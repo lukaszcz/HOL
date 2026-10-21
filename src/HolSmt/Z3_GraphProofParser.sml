@@ -1,0 +1,844 @@
+(* Copyright (c) 2026 The HOL4 contributors. *)
+structure Z3_GraphProofParser =
+struct
+  open Z3_Proof SmtLib_GraphFrontend SmtLib_Parser SmtReplayGraph
+    SmtLib_GraphProof SmtLib_GraphTranslation
+  structure F = SmtLib_GraphFrontend
+  structure P = SmtLib_Parser
+  structure G = SmtReplayGraph
+  val ERR = Feedback.mk_HOL_ERR "Z3_GraphProofParser"
+
+  datatype proof_id = Named of int | Anonymous of int
+  datatype 'a constructed_value = ProofId of proof_id
+    | Term of 'a F.constructed_term
+  type value = G.node constructed_value
+  datatype 'a constructed_step = Rule of
+    {rule : proof_rule, premises : proof_id list,
+     conclusion : 'a F.constructed_term,
+     arguments : 'a F.constructed_term list,
+     metadata : th_lemma_metadata option, accepts_bind : bool}
+    | Alias of proof_id
+    | Bind of {binding : 'a F.constructed_scoped_session, body : proof_id,
+               lambda_blocks : int list}
+  type step = G.node constructed_step
+  type 'a constructed_proof =
+    {steps : (proof_id, 'a constructed_step) Redblackmap.dict,
+     root : proof_id,vars : 'a list,z3_version : string,close : unit -> unit}
+  type proof = G.node constructed_proof
+  datatype syntax = Atom of string | List of syntax list
+
+  fun compare_id (Named left, Named right) = Int.compare (left, right)
+    | compare_id (Anonymous left, Anonymous right) = Int.compare (left, right)
+    | compare_id (Named _, Anonymous _) = LESS
+    | compare_id (Anonymous _, Named _) = GREATER
+  fun read tokens = case tokens () of
+      "(" =>
+        let fun entries acc = case tokens () of
+              ")" => List (List.rev acc)
+            | token => entries
+                (read (Library.undo_look_ahead [token] tokens) :: acc)
+        in entries [] end
+    | ")" => raise ERR "read" "unexpected closing delimiter"
+    | token => Atom token
+  fun token_list (Atom token) = [token]
+    | token_list (List entries) =
+        "(" :: List.concat (List.map token_list entries) @ [")"]
+  fun buffered raw action =
+    let val pending = ref (token_list raw)
+        fun next () = case !pending of
+            token :: rest => (pending := rest; token)
+          | [] => raise ERR "buffered" "incomplete expression"
+        val result = action next
+        val _ = if null (!pending) then () else
+          raise ERR "buffered" "trailing expression syntax"
+    in result end
+  fun atom context (Atom token) = P.proof_symbol_text token
+    | atom context _ = raise ERR context "expected an atomic symbol"
+  fun list context (List entries) = entries
+    | list context _ = raise ERR context "expected parenthesized entries"
+  fun named_id text =
+    if String.isPrefix "@x" text then
+      case Int.fromString (String.extract (text, 2, NONE)) of
+        SOME number => if number > 0 then Named number else
+          raise ERR "proof_id" "integer less than 1 found"
+      | NONE => raise ERR "proof_id" "'@x' not followed by an integer"
+    else raise ERR "proof_id" "'@x' prefix expected"
+
+  (* Metadata stays lexical data. Numeric index normalization is bounded by
+     the input token; it never walks an actual graph term representative. *)
+  fun index_text raw =
+    let val text = atom "rule_index" raw
+        val n = String.size text
+        fun digits limit index = index >= limit orelse
+          (Char.isDigit (String.sub (text, index)) andalso
+           digits limit (index + 1))
+        val integer_suffix = n > 1 andalso String.sub (text, n-1) = #"i"
+          andalso (digits (n-1) 0 orelse
+            (n > 2 andalso
+             (String.sub (text, 0) = #"-" orelse
+              String.sub (text, 0) = #"~") andalso digits (n-1) 1))
+    in if integer_suffix then String.substring (text, 0, n-1) else text end
+
+  fun create_using make_session (options : F.options) requested_version input
+      : proof SmtLib_GraphProof.packet =
+    let
+      val version = resolve_version requested_version
+      val tokenizer = P.make_proof_stream_tokenizer input
+      val terms = make_session options
+        {solver = "Z3", version = version, policy = F.Z3,
+         reserved_names = List.map #1
+           (Z3_ProofConstructors.entries @ Z3_ProofFpConstructors.entries)}
+        tokenizer
+      val _ = List.app (#add_recipe_parser terms)
+        (("=", Z3_ProofConstructors.equality) :: Z3_ProofConstructors.entries)
+      val _ = List.app (#add_recipe_parser terms)
+        (Z3_ProofFpConstructors.bounded_entries
+          (#index_limit (#recipe_limits options)))
+      val _ = (#add_literal_parser terms) Z3_ProofLiterals.numeric
+      val _ = (#add_literal_parser terms)
+        (Z3_ProofLiterals.bounded_word
+          (#index_limit (#recipe_limits options)))
+      val steps = ref
+        (Redblackmap.mkDict compare_id : (proof_id, step) Redblackmap.dict)
+      val counter = ref 0
+      val variables = ref ([] : G.node list)
+      val closures = ref ([] : (unit -> unit) list)
+      fun close () =
+        let val saved = !closures
+            val _ = closures := []
+        in List.app (fn action => action ()) saved end
+      fun error message = raise ERR "parse" message
+      fun term session raw = buffered raw (#parse_from (session : F.session))
+      fun sort session raw = buffered raw (#parse_sort (session : F.session))
+      fun proof (ProofId id) = id
+        | proof (Term _) = error "a graph term cannot be a proof premise"
+      fun boolean (Term value) =
+            if Type.compare (G.type_of (#graph options) (#node value),
+                Type.bool) = EQUAL then value else
+              error "proof conclusion must have Boolean type"
+        | boolean (ProofId _) = error
+            "LegacyDecimal proof reference used as a term conclusion"
+      fun save value =
+        let val _ = counter := !counter + 1
+            val id = Anonymous (!counter)
+        in steps := Redblackmap.insert (!steps, id, value); ProofId id end
+      fun key (session : F.session) token = (#symbol_key session) token
+      fun alias_value aliases name = Redblackmap.peek
+        (aliases, P.proof_symbol_text name)
+      fun descriptors session raw =
+        List.map (fn entry => case entry of
+            List [Atom name, ty] =>
+              if Option.isSome (P.proof_string_token name) then
+                error "string literal used as bound-variable name"
+              else (key session name, P.proof_symbol_text name,
+                    sort session ty)
+          | _ => error "malformed sorted variable")
+          (list "lambda_binders" raw)
+      fun scope session binders =
+        let
+          val binding as F.ScopedSession {close = end_scope, ...} =
+            (#open_binders (session : F.session)) binders
+          val _ = closures := end_scope :: !closures
+        in binding end
+      fun binding_session (F.ScopedSession {session, ...}) = session
+      fun lambda session raw =
+        case raw of
+          List [Atom "lambda", binders, body] =>
+            let val binding = scope session (descriptors session binders)
+                val child = binding_session binding
+            in (binding, child, body) end
+        | _ => error "proof-bind expects a lambda or proof expression"
+      fun parse_value session aliases raw =
+        case raw of
+          Atom name => (case alias_value aliases name of
+              SOME (value as ProofId _) => value
+            | SOME (Term retained) =>
+                let
+                  (* Reparse through the actual current lexical dictionary.
+                     Only that exact owned alias may retain its RHS syntax. *)
+                  val actual = term session raw
+                  val graph = #graph options
+                  val active = #scope actual
+                  val _ = G.validate_scope graph active
+                  val _ = if #node actual = #node retained then () else
+                    error "recorded term alias changed its owned node"
+                  val seen = ref (Redblackset.empty Int.compare)
+                  fun validate node =
+                    let
+                      val declared = G.node_scope graph node
+                      val _ = G.validate_scope graph declared
+                      val id = G.node_id node
+                    in if Redblackset.member (!seen,id) then () else
+                      let val _ = if G.scope_visible graph active declared
+                            then () else
+                              error "recorded alias child escapes scope"
+                      in seen := Redblackset.add (!seen,id) end
+                    end
+                  (* Lookup already checks the actual dictionary frame and
+                     exact alias node. Opaque atoms need no free-ID claim.
+                     Inspect only syntax used by clause_occurrences/literal;
+                     unused let RHSs and binder interiors stay boundaries. *)
+                  fun literal (P.ConstructionOccurrence
+                      {value,role,token,children,...}) =
+                    (validate value;
+                     case (role,token,children) of
+                       (P.ConstructionApplication,"not",[child]) =>
+                         validate (P.construction_value child)
+                     | (P.ConstructionApplication,"~",[child]) =>
+                         validate (P.construction_value child)
+                     | _ => ())
+                  fun clause (entry as P.ConstructionOccurrence
+                      {value,role,token,children,...}) =
+                    (validate value;
+                     case role of P.ConstructionLet _ =>
+                       (case List.rev children of body :: _ => clause body
+                        | [] => literal entry)
+                     | P.ConstructionAnnotation =>
+                       (case children of [body] => clause body
+                        | _ => literal entry)
+                     | P.ConstructionApplication =>
+                       if token = "or" then List.app literal children
+                       else literal entry
+                     | _ => literal entry)
+                  val _ = clause (#occurrence retained)
+                in Term {node = #node actual,scope = #scope actual,
+                  binder_blocks = #binder_blocks actual,
+                  occurrence = #occurrence retained} end
+            | NONE => Term (term session raw))
+        | List [Atom "let", bindings, body] =>
+            parse_let session aliases bindings body
+        | List (head :: operands) =>
+            let val (name, indices) = case head of
+                  Atom name => (P.proof_symbol_text name, [])
+                | List (Atom "_" :: Atom name :: indices) =>
+                    (P.proof_symbol_text name, indices)
+                | _ => ("", [])
+            in if name = "proof-bind" then
+                (case operands of [body] => parse_bind session aliases body
+                 | _ => error "proof-bind expects one operand")
+              else if name = "th-lemma" then
+                parse_lemma session aliases indices operands
+              else case lookup_rule version name of
+                  SOME rule =>
+                    parse_rule session aliases rule NONE indices operands
+                | NONE =>
+                    if Option.isSome (List.find (rule_matches name)
+                        proof_rule_registry) then
+                      error (registry_lookup_failure version name)
+                    else Term (term session raw)
+            end
+        | List [] => error "empty proof or term expression"
+      and parse_outer session aliases raw = case raw of
+          List [Atom "let", bindings, body] =>
+            if List.length (list "outer_let" bindings) = 1 then
+              parse_let_using true parse_outer session aliases bindings body
+            else error "outer Z3 proof let expects one definition"
+        | _ => parse_value session aliases raw
+      and parse_let session aliases bindings body =
+        parse_let_using false parse_value session aliases bindings body
+      and parse_let_using unique parse_body session aliases bindings body =
+        let
+          val entries = list "let_bindings" bindings
+          val _ = if null entries then error "empty let binding list" else ()
+          fun rhs binding = case binding of
+              List [Atom name, rhs] =>
+                (name, parse_value session aliases rhs)
+            | _ => error "malformed let binding"
+          val values = List.map rhs entries
+          val term_values = List.mapPartial (fn (name, value) =>
+            case value of Term value => SOME (name, value)
+            | ProofId _ => NONE) values
+          val binding as F.ScopedSession {session = child, close, ...} =
+            (#open_bindings (session : F.session)) term_values
+          val _ = closures := close :: !closures
+          fun install ((name, value), (aliases, names)) =
+            let
+              val name_text = P.proof_symbol_text name
+              val _ = if HOLset.member (names, name_text) then
+                error "duplicate simultaneous let variable" else ()
+              val _ = if unique andalso
+                  (Redblackmap.inDomain (aliases, name_text) orelse
+                   HOLset.member (#source_terms ((#namespace session) ()),
+                     key session name) orelse
+                   HOLset.member (#reserved ((#namespace session) ()),
+                     key session name)) then
+                error ("duplicate proof/term definition " ^ name_text)
+                else ()
+              val value = case value of
+                  Term value => if String.isPrefix "@x" name_text then
+                    error "named proof definition is not a proof"
+                    else Term value
+                | ProofId id => if String.isPrefix "@x" name_text then
+                    let val named = named_id name_text in
+                      if Redblackmap.inDomain (!steps, named) then
+                        error "duplicate named proof ID" else
+                        (steps := Redblackmap.insert (!steps, named, Alias id);
+                         ProofId named)
+                    end else ProofId id
+            in (Redblackmap.insert (aliases, name_text, value),
+                HOLset.add (names, name_text)) end
+          val (extended, _) = List.foldl install
+            (aliases, HOLset.empty String.compare) values
+          val parsed = parse_body child extended body
+        in case parsed of
+            ProofId _ => parsed
+          | Term value => Term
+              {node = #node value, scope = #scope value,
+               binder_blocks = #binder_blocks value,
+               occurrence = P.ConstructionOccurrence
+                 {value = #node value,
+                  role = P.ConstructionLet (List.map (fn (name, _) =>
+                    (key session name, P.proof_symbol_text name)) values),
+                  token = "let", children = List.map
+                    (#occurrence o #2) term_values @ [#occurrence value]}}
+        end
+      and parse_bind session aliases body =
+        case body of
+          List [Atom "lambda", _, _] =>
+            let
+              fun strip (List [Atom "lambda", binders, body]) entries sizes =
+                    let val entries_here = descriptors session binders
+                    in strip body (entries_here :: entries)
+                      (List.length entries_here :: sizes) end
+                | strip body entries sizes =
+                    (List.concat (List.rev entries), List.rev sizes, body)
+              val (entries, sizes, raw_body) = strip body [] []
+              val binding = scope session entries
+              val child = binding_session binding
+              val result = parse_value child aliases raw_body
+            in save (Bind {binding = binding, body = proof result,
+              lambda_blocks = sizes}) end
+        | _ => parse_value session aliases body
+      and parse_lemma session aliases indices operands =
+        let
+          val metadata = case List.map index_text indices of
+              theory :: subkind :: rest =>
+                mk_th_lemma_metadata (theory, SOME subkind, rest)
+            | [theory] => mk_th_lemma_metadata (theory, NONE, [])
+            | [] => error "th-lemma rule has no theory index"
+          val name = "th-lemma[" ^ #theory metadata ^ "]"
+          val rule = case lookup_rule version name of SOME rule => rule
+            | NONE => error (registry_lookup_failure version name)
+        in parse_rule session aliases rule (SOME metadata) [] operands end
+      and parse_rule session aliases (rule : proof_rule) metadata indices
+          operands =
+        let
+          val (premises, conclusion) = case List.rev operands of
+              conclusion :: rest => (List.rev rest, conclusion)
+            | [] => error ("proof rule " ^ #name rule ^ " has no conclusion")
+          val (proofs, arguments) = case #premise_shape rule of
+              ZeroPremises =>
+                if null premises then ([], []) else
+                  error "zero-premise proof rule has extra arguments"
+            | OnePremise => if List.length premises = 1 then
+                (List.map (proof o parse_value session aliases) premises, [])
+              else error "proof rule expects one premise"
+            | TwoPremises => if List.length premises = 2 then
+                (List.map (proof o parse_value session aliases) premises, [])
+              else error "proof rule expects two premises"
+            | ListPremises =>
+                (List.map (proof o parse_value session aliases) premises, [])
+            | TermArguments =>
+                if null premises then
+                  ([], List.map (fn raw =>
+                    case parse_value session aliases raw of
+                    Term value => value | ProofId _ =>
+                      error "proof ID used as a term argument") indices)
+                else error "indexed term-argument rule expects one conclusion"
+          val conclusion = boolean (parse_value session aliases conclusion)
+          val accepts_bind = List.exists (Lib.equal (#replay_handler rule))
+            ["nnf_neg", "nnf_pos", "quant_intro"]
+        in save (Rule {rule = rule, premises = proofs,
+          conclusion = conclusion, arguments = arguments,
+          metadata = metadata, accepts_bind = accepts_bind}) end
+      val no_aliases : (string, value) Redblackmap.dict =
+        Redblackmap.mkDict String.compare
+      fun declaration name domain range =
+        let val ty = boolSyntax.list_mk_fun
+              (List.map (sort terms) (list "function_domain" domain),
+               sort terms range)
+            val _ = (#declare terms) (name, ty)
+            val value = term terms (Atom name)
+        in variables := #node value :: !variables end
+      fun expression raw =
+        let val value = parse_outer terms no_aliases raw
+        in case value of ProofId id => id
+          | Term _ =>
+              let val head = case raw of List (head :: _) =>
+                    atom "proof_rule" head | _ => "<term>"
+              in error (registry_lookup_failure version head) end end
+      fun commands () =
+        let val _ = Library.expect_token "(" (tokenizer ())
+            val head = tokenizer ()
+        in case head of
+            "set-logic" =>
+              (tokenizer (); Library.expect_token ")" (tokenizer ());
+               commands ())
+          | "declare-fun" =>
+              let val name = tokenizer ()
+                  val domain = read tokenizer
+                  val range = read tokenizer
+                  val _ = Library.expect_token ")" (tokenizer ())
+              in declaration name domain range; commands () end
+          | "error" =>
+              (tokenizer (); Library.expect_token ")" (tokenizer ());
+               commands ())
+          | "proof" =>
+              let val root = expression (read tokenizer)
+                  val _ = Library.expect_token ")" (tokenizer ())
+              in root end
+          | _ => expression (read
+              (Library.undo_look_ahead ["(", head] tokenizer))
+        end
+      fun parse () =
+        let val _ = Library.expect_token "(" (tokenizer ())
+            val root = commands ()
+            val _ = Library.expect_token ")" (tokenizer ())
+            val proof =
+              {steps = !steps, root = root, vars = List.rev (!variables),
+               z3_version = version, close = close}
+        in SmtLib_GraphProof.new
+          {reader = #reader terms, proof = proof,
+           requested_version = requested_version, close = close} end
+    in parse () handle error =>
+      ((close () handle _ => ()); raise error) end
+
+  fun create_packet options version input =
+    create_using F.create_session options version input
+  fun create_configured_packet
+      (configured : F.configured_options) version input =
+    create_using (fn _ => F.create_configured_session configured)
+      (#base configured) version input
+  fun create_translation_packet options translation version input =
+    let
+      val configured = SmtLib_GraphTranslation.configured_options
+        options translation
+    in create_using
+      (fn _ => SmtLib_GraphTranslation.create_session options translation)
+      (#base configured) version input end
+  fun create options version input : proof =
+    SmtLib_GraphProof.proof (create_packet options version input)
+
+  type 'a policy_observations =
+    {type_of:'a -> Type.hol_type,same_identity:'a * 'a -> bool,
+     guard_alias_scope:G.scope * 'a -> unit,
+     alias_entry:G.scope * 'a -> {key:int,visible:unit -> bool}}
+
+  fun policy_description version =
+    {solver = "Z3", version = version, policy = F.Z3,
+     reserved_names = List.map #1
+       (Z3_ProofConstructors.entries @ Z3_ProofFpConstructors.entries)}
+
+  (* The policy grammar is shared with the Value backend. Observations and
+     packet ownership are supplied by the actual carrier specialization;
+     this programme grants no Source or inference authority. *)
+  fun create_using_with_policy_token_factory_for_backend
+      (observations:'a policy_observations) publish make_session
+      (options:'a F.constructed_policy_options)
+      requested_version make_token check_complete =
+    let
+      val version = resolve_version requested_version
+      val tokenizer = make_token ()
+      val terms = make_session options (policy_description version) tokenizer
+      val _ = List.app (#add_recipe_parser terms)
+        (("=", Z3_ProofConstructors.equality) :: Z3_ProofConstructors.entries)
+      val _ = List.app (#add_recipe_parser terms)
+        (Z3_ProofFpConstructors.entries_with_policy
+          (#index_limit (#recipe_limits options)))
+      val _ = (#add_literal_parser terms) Z3_ProofLiterals.numeric
+      val _ = (#add_literal_parser terms)
+        (Z3_ProofLiterals.word_with_policy
+          (#index_limit (#recipe_limits options)))
+      val steps = ref
+        (Redblackmap.mkDict compare_id :
+          (proof_id, 'a constructed_step) Redblackmap.dict)
+      val counter = ref 0
+      val variables = ref ([] : 'a list)
+      val closures = ref ([] : (unit -> unit) list)
+      fun close () =
+        let val saved = !closures
+            val _ = closures := []
+        in List.app (fn action => action ()) saved end
+      fun error message = raise ERR "parse" message
+      fun term session raw = buffered raw
+        (#parse_from (session : 'a F.constructed_session))
+      fun sort session raw = buffered raw
+        (#parse_sort (session : 'a F.constructed_session))
+      fun proof (ProofId id) = id
+        | proof (Term _) = error "a graph term cannot be a proof premise"
+      fun boolean (Term value) =
+            if Type.compare ((#type_of observations) (#node value),
+                Type.bool) = EQUAL then value else
+              error "proof conclusion must have Boolean type"
+        | boolean (ProofId _) = error
+            "LegacyDecimal proof reference used as a term conclusion"
+      fun save value =
+        let val _ = counter := !counter + 1
+            val id = Anonymous (!counter)
+        in steps := Redblackmap.insert (!steps, id, value); ProofId id end
+      fun key (session : 'a F.constructed_session) token =
+        (#symbol_key session) token
+      fun alias_value aliases name = Redblackmap.peek
+        (aliases, P.proof_symbol_text name)
+      fun descriptors session raw =
+        List.map (fn entry => case entry of
+            List [Atom name, ty] =>
+              if Option.isSome (P.proof_string_token name) then
+                error "string literal used as bound-variable name"
+              else (key session name, P.proof_symbol_text name,
+                    sort session ty)
+          | _ => error "malformed sorted variable")
+          (list "lambda_binders" raw)
+      fun scope session binders =
+        let
+          val binding as F.ScopedSession {close = end_scope, ...} =
+            (#open_binders (session : 'a F.constructed_session)) binders
+          val _ = closures := end_scope :: !closures
+        in binding end
+      fun binding_session (F.ScopedSession {session, ...}) = session
+      fun lambda session raw =
+        case raw of
+          List [Atom "lambda", binders, body] =>
+            let val binding = scope session (descriptors session binders)
+                val child = binding_session binding
+            in (binding, child, body) end
+        | _ => error "proof-bind expects a lambda or proof expression"
+      fun parse_value session aliases raw =
+        case raw of
+          Atom name => (case alias_value aliases name of
+              SOME (value as ProofId _) => value
+            | SOME (Term retained) =>
+                let
+                  (* Reparse through the actual current lexical dictionary.
+                     Only that exact owned alias may retain its RHS syntax. *)
+                  val actual = term session raw
+                  val active = #scope actual
+                  val _ = (#guard_alias_scope observations)
+                    (active,#node actual)
+                  val _ = if (#same_identity observations)
+                      (#node actual,#node retained) then () else
+                    error "recorded term alias changed its owned node"
+                  val seen = ref (Redblackset.empty Int.compare)
+                  fun validate node =
+                    let
+                      val {key=id,visible} =
+                        (#alias_entry observations) (active,node)
+                    in if Redblackset.member (!seen,id) then () else
+                      let val _ = if visible ()
+                            then () else
+                              error "recorded alias child escapes scope"
+                      in seen := Redblackset.add (!seen,id) end
+                    end
+                  (* Lookup already checks the actual dictionary frame and
+                     exact alias node. Opaque atoms need no free-ID claim.
+                     Inspect only syntax used by clause_occurrences/literal;
+                     unused let RHSs and binder interiors stay boundaries. *)
+                  fun literal (P.ConstructionOccurrence
+                      {value,role,token,children,...}) =
+                    (validate value;
+                     case (role,token,children) of
+                       (P.ConstructionApplication,"not",[child]) =>
+                         validate (P.construction_value child)
+                     | (P.ConstructionApplication,"~",[child]) =>
+                         validate (P.construction_value child)
+                     | _ => ())
+                  fun clause (entry as P.ConstructionOccurrence
+                      {value,role,token,children,...}) =
+                    (validate value;
+                     case role of P.ConstructionLet _ =>
+                       (case List.rev children of body :: _ => clause body
+                        | [] => literal entry)
+                     | P.ConstructionAnnotation =>
+                       (case children of [body] => clause body
+                        | _ => literal entry)
+                     | P.ConstructionApplication =>
+                       if token = "or" then List.app literal children
+                       else literal entry
+                     | _ => literal entry)
+                  val _ = clause (#occurrence retained)
+                in Term {node = #node actual,scope = #scope actual,
+                  binder_blocks = #binder_blocks actual,
+                  occurrence = #occurrence retained} end
+            | NONE => Term (term session raw))
+        | List [Atom "let", bindings, body] =>
+            parse_let session aliases bindings body
+        | List (head :: operands) =>
+            let val (name, indices) = case head of
+                  Atom name => (P.proof_symbol_text name, [])
+                | List (Atom "_" :: Atom name :: indices) =>
+                    (P.proof_symbol_text name, indices)
+                | _ => ("", [])
+            in if name = "proof-bind" then
+                (case operands of [body] => parse_bind session aliases body
+                 | _ => error "proof-bind expects one operand")
+              else if name = "th-lemma" then
+                parse_lemma session aliases indices operands
+              else case lookup_rule version name of
+                  SOME rule =>
+                    parse_rule session aliases rule NONE indices operands
+                | NONE =>
+                    if Option.isSome (List.find (rule_matches name)
+                        proof_rule_registry) then
+                      error (registry_lookup_failure version name)
+                    else Term (term session raw)
+            end
+        | List [] => error "empty proof or term expression"
+      and parse_outer session aliases raw = case raw of
+          List [Atom "let", bindings, body] =>
+            if List.length (list "outer_let" bindings) = 1 then
+              parse_let_using true parse_outer session aliases bindings body
+            else error "outer Z3 proof let expects one definition"
+        | _ => parse_value session aliases raw
+      and parse_let session aliases bindings body =
+        parse_let_using false parse_value session aliases bindings body
+      and parse_let_using unique parse_body session aliases bindings body =
+        let
+          val entries = list "let_bindings" bindings
+          val _ = if null entries then error "empty let binding list" else ()
+          fun rhs binding = case binding of
+              List [Atom name, rhs] =>
+                (name, parse_value session aliases rhs)
+            | _ => error "malformed let binding"
+          val values = List.map rhs entries
+          val term_values = List.mapPartial (fn (name, value) =>
+            case value of Term value => SOME (name, value)
+            | ProofId _ => NONE) values
+          val binding as F.ScopedSession {session = child, close, ...} =
+            (#open_bindings (session : 'a F.constructed_session)) term_values
+          val _ = closures := close :: !closures
+          fun install ((name, value), (aliases, names)) =
+            let
+              val name_text = P.proof_symbol_text name
+              val _ = if HOLset.member (names, name_text) then
+                error "duplicate simultaneous let variable" else ()
+              val _ = if unique andalso
+                  (Redblackmap.inDomain (aliases, name_text) orelse
+                   HOLset.member (#source_terms ((#namespace session) ()),
+                     key session name) orelse
+                   HOLset.member (#reserved ((#namespace session) ()),
+                     key session name)) then
+                error ("duplicate proof/term definition " ^ name_text)
+                else ()
+              val value = case value of
+                  Term value => if String.isPrefix "@x" name_text then
+                    error "named proof definition is not a proof"
+                    else Term value
+                | ProofId id => if String.isPrefix "@x" name_text then
+                    let val named = named_id name_text in
+                      if Redblackmap.inDomain (!steps, named) then
+                        error "duplicate named proof ID" else
+                        (steps := Redblackmap.insert (!steps, named, Alias id);
+                         ProofId named)
+                    end else ProofId id
+            in (Redblackmap.insert (aliases, name_text, value),
+                HOLset.add (names, name_text)) end
+          val (extended, _) = List.foldl install
+            (aliases, HOLset.empty String.compare) values
+          val parsed = parse_body child extended body
+        in case parsed of
+            ProofId _ => parsed
+          | Term value => Term
+              {node = #node value, scope = #scope value,
+               binder_blocks = #binder_blocks value,
+               occurrence = P.ConstructionOccurrence
+                 {value = #node value,
+                  role = P.ConstructionLet (List.map (fn (name, _) =>
+                    (key session name, P.proof_symbol_text name)) values),
+                  token = "let", children = List.map
+                    (#occurrence o #2) term_values @ [#occurrence value]}}
+        end
+      and parse_bind session aliases body =
+        case body of
+          List [Atom "lambda", _, _] =>
+            let
+              fun strip (List [Atom "lambda", binders, body]) entries sizes =
+                    let val entries_here = descriptors session binders
+                    in strip body (entries_here :: entries)
+                      (List.length entries_here :: sizes) end
+                | strip body entries sizes =
+                    (List.concat (List.rev entries), List.rev sizes, body)
+              val (entries, sizes, raw_body) = strip body [] []
+              val binding = scope session entries
+              val child = binding_session binding
+              val result = parse_value child aliases raw_body
+            in save (Bind {binding = binding, body = proof result,
+              lambda_blocks = sizes}) end
+        | _ => parse_value session aliases body
+      and parse_lemma session aliases indices operands =
+        let
+          val metadata = case List.map index_text indices of
+              theory :: subkind :: rest =>
+                mk_th_lemma_metadata (theory, SOME subkind, rest)
+            | [theory] => mk_th_lemma_metadata (theory, NONE, [])
+            | [] => error "th-lemma rule has no theory index"
+          val name = "th-lemma[" ^ #theory metadata ^ "]"
+          val rule = case lookup_rule version name of SOME rule => rule
+            | NONE => error (registry_lookup_failure version name)
+        in parse_rule session aliases rule (SOME metadata) [] operands end
+      and parse_rule session aliases (rule : proof_rule) metadata indices
+          operands =
+        let
+          val (premises, conclusion) = case List.rev operands of
+              conclusion :: rest => (List.rev rest, conclusion)
+            | [] => error ("proof rule " ^ #name rule ^ " has no conclusion")
+          val (proofs, arguments) = case #premise_shape rule of
+              ZeroPremises =>
+                if null premises then ([], []) else
+                  error "zero-premise proof rule has extra arguments"
+            | OnePremise => if List.length premises = 1 then
+                (List.map (proof o parse_value session aliases) premises, [])
+              else error "proof rule expects one premise"
+            | TwoPremises => if List.length premises = 2 then
+                (List.map (proof o parse_value session aliases) premises, [])
+              else error "proof rule expects two premises"
+            | ListPremises =>
+                (List.map (proof o parse_value session aliases) premises, [])
+            | TermArguments =>
+                if null premises then
+                  ([], List.map (fn raw =>
+                    case parse_value session aliases raw of
+                    Term value => value | ProofId _ =>
+                      error "proof ID used as a term argument") indices)
+                else error "indexed term-argument rule expects one conclusion"
+          val conclusion = boolean (parse_value session aliases conclusion)
+          val accepts_bind = List.exists (Lib.equal (#replay_handler rule))
+            ["nnf_neg", "nnf_pos", "quant_intro"]
+        in save (Rule {rule = rule, premises = proofs,
+          conclusion = conclusion, arguments = arguments,
+          metadata = metadata, accepts_bind = accepts_bind}) end
+      val no_aliases : (string, 'a constructed_value) Redblackmap.dict =
+        Redblackmap.mkDict String.compare
+      fun declaration name domain range =
+        let val ty = boolSyntax.list_mk_fun
+              (List.map (sort terms) (list "function_domain" domain),
+               sort terms range)
+            val _ = (#declare terms) (name, ty)
+            val value = term terms (Atom name)
+        in variables := #node value :: !variables end
+      fun expression raw =
+        let val value = parse_outer terms no_aliases raw
+        in case value of ProofId id => id
+          | Term _ =>
+              let val head = case raw of List (head :: _) =>
+                    atom "proof_rule" head | _ => "<term>"
+              in error (registry_lookup_failure version head) end end
+      fun commands () =
+        let val _ = Library.expect_token "(" (tokenizer ())
+            val head = tokenizer ()
+        in case head of
+            "set-logic" =>
+              (tokenizer (); Library.expect_token ")" (tokenizer ());
+               commands ())
+          | "declare-fun" =>
+              let val name = tokenizer ()
+                  val domain = read tokenizer
+                  val range = read tokenizer
+                  val _ = Library.expect_token ")" (tokenizer ())
+              in declaration name domain range; commands () end
+          | "error" =>
+              (tokenizer (); Library.expect_token ")" (tokenizer ());
+               commands ())
+          | "proof" =>
+              let val root = expression (read tokenizer)
+                  val _ = Library.expect_token ")" (tokenizer ())
+              in root end
+          | _ => expression (read
+              (Library.undo_look_ahead ["(", head] tokenizer))
+        end
+      fun parse () =
+        let val _ = Library.expect_token "(" (tokenizer ())
+            val root = commands ()
+            val _ = Library.expect_token ")" (tokenizer ())
+            val _ = check_complete tokenizer
+            val proof =
+              {steps = !steps, root = root, vars = List.rev (!variables),
+               z3_version = version, close = close}
+        in publish
+          {reader = #reader terms, proof = proof,
+           requested_version = requested_version, close = close} end
+    in parse () handle error =>
+      ((close () handle _ => ()); raise error) end
+
+
+  fun create_using_with_policy_token_factory make_session
+      (options:F.policy_options) requested_version make_token check_complete
+      : proof SmtLib_GraphProof.packet =
+    let
+      val graph = #graph options
+      val observations:G.node policy_observations =
+        {type_of=G.type_of graph,same_identity=op=,
+         guard_alias_scope=fn (active,_) => G.validate_scope graph active,
+         alias_entry=fn (active,node) =>
+           let val declared = G.node_scope graph node
+               val _ = G.validate_scope graph declared
+               val id = G.node_id node
+           in {key=id,visible=fn () =>
+             G.scope_visible graph active declared} end}
+    in create_using_with_policy_token_factory_for_backend observations
+      SmtLib_GraphProof.new make_session options requested_version
+      make_token check_complete end
+
+  fun create_using_with_policy make_session options version input =
+    create_using_with_policy_token_factory make_session options version
+      (fn () => P.make_proof_stream_tokenizer input) (fn _ => ())
+
+  fun create_using_with_policy_from_input make_session options version input =
+    let
+      fun check_complete tokenizer =
+        case (SOME (tokenizer ()) handle P.ProofEOF => NONE) of
+          NONE => ()
+        | SOME _ => raise ERR "parse" "trailing Z3 proof syntax"
+    in create_using_with_policy_token_factory make_session options version
+      (fn () => P.make_proof_input_tokenizer input) check_complete end
+
+  fun create_packet_with_policy options version input =
+    create_using_with_policy F.create_session_with_policy options version input
+  fun create_packet_with_policy_from_input options version input =
+    create_using_with_policy_from_input F.create_session_with_policy
+      options version input
+  fun create_configured_packet_with_policy
+      (configured : F.policy_configured_options) version input =
+    create_using_with_policy (fn _ => F.create_configured_session_with_policy configured)
+      (#base configured) version input
+  fun create_translation_packet_with_policy options translation version input =
+    let
+      val configured = SmtLib_GraphTranslation.configured_options_with_policy
+        options translation
+    in create_using_with_policy
+      (fn _ => SmtLib_GraphTranslation.create_session_with_policy options translation)
+      (#base configured) version input end
+  fun create_translation_packet_with_policy_from_input options translation
+      version input =
+    let
+      val configured = SmtLib_GraphTranslation.configured_options_with_policy
+        options translation
+    in create_using_with_policy_from_input
+      (fn _ => SmtLib_GraphTranslation.create_session_with_policy
+        options translation)
+      (#base configured) version input end
+  fun create_with_policy options version input : proof =
+    SmtLib_GraphProof.proof (create_packet_with_policy options version input)
+
+  local
+    datatype recorded = Recorded of
+      {packet : proof SmtLib_GraphProof.packet,
+       definitions : SmtLib.emitted_definition list}
+  in
+    type recorded_translation = recorded
+    fun create_recorded_translation_packet options translation version input =
+      let
+        val packet = create_translation_packet options translation version input
+        val definitions = SmtLib.translation_definitions translation
+          handle error => (SmtLib_GraphProof.close packet;raise error)
+      in Recorded {packet = packet,definitions = definitions} end
+    fun create_recorded_translation_packet_with_policy options translation version input =
+      let
+        val packet = create_translation_packet_with_policy options translation version input
+        val definitions = SmtLib.translation_definitions translation
+          handle error => (SmtLib_GraphProof.close packet;raise error)
+      in Recorded {packet = packet,definitions = definitions} end
+    fun recorded_packet (Recorded {packet,...}) = packet
+    fun recorded_translation_definitions (Recorded {definitions,...}) =
+      definitions
+  end
+end

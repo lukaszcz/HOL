@@ -5,6 +5,8 @@
 structure SmtFpProve =
 struct
 
+  structure G = SmtReplayGraph
+
   val ERR = Feedback.mk_HOL_ERR "SmtFpProve"
 
   fun profile name f x = Profile.profile_with_exn_name name f x
@@ -374,10 +376,22 @@ struct
      formula. *)
   fun definition_bitblast_uncapped_with word_prover definitions t =
   let
+    val limit = SmtResource.max_bv_replay_term_nodes
+    val source_limit = case Int.maxInt of SOME n => n
+      | NONE => SmtResource.max_metric
     val _ = SmtResource.contains
       (wordsSyntax.is_word_type o Term.type_of) t orelse
       raise ERR "definition_bitblast_prove" "no packed word in conclusion"
-    val free_vars = Term.FVL_dag [t] Term.empty_tmset
+    (* The timed caller owns its existing source DAG admission. Uncapped
+       callers gain no new root quota; bounded binder islands retain their
+       standing binder-opening diagnostic. *)
+    val summary = SmtReplayDependencies.source_summary
+      {dag_limit = source_limit, admit_binder = fn term =>
+        (ignore (SmtResource.term_children term); SOME limit)} t
+    val free_vars = case summary of
+        G.Known variables => HOLset.addList (Term.empty_tmset, variables)
+      | G.Unknown => raise ERR "definition_bitblast_prove"
+          "packed-bit definition relevance has unadmitted dependencies"
     fun relevant definition =
       pure_word_definition definition andalso
       HOLset.member (free_vars, Lib.fst (boolSyntax.dest_eq definition))

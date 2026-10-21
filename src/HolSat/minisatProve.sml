@@ -56,7 +56,9 @@ fun replay_proof is_proved sva nr in_name solver vc clauseth lfn ntm proof =
                 (replayProof sva nr in_name solver vc clauseth lfn) proof of
              SOME th => (sat_trace "resolution replay done"; th)
            | NONE => (warn "Proof replay failed. Using internal prover.";
-                      DPLL_TAUT (dest_neg ntm)))) (*triv prob/unknown err*)
+                      satTools.observed_internal_solver
+                        (fn () => DPLL_TAUT (dest_neg ntm)))))
+                        (*triv prob/unknown err*)
     else mk_sat_oracle_thm([ntm],F)
 
 local
@@ -99,7 +101,8 @@ fun invoke_solver solver lfn ntm clauseth cnfv vc is_proved
         (if nr > !sat_limit then
            warn "SAT solver not found. Using slow internal prover."
          else ();
-         DPLL_TAUT (dest_neg ntm))
+         satTools.observed_internal_solver
+                        (fn () => DPLL_TAUT (dest_neg ntm)))
     end
 end
 

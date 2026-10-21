@@ -5,6 +5,9 @@
 structure SmtReplayCanon =
 struct
 
+  open SmtReplayGraph SmtReplayCanonGraph
+  structure G = SmtReplayGraph
+
   val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
 
   (* Left-to-right conversion chain, total: an all-unchanged chain yields
@@ -216,25 +219,56 @@ struct
   val dag_orientation_conv = dag_conversion false
   val dag_rewrite_conv = dag_conversion true
 
-  (* Canonicalize physical sharing without changing any HOL syntax.  The
-     postorder visitor interns alpha-equal terms after their children have
-     been shared; every reuse is justified by kernel ALPHA, never by a hash. *)
+  (* Canonicalize source syntax bottom-up through typed constructor IDs.
+     Retained children justify local checked bridges. Binders are opened
+     only after bounded admission; oversized opaque binders stay retained. *)
   fun share_conv root =
     let
-      val index = SmtResource.new_bounded_term_index
-        SmtResource.max_bv_replay_term_nodes
-      val representatives = ref (Redblackmap.mkDict Int.compare)
-      fun intern term =
-        case index term of
-          NONE => Thm.REFL term
-        | SOME id =>
-            (case Redblackmap.peek (!representatives, id) of
-               SOME representative => Thm.ALPHA term representative
-             | NONE =>
-                 (representatives := Redblackmap.insert
-                    (!representatives, id, term);
-                  Thm.REFL term))
-    in dag_orientation_conv intern root end
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val maximum = SmtResource.max_bv_replay_term_nodes
+      val source = G.import graph scope maximum root
+      val memo = ref (Redblackmap.mkDict Int.compare)
+      fun share node = case Redblackmap.peek (!memo,G.node_id node) of
+          SOME result => result
+        | NONE =>
+          let
+            val original = G.representative graph node
+            val result = case G.view graph node of
+                G.OpaqueRetained =>
+                  (case SmtReplayImport.bounded_raw_size maximum original of
+                     NONE => (node,Thm.REFL original)
+                   | SOME _ =>
+                     let val admitted = G.admit_binder graph
+                       (G.node_scope graph node) maximum original in
+                       (#node admitted,#bridge admitted) end)
+              | G.Application (operator,operand) =>
+                  let
+                    val (left,left_proof) = share operator
+                    val (right,right_proof) = share operand
+                  in if left = operator andalso right = operand then
+                      (node,Thm.REFL original)
+                    else
+                      let
+                        val canonical = G.application graph scope (left,right)
+                        val combined = Thm.MK_COMB (left_proof,right_proof)
+                        val (rebuilt,rebuilt_right) = Term.dest_eq
+                          (Thm.concl combined)
+                        val bridge = Thm.TRANS (Thm.ALPHA original rebuilt)
+                          (Thm.TRANS combined (Thm.ALPHA rebuilt_right
+                            (G.representative graph canonical)))
+                      in (canonical,bridge) end
+                  end
+              | _ => (node,Thm.REFL original)
+            val _ = memo := Redblackmap.insert (!memo,G.node_id node,result)
+          in result end
+    in Thm.TRANS (#bridge source) (#2 (share (#node source))) end
+    handle Feedback.HOL_ERR error =>
+      if Feedback.top_structure_of error = "SmtReplayGraph" andalso
+         Feedback.top_function_of error = "import" andalso
+         Feedback.message_of error = "application import DAG budget exhausted"
+      then Thm.REFL root
+      else raise Feedback.HOL_ERR error
 
   (* The head patterns are disjoint.  Orienting each parent after all of its
      children therefore establishes both normal forms in one postorder pass,

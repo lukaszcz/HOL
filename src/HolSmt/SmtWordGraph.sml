@@ -461,10 +461,15 @@ struct
             (table, index, (term, value) :: Array.sub (table, index))
         end
       val generated_seen = new_pointer_set ()
+      val reserved = ref (HOLset.empty String.compare)
       fun mark_generated term = mark_pointer generated_seen term
       fun seed_source term =
         if mark_generated term then
-          List.app seed_source (SmtResource.term_children term)
+          (if Term.is_var term then
+             reserved := HOLset.add
+               (!reserved, Lib.fst (Term.dest_var term))
+           else ();
+           List.app seed_source (SmtResource.term_children term))
         else ()
       fun count_nodes root =
         let
@@ -478,13 +483,12 @@ struct
         in visit root; !count end
       (* Instantiating a small schema reconnects original operands.  Seed the
          generated-node set with the admitted source graph so those retained
-         nodes are not charged again as allocations. *)
+         nodes are not charged again as allocations.  Reserve names from that
+         same construction view.  This deliberately includes opened binder
+         variables: schema freshness needs a conservative occupied-name set,
+         not an independent free-variable oracle. Binder opening already has
+         SmtResource's standing bounded-body contract. *)
       val _ = seed_source root
-      val reserved = ref (List.foldl
-        (fn (variable, names) => HOLset.add
-          (names, Lib.fst (Term.dest_var variable)))
-        (HOLset.empty String.compare)
-        (HOLset.listItems (Term.FVL_dag [root] Term.empty_tmset)))
       val serial = ref 0
 
       fun fresh ty =

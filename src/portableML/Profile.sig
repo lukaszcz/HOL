@@ -8,6 +8,9 @@ val profile_with_exn : string -> ('a -> 'b) -> 'a -> 'b
 val profile_with_exn_name : string -> ('a -> 'b) -> 'a -> 'b
 val profile_no_exn : string -> ('a -> 'b) -> 'a -> 'b
 
+(* Opt-in synchronous benchmark bracket; existing profile APIs unchanged. *)
+val without_profiling : (unit -> 'a) -> 'a
+
 val reset1 : string -> unit
 val reset_all : unit -> unit
 

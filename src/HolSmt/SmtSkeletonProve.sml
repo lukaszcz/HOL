@@ -267,7 +267,7 @@ struct
       fun type_id ty = let val AdmissionTypeNode {id, ...} = intern ty in id end
       fun admit_abstraction operation term =
         let
-          val _ = case Term.term_size_bounded maximum term of
+          val _ = case SmtReplayImport.bounded_raw_size maximum term of
               SOME _ => ()
             | NONE => SmtResource.check_term_size_for "BitVector" operation
                 (maximum + 1)
@@ -657,7 +657,7 @@ struct
       fun intern_abstraction occurrence =
         let
           val size =
-            case Term.term_size_bounded maximum occurrence of
+            case SmtReplayImport.bounded_raw_size maximum occurrence of
               SOME size => size
             | NONE =>
                 (SmtResource.check_term_size_for "BitVector"

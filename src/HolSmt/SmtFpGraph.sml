@@ -1,6 +1,7 @@
 structure SmtFpGraph :> SmtFpGraph =
 struct
   open HolKernel
+  structure G = SmtReplayGraph
 
   exception Declined of string
 
@@ -282,12 +283,6 @@ struct
       | NONE => NONE
     end
 
-  fun pointer_peek entries term =
-    case List.find
-        (fn (saved, _) => Portable.pointer_eq (term, saved)) entries of
-      NONE => NONE
-    | SOME (_, value) => SOME value
-
   fun rebuild head theorems = List.foldl
     (fn (argument, function) => Thm.MK_COMB (function, argument))
     (Thm.REFL head) theorems
@@ -317,331 +312,62 @@ struct
      projections : int, conditionals : int, helpers : int,
      priorities : int, ordinary : int, beta_seconds : real}
 
-  fun close_helper_graph type_admission root =
-    let
-      val memo = ref (Redblackmap.mkDict String.compare :
-        (string, (term * (thm * bool)) list) Redblackmap.dict)
-      val visited = ref 0
-      val memo_hits = ref 0
-      val rewrites = ref 0
-      val literals = ref 0
-      val lets = ref 0
-      val betas = ref 0
-      val pairs = ref 0
-      val projections = ref 0
-      val conditionals = ref 0
-      val helpers = ref 0
-      val priorities = ref 0
-      val ordinary = ref 0
-      val beta_time = ref Time.zeroTime
-      val helper_schemas = ref ([] : (term * hol_type * thm) list)
+  (* Arithmetic schemas expose fields lazily below. The former eager helper
+     closure had no callers and duplicated these projection rules. *)
 
-      fun atomic term =
-        Term.is_var term orelse Term.is_const term orelse
-        numSyntax.is_numeral term orelse wordsSyntax.is_word_literal term
+  fun priority_count_conversion count =
+    if numSyntax.is_numeral count then Thm.REFL count
+    else
+      let
+        val limit = SmtResource.max_bv_replay_term_nodes
+        val source_limit = case Int.maxInt of SOME n => n
+          | NONE => SmtResource.max_metric
+        val graph = G.new ()
+        val scope = G.root_scope graph
+        val source = G.import graph scope source_limit count
+        (* Application admission belongs to the enclosing word graph.
+           Standalone projection calls impose no new source DAG quota.
+           Binder islands keep their standing opening diagnostic. *)
+        val summary = SmtReplayDependencies.graph_summary
+          {graph = graph, root = #node source,
+           admit_binder = fn term =>
+             (ignore (SmtResource.term_children term); SOME limit)}
+        val _ = case summary of
+            G.Known [] => ()
+          | G.Known _ => raise Declined "nonliteral priority count"
+          | G.Unknown => raise Declined "unadmitted priority count"
+        val admission = SmtWordGraph.new_type_admission ()
+        val evaluated = ref (Redblackmap.mkDict Int.compare)
 
-      fun generic_argument argument =
-        if full_named "smtfloat" "smtfp_unpack_rounding" 1 argument then
-          let
-            val (head, raw) =
-              case boolSyntax.strip_comb argument of
-                (head, [raw]) => (head, raw)
-              | _ => raise Declined "malformed smtfp_unpack_rounding"
-            val variable = Term.genvar (Term.type_of raw)
-          in Term.mk_comb (head, variable) end
-        else if is_rounding_type (Term.type_of argument) then
-          raise Declined
-            "arithmetic helper received a non-decoder rounding value"
-        else if Term.is_const argument orelse numSyntax.is_numeral argument
-             orelse wordsSyntax.is_word_literal argument then argument
-        else Term.genvar (Term.type_of argument)
-
-      fun local_head term =
-        let val (head, arguments) = boolSyntax.strip_comb term
-        in
-          (if Term.is_const head then
-             let val id = Term.dest_thy_const head
-             in #Thy id ^ "." ^ #Name id end
-           else if Term.is_abs head then "abstraction"
-           else "variable") ^ "/" ^ Int.toString (List.length arguments)
-        end
-
-      fun memo_class term =
-        let
-          val type_id = SmtWordGraph.primitive_type_id
-            type_admission (Term.type_of term)
-          fun shape 0 node = local_head node
-            | shape depth node =
-                let val (_, arguments) = boolSyntax.strip_comb node
-                in
-                  local_head node ^ "[" ^
-                  String.concatWith ","
-                    (List.map (shape (depth - 1)) arguments) ^ "]"
-                end
-        in shape 2 term ^ ":" ^ Int.toString type_id end
-
-      fun memo_peek term =
-        case Redblackmap.peek (!memo, memo_class term) of
-          NONE => NONE
-        | SOME entries => pointer_peek entries term
-
-      fun head_label head =
-        if Term.is_const head then
-          let val id = Term.dest_thy_const head
-          in #Thy id ^ "." ^ #Name id end
-        else "nonconstant"
-
-      fun save term result =
-        let
-          val key = memo_class term
-          val entries = Option.getOpt (Redblackmap.peek (!memo, key), [])
-        in
-          memo := Redblackmap.insert (!memo, key, (term, result) :: entries);
-          result
-        end
-
-      fun continue term prefix =
-        let val right = boolSyntax.rhs (Thm.concl prefix)
-        in
-          if Term.aconv term right then save term (Thm.REFL term, false)
-          else
-            let val (tail, _) = close right
-                val _ = rewrites := !rewrites + 1
-            in save term (Thm.TRANS prefix tail, true) end
-        end
-
-      and close term =
-        if atomic term then
-          (literals := !literals + 1; (Thm.REFL term, false))
-        else case memo_peek term of
-          SOME result => (memo_hits := !memo_hits + 1; result)
-        | NONE =>
-            let
-              val _ = visited := !visited + 1
-              val _ = SmtWordGraph.admit_primitive_type
-                type_admission (Term.type_of term)
-              val (head, arguments) = boolSyntax.strip_comb term
-            in
-              if full_named "bool" "LET" 2 term then
-                let
-                  val _ = lets := !lets + 1
-                  val (function, value) = case arguments of
-                    [function, value] => (function, value)
-                  | _ => raise Declined "malformed LET"
-                  val (value_theorem, _) = close value
-                  val assembled = rebuild head
-                    [Thm.REFL function, value_theorem]
-                  val reduced = Conv.REWR_CONV boolTheory.LET_THM
-                    (boolSyntax.rhs (Thm.concl assembled))
-                in continue term (Thm.TRANS assembled reduced) end
-              else if Term.is_abs head andalso not (List.null arguments) then
-                let
-                  val _ = betas := !betas + 1
-                  val (first, remaining) = case arguments of
-                    first :: remaining => (first, remaining)
-                  | [] => raise Declined "malformed abstraction application"
-                  val (first_theorem, _) = close first
-                  val applied = Thm.MK_COMB (Thm.REFL head, first_theorem)
-                  val timer = Timer.startRealTimer ()
-                  val beta = BETA_CONV
-                    (boolSyntax.rhs (Thm.concl applied))
-                  val elapsed = Timer.checkRealTimer timer
-                  val reduced = Thm.TRANS applied beta
-                  val _ = beta_time := Time.+ (!beta_time, elapsed)
-                  val attached = List.foldl
-                    (fn (argument, theorem) =>
-                      Thm.MK_COMB (theorem, Thm.REFL argument))
-                    reduced remaining
-                in continue term attached end
-              else if full_named "pair" "pair_CASE" 2 term then
-                let
-                  val _ = pairs := !pairs + 1
-                  val (value, function) = case arguments of
-                    [value, function] => (value, function)
-                  | _ => raise Declined "malformed pair_CASE"
-                  val (value_theorem, _) = close value
-                  val assembled = rebuild head
-                    [value_theorem, Thm.REFL function]
-                  val reduced = Conv.REWR_CONV pairTheory.pair_CASE_def
-                    (boolSyntax.rhs (Thm.concl assembled))
-                in continue term (Thm.TRANS assembled reduced) end
-              else if full_named "pair" "UNCURRY" 2 term then
-                let
-                  val _ = pairs := !pairs + 1
-                  val (function, value) = case arguments of
-                    [function, value] => (function, value)
-                  | _ => raise Declined "malformed UNCURRY"
-                  val (value_theorem, _) = close value
-                  val assembled = rebuild head
-                    [Thm.REFL function, value_theorem]
-                  val reduced = Conv.REWR_CONV pairTheory.UNCURRY
-                    (boolSyntax.rhs (Thm.concl assembled))
-                in continue term (Thm.TRANS assembled reduced) end
-              else if full_named "pair" "FST" 1 term orelse
-                      full_named "pair" "SND" 1 term then
-                let
-                  val _ = projections := !projections + 1
-                  val value = case arguments of
-                    [value] => value
-                  | _ => raise Declined "malformed pair projection"
-                  val (value_theorem, _) = close value
-                  val assembled = rebuild head [value_theorem]
-                  val residue = boolSyntax.rhs (Thm.concl assembled)
-                  val value' = List.hd
-                    (Lib.snd (boolSyntax.strip_comb residue))
-                  val reduced = if boolSyntax.is_cond value' then
-                      Conv.REWR_CONV boolTheory.COND_RAND residue
-                    else Conv.QCONV (Conv.FIRST_CONV
-                      [Conv.REWR_CONV pairTheory.FST,
-                       Conv.REWR_CONV pairTheory.SND,
-                       Conv.ALL_CONV]) residue
-                in continue term (Thm.TRANS assembled reduced) end
-              else if boolSyntax.is_cond term then close_cond term
-              else if rounding_case term then continue term
-                (Conv.REWR_CONV
-                  smtfloatReplayRoundingTheory.smtfp_rounding_case_unpack term)
-              else if rounding_test term then continue term
-                (Conv.QCONV (simpLib.SIMP_CONV bossLib.pure_ss
-                  rounding_test_laws) term)
-              else
-                (case helper_definition term of
-                   SOME definition => close_helper term definition
-                 | NONE => close_ordinary term head arguments)
-            end
-
-      and close_cond term = SmtResource.profile_phase
-        "fp-graph/close-conditional"
-        (fn term => let
-          val _ = conditionals := !conditionals + 1
-          val (condition, yes, no) = boolSyntax.dest_cond term
-          val (condition_theorem, _) = close condition
-          val condition' = boolSyntax.rhs (Thm.concl condition_theorem)
-          val evaluated = if HOLset.isEmpty
-              (Term.FVL_dag [condition'] Term.empty_tmset) then
-              Conv.QCONV bossLib.EVAL condition'
-            else Thm.REFL condition'
-          val guard = Thm.TRANS condition_theorem evaluated
-          val guard' = boolSyntax.rhs (Thm.concl guard)
-          val (head, _) = boolSyntax.strip_comb term
-        in
-          if Term.aconv guard' boolSyntax.T orelse
-             Term.aconv guard' boolSyntax.F then
-            let
-              val assembled = rebuild head
-                [guard, Thm.REFL yes, Thm.REFL no]
-              val reduced = Conv.COND_CONV
-                (boolSyntax.rhs (Thm.concl assembled))
-            in continue term (Thm.TRANS assembled reduced) end
-          else
-            let
-              val (yes_theorem, yes_changed) = close yes
-              val (no_theorem, no_changed) = close no
-              val result = rebuild head [guard, yes_theorem, no_theorem]
-              val guard_changed = not (Term.aconv condition guard')
-              val changed = guard_changed orelse yes_changed orelse no_changed
-            in save term (if changed then (result, true)
-              else (Thm.REFL term, false)) end
-        end) term
-
-      and close_helper term definition =
-        let val (head, arguments) = boolSyntax.strip_comb term
-        in
-          if full_named "smtfloatReplayWord" "smtfp_word_priority" 2 term
-          then
-            let
-              val _ = priorities := !priorities + 1
-              val (count, word) = case arguments of
-                [count, word] => (count, word)
-              | _ => raise Declined "malformed word priority"
-              val _ = if HOLset.isEmpty
-                  (Term.FVL_dag [count] Term.empty_tmset) then ()
-                else raise Declined "nonliteral priority count"
-              val count_theorem = Conv.QCONV bossLib.EVAL count
-              val assembled = rebuild head
-                [count_theorem, Thm.REFL word]
-              val residue = boolSyntax.rhs (Thm.concl assembled)
-              val reduced = Conv.QCONV (Conv.FIRST_CONV
-                (List.map Conv.REWR_CONV priority_laws)) residue
-            in continue term (Thm.TRANS assembled reduced) end
-          else
-            let
-              val _ = helpers := !helpers + 1
-              val converted = List.map close arguments
-              val assembled = rebuild head (List.map Lib.fst converted)
-              val normalized = boolSyntax.rhs (Thm.concl assembled)
-              val head_type = Term.type_of head
-              val schema =
-                case List.find (fn (saved_head, saved_type, saved) =>
-                    Term.same_const head saved_head andalso
-                    Type.compare (saved_type, head_type) = EQUAL andalso
-                    Lib.can (Term.match_term
-                      (boolSyntax.lhs (Thm.concl saved))) normalized)
-                    (!helper_schemas) of
-                  SOME (_, _, saved) => saved
-                | NONE =>
-                    let
-                      val action = fn () =>
-                        let
-                          val label = head_label head
-                          val generic_arguments =
-                            List.map generic_argument arguments
-                          val generic =
-                            Term.list_mk_comb (head, generic_arguments)
-                          val unfolded =
-                            Conv.REWR_CONV definition generic
-                          val (closed, _) = close
-                            (boolSyntax.rhs (Thm.concl unfolded))
-                          val saved = Thm.TRANS unfolded closed
-                          val output_nodes = SmtResource.dag_nodes_up_to
-                            SmtResource.max_bv_replay_term_nodes
-                            (boolSyntax.rhs (Thm.concl saved))
-                          val _ = helper_schemas :=
-                            (head, head_type, saved) :: !helper_schemas
-                        in saved end
-                    in
-                      SmtResource.profile_phase
-                        ("fp-graph/helper-schema/" ^ head_label head)
-                        action ()
-                    end
-              val instantiated = SmtResource.profile_phase
-                ("fp-graph/helper-instantiate/" ^ head_label head)
-                (fn () => Drule.INST_TY_TERM
-                  (Term.match_term
-                    (boolSyntax.lhs (Thm.concl schema)) normalized) schema) ()
-              val result = Thm.TRANS assembled instantiated
-            in save term (result, true) end
-        end
-
-      and close_ordinary term head arguments = SmtResource.profile_phase
-        "fp-graph/close-ordinary"
-        (fn () =>
-          if Term.is_abs term orelse List.null arguments then
-            save term (Thm.REFL term, false)
-          else
-            let
-              val _ = ordinary := !ordinary + 1
-              val converted = List.map close arguments
-              val changed = List.exists Lib.snd converted
-            in
-              if changed then save term
-                (rebuild head (List.map Lib.fst converted), true)
-              else save term (Thm.REFL term, false)
-            end) ()
-
-      val (theorem, _) = close root
-      val output = boolSyntax.rhs (Thm.concl theorem)
-      val output_nodes = SmtResource.dag_nodes_up_to
-        SmtResource.max_bv_replay_term_nodes output
-    in
-      (theorem,
-       {visited = !visited, memo_hits = !memo_hits,
-        rewrites = !rewrites, output_nodes = output_nodes,
-        literals = !literals, lets = !lets, betas = !betas,
-        pairs = !pairs, projections = !projections,
-        conditionals = !conditionals, helpers = !helpers,
-        priorities = !priorities, ordinary = !ordinary,
-        beta_seconds = Time.toReal (!beta_time)})
-    end
+        (* Reduce dependencies once, before exposing a primitive to EVAL.
+           A depth-80 shared arithmetic count can therefore become a small
+           numeral without evaluating its exponential unfolded source. The
+           standing BV primitive bound limits evaluation islands, not source
+           DAG admission. A large unreduced island stays retained here. *)
+        fun evaluate node =
+          case Redblackmap.peek (!evaluated, G.node_id node) of
+            SOME theorem => theorem
+          | NONE =>
+              let
+                val term = G.representative graph node
+                val children = case G.view graph node of
+                    G.Application (left, right) =>
+                      Thm.MK_COMB (evaluate left, evaluate right)
+                  | _ => Thm.REFL term
+                val right = boolSyntax.rhs (Thm.concl children)
+                val reduced =
+                  case SmtReplayImport.bounded_raw_size limit right of
+                    NONE => Thm.REFL right
+                  | SOME _ =>
+                      (SmtWordGraph.admit_primitive_type admission
+                         (Term.type_of right);
+                       Conv.QCONV bossLib.EVAL right)
+                val theorem = Thm.TRANS children reduced
+                val _ = evaluated := Redblackmap.insert
+                  (!evaluated, G.node_id node, theorem)
+              in theorem end
+        val theorem = Thm.TRANS (#bridge source) (evaluate (#node source))
+      in theorem end
 
   fun field_projection_conversion term =
     let
@@ -673,16 +399,30 @@ struct
           val (count, word) = case arguments of
             [count, word] => (count, word)
           | _ => raise Conv.UNCHANGED
-          val _ = if HOLset.isEmpty
-              (Term.FVL_dag [count] Term.empty_tmset) then ()
-            else raise Declined "nonliteral priority count"
-          val count_theorem = Conv.QCONV bossLib.EVAL count
+          val count_theorem = priority_count_conversion count
           val assembled = Thm.MK_COMB
             (Thm.MK_COMB (Thm.REFL head, count_theorem), Thm.REFL word)
+          val rebuilt = boolSyntax.lhs (Thm.concl assembled)
+          (* MK_COMB allocates the two outer application constructors. The
+             count conversion has already preserved its exact source; check
+             all three retained leaves before aligning just this spine.
+             ALPHA therefore never compares independent deep count DAGs. *)
+          val (old_operator, old_word) = Term.dest_comb term
+          val (old_head, old_count) = Term.dest_comb old_operator
+          val (new_operator, new_word) = Term.dest_comb rebuilt
+          val (new_head, new_count) = Term.dest_comb new_operator
+          val _ = if
+              Portable.pointer_eq (old_head, new_head) andalso
+              Portable.pointer_eq (old_count, new_count) andalso
+              Portable.pointer_eq (old_word, new_word) then ()
+            else raise Feedback.mk_HOL_ERR "SmtFpGraph"
+              "field_projection_conversion"
+              "priority conversion lost a retained source operand"
+          val aligned = Thm.TRANS (Thm.ALPHA term rebuilt) assembled
           val residue = boolSyntax.rhs (Thm.concl assembled)
           val reduced = Conv.FIRST_CONV
             (List.map Conv.REWR_CONV priority_laws) residue
-        in Thm.TRANS assembled reduced end
+        in Thm.TRANS aligned reduced end
     in
       if (full_named "pair" "FST" 1 term orelse
           full_named "pair" "SND" 1 term) then projection ()

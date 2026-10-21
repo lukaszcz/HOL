@@ -71,4 +71,80 @@ struct
       {run = run, statistics = fn () =>
         {hits = !hits, misses = !misses, retained = !size}}
     end
+
+  (* A graph cache belongs to one frozen proof block. Both successful and
+     negative entries use owned IDs; no realized term is compared on a hit.
+     Block ownership and activity are checked even for cached declines. *)
+  local
+    open SmtReplayGraph SmtReplayProof
+    structure G = SmtReplayGraph
+    structure P = SmtReplayProof
+    datatype graph_outcome = GraphProved of P.edge
+      | GraphSatisfiable | GraphCounterexample of Thm.thm
+  in
+  fun new_graph {block, enabled, capacity} =
+    let
+      val _ = capacity >= 0 orelse
+        raise ERR "new_graph" "negative cache capacity"
+      val saved = ref (Redblackmap.mkDict Int.compare)
+      val size = ref 0
+      val hits = ref 0
+      val misses = ref 0
+      fun return outcome = case outcome of
+          GraphProved edge => edge
+        | GraphSatisfiable => raise HolSatLib.SAT_satisfiable ()
+        | GraphCounterexample theorem => raise HolSatLib.SAT_cex theorem
+      fun run {procedure, source, target, prove} =
+        let
+          val source_name = P.name block source
+          val target_name = P.name block target
+          val _ = Term.type_of source_name = Type.bool andalso
+              Term.type_of target_name = Type.bool orelse
+            raise ERR "new_graph" "non-Boolean implication endpoints"
+          val key = G.node_id source
+          val target_key = G.node_id target
+          val bucket = Option.getOpt (Redblackmap.peek (!saved, key), [])
+          val found = if not enabled orelse capacity = 0 then NONE else
+            List.find (fn (label, right_key, _) =>
+              label = procedure andalso right_key = target_key) bucket
+          fun attempt () =
+            (let
+               val edge = prove ()
+               val theorem = P.theorem block edge
+               val expected = boolSyntax.mk_imp (source_name, target_name)
+               val _ = Term.aconv (Thm.concl theorem) expected orelse
+                 raise ERR "new_graph" "invalid compact implication schema"
+               (* Edges are abstract checked values. The owner check above
+                  rejects foreign blocks without reinterpreting the shared
+                  context as a new individual source hypothesis. *)
+             in GraphProved edge end
+             handle HolSatLib.SAT_satisfiable _ => GraphSatisfiable
+                  | HolSatLib.SAT_cex theorem =>
+                      (ignore (P.checked block theorem);
+                       GraphCounterexample theorem))
+        in case found of
+            SOME (_, _, outcome) =>
+              (hits := !hits + 1; return outcome)
+          | NONE =>
+              let
+                val _ = misses := !misses + 1
+                val outcome = attempt ()
+                val _ = if not enabled orelse capacity = 0 then () else
+                  let
+                    val _ = if !size < capacity then () else
+                      (saved := Redblackmap.mkDict Int.compare; size := 0)
+                    val bucket = Option.getOpt
+                      (Redblackmap.peek (!saved, key), [])
+                  in
+                    saved := Redblackmap.insert (!saved, key,
+                      (procedure, target_key, outcome) :: bucket);
+                    size := !size + 1
+                  end
+              in return outcome end
+        end
+    in
+      {run = run, statistics = fn () =>
+        {hits = !hits, misses = !misses, retained = !size}}
+    end
+  end
 end

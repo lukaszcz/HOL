@@ -25053,7 +25053,7 @@ let
   fun assume term =
     (assume_calls := !assume_calls + 1; Thm.ASSUME term)
   val theorem = Z3_ProofReplay.hypothesis_theorem_with_for_test
-    Term.has_free_vars forbidden_char_domain
+    Z3_ProofReplay.hypothesis_has_free_variables_for_test forbidden_char_domain
     char_prove assume target
 in
   assert (observed > maximum,
@@ -27427,6 +27427,1522 @@ in
     (fn () => ignore (SmtResource.bounded_structure 8 large_binder))
 end
 
+local
+  open SmtReplayGraph SmtReplayProof
+  structure G = SmtReplayGraph
+  structure P = SmtReplayProof
+  fun shared 0 atom = atom
+    | shared depth atom =
+        let val child = shared (depth - 1) atom
+        in boolSyntax.mk_conj (child, child) end
+  fun ptr left right = Portable.pointer_eq (left, right)
+  fun rejected action =
+    (action (); false) handle Feedback.HOL_ERR _ => true
+  (* Standard mk_abs eagerly abstracts its body. Insert the large free
+     residue into an already constructed small lambda through lazy Beta. *)
+  fun large_binder binder residue =
+    if Thm.kernelid = "expknl" then Term.mk_abs (binder, residue)
+    else
+      let
+        val marker = Term.mk_var
+          ("replay_test_insert", Term.type_of residue)
+        val template = Term.mk_abs (marker, Term.mk_abs (binder, marker))
+      in boolSyntax.rhs (Thm.concl
+        (Thm.Beta (Thm.REFL (Term.mk_comb (template, residue))))) end
+  fun variables graph node = case G.free_variables graph node of
+      G.Known variables => variables
+    | G.Unknown => die "FAIL: expected known replay graph dependencies"
+  fun source_bridge graph original (source : G.source) =
+    let val theorem = #bridge source
+        val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (ptr left original andalso
+              ptr right (G.representative graph (#node source)) andalso
+              List.null (Thm.hyp theorem),
+        "replay source bridge lost original endpoints or gained hypotheses");
+      check_oracle_tags "replay source bridge" theorem
+    end
+in
+
+fun replay_graph_checked_success () =
+let
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val x = Term.mk_var ("replay_graph_x", Type.bool)
+  val y = Term.mk_var ("replay_graph_y", Type.bool)
+  val z = Term.mk_var ("replay_graph_z", Type.bool)
+  val left = shared 80 x
+  val right = shared 80 (Term.mk_var ("replay_graph_x", Type.bool))
+  val a = G.import graph scope 8192 left
+  val b = G.import graph scope 8192 right
+  val _ = source_bridge graph left a
+  val _ = source_bridge graph right b
+  val _ = assert (#node a = #node b andalso
+                  G.dag_nodes graph [#node a] = 162 andalso
+                  List.length (variables graph (#node a)) = 1 andalso
+                  G.unfolded_nodes graph G.RawNodes 200000 (#node a) =
+                    SOME 200001,
+    "depth-80 graph import lost sharing, typed identity or tree metric")
+  val rigid = G.variable graph scope G.RigidSource x
+  val flexible = G.variable graph scope G.SolverFlexible x
+  val generated = G.variable graph scope G.Generated x
+  val typed = G.variable graph scope G.RigidSource
+    (Term.mk_var ("replay_graph_x", numSyntax.num))
+  val _ = assert (rigid <> flexible andalso rigid <> generated andalso
+      rigid <> typed andalso
+      rejected (fn () => ignore (G.equality graph (rigid, flexible))) andalso
+      rejected (fn () => ignore (G.equality graph (rigid, typed))) andalso
+      rejected (fn () => ignore (G.application graph scope (rigid, rigid))),
+    "graph ownership, rigid variables or checked application types erased")
+  val foreign = G.new ()
+  val foreign_node = G.variable foreign (G.root_scope foreign) G.RigidSource x
+  val _ = assert (rejected (fn () => ignore
+      (G.representative graph foreign_node)), "foreign graph node accepted")
+  val local_frame = G.new_scope graph scope []
+  val bound_x = G.variable graph local_frame G.Bound x
+  val bound_scope = G.new_scope graph local_frame [(x, bound_x)]
+  val unbound_scope = G.new_scope graph scope []
+  val bound_import = G.import graph bound_scope 20 x
+  val unbound_import = G.import graph unbound_scope 20 x
+  val _ = assert (#node bound_import = bound_x andalso
+      #node bound_import <> #node unbound_import andalso
+      rejected (fn () => ignore (G.equality graph
+        (#node bound_import, #node unbound_import))),
+    "physical import memo discarded scope or binding environment")
+  val identity = Term.mk_abs (x, x)
+  val opaque = G.import graph scope 20 identity
+  val _ = assert (case (G.view graph (#node opaque),
+      G.free_variables graph (#node opaque),
+      G.unfolded_nodes graph G.RawNodes 20 (#node opaque)) of
+      (G.OpaqueRetained, G.Unknown, NONE) => true | _ => false,
+    "opaque binder was opened or assigned a closed-variable summary")
+  val admitted = G.admit_binder graph scope 20 identity
+  val free_term = Term.mk_abs (y, x)
+  val free = G.admit_binder graph scope 20 free_term
+  val renamed_term = Term.mk_abs (z, z)
+  val renamed = G.admit_binder graph scope 20 renamed_term
+  val _ = List.app (fn (term, source) => source_bridge graph term source)
+    [(identity, admitted), (free_term, free), (renamed_term, renamed)]
+  val _ = assert (#node admitted = #node renamed andalso
+      #node admitted <> #node free andalso
+      List.null (variables graph (#node admitted)) andalso
+      List.length (variables graph (#node free)) = 1 andalso
+      Term.aconv (hd (variables graph (#node free))) x,
+    "physically reused variable lost its bound/free interpretation")
+  val body = case G.view graph (#node admitted) of
+      G.AdmittedBinder {body, ...} => body
+    | _ => die "FAIL: admitted binder lost its scoped body"
+  val outside = G.application graph (G.node_scope graph body)
+    (#node admitted, body)
+  val _ = assert (List.length (variables graph outside) = 1 andalso
+      List.length (G.block_reachable graph [#node admitted]) = 1,
+    "binder exclusion hid a free occurrence or block traversal opened it")
+  val _ = assert (rejected (fn () => ignore
+      (G.admit_binder graph scope 200000 (large_binder y left))),
+    "large binder bypassed bounded raw-size admission")
+  val atom = G.Occurrence {node = #node a, scope = scope,
+                          role = G.Atom, children = []}
+  val leaf = G.Occurrence {node = rigid, scope = scope,
+                          role = G.Atom, children = []}
+  val occurrence = G.Occurrence {node = #node a, scope = scope,
+                                role = G.Context,
+                                children = [atom, leaf, atom]}
+  val _ = G.validate_occurrence graph occurrence
+  val leaves = G.occurrence_leaves occurrence
+  val _ = assert (List.map (fn G.Occurrence {node, ...} => node) leaves =
+      [#node a, rigid, #node a],
+    "compound source leaf flattened or repeated occurrence removed")
+  val _ = assert (rejected (fn () => G.validate_occurrence graph
+      (G.Occurrence {node = rigid, scope = G.root_scope foreign,
+                     role = G.Atom, children = []})),
+    "foreign occurrence scope accepted")
+  val names = G.new ()
+  val name_scope = G.root_scope names
+  val collision = G.variable names name_scope G.RigidSource
+    (Term.mk_var ("__smt_replay_0", Type.bool))
+  val _ = G.reserve_names names [Term.mk_var ("__smt_replay_1", Type.bool)]
+  val placeholder = G.placeholder names collision
+in
+  assert (#1 (Term.dest_var placeholder) = "__smt_replay_2" andalso
+      ptr placeholder (G.placeholder names collision) andalso
+      rejected (fn () => G.reserve_names names [placeholder]),
+    "compact placeholder freshness or late-collision guard failed")
+end
+
+fun replay_import_metric_success () =
+let
+  val x = Term.mk_var ("replay_count_x", Type.bool)
+  val y = Term.mk_var ("replay_count_y", Type.bool)
+  val inserter = Term.mk_abs (x, Term.mk_abs (y, x))
+  val shifted = boolSyntax.rhs (Thm.concl
+    (Thm.Beta (Thm.REFL (Term.mk_comb (inserter, y)))))
+  val samples = [x, Term.mk_abs (x, x),
+    Term.mk_abs (x, Term.mk_abs (x, x)), shifted,
+    Term.mk_abs (y, boolSyntax.mk_conj (x, y)),
+    Term.mk_abs (Term.mk_var ("replay_count_x", numSyntax.num), x)]
+  fun inclusive term =
+    if Term.is_comb term then
+      let val (left, right) = Term.dest_comb term
+      in 1 + inclusive left + inclusive right end
+    else if Term.is_abs term then
+      2 + inclusive (#2 (Term.dest_abs term))
+    else 1
+  fun check term = List.app (fn (size, count) =>
+    List.app (fn limit => assert (count limit term =
+        (if size <= limit then SOME size else NONE),
+      "bounded import changed raw or binder-inclusive size boundary"))
+      [~1, 0, 1, size - 1, size, size + 1])
+    [(Term.term_size term, SmtReplayImport.bounded_raw_size),
+     (inclusive term, SmtReplayImport.bounded_binder_size)]
+  val _ = List.app check samples
+  val large = large_binder y (shared 80 x)
+  val graph = G.new ()
+  val source = G.admit_binder graph (G.root_scope graph) 20
+    (Term.mk_abs (x, x))
+in
+  assert (SmtReplayImport.bounded_raw_size 200000 large = NONE andalso
+      SmtReplayImport.bounded_binder_size 200000 large = NONE,
+    "large lazy binder bypassed bounded count-only admission");
+  assert (G.unfolded_nodes graph G.RawNodes 20 (#node source) = SOME 2 andalso
+      G.unfolded_nodes graph G.BinderInclusiveNodes 20 (#node source) = SOME 3,
+    "admitted binder graph conflated raw and binder-inclusive metrics");
+  assert (SmtReplayImport.pointer_bucket 16 4093 (Term.mk_abs (x, x)) =
+      SmtReplayImport.pointer_bucket 16 4093 large
+      andalso rejected (fn () => ignore
+        (SmtReplayImport.pointer_bucket 16 0 large)),
+    "pointer routing opened a binder body or accepted invalid modulus")
+end
+
+fun replay_compact_proof_success () =
+let
+  fun conjunction block graph node first second =
+    let val (operator, child) = case G.view graph node of
+        G.Application fields => fields
+      | _ => die "FAIL: missing outer conjunction application"
+        val (head, left) = case G.view graph operator of
+        G.Application fields => fields
+      | _ => die "FAIL: missing inner conjunction application"
+    in P.compose block (fn [first, second, outer, inner, head] =>
+      let
+        val inner_eq = Thm.TRANS inner (Thm.AP_THM head (P.name block left))
+        val outer_eq = Thm.TRANS outer
+          (Thm.AP_THM inner_eq (P.name block child))
+      in Thm.EQ_MP (Thm.SYM outer_eq) (Thm.CONJ first second) end
+      | _ => die "FAIL: wrong compact conjunction premise count")
+      [first, second, P.definition block node,
+       P.definition block operator, P.definition block head]
+    end
+  fun compact source_depth count =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val atom = shared source_depth
+        (Term.mk_var ("__smt_replay_1", Type.bool))
+      val source = G.import graph scope 8192 atom
+      val nodes = Array.array (count + 1, #node source)
+      val head = G.constant graph scope boolSyntax.conjunction
+      val _ = List.app (fn index =>
+        let val child = Array.sub (nodes, index - 1) in
+          Array.update (nodes, index, G.application graph scope
+            (G.application graph scope (head, child), child))
+        end) (List.tabulate (count, fn n => n + 1))
+      val target = Array.sub (nodes, count)
+      val block = P.freeze graph {scope = scope, roots = [target],
+        sources = [#node source], template_limit = 200000}
+      val derived = List.foldl (fn (index, prior) =>
+        conjunction block graph (Array.sub (nodes, index)) prior prior)
+        (P.source block 0) (List.tabulate (count, fn n => n + 1))
+      val _ = assert (rejected (fn () => ignore
+          (P.realize block head derived)), "wrong graph endpoint accepted")
+      val result = P.realize block target derived
+    in
+      assert (ptr (Thm.concl result) (G.representative graph target) andalso
+          List.length (Thm.hyp result) = 1 andalso
+          ptr (hd (Thm.hyp result)) (G.representative graph (#node source)),
+        "compact realization changed exact endpoint or compound source leaf");
+      check_oracle_tags "compact replay realization" result;
+      assert (rejected (fn () => ignore (P.name block target)) andalso
+          rejected (fn () => ignore (P.realize block target derived)),
+        "realized block remained available for expanded substitution")
+    end
+  val _ = compact 0 256
+  val _ = compact 80 32
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val x = Term.mk_var ("replay_prefix", Type.bool)
+  val y = Term.mk_var ("replay_other", Type.bool)
+  val original_a = boolSyntax.mk_conj (shared 80 x, x)
+  val original_b = boolSyntax.mk_conj (shared 80 x, y)
+  val a = G.import graph scope 8192 original_a
+  val b = G.import graph scope 8192 original_b
+  val _ = source_bridge graph original_a a
+  val _ = source_bridge graph original_b b
+  val target_source = G.import graph scope 8192 (boolSyntax.mk_conj
+    (G.representative graph (#node a), G.representative graph (#node b)))
+  val target = #node target_source
+  val block = P.freeze graph {scope = scope, roots = [target],
+    sources = [#node a, #node b, #node a], template_limit = 200000}
+  val _ = assert (P.dependencies block (P.source block 0) = [0] andalso
+      P.dependencies block (P.source block 2) = [2],
+    "repeated compact source occurrences lost their recorded indices")
+  val derived = conjunction block graph target
+    (P.source block 0) (P.source block 1)
+  val result = P.realize block target derived
+  val hypotheses = Thm.hyp result
+  val _ = assert
+    (ptr (Thm.concl result) (G.representative graph target) andalso
+      List.length hypotheses = 2 andalso
+      List.all (fn node => List.exists
+        (fn hypothesis => ptr hypothesis (G.representative graph node))
+        hypotheses) [#node a, #node b],
+    "shared canonical source prefixes lost exact hypotheses or endpoint")
+  val _ = check_oracle_tags "multiple compact sources" result
+  val negative = G.new ()
+  val negative_scope = G.root_scope negative
+  val node = G.variable negative negative_scope G.RigidSource x
+  val block = P.freeze negative {scope = negative_scope, roots = [node],
+    sources = [node], template_limit = 100}
+  val name = P.name block node
+  val _ = assert (rejected (fn () => ignore
+      (P.checked block (Thm.ASSUME y))) andalso
+      rejected (fn () => ignore (P.checked block
+        (Thm.ASSUME (shared 10 name)))) andalso
+      rejected (fn () => ignore (P.checked block
+        (Thm.REFL (Term.mk_abs (y, name))))),
+    "foreign hypothesis, expanded template or binder insertion accepted")
+  val other_block = P.freeze negative
+    {scope = negative_scope, roots = [node], sources = [node],
+     template_limit = 100}
+  val _ = assert (rejected (fn () => ignore
+      (P.theorem other_block (P.source block 0))),
+    "proof edge reused across independent compact blocks")
+  val definition = boolSyntax.mk_eq (y, boolSyntax.mk_conj (x, x))
+  val assumption = Thm.ASSUME definition
+  val _ = assert (rejected (fn () => ignore (Thm.GEN x assumption)),
+    "binder generalized before its local definitions were closed")
+  val closed = Thm.GEN x (Thm.DISCH definition assumption)
+in
+  assert (List.null (Thm.hyp closed), "local binder definition did not close");
+  check_oracle_tags "bounded binder definition closure" closed
+end
+
+end
+
+fun replay_graph_attempt_reuse_success () =
+let
+  val graph = SmtReplayGraph.new ()
+  val scope = SmtReplayGraph.root_scope graph
+  val atom = #node (SmtReplayGraph.import graph scope 8192
+    (Term.mk_var ("graph_attempt_atom", Type.bool)))
+  val conjunction = SmtReplayGraph.constant graph scope boolSyntax.conjunction
+  fun grow 0 node = node
+    | grow depth node = grow (depth - 1)
+        (SmtReplayGraph.application graph scope
+          (SmtReplayGraph.application graph scope (conjunction, node), node))
+  val source = grow 80 atom
+  val other = #node (SmtReplayGraph.import graph scope 8192
+    (Term.mk_var ("graph_attempt_other", Type.bool)))
+  val block = SmtReplayProof.freeze graph
+    {scope = scope, roots = [source, other], sources = [source],
+     template_limit = 10000}
+  val calls = ref 0
+  fun schema node () =
+    (calls := !calls + 1;
+     let val name = SmtReplayProof.name block node in
+       SmtReplayProof.checked block (Thm.DISCH name (Thm.ASSUME name))
+     end)
+  fun cache enabled capacity = SmtReplayAttempt.new_graph
+    {block = block, enabled = enabled, capacity = capacity}
+  val memo = cache true 8
+  fun run label node = #run memo
+    {procedure = label, source = node, target = node, prove = schema node}
+  val _ = run "raw" source
+  val _ = run "raw" source
+  val _ = assert (!calls = 1 andalso #hits (#statistics memo ()) = 1,
+    "graph attempt repeated its large-ID proof search")
+  val _ = run "normalized" source
+  val _ = run "raw" other
+  val _ = assert (!calls = 3,
+    "graph attempts conflated procedures or node endpoints")
+  val _ = List.app (fn (enabled, capacity) =>
+    let val local_cache = cache enabled capacity
+        val before_calls = !calls
+        fun request node = #run local_cache
+          {procedure = "raw", source = node, target = node,
+           prove = schema node}
+        val _ = request source
+        val _ = request other
+        val _ = request source
+    in assert (!calls = before_calls + 3,
+      "graph eviction or disabled cache changed successful procedure") end)
+    [(true, 1), (true, 0), (false, 8)]
+  fun exceptional label expected make =
+    let val attempts = ref 0
+        fun call () = #run memo
+          {procedure = label, source = source, target = other,
+           prove = fn () => (attempts := !attempts + 1; make ())}
+        val _ = List.app (fn _ => case Exn.capture call () of
+            Exn.Exn exn => assert (expected exn, "graph failure changed category")
+          | _ => die "invalid graph attempt succeeded") [(), ()]
+    in !attempts end
+  val _ = assert (exceptional "decline"
+    (fn HolSatLib.SAT_satisfiable _ => true | _ => false)
+    (fn () => raise HolSatLib.SAT_satisfiable ()) = 1,
+    "graph SAT decline repeated proof search")
+  val _ = assert (exceptional "terminal"
+    (fn Timeout.TIMEOUT _ => true | _ => false)
+    (fn () => raise Timeout.TIMEOUT Time.zeroTime) = 2,
+    "graph terminal failure was cached")
+  val _ = assert (exceptional "malformed"
+    (fn HOL_ERR _ => true | _ => false) (schema source) = 2,
+    "graph cache retained an incorrect implication endpoint")
+  val foreign_graph = SmtReplayGraph.new ()
+  val foreign = #node (SmtReplayGraph.import foreign_graph
+    (SmtReplayGraph.root_scope foreign_graph) 8192
+    (Term.mk_var ("foreign", Type.bool)))
+  val _ = case Exn.capture (fn () => run "raw" foreign) () of
+      Exn.Exn (HOL_ERR _) => ()
+    | _ => die "graph attempt reused a foreign graph node"
+  val _ = SmtReplayProof.realize block source (SmtReplayProof.source block 0)
+  val _ = case Exn.capture (fn () => run "raw" source) () of
+      Exn.Exn (HOL_ERR _) => ()
+    | _ => die "graph attempt reused a realized proof block"
+in () end
+
+local
+  open HolKernel boolTheory testutils SmtReplayGraph SmtReplaySource
+  structure G = SmtReplayGraph
+  structure S = SmtReplaySource
+in
+fun replay_source_checked_success () =
+let
+  fun ensure message condition = if condition then () else die message
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun reject message action =
+    ((action ();false) handle Feedback.HOL_ERR error =>
+      String.isSubstring message (Feedback.message_of error))
+  fun shared 0 atom = atom
+    | shared depth atom =
+        let val child = shared (depth-1) atom in
+          boolSyntax.mk_conj (child,child) end
+  fun prefix () = shared 80 (Term.mk_var ("source_prefix",Type.bool))
+  fun source_goal () = boolSyntax.mk_conj (prefix (),boolSyntax.F)
+  fun clean theorem =
+    let val (oracles,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.null oracles andalso List.null (Tag.axioms_of (Thm.tag theorem)) end
+
+  val _ = tprint "Source imports retain shared prefixes and occurrences"
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val goal = source_goal ()
+  val original_first = source_goal ()
+  val original_second = boolSyntax.mk_conj
+    (prefix (),Term.mk_var ("source_other",Type.bool))
+  val sources = S.new graph scope 8192
+    {goal = goal,assumptions = [original_first,original_second,original_first]}
+  val source_nodes = S.assumption_nodes sources
+  val canonical_first = G.representative graph (List.nth (source_nodes,0))
+  val canonical_second = G.representative graph (List.nth (source_nodes,1))
+  val canonical_goal = S.canonical_goal sources
+  val denied = G.representative graph (S.denied_goal_node sources)
+  val _ = ensure "recorded repeated source occurrence was discarded"
+    (List.length source_nodes = 3 andalso
+     List.nth (source_nodes,0) = List.nth (source_nodes,2))
+  val _ = ensure "equal source goal and independent assumption not canonicalized"
+    (ptr canonical_first canonical_goal andalso
+     not (ptr canonical_first original_first) andalso
+     not (ptr canonical_goal goal))
+  val _ = ensure "independent deep source prefixes remain distinct"
+    (ptr (#1 (boolSyntax.dest_conj canonical_first))
+      (#1 (boolSyntax.dest_conj canonical_second)))
+  val (bridge_left,bridge_right) = Term.dest_eq
+    (Thm.concl (S.goal_bridge sources))
+  val _ = ensure "checked source bridge lost exact original/retained endpoints"
+    (ptr bridge_left goal andalso ptr bridge_right canonical_goal andalso
+     List.null (Thm.hyp (S.goal_bridge sources)) andalso
+     clean (S.goal_bridge sources))
+  val _ = OK ()
+
+  val _ = tprint "Canonical contradiction retains the original goal pointer"
+  val contradiction = Drule.ADD_ASSUM canonical_second
+    (Thm.MP (Thm.NOT_ELIM (Thm.ASSUME denied)) (Thm.ASSUME canonical_first))
+  val _ = S.check_contradiction sources contradiction
+  val completed = S.close_contradiction sources contradiction
+  val _ = S.check_goal sources completed
+  val _ = ensure "source conclusion or canonical permitted hypotheses changed"
+    (ptr (Thm.concl completed) goal andalso clean completed andalso
+     List.length (Thm.hyp completed) = 2 andalso
+     List.exists (fn term => ptr term canonical_first)
+       (Thm.hyp completed) andalso
+     List.exists (fn term => ptr term canonical_second)
+       (Thm.hyp completed) andalso
+     not (List.exists (fn term => ptr term denied) (Thm.hyp completed)))
+  val _ = OK ()
+
+  val _ = tprint "Raw independent source hypotheses require import first"
+  (* This clean theorem concludes F from its own raw conjunction hypothesis.
+     It never unions or alpha-compares an original and a canonical deep DAG. *)
+  val raw_contradiction = Thm.CONJUNCT2 (Thm.ASSUME original_first)
+  val _ = ensure "raw-source rejection fixture was malformed"
+    (ptr (Thm.concl raw_contradiction) boolSyntax.F andalso
+     List.length (Thm.hyp raw_contradiction) = 1 andalso clean raw_contradiction)
+  val _ = ensure "original source hypothesis bypassed canonical assembly"
+    (reject "hypothesis is not a retained permitted source"
+      (fn () => S.check_contradiction sources raw_contradiction))
+  val _ = ensure "close_contradiction accepted mixed source provenance"
+    (reject "hypothesis is not a retained permitted source"
+      (fn () => ignore (S.close_contradiction sources raw_contradiction)))
+  val _ = OK ()
+
+  val _ = tprint "Source validators reject bad endpoints, hypotheses and tags"
+  val _ = ensure "non-F replay endpoint was accepted"
+    (reject "replay did not prove F"
+      (fn () => S.check_contradiction sources (Thm.ASSUME canonical_first)))
+  val _ = ensure "unpermitted false hypothesis was accepted"
+    (reject "hypothesis is not a retained permitted source"
+      (fn () => S.check_contradiction sources (Thm.ASSUME boolSyntax.F)))
+  val _ = ensure "canonical result replaced the exact original source conclusion"
+    (reject "source conclusion was not retained exactly"
+      (fn () => S.check_goal sources (Thm.ASSUME canonical_goal)))
+  val oracle_false = Thm.mk_oracle_thm "replay_source_negative"
+    ([canonical_first],boolSyntax.F)
+  val oracle_goal = Thm.mk_oracle_thm "replay_source_negative"
+    ([canonical_first],goal)
+  val _ = ensure "unexpected contradiction oracle tag was accepted"
+    (reject "unexpected replay tags"
+      (fn () => S.check_contradiction sources oracle_false))
+  val _ = ensure "unexpected final source oracle tag was accepted"
+    (reject "unexpected replay tags" (fn () => S.check_goal sources oracle_goal))
+  val _ = ensure "private final hypothesis was accepted"
+    (reject "hypothesis is not a retained permitted source"
+      (fn () => S.check_goal sources
+        (Drule.ADD_ASSUM (Term.mk_var ("private",Type.bool)) completed)))
+  val _ = OK ()
+
+  val _ = tprint "Source finalization preserves DISK_THM and rejects axiom tags"
+  val disk_tag = Thm.tag boolTheory.TRUTH
+  val _ = ensure "disk-tag fixture did not load a saved theorem"
+    (Tag.isDisk disk_tag)
+  val disk_contradiction = Thm.add_tag (disk_tag,contradiction)
+  val _ = S.check_contradiction sources disk_contradiction
+  val disk_completed = S.close_contradiction sources disk_contradiction
+  val _ = S.check_goal sources disk_completed
+  val (disk_oracles,_) = Tag.dest_tag (Thm.tag disk_completed)
+  val _ = ensure "legitimate DISK_THM source tag rejected or discarded"
+    (disk_oracles = ["DISK_THM"] andalso ptr (Thm.concl disk_completed) goal)
+  val axiom_tag = Tag.ax_tag (Nonce.mk "replay_source_negative_axiom")
+  val _ = ensure "axiom-tagged contradiction accepted"
+    (reject "unexpected replay tags" (fn () => S.check_contradiction sources
+      (Thm.add_tag (axiom_tag,contradiction))))
+  val _ = ensure "axiom-tagged source goal accepted"
+    (reject "unexpected replay tags" (fn () => S.check_goal sources
+      (Thm.add_tag (axiom_tag,completed))))
+  val _ = OK ()
+
+  val _ = tprint "Source admission validates scope ownership and Boolean types"
+  val foreign = G.new ()
+  val _ = ensure "foreign source scope was accepted"
+    (reject "scope belongs to a different graph"
+      (fn () => ignore (S.new graph (G.root_scope foreign) 8192
+        {goal = goal,assumptions = []})))
+  val _ = ensure "non-Boolean source goal was accepted"
+    (reject "non-Boolean source goal or assumption"
+      (fn () => ignore (S.new graph scope 8192
+        {goal = Term.mk_var ("typed",Type.mk_vartype "'a"),assumptions = []})))
+  val _ = OK ()
+
+  val _ = tprint "Source finalization rejects a popped replay frame"
+  val frame = G.new_scope graph scope []
+  val local_sources = S.new graph frame 8192
+    {goal = boolSyntax.T,assumptions = []}
+  val local_goal = S.canonical_goal local_sources
+  val local_denied = G.representative graph (S.denied_goal_node local_sources)
+  val local_contradiction = Thm.MP (Thm.NOT_ELIM (Thm.ASSUME local_denied))
+    boolTheory.TRUTH
+  val _ = S.check_contradiction local_sources local_contradiction
+  val _ = G.close_scope graph frame
+  fun closed action = (action ();false) handle Feedback.HOL_ERR _ => true
+  val _ = ensure "popped source frame was still usable"
+    (List.all closed
+      [fn () => ignore (S.canonical_goal local_sources),
+       fn () => ignore (S.assumption_nodes local_sources),
+       fn () => ignore (S.denied_goal_node local_sources),
+       fn () => ignore (S.goal_bridge local_sources),
+       fn () => S.check_contradiction local_sources local_contradiction,
+       fn () => ignore (S.close_contradiction local_sources local_contradiction),
+       fn () => S.check_goal local_sources boolTheory.TRUTH])
+  val _ = OK ()
+
+
+in () end
+end
+
+local
+  open HolKernel boolTheory testutils SmtReplayGraph SmtReplayUnify
+  structure G = SmtReplayGraph
+  structure U = SmtReplayUnify
+in
+fun replay_graph_unify_success () =
+let
+  fun ensure message condition = if condition then () else die message
+  fun reject action = (action ();false) handle Feedback.HOL_ERR _ => true
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun clean theorem =
+    let val (oracles,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.null oracles andalso List.null (Tag.axioms_of (Thm.tag theorem)) end
+  fun success outcome = case outcome of U.Unified result => result
+    | U.NoMatch _ => (die "unexpected unification failure";raise Fail "unify")
+  fun failure reason outcome = case outcome of
+      U.NoMatch actual => actual = reason | _ => false
+  fun variable graph scope kind name ty =
+    G.variable graph scope kind (Term.mk_var (name,ty))
+  fun verify graph result =
+    let
+      val assumptions = U.assumptions result
+      val context = U.context result
+      val _ = List.app (fn ((left,right),theorem) =>
+        let val (actual_left,actual_right) = Term.dest_eq (Thm.concl theorem) in
+          ensure "incorrect compact unification endpoint or tags"
+            (ptr actual_left (G.placeholder graph left) andalso
+             ptr actual_right (G.placeholder graph right) andalso clean theorem);
+          ensure "unifier returned expanded/extra hypotheses"
+            (List.all (fn hypothesis => ptr hypothesis context)
+              (Thm.hyp theorem))
+        end) (U.proofs result)
+      val _ = List.app (fn index =>
+        let val theorem = U.projection result index in
+          ensure "dependency leaf projection changed its equation"
+            (Term.aconv (Thm.concl theorem)
+              (#equation (List.nth (assumptions,index))) andalso clean theorem)
+        end) (List.tabulate (List.length assumptions,fn n => n))
+    in () end
+  fun shared graph scope operator 0 atom = atom
+    | shared graph scope operator depth atom =
+        let val child = shared graph scope operator (depth-1) atom in
+          G.application graph scope
+            (G.application graph scope (operator,child),child) end
+
+  val _ = tprint "Typed graph unification proves a depth-80 compact congruence"
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val source = variable graph scope G.RigidSource "source" Type.bool
+  val flexible = variable graph scope G.SolverFlexible "z" Type.bool
+  val operator_term = Term.rator (Term.rator
+    (boolSyntax.mk_conj (boolSyntax.T,boolSyntax.F)))
+  val operator = G.constant graph scope operator_term
+  val left = shared graph scope operator 80 source
+  val right = shared graph scope operator 80 flexible
+  val result = success (U.unify graph
+    {scope = scope,flexible = [flexible],equations = [(left,right)]})
+  val _ = verify graph result
+  val _ = ensure "large shared graph search duplicated assignments"
+    (case U.assignments result of [{variable,residue}] =>
+       variable = flexible andalso residue = source | _ => false)
+  val _ = ensure "solver assignment misclassified as constructor definition"
+    (List.length (List.filter (fn {kind,...} => case kind of
+       U.SolverAssignment _ => true | _ => false) (U.assumptions result)) = 1)
+  val _ = ensure "large graph expanded into compact proof schema"
+    (SmtReplayImport.bounded_raw_size 8
+      (Thm.concl (#2 (hd (U.proofs result)))) = SOME 5)
+  val _ = OK ()
+
+  val _ = tprint "Duplicate reversed definitions use stable variable orientation"
+  val orient_graph = G.new ()
+  val orient_scope = G.root_scope orient_graph
+  (* Allocate z2 first so stable orientation cannot accidentally follow IDs. *)
+  val z2 = variable orient_graph orient_scope G.SolverFlexible "z2" Type.bool
+  val z1 = variable orient_graph orient_scope G.SolverFlexible "z1" Type.bool
+  val oriented = success (U.unify orient_graph
+    {scope = orient_scope,flexible = [z1,z2],
+     equations = [(z2,z1),(z1,z2),(z2,z1)]})
+  val _ = verify orient_graph oriented
+  val _ = ensure "reverse duplicate definitions formed a cycle"
+    (case U.assignments oriented of [{variable,residue}] =>
+       variable = z1 andalso residue = z2 | _ => false)
+  val _ = ensure "reversed equation occurrence was discarded"
+    (List.length (U.proofs oriented) = 3)
+  val _ = OK ()
+
+  val _ = tprint "Assignment dependency chains remain explicit and acyclic"
+  val dependency = variable orient_graph orient_scope G.RigidSource
+    "anchor" Type.bool
+  val chain = success (U.unify orient_graph
+    {scope = orient_scope,flexible = [z1,z2],
+     equations = [(z1,z2),(z2,dependency)]})
+  val _ = verify orient_graph chain
+  val _ = ensure "dependency ordering discarded raw checked assignment edges"
+    (case U.assignments chain of
+       [{variable = first,residue = first_rhs},
+        {variable = second,residue = second_rhs}] =>
+         first = z2 andalso first_rhs = dependency andalso
+         second = z1 andalso second_rhs = z2
+     | _ => false)
+  val _ = OK ()
+
+  val _ = tprint "Rigid sources, types and ownership cannot be solved away"
+  val _ = ensure "rigid mismatch accepted"
+    (failure U.RigidMismatch (U.unify orient_graph
+      {scope = orient_scope,flexible = [],equations = [(z1,dependency)]}))
+  val _ = ensure "source variable granted flexibility"
+    (reject (fn () => ignore (U.unify orient_graph
+      {scope = orient_scope,flexible = [dependency],equations = []})))
+  val other_type = variable orient_graph orient_scope G.RigidSource
+    "different_type" (Type.mk_vartype "'a")
+  val _ = ensure "typed unification erased a type mismatch"
+    (failure U.TypeMismatch (U.unify orient_graph
+      {scope = orient_scope,flexible = [z1],equations = [(z1,other_type)]}))
+  val foreign = G.new ()
+  val _ = ensure "empty problem failed to validate scope ownership"
+    (reject (fn () => ignore (U.unify orient_graph
+      {scope = G.root_scope foreign,flexible = [],equations = []})))
+  val _ = OK ()
+
+  val _ = tprint "Direct and transitive occurs failures produce no compact proof"
+  val cycle_graph = G.new ()
+  val cycle_scope = G.root_scope cycle_graph
+  val x = variable cycle_graph cycle_scope G.SolverFlexible "x" Type.bool
+  val y = variable cycle_graph cycle_scope G.SolverFlexible "y" Type.bool
+  val function = variable cycle_graph cycle_scope G.RigidSource "f"
+    (Type.mk_type ("fun",[Type.bool,Type.bool]))
+  val fx = G.application cycle_graph cycle_scope (function,x)
+  val fy = G.application cycle_graph cycle_scope (function,y)
+  val _ = ensure "direct cyclic definition accepted"
+    (failure U.OccursCheck (U.unify cycle_graph
+      {scope = cycle_scope,flexible = [x,y],equations = [(x,fx)]}))
+  val _ = ensure "transitive cyclic definition accepted"
+    (failure U.OccursCheck (U.unify cycle_graph
+      {scope = cycle_scope,flexible = [x,y],equations = [(x,fy),(y,fx)]}))
+  val _ = ensure "failed search allocated reusable successful proof data"
+    (#1 (Term.dest_var (G.placeholder cycle_graph x)) = "__smt_replay_0")
+  val _ = OK ()
+
+  val _ = tprint "Repeated-variable obligations reject conflicting assignments"
+  val nonlinear_graph = G.new ()
+  val nonlinear_scope = G.root_scope nonlinear_graph
+  val nonlinear_x = variable nonlinear_graph nonlinear_scope G.SolverFlexible
+    "repeated" Type.bool
+  val nonlinear_operator = G.constant nonlinear_graph nonlinear_scope
+    operator_term
+  val truth = G.constant nonlinear_graph nonlinear_scope boolSyntax.T
+  val falsity = G.constant nonlinear_graph nonlinear_scope boolSyntax.F
+  fun conjunction first second = G.application nonlinear_graph nonlinear_scope
+    (G.application nonlinear_graph nonlinear_scope
+      (nonlinear_operator,first),second)
+  val _ = ensure "conflicting assignments were hidden by a visited pair"
+    (failure U.RigidMismatch (U.unify nonlinear_graph
+      {scope = nonlinear_scope,flexible = [nonlinear_x],
+       equations = [(conjunction nonlinear_x nonlinear_x,
+                     conjunction truth falsity)]}))
+  val _ = OK ()
+
+  val _ = tprint "Unknown binder metadata requests admission and cannot escape"
+  val binder_graph = G.new ()
+  val binder_scope = G.root_scope binder_graph
+  val binder_term = Term.mk_abs (Term.mk_var ("bound",Type.bool),
+    Term.mk_var ("bound",Type.bool))
+  val opaque = #node (G.import binder_graph binder_scope 20 binder_term)
+  val flexible_function = variable binder_graph binder_scope G.SolverFlexible
+    "function" (Term.type_of binder_term)
+  val _ = ensure "opaque binder certified an occurs-check absence"
+    (failure U.NeedsBinderAdmission (U.unify binder_graph
+      {scope = binder_scope,flexible = [flexible_function],
+       equations = [(flexible_function,opaque)]}))
+  val admitted = #node (G.admit_binder binder_graph binder_scope 20 binder_term)
+  val admitted_result = success (U.unify binder_graph
+    {scope = binder_scope,flexible = [flexible_function],
+     equations = [(flexible_function,admitted)]})
+  val _ = verify binder_graph admitted_result
+  val local_scope = G.new_scope binder_graph binder_scope []
+  val local_node = variable binder_graph local_scope G.Bound "local" Type.bool
+  val flexible_bool = variable binder_graph binder_scope G.SolverFlexible
+    "bool" Type.bool
+  val _ = ensure "local binder variable escaped into an outer assignment"
+    (failure U.EscapingScope (U.unify binder_graph
+      {scope = binder_scope,flexible = [flexible_bool],
+       equations = [(flexible_bool,local_node)]}))
+  val _ = ensure "ancestor flexible assignment captured a local bound node"
+    (failure U.EscapingScope (U.unify binder_graph
+      {scope = local_scope,flexible = [flexible_bool],
+       equations = [(flexible_bool,local_node)]}))
+  val local_flexible = variable binder_graph local_scope G.SolverFlexible
+    "a_inner" Type.bool
+  val local_truth = G.constant binder_graph local_scope boolSyntax.T
+  val local_result = success (U.unify binder_graph
+    {scope = local_scope,flexible = [flexible_bool,local_flexible],
+     equations = [(local_flexible,flexible_bool),
+                  (local_flexible,local_truth)]})
+  val _ = verify binder_graph local_result
+  val _ = ensure "ancestor flexible permission rejected in an active child"
+    (case U.unify binder_graph
+      {scope = local_scope,flexible = [flexible_bool],equations = []} of
+       U.Unified _ => true | _ => false)
+  val sibling_scope = G.new_scope binder_graph binder_scope []
+  val sibling_flexible = variable binder_graph sibling_scope G.SolverFlexible
+    "sibling" Type.bool
+  val _ = ensure "sibling scoped flexible permission accepted"
+    (reject (fn () => ignore (U.unify binder_graph
+      {scope = local_scope,flexible = [sibling_flexible],equations = []})))
+  val _ = G.close_scope binder_graph local_scope
+  val _ = ensure "unifier executable results survived their scope lifetime"
+    (List.all reject
+      [fn () => ignore (U.context local_result),
+       fn () => ignore (U.proofs local_result),
+       fn () => ignore (U.projection local_result 0),
+       fn () => ignore (U.unify binder_graph
+         {scope = local_scope,flexible = [],equations = []})])
+  val _ = ensure "scope closure removed historical assignment metadata"
+    (not (List.null (U.assignments local_result)))
+  val _ = OK ()
+
+in () end
+end
+
+local
+  open HolKernel testutils SmtReplayGraph SmtReplayProof SmtLib_GraphBackend
+  structure G = SmtReplayGraph
+  structure P = SmtReplayProof
+  structure B = SmtLib_GraphBackend
+in
+fun replay_graph_backend_success () =
+let
+  fun ensure message condition =
+    if condition then () else raise Fail message
+  fun rejected action =
+    (action (); false) handle Feedback.HOL_ERR _ => true
+  fun lookup backend frame name =
+    case B.lookup backend frame name of SOME value => value
+      | NONE => raise Fail ("missing binding " ^ name)
+  fun ptr left right = Portable.pointer_eq (left, right)
+  fun known graph node = case G.free_variables graph node of
+      G.Known variables => variables
+    | G.Unknown => raise Fail "unexpected unknown graph variable summary"
+  fun graph_backend graph = B.graphs
+    {graph = graph, scope = G.root_scope graph, import_limit = 8192,
+     literal_limit = 200000, binder_limit = 200000}
+
+  fun curried_let (bindings, body) =
+    List.foldl (fn ((_, _, value), function) =>
+      boolSyntax.mk_let (function, value))
+      (Term.list_mk_abs (List.map (fn (_, variable, _) => variable) bindings,
+                        body)) bindings
+  fun term_backend () = B.terms
+    {mk_bound_var = Term.mk_var, mk_let = curried_let}
+
+  val _ = tprint "Ordinary backend preserves configured LET syntax"
+  val ordinary = term_backend ()
+  val ordinary_root = B.root ordinary
+  val x = Term.mk_var ("backend_x", Type.bool)
+  val y = Term.mk_var ("backend_y", Type.bool)
+  val ordinary_result = B.let_expression ordinary ordinary_root
+    [("x", "backend_x", fn _ => y), ("y", "backend_y", fn _ => x)]
+    (fn frame => boolSyntax.mk_conj
+      (lookup ordinary frame "x", lookup ordinary frame "y"))
+  val expected = curried_let
+    ([("x", x, y), ("y", y, x)], boolSyntax.mk_conj (x, y))
+  val _ = ensure "ordinary LET convention or simultaneous RHS changed"
+    (Term.aconv ordinary_result expected)
+  val _ = OK ()
+
+  val _ = tprint "Simultaneous graph lets use parent values and retain aliases"
+  val graph = G.new ()
+  val backend = graph_backend graph
+  val root = B.root backend
+  val nx = B.source backend root x
+  val ny = B.source backend root y
+  val result = B.let_expression backend root
+    [("x", "backend_x", fn _ => ny), ("y", "backend_y", fn _ => nx)]
+    (fn frame =>
+      B.application backend frame
+        (B.application backend frame
+           (B.literal backend frame boolSyntax.conjunction,
+            lookup backend frame "x"), lookup backend frame "y"))
+  val _ = ensure "graph let substituted RHS sequentially or rebuilt residues"
+    (Term.aconv (G.representative graph result) (boolSyntax.mk_conj (y, x)))
+  val alias = B.let_expression backend root
+    [("alias", "backend_alias", fn _ => nx)]
+    (fn frame => lookup backend frame "alias")
+  val _ = ensure "graph let rebuilt an alias" (alias = nx)
+  val variable_alias = B.let_expression backend root
+    [("alias", "backend_alias", fn _ => nx)]
+    (fn frame => B.variable backend frame G.RigidSource
+      ("backend_alias", Type.bool))
+  val _ = ensure "typed lexical reference ignored simultaneous environment"
+    (variable_alias = nx)
+  val _ = ensure "duplicate simultaneous keys accepted"
+    (rejected (fn () => ignore (B.let_expression backend root
+      [("x", "a", fn _ => nx), ("x", "b", fn _ => ny)]
+      (fn frame => lookup backend frame "x"))))
+  val _ = ensure "foreign backend lexical frame accepted"
+    (rejected (fn () => ignore
+      (B.lookup backend (B.root (graph_backend graph)) "x")))
+  val _ = ensure "original source variable lost its retained origin anchor"
+    (case G.source_anchor graph nx of SOME anchor =>
+       ptr (#original anchor) x | NONE => false)
+  val _ = ensure "let result escaped its enclosing construction scope"
+    (G.node_scope graph result = G.root_scope graph)
+  val block = P.freeze graph
+    {scope = G.root_scope graph, roots = [result], sources = [ny, nx],
+     template_limit = 200000}
+  val (prefix, _) = case G.view graph result of
+      G.Application pair => pair | _ => raise Fail "let conjunction"
+  val (head_node, _) = case G.view graph prefix of
+      G.Application pair => pair | _ => raise Fail "let conjunction head"
+  val derived = P.compose block
+    (fn [left, right, outer, inner, head] =>
+      let
+        val inner_eq = Thm.TRANS inner (Thm.AP_THM head (P.name block ny))
+        val outer_eq = Thm.TRANS outer (Thm.AP_THM inner_eq (P.name block nx))
+      in Thm.EQ_MP (Thm.SYM outer_eq) (Thm.CONJ left right) end
+     | _ => raise Fail "let proof premises")
+    [P.source block 0, P.source block 1, P.definition block result,
+     P.definition block prefix, P.definition block head_node]
+  val realized = P.realize block result derived
+  val _ = ensure "graph let cannot realize at its enclosing scope"
+    (ptr (Thm.concl realized) (G.representative graph result) andalso
+     List.length (Thm.hyp realized) = 2 andalso
+     List.exists (fn term => ptr term x) (Thm.hyp realized) andalso
+     List.exists (fn term => ptr term y) (Thm.hyp realized))
+  val _ = OK ()
+
+  val _ = tprint "Returned lexical callbacks cannot reuse closed frames"
+  val escaped = ref (NONE : G.node B.frame option)
+  val _ = B.let_expression backend root
+    [("saved", "backend_saved", fn _ => nx)]
+    (fn frame => (escaped := SOME frame; lookup backend frame "saved"))
+  val _ = ensure "escaped let frame remained active"
+    (rejected (fn () => ignore
+      (B.lookup backend (valOf (!escaped)) "saved")))
+  val _ = B.abstraction backend root ("x", "backend_x", Type.bool)
+    (fn frame => (escaped := SOME frame; lookup backend frame "x"))
+  val _ = ensure "escaped binder frame remained active"
+    (rejected (fn () => ignore
+      (B.lookup backend (valOf (!escaped)) "x")))
+  val _ = ensure "failure fixture did not throw"
+    (rejected (fn () => ignore (B.let_expression backend root []
+      (fn frame => (escaped := SOME frame;
+        raise Feedback.mk_HOL_ERR "backend_tests" "failure" "sentinel")))))
+  val _ = ensure "failed lexical callback retained an active frame"
+    (rejected (fn () => ignore
+      (B.application backend (valOf (!escaped)) (nx, ny))))
+  val external_scope = G.new_scope graph (G.root_scope graph) []
+  val external_backend = B.graphs
+    {graph = graph, scope = external_scope, import_limit = 8192,
+     literal_limit = 200000, binder_limit = 200000}
+  val external_frame = B.root external_backend
+  val _ = G.close_scope graph external_scope
+  val _ = ensure "backend root ignored externally closed graph scope"
+    (rejected (fn () => ignore
+      (B.lookup external_backend external_frame "unused")))
+  val _ = OK ()
+
+  val _ = tprint "Let residue remains free under colliding lexical binder"
+  val capture_sensitive = B.let_expression backend root
+    [("saved", "backend_saved", fn _ => nx)]
+    (fn frame => B.abstraction backend frame
+      ("x", "backend_x", Type.bool)
+      (fn body => lookup backend body "saved"))
+  val abstraction = G.representative graph capture_sensitive
+  val variables = known graph capture_sensitive
+  val kernel_variables = Term.free_vars abstraction
+  val _ = ensure "graph binder captured rigid source let residue"
+    (List.length variables = 1 andalso Term.aconv (hd variables) x andalso
+     List.length kernel_variables = 1 andalso
+     Term.aconv (hd kernel_variables) x andalso
+     Term.aconv (boolSyntax.rhs (Thm.concl
+       (Thm.Beta (Thm.REFL (Term.mk_comb (abstraction, boolSyntax.T)))))) x)
+  val nested = B.abstraction backend root ("x", "backend_x", Type.bool)
+    (fn outer => B.let_expression backend outer
+      [("saved", "backend_saved", fn _ => lookup backend outer "x")]
+      (fn frame => B.abstraction backend frame
+        ("x", "backend_x", Type.bool)
+        (fn inner => lookup backend inner "saved")))
+  val _ = ensure "nested shadowing changed outer bound-variable meaning"
+    (List.null (known graph nested) andalso
+     Term.aconv (G.representative graph nested)
+       (Term.mk_abs (x, Term.mk_abs (y, x))))
+  val number = Term.mk_var ("backend_other", Type.ind)
+  val mixed = B.abstraction backend root ("x", "backend_x", Type.bool)
+    (fn outer => B.let_expression backend outer
+      [("saved", "backend_saved", fn _ => lookup backend outer "x")]
+      (fn frame => B.abstraction backend frame
+        ("x", "backend_x", Type.ind)
+        (fn inner => lookup backend inner "saved")))
+  val _ = ensure "mixed-type shadowing captured a Boolean bound variable"
+    (List.null (known graph mixed) andalso
+     Term.aconv (G.representative graph mixed)
+       (Term.mk_abs (x, Term.mk_abs (number, x))))
+  val _ = OK ()
+
+  val _ = tprint "Graph recipes insert IDs before large operand realization"
+  val hole = Term.mk_var ("operand", Type.bool)
+  val recipe = B.compile_recipe
+    {template = boolSyntax.mk_conj (hole, hole), holes = [hole],
+     template_limit = 100}
+  fun grow 0 node = node
+    | grow depth node = grow (depth - 1) (B.construct backend root recipe [node])
+  val large = grow 80 nx
+  val _ = ensure "recipe graph construction changed DAG or unfolded metric"
+    (G.dag_nodes graph [large] = 162 andalso
+     G.unfolded_nodes graph G.RawNodes 200000 large = SOME 200001 andalso
+     B.recipe_size recipe = Term.term_size (boolSyntax.mk_conj (hole, hole)))
+  val twice = B.construct backend root recipe [large]
+  val (operator, operand) = Term.dest_comb (G.representative graph twice)
+  val _ = ensure "recipe rebuilt shared graph operands"
+    (ptr operand (G.representative graph large) andalso
+     ptr (#2 (Term.dest_comb operator)) (G.representative graph large))
+  val _ = ensure "large binder constructed before graph admission"
+    (rejected (fn () => ignore (B.abstraction backend root
+      ("x", "backend_x", Type.bool) (fn _ => large))))
+  val _ = ensure "typed recipe accepted operand of wrong type"
+    (rejected (fn () => ignore (B.construct backend root recipe
+      [B.source backend root number])))
+  val _ = ensure "recipe arity mismatch accepted"
+    (rejected (fn () => ignore (B.construct backend root recipe [])))
+  val _ = ensure "typed recipe accepted a foreign graph operand"
+    (let val other = G.new ()
+         val other_backend = graph_backend other
+     in rejected (fn () => ignore (B.construct backend root recipe
+       [B.source other_backend (B.root other_backend) x])) end)
+  val _ = ensure "unowned free schema variable accepted"
+    (rejected (fn () => ignore (B.compile_recipe
+      {template = boolSyntax.mk_conj (hole, x), holes = [hole],
+       template_limit = 100})))
+  val _ = ensure "operand hole beneath binder accepted"
+    (rejected (fn () => ignore (B.compile_recipe
+      {template = Term.mk_abs (x, hole), holes = [hole],
+       template_limit = 100})))
+  val _ = ensure "duplicate typed operand holes accepted"
+    (rejected (fn () => ignore (B.compile_recipe
+      {template = hole, holes = [hole, hole], template_limit = 100})))
+  val _ = ensure "opaque unknown binder body treated as admitted"
+    (let val retained = B.source backend root (Term.mk_abs (x, x))
+     in rejected (fn () => ignore (B.abstraction backend root
+       ("unused", "backend_unused", Type.bool) (fn _ => retained))) end)
+  val _ = ensure "free variable accepted as closed literal"
+    (rejected (fn () => ignore (B.literal backend root x)))
+  val _ = OK ()
+
+in () end
+end
+
+local
+  open HolKernel boolTheory testutils
+       SmtReplayGraph SmtReplayProof SmtReplayClause
+  structure G = SmtReplayGraph
+  structure P = SmtReplayProof
+  structure C = SmtReplayClause
+in
+fun replay_graph_clauses_success () =
+let
+  fun fail message = (die message;raise Fail message)
+  fun ensure message condition = if condition then () else die message
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun rejected action =
+    (action ();false) handle Feedback.HOL_ERR _ => true
+  fun clean theorem =
+    let val (oracles,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.all (fn tag => tag = "DISK_THM") oracles andalso
+      List.null (Tag.axioms_of (Thm.tag theorem)) end
+  fun pos atom : C.literal = {atom = atom,negative = false}
+  fun neg atom : C.literal = {atom = atom,negative = true}
+  fun source graph scope name = G.variable graph scope G.RigidSource
+    (Term.mk_var (name,Type.bool))
+  fun freeze graph scope layouts sources = P.freeze graph
+    {scope = scope,roots = List.map C.root layouts,
+     sources = List.map C.root sources,template_limit = 200000}
+  fun check graph target expected theorem =
+    ensure "clause endpoint, hypotheses or tags changed"
+      (ptr (Thm.concl theorem) (G.representative graph (C.root target)) andalso
+       List.length (Thm.hyp theorem) = List.length expected andalso
+       List.all (fn hypothesis => List.exists (ptr hypothesis) expected)
+         (Thm.hyp theorem) andalso clean theorem)
+
+  fun resolution depth reverse =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "clause_p"
+      val q = source graph scope "clause_q"
+      val r = source graph scope "clause_r"
+      val disjunction = G.constant graph scope boolSyntax.disjunction
+      fun grow 0 node = node
+        | grow count node = grow (count-1)
+            (G.application graph scope
+              (G.application graph scope (disjunction,node),node))
+      val atom = grow depth p
+      val first = C.discover graph scope [pos atom,pos q]
+      val second = C.discover graph scope [neg atom,pos r]
+      val target = C.discover graph scope
+        (if reverse then [pos r,pos q] else [pos q,pos r])
+      val block = freeze graph scope [target] [first,second]
+      val left = C.from_source block first (P.source block 0)
+      val right = C.from_source block second (P.source block 1)
+      val result = if reverse then C.resolve (neg atom) right left
+        else C.resolve (pos atom) left right
+      val resolved = case result of SOME clause => clause
+        | NONE => fail "recorded graph pivot declined"
+      val _ = ensure "compound atom was flattened by resolution"
+        (List.length (C.literals resolved) = 2)
+      val theorem = P.realize block (C.root target)
+        (C.to_target target resolved)
+      val expected = List.map (G.representative graph o C.root) [first,second]
+      val _ = check graph target expected theorem
+      val _ = ensure "realized clause block remained available"
+        (rejected (fn () => ignore (C.proof resolved)))
+    in () end
+
+  fun alignment () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "factor_p"
+      val q = source graph scope "factor_q"
+      val r = source graph scope "factor_r"
+      val initial = C.discover graph scope [pos p,pos q,pos p]
+      val factored = C.discover graph scope [pos p,pos q]
+      val weakened = C.discover graph scope [pos q,pos r,pos p]
+      val strengthened = C.discover graph scope [pos p]
+      val block = freeze graph scope [factored,weakened,strengthened] [initial]
+      val clause = C.from_source block initial (P.source block 0)
+      val factor = C.factor clause
+      val _ = ensure "factoring lost recorded identity/order"
+        (List.map #atom (C.literals factor) = [p,q])
+      val _ = ensure "invalid strengthening was accepted"
+        (not (Option.isSome (C.align strengthened factor)))
+      val target = case C.align weakened factor of SOME clause => clause
+        | NONE => fail "valid reordering/weakening declined"
+      val theorem = P.realize block (C.root weakened)
+        (C.to_target weakened target)
+    in check graph weakened
+      [G.representative graph (C.root initial)] theorem end
+
+  fun boundaries () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "boundary_p"
+      val q = source graph scope "boundary_q"
+      val expanded = C.discover graph scope [pos p,pos q]
+      val original = C.discover graph scope [pos (C.root expanded)]
+      val block = freeze graph scope [expanded] [original]
+      val clause = C.from_source block original (P.source block 0)
+      val _ = ensure "compound source occurrence was opened prematurely"
+        (List.length (C.literals clause) = 1)
+      val target = case C.align expanded clause of SOME clause => clause
+        | NONE => fail "checked change of recorded boundaries declined"
+      val _ = ensure "target recorded boundaries were not retained"
+        (List.length (C.literals target) = 2)
+      val theorem = P.realize block (C.root expanded)
+        (C.to_target expanded target)
+    in check graph expanded
+      [G.representative graph (C.root original)] theorem end
+
+  fun empty_unit () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "unit_p"
+      val first = C.discover graph scope [pos p]
+      val second = C.discover graph scope [neg p]
+      val target = C.discover graph scope []
+      val block = freeze graph scope [target] [first,second]
+      val left = C.from_source block first (P.source block 0)
+      val right = C.from_source block second (P.source block 1)
+      val result = case C.resolve_chain
+        {pivots = [pos p],premises = [left,right],target = SOME target} of
+          SOME clause => clause | NONE => fail "unit resolution chain declined"
+      val _ = ensure "empty resolvent gained literal occurrences"
+        (List.null (C.literals result))
+      val theorem = P.realize block (C.root target) (C.to_target target result)
+    in check graph target
+      (List.map (G.representative graph o C.root) [first,second]) theorem end
+
+  fun false_weakening () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "false_weaken_p"
+      val first = C.discover graph scope []
+      val target = C.discover graph scope [pos p]
+      val block = freeze graph scope [target] [first]
+      val clause = C.from_source block first (P.source block 0)
+      val weakened = case C.align target clause of SOME clause => clause
+        | NONE => fail "empty false clause did not permit weakening"
+      val theorem = P.realize block (C.root target)
+        (C.to_target target weakened)
+    in check graph target [G.representative graph (C.root first)] theorem end
+
+  fun ownership () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "ownership_p"
+      val q = source graph scope "ownership_q"
+      val left = C.discover graph scope [pos p]
+      val right = C.discover graph scope [pos q]
+      val block = freeze graph scope [right] [left]
+      val clause = C.from_source block left (P.source block 0)
+      val _ = ensure "wrong named source endpoint accepted"
+        (rejected (fn () => ignore
+          (C.from_source block right (P.source block 0))))
+      val second_block = freeze graph scope [right] [left]
+      val other = C.from_source second_block left (P.source second_block 0)
+      val _ = ensure "foreign proof block accepted in graph resolution"
+        (rejected (fn () => ignore (C.resolve (pos p) clause other)))
+      val foreign_graph = G.new ()
+      val foreign = C.discover foreign_graph (G.root_scope foreign_graph) []
+      val _ = ensure "foreign empty occurrence tree accepted"
+        (rejected (fn () => ignore (C.align foreign clause)))
+      val _ = ensure "foreign empty chain target accepted"
+        (rejected (fn () => ignore (C.resolve_chain
+          {pivots = [],premises = [clause],target = SOME foreign})))
+      val local_scope = G.new_scope graph scope []
+      val local_layout = C.discover graph local_scope [pos p]
+      val local_block = freeze graph local_scope [] [local_layout]
+      val local_clause = C.from_source local_block local_layout
+        (P.source local_block 0)
+      val _ = G.close_scope graph local_scope
+    in ensure "popped clause scope remained usable"
+      (rejected (fn () => ignore (C.factor local_clause))) end
+
+  val _ = tprint "Graph clauses resolve exact compound literals and both pivots"
+  val _ = List.app (fn (depth,reverse) => resolution depth reverse)
+    [(0,false),(0,true),(80,false),(80,true)]
+  val _ = OK ()
+  val _ = tprint "Graph clause factoring, weakening and strengthening checks"
+  val _ = alignment ()
+  val _ = OK ()
+  val _ = tprint "Graph clause recorded source/target boundaries stay separate"
+  val _ = boundaries ()
+  val _ = OK ()
+  val _ = tprint "Graph clauses preserve empty/unit resolution and false sources"
+  val _ = empty_unit ()
+  val _ = false_weakening ()
+  val _ = OK ()
+  val _ = tprint "Graph clause ownership, endpoint and popped-scope guards"
+  val _ = ownership ()
+  val _ = OK ()
+in () end
+end
+
+local
+  open HolKernel boolTheory testutils
+       SmtReplayGraph SmtReplayUnify SmtReplayResolve
+       SmtReplayProof SmtReplayUnifyPlan
+  structure G = SmtReplayGraph
+  structure U = SmtReplayUnify
+  structure R = SmtReplayResolve
+  structure P = SmtReplayProof
+  structure N = SmtReplayUnifyPlan
+in
+fun replay_graph_resolution_success () =
+let
+  fun ensure message condition = if condition then () else die message
+  fun rejected action = (action ();false) handle Feedback.HOL_ERR _ => true
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun success outcome = case outcome of U.Unified result => result
+    | _ => (die "unexpected unifier failure";raise Fail "unify")
+  fun resolved outcome = case outcome of R.Resolved resolution => resolution
+    | _ => (die "unexpected resolution refusal";raise Fail "resolve")
+  fun refused reason outcome = case outcome of
+      R.Refused actual => actual = reason | _ => false
+  fun variable graph scope kind name = G.variable graph scope kind
+    (Term.mk_var (name,Type.bool))
+  fun shared graph scope operator 0 atom = atom
+    | shared graph scope operator depth atom =
+        let val child = shared graph scope operator (depth-1) atom in
+          G.application graph scope
+            (G.application graph scope (operator,child),child) end
+  fun clean theorem =
+    let val (oracles,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.all (fn oracle => oracle = "DISK_THM") oracles andalso
+      List.null (Tag.axioms_of (Thm.tag theorem)) end
+  fun equality graph scope left right =
+    let
+      val marker = Term.genvar (G.type_of graph left)
+      val operator = G.constant graph scope (Term.rator (Term.rator
+        (boolSyntax.mk_eq (marker,marker))))
+    in G.application graph scope
+      (G.application graph scope (operator,left),right) end
+
+  val _ = tprint "Depth-80 solver resolution retains exact original source"
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val rigid = variable graph scope G.RigidSource "original"
+  val first = variable graph scope G.SolverFlexible "z1"
+  val second = variable graph scope G.SolverFlexible "z2"
+  val operator = G.constant graph scope (Term.rator (Term.rator
+    (boolSyntax.mk_conj (boolSyntax.T,boolSyntax.F))))
+  val original = shared graph scope operator 80 rigid
+  val private = shared graph scope operator 80 first
+  val match = success (U.unify graph
+    {scope = scope,flexible = [first,second],
+     equations = [(first,second),(second,rigid),(private,original)]})
+  val plan = N.discover graph scope match
+  val resolution = resolved (R.prepare graph scope
+    {flexible = [first,second],assignments = U.assignments match,
+     roots = N.roots plan,preserved = [original]})
+  val _ = ensure "constructor substitution lost sharing or source identity"
+    (R.node resolution private = original andalso
+     R.node resolution original = original andalso
+     R.node resolution first = rigid andalso R.node resolution second = rigid)
+  val obligations = N.obligations plan
+  val _ = ensure "resolver and unifier disagree on exact assignment sources"
+    (List.all (fn {equation,...} =>
+      R.is_assignment_source resolution equation) obligations)
+  val block = P.freeze graph
+    {scope = scope,roots = R.roots resolution,
+     sources = original :: List.map #equation obligations,template_limit = 200000}
+  fun witness (obligation : N.obligation) =
+    let
+      fun seek _ ([] : N.obligation list) = raise Fail "unknown assignment"
+        | seek index (first::rest) =
+            if #equation first = #equation obligation then P.source block index
+            else seek (index+1) rest
+    in seek 1 obligations end
+  val edges = N.assemble block plan witness
+  val edge = P.compose block
+    (fn [equality,source] => Thm.CONJUNCT2 (Thm.CONJ equality source)
+      | _ => raise Fail "premises") [List.last edges,P.source block 0]
+  val theorem = P.realize_resolved block resolution original edge
+  val _ = ensure "solver assignment survived or original source changed"
+    (ptr (Thm.concl theorem) (G.representative graph original) andalso
+     (case Thm.hyp theorem of [hypothesis] =>
+        ptr hypothesis (G.representative graph original) | _ => false) andalso
+     clean theorem)
+  val _ = OK ()
+
+  val _ = tprint "Resolution rejects rigid assignment, types, cycles and escape"
+  val truth = G.constant graph scope boolSyntax.T
+  val _ = ensure "rigid source variable became a solver assignment"
+    (rejected (fn () => ignore (R.prepare graph scope
+      {flexible = [rigid],assignments = [{variable = rigid,residue = truth}],
+       roots = [],preserved = []})))
+  val _ = ensure "unpermitted solver assignment accepted"
+    (rejected (fn () => ignore (R.prepare graph scope
+      {flexible = [],assignments = [{variable = first,residue = truth}],
+       roots = [],preserved = []})))
+  val _ = ensure "typed assignment mismatch accepted"
+    (refused R.TypeMismatch (R.prepare graph scope
+      {flexible = [first],assignments = [{variable = first,residue = operator}],
+       roots = [],preserved = []}))
+  val _ = ensure "indirect assignment cycle accepted"
+    (refused R.CyclicAssignments (R.prepare graph scope
+      {flexible = [first,second],
+       assignments = [{variable = first,residue = second},
+                      {variable = second,residue = first}],
+       roots = [],preserved = []}))
+  val recursive = shared graph scope operator 1 first
+  val _ = ensure "constructor occurs cycle accepted"
+    (refused R.CyclicAssignments (R.prepare graph scope
+      {flexible = [first],assignments = [{variable = first,residue = recursive}],
+       roots = [],preserved = []}))
+  val child = G.new_scope graph scope []
+  val local_bound = variable graph child G.Bound "local"
+  val _ = ensure "ancestor flexible captured a local bound residue"
+    (refused R.EscapingScope (R.prepare graph child
+      {flexible = [first],
+       assignments = [{variable = first,residue = local_bound}],
+       roots = [],preserved = []}))
+  val _ = ensure "preserved source root was rewritten"
+    (refused R.ChangedPreservedRoot (R.prepare graph scope
+      {flexible = [first],assignments = [{variable = first,residue = rigid}],
+       roots = [private],preserved = [private]}))
+  val _ = OK ()
+
+  val _ = tprint "Final boundary protects ordinary sources and target itself"
+  val reversed = equality graph scope rigid first
+  val boundary = resolved (R.prepare graph scope
+    {flexible = [first],assignments = [{variable = first,residue = rigid}],
+     roots = [first,truth,reversed],preserved = []})
+  val boundary_block = P.freeze graph
+    {scope = scope,roots = R.roots boundary,
+     sources = [first],template_limit = 200000}
+  val _ = ensure "changed original target accepted"
+    (rejected (fn () => ignore (P.realize_resolved boundary_block boundary
+      first (P.source boundary_block 0))))
+  val truth_edge = P.compose boundary_block
+    (fn [definition] => Thm.EQ_MP (Thm.SYM definition) boolTheory.TRUTH
+      | _ => raise Fail "truth definition") [P.definition boundary_block truth]
+  val _ = ensure "changed ordinary source accepted without caller protection"
+    (rejected (fn () => ignore
+      (P.realize_resolved boundary_block boundary truth truth_edge)))
+  val reversed_block = P.freeze graph
+    {scope = scope,roots = R.roots boundary,
+     sources = [reversed],template_limit = 200000}
+  val reversed_truth = P.compose reversed_block
+    (fn [definition] => Thm.EQ_MP (Thm.SYM definition) boolTheory.TRUTH
+      | _ => raise Fail "truth definition") [P.definition reversed_block truth]
+  val _ = ensure "unrecorded reversed assignment source silently closed"
+    (not (R.is_assignment_source boundary reversed) andalso
+     rejected (fn () => ignore (P.realize_resolved reversed_block boundary
+       truth reversed_truth)))
+  val _ = OK ()
+
+  val _ = tprint "Unknown and affected binders require bounded local adapter"
+  val binder_term = Term.mk_abs (Term.mk_var ("bound",Type.bool),
+    Term.mk_var ("bound",Type.bool))
+  val opaque = #node (G.import graph scope 20 binder_term)
+  val _ = ensure "opaque binder certified assignment absence"
+    (refused R.NeedsBinderAdmission (R.prepare graph scope
+      {flexible = [first],assignments = [{variable = first,residue = rigid}],
+       roots = [opaque],preserved = []}))
+  val admitted = #node (G.admit_binder graph scope 20 binder_term)
+  val unaffected = resolved (R.prepare graph scope
+    {flexible = [first],assignments = [{variable = first,residue = rigid}],
+     roots = [admitted],preserved = [admitted]})
+  val _ = ensure "closed admitted binder needlessly rewritten"
+    (R.node unaffected admitted = admitted)
+  val binder_frame = G.new_scope graph scope []
+  val binder = G.fresh_bound_variable graph binder_frame
+    (Term.mk_var ("bound",Type.bool))
+  val affected = G.abstraction graph scope 20 (binder,first)
+  val _ = G.close_scope graph binder_frame
+  val _ = ensure "assignment inserted below a completed binder"
+    (refused R.NeedsBinderAdmission (R.prepare graph scope
+      {flexible = [first],assignments = [{variable = first,residue = rigid}],
+       roots = [affected],preserved = []}))
+  val _ = OK ()
+
+  val _ = tprint "Resolution owner and scope lifetime are checked even empty"
+  val empty = resolved (R.prepare graph scope
+    {flexible = [],assignments = [],roots = [],preserved = []})
+  val foreign = G.new ()
+  val _ = ensure "foreign empty resolution accepted"
+    (rejected (fn () => R.validate foreign (G.root_scope foreign) empty))
+  val local_resolution = resolved (R.prepare graph child
+    {flexible = [],assignments = [],roots = [truth],preserved = []})
+  val _ = G.close_scope graph child
+  val _ = ensure "resolution survived popped proof scope"
+    (rejected (fn () => ignore (R.node local_resolution truth)))
+  val _ = OK ()
+in () end
+end
+
+local
+  open HolKernel testutils SmtReplayGraph SmtReplayProof
+  structure G = SmtReplayGraph
+  structure P = SmtReplayProof
+in
+fun replay_graph_crossblock_success () =
+let
+  fun ensure message condition = if condition then () else die message
+  fun clean theorem =
+    let val (oracles, _) = Tag.dest_tag (Thm.tag theorem) in
+      List.null oracles andalso List.null (Tag.axioms_of (Thm.tag theorem))
+    end
+  fun rejected action =
+    (action (); false) handle Feedback.HOL_ERR _ => true
+  fun shared 0 atom = atom
+    | shared depth atom =
+        let val child = shared (depth - 1) atom in
+          boolSyntax.mk_conj (child, child)
+        end
+
+  fun cross_block () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val atom = G.variable graph scope G.RigidSource
+        (Term.mk_var ("cross_block_source",Type.bool))
+      val operator = G.constant graph scope boolSyntax.conjunction
+      val chain = Array.array (81,atom)
+      val _ = List.app (fn index =>
+        let val child = Array.sub (chain,index-1) in
+          Array.update (chain,index,G.application graph scope
+            (G.application graph scope (operator,child),child)) end)
+        (List.tabulate (80,fn n => n+1))
+      val target = Array.sub (chain,80)
+      val first = P.freeze graph
+        {scope = scope,roots = [target],sources = [atom],template_limit = 8192}
+      fun step (index,edge) = P.compose first
+        (fn [constructor,prior] => Thm.EQ_MP (Thm.SYM constructor)
+            (Thm.CONJ prior prior)
+          | _ => raise Fail "cross block conjunction")
+        [P.constructor first (Array.sub (chain,index)),edge]
+      val checked = P.realize first target
+        (List.foldl step (P.source first 0)
+          (List.tabulate (80,fn n => n+1)))
+      val second = P.freeze graph
+        {scope = scope,roots = [target],sources = [target,atom],
+         template_limit = 8192}
+      val theorem = P.realize_with_sources second target (P.source second 0)
+        (fn (index,node) => if index = 0 andalso node = target
+           then SOME checked else NONE)
+      val _ = ensure "cross-block witness became an extra lemma hypothesis"
+        (Portable.pointer_eq (Thm.concl theorem,G.representative graph target)
+         andalso (case Thm.hyp theorem of [hypothesis] =>
+           Portable.pointer_eq (hypothesis,G.representative graph atom)
+           | _ => false) andalso clean theorem)
+      val negative = P.freeze graph
+        {scope = scope,roots = [target],sources = [target,atom],
+         template_limit = 8192}
+      fun invalid proof = rejected (fn () => ignore
+        (P.realize_with_sources negative target (P.source negative 0)
+          (fn (index,_) => if index = 0 then SOME proof else NONE)))
+      val private = Term.mk_var ("cross_block_private",Type.bool)
+      val _ = ensure "cross-block private hypothesis was accepted"
+        (invalid (Drule.ADD_ASSUM private checked))
+      val _ = ensure "cross-block wrong endpoint was accepted"
+        (invalid (Thm.ASSUME (G.representative graph atom)))
+      val oracle = Thm.tag (Thm.mk_oracle_thm "cross_block_invalid"
+        ([],boolSyntax.T))
+      val _ = ensure "cross-block unexpected proof tag was accepted"
+        (invalid (Thm.add_tag (oracle,checked)))
+      val independent = shared 80 (G.representative graph atom)
+      val _ = ensure "independent large endpoint silently alpha-aligned"
+        (invalid (Thm.ASSUME independent))
+      val _ = ignore (P.realize_with_sources negative target
+        (P.source negative 0)
+        (fn (index,_) => if index = 0 then SOME checked else NONE))
+    in () end
+  fun local_discharge () =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val term = shared 80 (Term.mk_var ("local_fact",Type.bool))
+      val local_node = #node (G.import graph scope 8192 term)
+      val outer = G.variable graph scope G.RigidSource
+        (Term.mk_var ("outer_fact",Type.bool))
+      val old = P.freeze graph
+        {scope = scope,roots = [local_node],
+         sources = [local_node,outer,local_node],template_limit = 8192}
+      val _ = ensure "invalid local source index was accepted"
+        (rejected (fn () => ignore (P.discharge_sources old
+          {indices = [3],body = local_node,edge = P.source old 0})))
+      val {block,target,edge} = P.discharge_sources old
+        {indices = [0],body = local_node,edge = P.source old 0}
+      val _ = ensure "duplicate local source survived discharge"
+        (P.sources block = [outer])
+      val theorem = P.realize block target edge
+      val _ = ensure "discharged local source became an expanded hypothesis"
+        ((case Thm.hyp theorem of [hypothesis] => Portable.pointer_eq
+           (hypothesis,G.representative graph outer) | _ => false)
+         andalso Portable.pointer_eq
+           (Thm.concl theorem,G.representative graph target)
+         andalso clean theorem)
+      val frame = G.new_scope graph scope []
+      val binder = G.fresh_bound_variable graph frame
+        (Term.mk_var ("discharge_eigenvariable",Type.bool))
+      val inner = P.freeze graph
+        {scope = frame,roots = [binder],sources = [binder],
+         template_limit = 200}
+      val {block,target,edge} = P.discharge_sources inner
+        {indices = [0],body = binder,edge = P.source inner 0}
+      val closed = P.realize block target edge
+      val generalized = Thm.GEN (G.representative graph binder) closed
+      val _ = G.close_scope graph frame
+    in ensure "local context remained under GEN"
+      (List.null (Thm.hyp generalized) andalso clean generalized) end
+in cross_block ();local_discharge () end
+end
+
+fun run_replay_graph_unittests () =
+  List.app run_test
+    [("replay_graph_checked_success", replay_graph_checked_success),
+     ("replay_import_metric_success", replay_import_metric_success),
+     ("replay_compact_proof_success", replay_compact_proof_success),
+     ("replay_graph_attempt_reuse_success",
+       replay_graph_attempt_reuse_success),
+     ("replay_source_checked_success", replay_source_checked_success),
+     ("replay_graph_unify_success", replay_graph_unify_success),
+     ("replay_graph_backend_success", replay_graph_backend_success),
+     ("replay_graph_clauses_success", replay_graph_clauses_success),
+     ("replay_graph_resolution_success", replay_graph_resolution_success),
+     ("replay_graph_crossblock_success", replay_graph_crossblock_success)]
+
 fun word_graph_conversion_success () =
 let
   val x = ``x : word8``
@@ -28243,6 +29759,17 @@ let
     ("cvc_cpc_command_uses_standard_proof",
       cvc_cpc_command_uses_standard_proof),
     ("binder_opening_resource_success", binder_opening_resource_success),
+    ("replay_graph_checked_success", replay_graph_checked_success),
+    ("replay_import_metric_success", replay_import_metric_success),
+    ("replay_compact_proof_success", replay_compact_proof_success),
+    ("replay_graph_attempt_reuse_success",
+      replay_graph_attempt_reuse_success),
+    ("replay_source_checked_success", replay_source_checked_success),
+    ("replay_graph_unify_success", replay_graph_unify_success),
+    ("replay_graph_backend_success", replay_graph_backend_success),
+    ("replay_graph_clauses_success", replay_graph_clauses_success),
+    ("replay_graph_resolution_success", replay_graph_resolution_success),
+    ("replay_graph_crossblock_success", replay_graph_crossblock_success),
     ("replay_attempt_reuse_success", replay_attempt_reuse_success),
     ("circuit_graph_admission_success", circuit_graph_admission_success),
     ("circuit_graph_checked_success", circuit_graph_checked_success),

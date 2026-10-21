@@ -95,15 +95,63 @@ fun IMP_TRANS th1 th2 =
  *     A |- t=T                                                              *
  *---------------------------------------------------------------------------*)
 
+datatype eqt_intro_constructor_origin = EQTIntroConstructorOrigin of
+  {proof:thm,source:thm,statement:term,argument:term,hyp:term list,
+   bare:bool,closed:bool,epoch:int,symbols:int}
 local
-   val eq_thm =
+   val (eq_thm,eqt_origin,eqt_body) =
       let
          val (Bvar, _) = dest_forall (concl boolTheory.EQ_CLAUSES)
          val thm = CONJUNCT1 (CONJUNCT2 (SPEC Bvar boolTheory.EQ_CLAUSES))
+         val symmetric = SYM thm
+         val answer = GEN Bvar symmetric
+         (* Successful eager SPEC with a genuine Fv argument has a bare
+            result; CONJUNCT/SYM/GEN preserve it. No new normalizer call. *)
+         val bare_argument = Term.is_var Bvar
+         val hypotheses = Thm.hyp answer
+         val origin = EQTIntroConstructorOrigin
+           {proof=answer,source=boolTheory.EQ_CLAUSES,
+            statement=Thm.concl answer,argument=Bvar,hyp=hypotheses,
+            bare=bare_argument,closed=null hypotheses,
+            epoch=Type.type_epoch(),symbols=Term.term_epoch()}
       in
-         GEN Bvar (SYM thm)
+         (answer,origin,Thm.concl symmetric)
       end
 in
+   fun eqt_intro_constructor_origin () = eqt_origin
+   fun eqt_intro_constructor_origin_data
+       (value as EQTIntroConstructorOrigin
+          {proof,source,statement,argument,hyp,bare,closed,epoch,symbols}) =
+      if not(Portable.pointer_eq(value,eqt_origin))then
+         raise ERR "eqt_intro_constructor_origin_data"
+           "foreign cached law origin"
+      else if epoch<>Type.type_epoch()orelse symbols<>Term.term_epoch()then
+         raise ERR "eqt_intro_constructor_origin_data"
+           "cached law epoch changed"
+      else let
+         fun same [] []=true
+           | same(a::left)(b::right)=
+               Portable.pointer_eq(a,b)andalso same left right
+           | same _ _=false
+         val _=if Portable.pointer_eq(proof,eq_thm)andalso
+               Portable.pointer_eq(source,boolTheory.EQ_CLAUSES)andalso
+               Portable.pointer_eq(statement,Thm.concl proof)andalso
+               same hyp(Thm.hyp proof)then ()else
+             raise ERR "eqt_intro_constructor_origin_data"
+               "cached law identity changed"
+      in {bare=bare andalso closed,closed=closed,statement=statement,
+         quantifier_variable=argument,tag=Thm.tag proof}end
+   (* Immutable construction DATA, not current declaration validity.
+      A fresh owned reader must pay and validate actual ports separately. *)
+   fun eqt_intro_cache_data () =
+      let val EQTIntroConstructorOrigin
+          {proof,source,statement,argument,bare,closed,...}=eqt_origin
+          val _=if Portable.pointer_eq(proof,eq_thm)andalso
+                Portable.pointer_eq(source,boolTheory.EQ_CLAUSES)andalso
+                Portable.pointer_eq(statement,Thm.concl proof)then ()else
+              raise ERR "eqt_intro_cache_data" "cached identity changed"
+      in {statement=statement,body=eqt_body,quantifier_variable=argument,
+         tag=Thm.tag proof,bare=bare,closed=closed}end
    fun EQT_INTRO th = EQ_MP (SPEC (concl th) eq_thm) th
                       handle HOL_ERR _ => raise ERR "EQT_INTRO" ""
 end

@@ -580,4 +580,378 @@ structure Z3 = struct
                   (fn original => raise original)
           end)
 
+  (* Explicit finite graph path; legacy Z3_SMT_Prover above is unchanged. *)
+  fun Z3_SMT_Graph_Prover limits =
+    (SmtCheckedGraph.validate limits;
+     mk_Z3_fun "Z3_SMT_Graph_Prover"
+      (SmtResource.profile_phase "z3/input-generation" (fn goal =>
+        let
+          val original_goal = goal
+          val (goal, validation) = SolverSpec.simplify
+            (SmtLib.Z3_SIMP_TAC true) goal
+          val (translation, strings) =
+            goal_to_SmtLib_with_get_proof_translation_for_version
+              (configured_version ()) goal
+        in
+          (((original_goal, goal, validation), translation), strings)
+        end))
+      proof_cmd_stem
+      (fn ((original_goal,goal,validation),translation) => fn outfile =>
+        let
+          val input = TextIO.openIn outfile
+          fun close () = TextIO.closeIn input
+          fun parse_error error =
+            if SmtResource.terminal_diagnostic_exception error then raise error
+            else case error of Feedback.HOL_ERR holerr =>
+              (classify_proof_parse_error holerr
+               handle Feedback.HOL_ERR classified =>
+                 raise_with_context "Z3_SMT_Graph_Prover" "proof parse"
+                   (current_proof_cmd_stem ()) classified)
+            | _ => raise Feedback.mk_HOL_ERR "Z3" "Z3_SMT_Graph_Prover"
+                ("Z3 graph parse failed: " ^ General.exnMessage error)
+          fun replay_error error = case error of Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then raise error else
+                raise_with_context "Z3_SMT_Graph_Prover" "proof replay"
+                  (current_proof_cmd_stem ()) holerr
+            | _ => raise error
+          fun work () =
+            let val (status,start) = is_sat_stream_with_consumed input
+            in case status of SolverSpec.UNSAT NONE =>
+              let
+                val bytes = SmtResource.remaining_file_bytes outfile start
+                val _ = SmtResource.profile_phase "z3/byte-admission"
+                  (SmtResource.check_proof_size "z3-proof-text") bytes
+                val theorem = quiet (fn () =>
+                  SmtCheckedGraph.z3 limits translation (version_string ())
+                    goal input)
+                  handle SmtCheckedGraph.ParseFailure error => parse_error error
+                    | SmtCheckedGraph.ReplayFailure error => replay_error error
+                (* Graph replay already closed the denied goal exactly once. *)
+                val theorem = quiet (fn () =>
+                  SmtResource.profile_phase "z3/final-validation"
+                    validation [theorem])
+                val theorem = quiet (fn () =>
+                  SmtResource.profile_phase "z3/final-checks"
+                    (check_reconstructed_theorem "Z3_SMT_Graph_Prover")
+                    (original_goal,theorem))
+              in SolverSpec.UNSAT (SOME theorem) end
+            | _ => status end
+          val outcome = Exn.capture work ()
+        in case outcome of Exn.Res result => (close ();result)
+          | Exn.Exn error =>
+              SmtResource.resolve_diagnostic_exception error close
+              (fn original => raise original)
+        end))
+
+
+  (* Optional original Source path. The caller supplies a checked GP producer,
+     not an old tactic validation or a ready flag. LEGACY remains unchanged. *)
+  fun Z3_SMT_Original_Source_Prover
+      {limits,discover,local_law,nnf} original =
+    case configured_executable () of
+      NONE => raise Feedback.mk_HOL_ERR "Z3"
+        "Z3_SMT_Original_Source_Prover" error_msg
+    | SOME file =>
+      let
+        fun pre original =
+          let
+            val invocation = SmtCheckedGraph.prepare_original
+              limits discover original
+            fun translate () =
+              let
+                val version = version_string ()
+                val query = SmtCheckedGraph.processed_goal invocation
+                val (translation,strings) =
+                  goal_to_SmtLib_with_get_proof_translation_for_version
+                    (SOME version) query
+                val _ = SmtCheckedGraph.admit_translation invocation translation
+              in ((invocation,translation,version),strings) end
+          in translate () handle primary =>
+            ((SmtCheckedGraph.close_original invocation handle _ => ());
+             raise primary) end
+        fun post (invocation,translation,version) outfile =
+          let
+            val input = TextIO.openIn outfile
+            fun work () =
+              let val (status,start) = is_sat_stream_with_consumed input
+              in case status of SolverSpec.UNSAT NONE =>
+                let
+                  val bytes = SmtResource.remaining_file_bytes outfile start
+                  val _ = SmtResource.check_proof_size "z3-proof-text" bytes
+                  val theorem = quiet (fn () =>
+                    SmtCheckedGraph.z3_original invocation translation version
+                      {local_law = local_law,nnf = nnf} input)
+                in SolverSpec.UNSAT (SOME theorem) end
+              | _ => status end
+            val outcome = Exn.capture work ()
+            val cleanup = Exn.capture TextIO.closeIn input
+          in case outcome of Exn.Exn primary => raise primary
+            | Exn.Res result => (Exn.release cleanup;result) end
+        fun validate (invocation,_,_) goal theorem =
+          SmtCheckedGraph.audit_original invocation goal theorem
+        fun complete (invocation,_,_) =
+          SmtCheckedGraph.close_original invocation
+      in SolverSpec.make_solver_with_capture_command_and_completion
+        validate complete (z3_capture_for_invocation ())
+        (SmtResource.profile_phase "z3/input-generation" pre)
+        (fn _ => file ^ with_timeout_option proof_cmd_stem) post original end
+
+
+  (* Separate SAME-original-Work entry. Its owned invocation is produced
+     by the checked discover callback; old LEGACY entry remains literal. *)
+  fun Z3_SMT_Original_Source_Prover_With_Work
+      {limits,discover,local_law,nnf} original =
+    case configured_executable () of
+      NONE => raise Feedback.mk_HOL_ERR "Z3"
+        "Z3_SMT_Original_Source_Prover_With_Work" error_msg
+    | SOME file =>
+      let
+        fun pre original =
+          let
+            val invocation = SmtCheckedGraph.prepare_original_with_work
+              limits discover original
+            fun translate () =
+              let
+                val version = version_string ()
+                val query = SmtCheckedGraph.processed_goal_with_work invocation
+                val (translation,strings) =
+                  goal_to_SmtLib_with_get_proof_translation_for_version
+                    (SOME version) query
+                val _ = SmtCheckedGraph.admit_translation_with_work invocation translation
+              in ((invocation,translation,version),strings) end
+          in translate () handle primary =>
+            ((SmtCheckedGraph.close_original_with_work invocation handle _ => ());
+             raise primary) end
+        fun post (invocation,translation,version) outfile =
+          let
+            val input = TextIO.openIn outfile
+            fun work () =
+              let val (status,start) = is_sat_stream_with_consumed input
+              in case status of SolverSpec.UNSAT NONE =>
+                let
+                  val bytes = SmtResource.remaining_file_bytes outfile start
+                  val _ = SmtResource.check_proof_size "z3-proof-text" bytes
+                  val theorem = quiet (fn () =>
+                    SmtCheckedGraph.z3_original_with_work invocation translation version
+                      {local_law = local_law,nnf = nnf} input)
+                in SolverSpec.UNSAT (SOME theorem) end
+              | _ => status end
+            val outcome = Exn.capture work ()
+            val cleanup = Exn.capture TextIO.closeIn input
+          in case outcome of Exn.Exn primary => raise primary
+            | Exn.Res result => (Exn.release cleanup;result) end
+        fun validate (invocation,_,_) goal theorem =
+          SmtCheckedGraph.audit_original_with_work invocation goal theorem
+        fun complete (invocation,_,_) =
+          SmtCheckedGraph.close_original_with_work invocation
+      in SolverSpec.make_solver_with_capture_command_and_completion
+        validate complete (z3_capture_for_invocation ())
+        (SmtResource.profile_phase "z3/input-generation" pre)
+        (fn _ => file ^ with_timeout_option proof_cmd_stem) post original end
+
+  (* Fixed genuine-emission counterpart; original Work/default wrappers above
+     remain unchanged. No caller local-law or NNF normalizer is supplied. *)
+  fun Z3_SMT_Original_Source_Prover_With_Work_And_Emissions
+      {limits,discover} original =
+    case configured_executable () of
+      NONE => raise Feedback.mk_HOL_ERR "Z3"
+        "Z3_SMT_Original_Source_Prover_With_Work_And_Emissions" error_msg
+    | SOME file =>
+      let
+        fun pre original =
+          let
+            val invocation = SmtCheckedGraph.prepare_original_with_work
+              limits discover original
+            fun translate () =
+              let val version = version_string ()
+                  val {receipt,translation,strings} =
+                    SmtCheckedGraph.emit_translation_with_work invocation
+                      {policy = z3_414_logic_policy (SOME version),
+                       dialect = SmtLib.Z3LambdaArray,
+                       apply_operator = SmtLib.ApplyUnderscore,
+                       get_proof = true,
+                       target = SOME {solver = "Z3",version = SOME version}}
+                  val _ = SmtCheckedGraph.admit_emitted_translation_with_work
+                    invocation receipt
+                  val selected_check_sat = checked_check_sat_command translation
+                  fun select_check_sat command =
+                    if command = plain_check_sat_command then selected_check_sat
+                    else command
+              in ((invocation,receipt,version),
+                  List.map select_check_sat strings) end
+          in translate () handle primary =>
+            ((SmtCheckedGraph.close_original_with_work invocation
+                handle _ => ());raise primary) end
+        fun post (invocation,receipt,version) outfile =
+          let val input = TextIO.openIn outfile
+              fun work () =
+                let val (status,start) = is_sat_stream_with_consumed input
+                in case status of SolverSpec.UNSAT NONE =>
+                  let val bytes = SmtResource.remaining_file_bytes outfile start
+                      val _ = SmtResource.check_proof_size "z3-proof-text" bytes
+                      val theorem = quiet (fn () =>
+                        SmtCheckedGraph.z3_original_emitted_with_work
+                          invocation receipt version input)
+                  in SolverSpec.UNSAT (SOME theorem) end
+                | _ => status end
+              val outcome = Exn.capture work ()
+              val cleanup = Exn.capture TextIO.closeIn input
+          in case outcome of Exn.Exn primary => raise primary
+            | Exn.Res result => (Exn.release cleanup;result) end
+        fun validate (invocation,_,_) goal theorem =
+          SmtCheckedGraph.audit_original_with_work invocation goal theorem
+        fun complete (invocation,_,_) =
+          SmtCheckedGraph.close_original_with_work invocation
+      in SolverSpec.make_solver_with_capture_command_and_completion
+        validate complete (z3_capture_for_invocation ())
+        (SmtResource.profile_phase "z3/input-generation" pre)
+        (fn _ => file ^ with_timeout_option proof_cmd_stem) post original end
+
+  (* Opt-in policy path. The same original Source/Work is retained from
+     pre through parser, replay, close and the late immutable audit. This
+     does not add finite Ready or emitted-definition authority. *)
+  fun z3_original_source_prover_with_policy paid name prepare_original
+      {discover,prepare_options} original =
+    case configured_executable () of
+      NONE => raise Feedback.mk_HOL_ERR "Z3"
+        name error_msg
+    | SOME file =>
+      let
+        fun pre original =
+          let
+            val acquired = ref NONE
+            fun prepare () =
+              let
+                val {work,invocation} =
+                  prepare_original discover original
+                val _ = acquired := SOME (work,invocation)
+                val _ = if not paid then () else
+                  (case SmtReplayInvocationWork.work_policy work of
+                     SmtReplayResourcePolicy.AtMost n =>
+                       if n > 0 then () else
+                         raise Feedback.mk_HOL_ERR "Z3" name
+                           "paid proof capture requires finite original Work"
+                   | SmtReplayResourcePolicy.Uncapped =>
+                       raise Feedback.mk_HOL_ERR "Z3" name
+                         "paid proof capture requires finite original Work")
+                val options = prepare_options ()
+                val version = version_string ()
+                val query = SmtCheckedGraph.processed_goal_with_policy
+                  work invocation
+                val (translation,strings) =
+                  goal_to_SmtLib_with_get_proof_translation_for_version
+                    (SOME version) query
+                val _ = SmtCheckedGraph.admit_translation_with_policy
+                  work invocation translation
+              in ((work,invocation,translation,version,options),strings)
+              end
+          in SmtResource.profile_phase "z3/input-generation" prepare ()
+            handle primary =>
+              ((Option.app
+                  (fn (work,invocation) =>
+                    SmtCheckedGraph.close_original_with_policy
+                      work invocation) (!acquired) handle _ => ());
+               raise primary)
+          end
+        fun post (portfolio,invocation,translation,version,options)
+            outfile =
+          let
+            val input = TextIO.openIn outfile
+            fun parse_error error =
+              if SmtResource.terminal_diagnostic_exception error then
+                raise error
+              else case error of
+                Feedback.HOL_ERR holerr =>
+                  (classify_proof_parse_error holerr
+                   handle Feedback.HOL_ERR classified =>
+                     raise_with_context
+                       name
+                       "proof parse" (current_proof_cmd_stem ())
+                       classified)
+              | _ => raise Feedback.mk_HOL_ERR "Z3"
+                  name
+                  ("Z3 graph parse failed: " ^
+                   General.exnMessage error)
+            fun replay_error error = case error of
+                Feedback.HOL_ERR holerr =>
+                  if SmtResource.is_resource_gate holerr then raise error
+                  else raise_with_context
+                    name
+                    "proof replay" (current_proof_cmd_stem ()) holerr
+              | _ => raise error
+            fun check () =
+              let
+                val (status,start) = is_sat_stream_with_consumed input
+              in case status of
+                  SolverSpec.UNSAT NONE =>
+                    let
+                      val bytes = SmtResource.remaining_file_bytes
+                        outfile start
+                      val _ = SmtResource.profile_phase "z3/byte-admission"
+                        (SmtResource.check_proof_size "z3-proof-text") bytes
+                      val theorem = quiet (fn () =>
+                        if paid then
+                          let
+                            (* The path-size check above is advisory. The
+                               immutable receipt enforces the byte cap on
+                               this status-positioned descriptor itself. *)
+                            val receipt =
+                              SmtReplayInvocationWork.capture_z3_certificate
+                                portfolio input
+                          in SmtCheckedGraph.z3_original_with_policy_paid
+                            portfolio invocation translation version
+                            options receipt end
+                        else
+                          SmtCheckedGraph.z3_original_with_policy portfolio
+                            invocation translation version options input)
+                        handle SmtCheckedGraph.ParseFailure error =>
+                          parse_error error
+                             | SmtCheckedGraph.ReplayFailure error =>
+                          replay_error error
+                    in SolverSpec.UNSAT (SOME theorem) end
+                | _ => status
+              end
+            val outcome = Exn.capture check ()
+            val cleanup = Exn.capture TextIO.closeIn input
+          in case outcome of
+              Exn.Exn primary => raise primary
+            | Exn.Res result => (Exn.release cleanup;result)
+          end
+        fun validate (portfolio,invocation,_,_,_) goal theorem =
+          SmtCheckedGraph.audit_original_with_policy
+            portfolio invocation goal theorem
+        fun complete (portfolio,invocation,_,_,_) =
+          SmtCheckedGraph.close_original_with_policy portfolio invocation
+      in
+        (if paid then
+           SolverSpec.make_solver_with_capture_command_and_completion_strict
+         else SolverSpec.make_solver_with_capture_command_and_completion)
+          validate complete (z3_capture_for_invocation ())
+          pre
+          (fn _ => file ^ with_timeout_option proof_cmd_stem)
+          post original
+      end
+
+  fun Z3_SMT_Original_Source_Prover_With_Policy
+      {request,discover,prepare_options} original =
+    z3_original_source_prover_with_policy false
+      "Z3_SMT_Original_Source_Prover_With_Policy"
+      (SmtCheckedGraph.prepare_original_with_policy request)
+      {discover=discover,prepare_options=prepare_options} original
+
+  (* Takes ownership of an authentic caller-born Source/Work handoff.
+     Status scanning and output-path identity are separate from the
+     immutable proof-suffix receipt. General acquisition is not supplied
+     by this adapter; it must already belong to the caller's handoff. *)
+  fun Z3_SMT_Caller_Owned_Source_Paid_Prover_With_Policy
+      {handoff,discover,prepare_options} original =
+    (z3_original_source_prover_with_policy true
+      "Z3_SMT_Caller_Owned_Source_Paid_Prover_With_Policy"
+      (SmtCheckedGraph.prepare_children_first_with_policy handoff)
+      {discover=discover,prepare_options=prepare_options} original
+     handle primary =>
+       ((SmtCheckedGraph.close_children_first_handoff handoff
+           handle _ => ());
+        raise primary))
+
 end

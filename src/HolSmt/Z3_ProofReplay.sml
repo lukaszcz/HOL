@@ -12,6 +12,7 @@ local
     Profile.profile_with_exn_name name f x
 
   open Z3_Proof
+  open SmtReplayDependencies
 
   val op ++ = bossLib.++
   val op >> = Tactical.>>
@@ -19,6 +20,29 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "Z3_ProofReplay"
   val WARNING = Feedback.HOL_WARNING "Z3_ProofReplay"
+
+  (* Compatibility queries use owned typed constructor dependencies. The
+     old uncapped definition importer receives no new whole-root quota;
+     each binder retains the standing binder-opening metric and diagnostic.
+     Direct graph replay already retains these dependencies from parsing. *)
+  fun dependency_binder_admission binder =
+    (ignore (SmtResource.term_children binder);
+     SOME SmtResource.max_bv_replay_term_nodes)
+  fun replay_free_variables context term =
+    case SmtReplayDependencies.source_summary
+        {dag_limit = Option.valOf Int.maxInt,
+         admit_binder = dependency_binder_admission} term of
+        SmtReplayGraph.Known variables =>
+          HOLset.addList (Term.empty_tmset,variables)
+      | SmtReplayGraph.Unknown => raise ERR context
+          "source dependency admission is incomplete"
+  fun replay_has_free_variables term =
+    case SmtReplayDependencies.source_presence
+        {dag_limit = Option.valOf Int.maxInt,
+         admit_binder = dependency_binder_admission} term of
+      SOME answer => answer
+    | NONE => raise ERR "hypothesis"
+        "free-variable presence is unknown after dependency admission"
 
   val asserted_membership_diagnostic =
     "HOLSMT_TRANSLATION_ASSERTED_MEMBERSHIP"
@@ -110,6 +134,8 @@ local
        side.  Its stored orientation is retained; when both sides are proof
        variables, the stored left side is the established definition name. *)
     definition_hyps : Term.term HOLset.set,
+    (* Ordered actual state_define occurrences, including duplicates. *)
+    definition_occurrences_rev : Term.term list option,
     (* Proof variables still eligible for a definition.  [state_define]
        removes an oriented definition's established left-hand name once,
        instead of rescanning every prior definition at each rewrite. *)
@@ -142,6 +168,7 @@ local
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
       definition_hyps = #definition_hyps s,
+      definition_occurrences_rev = #definition_occurrences_rev s,
       flexible_vars = #flexible_vars s,
       thm_cache = #thm_cache s,
       large_thm_cache = #large_thm_cache s,
@@ -180,6 +207,9 @@ local
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
+      definition_occurrences_rev =
+        case #definition_occurrences_rev s of NONE => NONE
+        | SOME previous => SOME (List.rev terms @ previous),
       flexible_vars = List.foldl make_rigid (#flexible_vars s) newly_rigid,
       thm_cache = #thm_cache s,
       large_thm_cache = #large_thm_cache s,
@@ -203,6 +233,7 @@ local
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = #definition_hyps s,
+      definition_occurrences_rev = #definition_occurrences_rev s,
       flexible_vars = #flexible_vars s,
       thm_cache = if large then #thm_cache s
                   else Net.insert (conclusion, thm) (#thm_cache s),
@@ -4014,7 +4045,7 @@ local
 
   fun z3_hypothesis_theorem t =
     z3_hypothesis_theorem_with
-      Term.has_free_vars SmtStringProve.char_word_expansion_domain
+      replay_has_free_variables SmtStringProve.char_word_expansion_domain
       SmtStringProve.char_prove Thm.ASSUME t
 
   fun z3_hypothesis (state, t) =
@@ -5038,7 +5069,7 @@ local
         SmtReplayCanon.is_arith_type (Term.type_of variable)
       val _ = HOLset.foldl (fn (variable, accepted) =>
         accepted andalso arithmetic_variable variable) true
-        (Term.FVL_dag [target] Term.empty_tmset) orelse
+        (replay_free_variables "linear_arithmetic_rewrite_prove" target) orelse
         raise ERR "linear_arithmetic_rewrite_prove"
           "rewrite has a non-arithmetic variable"
       val _ = has_arithmetic_operator target orelse
@@ -5133,7 +5164,8 @@ local
       val decision = reflexive ()
         handle Feedback.HOL_ERR _ =>
           let val variables = HOLset.listItems
-            (Term.FVL_dag [normalized] Term.empty_tmset) in
+            (replay_free_variables "definition_normalization_prove"
+              normalized) in
             if not (List.null variables) andalso
                List.all (SmtReplayCanon.is_arith_type o Term.type_of) variables
             then profile "definition-normalization(owner:arithmetic)"
@@ -5611,7 +5643,11 @@ local
               (* E1(a): canonicalization decides polynomial normal forms. *)
               (state, rewrite_profile "polynomial-normal-form"
                 "rewrite(7)(poly-normal-form)"
-                linear_arithmetic_rewrite_prove t)
+                (fn target => linear_arithmetic_rewrite_prove target
+                  handle Feedback.HOL_ERR holerr =>
+                    if SmtResource.is_resource_gate holerr then
+                      raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+                    else raise Feedback.HOL_ERR holerr) t)
               handle Feedback.HOL_ERR _ =>
               (* E1(a): simplification decides quantified Boolean normality. *)
               (state, rewrite_profile "quantified-propositional"
@@ -5758,7 +5794,7 @@ local
        The resulting theorem retains only checked definitional hypotheses,
        which final replay eliminates as usual. *)
     (let
-       val free_vars = Term.FVL_dag [t] Term.empty_tmset
+       val free_vars = replay_free_variables "z3_rewrite" t
        val packed_vars = fp_packed_vars state
        val _ = List.exists
            (fn var => HOLset.member (free_vars, var)) packed_vars orelse
@@ -6910,7 +6946,7 @@ local
             | NONE => " head=" ^ traced_head t) ^
            (if stage = "begin" andalso
                OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "full" andalso
-               Option.isSome (Term.term_size_bounded 3000 t') then
+               Option.isSome (SmtReplayImport.bounded_raw_size 3000 t') then
               " target=" ^ SmtResource.bounded_text 2500
                 (Library.term_to_string t')
             else ""));
@@ -8020,7 +8056,7 @@ local
         else
           raise ERR "with_definition_dependency"
             "oriented name is absent from stored definition"
-      val dependencies = Term.FVL_dag [rhs] Term.empty_tmset
+      val dependencies = replay_free_variables "with_definition_dependency" rhs
       val entry = (definition, lhs, rhs,
         HOLset.member (dependencies, lhs), name_on_left)
     in
@@ -8085,7 +8121,8 @@ local
                           val bit_set = HOLset.addList
                             (HOLset.empty Term.var_compare, bits)
                           val word_variables =
-                            Term.FVL_dag [word] Term.empty_tmset
+                            replay_free_variables
+                              "checked_word_list_definition" word
                         in
                           HOLset.numItems bit_set = width andalso
                           List.all
@@ -8225,7 +8262,7 @@ local
           let
             fun summarize (entry as (_, _, residue, _, _)) =
               (entry, HOLset.intersection
-                (Term.FVL_dag [residue] Term.empty_tmset, def_set))
+                (replay_free_variables "remove_definitions" residue, def_set))
             val summaries = List.map summarize entries
             val graph = HOLset.foldl
               (fn (name, graph) =>
@@ -8468,6 +8505,7 @@ in
   (* For unit tests *)
   val hypothesis_theorem_for_test = z3_hypothesis_theorem
   val hypothesis_theorem_with_for_test = z3_hypothesis_theorem_with
+  val hypothesis_has_free_variables_for_test = replay_has_free_variables
   val hypothesis_char_next_route_for_test = hypothesis_char_next_route
   val asserted_membership_diagnostic = asserted_membership_diagnostic
   val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
@@ -8483,7 +8521,8 @@ in
   val checked_word_list_definition_for_test = checked_word_list_definition
   fun definition_dependency_summary_for_test definition =
     let
-      val variables = Term.FVL_dag [definition] Term.empty_tmset
+      val variables = replay_free_variables
+        "definition_dependency_summary_for_test" definition
     in
     with_definition_dependency variables definition
       (fn ((_, _, _, self_dependent, _), dependencies) =>
@@ -8750,6 +8789,7 @@ in
     allowed_asserted_hyps = allowed_asserted_hyps,
     asserted_hyps = Term.empty_tmset,
     definition_hyps = Term.empty_tmset,
+    definition_occurrences_rev = NONE,
     flexible_vars = proof_vars proof,
     thm_cache = Net.empty,
     large_thm_cache = [],
@@ -9266,6 +9306,294 @@ in
           (profile "check_proof(total)" (check_proof_impl definitions)))) args
 
   fun check_proof args : Thm.thm = check_proof_with_definitions [] args
+
+  (* Direct graph replay remains additive until its specialized adapters and
+     complete certificate gates pass. The source validator transports only
+     the retained original goal and admitted original assumptions. *)
+  val replay_graph_root = Z3_GraphProofReplay.replay
+  val check_graph_proof = Z3_GraphProofReplay.check_proof
+  structure ReplayGraph = SmtReplayGraph
+
+  (* Keep the ordinary NNF pointwise/optional-lift policy. These are actual
+     completed child proofs; no Bound-local hypothesis is a parent source. *)
+  fun graph_bounded_nnf graph
+      ({rule,target,premises} : Z3_GraphProofReplay.nnf_request) =
+    let
+      val _ = if #replay_handler rule = "nnf_pos" orelse
+          #replay_handler rule = "nnf_neg" then () else
+        raise ERR "graph_bounded_nnf" "expected an NNF rule"
+      val conclusion = ReplayGraph.representative graph target
+      val inputs = List.map (fn (variables,theorem) =>
+        (List.map (ReplayGraph.representative graph) variables,theorem)) premises
+      val _ = Z3_GraphProofReplay.admit_nnf_terms
+        (conclusion :: List.concat (List.map (fn (variables,theorem) =>
+          Thm.concl theorem :: Thm.hyp theorem @ variables) inputs))
+      (* Even the optional FORALL_EQ output is admitted before attempting
+         that kernel operation. Non-equations have no prospective lift. *)
+      fun prospective ([],_) = NONE
+        | prospective (variables,theorem) =
+            case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
+              NONE => NONE
+            | SOME (left,right) =>
+                if Type.compare (Term.type_of left,Type.bool) <> EQUAL then NONE
+                else SOME (boolSyntax.mk_eq
+                    (boolSyntax.list_mk_forall (variables,left),
+                     boolSyntax.list_mk_forall (variables,right)))
+      fun admitted_lift (input as (_,theorem)) =
+        case prospective input of NONE => input
+        | SOME output =>
+            (Z3_GraphProofReplay.admit_nnf_terms [output];input)
+            handle Feedback.HOL_ERR _ => ([],theorem)
+      val admitted_inputs = List.map admitted_lift inputs
+      val theorem = z3_nnf_bound
+        (fn ((),theorems,target) => nnf_prove (theorems,target))
+        ((),admitted_inputs,conclusion)
+      val _ = Z3_GraphProofReplay.admit_nnf_terms
+        (Thm.concl theorem :: Thm.hyp theorem)
+    in SOME theorem end
+
+  (* This compatibility route receives only fully admitted small laws and
+     arguments. It proves a closed conditional lemma before graph assembly;
+     it never receives an expanded large premise theorem. Larger inputs stay
+     with their graph rule adapter. *)
+  fun graph_bounded_local_law graph definitions
+      (proof : Z3_GraphProofParser.proof)
+      ({rule,metadata,target,premises,arguments,law}
+        : Z3_GraphProofReplay.local_request) =
+    let
+      val limit = SmtResource.max_bitblast_term_nodes
+      fun admitted node =
+        case ReplayGraph.unfolded_nodes graph
+            ReplayGraph.BinderInclusiveNodes limit node of
+          SOME size => size <= limit
+        | NONE => false
+      val nodes = law :: List.map #node arguments
+      val _ = if List.all admitted nodes then () else raise Conv.UNCHANGED
+      val type_admission = SmtWordGraph.new_type_admission ()
+      val _ = List.app (fn node => SmtWordGraph.admit_primitive_type
+        type_admission (ReplayGraph.type_of graph node))
+        (ReplayGraph.block_reachable graph nodes)
+      val conclusion = ReplayGraph.representative graph target
+      val premise_terms = List.map (ReplayGraph.representative graph) premises
+      val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
+      fun one constructor = case pts of
+          [premise] => constructor (premise,conclusion)
+        | _ => raise ERR "graph_bounded_local_law" "wrong premise arity"
+      fun indexed constructor = constructor
+        (case metadata of SOME value => value
+          | NONE => raise ERR "graph_bounded_local_law"
+              "missing theory lemma metadata",pts,conclusion)
+      val pt = case #replay_handler rule of
+          "apply_def" => one APPLY_DEF
+        | "commutativity" => COMMUTATIVITY conclusion
+        | "def_axiom" => DEF_AXIOM conclusion
+        | "elim_unused" => ELIM_UNUSED conclusion
+        | "intro_def" => INTRO_DEF conclusion
+        | "nnf_neg" => NNF_NEG (pts,conclusion)
+        | "nnf_pos" => NNF_POS (pts,conclusion)
+        | "quant_inst" => QUANT_INST
+            (List.map (ReplayGraph.representative graph o #node)
+              arguments,conclusion)
+        | "rewrite" => REWRITE conclusion
+        | "skolem" => SKOLEM conclusion
+        | "th_lemma[arith]" => indexed TH_LEMMA_ARITH
+        | "th_lemma[array]" => indexed TH_LEMMA_ARRAY
+        | "th_lemma[basic]" => indexed TH_LEMMA_BASIC
+        | "th_lemma[bv]" => indexed TH_LEMMA_BV
+        | "th_lemma[datatype]" => indexed TH_LEMMA_DATATYPE
+        | "th_lemma[seq]" => indexed TH_LEMMA_SEQ
+        | "th_lemma[char]" => indexed TH_LEMMA_CHAR
+        | "th_lemma[advanced]" => indexed TH_LEMMA_ADVANCED
+        | _ => raise Conv.UNCHANGED
+      val vars = HOLset.addList (Term.empty_tmset,
+        List.map (ReplayGraph.representative graph) (#vars proof))
+      val ordinary = mk_proof
+        (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),vars,[],
+         #z3_version proof)
+      val theorem = replay_root_with_definitions_for_test definitions ordinary
+      val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) conclusion) theorem
+      val conditional = List.foldr (fn (term,theorem) =>
+        Thm.DISCH term theorem) exact premise_terms
+      val aligned = Thm.EQ_MP (Thm.ALPHA (Thm.concl conditional)
+        (ReplayGraph.representative graph law)) conditional
+    in if List.null (Thm.hyp aligned) then SOME aligned else NONE end
+    handle Conv.UNCHANGED => NONE
+
+  fun record_definition_occurrences (s : state) : state = {
+    allowed_asserted_hyps = #allowed_asserted_hyps s,
+    asserted_hyps = #asserted_hyps s,definition_hyps = #definition_hyps s,
+    definition_occurrences_rev = SOME [],flexible_vars = #flexible_vars s,
+    thm_cache = #thm_cache s,large_thm_cache = #large_thm_cache s,
+    var_set = #var_set s,bit_decompositions = #bit_decompositions s,
+    translation_definitions = #translation_definitions s,
+    skeleton_context = #skeleton_context s,word_context = #word_context s,
+    string_index_cache = #string_index_cache s,z3_version = #z3_version s}
+
+  fun replay_root_with_definition_occurrences definitions proof =
+    let
+      val initial = record_definition_occurrences
+        (initial_replay_state (proof_asserted_hyps proof) definitions proof)
+      val ((state,_),theorem) =
+        thm_of_proofterm ((initial,proof),ID 0) Lib.I
+    in {theorem = theorem,
+        definitions = List.rev
+          (Option.valOf (#definition_occurrences_rev state)),
+        asserted = HOLset.listItems (#asserted_hyps state),
+        translation_definitions = #translation_definitions state} end
+
+  (* Opt-in local compatibility bridge. The category comes only from
+     actual state_define calls, never from asserted or intro_def spelling.
+     This isolated bounded replay does not carry legacy state across nodes. *)
+  fun graph_bounded_recorded_local_law graph scope template_limit definitions
+      (proof : Z3_GraphProofParser.proof)
+      ({rule,metadata,target,premises,arguments,law}
+        : Z3_GraphProofReplay.local_request) =
+    let
+      val limit = Int.min
+        (template_limit,SmtResource.max_bitblast_term_nodes)
+      val _ = if limit > 0 then () else raise Conv.UNCHANGED
+      fun admitted node =
+        List.all (fn metric =>
+          case ReplayGraph.unfolded_nodes graph metric limit node of
+            SOME size => size <= limit | NONE => false)
+          [ReplayGraph.RawNodes,ReplayGraph.BinderInclusiveNodes]
+      val nodes = law :: List.map #node arguments
+      val _ = if List.all admitted nodes then () else raise Conv.UNCHANGED
+      val type_admission = SmtWordGraph.new_type_admission ()
+      val _ = List.app (fn node => SmtWordGraph.admit_primitive_type
+        type_admission (ReplayGraph.type_of graph node))
+        (ReplayGraph.block_reachable graph nodes)
+      val conclusion = ReplayGraph.representative graph target
+      val premise_terms = List.map (ReplayGraph.representative graph) premises
+      val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
+      fun one constructor = case pts of
+          [premise] => constructor (premise,conclusion)
+        | _ => raise ERR "graph_bounded_local_law" "wrong premise arity"
+      fun indexed constructor = constructor
+        (case metadata of SOME value => value
+          | NONE => raise ERR "graph_bounded_local_law"
+              "missing theory lemma metadata",pts,conclusion)
+      val pt = case #replay_handler rule of
+          "apply_def" => one APPLY_DEF
+        | "commutativity" => COMMUTATIVITY conclusion
+        | "def_axiom" => DEF_AXIOM conclusion
+        | "elim_unused" => ELIM_UNUSED conclusion
+        | "intro_def" => INTRO_DEF conclusion
+        | "nnf_neg" => NNF_NEG (pts,conclusion)
+        | "nnf_pos" => NNF_POS (pts,conclusion)
+        | "quant_inst" => QUANT_INST
+            (List.map (ReplayGraph.representative graph o #node)
+              arguments,conclusion)
+        | "rewrite" => REWRITE conclusion
+        | "skolem" => SKOLEM conclusion
+        | "th_lemma[arith]" => indexed TH_LEMMA_ARITH
+        | "th_lemma[array]" => indexed TH_LEMMA_ARRAY
+        | "th_lemma[basic]" => indexed TH_LEMMA_BASIC
+        | "th_lemma[bv]" => indexed TH_LEMMA_BV
+        | "th_lemma[datatype]" => indexed TH_LEMMA_DATATYPE
+        | "th_lemma[seq]" => indexed TH_LEMMA_SEQ
+        | "th_lemma[char]" => indexed TH_LEMMA_CHAR
+        | "th_lemma[advanced]" => indexed TH_LEMMA_ADVANCED
+        | _ => raise Conv.UNCHANGED
+      val vars = HOLset.addList (Term.empty_tmset,
+        List.map (ReplayGraph.representative graph) (#vars proof))
+      val ordinary = mk_proof
+        (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),vars,[],
+         #z3_version proof)
+      val produced = replay_root_with_definition_occurrences
+        definitions ordinary
+      val theorem = #theorem produced
+      val recorded = #definitions produced
+      val available = HOLset.addList (Term.empty_tmset,
+        recorded @ premise_terms)
+      val _ = if HOLset.isSubset (Thm.hypset theorem,available) then () else
+        raise ERR "graph_bounded_recorded_local_law"
+          "legacy handler retained an unrecorded hypothesis"
+      (* Output definitions are admitted before graph import/type/ground
+         operations. The bounded legacy handler has already run; this is not
+         a claim of prospective admission for unknown generated definitions. *)
+      fun admitted_term term =
+        let fun walk ([],_) = ()
+              | walk (term :: rest,count) =
+                  if count >= limit then raise Conv.UNCHANGED
+                  else if Term.is_comb term then
+                    let val (left,right) = Term.dest_comb term in
+                      walk (left :: right :: rest,count+1) end
+                  else if Term.is_const term orelse Term.is_var term then
+                    walk (rest,count+1)
+                  else raise Conv.UNCHANGED
+        in walk ([term],0) end
+      val _ = List.app admitted_term recorded
+      (* No fresh variable authority. Bind only the original actual parsed
+         solver-variable nodes; ordinary Source variables keep their role. *)
+      val known = List.foldl (fn (node,set) => HOLset.addList (set,
+        Term.free_vars (ReplayGraph.representative graph node)))
+        Term.empty_tmset (law :: #vars proof)
+      val _ = List.app (fn term => if HOLset.isSubset
+        (HOLset.addList (Term.empty_tmset,Term.free_vars term),known)
+        then () else raise Conv.UNCHANGED) recorded
+      val child = ReplayGraph.new_scope graph scope
+        (List.map (fn node =>
+          (ReplayGraph.representative graph node,node)) (#vars proof))
+      fun import () =
+        let
+          val plans = ReplayGraph.plan_imports graph child limit recorded
+          val _ = List.app (fn plan => List.app
+            (SmtWordGraph.admit_primitive_type type_admission)
+            (ReplayGraph.import_types plan)) plans
+          val imported = List.map ReplayGraph.execute_import plans
+          val rehomed = List.map
+            (ReplayGraph.rehome graph scope o #node) imported
+        in List.map #node rehomed end
+      val original_nodes = import () handle error =>
+        ((ReplayGraph.close_scope graph child handle _ => ());raise error)
+      val _ = ReplayGraph.close_scope graph child
+      val actual_law = SmtReplayRules.implication graph scope
+        (original_nodes @ premises) target
+      val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) conclusion) theorem
+      val conditional = List.foldr (fn (term,theorem) =>
+        Thm.DISCH term theorem) exact (recorded @ premise_terms)
+      val aligned = Thm.EQ_MP (Thm.ALPHA (Thm.concl conditional)
+        (ReplayGraph.representative graph actual_law)) conditional
+    in if List.null (Thm.hyp aligned) then
+         SOME {definitions = original_nodes,theorem = aligned}
+       else NONE end
+    handle Conv.UNCHANGED => NONE
+
+  fun check_graph_proof_with_definitions definitions graph scope
+      args =
+    with_def_axiom_cache_boundary
+      (SmtResource.with_e0_invocation (with_e0_replay_boundary
+        (fn {sources,proof,template_limit} =>
+          Z3_GraphProofReplay.check_proof_using graph scope
+            {sources = sources,proof = proof,template_limit = template_limit,
+             local_law = graph_bounded_local_law graph definitions proof,
+             nnf = graph_bounded_nnf graph})))
+      args
+
+  fun check_recorded_graph_translation_packet recorded
+      {sources,template_limit} =
+    let
+      val packet = Z3_GraphProofParser.recorded_packet recorded
+      val graph = SmtLib_GraphProof.graph packet
+      val scope = SmtLib_GraphProof.scope packet
+      val proof = SmtLib_GraphProof.proof packet
+      val definitions =
+        Z3_GraphProofParser.recorded_translation_definitions recorded
+      val _ = List.app (fn node =>
+        (ignore (ReplayGraph.type_of graph node);
+         ReplayGraph.validate_scope graph (ReplayGraph.node_scope graph node)))
+        (SmtReplaySource.denied_goal_node sources ::
+         SmtReplaySource.assumption_nodes sources)
+    in with_def_axiom_cache_boundary
+      (SmtResource.with_e0_invocation (with_e0_replay_boundary
+        (fn () => Z3_GraphProofReplay.check_proof_with_recorded_definitions_using
+          graph scope {sources = sources,proof = proof,
+            template_limit = template_limit,
+            local_law = graph_bounded_local_law graph definitions proof,
+            recorded_law = graph_bounded_recorded_local_law
+              graph scope template_limit definitions proof,
+            nnf = graph_bounded_nnf graph}))) () end
 
 end  (* local *)
 

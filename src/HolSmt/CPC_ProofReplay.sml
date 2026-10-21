@@ -3,10 +3,51 @@
 structure CPC_ProofReplay =
 struct
 
+  open CPC_GraphClosedPrivateComponent
+  open CPC_GraphProofReplay CPC_GraphLexicalTransport
+  open SmtReplayDependencies
+  local open SmtReplaySupport SmtReplayRules in end
+
 local
   open CPC_Proof
 
   val ERR = Feedback.mk_HOL_ERR "CPC_ProofReplay"
+
+  (* Actual CPC operation events only; never graph-node or P-edge proxies.
+     Default NONE. Observation neither changes proof routes nor grants Work. *)
+  type operation_statistics =
+    {inst_calls : IntInf.int,inst_type_calls : IntInf.int,
+     replay_step_calls : IntInf.int,premise_edges : IntInf.int,
+     cache_hits : IntInf.int,cache_misses : IntInf.int}
+  type operation_fields =
+    {inst : IntInf.int ref,inst_type : IntInf.int ref,
+     steps : IntInf.int ref,premises : IntInf.int ref,
+     hits : IntInf.int ref,misses : IntInf.int ref}
+  val operation_observation = ref (NONE : operation_fields option)
+  fun observe_operation select = case !operation_observation of NONE => ()
+    | SOME fields => let val count = select fields
+                    in count := !count + 1 end
+  fun observed_inst substitution theorem =
+    (observe_operation #inst;Thm.INST substitution theorem)
+  fun observed_inst_type substitution theorem =
+    (observe_operation #inst_type;Thm.INST_TYPE substitution theorem)
+  fun with_operation_statistics_internal action =
+    let
+      val _ = case !operation_observation of NONE => ()
+        | SOME _ => raise ERR "operation_statistics" "observation reentry"
+      val fields : operation_fields =
+        {inst = ref 0,inst_type = ref 0,steps = ref 0,premises = ref 0,
+         hits = ref 0,misses = ref 0}
+      val _ = operation_observation := SOME fields
+      val outcome = Exn.capture action ()
+      val _ = operation_observation := NONE
+    in case outcome of Exn.Exn primary => raise primary
+       | Exn.Res result =>
+         (result,{inst_calls = !(#inst fields),
+           inst_type_calls = !(#inst_type fields),
+           replay_step_calls = !(#steps fields),
+           premise_edges = !(#premises fields),cache_hits = !(#hits fields),
+           cache_misses = !(#misses fields)} : operation_statistics) end
 
   val rare_seq_contains_refl = Library.prove
     (``!(x:'a list). IS_SUBLIST x x``,
@@ -712,6 +753,7 @@ local
               (commit_rejections context_rejections;
                #hits (#cache_stats state) :=
                  !(#hits (#cache_stats state)) + 1;
+               observe_operation #hits;
                profile_event "CPC(cache:hit)";
                if hypfree then profile_event "CPC(cache:hypfree_hit)"
                else ();
@@ -720,6 +762,7 @@ local
               (commit_rejections context_rejections;
                #misses (#cache_stats state) :=
                  !(#misses (#cache_stats state)) + 1;
+               observe_operation #misses;
                profile_event "CPC(cache:miss)";
                raise ERR "cached_thm"
                  "no alpha-identical cached CPC theorem")
@@ -2181,7 +2224,7 @@ local
             ("could not prove abstract implication " ^
              Library.term_to_string abstract_implication ^ "; " ^
              Feedback.message_of holerr)
-      val concrete_theorem = Thm.INST
+      val concrete_theorem = observed_inst
         (List.map (fn (variable, atom) =>
           {redex = variable, residue = atom}) replacements)
         abstract_theorem
@@ -2492,8 +2535,18 @@ local
             raise Conv.UNCHANGED
           val () = profile_event "CPC(canon:translator-definition)"
         in theorem end
+      fun dependency_binder_admission binder =
+        (ignore (SmtResource.term_children binder);
+         SOME SmtResource.max_bv_replay_term_nodes)
+      fun has_free_variables current =
+        case SmtReplayDependencies.source_presence
+            {dag_limit = Option.valOf Int.maxInt,
+             admit_binder = dependency_binder_admission} current of
+          SOME answer => answer
+        | NONE => raise ERR "strong_cpc_canon_conv"
+            "free-variable presence is unknown after dependency admission"
       fun finish current =
-        if not (Term.has_free_vars current) then
+        if not (has_free_variables current) then
           bossLib.SIMP_CONV (bossLib.srw_ss ())
             [HolSmtTheory.smt_rdiv_eq_div,
              intrealTheory.INT_FLOOR] current
@@ -3229,6 +3282,7 @@ local
 
   fun conjunction_source_name ParsedConjunction = "parsed"
     | conjunction_source_name AndIntroConjunction = "and_intro"
+    | conjunction_source_name ProcessScopeConjunction = "process_scope"
     | conjunction_source_name ArithReductionConjunction =
         "arith_reduction"
     | conjunction_source_name EqResolveConjunction = "eq_resolve"
@@ -3371,7 +3425,7 @@ local
       val substitutions = List.map
         (fn (atom, variable) => {redex = variable, residue = atom})
         (!atoms)
-      val instantiated = Thm.INST substitutions implication_theorem
+      val instantiated = observed_inst substitutions implication_theorem
     in
       List.foldl (fn (premise, theorem) => Thm.MP theorem premise)
         instantiated premises
@@ -3473,7 +3527,7 @@ local
     case List.filter (fn variable =>
         is_smtstr_type (Term.type_of variable))
       (Term.free_vars (Thm.concl theorem)) of
-      [variable] => Thm.INST
+      [variable] => observed_inst
         [{redex = variable, residue = sequence}] theorem
     | _ => raise ERR "instantiate_smtstr" "expected one String variable"
 
@@ -3863,7 +3917,7 @@ local
           val variable = Term.genvar Type.bool
           val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
             (boolSyntax.mk_neg (boolSyntax.mk_neg variable), variable))
-        in Thm.INST [{redex = variable, residue = p}] law end
+        in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-impl-elim", [left, right]) =>
         let
           val left_variable = Term.genvar Type.bool
@@ -3873,7 +3927,7 @@ local
              boolSyntax.mk_disj
                (boolSyntax.mk_neg left_variable, right_variable)))
         in
-          Thm.INST
+          observed_inst
             [{redex = left_variable, residue = left},
              {redex = right_variable, residue = right}] law
         end
@@ -3883,13 +3937,13 @@ local
           val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
             (boolSyntax.mk_eq (variable, boolSyntax.F),
              boolSyntax.mk_neg variable))
-        in Thm.INST [{redex = variable, residue = p}] law end
+        in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-eq-true", [p]) =>
         let
           val variable = Term.genvar Type.bool
           val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
             (boolSyntax.mk_eq (variable, boolSyntax.T), variable))
-        in Thm.INST [{redex = variable, residue = p}] law end
+        in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-xor-comm", [left, right]) =>
         let
           val left_variable = Term.genvar Type.bool
@@ -3898,7 +3952,7 @@ local
             (bool_xor (left_variable, right_variable),
              bool_xor (right_variable, left_variable)))
         in
-          Thm.INST
+          observed_inst
             [{redex = left_variable, residue = left},
              {redex = right_variable, residue = right}] law
         end
@@ -3907,14 +3961,14 @@ local
           val variable = Term.genvar Type.bool
           val law = xor_tautology (boolSyntax.mk_eq
             (bool_xor (variable, boolSyntax.F), variable))
-        in Thm.INST [{redex = variable, residue = p}] law end
+        in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-xor-true", [p]) =>
         let
           val variable = Term.genvar Type.bool
           val law = xor_tautology (boolSyntax.mk_eq
             (bool_xor (variable, boolSyntax.T),
              boolSyntax.mk_neg variable))
-        in Thm.INST [{redex = variable, residue = p}] law end
+        in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-impl-false1", [p]) =>
         Tactical.TAC_PROOF
           (([], boolSyntax.mk_eq
@@ -4077,7 +4131,7 @@ local
             let
               val (left, right) = boolSyntax.dest_eq target
               val variable = Term.genvar Type.bool
-              fun instantiate law operand = Thm.INST
+              fun instantiate law operand = observed_inst
                 [{redex = variable, residue = operand}] law
               val conj_left_law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
                 (boolSyntax.mk_conj (boolSyntax.F, variable), boolSyntax.F))
@@ -4496,7 +4550,7 @@ local
           val substitutions = List.map
             (fn (term, variable) => {redex = variable, residue = term})
             (Redblackmap.listItems (!atoms))
-        in Thm.INST substitutions generic end
+        in observed_inst substitutions generic end
     in
       if reflexive then Thm.REFL (Lib.fst (boolSyntax.dest_eq target))
       else (boolean_aci ()
@@ -4640,7 +4694,8 @@ local
         | _ => ()
       fun traced name prover argument =
         let
-          val timer = Timer.startRealTimer ()
+          val timer = if trace_large then SOME (Timer.startRealTimer ())
+            else NONE
           val _ = if trace_large then
               Feedback.HOL_MESG ("CPCBVROUTE start=" ^ name)
             else ()
@@ -4648,7 +4703,7 @@ local
           val _ = if trace_large then
               Feedback.HOL_MESG
                 ("CPCBVROUTE done=" ^ name ^ " time=" ^
-                 Time.toString (Timer.checkRealTimer timer))
+                 Time.toString (Timer.checkRealTimer (Option.valOf timer)))
             else ()
         in theorem end
       fun schematic_one_bit () =
@@ -4668,7 +4723,7 @@ local
             Tactical.THEN
               (Tactic.BOOL_CASES_TAC variable, bossLib.EVAL_TAC))
         in
-          Thm.INST [{redex = variable, residue = bit_term}]
+          observed_inst [{redex = variable, residue = bit_term}]
             template_theorem
         end
       fun schematic_boolean_skeleton () =
@@ -4708,7 +4763,7 @@ local
           val substitutions = List.map
             (fn (term, variable) => {redex = variable, residue = term})
             (!atoms)
-        in Thm.INST substitutions theorem end
+        in observed_inst substitutions theorem end
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "Boolean skeleton is not valid"
       fun schematic_word_constructors () =
@@ -4875,7 +4930,7 @@ local
           val substitutions = ListPair.mapEq
             (fn (variable, bit) => {redex = variable, residue = bit})
             (variables, bits)
-        in Thm.INST substitutions template_theorem end
+        in observed_inst substitutions template_theorem end
       fun schematic_bvite_words () =
         let
           fun is_holsmt_xor term =
@@ -5008,7 +5063,7 @@ local
           val circuit_theorem = HolSatLib.SAT_PROVE circuit_goal
             handle HolSatLib.SAT_cex _ =>
               raise ERR "bv_poly_norm" "Boolean circuit is not valid"
-          val instantiated_circuit = Thm.INST (!circuit_substitutions)
+          val instantiated_circuit = observed_inst (!circuit_substitutions)
             circuit_theorem
           fun discharge ((term, _), (index, theorem)) =
             let
@@ -5072,7 +5127,7 @@ local
             (fn (variable, bit) => {redex = variable, residue = bit})
             (variables, bits)
         in
-          Thm.INST substitutions template_theorem
+          observed_inst substitutions template_theorem
         end
       fun schematic_bvcomp () =
         let
@@ -5118,7 +5173,7 @@ local
             (fn (variable, bit) => {redex = variable, residue = bit})
             (variables, bits)
         in
-          Thm.INST substitutions template_theorem
+          observed_inst substitutions template_theorem
         end
       fun boolean_word_normalization () =
         let
@@ -5447,7 +5502,7 @@ local
       val _ = List.length definitions <= 1200 orelse
         raise ERR "circuit" "Boolean circuit exceeds the direct SAT limit"
       val law = SmtResource.with_bitblast_step_time label prover template
-      val theorem = Thm.INST substitutions law
+      val theorem = observed_inst substitutions law
       val result =
         if List.null definitions then theorem
         else
@@ -6255,7 +6310,7 @@ local
                 | _ => raise ERR name "not an equivalence CNF rule"
               val law = tautLib.TAUT_PROVE clause
             in
-              Thm.INST
+              observed_inst
                 [{redex = left_variable, residue = left},
                  {redex = right_variable, residue = right}] law
             end
@@ -6288,7 +6343,7 @@ local
                 | _ => raise ERR name "not an XOR CNF rule"
               val law = xor_tautology clause
             in
-              Thm.INST
+              observed_inst
                 [{redex = left_variable, residue = left},
                  {redex = right_variable, residue = right}] law
             end
@@ -6318,7 +6373,7 @@ local
             else
               mk_disj_terms (boolSyntax.mk_neg tree :: leaves)
         in
-          Thm.INST instances (tautLib.TAUT_PROVE clause)
+          observed_inst instances (tautLib.TAUT_PROVE clause)
         end
       fun cnf_and_pos_prove () =
         case args of
@@ -7504,7 +7559,7 @@ local
                      Int.toString width);
                    TextIO.flushOut TextIO.stdOut)
                 else ()
-              val schema = Thm.INST_TYPE
+              val schema = observed_inst_type
                 [{redex = Type.alpha,
                   residue = fcpSyntax.mk_int_numeric_type width}]
                 blastTheory.BITWISE_MUL
@@ -7680,7 +7735,7 @@ local
                       (String.extract (digits, 1, NONE))) orelse
                   raise Conv.UNCHANGED
                 val (variable, law) = mod_bit_law width index
-              in Thm.INST
+              in observed_inst
                    [{redex = variable, residue = value}] law end
           | NONE =>
               (case Lib.total numSyntax.dest_plus number of
@@ -7688,7 +7743,7 @@ local
                    let
                      val (left_var, right_var, law) =
                        add_bit_law index
-                   in Thm.INST
+                   in observed_inst
                         [{redex = left_var, residue = left},
                          {redex = right_var, residue = right}] law
                    end
@@ -7755,7 +7810,7 @@ local
                   val _ = projection_laws :=
                     (head, index, variables, law) :: !projection_laws
                 in (variables, law) end
-          val theorem = Thm.INST
+          val theorem = observed_inst
             (ListPair.mapEq (fn (variable, argument) =>
               {redex = variable, residue = argument})
               (variables, arguments)) law
@@ -7803,7 +7858,7 @@ local
                   val _ = word_bit_laws :=
                     (head, index, variables, law) :: !word_bit_laws
                 in (variables, law) end
-          val theorem = Thm.INST
+          val theorem = observed_inst
             (ListPair.mapEq (fn (variable, argument) =>
               {redex = variable, residue = argument})
               (variables, arguments)) law
@@ -7834,7 +7889,7 @@ local
                   val _ = word_relation_laws :=
                     (head, variables, law) :: !word_relation_laws
                 in (variables, law) end
-          val theorem = Thm.INST
+          val theorem = observed_inst
             (ListPair.mapEq (fn (variable, argument) =>
               {redex = variable, residue = argument})
               (variables, arguments)) law
@@ -8034,7 +8089,7 @@ local
                         if bitblast then
                           let
                             val _ = Option.isSome
-                                (Term.term_size_bounded
+                                (SmtReplayImport.bounded_raw_size
                                   SmtResource.max_skeleton_replay_dag_nodes
                                   current) orelse
                               raise Conv.UNCHANGED
@@ -8134,7 +8189,8 @@ local
                             SmtResource.dag_nodes_up_to (maximum + 1)
                               residue <= maximum andalso
                             Option.isSome
-                              (Term.term_size_bounded maximum residue)
+                              (SmtReplayImport.bounded_raw_size
+                                maximum residue)
                         in
                           if bounded then internal_with (SOME theorem)
                             (circuit residue)
@@ -8187,7 +8243,7 @@ local
                       projections)
                   val bounded = List.length (List.filter
                     (fn (term, _) => Option.isSome
-                      (Term.term_size_bounded
+                      (SmtReplayImport.bounded_raw_size
                         SmtResource.max_skeleton_replay_dag_nodes
                         term)) projections)
                   val closed = List.length (List.filter
@@ -8354,7 +8410,7 @@ local
         else ()
       val theorem = SmtResource.with_resource_step_time
         "BitVector" "cpc-fp-circuit-instantiation"
-        (fn () => Thm.INST (!substitutions) law) ()
+        (fn () => observed_inst (!substitutions) law) ()
       val alignment_memo = Array.array
         (boolean_dag_bucket_count,
          [] : (Term.term * Term.term * Thm.thm) list)
@@ -8401,7 +8457,7 @@ local
         else
           let
             val instantiated_equivalence =
-              Thm.INST (!substitutions) cnf_equivalence
+              observed_inst (!substitutions) cnf_equivalence
             val antecedent = boolSyntax.lhs
               (Thm.concl instantiated_equivalence)
             fun prove_definition
@@ -8762,7 +8818,7 @@ local
             (fn (source, variable) =>
               {redex = variable, residue = source})
             (!sources, variables)
-        in Thm.INST substitutions schematic_proof end
+        in observed_inst substitutions schematic_proof end
         handle HolSatLib.SAT_cex _ =>
           raise ERR "trust" "FP/word bridge residue is not valid"
              | Conv.UNCHANGED =>
@@ -8820,7 +8876,7 @@ local
           val second = Term.genvar word_type
           val schema_goal = boolSyntax.mk_eq (first, second)
           val schema = SmtWordGraph.normalize schema_goal
-          val normalized = Thm.INST
+          val normalized = observed_inst
             [{redex = first, residue = left},
              {redex = second, residue = right}] schema
           val _ = Term.aconv (boolSyntax.lhs (Thm.concl normalized))
@@ -8849,7 +8905,7 @@ local
             (fn (source, variable) =>
               {redex = variable, residue = source})
             (!sources, source_variables)
-        in Thm.INST substitutions schematic end
+        in observed_inst substitutions schematic end
         handle HolSatLib.SAT_cex _ =>
           raise ERR "trust" "FP word circuit is not valid"
       fun replay_fp_atom_bridge_uncached () =
@@ -9259,7 +9315,7 @@ local
                               (generic_left, generic_right, generic_law)
                             end
                     in
-                      SOME (Thm.INST
+                      SOME (observed_inst
                         [{redex = left_var, residue = left},
                          {redex = right_var, residue = right}] law)
                     end
@@ -9359,7 +9415,7 @@ local
                       (!fp_canonical_fact_laws, Term.type_of source)
                   else NONE of
                   SOME (generic_source, theorem) =>
-                    Thm.INST
+                    observed_inst
                       [{redex = generic_source, residue = source}] theorem
                 | NONE => let
                   val base = Drule.ISPECL [source]
@@ -9407,7 +9463,7 @@ local
                 (fn (source, variable) =>
                   {redex = variable, residue = source})
                 (!sources, source_variables)
-            in Thm.INST substitutions schematic end
+            in observed_inst substitutions schematic end
         handle HolSatLib.SAT_cex _ => raise ERR "trust"
           "normalized FP atom bridge is not valid"
              | HolSatLib.SAT_satisfiable _ => raise ERR "trust"
@@ -9667,7 +9723,7 @@ local
                     [{redex = pivot, residue = variable}] target
                   val _ = report "schematic goal ready"
                   val theorem = case_proof variable goal
-                in Thm.INST
+                in observed_inst
                   [{redex = variable, residue = pivot}] theorem end
               val _ = report "schematic attempt"
             in
@@ -9928,13 +9984,16 @@ local
 
   fun replay_process_scope strong_canon args prems =
     let
-      val process_scope_timer = Timer.startRealTimer ()
-      fun process_scope_mark phase =
+      val process_scope_timer =
         if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
-          Feedback.HOL_MESG
-            ("CPCPROCESSSCOPE phase=" ^ phase ^ " time=" ^
-             Time.toString (Timer.checkRealTimer process_scope_timer))
-        else ()
+          SOME (Timer.startRealTimer ()) else NONE
+      fun process_scope_mark phase = case process_scope_timer of NONE => ()
+        | SOME timer =>
+            if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
+              Feedback.HOL_MESG
+                ("CPCPROCESSSCOPE phase=" ^ phase ^ " time=" ^
+                 Time.toString (Timer.checkRealTimer timer))
+            else ()
       val premise = expect_one_premise "process_scope" prems
       (* The CPC printer records the original body conclusion as its sole
          argument.  Stop uncurrying at that exact term: the body itself may
@@ -10023,6 +10082,147 @@ local
       if Term.aconv (Thm.concl result) target then result
       else raise ERR "process_scope" "direct scope normalization shape mismatch"
     end
+
+  (* Fixed owned producer. Record the topology while constructing THIS
+     scope result; never recover n-ary grouping from its checked conclusion.
+     Every incoming antecedent remains one occurrence, with its original
+     child provenance. A single antecedent introduces no AND constructor. *)
+  fun replay_process_scope_with_boundary strong_canon located_args
+      premise_steps =
+    let
+      val args = List.map (#term : located_term -> Term.term) located_args
+      val prems = List.map step_theorem premise_steps
+      val process_scope_timer =
+        if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
+          SOME (Timer.startRealTimer ()) else NONE
+      fun process_scope_mark phase = case process_scope_timer of NONE => ()
+        | SOME timer =>
+            if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
+              Feedback.HOL_MESG
+                ("CPCPROCESSSCOPE phase=" ^ phase ^ " time=" ^
+                 Time.toString (Timer.checkRealTimer timer))
+            else ()
+      val premise = expect_one_premise "process_scope" prems
+      (* The CPC printer records the original body conclusion as its sole
+         argument.  Stop uncurrying at that exact term: the body itself may
+         be an implication, which is not an additional scoped assumption. *)
+      val scope_result = case args of [tm] => tm
+        | _ => raise ERR "process_scope" "expected one CPC :args term"
+      fun dest_scope tm acc =
+        if shared_aconv tm scope_result then (List.rev acc, NONE)
+        else if boolSyntax.is_imp_only tm andalso
+                not (boolSyntax.is_imp_only scope_result) then
+          let val (antecedent, consequent) = boolSyntax.dest_imp tm
+          in dest_scope consequent (antecedent :: acc) end
+        else if shared_aconv
+          (canonical_term tm) (canonical_term scope_result)
+        then (List.rev acc, SOME tm)
+        else if boolSyntax.is_imp_only tm then
+          let val (antecedent, consequent) = boolSyntax.dest_imp tm
+          in dest_scope consequent (antecedent :: acc) end
+        else (List.rev acc, SOME tm)
+      fun mk_conj [tm] = tm
+        | mk_conj (tm :: rest) = boolSyntax.mk_conj (tm, mk_conj rest)
+        | mk_conj [] = raise ERR "process_scope" "empty scope implication"
+      val (antecedents, normalized_result) =
+        dest_scope (Thm.concl premise) []
+      val _ = process_scope_mark "dest"
+      val conjunction = mk_conj antecedents
+      val incoming = case premise_steps of [premise] =>
+          step_provenance premise
+        | _ => raise ERR "process_scope" "expected actual premise record"
+      fun child_provenance provenance = case provenance of
+          ApplicationProvenance ("=>",[left,right]) => (left,right)
+        | _ => if definitely_no_conjunction provenance then
+            (AtomicProvenance,AtomicProvenance)
+          else (UnavailableProvenance
+            "actual scope antecedent has no retained child boundary",
+            UnavailableProvenance
+            "actual scope consequent has no retained child boundary")
+      fun record [] _ _ = []
+        | record (antecedent::rest) term provenance =
+            let val (left,right) = boolSyntax.dest_imp term
+                val _ = if shared_aconv left antecedent then () else
+                  raise ERR "process_scope"
+                    "actual scope antecedent differs from constructor recipe"
+                val (left_provenance,right_provenance) =
+                  child_provenance provenance
+            in left_provenance :: record rest right right_provenance end
+      val children = record antecedents (Thm.concl premise) incoming
+      val conjunction_provenance = case children of [one] => one
+        | [] => raise ERR "process_scope" "empty scope topology"
+        | _ => ConjunctionProvenance (ProcessScopeConjunction,children)
+      val body_provenance = case located_args of [body] => #provenance body
+        | _ => raise ERR "process_scope" "expected actual body argument"
+      val produced_provenance =
+        if Term.aconv scope_result boolSyntax.F then
+          ApplicationProvenance ("not",[conjunction_provenance])
+        else ApplicationProvenance
+          ("=>",[conjunction_provenance,body_provenance])
+      val target = if Term.aconv scope_result boolSyntax.F then
+        boolSyntax.mk_neg conjunction
+      else boolSyntax.mk_imp (conjunction, scope_result)
+      val conjunction_thm = Thm.ASSUME conjunction
+      fun conjunct_theorems expected theorem =
+        case expected of
+          [] => raise ERR "process_scope" "empty conjunction proof"
+        | [_] => [theorem]
+        | _ :: rest =>
+            Thm.CONJUNCT1 theorem ::
+            conjunct_theorems rest (Thm.CONJUNCT2 theorem)
+      val antecedent_theorems =
+        conjunct_theorems antecedents conjunction_thm
+      val applied = List.foldl
+        (fn (antecedent, implication) => Thm.MP implication antecedent)
+        premise antecedent_theorems
+      val _ = process_scope_mark "apply"
+      val normalized = case normalized_result of
+          NONE => applied
+        | SOME tm =>
+            let
+              fun bridge canon =
+                let
+                  val tm_norm = canon tm
+                  val result_norm = canon scope_result
+                in Thm.TRANS tm_norm (Thm.SYM result_norm) end
+              fun arithmetic_bridge () =
+                let
+                  val tm_norm = SmtReplayCanon.cpc_canon_conv tm
+                  val result_norm =
+                    SmtReplayCanon.cpc_canon_conv scope_result
+                  val normalized_tm = boolSyntax.rhs (Thm.concl tm_norm)
+                  val normalized_result =
+                    boolSyntax.rhs (Thm.concl result_norm)
+                  val middle = arith_prove
+                    (boolSyntax.mk_eq (normalized_tm, normalized_result))
+                in
+                  Thm.TRANS tm_norm
+                    (Thm.TRANS middle (Thm.SYM result_norm))
+                end
+              val bridge =
+                bridge SmtReplayCanon.cpc_canon_conv
+                handle Feedback.HOL_ERR _ =>
+                  (arithmetic_bridge ()
+                   handle Feedback.HOL_ERR _ =>
+                     (bridge strong_canon
+                      handle Feedback.HOL_ERR holerr =>
+                        raise ERR "process_scope"
+                          ("scope result canonicalization failed; local=" ^
+                           Library.term_to_string tm ^ "; expected=" ^
+                           Library.term_to_string scope_result ^ "; " ^
+                           Feedback.message_of holerr)))
+            in Thm.EQ_MP bridge applied end
+      val _ = process_scope_mark "normalize"
+      val discharged = Thm.DISCH conjunction normalized
+      val result =
+        if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
+        else discharged
+    in
+      if Term.aconv (Thm.concl result) target then
+        {theorem = result,provenance = produced_provenance}
+      else raise ERR "process_scope" "direct scope normalization shape mismatch"
+    end
+
 
   fun replay_not_and prems =
     let
@@ -10940,26 +11140,26 @@ local
                 val _ = count "proof-nodes" 1
                 val _ = count "proof-edges" (case p of
                     Member _ => 0 | Disjunction _ => 2 | _ => 1)
-                val assumption = Thm.ASSUME term
+                val assumption = SmtReplayRuleObservation.ASSUME term
                 val result = case p of
                     Member (_, path, bridge) =>
                       List.foldl
-                        (fn (Left right, th) => Thm.DISJ1 th right
-                          | (Right left, th) => Thm.DISJ2 left th)
+                        (fn (Left right, th) => SmtReplayRuleObservation.DISJ1 th right
+                          | (Right left, th) => SmtReplayRuleObservation.DISJ2 left th)
                         (case bridge of NONE => assumption
-                         | SOME eq => Thm.EQ_MP eq assumption) path
+                         | SOME eq => SmtReplayRuleObservation.EQ_MP eq assumption) path
                   | Disjunction (_, l, r) =>
                       let val (left, right) = boolSyntax.dest_disj term
-                      in Thm.DISJ_CASES assumption
-                        (Thm.MP (realize l) (Thm.ASSUME left))
-                        (Thm.MP (realize r) (Thm.ASSUME right)) end
+                      in SmtReplayRuleObservation.DISJ_CASES assumption
+                        (SmtReplayRuleObservation.MP (realize l) (SmtReplayRuleObservation.ASSUME left))
+                        (SmtReplayRuleObservation.MP (realize r) (SmtReplayRuleObservation.ASSUME right)) end
                   | Conjunction (_, first, sub) =>
-                      Thm.MP (realize sub)
-                        ((if first then Thm.CONJUNCT1 else Thm.CONJUNCT2)
+                      SmtReplayRuleObservation.MP (realize sub)
+                        ((if first then SmtReplayRuleObservation.CONJUNCT1 else SmtReplayRuleObservation.CONJUNCT2)
                           assumption)
                   | Conversion (_, bridge, sub) =>
-                      Thm.MP (realize sub) (Thm.EQ_MP bridge assumption)
-                val theorem = Thm.DISCH term result
+                      SmtReplayRuleObservation.MP (realize sub) (SmtReplayRuleObservation.EQ_MP bridge assumption)
+                val theorem = SmtReplayRuleObservation.DISCH term result
                 val _ = same (Thm.concl theorem)
                     (boolSyntax.mk_imp (term, target)) andalso
                     List.null (Thm.hyp theorem) orelse
@@ -11989,7 +12189,7 @@ local
                         (source, result) :: !schema_memo
                     in result end
               val law = schema_lemma source_schema
-              val instantiated = Thm.INST (!substitutions) law
+              val instantiated = observed_inst (!substitutions) law
             in Thm.MP instantiated theorem end
           fun semantic_taut_reorder theorem =
             let
@@ -12014,7 +12214,7 @@ local
                 in
                   case List.find same (!one_bit_laws) of
                     SOME (_, _, saved_word, law) =>
-                      Thm.INST [{redex = saved_word, residue = word}] law
+                      observed_inst [{redex = saved_word, residue = word}] law
                   | NONE =>
                       let
                         val bit = wordsSyntax.mk_word_bit
@@ -12279,7 +12479,7 @@ local
                   "abstract Boolean implication is not valid"
               val abstract_law = Thm.EQ_MP (Thm.SYM simplified)
                 truth_theorem
-              val law = Thm.INST (!substitutions) abstract_law
+              val law = observed_inst (!substitutions) abstract_law
               fun align left right =
                 Thm.TRANS (canonical_term_conv left)
                   (Thm.SYM (canonical_term_conv right))
@@ -12419,7 +12619,7 @@ local
               val _ = leaf_count <= 25 orelse raise ERR "resolution"
                 "direct Boolean alignment has too many leaves"
               val law = HolSatLib.SAT_PROVE template
-              val law = Thm.INST (!substitutions) law
+              val law = observed_inst (!substitutions) law
               val align = Thm.ALPHA
               val (law_source, law_target) =
                 boolSyntax.dest_imp (Thm.concl law)
@@ -12602,7 +12802,7 @@ local
               val law = List.foldr
                 (fn (premise, theorem) => Thm.DISCH premise theorem)
                 aligned abstract_prems
-              val law = Thm.INST (List.map
+              val law = observed_inst (List.map
                 (fn (term, variable) =>
                   {redex = variable, residue = term}) (!atoms)) law
               val result = List.foldl
@@ -12802,7 +13002,7 @@ local
               val law = List.foldr
                 (fn (premise, theorem) => Thm.DISCH premise theorem)
                 abstract_result abstract_prems
-              val instantiated = Thm.INST (!substitutions) law
+              val instantiated = observed_inst (!substitutions) law
             in List.foldl
               (fn (premise, theorem) => Thm.MP theorem premise)
               instantiated prems end
@@ -12878,7 +13078,7 @@ local
                 abstract_prems
               val law = SmtResource.with_bitblast_step_time
                 "cpc-resolution-dynamic-schema" HolSatLib.SAT_PROVE goal
-              val instantiated = Thm.INST (!substitutions) law
+              val instantiated = observed_inst (!substitutions) law
               val result = List.foldl (fn (premise, theorem) =>
                 Thm.MP theorem premise) instantiated prems
             in
@@ -13046,7 +13246,7 @@ local
                           val step = resolve_step accumulated next pivot
                           val step_substitutions = substitutions_for
                             [accumulated, next, Thm.concl step]
-                          val concrete_step = Thm.INST
+                          val concrete_step = observed_inst
                             step_substitutions step
                           fun discharge premise expected theorem =
                             (Drule.PROVE_HYP premise theorem
@@ -13091,7 +13291,7 @@ local
                          (boolSyntax.mk_imp (resolved, consequent)))
               val alignment_substitutions =
                 substitutions_for [resolved, consequent]
-              val concrete_alignment = Thm.INST
+              val concrete_alignment = observed_inst
                 alignment_substitutions alignment
               val concrete_antecedent =
                 Term.subst alignment_substitutions resolved
@@ -13106,7 +13306,7 @@ local
                   val goal = List.foldr boolSyntax.mk_imp consequent
                     abstracted_premises
                   val law = HolSatLib.SAT_PROVE goal
-                  val instantiated = Thm.INST (!substitutions) law
+                  val instantiated = observed_inst (!substitutions) law
                   fun apply ((abstracted, premise), theorem) =
                     let
                       val expected = Term.subst (!substitutions) abstracted
@@ -13369,7 +13569,7 @@ local
               val law = List.foldr
                 (fn (premise, theorem) => Thm.DISCH premise theorem)
                 resolved abstract_prems
-              val instantiated = Thm.INST (!substitutions) law
+              val instantiated = observed_inst (!substitutions) law
             in List.foldl
               (fn (premise, theorem) => Thm.MP theorem premise)
               instantiated prems end
@@ -13779,7 +13979,7 @@ local
                  abstract_formula normalized_target)
               val law = prove_boolean_dag_tautology_compact
                 "cpc-resolution-supported-schema" implication
-              val theorem = Thm.INST (!substitutions) law
+              val theorem = observed_inst (!substitutions) law
               val normalized_result = Thm.MP theorem normalized_supported
             in Thm.EQ_MP (Thm.SYM target_conversion) normalized_result end
           fun boolean_dag_convert_leaf term =
@@ -14452,7 +14652,7 @@ local
         case boolSyntax.strip_comb substring of
           (head, [string, start, count]) =>
             if same_const "smtstring" "smtstr_substr" head then
-              Thm.INST
+              observed_inst
                 [{redex = ``s : smtstr``, residue = string},
                  {redex = ``i : int``, residue = start},
                  {redex = ``n : int``, residue = count}]
@@ -14550,7 +14750,7 @@ local
                 val variable = Lib.singleton_of_list
                   (Term.free_vars (Thm.concl generic))
               in
-                Thm.INST [{redex = variable, residue = string}] generic
+                observed_inst [{redex = variable, residue = string}] generic
               end
             else raise ERR "string_eager_reduction"
               "unary argument has no checked eager-reduction schema"
@@ -14563,7 +14763,7 @@ local
           val variable = Lib.singleton_of_list (Term.free_vars
             (Thm.concl generic))
         in
-          Thm.INST [{redex = variable, residue = string}] generic
+          observed_inst [{redex = variable, residue = string}] generic
         end
       fun inferred_target () =
         case (name, args) of
@@ -14923,7 +15123,7 @@ local
                   val normalized_frozen =
                     Rewrite.PURE_REWRITE_RULE [hd_to_el0]
                       normalized_frozen
-                  val normalized = Thm.INST
+                  val normalized = observed_inst
                     [{redex = frozen, residue = selector},
                      {redex = protected_string, residue = string}]
                     normalized_frozen
@@ -15034,7 +15234,7 @@ local
                         (Term.free_vars string @ free_variables)
                         (Term.mk_var
                           ("re_unfold_pos_input", Term.type_of string))
-                      val choice_theorem = Thm.INST
+                      val choice_theorem = observed_inst
                         [{redex = regex_list_variable,
                           residue = regex_list},
                          {redex = string_variable,
@@ -15051,7 +15251,7 @@ local
                         (simpLib.++
                           (boolSimps.bool_ss, numSimps.REDUCE_ss))
                         [] choice_theorem
-                      val choice_theorem = Thm.INST
+                      val choice_theorem = observed_inst
                         [{redex = protected_string, residue = string}]
                         choice_theorem
                       val expected_premise = Lib.fst
@@ -17591,8 +17791,10 @@ local
          "; conclusion=" ^ conclusion_text)
     end
 
-  fun replay_step strong_canon state (step : step) =
+  fun replay_step_with_scope_boundary record_scope strong_canon state
+      (step : step) =
     let
+      val _ = observe_operation #steps
       val {id, conclusion = located_conclusion, rule, premises,
         args = located_args} = step
       val conclusion = Option.map
@@ -17602,6 +17804,9 @@ local
       val premise_steps = List.map
         (find_step "replay_step" state) premises
       val prems = List.map step_theorem premise_steps
+      val _ = case !operation_observation of NONE => ()
+        | SOME fields => #premises fields := !(#premises fields) +
+            IntInf.fromInt (List.length premise_steps)
       val premise_rules = List.map (lookup_rule state) premises
       fun opaque theorem =
         let
@@ -18809,8 +19014,9 @@ local
                                val dag_nodes = SmtResource.dag_nodes_up_to
                                  (max_exact_provenance_dag_nodes + 1) term
                                val tree_large =
-                                 not (Option.isSome (Term.term_size_bounded
-                                   max_exact_provenance_dag_nodes term))
+                                 not (Option.isSome
+                                   (SmtReplayImport.bounded_raw_size
+                                     max_exact_provenance_dag_nodes term))
                              in (dag_nodes, tree_large) end) prems)
                          val large = List.exists
                            (fn (dag_nodes, tree_large) =>
@@ -18905,7 +19111,7 @@ local
                         (max_exact_provenance_dag_nodes + 1) (#term source)
                       val exact_small =
                         dag_nodes <= max_exact_provenance_dag_nodes andalso
-                        Option.isSome (Term.term_size_bounded
+                        Option.isSome (SmtReplayImport.bounded_raw_size
                           (16 * max_exact_provenance_dag_nodes)
                           (#term source))
                     in
@@ -19194,8 +19400,19 @@ local
                      theorem
                end
            | "alpha_equiv" => opaque ( replay_alpha_equiv args)
-           | "process_scope" => opaque (
-               replay_process_scope strong_canon args prems)
+           | "process_scope" =>
+               (case record_scope of NONE =>
+                  opaque (replay_process_scope strong_canon args prems)
+                | SOME held =>
+                  let val produced = replay_process_scope_with_boundary
+                        strong_canon located_args premise_steps
+                      val result = exact_result
+                        (#provenance produced) (#theorem produced)
+                      (* Keep THIS genuine producer result before cache_step
+                         compacts irrelevant shells. No global cache gate is
+                         relaxed; actual clause/theorem identity is retained. *)
+                      val _ = held := SOME result
+                  in result end)
            | "not_and" => opaque ( replay_not_and prems)
            | "not_or_elim" => opaque ( replay_not_or_elim args prems)
            | "not_not_elim" =>
@@ -19414,6 +19631,10 @@ local
        theorem)
     end
 
+  (* All legacy/default entries retain the original opaque scope result. *)
+  fun replay_step strong_canon state step =
+    replay_step_with_scope_boundary NONE strong_canon state step
+
   fun replay_commands initial commands =
     let
       fun profile_bound name =
@@ -19434,7 +19655,8 @@ local
       val trace_steps = trace_setting = SOME "1" orelse
         trace_setting = SOME "full"
       val traced_steps = ref 0
-      val replay_cpu_timer = Timer.startCPUTimer ()
+      val replay_cpu_timer = if trace_steps then
+        SOME (Timer.startCPUTimer ()) else NONE
       fun trace_profile () =
         let
           val results = Profile.results ()
@@ -19491,7 +19713,8 @@ local
           in
             if count mod 25 = 0 orelse trace_setting = SOME "full" then
               let
-                val {nongc, gc} = Timer.checkCPUTimes replay_cpu_timer
+                val {nongc, gc} = Timer.checkCPUTimes
+                  (Option.valOf replay_cpu_timer)
                 val gc_time = Time.+ (#usr gc, #sys gc)
               in
                 Feedback.HOL_MESG
@@ -19777,6 +20000,8 @@ local
     end
 
 in
+  type replay_operation_statistics = operation_statistics
+  val with_operation_statistics = with_operation_statistics_internal
 
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology
@@ -20308,7 +20533,7 @@ in
         end
       val substitution = List.concat (List.map substitutions kinds)
     in
-      if List.null substitution then theorem else Thm.INST substitution theorem
+      if List.null substitution then theorem else observed_inst substitution theorem
     end
 
   (* The repaired CPC producer supplies the FP operand at every
@@ -20380,7 +20605,7 @@ in
   fun instantiate_cpc_fp_private_bindings bindings theorem =
     let val substitutions = cpc_fp_private_substitutions bindings in
       if List.null substitutions then theorem
-      else Thm.INST substitutions theorem
+      else observed_inst substitutions theorem
     end
 
   fun instantiate_cpc_fp_private_markers theorem =
@@ -20713,7 +20938,7 @@ in
               val large =
                 SmtResource.dag_nodes_up_to 257 hypothesis > 256 orelse
                 not (Option.isSome
-                  (Term.term_size_bounded 256 hypothesis))
+                  (SmtReplayImport.bounded_raw_size 256 hypothesis))
             in if large then
               replay_checked ()
             else
@@ -20823,6 +21048,744 @@ in
 
   fun check_proof args = check_proof_with_definitions [] args
 
+  (* Ordinary reconstruction is restricted to independently admitted local
+     operands. The graph caller closes the resulting conditional law before
+     freezing its enclosing compact proof block. *)
+  fun graph_bounded_worker definitions
+      (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
+    let
+      val initial = initial_state definitions (List.map #term premises)
+      val state = ListPair.foldlEq
+        (fn (id,{term,provenance},state) => cache_step state id
+          "graph-local-premise" (exact_result provenance (Thm.ASSUME term)))
+        initial (#premises step,premises)
+      val (state,theorem) = replay_step
+        (strong_cpc_canon_conv definitions) state step
+    in (theorem,step_located (find_step "graph_bounded_worker" state (#id step)))
+    end
+
+  (* Additive fixed producer receipt. The actual replayed result owns the
+     clause; no theorem/node or reconstructed literal table is supplied. *)
+  val _ = SmtClause.retain_with_work
+  fun graph_bounded_worker_with_clause work definitions
+      (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
+    (let
+      val sources = SmtReplayInvocationWork.original_sources work
+      val graph = SmtReplaySource.owning_graph sources
+      val root = SmtReplaySource.owning_scope sources
+      val limits = SmtReplayInvocationWork.semantic_limits work
+      val _ = SmtReplayInvocationWork.validate work graph root sources limits
+      val initial = initial_state definitions (List.map #term premises)
+      val state = ListPair.foldlEq
+        (fn (id,{term,provenance},state) => cache_step state id
+          "graph-local-premise" (exact_result provenance (Thm.ASSUME term)))
+        initial (#premises step,premises)
+      val produced_scope = ref (NONE : replay_result option)
+      val (state,theorem) = replay_step_with_scope_boundary
+        (SOME produced_scope) (strong_cpc_canon_conv definitions) state step
+      val saved = find_step "graph_bounded_worker_with_clause" state (#id step)
+      val actual_result = case !produced_scope of NONE => #result saved
+        | SOME actual =>
+            if Portable.pointer_eq (result_theorem actual,theorem) then actual
+            else raise ERR "graph_bounded_worker_with_clause"
+              "scope producer and returned theorem differ"
+      val clause = case #clause actual_result of NONE => NONE
+        | SOME actual =>
+            if Portable.pointer_eq (SmtClause.theorem actual,theorem) then
+              SOME (SmtClause.retain_with_work work actual)
+            else raise ERR "graph_bounded_worker_with_clause"
+              "actual clause and returned worker theorem differ"
+      val _ = SmtReplayInvocationWork.validate work graph root sources limits
+    in {theorem = theorem,located = result_located actual_result,
+        clause = clause} end
+     handle primary =>
+       (SmtReplayInvocationWork.close work;raise primary))
+
+  fun graph_bounded_force_worker definitions
+      (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
+    let
+      val _ = if #replay_handler (#rule step) = "trust" then () else
+        raise ERR "graph_bounded_force_worker" "expected registered TRUST"
+      val state = initial_state definitions (List.map #term premises)
+      val theorem = replay_trust true state
+        (List.map (Thm.ASSUME o #term) premises) (List.map #term (#args step))
+    in (theorem,{term = Thm.concl theorem,
+      provenance = AtomicProvenance}) end
+
+  (* Opt-in owner of the actual ordinary cache. The graph command engine
+     owns source authority and scope discharge. Native node notifications
+     never become ordinary assumptions or semantic private-marker laws. *)
+  local open CPC_GraphNativeComponent in end
+  fun graph_bounded_worker_factory_lexical_impl definitions
+      {graph,scope,commit_history,history_mode,lexical_plan,native_limit} =
+    let
+      val _ = if Option.isSome lexical_plan andalso
+          not (List.null definitions) then
+        raise CPC_GraphLexicalTransport.Adapter else ()
+      val committed = ref (initial_state definitions [])
+      (* Local datatype: neither its constructor nor actual issuance escapes
+         this factory. The exported check closes over this exact pending lease. *)
+      datatype lexical_ticket = LexicalTicket of
+        {serial : int,revision : int,step : CPC_Proof.step,
+         target : SmtReplayGraph.node,
+         prepared : CPC_GraphLexicalTransport.prepared,
+         raw_theorem : Thm.thm,raw_located : located_term,
+         theorem : Thm.thm,located : located_term,consumed : bool ref}
+      val lexical_ticket = ref (NONE : lexical_ticket option)
+      val pending = ref (NONE : state option)
+      val verified = ref false
+      val verified_law = ref (NONE : Thm.thm option)
+      val pending_origin = ref
+        (NONE : CPC_GraphProofReplay.producer_origin option)
+      val history_owner = ref ()
+      val native_stage = ref (NONE : int option)
+      val history_busy = ref false
+      val history_revision = ref 0
+      val history_commits = ref (Redblackmap.mkDict Int.compare :
+        (int,int * string * SmtReplayGraph.node) Redblackmap.dict)
+      val current = ref
+        (NONE : (int * CPC_ProofParser.graph_command) option)
+      val forcing = ref (NONE : (int * CPC_Proof.step) option)
+      val known = ref (Redblackmap.mkDict String.compare :
+        (string,int * SmtReplayGraph.node * term_provenance) Redblackmap.dict)
+      val snapshots = ref []
+      val next = ref 0
+      val next_force = ref 0
+      val open_invocation = ref true
+      val busy = ref false
+      val strong_canon = strong_cpc_canon_conv definitions
+      val owned_literals = ref (Redblackmap.mkDict Term.compare)
+      val owned_fp_facts = ref (Redblackmap.mkDict Type.compare)
+      val owned_fp_lowerings = ref (Redblackmap.mkDict Term.compare)
+      val owned_fp_booleans = ref (Redblackmap.mkDict Term.compare)
+      val owned_fp_bridges = ref []
+      type force_checkpoint =
+        {serial : int,state : state,statistics : int list,
+         literals : (Term.term,Thm.thm) Redblackmap.dict,
+         facts : (Type.hol_type,Term.term * Thm.thm) Redblackmap.dict,
+         lowerings : (Term.term,Thm.thm) Redblackmap.dict,
+         booleans : (Term.term,Thm.thm) Redblackmap.dict,
+         bridges : Thm.thm list}
+      val force_checkpoint = ref (NONE : force_checkpoint option)
+      fun statistic_cells (state : state) =
+        let val statistics = #cache_stats state in
+          [#hits statistics,#misses statistics,#context_rejections statistics,
+           #omitted_bypasses statistics,#cardinality statistics,
+           #peak_cardinality statistics,#step_cardinality statistics]
+        end
+      fun capture_checkpoint serial : force_checkpoint =
+          {serial = serial,state = !committed,
+           statistics = List.map (fn cell => !cell)
+             (statistic_cells (!committed)),
+           literals = !owned_literals,facts = !owned_fp_facts,
+           lowerings = !owned_fp_lowerings,booleans = !owned_fp_booleans,
+           bridges = !owned_fp_bridges}
+      fun checkpoint_force serial =
+        force_checkpoint := SOME (capture_checkpoint serial)
+      val invocation_checkpoint = if history_mode then
+        SOME (capture_checkpoint (~1)) else NONE
+      fun restore_force (saved : force_checkpoint) =
+        (committed := #state saved;
+         ListPair.appEq (fn (cell,value) => cell := value)
+           (statistic_cells (#state saved),#statistics saved);
+         owned_literals := #literals saved;owned_fp_facts := #facts saved;
+         owned_fp_lowerings := #lowerings saved;
+         owned_fp_booleans := #booleans saved;
+         owned_fp_bridges := #bridges saved)
+      fun with_memos action =
+        let
+          val saved_literals = !resolution_literal_normalizations
+          val saved_facts = !fp_canonical_fact_laws
+          val saved_lowerings = !fp_atom_lowerings
+          val saved_booleans = !fp_boolean_atom_normalizations
+          val saved_bridges = !fp_atom_bridge_laws
+          fun restore () =
+            (resolution_literal_normalizations := saved_literals;
+             fp_canonical_fact_laws := saved_facts;
+             fp_atom_lowerings := saved_lowerings;
+             fp_boolean_atom_normalizations := saved_booleans;
+             fp_atom_bridge_laws := saved_bridges)
+          val _ = resolution_literal_normalizations := !owned_literals
+          val _ = fp_canonical_fact_laws := !owned_fp_facts
+          val _ = fp_atom_lowerings := !owned_fp_lowerings
+          val _ = fp_boolean_atom_normalizations := !owned_fp_booleans
+          val _ = fp_atom_bridge_laws := !owned_fp_bridges
+          fun run () =
+            let
+              val result = action ()
+              val _ = owned_literals := !resolution_literal_normalizations
+              val _ = owned_fp_facts := !fp_canonical_fact_laws
+              val _ = owned_fp_lowerings := !fp_atom_lowerings
+              val _ = owned_fp_booleans := !fp_boolean_atom_normalizations
+              val _ = owned_fp_bridges := !fp_atom_bridge_laws
+              val _ = restore ()
+            in result end
+        in run () handle error => (restore ();raise error) end
+      fun ordinary action =
+        if !busy then raise ERR "graph_factory" "reentrant same worker"
+        else
+          (busy := true;
+           (with_memos action before busy := false)
+           handle error => (busy := false;raise error))
+      fun active () =
+        (SmtReplayGraph.validate_scope graph scope;
+         if !open_invocation then () else
+           raise ERR "graph_factory" "invocation is no longer active")
+      fun command_id (CPC_ProofParser.GraphAssume (id,_)) = id
+        | command_id (CPC_ProofParser.GraphAssumePush (id,_)) = id
+        | command_id (CPC_ProofParser.GraphStep {step,...}) = #id step
+      fun clear_pending () =
+        (pending := NONE;verified := false;verified_law := NONE;
+         pending_origin := NONE;lexical_ticket := NONE;native_stage := NONE)
+      fun project (premises : located_term list) : state =
+        let val saved = !committed in
+          {asserted_hyps = HOLset.addList
+             (Term.empty_tmset,List.map #term premises),
+           scope_hyps = [],translation_definitions = definitions,
+           steps = Redblackmap.mkDict String.compare,
+           thm_cache = #thm_cache saved,cache_stats = #cache_stats saved}
+        end
+      fun check_premise (id,value : located_term) =
+        case Redblackmap.peek (!known,id) of
+          NONE => raise ERR "graph_factory" "unknown or scoped-out premise"
+        | SOME (_,node,provenance) =>
+            if Portable.pointer_eq
+                 (#term value,SmtReplayGraph.representative graph node)
+                andalso Portable.pointer_eq (#provenance value,provenance)
+            then () else
+              raise ERR "graph_factory" "premise occurrence changed"
+      fun worker (step : CPC_Proof.step,premises : located_term list) =
+        let
+          val _ = active ()
+          val planned = case !current of
+              SOME (_,CPC_ProofParser.GraphStep {step,...}) => step
+            | _ => raise ERR "graph_factory" "no active rule occurrence"
+          val _ = if #id planned = #id step andalso
+              #rule planned = #rule step andalso
+              #premises planned = #premises step andalso
+              not (Option.isSome (!pending)) andalso
+              not (Option.isSome (!native_stage)) then () else
+            raise ERR "graph_factory" "changed or repeated rule callback"
+          val _ = ListPair.appEq check_premise (#premises step,premises)
+          val prepared = case lexical_plan of NONE => NONE | SOME plan =>
+            (case #conclusion planned of NONE =>
+               raise CPC_GraphLexicalTransport.Adapter
+             | SOME target => SOME
+                 (CPC_GraphLexicalTransport.prepare plan
+                   {target = #node target,step = step,premises = premises}))
+          val lexical_step = case prepared of NONE => step | SOME value =>
+            CPC_GraphLexicalTransport.step value
+          val lexical_premises = case prepared of NONE => premises
+            | SOME value => CPC_GraphLexicalTransport.premises value
+          val state = ListPair.foldlEq
+            (fn (id,{term,provenance},state) => cache_step state id
+              "graph-local-premise"
+              (exact_result provenance (Thm.ASSUME term)))
+            (project lexical_premises)
+            (#premises lexical_step,lexical_premises)
+          val (state,theorem) = ordinary
+            (fn () => replay_step strong_canon state lexical_step)
+          val located = step_located
+            (find_step "graph_factory" state (#id step))
+          val (owned_theorem,owned_located) = case prepared of
+              NONE => (theorem,located)
+            | SOME value => CPC_GraphLexicalTransport.restore value
+                {theorem = theorem,located = located}
+          val _ = case prepared of NONE => () | SOME value =>
+            let
+              val lexical_target = #term (valOf (#conclusion lexical_step))
+              val target = #node (valOf (#conclusion planned))
+              val owned_target = SmtReplayGraph.representative graph target
+              val actual_singleton = case Thm.hyp theorem of [hypothesis] =>
+                  Portable.pointer_eq (hypothesis,lexical_target)
+                | _ => false
+              val target_argument = case #args lexical_step of [argument] =>
+                  Portable.pointer_eq (#term argument,lexical_target)
+                | _ => false
+              val owned_singleton = case Thm.hyp owned_theorem of [hypothesis] =>
+                  Portable.pointer_eq (hypothesis,owned_target)
+                | _ => false
+              val eligible = #replay_handler (#rule step) = "trust" andalso
+                actual_singleton andalso owned_singleton andalso
+                target_argument andalso
+                Portable.pointer_eq (Thm.concl theorem,lexical_target) andalso
+                Portable.pointer_eq (#term located,lexical_target) andalso
+                Portable.pointer_eq (Thm.concl owned_theorem,owned_target)
+              val serial = #1 (valOf (!current))
+            in if eligible then lexical_ticket := SOME (LexicalTicket
+              {serial = serial,revision = !history_revision,step = step,
+               target = target,prepared = value,raw_theorem = theorem,
+               raw_located = located,theorem = owned_theorem,
+               located = owned_located,consumed = ref false}) else () end
+          val _ = pending := SOME state
+        in (owned_theorem,owned_located) end
+      fun force_worker (step : CPC_Proof.step,premises : located_term list) =
+        let
+          val _ = active ()
+          (* No universal/generated/force transport is implemented here.
+             This optional route must continue; actual errors are not caught. *)
+          val _ = if Option.isSome lexical_plan then
+            raise CPC_GraphLexicalTransport.Adapter else ()
+          val planned = case !forcing of SOME (_,planned) => planned
+            | NONE => raise ERR "graph_factory" "no forced obligation"
+          val _ = if #id step = #id planned andalso
+              #rule step = #rule planned andalso
+              #replay_handler (#rule step) = "trust" andalso
+              List.null (#premises step) andalso List.null premises andalso
+              not (Option.isSome (!pending)) then () else
+            raise ERR "graph_factory" "invalid forced callback"
+          val state = project []
+          val theorem = ordinary (fn () =>
+            replay_trust true state [] (List.map #term (#args step)))
+          val _ = pending := SOME state
+        in (theorem,{term = Thm.concl theorem,
+          provenance = AtomicProvenance}) end
+      fun owned_force_worker
+          ({serial,target,step,premises} :
+           CPC_GraphProofReplay.owned_force_request) =
+        let
+          val _ = active ()
+          val plan = case lexical_plan of SOME plan => plan
+            | NONE => raise CPC_GraphLexicalTransport.Adapter
+          val (current_serial,planned) = case !forcing of SOME lease => lease
+            | NONE => raise ERR "graph_lexical_force" "no actual force lease"
+          val _ = if serial = current_serial then () else
+            raise ERR "graph_lexical_force" "changed actual force serial"
+          val _ = SmtReplayGraph.validate_scope graph
+            (SmtReplayGraph.node_scope graph target)
+          val _ = if SmtReplayGraph.scope_visible graph scope
+              (SmtReplayGraph.node_scope graph target) then () else
+            raise ERR "graph_lexical_force" "foreign or escaping force target"
+          val endpoint = SmtReplayGraph.representative graph target
+          fun recorded (value : located_term) =
+            Portable.pointer_eq (#term value,endpoint)
+          val _ = if #id step = #id planned andalso
+              #rule step = #rule planned andalso
+              #replay_handler (#rule step) = "trust" andalso
+              null (#premises step) andalso null premises andalso
+              not (Option.isSome (!pending)) andalso
+              (case (#conclusion step,#conclusion planned,
+                     #args step,#args planned) of
+                 (SOME current,SOME retained,[argument],[original]) =>
+                   List.all recorded [current,retained,argument,original]
+               | _ => false) then () else
+            raise ERR "graph_lexical_force" "changed actual force endpoint"
+          (* Both complete metrics, FV inventory and actual types are admitted
+             by prepare before the genuine forced ordinary reconstruction. *)
+          (* Complete prospective computation laws precede prepare's first
+             type/FV callback; an optional decline keeps ordinary force. *)
+          val native_contract =
+            CPC_GraphLexicalTransport.native_component_contract
+              plan target
+          val native = case native_limit of NONE => NONE
+            | SOME template_limit => ordinary (fn () =>
+                CPC_GraphNativeComponent.prove
+                  {graph = graph,scope = scope,target = target,
+                   template_limit = template_limit,
+                   check_type = #check_type native_contract})
+          fun bounded () =
+            let
+          val component_contract =
+            CPC_GraphLexicalTransport.closed_component_contract
+              plan target
+          val prepared = CPC_GraphLexicalTransport.prepare plan
+            {target = target,step = step,premises = premises}
+          val lexical_step = CPC_GraphLexicalTransport.step prepared
+          val state = project []
+          fun reconstruct () =
+            let val computed = case component_contract of NONE => NONE
+                  | SOME {limit,check_type} =>
+                      CPC_GraphClosedPrivateComponent.prove
+                        {target = #term (valOf (#conclusion lexical_step)),
+                         limit = limit,check_type = check_type}
+            in case computed of SOME theorem => theorem
+              | NONE => replay_trust true state []
+                  (List.map #term (#args lexical_step)) end
+          val theorem = ordinary reconstruct
+          val (theorem,located) = CPC_GraphLexicalTransport.restore
+            prepared {theorem = theorem,located =
+              {term = Thm.concl theorem,provenance = AtomicProvenance}}
+          val _ = if null (Thm.hyp theorem) then () else
+            raise ERR "graph_lexical_force" "forced result is not independently closed"
+          (* Forced results never issue a singleton-deferral ticket. *)
+          val _ = pending := SOME state
+            in (theorem,located) end
+        in case native of NONE => bounded ()
+          | SOME theorem =>
+              let val (tags,_) = Tag.dest_tag (Thm.tag theorem)
+                  val _ = active ()
+                  val _ = if Portable.pointer_eq (Thm.concl theorem,endpoint)
+                      andalso null (Thm.hyp theorem) andalso
+                      null (Tag.axioms_of (Thm.tag theorem)) andalso
+                      List.all (fn tag => tag = "DISK_THM") tags then () else
+                    raise ERR "graph_lexical_force"
+                      "native proof is not closed clean owned endpoint"
+                  val _ = pending := SOME (project [])
+              in (theorem,{term = endpoint,provenance = AtomicProvenance}) end
+        end
+      fun direct_deferred
+          ({serial,step,target,theorem,located,hypothesis} :
+           CPC_GraphProofReplay.direct_deferred_request) =
+        case !lexical_ticket of NONE => NONE
+          | SOME (LexicalTicket saved) =>
+              let val _ = active ()
+                  val _ = ignore
+                    (CPC_GraphLexicalTransport.step (#prepared saved))
+                  val _ = case !current of SOME (current_serial,_) =>
+                    if current_serial = serial then () else
+                      raise ERR "graph_lexical_ticket" "wrong current serial"
+                    | NONE => raise ERR "graph_lexical_ticket"
+                        "ticket is outside its actual pending callback"
+                  val _ = if not (!(#consumed saved)) andalso
+                      Option.isSome (!pending) andalso serial = #serial saved
+                      andalso !history_revision = #revision saved andalso
+                      #id step = #id (#step saved) andalso
+                      #rule step = #rule (#step saved) andalso
+                      #premises step = #premises (#step saved) andalso
+                      target = #target saved andalso
+                      Portable.pointer_eq (theorem,#theorem saved) andalso
+                      Portable.pointer_eq (#term located,#term (#located saved))
+                      andalso Portable.pointer_eq
+                        (#provenance located,#provenance (#located saved))
+                      andalso Portable.pointer_eq (hypothesis,
+                        SmtReplayGraph.representative graph target) then () else
+                    raise ERR "graph_lexical_ticket" "changed or retired lease"
+                  val _ = #consumed saved := true
+              in SOME () end
+      fun commit () =
+        (case !pending of NONE => () | SOME state =>
+           if !verified then committed := state else
+             raise ERR "graph_factory" "unverified staged callback";
+         clear_pending ())
+      fun observer event =
+        case event of
+          CPC_GraphProofReplay.InvocationAbort =>
+            (case !force_checkpoint of SOME saved => restore_force saved
+               | NONE => ();
+             (case invocation_checkpoint of SOME saved => restore_force saved
+                | NONE => ());
+             force_checkpoint := NONE;
+             open_invocation := false;current := NONE;forcing := NONE;
+             clear_pending ();known := Redblackmap.mkDict String.compare;
+             snapshots := [];
+             history_commits := Redblackmap.mkDict Int.compare;
+             history_revision := 0)
+        | _ =>
+          let val _ = active ()
+              val _ = if !history_busy then
+                raise ERR "graph_history" "reentrant history callback" else ()
+          in case event of
+            CPC_GraphProofReplay.CommandBegin {serial,command} =>
+              (if serial = !next andalso not (Option.isSome (!current))
+                  andalso not (Option.isSome (!forcing)) then () else
+                 raise ERR "graph_factory" "out-of-order command occurrence";
+               clear_pending ();current := SOME (serial,command);
+               case command of
+                 CPC_ProofParser.GraphAssumePush _ =>
+                   snapshots := !known :: !snapshots
+               | _ => ())
+          | CPC_GraphProofReplay.CheckedLocalLaw {serial,law} =>
+              (case !current of SOME (expected,_) =>
+                 if serial = expected andalso Option.isSome (!pending)
+                     andalso List.null (Thm.hyp law) then () else
+                   raise ERR "graph_factory" "unowned/unclosed local law"
+               | NONE => raise ERR "graph_factory" "law outside command";
+               Library.check_oracle_tags "CPC_ProofReplay"
+                 "graph_factory_commit" law;
+               verified_law := SOME law;verified := true)
+          | CPC_GraphProofReplay.CheckedProducerOrigin origin =>
+              let
+                val (serial,command) = case !current of SOME value => value
+                  | NONE => raise ERR "graph_history" "origin outside command"
+                val law = case !verified_law of SOME law => law
+                  | NONE => raise ERR "graph_history" "origin precedes checked law"
+                val _ = if !verified andalso serial = #serial origin andalso
+                    Option.isSome (!pending) andalso
+                    not (Option.isSome (!pending_origin)) andalso
+                    Portable.pointer_eq (law,#checked_local_law origin) then ()
+                  else raise ERR "graph_history" "changed/unverified origin"
+                val planned = case command of
+                    CPC_ProofParser.GraphStep {step,...} => #premises step
+                  | _ => raise ERR "graph_history" "origin is not a rule producer"
+                val recorded = #premises origin
+                val count = length planned +
+                  (if Option.isSome (#deferred origin) then 1 else 0)
+                val _ = if length recorded = count andalso
+                    ListPair.allEq (fn (expected,{index,...}) =>
+                      expected = index)
+                      (List.tabulate (count,fn i => i),recorded) then () else
+                  raise ERR "graph_history" "incomplete original inventory"
+                val used = #actual_hypotheses origin
+                fun increasing [] = true
+                  | increasing [index] = index >= 0 andalso index < count
+                  | increasing (left :: (rest as right :: _)) =
+                      left >= 0 andalso left < right andalso increasing rest
+                val _ = if increasing used andalso
+                    #support_indices origin =
+                      Lib.mapi (fn index => fn original => (index,original)) used
+                    andalso List.all (fn index => index >= 0 andalso
+                      index <= length used)
+                      (SmtReplaySupport.selected (#support origin)) then ()
+                  else raise ERR "graph_history" "changed hypothesis map"
+                val _ = List.app (fn {index,node,command_occurrence} =>
+                  case command_occurrence of NONE =>
+                      if index = length planned andalso
+                          #deferred origin = SOME node then () else
+                        raise ERR "graph_history" "changed deferred occurrence"
+                    | SOME occurrence =>
+                        (case Redblackmap.peek (!known,List.nth (planned,index)) of
+                           SOME (recorded,target,_) =>
+                             if occurrence = recorded andalso node = target
+                               then () else raise ERR "graph_history"
+                                 "changed original premise occurrence"
+                         | NONE => raise ERR "graph_history" "expired premise"))
+                  (#premises origin)
+                val _ = if SmtReplayRules.equality graph (#target origin) =
+                    SOME (#equation origin) andalso null (Thm.hyp (#law origin))
+                    andalso Portable.pointer_eq (Thm.concl (#law origin),
+                      SmtReplayGraph.representative graph (#law_node origin))
+                  then () else raise ERR "graph_history" "inexact origin law"
+                val _ = Library.check_oracle_tags "CPC_ProofReplay"
+                  "graph_history" (#law origin)
+                val _ = List.app (fn node =>
+                  ignore (SmtReplayGraph.type_of graph node))
+                  (SmtReplaySupport.roots (#support origin))
+              in pending_origin := SOME origin end
+          | CPC_GraphProofReplay.ProducerOriginUnavailable {serial,...} =>
+              (case !current of SOME (expected,_) =>
+                 if serial = expected andalso !verified andalso
+                     Option.isSome (!pending) then () else
+                   raise ERR "graph_history" "unowned unavailable origin"
+               | NONE => raise ERR "graph_history" "origin gap outside command")
+          | CPC_GraphProofReplay.CommandEnd {serial,node,provenance} =>
+              let
+                val command = case !current of SOME (expected,command) =>
+                    if serial = expected then command else
+                      raise ERR "graph_factory" "wrong completed occurrence"
+                  | NONE => raise ERR "graph_factory" "no command to complete"
+                val _ = ignore (SmtReplayGraph.type_of graph node)
+                val _ = case command of
+                    CPC_ProofParser.GraphStep {pop = true,...} =>
+                    (case !snapshots of previous :: rest =>
+                       (known := previous;snapshots := rest)
+                     | [] => raise ERR "graph_factory" "unmatched scope pop")
+                  | _ => ()
+                val committed_origin = case !pending_origin of NONE => NONE
+                  | SOME origin =>
+                      let
+                        val _ = if node = #target origin then () else
+                          raise ERR "graph_history" "changed producer endpoint"
+                        val revision = !history_revision+1
+                        val id = command_id command
+                        val published = ref false
+                        fun validate_dependencies () = List.app (fn index =>
+                          let val {command_occurrence,node,...} =
+                                List.nth (#premises origin,index)
+                          in case command_occurrence of NONE => ()
+                            | SOME expected =>
+                                let val id = case command of
+                                    CPC_ProofParser.GraphStep {step,...} =>
+                                      List.nth (#premises step,index)
+                                  | _ => raise ERR "graph_history" "not a producer"
+                                in case Redblackmap.peek (!known,id) of
+                                    SOME (actual,target,_) =>
+                                      if actual = expected andalso target = node
+                                        then () else raise ERR "graph_history"
+                                          "changed source occurrence"
+                                  | NONE => raise ERR "graph_history"
+                                      "source occurrence was popped" end
+                          end) (#actual_hypotheses origin)
+                        fun validate_origin () =
+                          (active ();validate_dependencies ();
+                           if !published then
+                             (case Redblackmap.peek (!history_commits,serial) of
+                                SOME (actual,recorded,target) =>
+                                  if actual = revision andalso recorded = id andalso
+                                      target = node then
+                                    (case Redblackmap.peek (!known,id) of
+                                       SOME (live,owned,_) =>
+                                         if live = serial andalso owned = node
+                                           then () else raise ERR "graph_history"
+                                             "origin occurrence is no longer live"
+                                     | NONE => raise ERR "graph_history"
+                                         "origin occurrence was popped")
+                                  else raise ERR "graph_history" "changed revision"
+                              | NONE => raise ERR "graph_history" "retired origin")
+                           else if !history_revision+1 = revision andalso
+                               Option.isSome (!pending_origin) andalso !verified
+                             then () else raise ERR "graph_history"
+                               "expired staged origin")
+                        fun validate_committed () =
+                          (validate_origin ();
+                           if !published then () else
+                             raise ERR "graph_history" "origin is only staged")
+                        val _ = validate_origin ()
+                        val _ = history_busy := true
+                        val _ = (commit_history
+                          {owner = history_owner,revision = revision,
+                           command = command,origin = origin,
+                           validate = validate_origin,
+                           validate_committed = validate_committed}
+                          before history_busy := false)
+                          handle error => (history_busy := false;raise error)
+                        val _ = validate_origin ()
+                      in SOME (revision,id,published) end
+                val _ = commit ()
+                val _ = known := Redblackmap.insert
+                  (!known,command_id command,(serial,node,provenance))
+                val _ = case committed_origin of NONE => ()
+                  | SOME (revision,id,published) =>
+                      (history_revision := revision;
+                       history_commits := Redblackmap.insert
+                         (!history_commits,serial,(revision,id,node));
+                       published := true)
+                val _ = current := NONE
+              in next := serial+1 end
+          | CPC_GraphProofReplay.ForcedBegin {serial,step} =>
+              (if serial = !next_force andalso
+                  not (Option.isSome (!current)) andalso
+                  not (Option.isSome (!forcing)) then () else
+                 raise ERR "graph_factory" "out-of-order forced obligation";
+               checkpoint_force serial;
+               clear_pending ();forcing := SOME (serial,step))
+          | CPC_GraphProofReplay.ForcedEnd {serial,theorem,located} =>
+              (case !forcing of SOME (expected,_) =>
+                 if serial = expected andalso Option.isSome (!pending) then ()
+                 else raise ERR "graph_factory" "wrong forced completion"
+               | NONE => raise ERR "graph_factory" "no force to complete";
+               Library.check_oracle_tags "CPC_ProofReplay"
+                 "graph_factory_force" theorem;
+               if Portable.pointer_eq (Thm.concl theorem,#term located) then ()
+               else raise ERR "graph_factory" "changed forced endpoint";
+               verified := true;commit ();forcing := NONE;
+               next_force := serial+1)
+          | CPC_GraphProofReplay.ForcedAbort {serial} =>
+              (case !force_checkpoint of SOME saved =>
+                 if serial = #serial saved then restore_force saved else
+                   raise ERR "graph_factory" "wrong aborted force occurrence"
+               | NONE =>
+                   if serial = !next_force then () else
+                     raise ERR "graph_factory" "no force to abort";
+               force_checkpoint := NONE;clear_pending ();forcing := NONE;
+               next_force := serial+1)
+          | CPC_GraphProofReplay.InvocationEnd =>
+              (if Option.isSome (!current) orelse
+                  Option.isSome (!forcing) orelse
+                  Option.isSome (!pending) orelse
+                  not (List.null (!snapshots)) then
+                 raise ERR "graph_factory" "unfinished invocation lifecycle"
+               else open_invocation := false;
+               force_checkpoint := NONE;
+               known := Redblackmap.mkDict String.compare)
+          | CPC_GraphProofReplay.InvocationAbort => ()
+          end
+      (* Lifecycle lease only: no theorem, ASSUME, replay_step or cache
+         entry is synthesized. The graph-native producer checks its own
+         compact conditional law and final completion proves the target. *)
+      fun native_lease {serial,step : CPC_ProofParser.graph_rule_step,target} =
+        let
+          val _ = active ()
+          val planned = case !current of
+              SOME (actual,CPC_ProofParser.GraphStep {step,...}) =>
+                if actual = serial then step else
+                  raise ERR "graph_native" "wrong command serial"
+            | _ => raise ERR "graph_native" "no active rule occurrence"
+          val _ = if Portable.pointer_eq (step,planned) andalso
+              #replay_handler (#rule planned) = "trust" andalso
+              null (#premises planned) andalso
+              not (Option.isSome (!pending)) andalso
+              not (Option.isSome (!native_stage)) then () else
+            raise ERR "graph_native" "changed or repeated reservation"
+          val _ = case (#args planned,#conclusion planned) of
+              ([CPC_ProofParser.GraphTerm argument],SOME conclusion) =>
+                if #node argument = target andalso #node conclusion = target
+                  then () else raise ERR "graph_native" "changed owned endpoint"
+            | _ => raise ERR "graph_native" "missing exact TRUST target"
+          val _ = SmtReplayGraph.validate_scope graph
+            (SmtReplayGraph.node_scope graph target)
+          val _ = if SmtReplayGraph.scope_visible graph scope
+              (SmtReplayGraph.node_scope graph target) then () else
+            raise ERR "graph_native" "reservation captures lexical scope"
+          val id = #id planned
+          val _ = native_stage := SOME serial
+          fun committed () =
+            (active ();
+             case Redblackmap.peek (!known,id) of
+               SOME (actual,node,_) =>
+                 if actual = serial andalso node = target then () else
+                   raise ERR "graph_native" "retired command occurrence"
+             | NONE => raise ERR "graph_native" "popped command occurrence")
+          fun validate () =
+            (active ();
+             case !current of SOME (actual,_) =>
+               if actual = serial andalso !native_stage = SOME serial then ()
+               else committed ()
+             | NONE => committed ())
+        in {owner = history_owner,revision = serial+1,
+            validate = validate,validate_committed = committed} end
+
+      fun statistics () = cache_stats (!committed)
+    in {worker = worker,force_worker = force_worker,observer = observer,
+        statistics = statistics,direct_deferred = direct_deferred,
+        owned_force_worker = owned_force_worker,
+        native_lease = native_lease} end
+
+  fun graph_native_reservation_factory {graph,scope} =
+    graph_bounded_worker_factory_lexical_impl []
+      {graph = graph,scope = scope,commit_history = fn _ => (),
+       history_mode = true,lexical_plan = NONE,native_limit = NONE}
+
+  fun graph_bounded_worker_factory_history_impl definitions
+      {graph,scope,commit_history,history_mode} =
+    let val factory = graph_bounded_worker_factory_lexical_impl definitions
+          {graph = graph,scope = scope,commit_history = commit_history,
+           history_mode = history_mode,lexical_plan = NONE,native_limit = NONE}
+    in {worker = #worker factory,force_worker = #force_worker factory,
+        observer = #observer factory,statistics = #statistics factory} end
+  fun graph_bounded_worker_factory_with_history_lexical
+      {graph,scope,commit_history,plan} =
+    graph_bounded_worker_factory_lexical_impl []
+      {graph = graph,scope = scope,commit_history = commit_history,
+       history_mode = true,lexical_plan = SOME plan,native_limit = NONE}
+  fun graph_bounded_worker_factory_with_history_lexical_native
+      {graph,scope,commit_history,plan,template_limit} =
+    if template_limit <= 0 then
+      raise ERR "graph_factory" "nonpositive native template contract"
+    else graph_bounded_worker_factory_lexical_impl []
+      {graph = graph,scope = scope,commit_history = commit_history,
+       history_mode = true,lexical_plan = SOME plan,
+       native_limit = SOME template_limit}
+  fun graph_bounded_worker_factory_with_history definitions
+      {graph,scope,commit_history} =
+    graph_bounded_worker_factory_history_impl definitions
+      {graph = graph,scope = scope,commit_history = commit_history,
+       history_mode = true}
+
+  fun graph_bounded_worker_factory definitions {graph,scope} =
+    graph_bounded_worker_factory_history_impl definitions
+      {graph = graph,scope = scope,commit_history = fn _ => (),
+       history_mode = false}
+
+  fun check_graph_proof_with_definitions definitions
+      {graph,scope,sources,proof} =
+    CPC_GraphProofReplay.check_contradiction_using
+      {graph = graph,scope = scope,sources = sources,proof = proof,
+       ordinary_limit = SmtResource.max_bv_replay_term_nodes,
+       template_limit = SmtResource.max_bv_replay_term_nodes,
+       worker = graph_bounded_worker definitions,
+       force_worker = SOME (graph_bounded_force_worker definitions)}
+  fun check_graph_proof input = check_graph_proof_with_definitions [] input
+
+  fun prove_graph_proof_with_definitions definitions
+      {graph,scope,sources,proof} =
+    CPC_GraphProofReplay.prove_using
+      {graph = graph,scope = scope,sources = sources,proof = proof,
+       ordinary_limit = SmtResource.max_bv_replay_term_nodes,
+       template_limit = SmtResource.max_bv_replay_term_nodes,
+       worker = graph_bounded_worker definitions,
+       force_worker = SOME (graph_bounded_force_worker definitions)}
+  fun prove_graph_proof input = prove_graph_proof_with_definitions [] input
+
   fun replay_trust_for_test target =
     replay_trust true (initial_state [] []) [] [target]
 
@@ -20883,6 +21846,166 @@ in
 
   fun replay_root_with_cache_stats_for_test proof =
     replay_root_with_cache_stats_and_definitions_for_test [] proof
+  (* The legacy receiver/factories above are unchanged. This opaque owner
+     exposes fixed prospective programmes, never an arbitrary native worker.
+     The higher policy receiver remains a separate compilation unit. *)
+  structure PolicyNative :>
+  sig
+    type owner
+    type specialize_plan
+    val begin_with_policy : SmtReplayInvocationWork.portfolio ->
+      SmtReplayNativeContract.contract ->
+      {packet:CPC_ProofParser.graph_proof SmtLib_GraphProof.packet,
+       preprocessing:SmtLib_GraphPreprocess.validation,
+       profiles:SmtReplayGraph.policy_opaque_profile list,
+       check_type:Type.hol_type -> unit} -> owner
+    val prepare_specialize_with_policy :
+      SmtReplayInvocationWork.portfolio -> owner ->
+      {command:int,block:SmtReplayProof.block,
+       premises:(string * SmtReplayGraph.node * SmtReplayProof.edge) list}
+      -> specialize_plan
+    val execute_specialize_with_policy :
+      SmtReplayInvocationWork.portfolio -> specialize_plan ->
+      SmtReplayProof.closed_fact
+  end =
+  struct
+    structure W=SmtReplayInvocationWork
+    structure NC=SmtReplayNativeContract
+    structure G=SmtReplayGraph
+    structure S=SmtReplaySource
+    structure P=SmtReplayProof
+    structure Q=CPC_ProofParser
+    structure GP=SmtLib_GraphPreprocess
+    structure Packet=SmtLib_GraphProof
+    val _=SmtReplayProof.prepare_local_specialize_with_policy
+    val _=SmtReplayProof.execute_local_specialize_with_policy
+    datatype owner=Owner of
+      {work:W.portfolio,native:NC.contract,graph:G.graph,root:G.scope,
+       sources:S.sources,packet:Q.graph_proof Packet.packet,
+       preprocessing:GP.validation,profiles:G.policy_opaque_profile list,
+       check_type:Type.hol_type -> unit,epoch:int,symbols:int,
+       issued:int list ref}
+    datatype specialize_plan=SpecializePlan of
+      {owner:owner,programme:P.policy_local_specialize_plan}
+    fun header expected(Owner{work,...})=
+      if Portable.pointer_eq(expected,work)then ()else
+        raise ERR "policy_native" "different original Work"
+    fun active(owner as Owner{work,native,graph,root,sources,packet,
+        preprocessing,epoch,symbols,...})=
+      (header work owner;NC.validate_for work native;
+       W.validate_policy work graph root sources(W.semantic_policy work);
+       GP.validate_with_policy work preprocessing;
+       if Portable.pointer_eq(Packet.graph packet,graph)andalso
+           Packet.scope packet=root andalso Portable.pointer_eq
+             (GP.original_sources preprocessing,sources)andalso
+           GP.source_nodes preprocessing=S.assumption_nodes sources @
+             [S.denied_goal_node sources]andalso
+           Type.type_epoch()=epoch andalso Term.term_epoch()=symbols
+         then ()else raise ERR "policy_native" "packet owner changed")
+    fun begin_with_policy work native
+        {packet,preprocessing,profiles,check_type}=
+      ((let
+          val _=NC.validate_for work native
+          val sources=W.original_sources work
+          val graph=S.owning_graph sources val root=S.owning_scope sources
+          val owner=Owner{work=work,native=native,graph=graph,root=root,
+            sources=sources,packet=packet,preprocessing=preprocessing,
+            profiles=profiles,check_type=check_type,
+            epoch=Type.type_epoch(),symbols=Term.term_epoch(),issued=ref[]}
+          val _=active owner
+        in owner end)handle primary=>(W.close work;raise primary))
+    fun prepare_specialize_with_policy expected owner
+        {command,block,premises}=
+      ((header expected owner;
+        (* Both opaque Work headers are fenced before packet/GP semantics.
+           P's actual owner accessor validates its own table/frame backing. *)
+        let
+          val block_owner=P.policy_native_block_owner_for expected block
+          val Owner{work,native,graph,root,packet,profiles,check_type,
+            issued,...}=owner
+          val _=if Portable.pointer_eq(#contract block_owner,native)andalso
+              Portable.pointer_eq(#graph block_owner,graph)then ()else
+            raise ERR "policy_native" "different actual Block contract"
+          val _=active owner
+        in W.with_step work(fn()=>
+          let
+            fun tick()=(active owner;W.spend_policy work 1)
+            fun fail text=raise ERR "policy_native" text
+            fun lookup wanted []=fail("unknown visible premise "^wanted)
+              | lookup wanted((id,node)::rest)=
+                  (tick();W.spend_policy work
+                    (IntInf.fromInt(String.size wanted+String.size id));
+                   if id=wanted then node else lookup wanted rest)
+            fun add id node known=
+              (tick();(id,node)::known)
+            fun located(value:SmtLib_GraphFrontend.term)=
+              let val _=tick() val node= #node value
+                  val _=G.validate_scope graph(#scope value)
+                  val _=if G.scope_visible graph(#scope value)
+                      (G.node_scope graph node)then ()else
+                    fail "invisible packet syntax"
+              in node end
+            fun prior step=case #conclusion(step:Q.graph_rule_step)of
+                SOME value=>located value
+              | NONE=>fail "prior inferred result requires receiver registry"
+            (* Premises are looked up before a scope-pop restores its old
+               dictionary. Only the subsequent visible map is restored. *)
+            fun seek index known stack []=fail "command index absent"
+              | seek index known stack(cmd::rest)=
+                  (tick();if index=command then
+                    (case cmd of Q.GraphStep{step,pop=false}=>(step,known)
+                     | _=>fail "command is not a local inference")
+                   else case cmd of
+                     Q.GraphAssume(id,value)=>seek(index+1)
+                       (add id(located value)known)stack rest
+                   | Q.GraphAssumePush(id,value)=>seek(index+1)
+                       (add id(located value)known)(known::stack)rest
+                   | Q.GraphStep{step,pop}=>
+                       let val node=prior step
+                           val(visible,tail)=if pop then
+                               case stack of []=>fail "unmatched scope pop"
+                               | saved::tail=>
+                                   if #replay_handler(#rule step)="scope"
+                                     then(saved,tail)else
+                                     fail "scope pop handler differs"
+                             else(known,stack)
+                       in seek(index+1)(add(#id step)node visible)tail rest
+                       end)
+            val _=if command>=0 then ()else fail "negative command index"
+            val _=if List.exists(fn old=>(tick();old=command))(!issued)
+              then fail "command occurrence already prepared"else ()
+            val(step,known)=seek 0[][](#commands(Packet.proof packet))
+            val _=if #replay_handler(#rule step)="instantiate"then ()else
+              fail "fixed specialization handler required"
+            val premise=case(#premises step,premises)of
+                ([wanted],[(id,node,edge)])=>
+                  if id=wanted andalso lookup wanted known=node then
+                    {node=node,edge=edge}else
+                    fail "actual packet premise differs"
+              | _=>fail "specialization needs one actual premise"
+            fun argument(Q.GraphTerm term)=located term
+              | argument _=fail "specialization argument is not term syntax"
+            val arguments=List.map argument(#args step)
+            val target=case #conclusion step of SOME value=>located value
+              | NONE=>fail "specialization needs declared target"
+            fun policy ty=(active owner;check_type ty;active owner)
+            val programme=P.prepare_local_specialize_with_policy work block
+              {premise=premise,arguments=arguments,target=target,
+               profiles=profiles,check_type=policy}
+            val _=active owner val _=issued:=command:: !issued
+          in SpecializePlan{owner=owner,programme=programme}end)
+        end)handle primary=>(W.close expected;raise primary))
+    fun execute_specialize_with_policy expected
+        (SpecializePlan{owner,programme})=
+      ((header expected owner;active owner;
+        W.with_step expected(fn()=>
+          let val _=active owner
+              val fact=P.execute_local_specialize_with_policy
+                expected programme
+              val _=active owner
+          in fact end))handle primary=>(W.close expected;raise primary))
+  end
+
 end
 
 end

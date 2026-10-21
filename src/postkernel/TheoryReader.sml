@@ -24,6 +24,24 @@ fun temp_encoded_update sdata thyname {data,ty} =
     }
 
 
+(* This immutable fact is minted only from this instance's successful
+   default decoder output. It is not current declaration validity or Work
+   credit. The actual canonical H vector is retained after disk_thm. *)
+datatype bool_left_decode_origin = BoolLeftDecodeOrigin of
+  {proof: Thm.thm, statement: Term.term,
+   hypotheses: Term.term list, hypothesis_count: int}
+val captured_bool_left_decode_origin =
+  ref (NONE: bool_left_decode_origin option)
+
+fun bool_left_decode_origin () = !captured_bool_left_decode_origin
+fun bool_left_decode_origin_matches
+    (BoolLeftDecodeOrigin held) {proof,statement} =
+  Portable.pointer_eq (#proof held,proof) andalso
+  Portable.pointer_eq (#statement held,statement)
+fun bool_left_decode_origin_counts (BoolLeftDecodeOrigin held) =
+  {hypotheses = #hypothesis_count held}
+
+
 fun load_thydata_from_dat (r as {thyname,path,hash}) =
     let
       open HOLsexp
@@ -63,6 +81,22 @@ fun load_thydata_from_dat (r as {thyname,path,hash}) =
           )
           (#thydata rawthy)
         )
+    (* Only this successful PRIVATE default loader mints the fact. Every
+       thmdict entry is from actual read_raw C/H ports and disk_thm. This
+       fixed selection does not accept an externally supplied theorem. *)
+    val _ = if thyname <> "bool" then () else
+      (case Symtab.lookup thmdict "LEFT_FORALL_IMP_THM" of
+         NONE => captured_bool_left_decode_origin := NONE
+       | SOME (proof,_) =>
+           let
+             val statement = Thm.concl proof
+             val hypotheses = Thm.hyp proof
+             val hypothesis_count = List.length hypotheses
+           in
+             captured_bool_left_decode_origin := SOME (BoolLeftDecodeOrigin
+               {proof=proof,statement=statement,hypotheses=hypotheses,
+                hypothesis_count=hypothesis_count})
+           end)
   in
     thmdict
   end handle Interrupt => raise Interrupt

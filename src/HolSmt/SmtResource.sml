@@ -391,7 +391,7 @@ struct
      DAGs without unfolding their trees.  Two bounded operand paths reach
      beyond the identical operator prefixes of curried applications.  This
      is only an index hint: every hit is resolved by exact pointer equality. *)
-  val pointer_bucket = Term.pointer_bucket 16
+  val pointer_bucket = SmtReplayImport.pointer_bucket 16
 
   (* Repeated primitive types should not migrate to the cold end of a
      type-admission cache as independently allocated types are discovered.
@@ -443,7 +443,7 @@ struct
                   let val (left, right) = Term.dest_comb term
                   in [left, right] end
                 else if Term.is_abs term then
-                  (case Term.term_size_bounded (limit - count + 1) term of
+                  (case SmtReplayImport.bounded_raw_size (limit - count + 1) term of
                      NONE => raise Exceeded
                    | SOME _ =>
                        let val (binder, body) = Term.dest_abs term
@@ -501,7 +501,7 @@ struct
                         else raise Exceeded
                       val (left, right) =
                         if Term.is_comb term then Term.dest_comb term
-                        else case Term.term_size_bounded limit term of
+                        else case SmtReplayImport.bounded_raw_size limit term of
                           NONE => raise Exceeded
                         | SOME _ => Term.dest_abs term
                     in loop (Visit left :: Visit right ::
@@ -632,7 +632,7 @@ struct
       let val (operator, operand) = Term.dest_comb term
       in [operator, operand] end
     else if Term.is_abs term then
-      (case Term.term_size_bounded max_bv_replay_term_nodes term of
+      (case SmtReplayImport.bounded_raw_size max_bv_replay_term_nodes term of
          NONE =>
            (check_term_size_for "BitVector" "binder-opening"
               (max_bv_replay_term_nodes + 1);

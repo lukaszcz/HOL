@@ -4,10 +4,14 @@ structure CPC_ProofParser =
 struct
 
 local
-  open CPC_Proof
+  open CPC_Proof smtfloatReplayWordTheory SmtLib_GraphTranslation
 
   val ERR = Feedback.mk_HOL_ERR "CPC_ProofParser"
 
+  structure F = SmtLib_GraphFrontend
+  structure P = SmtLib_Parser
+  structure G = SmtReplayGraph
+  structure B = SmtLib_GraphBackend
   type dicts = SmtLib_Parser.dicts
 
   val term_intern_bucket_count = 4093
@@ -1438,6 +1442,18 @@ local
         in
           if head = "_" then
             let
+              val marked_operator = get_token ()
+            in
+              if marked_head = "_" andalso
+                 (marked_operator = "BitVec" orelse
+                  marked_operator = "FloatingPoint") then
+                (* Only actual indexed sort markers use this shared path.
+                   Every other CPC underscore keeps higher-order semantics. *)
+                ordinary [first, marked_head, marked_operator]
+              else
+            let
+              val get_token = Library.undo_look_ahead
+                [marked_operator] get_token
               fun application_terms terms =
                 let val token = get_token () in
                   if token = ")" then List.rev terms
@@ -1454,6 +1470,7 @@ local
                   else Term.list_mk_comb (function, arguments)
               | [] => raise ERR "parse_term"
                   "CPC `_` application expects a function"
+            end
             end
           (* CPC declares [is] as a parameterized constant whose first
              explicit argument is a constructor symbol, rather than as the
@@ -1594,6 +1611,368 @@ local
       RawAtom token => [token]
     | RawList entries =>
         "(" :: List.concat (List.map raw_tokens entries) @ [")"]
+
+  (* Shared syntax-only validation; no term elaboration or mutable
+     parser dictionaries enter this check. *)
+  fun validate_raw_term raw_error raw =
+    let
+    fun member token choices = List.exists (Lib.equal token) choices
+    fun quoted_symbol token =
+      SmtLib_Parser.proof_quoted_symbol_token token
+    fun token_text token =
+      Option.getOpt (quoted_symbol token, token)
+    fun unquoted_is expected token =
+      not (Option.isSome (quoted_symbol token)) andalso token = expected
+    fun string_literal token =
+      Option.isSome (SmtLib_Parser.proof_string_token token)
+    val reserved =
+      ["_", "!", "as", "let", "forall", "exists", "lambda",
+       "match", "par"]
+    fun all_chars predicate text =
+      List.all predicate (String.explode text)
+    fun ascii_letter c =
+      (#"a" <= c andalso c <= #"z") orelse
+      (#"A" <= c andalso c <= #"Z")
+    fun simple_initial c =
+      ascii_letter c orelse
+      member c [#"~", #"!", #"@", #"$", #"%", #"^", #"&",
+        #"*", #"_", #"-", #"+", #"=", #"<", #">", #".",
+        #"?", #"/"]
+    fun simple_symbol text =
+      String.size text > 0 andalso
+      simple_initial (String.sub (text, 0)) andalso
+      all_chars (fn c => simple_initial c orelse Char.isDigit c) text
+    fun keyword token =
+      not (Option.isSome (quoted_symbol token)) andalso
+      String.size token > 1 andalso String.sub (token, 0) = #":" andalso
+      simple_symbol (String.extract (token, 1, NONE))
+    fun digits text =
+      String.size text > 0 andalso all_chars Char.isDigit text
+    fun numeral text =
+      text = "0" orelse
+      (String.size text > 0 andalso String.sub (text, 0) <> #"0" andalso
+       digits text)
+    fun decimal text =
+      case String.fields (Lib.equal #".") text of
+        [whole, fraction] => numeral whole andalso digits fraction
+      | _ => false
+    fun radix_literal prefix predicate text =
+      String.isPrefix prefix text andalso String.size text > 2 andalso
+      all_chars predicate (String.extract (text, 2, NONE))
+    fun hex_digit c =
+      Char.isDigit c orelse (#"a" <= c andalso c <= #"f") orelse
+      (#"A" <= c andalso c <= #"F")
+    fun hexadecimal text =
+      radix_literal "#x" hex_digit text
+    fun binary text =
+      radix_literal "#b" (fn c => c = #"0" orelse c = #"1") text
+    fun unsigned_number text = numeral text orelse decimal text
+    fun signed_number text =
+      String.size text > 1 andalso String.sub (text, 0) = #"-" andalso
+      unsigned_number (String.extract (text, 1, NONE))
+    fun rational text =
+      case String.fields (Lib.equal #"/") text of
+        [numerator, denominator] =>
+          (numeral numerator orelse signed_number numerator) andalso
+          numeral denominator andalso denominator <> "0"
+      | _ => false
+    fun literal token =
+      string_literal token orelse numeral token orelse decimal token orelse
+      hexadecimal token orelse binary token orelse signed_number token orelse
+      rational token
+    fun valid_quoted text =
+      (SmtLib_String_Literal.validate_lexical_text true text; true)
+      handle SmtLib_String_Literal.InvalidStringLiteral _ => false
+    fun validate_symbol description token =
+      case SmtLib_Parser.proof_string_token token of
+        SOME _ => raw_error
+          ("string literal is not a valid " ^ description)
+      | NONE =>
+          (case quoted_symbol token of
+             SOME text =>
+               if valid_quoted text then ()
+               else raw_error ("invalid quoted " ^ description)
+           | NONE =>
+               if simple_symbol token andalso not (keyword token) andalso
+                  not (member token reserved)
+               then ()
+               else raw_error
+                 ("invalid " ^ description ^ " '" ^ token ^ "'"))
+    val validate_identifier_symbol = validate_symbol
+    fun validate_index raw =
+      case raw of
+        RawAtom token =>
+          if Option.isSome (quoted_symbol token) then
+            validate_symbol "indexed-identifier index" token
+          else if numeral token then ()
+          else validate_identifier_symbol
+            "indexed-identifier index" token
+      | RawList _ => raw_error "indexed-identifier index is not atomic"
+    fun validate_simple_identifier description raw =
+      case raw of
+        RawAtom token => validate_identifier_symbol description token
+      | RawList (RawAtom marker :: RawAtom name :: indices) =>
+          if unquoted_is "_" marker then
+            (validate_identifier_symbol
+               ("indexed " ^ description ^ " name") name;
+             if List.null indices then
+               raw_error ("indexed " ^ description ^
+                 " requires at least one index")
+             else List.app validate_index indices)
+          else raw_error
+            (description ^ " is not a simple/indexed identifier")
+      | RawList _ =>
+          raw_error (description ^ " is not a simple/indexed identifier")
+    fun validate_sort raw =
+      case raw of
+        RawAtom _ => validate_simple_identifier "sort identifier" raw
+      | RawList (RawAtom marker :: RawAtom _ :: _) =>
+          if unquoted_is "_" marker then
+            validate_simple_identifier "sort identifier" raw
+          else validate_sort_application raw
+      | RawList [] => raw_error "empty sort"
+      | RawList _ => validate_sort_application raw
+    and validate_sort_application raw =
+      case raw of
+        RawList (head :: arguments) =>
+          (validate_simple_identifier "sort application head" head;
+           if List.null arguments then
+             raw_error "sort application requires at least one argument"
+           else List.app validate_sort arguments)
+      | _ => raw_error "malformed sort application"
+    fun validate_identifier raw =
+      case raw of
+        RawAtom _ => validate_simple_identifier "identifier" raw
+      | RawList [RawAtom marker, identifier, sort] =>
+          if unquoted_is "as" marker then
+            (validate_simple_identifier "ascribed identifier" identifier;
+             validate_sort sort)
+          else if unquoted_is "_" marker then
+            validate_simple_identifier "identifier" raw
+          else raw_error
+            "application head is not a qualified identifier"
+      | RawList (RawAtom marker :: _) =>
+          if unquoted_is "as" marker then
+            raw_error
+              "qualified identifier 'as' expects an identifier and sort"
+          else if unquoted_is "_" marker then
+            validate_simple_identifier "identifier" raw
+          else raw_error
+            "application head is not a qualified identifier"
+      | RawList _ => raw_error
+          "application head is not a qualified identifier"
+    fun validate_sorted_variable raw =
+      case raw of
+        RawList [RawAtom name, sort] =>
+          (validate_symbol "bound variable" name; validate_sort sort)
+      | _ => raw_error
+          "sorted variable must have the form (name sort)"
+    fun validate_cpc_var name sort =
+      (case SmtLib_Parser.proof_string_token name of
+         SOME _ => ()
+       | NONE => validate_symbol "bound variable" name;
+       validate_sort sort)
+    fun validate_binders binders =
+      case binders of
+        RawAtom alias => validate_symbol "CPC binder-list alias" alias
+      | RawList (RawAtom marker :: variables) =>
+          if unquoted_is "@list" marker then
+            if List.null variables then
+              raw_error "CPC binder list must be nonempty"
+            else List.app (fn variable =>
+              case variable of
+                RawAtom alias =>
+                  validate_symbol "CPC bound-variable alias" alias
+              | RawList [RawAtom var_marker, RawAtom name, sort] =>
+                  if unquoted_is "@var" var_marker then
+                    validate_cpc_var name sort
+                  else raw_error
+                    "CPC binder must be an alias or (@var name sort)"
+              | _ => raw_error
+                  "CPC binder must be an alias or (@var name sort)")
+              variables
+          else validate_sorted_variables binders
+      | RawList _ => validate_sorted_variables binders
+    and validate_sorted_variables binders =
+      case binders of
+        RawList variables =>
+          if List.null variables then
+            raw_error "sorted-variable list must be nonempty"
+          else List.app validate_sorted_variable variables
+      | _ => raw_error "sorted-variable list must be parenthesized"
+    fun validate_pattern pattern =
+      case pattern of
+        RawAtom name => validate_symbol "match pattern" name
+      | RawList (RawAtom constructor :: variables) =>
+          (validate_symbol "match constructor" constructor;
+           if List.null variables then
+             raw_error "constructor pattern requires at least one variable"
+           else List.app (fn variable => case variable of
+               RawAtom name => validate_symbol "match binder" name
+             | RawList _ => raw_error "match binder is not atomic")
+             variables)
+      | RawList _ => raw_error "malformed match pattern"
+    fun validate_sexp sexp =
+      case sexp of
+        RawAtom token =>
+          if literal token orelse keyword token then ()
+          else validate_symbol "annotation s-expression atom" token
+      | RawList entries => List.app validate_sexp entries
+    fun validate_attributes attributes =
+      let
+        fun loop [] = ()
+          | loop (RawAtom attribute :: rest) =
+              if not (keyword attribute) then
+                raw_error "annotation expects an attribute keyword"
+              else
+                (case rest of
+                   RawAtom next :: _ =>
+                     if keyword next then loop rest
+                     else (validate_sexp (List.hd rest);
+                           loop (List.tl rest))
+                 | RawList value :: tail =>
+                     (validate_sexp (RawList value); loop tail)
+                 | [] => ())
+          | loop _ = raw_error "annotation expects an attribute keyword"
+      in
+        if List.null attributes then
+          raw_error "annotation requires at least one attribute"
+        else loop attributes
+      end
+    fun validate_application_arity head operands =
+      let
+        fun exact expected =
+          if List.length operands = expected then ()
+          else raw_error ("'" ^ head ^ "' expects exactly " ^
+            Int.toString expected ^ " operand(s)")
+        fun at_least expected =
+          if List.length operands >= expected then ()
+          else raw_error ("'" ^ head ^ "' expects at least " ^
+            Int.toString expected ^ " operand(s)")
+      in
+        case head of
+          "true" => raw_error "'true' must be an atomic term"
+        | "false" => raw_error "'false' must be an atomic term"
+        | "not" => exact 1
+        | "ite" => exact 3
+        | "=" => at_least 2
+        | "distinct" => at_least 2
+        | "=>" => at_least 2
+        | "and" => at_least 2
+        | "or" => at_least 2
+        | "xor" => at_least 2
+        | _ => at_least 1
+      end
+    fun validate_raw raw =
+      case raw of
+        RawAtom token =>
+          if literal token then ()
+          else validate_identifier_symbol "term identifier" token
+      | RawList (RawAtom marked_head :: rest) =>
+          let
+            val head = token_text marked_head
+            val special =
+              not (Option.isSome (quoted_symbol marked_head))
+            fun special_head name = special andalso head = name
+          in
+            if special_head "as" then
+              (case rest of
+                 [identifier, sort] =>
+                   (validate_simple_identifier
+                      "ascribed identifier" identifier;
+                    validate_sort sort)
+               | _ => raw_error
+                   ("qualified identifier 'as' expects an identifier " ^
+                    "and sort"))
+            else if special_head "_" then
+              validate_simple_identifier "identifier" raw
+            else if member head ["forall", "exists", "lambda"] andalso
+                    special then
+              (case rest of
+                 [binders, body] =>
+                   (validate_binders binders; validate_raw body)
+               | _ => raw_error ("malformed " ^ head ^ " binder"))
+            else if special_head "let" then
+              (case rest of
+                 [RawList bindings, body] =>
+                   (if List.null bindings then
+                      raw_error "let requires at least one binding"
+                    else List.app (fn binding => case binding of
+                        RawList [RawAtom name, rhs] =>
+                          (validate_symbol "let variable" name;
+                           validate_raw rhs)
+                      | _ => raw_error
+                          "let binding must have the form (name term)")
+                      bindings;
+                    validate_raw body)
+               | _ => raw_error "malformed let term")
+            else if special_head "!" then
+              (case rest of
+                 term :: attributes =>
+                   (validate_raw term; validate_attributes attributes)
+               | [] => raw_error "annotation is missing its term")
+            else if special_head "match" then
+              (case rest of
+                 [scrutinee, RawList branches] =>
+                   (validate_raw scrutinee;
+                    if List.null branches then
+                      raw_error "match requires at least one branch"
+                    else List.app (fn branch => case branch of
+                        RawList [pattern, body] =>
+                          (validate_pattern pattern; validate_raw body)
+                      | _ => raw_error
+                          "match branch must have pattern and body")
+                        branches)
+               | _ => raw_error
+                   "match expects a scrutinee and parenthesized branches")
+            else if special_head "set.comprehension" then
+              (case rest of
+                 [binders as RawList (RawList _ :: _), predicate, value] =>
+                   (validate_binders binders;
+                    validate_raw predicate;
+                    validate_raw value)
+               | _ =>
+                   (validate_identifier_symbol
+                      "application head" marked_head;
+                    validate_application_arity head rest;
+                    List.app validate_raw rest))
+            else if special_head "@list" then List.app validate_raw rest
+            else if special_head "@" then
+              (case rest of
+                 rator :: arguments =>
+                   if List.null arguments then
+                     raw_error "'@' expects a rator and at least one operand"
+                   else
+                     (validate_raw rator; List.app validate_raw arguments)
+               | [] => raw_error
+                   "'@' expects a rator and at least one operand")
+            else if special_head "@var" then
+              (case rest of
+                 [RawAtom name, sort] => validate_cpc_var name sort
+               | _ => raw_error "@var expects a name and sort")
+            else if special_head "is" then
+              (case rest of
+                 [RawAtom constructor, scrutinee] =>
+                   (validate_symbol "tester constructor" constructor;
+                    validate_raw scrutinee)
+               | _ => raw_error
+                   "CPC datatype tester expects a constructor and scrutinee")
+            else
+              (validate_identifier_symbol "application head" marked_head;
+               if special then validate_application_arity head rest else
+                 if List.null rest then
+                   raw_error
+                     "function application requires at least one argument"
+                 else ();
+               List.app validate_raw rest)
+          end
+      | RawList (head :: operands) =>
+          (validate_identifier head;
+           if List.null operands then
+             raw_error "function application requires at least one argument"
+           else List.app validate_raw operands)
+      | RawList [] => raw_error "empty term"
+    in validate_raw raw end
 
   fun raw_contains_let raw =
     case raw of
@@ -2022,9 +2401,9 @@ local
       all_chars (fn c => initial c orelse Char.isDigit c) text
     end
 
-  fun datatype_symbol where_ role token =
+  fun datatype_symbol_using symbol_key where_ role token =
     let
-      val key = cpc_symbol_key where_ token
+      val key = symbol_key token
       val name = SmtLib_Parser.proof_symbol_text key
       val _ =
         case SmtLib_Parser.proof_quoted_symbol_token token of
@@ -2037,6 +2416,9 @@ local
     in
       (key, name)
     end
+
+  fun datatype_symbol where_ role token =
+    datatype_symbol_using (cpc_symbol_key where_) where_ role token
 
   fun distinct_datatype_names where_ role names =
     let
@@ -2059,7 +2441,7 @@ local
     | NONE => raise ERR where_
         ("datatype arity for '" ^ name ^ "' must be a natural numeral")
 
-  fun parse_datatype_body where_ sort_key sort_name arity body =
+  fun parse_datatype_body_using symbol_key where_ sort_key sort_name arity body =
     let
       val (param_tokens, constructor_raws) =
         case body of
@@ -2071,7 +2453,7 @@ local
         | RawAtom _ => raise ERR where_ "datatype body must be parenthesized"
       fun parameter raw =
         case raw of
-          RawAtom token => datatype_symbol where_ "datatype parameter" token
+          RawAtom token => datatype_symbol_using symbol_key where_ "datatype parameter" token
         | RawList _ => raise ERR where_ "datatype parameter must be a symbol"
       val parameter_names = List.map parameter param_tokens
       val _ = distinct_datatype_names where_ "datatype parameter"
@@ -2086,7 +2468,7 @@ local
         case raw of
           RawList [RawAtom token, sort] =>
             let val (key, name) =
-              datatype_symbol where_ "datatype selector" token
+              datatype_symbol_using symbol_key where_ "datatype selector" token
             in {key = key, name = name, sort = sort} end
         | _ => raise ERR where_
             "datatype selector must have the form (name sort)"
@@ -2095,7 +2477,7 @@ local
           RawList (RawAtom token :: selector_raws) =>
             let
               val (key, name) =
-                datatype_symbol where_ "datatype constructor" token
+                datatype_symbol_using symbol_key where_ "datatype constructor" token
               val selectors = List.map selector selector_raws
               val _ = distinct_datatype_names where_ "datatype selector"
                 (List.map (fn ({key, name, ...}: datatype_selector) =>
@@ -2123,6 +2505,10 @@ local
        params = List.map #1 parameter_names, constructors = constructors}
     end
 
+  fun parse_datatype_body where_ sort_key sort_name arity body =
+    parse_datatype_body_using (cpc_symbol_key where_)
+      where_ sort_key sort_name arity body
+
   fun source_sort_type where_ tydict key arguments =
     let
       val candidates =
@@ -2140,7 +2526,8 @@ local
       first candidates
     end
 
-  fun validate_datatype_declarations dicts_ref declarations =
+  fun validate_datatype_declarations_using
+      (namespace : SmtLib_GraphFrontend.namespace) dicts_ref declarations =
     let
       val (tydict, tmdict) = !dicts_ref
       val sort_names = List.map
@@ -2159,14 +2546,14 @@ local
         "datatype constructor/selector" value_names
       fun reject_sort ({sort_key, sort_name, arity, ...}:
           datatype_declaration) =
-        if set_member (!cpc_reserved_symbols) sort_key orelse
-           set_member (!cpc_reserved_symbols) sort_name then
+        if set_member (#reserved namespace) sort_key orelse
+           set_member (#reserved namespace) sort_name then
           raise ERR "declare-datatypes"
             ("datatype may not shadow builtin sort " ^ sort_name)
-        else if set_member (!cpc_proof_sort_symbols) sort_key then
+        else if set_member (#proof_sorts namespace) sort_key then
           raise ERR "declare-datatypes"
             ("datatype sort conflicts with a proof declaration " ^ sort_name)
-        else if not (set_member (!cpc_source_sort_symbols) sort_key) orelse
+        else if not (set_member (#source_sorts namespace) sort_key) orelse
                 not (sort_declaration_compatible tydict sort_key arity) then
           raise ERR "declare-datatypes"
             ("datatype sort is not identical to source sort " ^ sort_name)
@@ -2184,10 +2571,10 @@ local
             let
               val name = SmtLib_Parser.proof_symbol_text key
               val _ =
-                if set_member (!cpc_reserved_symbols) key orelse
-                   set_member (!cpc_reserved_symbols) name orelse
-                   set_member (!cpc_source_sort_symbols) key orelse
-                   set_member (!cpc_proof_sort_symbols) key then
+                if set_member (#reserved namespace) key orelse
+                   set_member (#reserved namespace) name orelse
+                   set_member (#source_sorts namespace) key orelse
+                   set_member (#proof_sorts namespace) key then
                   raise ERR "declare-datatypes"
                     ("datatype parameter shadows namespace symbol " ^ name)
                 else ()
@@ -2238,16 +2625,16 @@ local
                Int.toString (List.length source_constructors) ^
                ", declared " ^ Int.toString (List.length constructors))
           fun require_source_symbol role key name =
-            if set_member (!cpc_reserved_symbols) key orelse
-               set_member (!cpc_reserved_symbols) name then
+            if set_member (#reserved namespace) key orelse
+               set_member (#reserved namespace) name then
               raise ERR "declare-datatypes"
                 ("datatype " ^ role ^ " may not shadow builtin symbol " ^
                  name)
-            else if set_member (!cpc_proof_term_symbols) key then
+            else if set_member (#proof_terms namespace) key then
               raise ERR "declare-datatypes"
                 ("datatype " ^ role ^
                  " conflicts with a proof declaration " ^ name)
-            else if not (set_member (!cpc_source_term_symbols) key) then
+            else if not (set_member (#source_terms namespace) key) then
               raise ERR "declare-datatypes"
                 ("datatype " ^ role ^
                  " is not identical to source symbol " ^ name)
@@ -2371,6 +2758,14 @@ local
     in
       List.app validate_one declarations
     end
+
+  fun validate_datatype_declarations dicts_ref declarations =
+    validate_datatype_declarations_using
+      {reserved = !cpc_reserved_symbols,
+       source_terms = !cpc_source_term_symbols,
+       source_sorts = !cpc_source_sort_symbols,
+       proof_terms = !cpc_proof_term_symbols,
+       proof_sorts = !cpc_proof_sort_symbols} dicts_ref declarations
 
   fun parse_declare_datatype_command dicts_ref get_token =
     let
@@ -2596,362 +2991,7 @@ local
       fun raw_error detail = raise ERR "parse_step"
         ("malformed raw term in unsupported CPC step " ^ id ^ ": " ^
          detail)
-      fun member token choices = List.exists (Lib.equal token) choices
-      fun quoted_symbol token =
-        SmtLib_Parser.proof_quoted_symbol_token token
-      fun token_text token =
-        Option.getOpt (quoted_symbol token, token)
-      fun unquoted_is expected token =
-        not (Option.isSome (quoted_symbol token)) andalso token = expected
-      fun string_literal token =
-        Option.isSome (SmtLib_Parser.proof_string_token token)
-      val reserved =
-        ["_", "!", "as", "let", "forall", "exists", "lambda",
-         "match", "par"]
-      fun all_chars predicate text =
-        List.all predicate (String.explode text)
-      fun ascii_letter c =
-        (#"a" <= c andalso c <= #"z") orelse
-        (#"A" <= c andalso c <= #"Z")
-      fun simple_initial c =
-        ascii_letter c orelse
-        member c [#"~", #"!", #"@", #"$", #"%", #"^", #"&",
-          #"*", #"_", #"-", #"+", #"=", #"<", #">", #".",
-          #"?", #"/"]
-      fun simple_symbol text =
-        String.size text > 0 andalso
-        simple_initial (String.sub (text, 0)) andalso
-        all_chars (fn c => simple_initial c orelse Char.isDigit c) text
-      fun keyword token =
-        not (Option.isSome (quoted_symbol token)) andalso
-        String.size token > 1 andalso String.sub (token, 0) = #":" andalso
-        simple_symbol (String.extract (token, 1, NONE))
-      fun digits text =
-        String.size text > 0 andalso all_chars Char.isDigit text
-      fun numeral text =
-        text = "0" orelse
-        (String.size text > 0 andalso String.sub (text, 0) <> #"0" andalso
-         digits text)
-      fun decimal text =
-        case String.fields (Lib.equal #".") text of
-          [whole, fraction] => numeral whole andalso digits fraction
-        | _ => false
-      fun radix_literal prefix predicate text =
-        String.isPrefix prefix text andalso String.size text > 2 andalso
-        all_chars predicate (String.extract (text, 2, NONE))
-      fun hex_digit c =
-        Char.isDigit c orelse (#"a" <= c andalso c <= #"f") orelse
-        (#"A" <= c andalso c <= #"F")
-      fun hexadecimal text =
-        radix_literal "#x" hex_digit text
-      fun binary text =
-        radix_literal "#b" (fn c => c = #"0" orelse c = #"1") text
-      fun unsigned_number text = numeral text orelse decimal text
-      fun signed_number text =
-        String.size text > 1 andalso String.sub (text, 0) = #"-" andalso
-        unsigned_number (String.extract (text, 1, NONE))
-      fun rational text =
-        case String.fields (Lib.equal #"/") text of
-          [numerator, denominator] =>
-            (numeral numerator orelse signed_number numerator) andalso
-            numeral denominator andalso denominator <> "0"
-        | _ => false
-      fun literal token =
-        string_literal token orelse numeral token orelse decimal token orelse
-        hexadecimal token orelse binary token orelse signed_number token orelse
-        rational token
-      fun valid_quoted text =
-        (SmtLib_String_Literal.validate_lexical_text true text; true)
-        handle SmtLib_String_Literal.InvalidStringLiteral _ => false
-      fun validate_symbol description token =
-        case SmtLib_Parser.proof_string_token token of
-          SOME _ => raw_error
-            ("string literal is not a valid " ^ description)
-        | NONE =>
-            (case quoted_symbol token of
-               SOME text =>
-                 if valid_quoted text then ()
-                 else raw_error ("invalid quoted " ^ description)
-             | NONE =>
-                 if simple_symbol token andalso not (keyword token) andalso
-                    not (member token reserved)
-                 then ()
-                 else raw_error
-                   ("invalid " ^ description ^ " '" ^ token ^ "'"))
-      val validate_identifier_symbol = validate_symbol
-      fun validate_index raw =
-        case raw of
-          RawAtom token =>
-            if Option.isSome (quoted_symbol token) then
-              validate_symbol "indexed-identifier index" token
-            else if numeral token then ()
-            else validate_identifier_symbol
-              "indexed-identifier index" token
-        | RawList _ => raw_error "indexed-identifier index is not atomic"
-      fun validate_simple_identifier description raw =
-        case raw of
-          RawAtom token => validate_identifier_symbol description token
-        | RawList (RawAtom marker :: RawAtom name :: indices) =>
-            if unquoted_is "_" marker then
-              (validate_identifier_symbol
-                 ("indexed " ^ description ^ " name") name;
-               if List.null indices then
-                 raw_error ("indexed " ^ description ^
-                   " requires at least one index")
-               else List.app validate_index indices)
-            else raw_error
-              (description ^ " is not a simple/indexed identifier")
-        | RawList _ =>
-            raw_error (description ^ " is not a simple/indexed identifier")
-      fun validate_sort raw =
-        case raw of
-          RawAtom _ => validate_simple_identifier "sort identifier" raw
-        | RawList (RawAtom marker :: RawAtom _ :: _) =>
-            if unquoted_is "_" marker then
-              validate_simple_identifier "sort identifier" raw
-            else validate_sort_application raw
-        | RawList [] => raw_error "empty sort"
-        | RawList _ => validate_sort_application raw
-      and validate_sort_application raw =
-        case raw of
-          RawList (head :: arguments) =>
-            (validate_simple_identifier "sort application head" head;
-             if List.null arguments then
-               raw_error "sort application requires at least one argument"
-             else List.app validate_sort arguments)
-        | _ => raw_error "malformed sort application"
-      fun validate_identifier raw =
-        case raw of
-          RawAtom _ => validate_simple_identifier "identifier" raw
-        | RawList [RawAtom marker, identifier, sort] =>
-            if unquoted_is "as" marker then
-              (validate_simple_identifier "ascribed identifier" identifier;
-               validate_sort sort)
-            else if unquoted_is "_" marker then
-              validate_simple_identifier "identifier" raw
-            else raw_error
-              "application head is not a qualified identifier"
-        | RawList (RawAtom marker :: _) =>
-            if unquoted_is "as" marker then
-              raw_error
-                "qualified identifier 'as' expects an identifier and sort"
-            else if unquoted_is "_" marker then
-              validate_simple_identifier "identifier" raw
-            else raw_error
-              "application head is not a qualified identifier"
-        | RawList _ => raw_error
-            "application head is not a qualified identifier"
-      fun validate_sorted_variable raw =
-        case raw of
-          RawList [RawAtom name, sort] =>
-            (validate_symbol "bound variable" name; validate_sort sort)
-        | _ => raw_error
-            "sorted variable must have the form (name sort)"
-      fun validate_cpc_var name sort =
-        (case SmtLib_Parser.proof_string_token name of
-           SOME _ => ()
-         | NONE => validate_symbol "bound variable" name;
-         validate_sort sort)
-      fun validate_binders binders =
-        case binders of
-          RawAtom alias => validate_symbol "CPC binder-list alias" alias
-        | RawList (RawAtom marker :: variables) =>
-            if unquoted_is "@list" marker then
-              if List.null variables then
-                raw_error "CPC binder list must be nonempty"
-              else List.app (fn variable =>
-                case variable of
-                  RawAtom alias =>
-                    validate_symbol "CPC bound-variable alias" alias
-                | RawList [RawAtom var_marker, RawAtom name, sort] =>
-                    if unquoted_is "@var" var_marker then
-                      validate_cpc_var name sort
-                    else raw_error
-                      "CPC binder must be an alias or (@var name sort)"
-                | _ => raw_error
-                    "CPC binder must be an alias or (@var name sort)")
-                variables
-            else validate_sorted_variables binders
-        | RawList _ => validate_sorted_variables binders
-      and validate_sorted_variables binders =
-        case binders of
-          RawList variables =>
-            if List.null variables then
-              raw_error "sorted-variable list must be nonempty"
-            else List.app validate_sorted_variable variables
-        | _ => raw_error "sorted-variable list must be parenthesized"
-      fun validate_pattern pattern =
-        case pattern of
-          RawAtom name => validate_symbol "match pattern" name
-        | RawList (RawAtom constructor :: variables) =>
-            (validate_symbol "match constructor" constructor;
-             if List.null variables then
-               raw_error "constructor pattern requires at least one variable"
-             else List.app (fn variable => case variable of
-                 RawAtom name => validate_symbol "match binder" name
-               | RawList _ => raw_error "match binder is not atomic")
-               variables)
-        | RawList _ => raw_error "malformed match pattern"
-      fun validate_sexp sexp =
-        case sexp of
-          RawAtom token =>
-            if literal token orelse keyword token then ()
-            else validate_symbol "annotation s-expression atom" token
-        | RawList entries => List.app validate_sexp entries
-      fun validate_attributes attributes =
-        let
-          fun loop [] = ()
-            | loop (RawAtom attribute :: rest) =
-                if not (keyword attribute) then
-                  raw_error "annotation expects an attribute keyword"
-                else
-                  (case rest of
-                     RawAtom next :: _ =>
-                       if keyword next then loop rest
-                       else (validate_sexp (List.hd rest);
-                             loop (List.tl rest))
-                   | RawList value :: tail =>
-                       (validate_sexp (RawList value); loop tail)
-                   | [] => ())
-            | loop _ = raw_error "annotation expects an attribute keyword"
-        in
-          if List.null attributes then
-            raw_error "annotation requires at least one attribute"
-          else loop attributes
-        end
-      fun validate_application_arity head operands =
-        let
-          fun exact expected =
-            if List.length operands = expected then ()
-            else raw_error ("'" ^ head ^ "' expects exactly " ^
-              Int.toString expected ^ " operand(s)")
-          fun at_least expected =
-            if List.length operands >= expected then ()
-            else raw_error ("'" ^ head ^ "' expects at least " ^
-              Int.toString expected ^ " operand(s)")
-        in
-          case head of
-            "true" => raw_error "'true' must be an atomic term"
-          | "false" => raw_error "'false' must be an atomic term"
-          | "not" => exact 1
-          | "ite" => exact 3
-          | "=" => at_least 2
-          | "distinct" => at_least 2
-          | "=>" => at_least 2
-          | "and" => at_least 2
-          | "or" => at_least 2
-          | "xor" => at_least 2
-          | _ => at_least 1
-        end
-      fun validate_raw raw =
-        case raw of
-          RawAtom token =>
-            if literal token then ()
-            else validate_identifier_symbol "term identifier" token
-        | RawList (RawAtom marked_head :: rest) =>
-            let
-              val head = token_text marked_head
-              val special =
-                not (Option.isSome (quoted_symbol marked_head))
-              fun special_head name = special andalso head = name
-            in
-              if special_head "as" then
-                (case rest of
-                   [identifier, sort] =>
-                     (validate_simple_identifier
-                        "ascribed identifier" identifier;
-                      validate_sort sort)
-                 | _ => raw_error
-                     ("qualified identifier 'as' expects an identifier " ^
-                      "and sort"))
-              else if special_head "_" then
-                validate_simple_identifier "identifier" raw
-              else if member head ["forall", "exists", "lambda"] andalso
-                      special then
-                (case rest of
-                   [binders, body] =>
-                     (validate_binders binders; validate_raw body)
-                 | _ => raw_error ("malformed " ^ head ^ " binder"))
-              else if special_head "let" then
-                (case rest of
-                   [RawList bindings, body] =>
-                     (if List.null bindings then
-                        raw_error "let requires at least one binding"
-                      else List.app (fn binding => case binding of
-                          RawList [RawAtom name, rhs] =>
-                            (validate_symbol "let variable" name;
-                             validate_raw rhs)
-                        | _ => raw_error
-                            "let binding must have the form (name term)")
-                        bindings;
-                      validate_raw body)
-                 | _ => raw_error "malformed let term")
-              else if special_head "!" then
-                (case rest of
-                   term :: attributes =>
-                     (validate_raw term; validate_attributes attributes)
-                 | [] => raw_error "annotation is missing its term")
-              else if special_head "match" then
-                (case rest of
-                   [scrutinee, RawList branches] =>
-                     (validate_raw scrutinee;
-                      if List.null branches then
-                        raw_error "match requires at least one branch"
-                      else List.app (fn branch => case branch of
-                          RawList [pattern, body] =>
-                            (validate_pattern pattern; validate_raw body)
-                        | _ => raw_error
-                            "match branch must have pattern and body")
-                          branches)
-                 | _ => raw_error
-                     "match expects a scrutinee and parenthesized branches")
-              else if special_head "set.comprehension" then
-                (case rest of
-                   [binders as RawList (RawList _ :: _), predicate, value] =>
-                     (validate_binders binders;
-                      validate_raw predicate;
-                      validate_raw value)
-                 | _ =>
-                     (validate_identifier_symbol
-                        "application head" marked_head;
-                      validate_application_arity head rest;
-                      List.app validate_raw rest))
-              else if special_head "@list" then List.app validate_raw rest
-              else if special_head "@" then
-                (case rest of
-                   rator :: arguments =>
-                     if List.null arguments then
-                       raw_error "'@' expects a rator and at least one operand"
-                     else
-                       (validate_raw rator; List.app validate_raw arguments)
-                 | [] => raw_error
-                     "'@' expects a rator and at least one operand")
-              else if special_head "@var" then
-                (case rest of
-                   [RawAtom name, sort] => validate_cpc_var name sort
-                 | _ => raw_error "@var expects a name and sort")
-              else if special_head "is" then
-                (case rest of
-                   [RawAtom constructor, scrutinee] =>
-                     (validate_symbol "tester constructor" constructor;
-                      validate_raw scrutinee)
-                 | _ => raw_error
-                     "CPC datatype tester expects a constructor and scrutinee")
-              else
-                (validate_identifier_symbol "application head" marked_head;
-                 if special then validate_application_arity head rest else
-                   if List.null rest then
-                     raw_error
-                       "function application requires at least one argument"
-                   else ();
-                 List.app validate_raw rest)
-            end
-        | RawList (head :: operands) =>
-            (validate_identifier head;
-             if List.null operands then
-               raw_error "function application requires at least one argument"
-             else List.app validate_raw operands)
-        | RawList [] => raw_error "empty term"
+      val validate_raw = validate_raw_term raw_error
       fun structural_premises () =
         let
           val _ = if structural_token "while reading :premises" = "("
@@ -3440,6 +3480,41 @@ local
       | NONE => (id, SOME (parse_supported ()))
     end
 
+  fun register_command_signature seen_steps kind id tokens =
+    let
+    fun same_tokens left right =
+      ListPair.allEq (op =) (left, right)
+    fun normalize_premise_ids tokens =
+      let
+        fun normal acc [] = List.rev acc
+          | normal acc (":premises" :: "(" :: rest) =
+              premises ("(" :: ":premises" :: acc) rest
+          | normal acc (token :: rest) = normal (token :: acc) rest
+        and premises acc [] = List.rev acc
+          | premises acc (")" :: rest) = normal (")" :: acc) rest
+          | premises acc (_ :: rest) =
+              premises ("@premise" :: acc) rest
+      in
+        normal [] tokens
+      end
+    fun register_step_signature kind id tokens =
+      let
+        (* [tokens] starts with the raw command-ID token.  Use its already
+           validated semantic key so normalized-identical scoped reuse is
+           independent of equivalent quoted/unquoted spelling. *)
+        val signature_tokens =
+          kind :: id :: normalize_premise_ids (List.tl tokens)
+      in
+        case Redblackmap.peek (!seen_steps, id) of
+          NONE => seen_steps :=
+            Redblackmap.insert (!seen_steps, id, signature_tokens)
+        | SOME known_tokens =>
+            if same_tokens signature_tokens known_tokens then ()
+            else raise ERR "parse_commands"
+              ("duplicate CPC command ID " ^ id)
+      end
+    in register_step_signature kind id tokens end
+
   fun parse_commands dicts_ref version known_ids scope_snapshots
       seen_steps record_unsupported get_token stop acc =
     let
@@ -3449,37 +3524,7 @@ local
       fun recurse acc =
         parse_commands dicts_ref version known_ids scope_snapshots
           seen_steps record_unsupported get_token stop acc
-      fun same_tokens left right =
-        ListPair.allEq (op =) (left, right)
-      fun normalize_premise_ids tokens =
-        let
-          fun normal acc [] = List.rev acc
-            | normal acc (":premises" :: "(" :: rest) =
-                premises ("(" :: ":premises" :: acc) rest
-            | normal acc (token :: rest) = normal (token :: acc) rest
-          and premises acc [] = List.rev acc
-            | premises acc (")" :: rest) = normal (")" :: acc) rest
-            | premises acc (_ :: rest) =
-                premises ("@premise" :: acc) rest
-        in
-          normal [] tokens
-        end
-      fun register_step_signature kind id tokens =
-        let
-          (* [tokens] starts with the raw command-ID token.  Use its already
-             validated semantic key so normalized-identical scoped reuse is
-             independent of equivalent quoted/unquoted spelling. *)
-          val signature_tokens =
-            kind :: id :: normalize_premise_ids (List.tl tokens)
-        in
-          case Redblackmap.peek (!seen_steps, id) of
-            NONE => seen_steps :=
-              Redblackmap.insert (!seen_steps, id, signature_tokens)
-          | SOME known_tokens =>
-              if same_tokens signature_tokens known_tokens then ()
-              else raise ERR "parse_commands"
-                ("duplicate CPC command ID " ^ id)
-        end
+      val register_step_signature = register_command_signature seen_steps
       fun parse_recorded_step kind =
         let
           val consumed = ref ([] : string list)
@@ -3599,6 +3644,11 @@ local
            SmtLib_Parser.proof_symbol_text other ^ "'")
     end
 in
+  datatype raw_term = datatype raw_term
+  val read_raw_term = read_raw_term
+  val raw_tokens = raw_tokens
+  val normalize_cpc_testers = normalize_cpc_testers
+  val validate_raw_term = validate_raw_term
   val intern_cpc_term = intern_cpc_term
   val cpc_indexed_term_registry = cpc_indexed_term_registry
   val with_cpc_deindexed_entries = with_cpc_deindexed_entries
@@ -3695,6 +3745,1047 @@ in
 
   fun parse_stream dicts instream =
     parse_stream_with_version dicts unknown_cvc_version instream
+
+  (* Explicitly audited CPC constructors receive only bounded typed holes.
+     Shape-dependent BV/FP and skolem builders remain separate adapters. *)
+  fun install_graph_recipes (options : SmtLib_GraphFrontend.options)
+      (terms : SmtLib_GraphFrontend.session) =
+    let
+      fun bounded_distinct token indices arguments =
+        let val count = List.length arguments
+            val limit = #template_limit (#recipe_limits options)
+            (* Regex distinct builds pairwise relations. Admit its quadratic
+               schematic work before invoking the authoritative builder. *)
+            val regex = case arguments of first :: _ =>
+                cpc_type_eq (Term.type_of first, cpc_reglan_ty)
+              | [] => false
+            val _ = if regex andalso count > 0 andalso
+                count > limit div count div 16 then
+              raise ERR "graph_distinct" "distinct schema exceeds contract"
+            else ()
+        in cpc_distinct_parsefn token indices arguments end
+      val entries =
+        [("=", cpc_equality_parsefn), ("distinct", bounded_distinct),
+         ("str.++", cpc_concat_parsefn "smtstr_concat"),
+         ("re.++", cpc_concat_parsefn "reglan_concat"),
+         ("re.union", cpc_concat_parsefn "reglan_union"),
+         ("re.inter", cpc_concat_parsefn "reglan_inter"),
+         ("to_int", cpc_intreal_parsefn), ("to_real", cpc_intreal_parsefn),
+         ("int.pow2", cpc_intreal_parsefn)]
+      val totals = List.map (fn name => (name, cpc_arith_total_parsefn))
+        ["div_total", "mod_total", "/_total", "@int_div_by_zero",
+         "@mod_by_zero", "@div_by_zero", "**_total"]
+      val backend = #backend (#reader terms)
+      val graph = #graph options
+      val limits = #recipe_limits options
+      val width_limit = #index_limit limits
+      fun admitted term =
+        case SmtReplayImport.bounded_raw_size width_limit term of
+          SOME _ => term
+        | NONE => raise ERR "graph_index" "expanded private literal index"
+      fun natural term =
+        let val value = numeral_of_term "graph private index" (admitted term)
+        in if Arbnum.<= (value, Arbnum.fromInt width_limit) then value else
+          raise ERR "graph_index" "private numeric index exceeds contract" end
+      fun index (P.LiteralIndex term) = natural term
+        | index (P.ValueIndex (node, _)) =
+            (case G.unfolded_nodes graph
+                G.RawNodes width_limit node of
+               SOME size => if size <= width_limit then
+                   natural (G.representative graph node)
+                 else raise ERR "graph_index" "expanded private index operand"
+             | NONE => raise ERR "graph_index" "opaque private index operand")
+        | index _ = raise ERR "graph_index" "nonliteral private index"
+      fun marker frame token indices args =
+        let
+          val ty = case (token, indices, args) of
+              ("BitVec", [bits], []) =>
+                wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
+            | ("FloatingPoint", [eb, sb], []) =>
+                SmtLib_Theories.smtfp_type (index eb, index sb)
+            | ("->", [], _ :: _ :: _) =>
+                let val (domains, range) = Lib.front_last args in
+                  boolSyntax.list_mk_fun
+                    (List.map (B.type_of backend) domains,
+                     B.type_of backend range) end
+            | _ => raise ERR "cpc_sort_marker_parsefn"
+                ("malformed CPC sort marker " ^ token)
+        in (#private_symbol terms) frame
+          {kind = "@cpc." ^ token, hol_type = ty,
+           source = NONE, stable = true} end
+      fun private_fp frame token indices args =
+        if not (null indices) then raise ERR "cpc_fp_private_parsefn"
+          "unexpected indices"
+        else case args of
+            [sort_marker] => (#private_symbol terms) frame
+              {kind = token, hol_type = B.type_of
+                 backend sort_marker, source = NONE, stable = false}
+          | [sort_marker, source] => (#private_symbol terms) frame
+              {kind = token, hol_type = B.type_of
+                 backend sort_marker, source = SOME source, stable = true}
+          | _ => raise ERR "cpc_fp_private_parsefn"
+              (token ^ " expects a sort marker and at most one " ^
+               "floating-point operand")
+      fun private_const frame token indices args =
+        case (token, indices, args) of
+          ("@const", [], [number, sort_marker]) =>
+            let
+              val _ = if Type.compare (B.type_of backend number,
+                  intSyntax.int_ty) = EQUAL then () else
+                raise ERR "cpc_private_const_parsefn"
+                  "@const index must have HOL int type"
+              val value = index (P.ValueIndex (number, "@const"))
+            in (#private_symbol terms) frame
+              {kind = "@cpc.const." ^ Arbnum.toString value,
+               hol_type = B.type_of backend sort_marker,
+               source = NONE, stable = true} end
+        | _ => raise ERR "cpc_private_const_parsefn"
+            "@const expects an index and a sort marker"
+      fun private_total frame token indices args =
+        if not (null indices) orelse null args then
+          raise ERR "cpc_fp_total_parsefn" "malformed private FP operator"
+        else
+          let val types = List.map (B.type_of backend) args
+              val ty = boolSyntax.list_mk_fun (types, hd types)
+              val head = (#private_symbol terms) frame
+                {kind = token, hol_type = ty, source = NONE, stable = true}
+          in List.foldl (fn (arg, head) =>
+            B.application backend frame (head, arg))
+            head args end
+      fun arithmetic frame token indices args =
+        if null indices andalso null args andalso
+            List.exists (Lib.equal token)
+              ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
+          (#private_symbol terms) frame
+            {kind = token, hol_type = if token = "@div_by_zero"
+               then realSyntax.real_ty else intSyntax.int_ty,
+             source = NONE, stable = true}
+        else SmtLib_GraphTheories.recipe_parsefn backend limits
+          cpc_arith_total_parsefn frame token indices args
+      val _ = List.app (#add_recipe_parser terms) entries
+      val _ = List.app (fn (name, _) =>
+        (#add_constructor_parser terms) (name, arithmetic)) totals
+      val _ = (#add_constructor_parser terms) ("@const", private_const)
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, marker))
+        ["BitVec", "FloatingPoint", "->"]
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, private_fp))
+        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
+         "@fp.NAN", "@fp.INF"]
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, private_total))
+        ["fp.max_total", "fp.min_total"]
+      val _ = List.app (#add_recipe_parser terms)
+        [("@fp.RMBITBLAST", cpc_fp_rounding_parsefn),
+         ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
+         ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
+         ("@bvsize", cpc_bv_parsefn)]
+    in () end
+
+  (* Additive direct-ID frontend. This reads terms for graph proof records;
+     script/rule reconstruction still uses the compatibility entry above
+     until its specialized graph adapters and certificate gates pass. *)
+  type graph_located_term = SmtLib_GraphFrontend.term
+  type graph_step = proof_rule SmtLib_GraphFrontend.step
+  fun graph_term_reader_with_version options version instream =
+    let
+      val version = resolve_version version
+      val baseline = with_cpc_literals
+        (SmtLib_Logics.parsedicts_of_logic "ALL")
+      val reserved_names = Redblackmap.foldl
+        (fn (key, _, keys) => key :: keys)
+        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
+          ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
+           "par", "declare-const", "declare-fun", "declare-sort",
+           "declare-datatype", "declare-datatypes", "define",
+           "assume", "assume-push", "step", "step-pop"] (#1 baseline))
+        (#2 baseline)
+      val terms = SmtLib_GraphFrontend.create_session options
+        {solver = "cvc5", version = version,
+         policy = SmtLib_GraphFrontend.CPC, reserved_names = reserved_names}
+        (SmtLib_Parser.make_cpc_proof_stream_tokenizer instream)
+      val _ = install_graph_recipes options terms
+      val _ = (#add_literal_parser terms)
+        (fn token => cpc_literal_parsefn token [] [])
+    in #reader terms end
+  fun graph_term_reader options instream =
+    graph_term_reader_with_version options unknown_cvc_version instream
+
+  (* Complete incremental command grammar. Semantic arguments retain their
+     source occurrence trees; list/index/sort/hint roles are separate data,
+     never counterfeit HOL terms. Proof-block lifetime belongs to replay. *)
+  datatype 'a constructed_graph_argument =
+      GraphTerm of 'a F.constructed_term
+    | GraphList of 'a constructed_graph_argument list | GraphIndex of int
+    | GraphSort of Type.hol_type | GraphHint of raw_term
+  type graph_argument = G.node constructed_graph_argument
+  type 'a constructed_graph_rule_step =
+    {id : string, rule : proof_rule, premises : string list,
+     conclusion : 'a F.constructed_term option,
+     args : 'a constructed_graph_argument list,
+     raw_conclusion : raw_term option, raw_args : raw_term list}
+  type graph_rule_step = G.node constructed_graph_rule_step
+  datatype 'a constructed_graph_command =
+      GraphAssume of string * 'a F.constructed_term
+    | GraphAssumePush of string * 'a F.constructed_term
+    | GraphStep of {step : 'a constructed_graph_rule_step, pop : bool}
+  type graph_command = G.node constructed_graph_command
+  type 'a constructed_graph_proof =
+    {commands : 'a constructed_graph_command list,cvc_version : string}
+  type graph_proof = G.node constructed_graph_proof
+  type 'a constructed_graph_command_reader =
+    {next : unit -> 'a constructed_graph_command option,
+     terms : 'a F.constructed_session,cvc_version : string}
+  type graph_command_reader = G.node constructed_graph_command_reader
+
+  fun graph_command_reader_with_factory make_session
+      (options : SmtLib_GraphFrontend.options)
+      (declaration_dicts : dicts) requested_version instream
+      : graph_command_reader =
+    let
+      val version = resolve_version requested_version
+      val baseline = with_cpc_literals
+        (SmtLib_Logics.parsedicts_of_logic "ALL")
+      val syntax_names =
+        ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
+         "par", "declare-const", "declare-fun", "declare-sort",
+         "declare-datatype", "declare-datatypes", "define", "assume",
+         "assume-push", "step", "step-pop"]
+      val reserved_names = Redblackmap.foldl
+        (fn (key, _, keys) => key :: keys)
+        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
+          syntax_names (#1 baseline)) (#2 baseline)
+      val token = P.make_cpc_proof_stream_tokenizer instream
+      val terms = make_session options
+        {solver = "cvc5", version = version, policy = F.CPC,
+         reserved_names = reserved_names} token
+      val _ = install_graph_recipes options terms
+      val _ = (#add_literal_parser terms)
+        (fn token => cpc_literal_parsefn token [] [])
+      val known = ref (HOLset.empty String.compare)
+      val snapshots = ref ([] : string HOLset.set list)
+      val seen = ref
+        (Redblackmap.mkDict String.compare :
+          (string, string list) Redblackmap.dict)
+      val pending = ref (NONE : (string * string) option)
+      val ended = ref false
+      val _ = Library.expect_token "(" (token ())
+      fun error message = raise ERR "graph_commands" message
+      fun tokens raw action =
+        let val remaining = ref (raw_tokens raw)
+            fun next () = case !remaining of
+                first :: rest => (remaining := rest; first)
+              | [] => error "buffered term ended unexpectedly"
+            val result = action next
+            val _ = if null (!remaining) then () else
+              error "buffered term has trailing syntax"
+        in result end
+      fun sort raw = tokens raw (#parse_sort terms)
+      fun graph_application raw = case raw of
+          RawList (RawAtom "_" :: RawAtom name :: indices) =>
+            if name = "BitVec" orelse name = "FloatingPoint" then
+              let
+                val arity = if name = "BitVec" then 1 else 2
+                val _ = if List.length indices = arity then () else
+                  error ("malformed CPC indexed sort marker " ^ name)
+                (* These are actual indexed sort markers, not the CPC
+                   higher-order application form. The installed marker
+                   recipe admits every literal/value index and its width
+                   before constructing the authoritative HOL type. *)
+              in RawList (RawAtom "_" :: RawAtom name ::
+                List.map graph_application indices) end
+            else RawList (RawAtom "@" ::
+              List.map graph_application (RawAtom name :: indices))
+        | RawList (RawAtom "_" :: arguments) =>
+            RawList (RawAtom "@" :: List.map graph_application arguments)
+        | RawList ((head as RawList (RawAtom "_" :: _)) :: arguments) =>
+            RawList (head :: List.map graph_application arguments)
+        | RawList entries => RawList (List.map graph_application entries)
+        | RawAtom _ => raw
+      fun parse raw : graph_located_term =
+        case raw of
+          RawList [RawAtom "@var", RawAtom name, ty] =>
+            (#private_variable terms) (cpc_var_name name, sort ty)
+        | _ => tokens (graph_application (normalize_cpc_testers raw))
+            (#parse_from terms)
+      fun raw_list context raw = case raw of RawList entries => entries
+        | _ => error (context ^ " must be parenthesized")
+      fun atom context raw = case raw of RawAtom text => text
+        | _ => error (context ^ " must be atomic")
+      fun id text = cpc_id_key "graph_commands" "command ID" text
+      fun fresh name = ensure_fresh_id "graph_commands" name known
+      fun add name = known := HOLset.add (!known, name)
+      fun close name = case !snapshots of
+          previous :: rest => (known := previous; snapshots := rest; add name)
+        | [] => error ("step-pop without assume-push in CPC step " ^ name)
+      fun declarations kind =
+        let val name = token ()
+            val domain = if kind = "declare-fun" then
+                List.map sort (raw_list "function domain"
+                  (read_raw_term token))
+              else []
+            val range = sort (read_raw_term token)
+            val _ = Library.expect_token ")" (token ())
+        in (#declare terms) (name, boolSyntax.list_mk_fun (domain, range)) end
+      fun datatype_declaration kind =
+        let
+          val namespace = (#namespace terms) ()
+          val symbol_key = #symbol_key terms
+          fun binding raw = case raw of
+              RawList [RawAtom name, RawAtom arity] =>
+                let val (key, text) = datatype_symbol_using symbol_key
+                      "declare-datatypes" "datatype sort" name
+                in (key, text, datatype_arity "declare-datatypes" text arity)
+                end
+            | _ => error "malformed datatype binding"
+          val declarations = if kind = "declare-datatype" then
+              let
+                val name = token ()
+                val (key, text) = datatype_symbol_using symbol_key
+                  kind "datatype sort" name
+                val body = read_raw_term token
+                val arity = case body of
+                    RawList [RawAtom "par", RawList params, RawList _] =>
+                      List.length params
+                  | _ => 0
+              in [parse_datatype_body_using symbol_key
+                kind key text arity body] end
+            else
+              let val bindings = List.map binding
+                    (raw_list "datatype bindings" (read_raw_term token))
+                  val bodies = raw_list "datatype bodies"
+                    (read_raw_term token)
+                  val _ = if List.length bindings = List.length bodies then
+                    () else error "datatype binding/body count mismatch"
+              in ListPair.mapEq (fn ((key, name, arity), body) =>
+                parse_datatype_body_using symbol_key kind key name arity body)
+                (bindings, bodies) end
+          val _ = Library.expect_token ")" (token ())
+        in validate_datatype_declarations_using namespace
+          (ref ((#sort_dictionary terms) (), #2 declaration_dicts))
+          declarations end
+      fun define () =
+        let
+          val name = token ()
+          val start = token ()
+          val first = if start = "(" then
+              (Library.expect_token ")" (token ()); token ()) else start
+          val raw = if first = "@list" then
+              RawList (RawAtom "@list" :: raw_list "CPC list"
+                (read_raw_term token))
+            else read_raw_term (Library.undo_look_ahead [first] token)
+          val _ = Library.expect_token ")" (token ())
+        in case raw of
+            RawList (RawAtom "@list" :: entries) =>
+              (#define_list terms) (name, List.map parse entries)
+          | RawList [RawAtom "@var", RawAtom variable, ty] =>
+              ignore ((#define_variable terms)
+                (name, cpc_var_name variable, sort ty))
+          | RawList [RawAtom "@purify", payload] =>
+              (#define terms) (name, parse payload)
+          | _ => (#define terms) (name, parse raw)
+        end
+      fun argument raw = case raw of
+          RawList (RawAtom "@list" :: entries) =>
+            GraphList (List.map argument entries)
+        | RawAtom name => (case (#lookup_list terms) name of
+            SOME entries => GraphList (List.map GraphTerm entries)
+          | NONE => GraphTerm (parse raw))
+        | RawList (RawAtom "Set" :: _) => GraphSort (sort raw)
+        | _ => GraphTerm (parse raw)
+      fun index raw =
+        let val text = atom "CPC index" raw
+        in case Int.fromString text of
+            SOME index => if index >= 0 then GraphIndex index else
+              error "negative CPC index"
+          | NONE => error "non-numeral CPC index" end
+      fun rule_arguments (rule : proof_rule) raws =
+        if #replay_handler rule = "and_elim" orelse
+           #replay_handler rule = "not_or_elim" then
+          (case raws of [raw] => [index raw]
+           | _ => error "elimination rule expects one index")
+        else if #name rule = "cnf_and_pos" orelse
+                #name rule = "cnf_or_neg" then
+          (case raws of [object, number] => [argument object, index number]
+           | _ => error "CNF rule expects an object and index")
+        else if #name rule = "resolution" then
+          (case raws of polarity :: pivot :: hints =>
+              argument polarity :: argument pivot :: List.map GraphHint hints
+           | [] => []
+           | _ => error "resolution requires polarity and pivot")
+        else List.map argument raws
+      fun step kind =
+        let
+          val consumed = ref ([] : string list)
+          fun next () = let val text = token () in
+            consumed := text :: !consumed; text end
+          val name = id (next ())
+          val _ = fresh name
+          val first = next ()
+          val conclusion = if first = ":rule" then NONE else
+            SOME (read_raw_term (Library.undo_look_ahead [first] next))
+          val _ = if first = ":rule" then () else
+            Library.expect_token ":rule" (next ())
+          val rule_name = next ()
+          val rule = case lookup_rule version rule_name of
+              SOME rule => rule
+            | NONE => raise ERR "graph_step"
+                (registry_lookup_failure version rule_name)
+          fun attrs saw_premises saw_args premises args =
+            case next () of
+              ")" => (premises, args)
+            | ":premises" =>
+                if saw_premises then error "duplicate :premises" else
+                  let val premises = List.map
+                        (cpc_id_key "graph_step" "premise ID" o
+                          atom "premise ID")
+                        (raw_list "premises" (read_raw_term next))
+                      val _ = List.app
+                        (require_known_premise name known) premises
+                  in attrs true saw_args premises args end
+            | ":args" => if saw_args then error "duplicate :args" else
+                attrs saw_premises true premises
+                  (raw_list "arguments" (read_raw_term next))
+            | attribute => error ("unknown CPC step attribute " ^ attribute)
+          val (premises, args) = attrs false false [] []
+          val _ = register_command_signature seen kind name
+            (List.rev (!consumed))
+          val _ = if kind = "step-pop" then close name else add name
+        in case rare_unsupported_diagnostic rule_name of
+            SOME diagnostic =>
+              let fun raw_error detail = raise ERR "parse_step"
+                    ("malformed raw term in unsupported CPC step " ^ name ^
+                     ": " ^ detail)
+                  val _ = Option.app (validate_raw_term raw_error) conclusion
+                  val _ = List.app (validate_raw_term raw_error) args
+                  val _ = if Option.isSome (!pending) then () else
+                    pending := SOME (rule_name, diagnostic)
+              in NONE end
+          | NONE => SOME (GraphStep
+              {step = {id = name, rule = rule, premises = premises,
+                 conclusion = Option.map parse conclusion,
+                 args = rule_arguments rule args,
+                 raw_conclusion = conclusion, raw_args = args},
+               pop = kind = "step-pop"})
+        end
+      fun finish () =
+        let val _ = if null (!snapshots) then () else
+              error "unclosed assume-push scope at end of CPC proof wrapper"
+            val trailing = SOME (token ()) handle P.CPCProofEOF => NONE
+            val _ = case trailing of NONE => () | SOME text =>
+              error ("second CPC proof wrapper or trailing token '" ^
+                P.proof_symbol_text text ^ "'")
+            val _ = ended := true
+        in case !pending of NONE => NONE
+          | SOME (rule, diagnostic) => raise ERR rule diagnostic end
+      fun next () = if !ended then NONE else
+        case token () of
+          ")" => finish ()
+        | "(" =>
+            (case token () of
+               "declare-const" => (declarations "declare-const"; next ())
+             | "declare-fun" => (declarations "declare-fun"; next ())
+             | "declare-sort" =>
+                 let val name = token ()
+                     val arity = datatype_arity "declare-sort" name (token ())
+                     val _ = Library.expect_token ")" (token ())
+                 in (#declare_sort terms) (name, arity); next () end
+             | "declare-datatype" =>
+                 (datatype_declaration "declare-datatype"; next ())
+             | "declare-datatypes" =>
+                 (datatype_declaration "declare-datatypes"; next ())
+             | "define" => (define (); next ())
+             | "assume" => assumption false
+             | "assume-push" => assumption true
+             | "step" => (case step "step" of
+                 NONE => next () | command => command)
+             | "step-pop" => (case step "step-pop" of
+                 NONE => next () | command => command)
+             | command => error ("unknown CPC construct " ^ command))
+        | text => error ("unexpected CPC token '" ^
+            P.proof_symbol_text text ^ "'")
+      and assumption push =
+        let val name = id (token ())
+            val _ = fresh name
+            val value = parse (read_raw_term token)
+            val _ = Library.expect_token ")" (token ())
+            val _ = if push then snapshots := !known :: !snapshots else ()
+            val _ = add name
+        in SOME (if push then GraphAssumePush (name, value)
+          else GraphAssume (name, value)) end
+      fun checked_next () = next () handle P.CPCProofEOF =>
+        error "unexpected end of CPC proof wrapper"
+    in {next = checked_next, terms = terms, cvc_version = version} end
+
+  fun graph_command_reader_with_version options declaration_dicts version input =
+    graph_command_reader_with_factory F.create_session
+      options declaration_dicts version input
+
+  fun graph_configured_command_reader_with_version
+      (configured : F.configured_options) declaration_dicts version input =
+    graph_command_reader_with_factory
+      (fn _ => F.create_configured_session configured)
+      (#base configured) declaration_dicts version input
+
+  fun packet requested_version (reader : graph_command_reader)
+      : graph_proof SmtLib_GraphProof.packet =
+    let
+        fun commands acc = case (#next reader) () of
+            NONE => List.rev acc | SOME command => commands (command :: acc)
+        val proof = {commands = commands [], cvc_version = #cvc_version reader}
+    in SmtLib_GraphProof.new
+      {reader = #reader (#terms reader), proof = proof,
+       requested_version = requested_version, close = fn () => ()} end
+
+  fun parse_graph_packet_with_version options declaration_dicts version input =
+    let val reader = graph_command_reader_with_version
+          options declaration_dicts version input
+    in packet version reader end
+
+  fun parse_graph_configured_packet_with_version configured declaration_dicts
+      version input =
+    packet version (graph_configured_command_reader_with_version
+      configured declaration_dicts version input)
+
+  fun parse_graph_translation_packet_with_version options translation
+      version input =
+    let
+      val configured = SmtLib_GraphTranslation.configured_options
+        options translation
+      val make_session = fn _ =>
+        SmtLib_GraphTranslation.create_session options translation
+      val dicts = SmtLib.parser_dicts_for_solver_translation "cvc5" translation
+    in packet version (graph_command_reader_with_factory make_session
+      (#base configured) dicts version input) end
+
+  fun parse_graph_stream_with_version options declaration_dicts version input
+      : graph_proof =
+    SmtLib_GraphProof.proof
+      (parse_graph_packet_with_version options declaration_dicts version input)
+
+  fun policy_reader_length values =
+    let fun count [] (n:IntInf.int) = n
+          | count (_::rest) n = count rest (n+1)
+    in count values 0 end
+  fun policy_reader_width SmtReplayResourcePolicy.Uncapped _ = true
+    | policy_reader_width (SmtReplayResourcePolicy.AtMost cap) value =
+        cap >= 0 andalso Arbnum.<=
+          (value,Arbnum.fromString (IntInf.toString cap))
+  fun install_graph_recipes_with_policy_for_backend value_index
+      (options:'a F.constructed_policy_options)
+      (terms:'a F.constructed_session) =
+    let
+      fun bounded_distinct token indices arguments =
+        let val count = policy_reader_length arguments
+            val limit = #template_limit (#recipe_limits options)
+            (* Regex distinct builds pairwise relations. Admit its quadratic
+               schematic work before invoking the authoritative builder. *)
+            val regex = case arguments of first :: _ =>
+                cpc_type_eq (Term.type_of first, cpc_reglan_ty)
+              | [] => false
+            val _ = if regex andalso count > 0 andalso
+                not (SmtReplayResourcePolicy.allows limit (count * count * 16)) then
+              raise ERR "graph_distinct" "distinct schema exceeds contract"
+            else ()
+        in cpc_distinct_parsefn token indices arguments end
+      val entries =
+        [("=", cpc_equality_parsefn), ("distinct", bounded_distinct),
+         ("str.++", cpc_concat_parsefn "smtstr_concat"),
+         ("re.++", cpc_concat_parsefn "reglan_concat"),
+         ("re.union", cpc_concat_parsefn "reglan_union"),
+         ("re.inter", cpc_concat_parsefn "reglan_inter"),
+         ("to_int", cpc_intreal_parsefn), ("to_real", cpc_intreal_parsefn),
+         ("int.pow2", cpc_intreal_parsefn)]
+      val totals = List.map (fn name => (name, cpc_arith_total_parsefn))
+        ["div_total", "mod_total", "/_total", "@int_div_by_zero",
+         "@mod_by_zero", "@div_by_zero", "**_total"]
+      val backend = #backend (#reader terms)
+      val limits = #recipe_limits options
+      val width_limit = #index_limit limits
+      fun admitted term =
+        case SmtReplayImport.raw_size_with_policy width_limit term of
+          SOME _ => term
+        | NONE => raise ERR "graph_index" "expanded private literal index"
+      fun natural term =
+        let val value = numeral_of_term "graph private index" (admitted term)
+        in if policy_reader_width width_limit value then value else
+          raise ERR "graph_index" "private numeric index exceeds contract" end
+      fun index (P.LiteralIndex term) = natural term
+        | index (P.ValueIndex (node, _)) = value_index natural node
+        | index _ = raise ERR "graph_index" "nonliteral private index"
+      fun marker frame token indices args =
+        let
+          val ty = case (token, indices, args) of
+              ("BitVec", [bits], []) =>
+                wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
+            | ("FloatingPoint", [eb, sb], []) =>
+                SmtLib_Theories.smtfp_type (index eb, index sb)
+            | ("->", [], _ :: _ :: _) =>
+                let val (domains, range) = Lib.front_last args in
+                  boolSyntax.list_mk_fun
+                    (List.map (B.type_of backend) domains,
+                     B.type_of backend range) end
+            | _ => raise ERR "cpc_sort_marker_parsefn"
+                ("malformed CPC sort marker " ^ token)
+        in (#private_symbol terms) frame
+          {kind = "@cpc." ^ token, hol_type = ty,
+           source = NONE, stable = true} end
+      fun private_fp frame token indices args =
+        if not (null indices) then raise ERR "cpc_fp_private_parsefn"
+          "unexpected indices"
+        else case args of
+            [sort_marker] => (#private_symbol terms) frame
+              {kind = token, hol_type = B.type_of
+                 backend sort_marker, source = NONE, stable = false}
+          | [sort_marker, source] => (#private_symbol terms) frame
+              {kind = token, hol_type = B.type_of
+                 backend sort_marker, source = SOME source, stable = true}
+          | _ => raise ERR "cpc_fp_private_parsefn"
+              (token ^ " expects a sort marker and at most one " ^
+               "floating-point operand")
+      fun private_const frame token indices args =
+        case (token, indices, args) of
+          ("@const", [], [number, sort_marker]) =>
+            let
+              val _ = if Type.compare (B.type_of backend number,
+                  intSyntax.int_ty) = EQUAL then () else
+                raise ERR "cpc_private_const_parsefn"
+                  "@const index must have HOL int type"
+              val value = index (P.ValueIndex (number, "@const"))
+            in (#private_symbol terms) frame
+              {kind = "@cpc.const." ^ Arbnum.toString value,
+               hol_type = B.type_of backend sort_marker,
+               source = NONE, stable = true} end
+        | _ => raise ERR "cpc_private_const_parsefn"
+            "@const expects an index and a sort marker"
+      fun private_total frame token indices args =
+        if not (null indices) orelse null args then
+          raise ERR "cpc_fp_total_parsefn" "malformed private FP operator"
+        else
+          let val types = List.map (B.type_of backend) args
+              val ty = boolSyntax.list_mk_fun (types, hd types)
+              val head = (#private_symbol terms) frame
+                {kind = token, hol_type = ty, source = NONE, stable = true}
+          in List.foldl (fn (arg, head) =>
+            B.application backend frame (head, arg))
+            head args end
+      fun arithmetic frame token indices args =
+        if null indices andalso null args andalso
+            List.exists (Lib.equal token)
+              ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
+          (#private_symbol terms) frame
+            {kind = token, hol_type = if token = "@div_by_zero"
+               then realSyntax.real_ty else intSyntax.int_ty,
+             source = NONE, stable = true}
+        else SmtLib_GraphTheories.recipe_parsefn_with_policy backend limits
+          cpc_arith_total_parsefn frame token indices args
+      val _ = List.app (#add_recipe_parser terms) entries
+      val _ = List.app (fn (name, _) =>
+        (#add_constructor_parser terms) (name, arithmetic)) totals
+      val _ = (#add_constructor_parser terms) ("@const", private_const)
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, marker))
+        ["BitVec", "FloatingPoint", "->"]
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, private_fp))
+        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
+         "@fp.NAN", "@fp.INF"]
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, private_total))
+        ["fp.max_total", "fp.min_total"]
+      val _ = List.app (#add_recipe_parser terms)
+        [("@fp.RMBITBLAST", cpc_fp_rounding_parsefn),
+         ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
+         ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
+         ("@bvsize", cpc_bv_parsefn)]
+    in () end
+
+
+  fun install_graph_recipes_with_policy
+      (options:F.policy_options) (terms:F.session) =
+    let val graph = #graph options
+        val width_limit = #index_limit (#recipe_limits options)
+        fun value_index natural node =
+          case G.unfolded_nodes_with_policy graph
+              G.RawNodes width_limit node of
+              SOME size =>
+                if SmtReplayResourcePolicy.allows width_limit size then
+                  natural (G.representative graph node)
+                else raise ERR "graph_index" "expanded private index operand"
+            | NONE => raise ERR "graph_index" "opaque private index operand"
+    in install_graph_recipes_with_policy_for_backend value_index options terms
+    end
+
+  fun graph_term_reader_with_version_with_policy options version instream =
+    let
+      val version = resolve_version version
+      val baseline = with_cpc_literals
+        (SmtLib_Logics.parsedicts_of_logic "ALL")
+      val reserved_names = Redblackmap.foldl
+        (fn (key, _, keys) => key :: keys)
+        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
+          ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
+           "par", "declare-const", "declare-fun", "declare-sort",
+           "declare-datatype", "declare-datatypes", "define",
+           "assume", "assume-push", "step", "step-pop"] (#1 baseline))
+        (#2 baseline)
+      val terms = SmtLib_GraphFrontend.create_session_with_policy options
+        {solver = "cvc5", version = version,
+         policy = SmtLib_GraphFrontend.CPC, reserved_names = reserved_names}
+        (SmtLib_Parser.make_cpc_proof_stream_tokenizer instream)
+      val _ = install_graph_recipes_with_policy options terms
+      val _ = (#add_literal_parser terms)
+        (fn token => cpc_literal_parsefn token [] [])
+    in #reader terms end
+  fun graph_term_reader_with_policy options instream =
+    graph_term_reader_with_version_with_policy options unknown_cvc_version instream
+
+  fun graph_policy_description version =
+    let
+      val baseline = with_cpc_literals
+        (SmtLib_Logics.parsedicts_of_logic "ALL")
+      val syntax_names =
+        ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
+         "par", "declare-const", "declare-fun", "declare-sort",
+         "declare-datatype", "declare-datatypes", "define", "assume",
+         "assume-push", "step", "step-pop"]
+      val reserved_names = Redblackmap.foldl
+        (fn (key, _, keys) => key :: keys)
+        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
+          syntax_names (#1 baseline)) (#2 baseline)
+    in {solver="cvc5",version=version,policy=F.CPC,
+      reserved_names=reserved_names} end
+
+  fun graph_command_reader_for_backend_with_policy
+      install_recipes make_session (options:'a F.constructed_policy_options)
+      (declaration_dicts:dicts) requested_version make_token
+      : 'a constructed_graph_command_reader =
+    let
+      val version = resolve_version requested_version
+      val description = graph_policy_description version
+      val token = make_token ()
+      val terms = make_session options description token
+      val _ = install_recipes options terms
+      val _ = (#add_literal_parser terms)
+        (fn token => cpc_literal_parsefn token [] [])
+      val known = ref (HOLset.empty String.compare)
+      val snapshots = ref ([] : string HOLset.set list)
+      val seen = ref
+        (Redblackmap.mkDict String.compare :
+          (string, string list) Redblackmap.dict)
+      val pending = ref (NONE : (string * string) option)
+      val ended = ref false
+      val _ = Library.expect_token "(" (token ())
+      fun error message = raise ERR "graph_commands" message
+      fun tokens raw action =
+        let val remaining = ref (raw_tokens raw)
+            fun next () = case !remaining of
+                first :: rest => (remaining := rest; first)
+              | [] => error "buffered term ended unexpectedly"
+            val result = action next
+            val _ = if null (!remaining) then () else
+              error "buffered term has trailing syntax"
+        in result end
+      fun sort raw = tokens raw (#parse_sort terms)
+      fun graph_application raw = case raw of
+          RawList (RawAtom "_" :: RawAtom name :: indices) =>
+            if name = "BitVec" orelse name = "FloatingPoint" then
+              let
+                val arity = if name = "BitVec" then 1 else 2
+                val _ = if List.length indices = arity then () else
+                  error ("malformed CPC indexed sort marker " ^ name)
+                (* These are actual indexed sort markers, not the CPC
+                   higher-order application form. The installed marker
+                   recipe admits every literal/value index and its width
+                   before constructing the authoritative HOL type. *)
+              in RawList (RawAtom "_" :: RawAtom name ::
+                List.map graph_application indices) end
+            else RawList (RawAtom "@" ::
+              List.map graph_application (RawAtom name :: indices))
+        | RawList (RawAtom "_" :: arguments) =>
+            RawList (RawAtom "@" :: List.map graph_application arguments)
+        | RawList ((head as RawList (RawAtom "_" :: _)) :: arguments) =>
+            RawList (head :: List.map graph_application arguments)
+        | RawList entries => RawList (List.map graph_application entries)
+        | RawAtom _ => raw
+      fun parse raw : 'a F.constructed_term =
+        case raw of
+          RawList [RawAtom "@var", RawAtom name, ty] =>
+            (#private_variable terms) (cpc_var_name name, sort ty)
+        | _ => tokens (graph_application (normalize_cpc_testers raw))
+            (#parse_from terms)
+      fun raw_list context raw = case raw of RawList entries => entries
+        | _ => error (context ^ " must be parenthesized")
+      fun atom context raw = case raw of RawAtom text => text
+        | _ => error (context ^ " must be atomic")
+      fun id text = cpc_id_key "graph_commands" "command ID" text
+      fun fresh name = ensure_fresh_id "graph_commands" name known
+      fun add name = known := HOLset.add (!known, name)
+      fun close name = case !snapshots of
+          previous :: rest => (known := previous; snapshots := rest; add name)
+        | [] => error ("step-pop without assume-push in CPC step " ^ name)
+      fun declarations kind =
+        let val name = token ()
+            val domain = if kind = "declare-fun" then
+                List.map sort (raw_list "function domain"
+                  (read_raw_term token))
+              else []
+            val range = sort (read_raw_term token)
+            val _ = Library.expect_token ")" (token ())
+        in (#declare terms) (name, boolSyntax.list_mk_fun (domain, range)) end
+      fun datatype_declaration kind =
+        let
+          val namespace = (#namespace terms) ()
+          val symbol_key = #symbol_key terms
+          fun binding raw = case raw of
+              RawList [RawAtom name, RawAtom arity] =>
+                let val (key, text) = datatype_symbol_using symbol_key
+                      "declare-datatypes" "datatype sort" name
+                in (key, text, datatype_arity "declare-datatypes" text arity)
+                end
+            | _ => error "malformed datatype binding"
+          val declarations = if kind = "declare-datatype" then
+              let
+                val name = token ()
+                val (key, text) = datatype_symbol_using symbol_key
+                  kind "datatype sort" name
+                val body = read_raw_term token
+                val arity = case body of
+                    RawList [RawAtom "par", RawList params, RawList _] =>
+                      List.length params
+                  | _ => 0
+              in [parse_datatype_body_using symbol_key
+                kind key text arity body] end
+            else
+              let val bindings = List.map binding
+                    (raw_list "datatype bindings" (read_raw_term token))
+                  val bodies = raw_list "datatype bodies"
+                    (read_raw_term token)
+                  val _ = if List.length bindings = List.length bodies then
+                    () else error "datatype binding/body count mismatch"
+              in ListPair.mapEq (fn ((key, name, arity), body) =>
+                parse_datatype_body_using symbol_key kind key name arity body)
+                (bindings, bodies) end
+          val _ = Library.expect_token ")" (token ())
+        in validate_datatype_declarations_using namespace
+          (ref ((#sort_dictionary terms) (), #2 declaration_dicts))
+          declarations end
+      fun define () =
+        let
+          val name = token ()
+          val start = token ()
+          val first = if start = "(" then
+              (Library.expect_token ")" (token ()); token ()) else start
+          val raw = if first = "@list" then
+              RawList (RawAtom "@list" :: raw_list "CPC list"
+                (read_raw_term token))
+            else read_raw_term (Library.undo_look_ahead [first] token)
+          val _ = Library.expect_token ")" (token ())
+        in case raw of
+            RawList (RawAtom "@list" :: entries) =>
+              (#define_list terms) (name, List.map parse entries)
+          | RawList [RawAtom "@var", RawAtom variable, ty] =>
+              ignore ((#define_variable terms)
+                (name, cpc_var_name variable, sort ty))
+          | RawList [RawAtom "@purify", payload] =>
+              (#define terms) (name, parse payload)
+          | _ => (#define terms) (name, parse raw)
+        end
+      fun argument raw = case raw of
+          RawList (RawAtom "@list" :: entries) =>
+            GraphList (List.map argument entries)
+        | RawAtom name => (case (#lookup_list terms) name of
+            SOME entries => GraphList (List.map GraphTerm entries)
+          | NONE => GraphTerm (parse raw))
+        | RawList (RawAtom "Set" :: _) => GraphSort (sort raw)
+        | _ => GraphTerm (parse raw)
+      fun index raw =
+        let val text = atom "CPC index" raw
+        in case Int.fromString text of
+            SOME index => if index >= 0 then GraphIndex index else
+              error "negative CPC index"
+          | NONE => error "non-numeral CPC index" end
+      fun rule_arguments (rule : proof_rule) raws =
+        if #replay_handler rule = "and_elim" orelse
+           #replay_handler rule = "not_or_elim" then
+          (case raws of [raw] => [index raw]
+           | _ => error "elimination rule expects one index")
+        else if #name rule = "cnf_and_pos" orelse
+                #name rule = "cnf_or_neg" then
+          (case raws of [object, number] => [argument object, index number]
+           | _ => error "CNF rule expects an object and index")
+        else if #name rule = "resolution" then
+          (case raws of polarity :: pivot :: hints =>
+              argument polarity :: argument pivot :: List.map GraphHint hints
+           | [] => []
+           | _ => error "resolution requires polarity and pivot")
+        else List.map argument raws
+      fun step kind =
+        let
+          val consumed = ref ([] : string list)
+          fun next () = let val text = token () in
+            consumed := text :: !consumed; text end
+          val name = id (next ())
+          val _ = fresh name
+          val first = next ()
+          val conclusion = if first = ":rule" then NONE else
+            SOME (read_raw_term (Library.undo_look_ahead [first] next))
+          val _ = if first = ":rule" then () else
+            Library.expect_token ":rule" (next ())
+          val rule_name = next ()
+          val rule = case lookup_rule version rule_name of
+              SOME rule => rule
+            | NONE => raise ERR "graph_step"
+                (registry_lookup_failure version rule_name)
+          fun attrs saw_premises saw_args premises args =
+            case next () of
+              ")" => (premises, args)
+            | ":premises" =>
+                if saw_premises then error "duplicate :premises" else
+                  let val premises = List.map
+                        (cpc_id_key "graph_step" "premise ID" o
+                          atom "premise ID")
+                        (raw_list "premises" (read_raw_term next))
+                      val _ = List.app
+                        (require_known_premise name known) premises
+                  in attrs true saw_args premises args end
+            | ":args" => if saw_args then error "duplicate :args" else
+                attrs saw_premises true premises
+                  (raw_list "arguments" (read_raw_term next))
+            | attribute => error ("unknown CPC step attribute " ^ attribute)
+          val (premises, args) = attrs false false [] []
+          val _ = register_command_signature seen kind name
+            (List.rev (!consumed))
+          val _ = if kind = "step-pop" then close name else add name
+        in case rare_unsupported_diagnostic rule_name of
+            SOME diagnostic =>
+              let fun raw_error detail = raise ERR "parse_step"
+                    ("malformed raw term in unsupported CPC step " ^ name ^
+                     ": " ^ detail)
+                  val _ = Option.app (validate_raw_term raw_error) conclusion
+                  val _ = List.app (validate_raw_term raw_error) args
+                  val _ = if Option.isSome (!pending) then () else
+                    pending := SOME (rule_name, diagnostic)
+              in NONE end
+          | NONE => SOME (GraphStep
+              {step = {id = name, rule = rule, premises = premises,
+                 conclusion = Option.map parse conclusion,
+                 args = rule_arguments rule args,
+                 raw_conclusion = conclusion, raw_args = args},
+               pop = kind = "step-pop"})
+        end
+      fun finish () =
+        let val _ = if null (!snapshots) then () else
+              error "unclosed assume-push scope at end of CPC proof wrapper"
+            val trailing = SOME (token ()) handle P.CPCProofEOF => NONE
+            val _ = case trailing of NONE => () | SOME text =>
+              error ("second CPC proof wrapper or trailing token '" ^
+                P.proof_symbol_text text ^ "'")
+            val _ = ended := true
+        in case !pending of NONE => NONE
+          | SOME (rule, diagnostic) => raise ERR rule diagnostic end
+      fun next () = if !ended then NONE else
+        case token () of
+          ")" => finish ()
+        | "(" =>
+            (case token () of
+               "declare-const" => (declarations "declare-const"; next ())
+             | "declare-fun" => (declarations "declare-fun"; next ())
+             | "declare-sort" =>
+                 let val name = token ()
+                     val arity = datatype_arity "declare-sort" name (token ())
+                     val _ = Library.expect_token ")" (token ())
+                 in (#declare_sort terms) (name, arity); next () end
+             | "declare-datatype" =>
+                 (datatype_declaration "declare-datatype"; next ())
+             | "declare-datatypes" =>
+                 (datatype_declaration "declare-datatypes"; next ())
+             | "define" => (define (); next ())
+             | "assume" => assumption false
+             | "assume-push" => assumption true
+             | "step" => (case step "step" of
+                 NONE => next () | command => command)
+             | "step-pop" => (case step "step-pop" of
+                 NONE => next () | command => command)
+             | command => error ("unknown CPC construct " ^ command))
+        | text => error ("unexpected CPC token '" ^
+            P.proof_symbol_text text ^ "'")
+      and assumption push =
+        let val name = id (token ())
+            val _ = fresh name
+            val value = parse (read_raw_term token)
+            val _ = Library.expect_token ")" (token ())
+            val _ = if push then snapshots := !known :: !snapshots else ()
+            val _ = add name
+        in SOME (if push then GraphAssumePush (name, value)
+          else GraphAssume (name, value)) end
+      fun checked_next () = next () handle P.CPCProofEOF =>
+        error "unexpected end of CPC proof wrapper"
+    in {next = checked_next, terms = terms, cvc_version = version} end
+
+
+  fun graph_command_reader_with_factory_with_policy_token_factory
+      make_session (options:F.policy_options) declaration_dicts
+      requested_version make_token : graph_command_reader =
+    graph_command_reader_for_backend_with_policy
+      install_graph_recipes_with_policy make_session options declaration_dicts
+      requested_version make_token
+
+  fun graph_command_reader_with_factory_with_policy make_session
+      options declaration_dicts version instream =
+    graph_command_reader_with_factory_with_policy_token_factory
+      make_session options declaration_dicts version
+      (fn () => P.make_cpc_proof_stream_tokenizer instream)
+
+  fun graph_command_reader_with_version_with_policy options declaration_dicts version input =
+    graph_command_reader_with_factory_with_policy F.create_session_with_policy
+      options declaration_dicts version input
+
+  fun graph_configured_command_reader_with_version_with_policy
+      (configured : F.policy_configured_options) declaration_dicts version input =
+    graph_command_reader_with_factory_with_policy
+      (fn _ => F.create_configured_session_with_policy configured)
+      (#base configured) declaration_dicts version input
+
+  fun parse_graph_packet_with_version_with_policy options declaration_dicts version input =
+    let val reader = graph_command_reader_with_version_with_policy
+          options declaration_dicts version input
+    in packet version reader end
+
+  fun parse_graph_configured_packet_with_version_with_policy configured declaration_dicts
+      version input =
+    packet version (graph_configured_command_reader_with_version_with_policy
+      configured declaration_dicts version input)
+
+  fun parse_graph_translation_packet_with_version_with_policy_token_factory
+      options translation version make_token =
+    let
+      val configured = SmtLib_GraphTranslation.configured_options_with_policy
+        options translation
+      val make_session = fn _ =>
+        SmtLib_GraphTranslation.create_session_with_policy options translation
+      val dicts = SmtLib.parser_dicts_for_solver_translation "cvc5" translation
+    in packet version
+      (graph_command_reader_with_factory_with_policy_token_factory
+        make_session (#base configured) dicts version make_token) end
+
+  fun parse_graph_translation_packet_with_version_with_policy options translation
+      version input =
+    parse_graph_translation_packet_with_version_with_policy_token_factory
+      options translation version
+      (fn () => P.make_cpc_proof_stream_tokenizer input)
+
+  fun parse_graph_translation_packet_with_version_with_policy_from_input
+      options translation version input =
+    parse_graph_translation_packet_with_version_with_policy_token_factory
+      options translation version
+      (fn () => P.make_cpc_proof_tokenizer_from_input input)
+
+  fun parse_graph_stream_with_version_with_policy options declaration_dicts version input
+      : graph_proof =
+    SmtLib_GraphProof.proof
+      (parse_graph_packet_with_version_with_policy options declaration_dicts version input)
 
 end
 

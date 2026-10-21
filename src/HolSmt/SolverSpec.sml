@@ -66,6 +66,21 @@ structure SolverSpec = struct
         command ^ " " ^ Int.toString (wall_timeout_seconds ()) ^ " " ^ cmd
     | NONE => cmd
 
+  fun ordinary_validation _ (As, g) thm =
+    let
+      val allowed_hyps = HOLset.fromList Term.compare As
+      val extra_hyps = HOLset.difference (Thm.hypset thm, allowed_hyps)
+    in
+      if not (HOLset.isEmpty extra_hyps) then
+        raise Feedback.mk_HOL_ERR "SolverSpec" "make_solver"
+          "solver proof theorem contains additional hyp(s)"
+      else ();
+      if not (Term.aconv (Thm.concl thm) g) then
+        raise Feedback.mk_HOL_ERR "SolverSpec" "make_solver"
+          "solver proof theorem conclusion does not match goal"
+      else ()
+    end
+
   (* calls 'pre' (which is supposed to translate a HOL goal into a list of
      strings that the SMT solver will understand); writes these strings into a
      file; appends the names of input and output files to 'cmd_stem' before
@@ -75,9 +90,41 @@ structure SolverSpec = struct
   (* `capture` is an optional observation hook.  It receives a stable query
      key, then `input` before solver invocation and `output` afterwards, while
      both temporary files still exist.  It must not alter solver semantics. *)
-  fun make_solver_with_capture_and_command
+  (* Validation receives this invocation's exact preprocessing artifact and
+     original goal. Graph callers must supply their retained source check;
+     the invocation itself performs no mixed raw/canonical comparisons. *)
+  (* Only opt-in capture calls may propagate cancellation. The ordinary
+     capture observer retains its existing best-effort behavior. *)
+  fun terminal_capture_exception exn =
+    case exn of Interrupt => true
+      | Timeout.TIMEOUT _ => true
+      | _ => false
+
+  type input_writer = (string -> unit) -> unit
+
+  (* Emit fragments directly to the invocation's file. Close the stream on
+     every outcome, preserving the writer's original exception. The writer
+     runs after command selection and before the existing input observer. *)
+  fun write_input path (write : input_writer) =
+    let
+      val stream = TextIO.openOut path
+      val active = ref true
+      fun output fragment =
+        if !active then TextIO.output (stream,fragment) else
+          raise Feedback.mk_HOL_ERR "SolverSpec" "write_input"
+            "solver input writer expired"
+      val outcome = Exn.capture write output
+      val _ = active := false
+      val cleanup = Exn.capture TextIO.closeOut stream
+    in case outcome of Exn.Exn primary => raise primary
+      | Exn.Res () => Exn.release cleanup
+    end
+
+  fun make_solver_with_capture_command_and_validation_writer_internal
+      strict_capture
+      (validate : 'a -> Abbrev.goal -> Thm.thm -> unit)
       (capture : (string -> string -> string -> string -> unit) option)
-      (pre : Abbrev.goal -> 'a * string list)
+      (pre : Abbrev.goal -> 'a * input_writer)
       (command_stem : 'a -> string)
       (post : 'a -> string -> result) : Abbrev.goal -> result =
   fn goal => SmtResource.with_e0_invocation (fn goal =>
@@ -91,11 +138,13 @@ structure SolverSpec = struct
       (Option.app
         (fn record => record cmd_stem infile stage source) capture
        handle exn =>
-         SmtResource.emit_e0
+         if strict_capture andalso terminal_capture_exception exn then
+           raise exn
+         else SmtResource.emit_e0
            ("capture=refused reason=" ^
             SmtResource.bounded_text 240 (General.exnMessage exn)))
     fun work() = let
-      val _ = Library.write_strings_to_file infile inputs
+      val _ = write_input infile inputs
       val _ = observe "input" infile
       val cmd = with_wall_timeout (cmd_stem ^ infile ^ " > " ^ outfile)
       (* the actual system call to the SMT solver *)
@@ -129,20 +178,7 @@ structure SolverSpec = struct
       val _ =
         case result of
           UNSAT (SOME thm) =>
-          let
-            val (As, g) = goal
-            val allowed_hyps = HOLset.fromList Term.compare As
-            val extra_hyps = HOLset.difference (Thm.hypset thm, allowed_hyps)
-          in
-            if not (HOLset.isEmpty extra_hyps) then
-              raise Feedback.mk_HOL_ERR "SolverSpec" "make_solver"
-                "solver proof theorem contains additional hyp(s)"
-            else ();
-            if not (Term.aconv (Thm.concl thm) g) then
-              raise Feedback.mk_HOL_ERR "SolverSpec" "make_solver"
-                "solver proof theorem conclusion does not match goal"
-            else ()
-          end
+            validate x goal thm
         | _ => ()
     in
       result
@@ -154,8 +190,33 @@ structure SolverSpec = struct
                    [infile, outfile]
         else ()
   in
-    Portable.finally finish work ()
+    if strict_capture then
+      let val outcome = Exn.capture work ()
+          val cleanup = Exn.capture finish ()
+      in case outcome of Exn.Exn primary => raise primary
+        | Exn.Res result => (Exn.release cleanup;result) end
+    else Portable.finally finish work ()
   end) goal
+
+  (* Retain the list API and its exact fragment order. Both forms use the
+     same external invocation, capture, timeout and validation boundary. *)
+  fun make_solver_with_capture_command_and_validation_internal
+      strict_capture validate capture pre command_stem post =
+    let
+      fun writer_pre goal =
+        let val (artifact,fragments) = pre goal
+        in (artifact,fn output => List.app output fragments) end
+    in make_solver_with_capture_command_and_validation_writer_internal
+      strict_capture validate capture writer_pre command_stem post end
+
+  fun make_solver_with_capture_command_and_validation
+      validate capture pre command_stem post =
+    make_solver_with_capture_command_and_validation_internal false
+      validate capture pre command_stem post
+
+  fun make_solver_with_capture_and_command capture pre command_stem post =
+    make_solver_with_capture_command_and_validation ordinary_validation
+      capture pre command_stem post
 
   (* Preserve the original capture hook: it observes only the stable key,
      stage, and temporary path.  The command-aware API above is opt-in. *)
@@ -194,5 +255,70 @@ structure SolverSpec = struct
     else ();
     (new_goal, validation)
   end
+
+
+  (* New owned-artifact path. Existing invocation, command, capture, timeout,
+     status and temporary-file behavior is delegated to the original API.
+     Retire a retained artifact on every outcome, including SAT/UNKNOWN and
+     errors between preprocessing and post. Cleanup cannot replace primary. *)
+  fun complete_owned complete work input =
+    let
+      val outcome = Exn.capture work input
+      val cleanup = Exn.capture complete ()
+    in case outcome of
+        Exn.Exn primary => raise primary
+      | Exn.Res result => (Exn.release cleanup;result)
+    end
+
+  fun make_solver_with_capture_command_and_completion
+      validate complete capture pre command_stem post goal =
+    let
+      val pending = ref NONE
+      fun retain goal =
+        let val result as (artifact,_) = pre goal
+            val _ = pending := SOME artifact
+        in result end
+    in complete_owned (fn () => Option.app complete (!pending))
+      (make_solver_with_capture_command_and_validation validate capture
+        retain command_stem post) goal end
+
+  (* Opt-in strict observer: an input-capture cancellation stops before
+     Systeml.system_ps; output-capture cancellation stops before post. *)
+  fun make_solver_with_capture_command_and_completion_strict
+      validate complete capture pre command_stem post goal =
+    let
+      val pending = ref NONE
+      fun retain goal =
+        let val result as (artifact,_) = pre goal
+            val _ = pending := SOME artifact
+        in result end
+    in complete_owned (fn () => Option.app complete (!pending))
+      (make_solver_with_capture_command_and_validation_internal true
+        validate capture retain command_stem post) goal end
+
+  (* The graph serializer supplies a sharing-preserving document writer.
+     Keep its artifact owned through writing, capture, solver execution,
+     replay and validation, including failures before the solver starts. *)
+  fun make_solver_with_capture_command_and_completion_writer_internal
+      strict_capture validate complete capture pre command_stem post goal =
+    let
+      val pending = ref NONE
+      fun retain goal =
+        let val result as (artifact,_) = pre goal
+            val _ = pending := SOME artifact
+        in result end
+    in complete_owned (fn () => Option.app complete (!pending))
+      (make_solver_with_capture_command_and_validation_writer_internal
+        strict_capture validate capture retain command_stem post) goal end
+
+  fun make_solver_with_capture_command_and_completion_writer
+      validate complete capture pre command_stem post =
+    make_solver_with_capture_command_and_completion_writer_internal false
+      validate complete capture pre command_stem post
+
+  fun make_solver_with_capture_command_and_completion_writer_strict
+      validate complete capture pre command_stem post =
+    make_solver_with_capture_command_and_completion_writer_internal true
+      validate complete capture pre command_stem post
 
 end

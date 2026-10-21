@@ -1,0 +1,1087 @@
+(* Copyright (c) 2026 The HOL4 contributors. *)
+
+structure SmtLib_GraphBackend :> SmtLib_GraphBackend =
+struct
+  open SmtReplayGraph
+  structure G = SmtReplayGraph
+  structure R = ReplayRedblackPrivateWork
+  val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphBackend"
+  type environment = {lexical : G.scope, construction : G.scope} option
+  type 'a solver_variable =
+    {node : 'a, lexical : Term.term, scope : G.scope option}
+  datatype 'a backend = Backend of
+    {owner : unit ref, graph : G.graph option, initial : environment,
+     validate_environment : environment -> unit,
+     type_of : 'a -> Type.hol_type,
+     variable_descriptor : 'a -> Term.term option,
+     solver_variables : unit -> 'a solver_variable list,
+     mk_bound_var : string * Type.hol_type -> Term.term,
+     source : environment -> Term.term -> 'a,
+     literal : environment -> Term.term -> 'a,
+     variable : environment -> G.variable_kind -> Term.term -> 'a,
+     fresh_solver_variable : environment -> Term.term -> 'a,
+     reference : environment -> Term.term * 'a -> 'a,
+     bound_variable : environment -> Term.term -> 'a,
+     application : environment -> 'a * 'a -> 'a,
+     new_scope : environment -> (Term.term * 'a) list -> environment,
+     new_let_scope : environment -> (Term.term * 'a) list -> environment,
+     close_scope : environment -> unit,
+     abstraction : environment -> environment -> 'a * 'a -> 'a,
+     new_abstraction_scope : environment -> environment,
+     abort_abstraction_scope : environment -> unit,
+     let_binding : Term.term * 'a -> 'a,
+     finish_let : (string * Term.term * 'a) list * 'a -> 'a}
+  datatype 'a frame = Frame of
+    {owner : unit ref, active : bool ref, environment : environment,
+     bindings : (string, 'a) Redblackmap.dict}
+
+  datatype 'a binding_origin = BindingOrigin of
+    {backend : 'a backend,parent : 'a frame,child : 'a frame,
+     graph : G.graph,parent_scope : G.scope,scope : G.scope,
+     variables : 'a list,descriptors : (string * string * Type.hol_type) list,
+     binders : bool,epoch : int,symbols : int}
+
+  fun type_of (Backend {type_of, ...}) value = type_of value
+  fun variable_descriptor (Backend {variable_descriptor, ...}) value =
+    variable_descriptor value
+  fun solver_variables (Backend {solver_variables, ...}) = solver_variables ()
+  fun root (Backend {owner, initial, ...}) =
+    Frame {owner = owner, active = ref true, environment = initial,
+           bindings = Redblackmap.mkDict String.compare}
+  fun checked_frame (Backend {owner, validate_environment, ...})
+      (Frame {owner = frame_owner, active, environment, bindings}) =
+    if owner <> frame_owner then
+      raise ERR "frame" "lexical frame belongs to another backend"
+    else if not (!active) then raise ERR "frame" "lexical frame is closed"
+    else (validate_environment environment; (environment, bindings))
+  fun scoped_body (frame as Frame {active, ...}) body =
+    let val result = body frame
+          handle error => (active := false; raise error)
+    in active := false; result end
+  fun finish_scopes close_scope environments action =
+    let
+      fun close () = List.app close_scope environments
+      val result = action () handle error => (close (); raise error)
+    in close (); result end
+  fun lookup backend frame key =
+    Redblackmap.peek (#2 (checked_frame backend frame), key)
+  fun source (backend as Backend {source, ...}) frame term =
+    source (#1 (checked_frame backend frame)) term
+  fun literal (backend as Backend {literal, ...}) frame term =
+    literal (#1 (checked_frame backend frame)) term
+  fun variable (backend as Backend {variable, mk_bound_var, ...}) frame kind
+      (name, ty) =
+    variable (#1 (checked_frame backend frame)) kind (mk_bound_var (name, ty))
+  fun fresh_solver_variable
+      (backend as Backend {fresh_solver_variable, mk_bound_var, ...})
+      frame descriptor =
+    fresh_solver_variable (#1 (checked_frame backend frame))
+      (mk_bound_var descriptor)
+  fun reference (backend as Backend {reference, ...}) frame declaration =
+    reference (#1 (checked_frame backend frame)) declaration
+  fun application (backend as Backend {application, ...}) frame operands =
+    application (#1 (checked_frame backend frame)) operands
+
+  fun terms {mk_bound_var, mk_let} = Backend
+    {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
+     variable_descriptor = fn term =>
+       if Term.is_var term then SOME term else NONE,
+     solver_variables = fn () => [],
+     validate_environment = fn _ => (),
+     mk_bound_var = mk_bound_var, source = fn _ => fn term => term,
+     literal = fn _ => fn term => term,
+     variable = fn _ => fn _ => fn term => term,
+     fresh_solver_variable = fn _ => Term.genvar o Term.type_of,
+     reference = fn _ => #2,
+     bound_variable = fn _ => fn term => term,
+     application = fn _ => Term.mk_comb,
+     new_scope = fn _ => fn _ => NONE,
+     new_let_scope = fn _ => fn _ => NONE,
+     close_scope = fn _ => (),
+     abstraction = fn _ => fn _ => Term.mk_abs,
+     new_abstraction_scope = fn _ => NONE,
+     abort_abstraction_scope = fn _ => (),
+     let_binding = fn (variable, _) => variable, finish_let = mk_let}
+
+  fun graphs {graph, scope, import_limit, literal_limit, binder_limit} =
+    let
+      val _ = G.validate_scope graph scope
+      val _ = if import_limit > 0 andalso literal_limit > 0 andalso
+          binder_limit > 0 then ()
+        else raise ERR "graphs" "nonpositive public import contract"
+      fun scopes (SOME scopes) = scopes
+        | scopes NONE = raise ERR "graphs" "missing graph environment"
+      fun lexical environment = #lexical (scopes environment)
+      fun construction environment = #construction (scopes environment)
+      val lexical_descriptors = ref
+        (Redblackmap.mkDict Int.compare : (int, Term.term) Redblackmap.dict)
+      fun retain_variable term node =
+        (lexical_descriptors := Redblackmap.insert
+           (!lexical_descriptors, G.node_id node, term); node)
+      fun compare_private ((left_scope, left_term),
+                           (right_scope, right_term)) =
+        case Int.compare (left_scope, right_scope) of
+          EQUAL => Term.compare (left_term, right_term) | order => order
+      val private_variables = ref (Redblackmap.mkDict compare_private)
+      val solver_variables = ref ([] : G.node solver_variable list)
+      val recorded_variables = ref (HOLset.empty Int.compare)
+      fun record_flexible term node =
+        (if HOLset.member (!recorded_variables, G.node_id node) then () else
+           (recorded_variables := HOLset.add
+              (!recorded_variables, G.node_id node);
+            solver_variables :=
+              {node = node, lexical = term,
+               scope = SOME (G.node_scope graph node)} :: !solver_variables);
+         node)
+      fun fresh_flexible environment term =
+        record_flexible term (retain_variable term
+          (G.fresh_flexible_variable graph (construction environment) term))
+      fun flexible environment term =
+        let
+          val scope = construction environment
+          val key = (G.scope_id scope, term)
+          val default = case Redblackmap.peek (!private_variables, key) of
+              SOME node => node
+            | NONE =>
+                let val node = retain_variable term
+                      (G.fresh_flexible_variable graph scope term)
+                in private_variables := Redblackmap.insert
+                     (!private_variables, key, node); node end
+          val node = G.resolve_reference graph
+            (lexical environment) term default
+          val _ = case G.view graph node of
+              G.Variable (G.SolverFlexible, _) =>
+                ignore (record_flexible term node)
+            | _ => ()
+        in node end
+      fun import environment term =
+        #node (G.import graph (construction environment) import_limit term)
+      fun source _ term =
+        let val node = #node (G.import graph scope import_limit term)
+        in if Term.is_var term then retain_variable term node else node end
+      fun literal environment term =
+        let
+          val _ = case SmtReplayImport.bounded_raw_size literal_limit term of
+              SOME _ => ()
+            | NONE => raise ERR "literal" "literal exceeds bounded contract"
+          val _ = if List.null (Term.free_vars term) then () else
+            raise ERR "literal" "literal contains an unowned free variable"
+        in if Term.is_const term then
+          G.constant graph (construction environment) term
+        else import environment term end
+    in Backend
+      {owner = ref (), graph = SOME graph,
+       initial = SOME {lexical = scope, construction = scope},
+       validate_environment = fn environment =>
+         (G.validate_scope graph (lexical environment);
+          G.validate_scope graph (construction environment)),
+       type_of = G.type_of graph,
+       variable_descriptor = fn node =>
+         (ignore (G.type_of graph node);
+          Redblackmap.peek (!lexical_descriptors, G.node_id node)),
+       solver_variables = fn () => List.rev (!solver_variables),
+       mk_bound_var = Term.mk_var, source = source, literal = literal,
+       fresh_solver_variable = fresh_flexible,
+       variable = fn environment => fn kind => fn term =>
+         case kind of G.RigidSource =>
+           G.resolve_variable graph (lexical environment) term
+         | G.SolverFlexible => flexible environment term
+         | _ => G.variable graph (construction environment) kind term,
+       reference = fn environment => fn (term, value) =>
+         G.resolve_reference graph (lexical environment) term value,
+       bound_variable = fn environment => fn term => retain_variable term
+         (G.fresh_bound_variable graph (construction environment) term),
+       application = fn environment =>
+         G.application graph (construction environment),
+       new_scope = fn environment => fn bindings =>
+         let val scope = G.new_scope graph (lexical environment) bindings
+         in SOME {lexical = scope, construction = scope} end,
+       (* Let aliases affect name resolution, while constructed values
+          retain the enclosing proof block's construction scope. *)
+       new_let_scope = fn environment => fn bindings =>
+         SOME {lexical = G.new_scope graph (lexical environment) bindings,
+               construction = construction environment},
+       close_scope = fn environment => G.close_scope graph
+         (lexical environment),
+       abstraction = fn environment => fn body_environment =>
+         fn (binder,body) =>
+           G.recorded_abstraction graph (construction environment) binder_limit
+             {binder = binder,body = body,
+              body_frame = construction body_environment},
+       new_abstraction_scope = fn environment =>
+         let val retained = G.new_construction_scope graph
+               {lexical = lexical environment,
+                construction = construction environment}
+             val lexical = G.new_scope graph retained []
+               handle primary =>
+                 ((G.close_scope graph retained handle _ => ());raise primary)
+         in SOME {lexical = lexical,construction = retained} end,
+       abort_abstraction_scope = fn environment =>
+         G.close_scope graph (construction environment),
+       let_binding = #2, finish_let = #2}
+    end
+
+  fun unique_keys entries =
+    let
+      fun insert ((key, _, _), seen) =
+        if HOLset.member (seen, key) then
+          raise ERR "let_expression" "duplicate simultaneous binding key"
+        else HOLset.add (seen, key)
+    in ignore (List.foldl insert (HOLset.empty String.compare) entries) end
+
+  fun let_expression
+      (backend as Backend {owner, mk_bound_var, new_let_scope, close_scope,
+                           let_binding, finish_let, ...}) parent entries body =
+    let
+      val (environment, dictionary) = checked_frame backend parent
+      val _ = unique_keys entries
+      (* RHS elaboration precedes every dictionary/scope extension. *)
+      val values = List.map (fn (key, name, action) =>
+        let val value = action parent in
+          (key, mk_bound_var (name, type_of backend value), value)
+        end) entries
+      val bindings = List.map (fn (key, variable, value) =>
+        (key, variable, let_binding (variable, value))) values
+      val environment = new_let_scope environment
+        (List.map (fn (_, variable, value) => (variable, value)) bindings)
+      val dictionary = List.foldl (fn ((key, _, value), dictionary) =>
+        Redblackmap.insert (dictionary, key, value)) dictionary bindings
+      val child = Frame {owner = owner, active = ref true,
+                         environment = environment,
+                         bindings = dictionary}
+    in finish_scopes close_scope [environment] (fn () =>
+      let
+        val result = scoped_body child body
+        val _ = ignore (type_of backend result)
+      in finish_let (values, result) end) end
+
+  fun abstraction (backend as Backend
+      {owner, mk_bound_var, bound_variable, new_abstraction_scope,
+       new_let_scope, close_scope, abstraction, abort_abstraction_scope, ...})
+      parent
+      (key, name, ty) body =
+    let
+      val (environment, dictionary) = checked_frame backend parent
+      val term = mk_bound_var (name, ty)
+      val binder_frame = new_abstraction_scope environment
+      val environments = ref [binder_frame]
+      fun close_lexical () = List.app
+        (fn frame => close_scope frame handle _ => ()) (!environments)
+      fun abort primary =
+        (close_lexical ();
+         (abort_abstraction_scope binder_frame handle _ => ());raise primary)
+      fun construct () =
+        let
+          val binder = bound_variable binder_frame term
+          val body_environment = new_let_scope binder_frame [(term,binder)]
+          val _ = environments := body_environment :: !environments
+          val child = Frame {owner = owner, active = ref true,
+            environment = body_environment,
+            bindings = Redblackmap.insert (dictionary,key,binder)}
+          val result = scoped_body child body
+        in abstraction environment body_environment (binder,result) end
+      val result = construct () handle primary => abort primary
+      val _ = List.app close_scope (!environments)
+        handle primary => abort primary
+    in result end
+
+  fun frame_scope backend frame =
+    case #1 (checked_frame backend frame) of
+      NONE => NONE | SOME {construction, ...} => SOME construction
+
+  fun frame_lexical_scope backend frame =
+    case #1 (checked_frame backend frame) of
+      NONE => NONE | SOME {lexical, ...} => SOME lexical
+
+  (* No caller scope, frame guard callback or origin constructor is public. *)
+  fun opened_origin (backend as Backend {graph,...}) parent child
+      variables descriptors binders =
+    case graph of NONE => NONE
+      | SOME graph => SOME (BindingOrigin
+          {backend = backend,parent = parent,child = child,graph = graph,
+           parent_scope = valOf (frame_scope backend parent),
+           scope = valOf (frame_scope backend child),variables = variables,
+           descriptors = descriptors,binders = binders,
+           epoch = Type.type_epoch (),symbols = Term.term_epoch ()})
+  fun binding_origin_owner (BindingOrigin {graph,parent_scope,scope,...}) =
+    {graph = graph,parent_scope = parent_scope,scope = scope}
+  fun binding_origin_data graph parent_scope
+      (BindingOrigin {backend,parent,child,graph = held,
+       parent_scope = original,scope,variables,descriptors,binders,
+       epoch,symbols}) =
+    let
+      val _ = if Portable.pointer_eq (graph,held) andalso
+          parent_scope = original then () else
+        raise ERR "binding_origin" "different graph or genuine parent"
+      fun guard () =
+        (if Type.type_epoch () = epoch andalso
+            Term.term_epoch () = symbols then () else
+           raise ERR "binding_origin" "origin retirement epoch changed";
+         if frame_scope backend parent = SOME original andalso
+             frame_scope backend child = SOME scope then () else
+           raise ERR "binding_origin" "actual lexical frame changed")
+      val _ = guard ()
+      val _ = if G.scope_visible graph scope original then () else
+        raise ERR "binding_origin" "child escaped its genuine parent"
+      val _ = List.app (fn node =>
+        if G.scope_visible graph scope (G.node_scope graph node) then () else
+          raise ERR "binding_origin" "variable escaped its actual child")
+        variables
+      val _ = guard ()
+    in {scope = scope,variables = variables,descriptors = descriptors,
+      binders = binders} end
+
+  (* Constructed only from an authentic private BindingOrigin. The meter
+     is supplied internally by the original Work consumer, not by a proof
+     caller. Frame environments, owner fields and node scopes are immutable;
+     every mutable lexical active ref remains in the retained program. *)
+  datatype binding_guard = BindingGuard of
+    {meter:R.scope_meter,graph:G.graph,parent_scope:G.scope,scope:G.scope,
+     parent_active:bool ref,child_active:bool ref,
+     parent_paths:(G.scope * G.scope_path) list,
+     child_paths:(G.scope * G.scope_path) list,
+     visible:G.binding_scope_path,
+     variables:(G.scope * G.binding_scope_path) list,
+     epoch:int,symbols:int,work:IntInf.int,
+     data:{scope:G.scope,variables:G.node list,
+       descriptors:(string * string * Type.hol_type) list,binders:bool}}
+  fun binding_guard_uses expected (BindingGuard {meter,...}) =
+    R.same_scope_meter (expected,meter)
+  fun binding_guard_work (BindingGuard {work,...}) = work
+  fun binding_guard_data (BindingGuard {data,...}) = data
+  fun prepare_binding_guard graph caller
+      (BindingOrigin {backend=Backend {owner,graph=original,...},
+        parent,child,graph=held,parent_scope,scope,variables,descriptors,
+        binders,epoch,symbols}) meter =
+    let
+      val _ = R.scope_meter_charge meter 8
+      val _ = if Portable.pointer_eq (graph,held) andalso
+          caller = parent_scope then () else
+        raise ERR "binding_guard" "different graph or genuine parent"
+      val _ = case original of SOME actual =>
+          if Portable.pointer_eq (actual,graph) then () else
+            raise ERR "binding_guard" "different private backend graph"
+        | NONE => raise ERR "binding_guard" "ordinary backend has no origin"
+      fun frame (Frame {owner=actual,active,environment,...}) expected =
+        let
+          val _ = R.scope_meter_charge meter 7
+          val _ = if actual = owner then () else
+            raise ERR "binding_guard" "different private lexical owner"
+          val (lexical,construction) = case environment of
+              SOME {lexical,construction} => (lexical,construction)
+            | NONE => raise ERR "binding_guard" "no graph environment"
+          val _ = R.scope_meter_charge meter 3
+          val _ = if construction = expected then () else
+            raise ERR "binding_guard" "actual lexical frame differs"
+          fun path scope =
+            let val (program,_) = G.prepare_shared_scope_path graph scope meter
+                val _ = R.scope_meter_charge meter 2
+            in (scope,program) end
+          val lexical_path = path lexical
+          val construction_path = path construction
+          val _ = R.scope_meter_charge meter 3
+        in (active,[lexical_path,construction_path]) end
+      val (parent_active,parent_paths) = frame parent parent_scope
+      val (child_active,child_paths) = frame child scope
+      val visible = G.prepare_binding_scope_path graph scope parent_scope meter
+      fun node_paths [] = (R.scope_meter_charge meter 1;[])
+        | node_paths (node::rest) =
+          let
+            val _ = R.scope_meter_charge meter 2
+            val required = G.binding_node_scope graph node meter
+            val program = G.prepare_binding_scope_path graph scope required
+              meter
+            val tail = node_paths rest
+            val _ = R.scope_meter_charge meter 2
+          in (required,program)::tail end
+      val paths = node_paths variables
+      fun sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
+        | sum ((_,path)::rest) =
+            (R.scope_meter_charge meter 3;
+             G.scope_path_validation_work path+sum rest+2)
+      fun variable_sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
+        | variable_sum ((_,path)::rest) =
+            (R.scope_meter_charge meter 3;
+             G.binding_scope_path_work path+variable_sum rest+2)
+      val frame_work = sum parent_paths + sum child_paths + 4
+      (* Both original guard calls retain epoch checks and frame checks;
+         between them every actual variable visibility path is validated. *)
+      val work = 2*(frame_work+6) +
+        G.binding_scope_path_work visible + variable_sum paths + 8
+      val _ = R.scope_meter_charge meter 16
+    in BindingGuard {meter=meter,graph=graph,parent_scope=parent_scope,
+      scope=scope,parent_active=parent_active,child_active=child_active,
+      parent_paths=parent_paths,child_paths=child_paths,visible=visible,
+      variables=paths,epoch=epoch,symbols=symbols,work=work,
+      data={scope=scope,variables=variables,descriptors=descriptors,
+        binders=binders}} end
+  fun validate_binding_guard graph caller
+      (BindingGuard {graph=held,parent_scope,scope,parent_active,child_active,
+        parent_paths,child_paths,visible,variables,epoch,symbols,...}) =
+    let
+      val _ = if Portable.pointer_eq (graph,held) andalso
+          caller = parent_scope then () else
+        raise ERR "binding_guard" "different graph or genuine parent"
+      fun paths [] = ()
+        | paths ((scope,path)::rest) =
+            (G.validate_scope_path graph scope path;paths rest)
+      fun guard () =
+        (if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
+           then () else raise ERR "binding_guard" "origin epoch changed";
+         if !parent_active then () else
+           raise ERR "binding_guard" "private parent lexical frame closed";
+         paths parent_paths;
+         if !child_active then () else
+           raise ERR "binding_guard" "private child lexical frame closed";
+         paths child_paths)
+      val _ = guard ()
+      val _ = G.validate_binding_scope_path graph scope parent_scope visible
+      val _ = List.app (fn (required,path) =>
+        G.validate_binding_scope_path graph scope required path) variables
+      val _ = guard ()
+    in () end
+
+  fun open_bindings (backend as Backend
+      {owner, mk_bound_var, new_let_scope, close_scope, let_binding, ...})
+      parent entries =
+    let
+      val _ = unique_keys entries
+      val (environment, dictionary) = checked_frame backend parent
+      val bindings = List.map (fn (key, name, value) =>
+        let val variable = mk_bound_var (name, type_of backend value)
+        in (key, variable, let_binding (variable, value)) end) entries
+      val environment = new_let_scope environment
+        (List.map (fn (_, term, value) => (term, value)) bindings)
+      val dictionary = List.foldl (fn ((key, _, value), dictionary) =>
+        Redblackmap.insert (dictionary, key, value)) dictionary bindings
+      val active = ref true
+      val frame = Frame {owner = owner, active = active,
+                         environment = environment, bindings = dictionary}
+      fun close () = if not (!active) then () else
+        (active := false; close_scope environment)
+      val origin = (case backend of Backend {graph = NONE,...} => NONE
+        | _ => opened_origin backend parent frame []
+            (ListPair.map (fn ((key,name,_),(_,variable,_)) =>
+              (key,name,Term.type_of variable)) (entries,bindings))
+            false)
+        handle primary => ((close () handle _ => ());raise primary)
+    in {frame = frame, scope = frame_scope backend frame, close = close,
+      origin = origin} end
+
+  fun open_binders (backend as Backend
+      {owner, mk_bound_var, bound_variable, new_scope, new_let_scope,
+       close_scope, ...}) parent descriptors =
+    let
+      val environments = ref ([] : environment list)
+      val closed = ref false
+      val (initial, dictionary) = checked_frame backend parent
+      fun close_environments () = List.app close_scope (!environments)
+      fun bind [] environment dictionary variables =
+            (environment, dictionary, List.rev variables)
+        | bind ((key, name, ty) :: rest) environment dictionary variables =
+            let
+              val lexical = mk_bound_var (name, ty)
+              val binder_frame = new_scope environment []
+              val _ = environments := binder_frame :: !environments
+              val variable = bound_variable binder_frame lexical
+              val body_environment = new_let_scope
+                binder_frame [(lexical, variable)]
+              val _ = environments := body_environment :: !environments
+            in bind rest body_environment
+              (Redblackmap.insert (dictionary, key, variable))
+              (variable :: variables) end
+      val (environment, dictionary, variables) =
+        bind descriptors initial dictionary []
+        handle error => (close_environments (); raise error)
+      val active = ref true
+      val frame = Frame {owner = owner, active = active,
+                         environment = environment, bindings = dictionary}
+      fun close () = if !closed then () else
+        (closed := true; active := false; close_environments ())
+      val origin = opened_origin backend parent frame variables descriptors true
+        handle primary => ((close () handle _ => ());raise primary)
+    in {frame = frame, variables = variables,
+        scope = frame_scope backend frame, close = close,origin = origin} end
+
+  datatype syntax = Hole of int | Constant of Term.term
+                  | BoundVariable of int
+                  | Application of syntax * syntax
+                  | Abstraction of Term.term * syntax
+  datatype recipe = Recipe of
+    {syntax : syntax, holes : Type.hol_type vector,
+     result : Type.hol_type, size : int}
+
+  fun recipe_type (Recipe {result, ...}) = result
+  fun recipe_size (Recipe {size, ...}) = size
+
+  fun compile_recipe {template, holes, template_limit} =
+    let
+      val size = case SmtReplayImport.bounded_raw_size template_limit
+          template of SOME size => size
+        | NONE => raise ERR "compile_recipe" "expanded operator template"
+      val _ = List.app (fn hole => if Term.is_var hole then () else
+        raise ERR "compile_recipe" "operand hole is not a typed variable")
+        holes
+      val _ = List.foldl (fn (hole, previous) =>
+        if List.exists (Term.aconv hole) previous then
+          raise ERR "compile_recipe" "duplicate typed operand hole"
+        else hole :: previous) [] holes
+      fun index variable terms =
+        let fun seek [] _ = NONE
+              | seek (term :: rest) i =
+                  if Term.aconv variable term then SOME i else seek rest (i+1)
+        in seek terms 0 end
+      fun compile binders term =
+        if Term.is_var term then
+          (case index term binders of
+             SOME i => BoundVariable i
+           | NONE => case index term holes of
+               SOME i => if List.null binders then Hole i else
+                 raise ERR "compile_recipe" "operand insertion below binder"
+             | NONE => raise ERR "compile_recipe" "unowned schema variable")
+        else if Term.is_const term then Constant term
+        else if Term.is_comb term then
+          let val (operator, operand) = Term.dest_comb term in
+            Application (compile binders operator, compile binders operand)
+          end
+        else
+          let val (binder, body) = Term.dest_abs term in
+            Abstraction (binder, compile (binder :: binders) body)
+          end
+    in Recipe {syntax = compile [] template,
+      holes = Vector.fromList (List.map Term.type_of holes),
+      result = Term.type_of template, size = size} end
+
+  fun construct_with_branches backend frame
+      (Recipe {syntax, holes, result, ...}) arguments =
+    let
+      val _ = ignore (checked_frame backend frame)
+      val values = Vector.fromList arguments
+      val _ = if Vector.length holes = Vector.length values then () else
+        raise ERR "construct" "operator recipe arity mismatch"
+      val _ = Vector.appi (fn (index, expected) =>
+        if Type.compare (expected, type_of backend
+            (Vector.sub (values, index))) = EQUAL then ()
+        else raise ERR "construct" "operator recipe operand type mismatch")
+        holes
+      val branches = ref []
+      fun build frame bound (Hole index) = Vector.sub (values, index)
+        | build frame bound (Constant term) = literal backend frame term
+        | build frame bound (BoundVariable index) = List.nth (bound, index)
+        | build frame bound (Application (operator, operand)) =
+            application backend frame
+              (build frame bound operator, build frame bound operand)
+        | build frame bound (Abstraction (binder, body)) =
+            let
+              val (name, ty) = Term.dest_var binder
+              val branch = abstraction backend frame
+                (name, name, ty) (fn child =>
+                  let val value = valOf (lookup backend child name) in
+                    build child (value :: bound) body
+                  end)
+              val _ = branches := branch :: !branches
+            in branch end
+      val value = build frame [] syntax
+      val _ = if Type.compare (type_of backend value, result) = EQUAL then ()
+        else raise ERR "construct" "operator recipe result type mismatch"
+    in {value = value, branches = List.rev (!branches)} end
+
+  fun construct backend frame recipe arguments =
+    #value (construct_with_branches backend frame recipe arguments)
+  fun prepare_binding_guard_policy graph caller
+      (BindingOrigin {backend=Backend {owner,graph=original,...},
+        parent,child,graph=held,parent_scope,scope,variables,descriptors,
+        binders,epoch,symbols}) meter =
+    let
+      val _ = R.scope_meter_charge meter 8
+      val _ = if Portable.pointer_eq (graph,held) andalso
+          caller = parent_scope then () else
+        raise ERR "binding_guard" "different graph or genuine parent"
+      val _ = case original of SOME actual =>
+          if Portable.pointer_eq (actual,graph) then () else
+            raise ERR "binding_guard" "different private backend graph"
+        | NONE => raise ERR "binding_guard" "ordinary backend has no origin"
+      fun frame (Frame {owner=actual,active,environment,...}) expected =
+        let
+          val _ = R.scope_meter_charge meter 7
+          val _ = if actual = owner then () else
+            raise ERR "binding_guard" "different private lexical owner"
+          val (lexical,construction) = case environment of
+              SOME {lexical,construction} => (lexical,construction)
+            | NONE => raise ERR "binding_guard" "no graph environment"
+          val _ = R.scope_meter_charge meter 3
+          val _ = if construction = expected then () else
+            raise ERR "binding_guard" "actual lexical frame differs"
+          fun path scope =
+            let val (program,_) =
+                  G.prepare_shared_scope_path_policy graph scope meter
+                val _ = R.scope_meter_charge meter 2
+            in (scope,program) end
+          val lexical_path = path lexical
+          val construction_path = path construction
+          val _ = R.scope_meter_charge meter 3
+        in (active,[lexical_path,construction_path]) end
+      val (parent_active,parent_paths) = frame parent parent_scope
+      val (child_active,child_paths) = frame child scope
+      val visible = G.prepare_binding_scope_path_policy graph scope
+        parent_scope meter
+      fun node_paths [] = (R.scope_meter_charge meter 1;[])
+        | node_paths (node::rest) =
+          let
+            val _ = R.scope_meter_charge meter 2
+            val required = G.binding_node_scope graph node meter
+            val program = G.prepare_binding_scope_path_policy graph scope required
+              meter
+            val tail = node_paths rest
+            val _ = R.scope_meter_charge meter 2
+          in (required,program)::tail end
+      val paths = node_paths variables
+      fun sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
+        | sum ((_,path)::rest) =
+            (R.scope_meter_charge meter 3;
+             G.scope_path_validation_work path+sum rest+2)
+      fun variable_sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
+        | variable_sum ((_,path)::rest) =
+            (R.scope_meter_charge meter 3;
+             G.binding_scope_path_work path+variable_sum rest+2)
+      val frame_work = sum parent_paths + sum child_paths + 4
+      (* Both original guard calls retain epoch checks and frame checks;
+         between them every actual variable visibility path is validated. *)
+      val work = 2*(frame_work+6) +
+        G.binding_scope_path_work visible + variable_sum paths + 8
+      val _ = R.scope_meter_charge meter 16
+    in BindingGuard {meter=meter,graph=graph,parent_scope=parent_scope,
+      scope=scope,parent_active=parent_active,child_active=child_active,
+      parent_paths=parent_paths,child_paths=child_paths,visible=visible,
+      variables=paths,epoch=epoch,symbols=symbols,work=work,
+      data={scope=scope,variables=variables,descriptors=descriptors,
+        binders=binders}} end
+
+  (* Additive exact recipe; original recipe representation stays literal. *)
+  datatype policy_recipe = FinitePolicyRecipe of recipe
+    | ExactPolicyRecipe of
+        {syntax : syntax,holes : Type.hol_type vector,
+         result : Type.hol_type,size : IntInf.int}
+  fun recipe_policy_int_limit SmtReplayResourcePolicy.Uncapped = NONE
+    | recipe_policy_int_limit (SmtReplayResourcePolicy.AtMost limit) =
+        (SOME (IntInf.toInt limit) handle Overflow => NONE)
+  fun recipe_type_with_policy (FinitePolicyRecipe recipe) =
+        recipe_type recipe
+    | recipe_type_with_policy (ExactPolicyRecipe {result,...}) = result
+  fun recipe_size_with_policy (FinitePolicyRecipe recipe) =
+        IntInf.fromInt (recipe_size recipe)
+    | recipe_size_with_policy (ExactPolicyRecipe {size,...}) = size
+  fun compile_exact_policy_recipe {template, holes, template_limit} =
+    let
+      val size = case SmtReplayImport.raw_size_with_policy template_limit
+          template of SOME size => size
+        | NONE => raise ERR "compile_recipe" "expanded operator template"
+      val _ = List.app (fn hole => if Term.is_var hole then () else
+        raise ERR "compile_recipe" "operand hole is not a typed variable")
+        holes
+      val _ = List.foldl (fn (hole, previous) =>
+        if List.exists (Term.aconv hole) previous then
+          raise ERR "compile_recipe" "duplicate typed operand hole"
+        else hole :: previous) [] holes
+      fun index variable terms =
+        let fun seek [] _ = NONE
+              | seek (term :: rest) i =
+                  if Term.aconv variable term then SOME i else seek rest (i+1)
+        in seek terms 0 end
+      fun compile binders term =
+        if Term.is_var term then
+          (case index term binders of
+             SOME i => BoundVariable i
+           | NONE => case index term holes of
+               SOME i => if List.null binders then Hole i else
+                 raise ERR "compile_recipe" "operand insertion below binder"
+             | NONE => raise ERR "compile_recipe" "unowned schema variable")
+        else if Term.is_const term then Constant term
+        else if Term.is_comb term then
+          let val (operator, operand) = Term.dest_comb term in
+            Application (compile binders operator, compile binders operand)
+          end
+        else
+          let val (binder, body) = Term.dest_abs term in
+            Abstraction (binder, compile (binder :: binders) body)
+          end
+    in ExactPolicyRecipe {syntax = compile [] template,
+      holes = Vector.fromList (List.map Term.type_of holes),
+      result = Term.type_of template, size = size} end
+
+  fun compile_recipe_with_policy
+      (request as {template,holes,template_limit}) =
+    case recipe_policy_int_limit template_limit of
+        SOME finite => FinitePolicyRecipe (compile_recipe
+          {template=template,holes=holes,template_limit=finite})
+      | NONE => compile_exact_policy_recipe request
+  fun construct_with_branches_with_policy backend frame
+      (FinitePolicyRecipe recipe) arguments =
+        construct_with_branches backend frame recipe arguments
+    | construct_with_branches_with_policy backend frame
+        (ExactPolicyRecipe {syntax, holes, result, ...}) arguments =
+    let
+      val _ = ignore (checked_frame backend frame)
+      val values = Vector.fromList arguments
+      val _ = if Vector.length holes = Vector.length values then () else
+        raise ERR "construct" "operator recipe arity mismatch"
+      val _ = Vector.appi (fn (index, expected) =>
+        if Type.compare (expected, type_of backend
+            (Vector.sub (values, index))) = EQUAL then ()
+        else raise ERR "construct" "operator recipe operand type mismatch")
+        holes
+      val branches = ref []
+      fun build frame bound (Hole index) = Vector.sub (values, index)
+        | build frame bound (Constant term) = literal backend frame term
+        | build frame bound (BoundVariable index) = List.nth (bound, index)
+        | build frame bound (Application (operator, operand)) =
+            application backend frame
+              (build frame bound operator, build frame bound operand)
+        | build frame bound (Abstraction (binder, body)) =
+            let
+              val (name, ty) = Term.dest_var binder
+              val branch = abstraction backend frame
+                (name, name, ty) (fn child =>
+                  let val value = valOf (lookup backend child name) in
+                    build child (value :: bound) body
+                  end)
+              val _ = branches := branch :: !branches
+            in branch end
+      val value = build frame [] syntax
+      val _ = if Type.compare (type_of backend value, result) = EQUAL then ()
+        else raise ERR "construct" "operator recipe result type mismatch"
+    in {value = value, branches = List.rev (!branches)} end
+
+  fun construct_with_policy backend frame recipe arguments =
+    #value (construct_with_branches_with_policy backend frame recipe arguments)
+
+  fun exact_graphs_with_policy {graph, scope, import_limit, literal_limit, binder_limit} =
+    let
+      val _ = G.validate_scope graph scope
+      val _ = if SmtReplayResourcePolicy.positive import_limit andalso
+          SmtReplayResourcePolicy.positive literal_limit andalso
+          SmtReplayResourcePolicy.positive binder_limit then ()
+        else raise ERR "graphs" "nonpositive public import contract"
+      fun scopes (SOME scopes) = scopes
+        | scopes NONE = raise ERR "graphs" "missing graph environment"
+      fun lexical environment = #lexical (scopes environment)
+      fun construction environment = #construction (scopes environment)
+      val lexical_descriptors = ref
+        (Redblackmap.mkDict Int.compare : (int, Term.term) Redblackmap.dict)
+      fun retain_variable term node =
+        (lexical_descriptors := Redblackmap.insert
+           (!lexical_descriptors, G.node_id node, term); node)
+      fun compare_private ((left_scope, left_term),
+                           (right_scope, right_term)) =
+        case Int.compare (left_scope, right_scope) of
+          EQUAL => Term.compare (left_term, right_term) | order => order
+      val private_variables = ref (Redblackmap.mkDict compare_private)
+      val solver_variables = ref ([] : G.node solver_variable list)
+      val recorded_variables = ref (HOLset.empty Int.compare)
+      fun record_flexible term node =
+        (if HOLset.member (!recorded_variables, G.node_id node) then () else
+           (recorded_variables := HOLset.add
+              (!recorded_variables, G.node_id node);
+            solver_variables :=
+              {node = node, lexical = term,
+               scope = SOME (G.node_scope graph node)} :: !solver_variables);
+         node)
+      fun fresh_flexible environment term =
+        record_flexible term (retain_variable term
+          (G.fresh_flexible_variable graph (construction environment) term))
+      fun flexible environment term =
+        let
+          val scope = construction environment
+          val key = (G.scope_id scope, term)
+          val default = case Redblackmap.peek (!private_variables, key) of
+              SOME node => node
+            | NONE =>
+                let val node = retain_variable term
+                      (G.fresh_flexible_variable graph scope term)
+                in private_variables := Redblackmap.insert
+                     (!private_variables, key, node); node end
+          val node = G.resolve_reference graph
+            (lexical environment) term default
+          val _ = case G.view graph node of
+              G.Variable (G.SolverFlexible, _) =>
+                ignore (record_flexible term node)
+            | _ => ()
+        in node end
+      fun import environment term =
+        #node (G.import_with_policy graph (construction environment) import_limit term)
+      fun source _ term =
+        let val node = #node (G.import_with_policy graph scope import_limit term)
+        in if Term.is_var term then retain_variable term node else node end
+      fun literal environment term =
+        let
+          val _ = case SmtReplayImport.raw_size_with_policy literal_limit term of
+              SOME _ => ()
+            | NONE => raise ERR "literal" "literal exceeds bounded contract"
+          val _ = if List.null (Term.free_vars term) then () else
+            raise ERR "literal" "literal contains an unowned free variable"
+        in if Term.is_const term then
+          G.constant graph (construction environment) term
+        else import environment term end
+    in Backend
+      {owner = ref (), graph = SOME graph,
+       initial = SOME {lexical = scope, construction = scope},
+       validate_environment = fn environment =>
+         (G.validate_scope graph (lexical environment);
+          G.validate_scope graph (construction environment)),
+       type_of = G.type_of graph,
+       variable_descriptor = fn node =>
+         (ignore (G.type_of graph node);
+          Redblackmap.peek (!lexical_descriptors, G.node_id node)),
+       solver_variables = fn () => List.rev (!solver_variables),
+       mk_bound_var = Term.mk_var, source = source, literal = literal,
+       fresh_solver_variable = fresh_flexible,
+       variable = fn environment => fn kind => fn term =>
+         case kind of G.RigidSource =>
+           G.resolve_variable graph (lexical environment) term
+         | G.SolverFlexible => flexible environment term
+         | _ => G.variable graph (construction environment) kind term,
+       reference = fn environment => fn (term, value) =>
+         G.resolve_reference graph (lexical environment) term value,
+       bound_variable = fn environment => fn term => retain_variable term
+         (G.fresh_bound_variable graph (construction environment) term),
+       application = fn environment =>
+         G.application graph (construction environment),
+       new_scope = fn environment => fn bindings =>
+         let val scope = G.new_scope graph (lexical environment) bindings
+         in SOME {lexical = scope, construction = scope} end,
+       (* Let aliases affect name resolution, while constructed values
+          retain the enclosing proof block's construction scope. *)
+       new_let_scope = fn environment => fn bindings =>
+         SOME {lexical = G.new_scope graph (lexical environment) bindings,
+               construction = construction environment},
+       close_scope = fn environment => G.close_scope graph
+         (lexical environment),
+       abstraction = fn environment => fn body_environment =>
+         fn (binder,body) =>
+           G.recorded_abstraction_with_policy graph (construction environment)
+             binder_limit
+             {binder = binder,body = body,
+              body_frame = construction body_environment},
+       new_abstraction_scope = fn environment =>
+         let val retained = G.new_construction_scope graph
+               {lexical = lexical environment,
+                construction = construction environment}
+             val lexical = G.new_scope graph retained []
+               handle primary =>
+                 ((G.close_scope graph retained handle _ => ());raise primary)
+         in SOME {lexical = lexical,construction = retained} end,
+       abort_abstraction_scope = fn environment =>
+         G.close_scope graph (construction environment),
+       let_binding = #2, finish_let = #2}
+    end
+
+  fun graphs_with_policy
+      (request as {graph,scope,import_limit,literal_limit,binder_limit}) =
+    case (recipe_policy_int_limit import_limit,
+          recipe_policy_int_limit literal_limit,
+          recipe_policy_int_limit binder_limit) of
+        (SOME imports,SOME literals,SOME binders) => graphs
+          {graph=graph,scope=scope,import_limit=imports,
+           literal_limit=literals,binder_limit=binders}
+      | _ => exact_graphs_with_policy request
+
+  structure PV = SmtLib_GraphParserValue
+  datatype value_factory_token = ValueFactoryToken of
+    {backend:PV.value backend,context:PV.context}
+  type value_backend =
+    {backend:PV.value backend,context:PV.context,
+     factory_token:value_factory_token,
+     binding_origin_data:G.scope -> PV.value binding_origin ->
+       {scope:G.scope,variables:PV.value list,
+        descriptors:(string * string * Type.hol_type) list,binders:bool},
+     close:unit -> unit}
+  fun values_with_policy
+      {context,graph,scope,import_limit,literal_limit,binder_limit}
+      : value_backend =
+    let
+      val _ = if List.all SmtReplayResourcePolicy.positive
+          [import_limit,literal_limit,binder_limit] then () else
+        raise ERR "values" "nonpositive public import contract"
+      val _ = PV.validate_for context graph scope
+      val owner = ref ()
+      fun step () = PV.spend context 1
+      fun protect action = PV.protect context action
+      fun scopes (SOME fields) = fields
+        | scopes NONE = raise ERR "values" "missing value environment"
+      fun lexical environment = #lexical (scopes environment)
+      fun construction environment = #construction (scopes environment)
+      val descriptors = ref (Redblackmap.mkDict Int.compare)
+      fun retain lexical value =
+        (descriptors := Redblackmap.insert
+           (!descriptors,PV.key context value,lexical);value)
+      fun descriptor value =
+        case Redblackmap.peek (!descriptors,PV.key context value) of
+          SOME term => SOME term
+        | NONE => (case PV.view context value of
+            PV.Variable (_,term) => SOME term | _ => NONE)
+      val variables = ref ([] : PV.value solver_variable list)
+      val recorded = ref (Redblackset.empty Int.compare)
+      fun record lexical value =
+        let val id = PV.key context value in
+          if Redblackset.member (!recorded,id) then () else
+            (recorded := Redblackset.add (!recorded,id);
+             variables := {node=value,lexical=lexical,
+               scope=SOME (PV.scope_of context value)} :: !variables);
+          retain lexical value
+        end
+      fun private_compare ((ls,lt),(rs,rt)) =
+        case Int.compare (ls,rs) of EQUAL => Term.compare (lt,rt)
+          | result => result
+      val private_variables = ref (Redblackmap.mkDict private_compare)
+      fun fresh environment term = record term
+        (PV.fresh_flexible context (construction environment) term)
+      fun flexible environment term =
+        let val index = (G.scope_id (construction environment),term)
+            val fallback = case Redblackmap.peek (!private_variables,index) of
+                SOME value => value
+              | NONE => let val value = fresh environment term
+                            val _ = private_variables := Redblackmap.insert
+                              (!private_variables,index,value)
+                        in value end
+            val value = PV.reference context (lexical environment)
+              (term,fallback)
+        in case PV.view context value of PV.Variable (G.SolverFlexible,_) =>
+            record term value | _ => value end
+      val backend = Backend
+        {owner=owner,graph=SOME graph,
+         initial=SOME {lexical=scope,construction=scope},
+         validate_environment=fn environment =>
+           (PV.spend context 0;
+            G.validate_scope graph (lexical environment);
+            G.validate_scope graph (construction environment)),
+         type_of=PV.type_of context,variable_descriptor=descriptor,
+         solver_variables=fn () =>
+           (PV.spend context 1;List.rev (!variables)),
+         mk_bound_var=fn pair => (step ();Term.mk_var pair),
+         source=fn _ => PV.import context scope import_limit,
+         literal=fn environment =>
+           PV.literal context (construction environment) literal_limit,
+         variable=fn environment => fn kind => fn term =>
+           (case kind of G.RigidSource =>
+              (step ();PV.resolve_variable context
+                (lexical environment) term)
+            | G.SolverFlexible => flexible environment term
+            | _ => retain term
+                (PV.variable context (construction environment) kind term)),
+         fresh_solver_variable=fresh,
+         reference=fn environment => PV.reference context
+           (lexical environment),
+         bound_variable=fn environment => fn term => retain term
+           (PV.fresh_bound context (construction environment) term),
+         application=fn environment =>
+           PV.application context (construction environment),
+         new_scope=fn environment => fn bindings =>
+           let val child = PV.new_scope context (lexical environment) bindings
+           in SOME {lexical=child,construction=child} end,
+         new_let_scope=fn environment => fn bindings =>
+           SOME {lexical=PV.new_scope context (lexical environment) bindings,
+             construction=construction environment},
+         close_scope=fn environment =>
+           PV.close_scope context (lexical environment),
+         abstraction=fn environment => fn body_environment =>
+           fn (binder,body) =>
+             PV.abstraction context (construction environment)
+               {binder=binder,body=body,
+                body_frame=construction body_environment},
+         new_abstraction_scope=fn environment =>
+           let val retained = PV.new_construction_scope context
+                 {lexical=lexical environment,
+                  construction=construction environment}
+               val child = PV.new_scope context retained []
+           in SOME {lexical=child,construction=retained} end,
+         abort_abstraction_scope=fn environment =>
+           PV.close_scope context (construction environment),
+         let_binding= #2,finish_let= #2}
+      fun origin_data parent_scope (BindingOrigin
+          {backend=Backend {owner=held,...},parent,child,graph=held_graph,
+           parent_scope=original,scope=child_scope,variables,descriptors,
+           binders,epoch,symbols}) = protect (fn () =>
+        let val _ = PV.validate context
+            val _ = if Portable.pointer_eq (owner,held) andalso
+                Portable.pointer_eq (graph,held_graph) andalso
+                parent_scope=original then () else
+              raise ERR "binding_origin" "different value backend or parent"
+            val _ = if Type.type_epoch ()=epoch andalso
+                Term.term_epoch ()=symbols then () else
+              raise ERR "binding_origin" "origin retirement epoch changed"
+            val _ = if frame_scope backend parent=SOME original andalso
+                frame_scope backend child=SOME child_scope then () else
+              raise ERR "binding_origin" "actual lexical frame changed"
+            val _ = List.app (PV.usable context child_scope) variables
+        in {scope=child_scope,variables=variables,descriptors=descriptors,
+          binders=binders} end)
+    in {backend=backend,context=context,
+      factory_token=ValueFactoryToken {backend=backend,context=context},
+      binding_origin_data=origin_data,
+      close=fn () => PV.close context} end
+
+  datatype value_binding_guard = ValueBindingGuard of
+    {graph:G.graph,parent_scope:G.scope,parent_active:bool ref,
+     child_active:bool ref,epoch:int,symbols:int,
+     lifetime:PV.lifetime_guard,work:IntInf.int,
+     data:{scope:G.scope,variables:PV.value list,
+       descriptors:(string * string * Type.hol_type) list,binders:bool}}
+  fun value_binding_origin_owner
+      (BindingOrigin {graph,parent_scope,scope,...}:PV.value binding_origin) =
+    {graph=graph,parent_scope=parent_scope,scope=scope}
+  fun prepare_value_binding_guard (factory:value_backend) graph caller
+      (origin as BindingOrigin
+        {backend=held,parent=Frame {active=parent_active,...},
+         child=Frame {active=child_active,...},graph=owner,parent_scope,
+         scope=child_scope,variables,descriptors,binders,
+         epoch,symbols}) {root_scope,remaining_work} =
+    let
+      val context = #context factory
+      val backend = #backend factory
+      val ValueFactoryToken {backend=actual,context=actual_context} =
+        #factory_token factory
+      val _ = if Portable.pointer_eq (backend,actual) andalso
+          Portable.pointer_eq (context,actual_context) then () else
+        raise ERR "value_binding_guard" "Value factory fields changed"
+      val _ = if Portable.pointer_eq (#backend factory,held) andalso
+          Portable.pointer_eq (graph,owner) andalso caller=parent_scope
+        then () else raise ERR "value_binding_guard"
+          "different genuine Value backend or parent"
+      val _ = PV.validate_for context graph root_scope
+      val _ = if Type.type_epoch ()=epoch andalso
+          Term.term_epoch ()=symbols then () else
+        raise ERR "value_binding_guard" "origin declaration lifetime changed"
+      val BindingOrigin {parent,child,...} = origin
+      val _ = if frame_scope backend parent=SOME caller andalso
+          frame_scope backend child=SOME child_scope then () else
+        raise ERR "value_binding_guard" "actual lexical frame changed"
+      val _ = List.app (PV.usable context child_scope) variables
+      val data = {scope=child_scope,variables=variables,
+        descriptors=descriptors,binders=binders}
+      fun frame (Frame {environment,...}) = case environment of
+          SOME {lexical,construction} => [lexical,construction]
+        | NONE => raise ERR "value_binding_guard" "missing Value environment"
+      val lifetime = PV.prepare_lifetime_guard context
+        {remaining_work=remaining_work,scopes=frame parent @ frame child,
+         values= #variables data}
+      val _ = PV.spend context 12
+    in ValueBindingGuard {graph=graph,parent_scope=caller,
+      parent_active=parent_active,child_active=child_active,
+      epoch=epoch,symbols=symbols,lifetime=lifetime,
+      work=PV.lifetime_guard_work lifetime+12,data=data} end
+  fun value_binding_guard_work (ValueBindingGuard {work,...}) = work
+  fun value_binding_guard_data (ValueBindingGuard {data,...}) = data
+  fun validate_value_binding_guard graph caller
+      (ValueBindingGuard {graph=held,parent_scope,parent_active,
+                         child_active,epoch,symbols,lifetime,...}) =
+    (if Portable.pointer_eq (graph,held) andalso caller=parent_scope then ()
+     else raise ERR "value_binding_guard" "different graph or parent";
+     if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then ()
+     else raise ERR "value_binding_guard"
+       "origin declaration lifetime changed";
+     if !parent_active andalso !child_active then () else
+       raise ERR "value_binding_guard" "actual Value lexical frame closed";
+     PV.validate_lifetime_guard lifetime;
+     if !parent_active andalso !child_active then () else
+       raise ERR "value_binding_guard" "actual Value lexical frame closed")
+end
