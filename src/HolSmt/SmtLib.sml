@@ -2943,6 +2943,20 @@ local
       head
     end
 
+  (* Upstream list metadata does not register HD/TL.  Supply their proved
+     laws only in our translation view; never update TypeBase, even
+     temporarily.  Explicit caller registrations remain authoritative, as
+     for every other datatype.  These laws guide checked case proofs, not
+     semantic rewrites justified by metadata alone. *)
+  val list_destructor_laws = [listTheory.HD, listTheory.TL_DEF]
+  fun datatype_destructor_theorems tyinfo =
+    let val registered = TypeBasePure.destructors_of tyinfo in
+      if List.null registered andalso
+         TypeBasePure.ty_name_of tyinfo = ("list", "list") then
+        list_destructor_laws
+      else registered
+    end
+
   fun datatype_destructor_theorem_with metadata_error same_const
       tyinfo destructor =
     let
@@ -2953,7 +2967,7 @@ local
         (fn theorem =>
           let val head = metadata (fn () => datatype_destructor_head theorem)
           in same_const destructor head end)
-        (metadata (fn () => TypeBasePure.destructors_of tyinfo))
+        (metadata (fn () => datatype_destructor_theorems tyinfo))
     end
 
   fun datatype_destructor_theorem tyinfo destructor =
@@ -8508,7 +8522,7 @@ in
     reject_unsupported_smtfloat_constant
   fun datatype_destructor_theorems_for_test ty =
     case TypeBase.fetch ty of
-      SOME tyinfo => TypeBasePure.destructors_of tyinfo
+      SOME tyinfo => datatype_destructor_theorems tyinfo
     | NONE => []
   val datatype_destructor_head_for_test = datatype_destructor_head
   val datatype_destructor_case_for_test = datatype_destructor_case
