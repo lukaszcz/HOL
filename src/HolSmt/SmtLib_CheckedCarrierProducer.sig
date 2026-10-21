@@ -27,6 +27,10 @@ sig
   val run_cvc_with_work : request ->
     ((SmtReplaySource.sources -> owned_preprocessing) ->
       Abbrev.goal -> SolverSpec.result) -> Abbrev.goal -> SolverSpec.result
+  (* Emitted CPC numeric continuation over the same Source/Work. *)
+  val run_cvc_with_integer_division : request ->
+    ((SmtReplaySource.sources -> owned_preprocessing) ->
+      Abbrev.goal -> SolverSpec.result) -> Abbrev.goal -> SolverSpec.result
   val run_fixed_num_with_work : request ->
     ((SmtReplaySource.sources -> owned_preprocessing) ->
       Abbrev.goal -> SolverSpec.result) -> Abbrev.goal -> SolverSpec.result

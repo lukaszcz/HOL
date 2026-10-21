@@ -70,7 +70,8 @@ struct
   fun cvc_with_emissions
       {limits,semantic_limits,work_limit,check_type,scope_opened,
        ordinary_limit} original =
-    run_cvc_with_work {limits = limits,semantic_limits = semantic_limits,
+    SmtLib_CheckedCarrierProducer.run_cvc_with_integer_division
+      {limits = limits,semantic_limits = semantic_limits,
       work_limit = work_limit,check_type = check_type,
       scope_opened = scope_opened}
       (fn discover => CVC.CVC_SMT_Owned_Original_Source_Prover_With_Emissions

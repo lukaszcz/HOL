@@ -435,6 +435,10 @@ struct
     graph_conversion_internal graph scope revisit propose (fn _ => NONE)
       (fn _ => NONE) (fn () => ()) source
 
+  fun graph_conversion_with_schemas graph scope {revisit,propose,observe} =
+    graph_conversion_internal graph scope revisit propose (fn _ => NONE)
+      (fn _ => NONE) observe
+
   fun graph_conversion_with_closed graph scope
       {template_limit,revisit,propose,observe} source =
     if template_limit <= 0 then

@@ -104,7 +104,7 @@ struct
        check_type = check_type,scope_opened = scope_opened}
   fun begin_provenance work input =
     begin_internal OriginalProvenance work input
-  fun build (owner as Owner
+  fun build_internal numeric (owner as Owner
       {graph,root,sources,work,limits,traversal,rows,phase,assumption_mode,
        goal_view,denial_view,denial,denial_index,...}) =
     protected owner (fn () =>
@@ -138,7 +138,11 @@ struct
             in transport plan fact end end
         (* Ordered assertions consume the SAME persistent traversal owner
            before positive Goal. The positive record never becomes P.Source. *)
-        val assumptions = List.map process rows
+        val normalize = numeric owner
+        fun normalize_fact fact = case normalize (F.endpoint fact) of
+            NONE => fact
+          | SOME plan => transport plan fact
+        val assumptions = List.map (normalize_fact o process) rows
         val denied = original denial_index (#node denial)
         val result = T.run_goal_owned traversal {view = goal_view}
         val _ = active owner
@@ -163,6 +167,23 @@ struct
                      observe = observe} end)
                 val _ = active owner
             in (target,transport plan denied) end
+        val (goal,negative) = case normalize goal of NONE => (goal,negative)
+          | SOME positive =>
+            let val target = C.graph_result positive
+                val plan = meta owner (fn () =>
+                  let fun observe () = (active owner;W.spend work 1)
+                      val denied = F.endpoint negative
+                      val (head,operand) = case G.view graph denied of
+                          G.Application pair => pair
+                        | _ => raise ERR "build" "denial is not application"
+                      val _ = if operand = C.graph_source positive then ()
+                        else raise ERR "build" "numeric denial mismatch"
+                      val left = C.graph_identity graph root
+                        {observe = observe} head
+                  in C.graph_application graph root
+                    {source = denied,left = left,right = positive,
+                     observe = observe} end)
+            in (target,transport plan negative) end
         val validation = meta owner (fn () =>
           let val checked = F.validate graph root sources
                 {assumptions = assumptions,goal = goal,denied = negative,
@@ -176,6 +197,13 @@ struct
           in result end)
         val _ = active owner val _ = phase := Complete
       in validation end)
+  fun build owner = build_internal (fn _ => fn _ => NONE) owner
+  fun build_integer_division owner {check_type} =
+    build_internal (fn owner as Owner {work,...} =>
+      let val convert = meta owner (fn () =>
+            SmtLib_GraphIntegerDivision.conversion work
+              {check_type = check_type})
+      in fn node => meta owner (fn () => convert node) end) owner
   val _ = SmtLib_GraphNeededCarrierDriver.begin
   fun build_needed (owner as Owner {work,traversal,...}) {check_type} =
     protected owner (fn () =>

@@ -1598,7 +1598,8 @@ struct
             {serial = occurrence,node = node result,
              provenance = #provenance (fact result)})
         in result end
-      val completed = List.map observed (#commands proof)
+      val completed = SmtResource.profile_phase "cvc/graph-rule-admission"
+        (List.map observed) (#commands proof)
       val final = case List.rev completed of root::_ => root
         | [] => raise ERR "check_contradiction" "empty CPC proof"
       (* cvc5 can certify an already false input with only ASSUME commands,
@@ -3345,12 +3346,14 @@ struct
                     bounded_result ()
               in action (fn () =>
                    let val _ = complete_phase "tables.before"
-                       val tables = P.prepare_owned_realization_tables work
-                         frontier
+                       val tables = SmtResource.profile_phase
+                         "cvc/graph-table-admission"
+                         (P.prepare_owned_realization_tables work) frontier
                        val _ = complete_phase "tables.after"
                        val _ = complete_phase "freeze.before"
                        val block =
-                         P.freeze_owned_realization_tables_plan work tables
+                         SmtResource.profile_phase "cvc/graph-freeze"
+                           (P.freeze_owned_realization_tables_plan work) tables
                        val _ = complete_phase "freeze.after"
                    in block end)
               end
@@ -3393,7 +3396,8 @@ struct
                     (R.apply_law graph block) step
                   val _ = memo := Redblackmap.insert (!memo,serial step,edge)
                 in edge end
-          val edge = action (fn () => assemble root)
+          val edge = SmtResource.profile_phase "cvc/graph-construction"
+            (fn () => action (fn () => assemble root)) ()
           val dependency_ids = action (fn () => P.dependencies block edge)
           val source_occurrences = ListPair.zip (source_nodes,
             List.tabulate (List.length source_nodes,fn index => index))
@@ -3436,7 +3440,8 @@ struct
             val _ = complete_phase "realize.before"
             val _ = Option.app
               (fn work => P.validate_block_for work block) owned_work
-            val theorem = P.realize_with_sources block target edge
+            val theorem = SmtResource.profile_phase "cvc/graph-realization"
+              (P.realize_with_sources block target edge)
               (fn (_,node) => Redblackmap.peek (!witnesses,G.node_id node))
             val _ = complete_phase "realize.after"
           in theorem end) end
@@ -3968,7 +3973,8 @@ struct
         val original = W.original_sources work
         val _ = if Portable.pointer_eq (sources,original) then () else
           (W.close work;raise ERR "owned_replay" "different final Sources")
-    in SmtReplaySource.close_contradiction original contradiction end
+    in SmtResource.profile_phase "cvc/graph-source-finalization"
+      (SmtReplaySource.close_contradiction original) contradiction end
 
   fun prove_preprocessed_using (input as {sources,...}) =
     SmtReplaySource.close_contradiction sources

@@ -21599,7 +21599,7 @@ in
     in () end)
 end
 
-(* Actual original-With_Work emitted integer controls; UNCOMPILED. *)
+(* Actual original-With_Work emitted integer controls. *)
 local
   structure Factory = SmtLib_CheckedCarrierCallsite
   val _ = SmtLib_CheckedCarrierCallsite.cvc_with_emissions
@@ -21616,12 +21616,13 @@ local
      scope_opened = fn _ => (),ordinary_limit = 512} original
   fun proved (assumptions,goal) = case owned (assumptions,goal) of
       SolverSpec.UNSAT (SOME theorem) =>
-        ensure "emitted integer changed original Goal/Hyp or proof tags"
+        (Library.check_oracle_tags "selftest" "emitted integer" theorem;
+         ensure "emitted integer changed original Goal/Hyp or proof tags"
           (Term.aconv (Thm.concl theorem) goal andalso
            length (Thm.hyp theorem) = length assumptions andalso
            List.all (fn h => List.exists (Term.aconv h) assumptions)
              (Thm.hyp theorem) andalso
-           null (Tag.axioms_of (Thm.tag theorem)))
+           null (Tag.axioms_of (Thm.tag theorem))))
     | _ => raise Fail "emitted integer query did not produce checked theorem"
   fun configured action = if CVC.is_configured () then action () else
     print "SKIPPED: configured external cvc5 required\n"
@@ -21640,6 +21641,23 @@ in
   val _ = configured (fn () => proved
     ([``(emission_guard_y:int) <> 0``],
      ``integer$ediv 0 emission_guard_y = 0``))
+
+  val _ = testutils.tprint "Owned emitted division assumption stays Source"
+  val _ = configured (fn () => proved
+    ([``integer$ediv 0 (emission_guard_y:int) = 0``],
+     ``integer$ediv 0 (emission_guard_y:int) = 0``))
+
+  val _ = testutils.tprint "Owned emitted zero numerator still needs guard"
+  val _ = configured (fn () =>
+    let val original = ([],``integer$ediv 0 (emission_guard_y:int) = 0``)
+        val control = CVC.CVC_SMT_Prover original
+        val emitted = owned original
+        val same = case (control,emitted) of
+            (SolverSpec.SAT _,SolverSpec.SAT _) => true
+          | (SolverSpec.UNKNOWN _,SolverSpec.UNKNOWN _) => true
+          | _ => false
+    in ensure "zero numerator silently assumed its nonzero divisor guard"
+      same end)
 
   val _ = testutils.tprint "Owned emitted zero divisor keeps legacy status"
   val _ = configured (fn () =>

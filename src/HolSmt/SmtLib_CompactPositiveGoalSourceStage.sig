@@ -20,6 +20,10 @@ sig
      check_type : Type.hol_type -> unit,
      scope_opened : SmtReplayGraph.scope -> unit} -> owner
   val build : owner -> SmtLib_GraphPreprocess.validation
+  (* Fixed zero-numerator division continuation; keeps the zero branch. *)
+  val build_integer_division : owner ->
+    {check_type : Type.hol_type -> unit} ->
+    SmtLib_GraphPreprocess.validation
   (* Fixed retained-stock carrier/beta continuation on SAME traversal.
      Numeric conditional rewrites and SIMP remain separate prerequisites. *)
   val build_needed : owner ->

@@ -598,13 +598,16 @@ structure CVC = struct
       let
         fun pre original =
           let
-            val invocation = SmtCheckedGraph.prepare_original_with_work
-              limits discover original
+            val invocation = SmtResource.profile_phase
+              "cvc/emitted-source-admission"
+              (SmtCheckedGraph.prepare_original_with_work limits discover)
+              original
             fun translate () =
               let
                 val version = version_string ()
                 val {receipt,translation,strings} =
-                  SmtCheckedGraph.emit_translation_with_work invocation
+                  SmtResource.profile_phase "cvc/emitted-translation"
+                    (SmtCheckedGraph.emit_translation_with_work invocation)
                     {policy = cvc_logic_policy,dialect = SmtLib.Standard27,
                      apply_operator = SmtLib.ApplyAt,get_proof = true,
                      target = SOME {solver = "cvc5",version = SOME version}}
@@ -638,7 +641,8 @@ structure CVC = struct
           in case outcome of Exn.Exn primary => raise primary
             | Exn.Res result => (Exn.release cleanup;result) end
         fun validate (invocation,_,_,_) goal theorem =
-          SmtCheckedGraph.audit_original_with_work invocation goal theorem
+          SmtResource.profile_phase "cvc/emitted-final-audit"
+            (SmtCheckedGraph.audit_original_with_work invocation goal) theorem
         fun complete (invocation,_,_,_) =
           SmtCheckedGraph.close_original_with_work invocation
       in SolverSpec.make_solver_with_capture_command_and_completion

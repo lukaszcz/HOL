@@ -131,7 +131,7 @@ struct
          same-original live accept + immutable late audit. Do not close K at
          discover return: GP evidence still needs the SAME live Work later. *)
     in SolverSpec.complete_owned complete (solver discover) original end
-  fun run_cvc_with_work
+  fun run_cvc_with_work_using integer_division
       ({limits,semantic_limits,work_limit,check_type,scope_opened}
            : request) solver original =
     let
@@ -165,7 +165,9 @@ struct
             {import_limit = #import_limit limits,check_type = check_type,
              scope_opened = scope_opened}
           val _ = stage_ref := SOME stage
-          val validation = K.build stage
+          val validation = if integer_division then
+              K.build_integer_division stage {check_type = check_type}
+            else K.build stage
           val _ = discovery_guard () val _ = guard ()
           val _ = GP.validate_with_work work validation
           val _ = if Portable.pointer_eq
@@ -178,6 +180,8 @@ struct
          same-original live accept + immutable late audit. Do not close K at
          discover return: GP evidence still needs the SAME live Work later. *)
     in SolverSpec.complete_owned complete (solver discover) original end
+  val run_cvc_with_work = run_cvc_with_work_using false
+  val run_cvc_with_integer_division = run_cvc_with_work_using true
   val _ = SmtLib_OwnedFixedNumSourceStage.begin
   val _ = SmtLib_OwnedFixedNumSourceStage.build_needed
   fun prepare_fixed_num_stage work request =

@@ -312,9 +312,10 @@ struct
                     "invocation replay is one-shot"
                 else replay_started := true
             val _ = admit_translation_with_work owned translation
-            val parsed =
-              CPC_ProofParser.parse_graph_translation_packet_with_version
-              (options limits graph scope translation) translation version input
+            val parsed = SmtResource.profile_phase "cvc/emitted-parse"
+              (CPC_ProofParser.parse_graph_translation_packet_with_version
+                (options limits graph scope translation) translation version)
+              input
               handle error => raise ParseFailure error
             val _ = packet := SOME parsed
             val _ = if Portable.pointer_eq (Q.graph parsed,graph) andalso
@@ -322,7 +323,8 @@ struct
                 #requested (Q.versions parsed) = version then () else
               raise ERR "cvc_original_with_clauses_and_work"
                 "foreign parser packet"
-        in D.prove_cpc_with_clauses_and_work_using work session
+        in SmtResource.profile_phase "cvc/emitted-replay-total"
+          (D.prove_cpc_with_clauses_and_work_using work session)
           {proof = Q.proof parsed,ordinary_limit = ordinary_limit,
            template_limit = #template_limit (#recipe_limits limits),
            worker = worker,clause_worker = clause_worker,

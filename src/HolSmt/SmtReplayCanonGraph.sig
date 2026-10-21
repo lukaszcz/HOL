@@ -45,6 +45,11 @@ sig
   val graph_conversion : SmtReplayGraph.graph -> SmtReplayGraph.scope -> bool ->
     (SmtReplayGraph.node -> graph_schema option) -> SmtReplayGraph.node ->
     graph_conversion
+  (* Same memoized schema traversal with the caller's nominal Work hook. *)
+  val graph_conversion_with_schemas : SmtReplayGraph.graph ->
+    SmtReplayGraph.scope ->
+    {revisit : bool,propose : SmtReplayGraph.node -> graph_schema option,
+     observe : unit -> unit} -> SmtReplayGraph.node -> graph_conversion
   (* Local equalities are genuine bounded closed facts, including typed
      non-Boolean endpoints. Reserve graph_closed_facts before freeze.
      Applications reuse the ordinary compact constructor assembler.
