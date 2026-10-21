@@ -5,7 +5,8 @@ kinds, wrong arities, reordered/missing/duplicate events, mismatching source
 paths/hashes, wrong process exits and timeouts are errors. `test_runner.py`
 mutates valid receipts to exercise the validator independently of HOL.
 All counts are exact, not minima. TASK_03 adds the optional performance
-fixture; TASK_04 adds frozen public clients. TASK_02 observations are unchanged.
+fixture; TASK_04 adds frozen public clients; TASK_05 adds independent staged
+proof contracts. TASK_02 observations are unchanged.
 
 ## Ordered process protocol
 
@@ -227,3 +228,50 @@ All `.json.gz` receipts keep unique diagnostics, events and path fingerprints.
 reports per-process medians, paired ratios and deterministic percentile
 bootstrap intervals. Summaries hash every source receipt. These are diagnostic
 intervals from six pairs, not final acceptance or independent clean builds.
+
+## TASK_05 optional staged tactic fixture
+
+`--staging-contracts` adds `Staging.sml`, actually elaborated through the same
+Holmake-built state0 launcher on both selections. `--staging-only` executes
+only that suite (no historical reproducer or signature probe). It requires
+`--staging-contracts` and rejects combinations with the other optional suites
+or old negative controls. The selected complete implementation must still
+elaborate from its private path; all source/exit/footer checks still apply.
+
+`staging_contracts.py` enumerates 43 cases and validates the shape of sealed
+`staging/baseline.json` and `staging/reviewed.json` expectations. The existing
+`--candidate-behavior` chooses the candidate expectation; baseline always uses
+baseline. The reviewed choice means `expected-candidate-red`, even though the
+launcher successfully captures the known wrong behavior and exits 0. Exact
+ordered expectations are compared, not just counts or sets of observations.
+A strict baseline-contract run on current sources must reject the new suite.
+See `STAGING_CONTRACTS.md` for stage meanings and every baseline outcome.
+
+Each scenario has `NAME.construct.{prims,callbacks,outcome}`, followed by either
+`NAME.uses = unavailable` (construction raised) or measured `NAME.first` and
+`NAME.second` application stages. Returned applications additionally require
+`NAME.USE.goals`, `NAME.USE.proof.{prims,callbacks}`, `check NAME.USE proof pass`,
+`NAME.USE.theorem` and `NAME.USE.oracles`, in precisely that order. The theorem
+is the result of actually calling the returned validation with genuine kernel
+subgoal proofs; no `VALID` oracle surrogate is used. Only `DISK_THM` dependency
+tags are allowed. Encodings preserve full constant/variable/type identities,
+ordered assumptions/goals and reconstructed hypothesis sets/conclusions.
+They do not invoke term printers. Metrics are exact nonnegative decimal
+integers, callbacks are ordered strings, and exception messages are escaped.
+Unexpected exceptions in residual proving or reconstruction fail the process.
+
+After malformed-bound scenarios, the separate `negative_bound.argument` stage
+must raise exactly the documented argument-constructor HOL error. After all
+scenarios, three validator control checks must reject wrong conclusion, foreign
+hypothesis and oracle-tagged theorem; `validations.executed` must equal the
+number of successful real reconstructions. Footer counts are 60 develop / 57
+initial candidate; real validations are 57 / 54. All stage/proof observations
+are mandatory even for unchanged or fully solved goals.
+
+The manifest uses `evidence_id: TASK_05-staging-contracts-v1`, adds
+`staging_contracts` with sealed input references, selected expectation and
+reviewed-to-selected / working simplifier source diffs. Inputs include the
+fixture, both expectations, seals and validator/tests. A standalone strict
+red receipt retains the full executed stream and exit 0, with `accepted=false`
+and a nonzero driver exit: captured incompatibility is distinct from an
+unexpected process failure. No expected static errors are permitted here.

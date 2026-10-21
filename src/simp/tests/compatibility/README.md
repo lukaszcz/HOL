@@ -1,5 +1,11 @@
 # Pinned simplifier review inputs
 
+TASK_05's independent 43-scenario construction/use/proof matrix, sealed
+expectations, initial callback/exception reds and standalone reproduction
+commands are in [`STAGING_CONTRACTS.md`](STAGING_CONTRACTS.md). Every returned
+validation runs with genuine residual proofs; this is contract capture, not
+TASK_18's production repair.
+
 TASK_04's complete public-interface inventory, sealed baseline clients,
 expected initial reds and reproduction commands are in
 [`PUBLIC_CONTRACTS.md`](PUBLIC_CONTRACTS.md). Its coverage includes all six

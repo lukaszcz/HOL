@@ -1,0 +1,435 @@
+{
+  "evidence_id": "TASK_05-staging-contracts-v1",
+  "status": "complete bounded contract-capture task; production staging remains expected-red for TASK_18",
+  "head": "54c4882ba04dd788bc6fee104e68b2f5c0335ce2",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "current": "54c4882ba04dd788bc6fee104e68b2f5c0335ce2",
+  "runtime": {
+    "poly_version": "Poly/ML 5.9.2 Release",
+    "options": [
+      "--gcthreads=1",
+      "run",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0"
+    ],
+    "tools": {
+      "bin/hol": {
+        "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+        "bytes": 43099640
+      },
+      "bin/hol.state0": {
+        "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+        "bytes": 20469336
+      },
+      "bin/hol.state.min": {
+        "sha256": "4f73a07180cf088c592828006584d2160b6cba928e972f5377444ff263a1adea",
+        "bytes": 7623888
+      },
+      "bin/Holmake": {
+        "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+        "bytes": 3409600
+      },
+      "holproject.toml": {
+        "sha256": "e5edfdfa427248d29611b2da398f8f3e438868ffed563b6528e4cd14e797d72a",
+        "bytes": 2747
+      },
+      "/usr/local/bin/poly": {
+        "sha256": "1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311",
+        "bytes": 17381496
+      }
+    }
+  },
+  "commands": [
+    {
+      "argv": [
+        "bin/build",
+        "-t",
+        "--seq=tools/sequences/upto-parallel"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "evidence": "routine.log.gz"
+    },
+    {
+      "argv": [
+        "bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+        "-C",
+        "src/simp/tests/compatibility",
+        "-j1",
+        "PAIRED_OUTPUT=/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task05/current-head",
+        "staging-contracts"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "evidence": "current.log.gz"
+    },
+    {
+      "argv": [
+        "bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+        "-C",
+        "src/simp/tests/compatibility",
+        "-j1",
+        "PAIRED_OUTPUT=/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task05/baseline-control",
+        "staging-baseline-control"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "evidence": "control.log.gz"
+    },
+    {
+      "argv": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_paired.py",
+        "--staging-contracts",
+        "--staging-only",
+        "--candidate",
+        "cf1f863b4e5a9712ce1b179f18274eb3451f3954",
+        "--output",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task05/reviewed"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "evidence": "reviewed.log.gz"
+    },
+    {
+      "argv": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_paired.py",
+        "--staging-contracts",
+        "--staging-only",
+        "--candidate",
+        "HEAD",
+        "--candidate-behavior",
+        "baseline",
+        "--output",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task05/strict-red"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 1,
+      "evidence": "red.log.gz"
+    },
+    {
+      "argv": [
+        "tools/h4pedant/h4pedant",
+        "src/simp/tests/compatibility/staging"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "evidence": "pedant.log.gz"
+    },
+    {
+      "argv": [
+        "sha256sum",
+        "-c",
+        "src/simp/tests/compatibility/SHA256SUMS"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "evidence": "immutable.log.gz"
+    },
+    {
+      "argv": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/verify_evidence.py"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0
+    }
+  ],
+  "python_tests": {
+    "total": 34,
+    "new_staging_tests": 11,
+    "exit": 0,
+    "evidence": [
+      "current.log.gz",
+      "control.log.gz"
+    ]
+  },
+  "offline_audit": {
+    "accepted_receipts_bound_to_manifest_sources": 11,
+    "all_8_staging_streams_equal_sealed_expectations": true,
+    "all_selected_Git_source_bytes_match_manifest": true,
+    "all_accepted_shared_sources_and_final_harness_inputs_rechecked": true,
+    "strict_red_online_path_audit": "not accepted; separate accepted current-HEAD receipt has complete online path/hash audit"
+  },
+  "generic_read_only_baseline_equal": {
+    "src/marker/markerLib.sml": {
+      "sha256": "1e29a10f16d9deea6ec8938241a370c71b7e9bcd8ced3484522e074c5acf6dc0",
+      "bytes": 58827
+    },
+    "src/marker/markerSyntax.sml": {
+      "sha256": "5a9c30dcc2d268fc7e57c25c63ef0a78cf50cadefc8b976d6c2c1aa91e44a47d",
+      "bytes": 6089
+    },
+    "src/1/Ho_Rewrite.sml": {
+      "sha256": "c4fc141a076e0f45f68277823ead544d4272d2030685eda86b8f500082c994d9",
+      "bytes": 11822
+    },
+    "src/1/BoundedRewrites.sml": {
+      "sha256": "84ab96b174135590742669b1eb047aac4aa4beeff285fac161e925eaf4666612",
+      "bytes": 993
+    }
+  },
+  "production_source_diff_reviewed_to_current": "",
+  "working_production_diff": "",
+  "files": {
+    "src/simp/tests/compatibility/Holmakefile": {
+      "sha256": "751bbad450d209067e11adc5bd9ffc65cca977d2c19a9d386193476dbef4d023",
+      "bytes": 1501
+    },
+    "src/simp/tests/compatibility/README.md": {
+      "sha256": "731e2b787f3c95aa9eaa3c05f4271a4f9e7dda2b30c34588f7a12525346d5401",
+      "bytes": 10520
+    },
+    "src/simp/tests/compatibility/SCHEMA.md": {
+      "sha256": "485a5b17dedc4459215504d67992fef87066807ac6acdb994845484f59891440",
+      "bytes": 17003
+    },
+    "src/simp/tests/compatibility/STAGING_CONTRACTS.md": {
+      "sha256": "cac749b1ef1cfa65399bbf4c1e9fede7a3e0cc23cd45a060e4bd91e74a65d5c2",
+      "bytes": 11595
+    },
+    "src/simp/tests/compatibility/TASK_05_HANDOFF.md": {
+      "sha256": "e82ab2f58bccca0d246be281adbe4c27af0643b24cab0443397ea9b7a648c87f",
+      "bytes": 9764
+    },
+    "src/simp/tests/compatibility/evidence/task05/baseline-control/baseline-Staging-none.json.gz": {
+      "sha256": "f916e254409b1c3cdc4ce6aac91046ead8e4731227a464a03f212dbb93033078",
+      "bytes": 54287
+    },
+    "src/simp/tests/compatibility/evidence/task05/baseline-control/baseline-build.json.gz": {
+      "sha256": "1b23664a98bb0155ad0484e7a0276679e1378acaff30dea06d24fa94a24bb40b",
+      "bytes": 528
+    },
+    "src/simp/tests/compatibility/evidence/task05/baseline-control/candidate-Staging-none.json.gz": {
+      "sha256": "21ad2220a84803ca07ba7aa91521173516f877015e013f1e168366f60013b324",
+      "bytes": 54287
+    },
+    "src/simp/tests/compatibility/evidence/task05/baseline-control/candidate-build.json.gz": {
+      "sha256": "9134024b342cd33bf2d7beb1b3c8f6c4b17560e654b60683ff04cbf339ec9117",
+      "bytes": 528
+    },
+    "src/simp/tests/compatibility/evidence/task05/baseline-control/manifest.json": {
+      "sha256": "0e1dfdc0f3217dd4442d4cbbd57196c23711259cfa16a7c3f57389488e810dd1",
+      "bytes": 603297
+    },
+    "src/simp/tests/compatibility/evidence/task05/control.log.gz": {
+      "sha256": "8e696a4bd0ae29a8a452300854d0549cc165443ac9b2e9e59293a2ce4def5d1a",
+      "bytes": 282
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-Staging-none.json.gz": {
+      "sha256": "a27af1a16b696d382558bdd59c887ae142beb319eb596994ebdbe52310945c06",
+      "bytes": 54289
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-build.json.gz": {
+      "sha256": "744ca3653108c29fc48d08d277f417a64dc7a3167fffa62f0354dea65c787ddc",
+      "bytes": 528
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-deferred.json.gz": {
+      "sha256": "b7325c11a16e4a06ff6d15ac0586f27070c848fc89719cdb518381d172e4fa4b",
+      "bytes": 5278
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-failed.json.gz": {
+      "sha256": "4ae28d76faa18039be8e533bc7b89f42d1df5a0b95d357bd854d68f6e09cbf17",
+      "bytes": 6277
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-missing.json.gz": {
+      "sha256": "17f151196169cfd749c61315644e01b5b8690ef5ff2b3c33a41797a0c7f79c17",
+      "bytes": 6276
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-none.json.gz": {
+      "sha256": "8e8758e5bb0c4fc09da95dd3c1639ac319c5a814748c552d73fe2eaa4d12da33",
+      "bytes": 51659
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-truncated.json.gz": {
+      "sha256": "9c1dde09048075b44fe34bbb8bbba68435220117c59b8e818b731d681c8c4147",
+      "bytes": 6281
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-unexecuted.json.gz": {
+      "sha256": "8d7637f4758aa2ea025df7413e1ad39577f4eb59a5985a0e0c583cdf2a21277d",
+      "bytes": 374
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-selftest-wrong-path.json.gz": {
+      "sha256": "a78884a2ae0509af0d5fd0d417d8481c135df3b342e2fbcc0ffdc96fc1767f52",
+      "bytes": 6420
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/baseline-signature-none.json.gz": {
+      "sha256": "e6da73a2288e1e298bbcab8e9e6adc48eec58453dd9f48f70ba1e89a8d549ea7",
+      "bytes": 43394
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-Staging-none.json.gz": {
+      "sha256": "09048565d14d27ba35299094491ddd1e9df59e0dae900de2e12ef908e51e5e85",
+      "bytes": 55222
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-build.json.gz": {
+      "sha256": "4ef6ff5e11f45e9e7af2c7cae20aca752704a23767e2fb900cebc78184e617c7",
+      "bytes": 568
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-deferred.json.gz": {
+      "sha256": "a2c49f0ad2505495764f36fb82088bade87dfe05123171c679f862c75ec618cd",
+      "bytes": 5277
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-failed.json.gz": {
+      "sha256": "13813e8693d51695e294ff16c4eca0db9e39297cebe7ee39ab3c95e6062fb81e",
+      "bytes": 6385
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-missing.json.gz": {
+      "sha256": "0afe85e9c1103d7ffa7ce5ff93aff35d55b6c35bbb9b49f08a0780b9d90c6d48",
+      "bytes": 6387
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-none.json.gz": {
+      "sha256": "c0b0fe25504c56cf46fe31fa2f28b3dcc71ae6704fda28ef26ef7f5ebaeb26e5",
+      "bytes": 52742
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-truncated.json.gz": {
+      "sha256": "873e7099cb7a6510b45732db6334175f8a93760c07524ff02fac5f5ecc53bff3",
+      "bytes": 6385
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-unexecuted.json.gz": {
+      "sha256": "b088110ef5b676a1cacf4615b6ec1c7f064b2ad9c5d8368325617885f51498e4",
+      "bytes": 375
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-selftest-wrong-path.json.gz": {
+      "sha256": "c61bacc2275561dcd570e38a031d5729cc92736b379182ceb51287c4aa364b6e",
+      "bytes": 6309
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/candidate-signature-none.json.gz": {
+      "sha256": "84d9629d4a375e26ea3103001588cc2f4605328bce4e9045d2179d1037a48b80",
+      "bytes": 44226
+    },
+    "src/simp/tests/compatibility/evidence/task05/current-head/manifest.json": {
+      "sha256": "4614dbe07041d5478c64c7505a3ad7cd884f933eaabc9a42e43dcd4916ce9122",
+      "bytes": 69477
+    },
+    "src/simp/tests/compatibility/evidence/task05/current.log.gz": {
+      "sha256": "b861a37a815b0af47aa7f572ae910848bd304d16bd72a00294fd79731c4fd2cb",
+      "bytes": 247
+    },
+    "src/simp/tests/compatibility/evidence/task05/development.json": {
+      "sha256": "57b434bf0bc068c6f4ca21d411e190431d368cf1626136fafc058d54023c9432",
+      "bytes": 1619
+    },
+    "src/simp/tests/compatibility/evidence/task05/immutable.log.gz": {
+      "sha256": "b6d53a8b3eca80d095e960ca8a0de146e5d7f18c93b7189637ce9798a5c432b9",
+      "bytes": 338
+    },
+    "src/simp/tests/compatibility/evidence/task05/observations-summary.json": {
+      "sha256": "727905a81c989ee4d12491a243a957fad20022b3f90e0e7df7bd967715656fc8",
+      "bytes": 4326
+    },
+    "src/simp/tests/compatibility/evidence/task05/pedant.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "src/simp/tests/compatibility/evidence/task05/red.log.gz": {
+      "sha256": "a53a93ce6b03bd771e9a11faf956dec292b3c777147820a558209648c6520f9c",
+      "bytes": 155
+    },
+    "src/simp/tests/compatibility/evidence/task05/reviewed.log.gz": {
+      "sha256": "80b8d4920291f4309260e186487b382b9095656e5fdea6d07ce7f21ac2104707",
+      "bytes": 113
+    },
+    "src/simp/tests/compatibility/evidence/task05/reviewed/baseline-Staging-none.json.gz": {
+      "sha256": "517ac58e21ae55f6e89668926e070ad8107136403adfc5f48d0f2357d6d4961e",
+      "bytes": 54299
+    },
+    "src/simp/tests/compatibility/evidence/task05/reviewed/baseline-build.json.gz": {
+      "sha256": "6f978802ed72c53adc72238522dd2d728ce5ce15536382a89584a3f29a930fb7",
+      "bytes": 526
+    },
+    "src/simp/tests/compatibility/evidence/task05/reviewed/candidate-Staging-none.json.gz": {
+      "sha256": "c31697a2741a338a9936392838c9a25bd5c177dc7f6984bda525ad3c458ffcc8",
+      "bytes": 55218
+    },
+    "src/simp/tests/compatibility/evidence/task05/reviewed/candidate-build.json.gz": {
+      "sha256": "4b4f3a135c44c7b937cab49d49286203c0b1b1c522653de996476f753b018ccb",
+      "bytes": 568
+    },
+    "src/simp/tests/compatibility/evidence/task05/reviewed/manifest.json": {
+      "sha256": "1741953d2c5d1ec459ac894f0d3d66da41a060b61e130df7ca1a5873bdc51f81",
+      "bytes": 67273
+    },
+    "src/simp/tests/compatibility/evidence/task05/routine.log.gz": {
+      "sha256": "550ebd48eefebb37f8853a03467f540feb2a0df72b93e646b49b61a4e4838bbc",
+      "bytes": 2751
+    },
+    "src/simp/tests/compatibility/evidence/task05/strict-red/baseline-Staging-none.json.gz": {
+      "sha256": "bb107becc4b1ec53456ae844dfc4aa2dca0d195c46594ed58e66a54516be0b66",
+      "bytes": 54284
+    },
+    "src/simp/tests/compatibility/evidence/task05/strict-red/baseline-build.json.gz": {
+      "sha256": "9adeca208310d20712b9a50f3cff86b25d451c88321225af71b7a764ec4852a0",
+      "bytes": 528
+    },
+    "src/simp/tests/compatibility/evidence/task05/strict-red/candidate-Staging-none.json.gz": {
+      "sha256": "39bcb1cc71b74876e21c3219f6e29ba83e0701884c9313bae1624f613a9bec57",
+      "bytes": 10373
+    },
+    "src/simp/tests/compatibility/evidence/task05/strict-red/candidate-build.json.gz": {
+      "sha256": "d4b83fbf7c025dfda8c89f46fede6b79d917c6f97ce405f92b0d1952dedcf1e2",
+      "bytes": 571
+    },
+    "src/simp/tests/compatibility/evidence/task05/strict-red/manifest.json": {
+      "sha256": "a28d03ea4f5636284cc976f2574f5209ec68104ae22d3617c6189e97b20e4283",
+      "bytes": 67328
+    },
+    "src/simp/tests/compatibility/run_paired.py": {
+      "sha256": "7f30b547ee6ee3b384cb24d6188fdb5efd20ee0ec46ffe804014aba7b7d81019",
+      "bytes": 36842
+    },
+    "src/simp/tests/compatibility/staging/Staging.sml": {
+      "sha256": "7da09afa4303daa3eba65092ed456a905d07f6d424d668d1a909ab47bbf12a1f",
+      "bytes": 13228
+    },
+    "src/simp/tests/compatibility/staging/baseline.json": {
+      "sha256": "c828446937e0a42771f15aafce1acd96c49f3267bbcbb22ccb25aa164c05e706",
+      "bytes": 90156
+    },
+    "src/simp/tests/compatibility/staging/references.json": {
+      "sha256": "3b8c6219331de1e626006ad9897caa25a8a078561f6d4dc61cec878b0a019c30",
+      "bytes": 589
+    },
+    "src/simp/tests/compatibility/staging/reviewed.json": {
+      "sha256": "3e73281110780ca810b6188adc2b075510d7724e6f184c00faa73d1b9a214cee",
+      "bytes": 88508
+    },
+    "src/simp/tests/compatibility/staging_contracts.py": {
+      "sha256": "a21745fcbacfd8fff9bb833f00a55ab65cc02815372e5323ef2704711ef5e15d",
+      "bytes": 4633
+    },
+    "src/simp/tests/compatibility/test_staging.py": {
+      "sha256": "baf2fe5c8db69f6d844bb08357e58d847df385aebed8615a7e802bc7080665f9",
+      "bytes": 8612
+    }
+  },
+  "cleanup": "All task05 scratch trees, inputs/logs and newly created staging target locks removed. Existing unrelated artifacts preserved. Private driver trees cleaned automatically."
+}

@@ -3,9 +3,10 @@
 ifndef PAIRED_OUTPUT
 PAIRED_OUTPUT = paired-results
 endif
-.PHONY: check python-tests public-contracts public-baseline-control
+.PHONY: check python-tests public-contracts public-baseline-control \
+        staging-contracts staging-baseline-control
 python-tests:
-	python3 -B -m unittest test_runner test_public_contracts
+	python3 -B -m unittest test_runner test_public_contracts test_staging
 
 check: python-tests
 	python3 -B run_paired.py --negative-controls --output $(PAIRED_OUTPUT)
@@ -21,3 +22,13 @@ public-baseline-control: python-tests
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
 	  --candidate-signature pass --candidate-behavior baseline \
 	  --output $(PAIRED_OUTPUT)
+
+# Diagnostic expected reds; repair acceptance must use baseline behavior.
+staging-contracts: python-tests
+	python3 -B run_paired.py --staging-contracts --negative-controls \
+	  --candidate HEAD --output $(PAIRED_OUTPUT)
+
+staging-baseline-control: python-tests
+	python3 -B run_paired.py --staging-contracts --staging-only \
+	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
+	  --candidate-behavior baseline --output $(PAIRED_OUTPUT)

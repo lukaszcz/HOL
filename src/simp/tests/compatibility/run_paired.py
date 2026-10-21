@@ -214,7 +214,8 @@ def validate(receipt, *, selection, fixture, control, private, repo,
         require(str(private / (name + ".sml")) in used,
                 "selected implementation not elaborated: " + name)
     outcome = "pass"
-    if red or (contract and contract["warning"]) or (
+    if red or (contract and (contract.get("warning") or
+                             contract.get("expected_red"))) or (
             fixture == "selftest" and flavor == "reviewed"):
         outcome = "expected-candidate-red"
     return {"observations": observations, "expected_test_count": checks,
@@ -334,6 +335,10 @@ def main():
     p.add_argument("--candidate-signature", choices=("reject", "pass"), default="reject")
     p.add_argument("--candidate-behavior", choices=("reviewed", "baseline"), default="reviewed")
     p.add_argument("--negative-controls", action="store_true")
+    p.add_argument("--staging-contracts", action="store_true",
+                   help="execute construction/use/proof stage contracts")
+    p.add_argument("--staging-only", action="store_true",
+                   help="run only the new suite, independent of old probes")
     p.add_argument("--public-contracts", action="store_true",
                    help="execute frozen complete public-interface clients")
     p.add_argument("--output", type=Path, required=True)
@@ -345,6 +350,13 @@ def main():
     if (args.performance_pairs < 0 or args.samples < 3 or
             not 0.1 <= args.batch_seconds <= 60):
         p.error("require nonnegative pairs, >=3 samples, 0.1..60 second batches")
+    if args.staging_only and (not args.staging_contracts or
+            args.negative_controls or args.public_contracts or
+            args.performance_pairs):
+        p.error("--staging-only requires --staging-contracts alone")
+    staging = None
+    if args.staging_contracts:
+        import staging_contracts as staging
     public = None
     if args.public_contracts:
         import public_contracts as public
@@ -421,6 +433,16 @@ def main():
                     repo, "diff", BASE, ref, "--", "*.sig").decode()
                     for selection, ref in (("baseline", args.baseline),
                                            ("candidate", args.candidate))}}
+        if staging:
+            manifest["evidence_id"] = "TASK_05-staging-contracts-v1"
+            manifest["staging_contracts"] = {
+                "references": staging.references(HERE, require, fingerprint),
+                "candidate_expectation": args.candidate_behavior,
+                "reviewed_to_current_source_diff": git(
+                    repo, "diff", REVIEWED, args.candidate,
+                    "--", "src/simp/src").decode(),
+                "working_simplifier_diff": git(
+                    repo, "diff", "HEAD", "--", "src/simp/src").decode()}
         inputs = [HERE / "run_paired.py", HERE / "test_runner.py",
                   HERE / "Holmakefile", HERE / "SCHEMA.md",
                   HERE / "paired/Holmakefile",
@@ -436,6 +458,9 @@ def main():
                        HERE / "test_public_contracts.py",
                        *sorted((HERE / "public").glob("*")),
                        *sorted((HERE / "inputs/develop").glob("*.sig"))]
+        if staging:
+            inputs += [HERE / "staging_contracts.py", HERE / "test_staging.py",
+                       *sorted((HERE / "staging").glob("*"))]
         for path in inputs:
             manifest["inputs"][str(path.relative_to(repo))] = fingerprint(path)
         sources = {}
@@ -449,6 +474,8 @@ def main():
                 install_fixtures(dst, performance=bool(performance))
                 if public:
                     public.install(HERE, dst, refs)
+                if staging:
+                    staging.install(HERE, dst)
                 manifest["selections"][selection] = {
                     "requested_ref": ref, "revision": rev, "private": str(dst),
                     "sources": inventory,
@@ -529,9 +556,12 @@ def main():
                 dst = root / selection
                 flavor = "baseline" if selection == "baseline" else args.candidate_behavior
                 signature = "pass" if selection == "baseline" else args.candidate_signature
-                cases = [("selftest", "none"), ("signature", "none")]
+                cases = ([] if args.staging_only else
+                         [("selftest", "none"), ("signature", "none")])
                 if public:
                     cases += [(target, "none") for target in public.CONTRACTS]
+                if staging:
+                    cases += [("Staging", "none")]
                 if args.negative_controls:
                     cases += [("selftest", c) for c in
                               ("missing", "truncated", "failed", "wrong-path",
@@ -539,6 +569,8 @@ def main():
                 for fixture, control in cases:
                     contract = (public.expectation(fixture, signature)
                                 if public and fixture in public.CONTRACTS else None)
+                    if staging and fixture == "Staging":
+                        contract = staging.expectation(HERE, flavor)
                     target = (contract["target"] if contract else
                               "SignatureCheck" if fixture == "signature" else "selftest")
                     if control == "wrong-path":
