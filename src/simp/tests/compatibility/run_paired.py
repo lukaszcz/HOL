@@ -74,7 +74,8 @@ def parse_events(text):
 
 
 def validate(receipt, *, selection, fixture, control, private, repo,
-             private_names, flavor, signature, source_hashes):
+             private_names, flavor, signature, source_hashes,
+             expected_observations=None):
     """Strict ordered protocol + exit + source/path audit. Never infer success
     from .uo creation, expected exit alone, or a success substring in a log.
     The only allowed error is the explicitly requested old-datatype rejection.
@@ -104,8 +105,9 @@ def validate(receipt, *, selection, fixture, control, private, repo,
             "missing/duplicate initial heap source inventory")
     require(events[start:start + 2] == searches, "wrong ordered search paths")
     start += 2
-    expected = behavior_events(flavor) if fixture == "selftest" else [
-        ["check", "legacy signature", "pass"]]
+    expected = (expected_observations if expected_observations is not None else
+                behavior_events(flavor) if fixture == "selftest" else
+                [["check", "legacy signature", "pass"]])
     red = fixture == "signature" and signature == "reject"
     if red:
         expected = [["exception", "Fail", r'Fail \"Static Errors\"']]
@@ -177,7 +179,9 @@ def validate(receipt, *, selection, fixture, control, private, repo,
         paths[raw] = {"physical": str(p), **info, "related_products": related,
                       "origin": "elaborated" if raw in used else "initial-map"}
     require(observations == expected, "incomplete or wrong ordered observations")
-    target = "SignatureCheck.sml" if fixture == "signature" else "selftest.sml"
+    target = {"signature": "SignatureCheck.sml",
+              "performance": "Performance.sml"}
+    target = target.get(fixture, "selftest.sml")
     require(str(private / target) in used, "requested fixture never elaborated")
     for name in ("Traverse",) if fixture == "signature" else ("Traverse", "simpLib"):
         require(str(private / (name + ".sml")) in used,
@@ -238,10 +242,15 @@ def extract(repo, rev, dst):
     return inventory
 
 
-def install_fixtures(dst):
+def install_fixtures(dst, performance=False):
     for p in (HERE / "paired").iterdir():
         if p.suffix == ".sml" or p.name == "Holmakefile":
             shutil.copyfile(p, dst / p.name)
+    if performance:
+        shutil.copyfile(HERE.parent / "performance/Performance.sml",
+                        dst / "Performance.sml")
+        with (dst / "Holmakefile").open("a") as out:
+            out.write("\npaired.exe: Performance.uo\n")
     # Preserve the complete immutable signature and ascription. Only replace
     # the review probe's process exit with a counted testutils assertion, so
     # the launcher can emit its mandatory completion footer after elaboration.
@@ -296,12 +305,23 @@ def main():
     p.add_argument("--negative-controls", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--timeout", type=int, default=300)
+    p.add_argument("--performance-pairs", type=int, default=0)
+    p.add_argument("--samples", type=int, default=5)
+    p.add_argument("--batch-seconds", type=float, default=0.2)
     args = p.parse_args()
+    if (args.performance_pairs < 0 or args.samples < 3 or
+            not 0.1 <= args.batch_seconds <= 60):
+        p.error("require nonnegative pairs, >=3 samples, 0.1..60 second batches")
+    performance = None
+    if args.performance_pairs:
+        import sys
+        sys.path.insert(0, str(HERE.parent / "performance"))
+        import performance_schema as performance
     repo, output = args.repo.resolve(), args.output.resolve()
     # Never overwrite historical/user evidence, even on a failed invocation.
     output.mkdir(parents=True, exist_ok=False)
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("HOL", "POLY", "ML", "PAIR_"))}
+           if not k.startswith(("HOL", "POLY", "ML", "PAIR_", "PERF_", "LD_"))}
     env.update(HOLDIR=str(repo), TERM="dumb", LC_ALL="C", TZ="UTC")
     manifest = {"schema_version": 1, "evidence_id": "TASK_02-paired-v1",
                 "scope": "mixed-source isolation, not independent repository builds",
@@ -314,6 +334,13 @@ def main():
                                 if k in ("HOLDIR", "TERM", "LC_ALL", "TZ", "PATH")},
                 "tools": {}, "inputs": {}, "selections": {}, "runs": [],
                 "success": False}
+    if performance:
+        manifest["evidence_id"] = "TASK_03-baselines-v1"
+        manifest["performance"] = {
+            "pairs": args.performance_pairs, "samples": args.samples,
+            "batch_seconds": args.batch_seconds,
+            "order": "AB,BA alternating; fresh process per selection",
+            "outliers": "none removed"}
     try:
         for name in ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
                      "bin/Holmake", "holproject.toml"):
@@ -324,12 +351,36 @@ def main():
         manifest["poly_version"] = execute([poly, "--version"], repo, env,
                                             args.timeout)
         require(manifest["poly_version"]["exit"] == 0, "poly --version failed")
+        if performance:
+            import platform
+            manifest["machine"] = {
+                "uname": list(platform.uname()),
+                "cpu_affinity": sorted(os.sched_getaffinity(0)),
+                "cpuinfo_unique_fields": sorted({line for line in
+                    Path("/proc/cpuinfo").read_text().splitlines()
+                    if line and not line.startswith("processor")}),
+                "load_average_before": list(os.getloadavg()),
+            }
+            linked = execute(["ldd", str(repo / "bin/hol")], repo, env,
+                             args.timeout)
+            require(linked["exit"] == 0, "runtime library discovery failed")
+            manifest["dynamic_libraries"] = linked
+            for name in re.findall(r"(/[^\s()]+)", linked["stdout"]):
+                manifest["tools"][name] = fingerprint(Path(name).resolve())
+            manifest["reviewed_to_current_source_diff"] = git(
+                repo, "diff", REVIEWED, "HEAD", "--", "src/simp/src").decode()
+            manifest["working_simplifier_diff"] = git(
+                repo, "diff", "HEAD", "--", "src/simp/src").decode()
         inputs = [HERE / "run_paired.py", HERE / "test_runner.py",
                   HERE / "Holmakefile", HERE / "SCHEMA.md",
                   HERE / "paired/Holmakefile",
                   *sorted((HERE / "paired").glob("*.sml")),
                   HERE / "inputs/develop/Traverse.sig",
                   HERE.parent / "performance/review-20261021/abicheck.sml"]
+        if performance:
+            inputs += [HERE.parent / "performance" / name for name in
+                       ("Performance.sml", "performance_schema.py",
+                        "summarize.py", "test_performance.py", "Holmakefile")]
         for path in inputs:
             manifest["inputs"][str(path.relative_to(repo))] = fingerprint(path)
         sources = {}
@@ -340,7 +391,7 @@ def main():
                 dst.mkdir()
                 rev = git(repo, "rev-parse", ref + "^{commit}").decode().strip()
                 inventory = extract(repo, rev, dst)
-                install_fixtures(dst)
+                install_fixtures(dst, performance=bool(performance))
                 manifest["selections"][selection] = {
                     "requested_ref": ref, "revision": rev, "private": str(dst),
                     "sources": inventory,
@@ -438,6 +489,52 @@ def main():
                             receipt.get("control_failure", ""))
                     require(receipt["accepted"] == (control == "none"),
                             label + ": " + receipt.get("rejection", "negative control accepted"))
+            if performance:
+                for pair in range(args.performance_pairs):
+                    order = ("baseline", "candidate")
+                    if pair % 2:
+                        order = tuple(reversed(order))
+                    for selection in order:
+                        dst = root / selection
+                        runenv = dict(
+                            env, PAIR_SELECTION=selection,
+                            PAIR_FIXTURE="performance", PAIR_CONTROL="none",
+                            PAIR_PRIVATE=str(dst), PAIR_TARGET="Performance",
+                            PERF_SAMPLES=str(args.samples),
+                            PERF_SECONDS=str(args.batch_seconds))
+                        receipt = execute([str(dst / "paired.exe")], dst,
+                                          runenv, args.timeout)
+                        receipt.update(
+                            selection=selection, fixture="performance",
+                            control="none", pair=pair,
+                            environment={k: v for k, v in runenv.items()
+                                         if k.startswith(("PAIR_", "PERF_"))})
+                        try:
+                            observations, measurements = performance.validate(
+                                parse_events(receipt["stdout"]), args.samples,
+                                args.batch_seconds)
+                            receipt["result"] = validate(
+                                receipt, selection=selection,
+                                fixture="performance", control="none",
+                                private=dst, repo=repo, private_names=names,
+                                flavor="baseline", signature="pass",
+                                source_hashes=sources,
+                                expected_observations=observations)
+                            receipt["measurements"] = measurements
+                            receipt["accepted"] = True
+                        except (ValueError, OSError) as e:
+                            receipt["accepted"] = False
+                            receipt["rejection"] = str(e)
+                            receipt["events"] = parse_events(receipt["stdout"])
+                        label = f"pair-{pair:02d}-{selection}"
+                        manifest["runs"].append({
+                            "receipt": label + ".json.gz",
+                            "accepted": receipt["accepted"],
+                            "expected_acceptance": True,
+                            "exit": receipt["exit"]})
+                        compact(receipt, output, label)
+                        require(receipt["accepted"],
+                                receipt.get("rejection", ""))
             # Shared dependencies are fingerprinted in accepted run inventories;
             # refuse source/tool mutations across this entire comparison.
             for run in manifest["runs"]:
@@ -451,6 +548,11 @@ def main():
                         for path, expected in info["related_products"].items():
                             require(fingerprint(Path(path)) == expected,
                                     "loaded dependency product changed during pair")
+            if performance:
+                manifest["machine"]["load_average_after"] = list(os.getloadavg())
+            for path, info in manifest["inputs"].items():
+                require(fingerprint(repo / path) == info,
+                        "harness input changed during experiment")
             for name, info in manifest["tools"].items():
                 require(fingerprint(repo / name) == info, "runtime/tool changed during pair")
         manifest["success"] = True

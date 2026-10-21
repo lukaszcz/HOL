@@ -4,7 +4,8 @@
 kinds, wrong arities, reordered/missing/duplicate events, mismatching source
 paths/hashes, wrong process exits and timeouts are errors. `test_runner.py`
 mutates valid receipts to exercise the validator independently of HOL.
-All counts are exact, not minima. No timing samples are defined in TASK_02.
+All counts are exact, not minima. TASK_03 adds the optional performance
+fixture below; non-performance TASK_02 contracts remain unchanged.
 
 ## Ordered process protocol
 
@@ -133,3 +134,54 @@ incomplete loaded inventories, source mutations, arbitrary static errors,
 wrong-but-byte-identical source paths and killing descendants on timeout.
 Baseline-versus-baseline executes the wrong-path control too: rejecting it
 cannot depend on a behavioral difference between the two revisions.
+
+## TASK_03 optional performance fixture
+
+`--performance-pairs N` installs `../performance/Performance.sml` into both
+private trees. It is a deferred `.uo`, actually elaborated in a fresh launcher
+process for each selection of each pair, after both builds and the independent
+behavior/signature/control runs. Process order alternates AB/BA. The same full
+source/path/exit/footer validation applies; there is no expected-red timing
+mode. The driver checks that fixture/driver inputs do not change during runs.
+Both sources use identical `PERF_SAMPLES` and `PERF_SECONDS` options. Counts are
+calibrated separately per workload/process with all calibration batches saved.
+
+`performance_schema.py` validates the entire ordered observation/check stream:
+
+- `timer.accounting`: forced five-full-GC batch, then `check timer accounting`.
+- `check workload inputs` (1,000 independent boolean rewrite assumptions).
+- `storage`: exactly 0/10/100/1,000 rules, each followed by a retained-graph check.
+- Each label in the fixed `LABELS` list: calibration events starting at one
+  iteration and doubling until requested wall duration; then exactly the
+  requested sample count of batch events followed by result checks.
+- One final `sink`: exact sum of all timed consumed counts, not just nonzero.
+
+All observations have three fields: `observation key comma-separated-numbers`.
+Timing payload order is wall, non-GC user/system, GC user/system, inclusive
+CPU user/system, `checkGCTime` user, and consumed count. Calibration prefixes
+this with iteration count; batch prefixes with sample index then iterations.
+All durations are seconds, indices/counts are integers. SML's `~` negative
+exponents are normalized to `-` when parsing. NaN/infinity/negative durations,
+incorrect consumption, CPU-accounting mismatch, wrong counts/ordering and
+measured wall batches below half the target are errors, not noisy passes.
+GC is included in CPU: it is **never added to CPU**. `checkGCTime` omits GC
+system time; it is checked against GC user, not labeled total GC CPU.
+
+Storage payload: rule count, base words, fragment words, simpset words,
+equal-arity anchor words, union words, compiled increment, historical
+increment, fragment anchor words, fragment union words, fragment increment.
+Subtractions and integral word counts are checked. See the performance README
+for exact root expressions and why historical increment differs by one word.
+
+Performance receipts add `pair` and validated `measurements` (raw calibration/
+batch metrics and storage). Test-count is 61 at five samples (2 initial,
+4 storage, 11 x 5 results); footer pass and exit 0 are mandatory. There is no
+outlier exclusion. The manifest adds `performance` options/order/outlier policy,
+machine/affinity/load information, exact `ldd` output and runtime-library hashes,
+and current-HEAD/working-source diffs against the reviewed implementation.
+Inherited `PERF_*` and `LD_*` are stripped as well as existing HOL/Poly settings.
+All `.json.gz` receipts keep unique diagnostics, events and path fingerprints.
+`summarize.py` revalidates archived metrics, checks complete AB/BA pairs and
+reports per-process medians, paired ratios and deterministic percentile
+bootstrap intervals. Summaries hash every source receipt. These are diagnostic
+intervals from six pairs, not final acceptance or independent clean builds.

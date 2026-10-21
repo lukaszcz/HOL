@@ -1,0 +1,24 @@
+# Diagnostic isolation only. No final performance acceptance is implied.
+ifndef PERFORMANCE_OUTPUT
+PERFORMANCE_OUTPUT = performance-results
+endif
+.PHONY: python-tests diagnostic
+python-tests:
+	python3 -B test_performance.py
+	python3 -B ../compatibility/test_runner.py
+
+# One recipe keeps baseline variability before reviewed observations even
+# when invoked by a parallel caller. Never benchmark alongside other builds.
+diagnostic: python-tests
+	python3 -B ../compatibility/run_paired.py \
+	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
+	  --candidate-signature pass --candidate-behavior baseline \
+	  --negative-controls --performance-pairs 6 --samples 5 \
+	  --batch-seconds 0.25 --output $(PERFORMANCE_OUTPUT)/baseline-control
+	python3 -B summarize.py $(PERFORMANCE_OUTPUT)/baseline-control \
+	  --output $(PERFORMANCE_OUTPUT)/baseline-summary.json
+	python3 -B ../compatibility/run_paired.py --negative-controls \
+	  --performance-pairs 6 --samples 5 --batch-seconds 0.25 \
+	  --output $(PERFORMANCE_OUTPUT)/reviewed
+	python3 -B summarize.py $(PERFORMANCE_OUTPUT)/reviewed \
+	  --output $(PERFORMANCE_OUTPUT)/reviewed-summary.json

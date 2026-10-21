@@ -1,0 +1,156 @@
+{
+  "evidence_id": "TASK_03-baselines-v1",
+  "starting_head": "46c57b3e6972833a8ce483c82b970394e9561494",
+  "commands": [
+    {
+      "command": [
+        "bin/build",
+        "-t",
+        "--seq=tools/sequences/upto-parallel"
+      ],
+      "exit": 0,
+      "evidence": "routine.log.gz",
+      "note": "Ran after final compiled SML edits, before final timing observations."
+    },
+    {
+      "command": [
+        "bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+        "-C",
+        "src/simp/tests/performance",
+        "-j1",
+        "PERFORMANCE_OUTPUT=/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03",
+        "diagnostic"
+      ],
+      "exit": 0,
+      "evidence": "diagnostic.log.gz"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_paired.py",
+        "--candidate",
+        "HEAD",
+        "--performance-pairs",
+        "1",
+        "--samples",
+        "5",
+        "--batch-seconds",
+        "0.25",
+        "--output",
+        "src/simp/tests/performance/evidence/task03/current-head"
+      ],
+      "exit": 0,
+      "evidence": "current-head.log.gz"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/performance/test_performance.py"
+      ],
+      "exit": 0,
+      "output": "........\n----------------------------------------------------------------------\nRan 8 tests in 0.017s\n\nOK\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/test_runner.py"
+      ],
+      "exit": 0,
+      "output": ".............\n----------------------------------------------------------------------\nRan 13 tests in 1.316s\n\nOK\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/verify_evidence.py"
+      ],
+      "exit": 0,
+      "output": "TASK_01 evidence integrity: 37 immutable artifacts verified\nBaseline inputs and ABI derivation match pinned Git sources\nHistorical JSON/log counts, stages and storage agree\nNo HOL tests, elaboration or benchmarks executed; no pass inferred\n"
+    },
+    {
+      "command": [
+        "sha256sum",
+        "-c",
+        "src/simp/tests/compatibility/SHA256SUMS"
+      ],
+      "exit": 0,
+      "output": "src/simp/tests/performance/review-20261021/abicheck.sml: OK\nsrc/simp/tests/performance/review-20261021/bench.sml: OK\nsrc/simp/tests/performance/review-20261021/candidate-abicheck.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-bench-build.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-build.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-detail-1.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-detail-2.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-exclusion.log.gz: OK\nsrc/simp/tests/performance/review-20261021/candidate-legacy.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-memory.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-staging.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-timings-1.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-timings-2.log: OK\nsrc/simp/tests/performance/review-20261021/candidate-traversal.log.gz: OK\nsrc/simp/tests/performance/review-20261021/detail.sml: OK\nsrc/simp/tests/performance/review-20261021/detailed-benchmarks.json: OK\nsrc/simp/tests/performance/review-20261021/develop-abicheck.log: OK\nsrc/simp/tests/performance/review-20261021/develop-bench-build.log: OK\nsrc/simp/tests/performance/review-20261021/develop-build.log: OK\nsrc/simp/tests/performance/review-20261021/develop-detail-1.log: OK\nsrc/simp/tests/performance/review-20261021/develop-detail-2.log: OK\nsrc/simp/tests/performance/review-20261021/develop-exclusion.log.gz: OK\nsrc/simp/tests/performance/review-20261021/develop-legacy.log: OK\nsrc/simp/tests/performance/review-20261021/develop-memory.log: OK\nsrc/simp/tests/performance/review-20261021/develop-staging.log: OK\nsrc/simp/tests/performance/review-20261021/develop-timings-1.log: OK\nsrc/simp/tests/performance/review-20261021/develop-timings-2.log: OK\nsrc/simp/tests/performance/review-20261021/develop-traversal.log.gz: OK\nsrc/simp/tests/performance/review-20261021/memory.sml: OK\nsrc/simp/tests/performance/review-20261021/native-selftest.log.gz: OK\nsrc/simp/tests/performance/review-20261021/native.log.gz: OK\nsrc/simp/tests/performance/review-20261021/reproduce.py: OK\nsrc/simp/tests/performance/review-20261021/review-results.json: OK\nsrc/simp/tests/performance/review-20261021/staging.sml: OK\nsrc/simp/tests/performance/review-20261021/validation-summary.json: OK\nsrc/simp/tests/compatibility/inputs/develop/Traverse.sig: OK\nsrc/simp/tests/compatibility/inputs/develop/selftest.sml: OK\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/performance/audit_evidence.py",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03/baseline-control",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03/reviewed",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03/current-head"
+      ],
+      "exit": 0,
+      "output": "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03/baseline-control: 12 source-bound receipts; wrong-selection and mutated-source controls rejected\n/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03/reviewed: 12 source-bound receipts; wrong-selection and mutated-source controls rejected\n/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task03/current-head: 2 source-bound receipts; wrong-selection and mutated-source controls rejected\nVerified 26 performance receipts\n"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "command": ["git", "diff", "--cached", "--check"],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "offline",
+        "recompute both summary objects"
+      ],
+      "exit": 0,
+      "output": "Both match archived summaries exactly."
+    },
+    {
+      "command": [
+        "offline",
+        "recheck all surviving source/runtime/dependency/input fingerprints"
+      ],
+      "exit": 0,
+      "output": "842 unique surviving paths match all three experiments."
+    }
+  ],
+  "archived_log_hashes": {
+    "polyml-v5.9.2-Timer.sml.gz": {
+      "sha256": "003da0a90a6914ef43d35477f74ac4706b21d8d131f03fd23fc20f91ade68c02",
+      "bytes": 1194
+    },
+    "current-head.log.gz": {
+      "sha256": "6f291902887a9a35697e713a5b71032842843bd6f4761f1b19b1e8c0a7b1a3af",
+      "bytes": 113
+    },
+    "routine.log.gz": {
+      "sha256": "a4d533126483e2de87ef5604af975b332f65f049e93c562b3c99394e980ae55a",
+      "bytes": 2729
+    },
+    "diagnostic.log.gz": {
+      "sha256": "29e291cc44e61088d418aa78df117b3eddaebf49fdf9e0bbca982a3425b12e11",
+      "bytes": 1562
+    }
+  },
+  "additional_auditor": {
+    "sha256": "8325ef4f4021cf2fcb6752abfd1fb016fa3d70a56f21e713a77cc2d8f33438cd",
+    "bytes": 5068
+  },
+  "timer_source": {
+    "url": "https://raw.githubusercontent.com/polyml/polyml/v5.9.2/basis/Timer.sml",
+    "uncompressed_sha256": "e68d88cb8d14479806ddc540571dc5924e5756478f01ffe775fe74be5f503fd2"
+  },
+  "scope": "Diagnostic mixed-source isolation; NOT performance acceptance. Small/noisy cost conclusions unresolved, never passes."
+}
