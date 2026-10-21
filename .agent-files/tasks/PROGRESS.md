@@ -15,12 +15,12 @@
 - TASK_13: done — acceptance verified; docs/search/native/sanity reruns pass.
 - TASK_14: done — acceptance verified; full paired matrix/native/sanity pass.
 - TASK_15: done — acceptance verified; downstream/native/routine receipts and source hashes checked.
-- TASK_16: done — acceptance verified; full selftest-enabled build exits 0.
-- TASK_17: unblocked (not started).
+- TASK_16: done — full build exit 0; scope, fresh tests and source hashes verified.
+- TASK_17: done — 58-item audit, final gate continuity, whitespace and cleanup verified.
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_17_final_acceptance_and_report.md`.
+None — all seventeen tasks are complete within the qualified validation scope.
 
 ## 3. Completion log
 
@@ -42,4 +42,5 @@ and evidence pointer.
 - TASK_13 — `ee1ea6da1` + `5b5f07df2`; evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/{validation,naming-validation}.json`.
 - TASK_14 — `4d7bf126d`; evidence: `src/simp/compatibility/PAIRED_VALIDATION.md` and `src/simp/compatibility/results/task14/`.
 - TASK_15 — `34ba6e174`; evidence: `src/simp/compatibility/DOWNSTREAM_VALIDATION.md` and `src/simp/compatibility/results/task15/`.
-- TASK_16 — `[TASK_16] Record successful full regression gate`; evidence: `src/simp/compatibility/FULL_REGRESSION.md` and `src/simp/compatibility/results/task16/`.
+- TASK_16 — `bc05969be`; evidence: `src/simp/compatibility/FULL_REGRESSION.md` and `src/simp/compatibility/results/task16/`.
+- TASK_17 — `[TASK_17] Complete compatibility acceptance audit and report`; evidence: `src/simp/compatibility/{FINAL_REPORT,PLAN_AUDIT}.md` and `src/simp/compatibility/results/task17/`.

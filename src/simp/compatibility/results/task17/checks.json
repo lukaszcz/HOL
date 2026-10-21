@@ -1,0 +1,131 @@
+{
+  "started_utc": "2026-10-21T09:14:51.597065+00:00",
+  "ended_utc": "2026-10-21T09:14:56.735783+00:00",
+  "revision": "bc05969beb79cf2cefa76a260da01b0729628388",
+  "tree": "6a889bfc0f8f6da0c26fecc8421a8770a794e863",
+  "commands": [
+    {
+      "argv": [
+        "python3",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/compatibility/paired_report.py",
+        "--paired",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/compatibility/results/task14/paired-verified",
+        "--fresh",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/compatibility/results/task14/fresh-verified",
+        "--output",
+        "/tmp/claude/compat-task17-report.b65x86rk/comparison"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "stdout": "PASS: all ordered contracts and raw-output differences reviewed\n",
+      "stdout_sha256": "2c3eef0860615fcf13ce1947f53961b8e910a5055b440967c65335d9b04db60e"
+    },
+    {
+      "argv": [
+        "python3",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/compatibility/paired_report_test.py"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "stdout": "......\n----------------------------------------------------------------------\nRan 6 tests in 0.011s\n\nOK\n",
+      "stdout_sha256": "e11bbb630c1a6ea91f4322ac92d7ce2a6c043ad84d3e41ecf0d0f5a73e9c9fd0"
+    },
+    {
+      "argv": [
+        "sha256sum",
+        "-c",
+        "inputs/SHA256SUMS"
+      ],
+      "cwd": "src/simp/compatibility",
+      "exit": 0,
+      "stdout": "inputs/develop/selftest.sml: OK\ninputs/investigation/README.md: OK\ninputs/investigation/branch-compat.log: OK\ninputs/investigation/branch-namespace.log: OK\ninputs/investigation/compat-selftest.sml: OK\ninputs/investigation/develop-compat.log: OK\ninputs/investigation/develop-namespace.log: OK\ninputs/investigation/namespace-selftest.sml: OK\n",
+      "stdout_sha256": "735a466d0b650f46cb4d61a273534a2159c7c7d28f0dc945b39a75892d4a636a"
+    },
+    {
+      "argv": [
+        "tools/h4pedant/h4pedant",
+        "src/1",
+        "src/postkernel",
+        "src/simp/src",
+        "src/marker",
+        "src/simp/compatibility/probes/support",
+        "src/simp/compatibility/probes/legacy",
+        "src/simp/compatibility/probes/fresh-load",
+        "src/simp/compatibility/probes/split-registration",
+        "src/simp/compatibility/probes/split-persistence"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "stdout": "",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "verified": {
+    "candidate_files": 7924,
+    "task15_inputs": 118,
+    "task15_command_logs": 11,
+    "task16_tools_and_driver": 7,
+    "task16_sequences": 7,
+    "task16_fresh_log_records": 34,
+    "task16_visits": 87,
+    "task16_theory_timings": 650,
+    "task16_evidence_hashes": 6,
+    "paired-verified_branch_sources": 45,
+    "paired-verified_inputs": 17,
+    "paired_support": 6,
+    "fresh-verified_branch_sources": 45,
+    "fresh-verified_inputs": 3,
+    "original_develop_selftest_byte_equal": true,
+    "paired_ordinary_inputs": 17,
+    "paired_fresh_inputs": 5,
+    "ordered_observation_pairs": 3251,
+    "plan_items_mapped": 58,
+    "original_plan_sha256": "87bd4a5c0f355e6c541d4c3f74ed22a814af4f7d9e88b1c4b1ee1c4798e3b25c",
+    "completion_log_lines": 17,
+    "final_report_and_handoff_sha256": {
+      ".agent-files/tasks/PROGRESS.md": "ec70cf34e012faad91f14928e8a3809199e717b498bc457296143e1721c2cddf",
+      ".agent-files/tasks/TASK_INDEX.md": "f97070ee5c61175cea60dc1406ccd23855d11a19b70a9a909f99f3d13b37456b",
+      "src/simp/compatibility/FINAL_REPORT.md": "e6b77f69b8476fe012a0583702fb6d4b69af1abb05684651e345cd2997c0d8e4",
+      "src/simp/compatibility/PLAN_AUDIT.md": "d4538ff84128cbcc0a2195391ca6ba1235eec404539867141eab00b9832d0087"
+    },
+    "changed_text_paths": [
+      ".agent-files/tasks/PROGRESS.md",
+      ".agent-files/tasks/TASK_INDEX.md",
+      "src/simp/compatibility/FINAL_REPORT.md",
+      "src/simp/compatibility/PLAN_AUDIT.md",
+      "src/simp/compatibility/results/task17/check.py",
+      "src/simp/compatibility/results/task17/checks.json"
+    ],
+    "temporary_roots_inspected": [
+      "/tmp",
+      "/tmp/claude"
+    ],
+    "task_scratch_or_cache_leftovers": [],
+    "cleanup": "Reporter TemporaryDirectory removed; no build products/caller files deleted. Historical caller-owned investigation and unrelated worktrees untouched."
+  },
+  "audit_driver_sha256": "9b1d9e89cf438a5b7a5995569055af2a93744e88c443e582d127b26a07248e53",
+  "scope": "Integrity/audit checks; no new library/full build execution."
+}

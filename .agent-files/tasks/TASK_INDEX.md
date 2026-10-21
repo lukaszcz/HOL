@@ -12,8 +12,11 @@ shape, context lifetime, rule ordering, quotas, history, and load-time state.
 Equal final conclusions alone are insufficient.
 
 Every task has a Context section distinguishing that overall objective from
-its own acceptance criteria. These files specify future work: none of the
-implementation or validation tasks is complete just because it is listed.
+its own acceptance criteria. These files specify requirements: listing a task
+is not evidence of completion. All seventeen tasks are now landed; the final qualified report
+is [FINAL_REPORT.md](../../src/simp/compatibility/FINAL_REPORT.md), with the
+58-item [plan audit](../../src/simp/compatibility/PLAN_AUDIT.md) and final
+integrity/whitespace/cleanup receipts in `results/task17/` there.
 
 ## Tasks and dependencies
 
@@ -200,5 +203,21 @@ The paired harness uses `bin/hol.state0`, private per-revision products and
 shared host dependencies/generated markerTheory: **mixed-source**, not
 independent repository builds. Control builds/runs exited 0 on both; the
 unchanged develop suite exited 0 with 73 OK on both. The routine build
-completed with exit 0. No compatibility repairs, full-build gate, or broad
-observational equivalence are claimed. TASK_17 will add the final report.
+completed with exit 0. Those initial receipts alone claim no compatibility
+repair, full-build gate or broad equivalence. The later task handoffs above supersede their
+bounded acceptance status; historical evidence is unchanged.
+
+TASK_17 final acceptance and handoff:
+`src/simp/compatibility/FINAL_REPORT.md` and `PLAN_AUDIT.md`, with reproducible
+`results/task17/{check.py,checks.json}` under that directory. All 58 original
+plan boxes, all twelve original regressions, native callback/lifetime/shared
+control/history contracts, migrated extension suites and required gates are
+accounted for. All 7924 TASK_16 candidate-file and 118 TASK_15 input hashes
+still match; TASK_14 source/input inventories and retained paired comparison
+are rechecked. No implementation/test/recipe change invalidated a gate.
+Whitespace/pedant and task-owned cleanup are complete. No missing required
+work or open legacy-reachable divergence was found; next task is none.
+Mixed-source differential provenance, incremental level-1 build scope,
+optional untested configurations and absence of universal callback-equivalence
+proof remain explicit in the report. The final task changes only reports,
+audit evidence and index/progress, preserving caller-owned corrections.
