@@ -6,9 +6,6 @@ type call_info = {real: time, gc: time, sys: time, usr: time, n: int}
 
 val ptable : call_info Symtab.table ref = ref Symtab.empty
 
-(* Benchmark opt-in only; all existing callers stay enabled by default. *)
-val profiling_suppressed = ref false
-
 datatype 'a result = OK of 'a | Ex of exn
 
 fun return (OK x) = x | return (Ex e) = raise e
@@ -58,7 +55,6 @@ fun add_profile nm timefx =
          end
 
 fun profile_exn_opt do_exn do_ok do_both nm f x =
-  if !profiling_suppressed then f x else
   let
      val (result, timefx) = time f x
      val _ = if do_both then add_profile nm timefx else ()
@@ -72,20 +68,6 @@ fun profile_exn_opt do_exn do_ok do_both nm f x =
   in
      return result
   end
-
-(* One synchronous bracket bypasses timers and tables at the common hook.
-   Preserve any existing table even if the action explicitly resets it. *)
-fun without_profiling action =
-  if !profiling_suppressed then
-    raise Fail "Profile.without_profiling: reentry"
-  else
-    let
-      val saved = !ptable
-      val _ = profiling_suppressed := true
-      val outcome = OK (action ()) handle primary => Ex primary
-      val _ = ptable := saved
-      val _ = profiling_suppressed := false
-    in return outcome end
 
 fun profile nm = profile_exn_opt NONE false true nm
 fun profile_with_exn nm = profile_exn_opt (SOME false) true true nm

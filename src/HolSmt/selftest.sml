@@ -22124,62 +22124,215 @@ in
     in () end)
 end
 
-(* Real Profile API controls. Source-only; Root compiles via selftest. *)
+(* Ordinary Profile controls: also run before loading HolSmt. *)
 local
-  val _ = Profile.without_profiling
-  fun ensure message yes = if yes then testutils.OK () else raise Fail message
-  fun count label = case List.find (fn (name,_) => name = label)
-      (Profile.results ()) of NONE => 0 | SOME (_,info) => #n info
+  structure O = SmtReplayObserve
+  fun ensure message yes =
+    if yes then testutils.OK () else raise Fail message
+  fun count label = case List.find (fn (name, _) => name = label)
+      (Profile.results ()) of NONE => 0 | SOME (_, info) => #n info
+  exception Primary of unit ref
+  val token = ref ()
+  fun ordinary_controls () =
+    let
+      val _ = testutils.tprint "Profile preserves all four ordinary hooks"
+      val _ = Profile.reset_all ()
+      val runs = ref 0
+      fun run () = (runs := !runs + 1; 42)
+      val prepared = Profile.profile_with_exn_name "named"
+      val values =
+        [Profile.profile "plain" run (),
+         Profile.profile_with_exn "both" run (), prepared run (),
+         Profile.profile_no_exn "ok" run ()]
+      val _ = ensure "ordinary profiling lost a result or table entry"
+        (values = [42, 42, 42, 42] andalso !runs = 4 andalso
+         List.map count ["plain", "both", "both_OK", "named", "named_OK",
+           "ok_OK"] = [1, 1, 1, 1, 1, 1] andalso count "ok" = 0)
+      val _ = testutils.tprint "Profile preserves exceptions and event names"
+      fun raises () = raise Primary token
+      fun same action = (action (); false)
+        handle Primary held => Portable.pointer_eq (held, token)
+      val _ = ensure "ordinary profiler changed an exception or its counts"
+        (same (fn () => Profile.profile "plain" raises ()) andalso
+         same (fn () => Profile.profile_with_exn "both" raises ()) andalso
+         same (fn () => prepared raises ()) andalso
+         same (fn () => Profile.profile_no_exn "ok" raises ()) andalso
+         List.map count ["plain", "both", "both_OK", "both_exn", "named",
+           "named_OK", "named_" ^ General.exnName (Primary token),
+           "ok_OK"] = [2, 2, 1, 1, 2, 1, 1, 1])
+      val _ = testutils.tprint "Profile reset1/reset_all and nested calls"
+      val _ = Profile.reset1 "plain"
+      val _ = Profile.reset1 "absent"
+      val _ = ensure "reset1 changed unrelated entries"
+        (count "plain" = 0 andalso count "both" = 2)
+      val result = Profile.profile "outer" (fn () =>
+        (Profile.reset_all (); Profile.profile "inner" run ())) ()
+      val _ = ensure "reset inside profiled callback was rolled back"
+        (result = 42 andalso List.map #1 (Profile.results ()) =
+          ["inner", "outer"] andalso count "inner" = 1 andalso
+         count "outer" = 1)
+      val _ = testutils.tprint "Profile records and propagates Interrupt"
+      val interrupted =
+        (Profile.profile_with_exn_name "interrupt"
+           (fn () => raise Interrupt) (); false)
+        handle Interrupt => true
+      val _ = ensure "Interrupt swallowed or profiling left disabled"
+        (interrupted andalso count "interrupt" = 1 andalso
+         count ("interrupt_" ^ General.exnName Interrupt) = 1)
+      val _ = Profile.reset_all ()
+    in () end
 in
   val _ = run_postlude 138 "postlude-0213-line-21542" (fn () =>
     let
-  val _ = testutils.tprint "Transient profile suppression skips all four hooks"
-  val _ = let val _ = Profile.reset_all ()
-      val _ = Profile.profile "saved" (fn () => ()) ()
-      val saved = Profile.results ()
-      val runs = ref 0
-      fun run () = (runs := !runs + 1;42)
-      val prepared = Profile.profile_with_exn_name "prepared"
-      val value = Profile.without_profiling (fn () =>
-        let val _ = Profile.profile "plain" run ()
-            val _ = Profile.profile_with_exn "exception" run ()
-            val _ = prepared run ()
-            val _ = Profile.profile_no_exn "ok" run ()
-            val _ = Profile.reset_all ()
-        in 42 end)
-      val _ = Profile.profile "after" (fn () => ()) ()
-    in ensure "timers/tables changed action or default did not resume"
-      (value = 42 andalso !runs = 4 andalso count "saved" = 1 andalso
-       count "after" = 1 andalso count "plain" = 0 andalso
-       count "exception" = 0 andalso count "prepared" = 0 andalso
-       count "ok" = 0 andalso List.length saved = 1) end
-
-  val _ = testutils.tprint "Transient profile suppression preserves Primary"
-  val _ = let exception Primary of unit ref
-      val token = ref ()
-      val saved = Profile.results ()
-      val same = ((Profile.without_profiling (fn () =>
-          (Profile.reset_all ();raise Primary token));false)
-        handle Primary held => Portable.pointer_eq (held,token))
-      val restored = Profile.results () = saved
-      val _ = Profile.profile "primary-after" (fn () => ()) ()
-      val resumed = count "primary-after" = 1
-      val _ = print ("PROFILE_PRIMARY_CONTROL same_constructor_payload=" ^
-        Bool.toString same ^ " table_restored=" ^ Bool.toString restored ^
-        " default_resumed=" ^ Bool.toString resumed ^ "\n")
-    in ensure "Primary/table changed or profiler remained suppressed"
-      (same andalso restored andalso resumed) end
-
-  val _ = testutils.tprint "Transient profile suppression denies reentry"
-  val _ = let val saved = Profile.results ()
-      val no = ((Profile.without_profiling (fn () =>
-          Profile.without_profiling (fn () => 42));false)
-        handle Fail text => text = "Profile.without_profiling: reentry")
-      val restored = Profile.results () = saved
-      val _ = Profile.profile "reentry-after" (fn () => ()) ()
-    in ensure "reentry survived or exact prior table was lost"
-      (no andalso restored andalso count "reentry-after" = 1) end
-
+      val _ = ordinary_controls ()
+      val previous = !O.observer
+      val retained = !O.retained
+      val theorem = Thm.ASSUME (Term.mk_var ("observed_p", Type.bool))
+      fun inputs () : O.inputs =
+        {domain = "profile-control", identifier = "local",
+         premises = [("premise", theorem)], terms = [], scope = [],
+         definitions = [], metadata = []}
+      fun project result = result
+      fun action () = Profile.profile "action" (fn () => theorem) ()
+      fun invoke () = O.run inputs project action
+      fun with_observer observe body =
+        let
+          val saved = !O.observer
+          val _ = O.observer := observe
+          val result = Exn.capture body ()
+          val _ = O.observer := saved
+        in Exn.release result end
+      fun controls () =
+        let
+          val _ = O.clear ()
+          val _ = testutils.tprint
+            "Disabled observation skips inputs/projection and retention"
+          fun unused () = raise Fail "disabled observer collected inputs"
+          fun unprojected _ = raise Fail "disabled observer projected result"
+          val result = with_observer NONE (fn () =>
+            List.tabulate (20, fn _ => O.run unused unprojected action))
+          val _ = ensure "disabled diagnostics collected or suppressed work"
+            (List.all (fn th => Portable.pointer_eq (th, theorem)) result
+             andalso count "action" = 20 andalso null (O.observations ()))
+          val _ = testutils.tprint
+            "Enabled observation keeps exact theorem and ordinary profiles"
+          val collected = ref 0
+          val projected = ref 0
+          val events = ref 0
+          fun counted_inputs () = (collected := !collected + 1; inputs ())
+          fun counted_project th = (projected := !projected + 1; th)
+          fun observe (event : O.observation) =
+            (events := !events + 1;
+             Profile.profile "callback" (fn () => ()) ();
+             if #outcome event = "success" andalso
+                (case #result event of SOME th =>
+                   Portable.pointer_eq (th, theorem) | NONE => false)
+             then () else raise Fail "observer changed checked result")
+          val result = with_observer (SOME observe) (fn () =>
+            O.run counted_inputs counted_project action)
+          val _ = ensure "enabled observer suppressed profiles or retained"
+            (Portable.pointer_eq (result, theorem) andalso
+             !collected = 1 andalso !projected = 1 andalso !events = 1
+             andalso count "action" = 21 andalso count "callback" = 1
+             andalso null (O.observations ()))
+          val _ = testutils.tprint
+            "Observation retention is explicit and clearable"
+          val _ = with_observer (SOME O.retain) invoke
+          val _ = ensure "explicit retention lost the actual result or inputs"
+            (case O.observations () of [event] =>
+               #domain (#inputs event) = "profile-control" andalso
+               (case (#result event, #premises (#inputs event)) of
+                  (SOME th, [(_, premise)]) =>
+                    Portable.pointer_eq (th, theorem) andalso
+                    Portable.pointer_eq (premise, theorem)
+                | _ => false)
+             | _ => false)
+          val _ = O.clear ()
+          val _ = with_observer NONE invoke
+          val _ = ensure "disabled diagnostics recreated a cleared history"
+            (null (O.observations ()))
+          val _ = testutils.tprint
+            "Observation allows callback reentry and reset1"
+          val depth = ref 0
+          val callbacks = ref 0
+          fun reenter _ =
+            (callbacks := !callbacks + 1;
+             Profile.profile "reentry-callback" (fn () => ()) ();
+             if !depth = 0 then
+               (depth := 1; Profile.reset1 "callback"; ignore (invoke ()))
+             else ())
+          val _ = with_observer (SOME reenter) invoke
+          val _ = ensure
+            "reentry suppressed events or restored deleted entries"
+            (!callbacks = 2 andalso count "reentry-callback" = 2 andalso
+             count "callback" = 0 andalso count "action" = 25)
+          val _ = testutils.tprint
+            "Observer reset_all remains visible to its caller"
+          val _ = with_observer (SOME (fn _ =>
+            (Profile.reset_all ();
+             Profile.profile "after-reset" (fn () => ()) ()))) invoke
+          val _ = ensure "observer reset_all was rolled back"
+            (List.map #1 (Profile.results ()) = ["after-reset"])
+          val _ = testutils.tprint
+            "Observation preserves primary failure and Interrupt"
+          fun broken _ =
+            Profile.profile "broken-observer" (fn () => raise Fail "write") ()
+          fun failing () = Profile.profile_with_exn_name "failure"
+            (fn () => raise Primary token) ()
+          val same = with_observer (SOME broken) (fn () =>
+            (O.run inputs project failing; false)
+            handle Primary held => Portable.pointer_eq (held, token))
+          val interrupted = with_observer (SOME broken) (fn () =>
+            (O.run inputs project (fn () =>
+              Profile.profile_with_exn_name "interrupted-action"
+                (fn () => raise Interrupt) ()); false)
+            handle Interrupt => true)
+          val _ = ensure
+            "diagnostic failure masked primary exception or profiling"
+            (same andalso interrupted andalso count "failure" = 1 andalso
+             count "interrupted-action" = 1 andalso
+             count "broken-observer" = 2)
+          val _ = testutils.tprint
+            "Observation reports interrupts without projecting"
+          val got_interrupt = ref false
+          val _ = with_observer (SOME (fn event =>
+            got_interrupt := (#outcome event = "interrupt" andalso
+              not (Option.isSome (#result event))))) (fn () =>
+            (O.run inputs (fn _ => raise Fail "projected failure")
+              (fn () => raise Interrupt); ()) handle Interrupt => ())
+          val _ = ensure "interrupt outcome collected a result"
+            (!got_interrupt)
+          val _ = testutils.tprint
+            "Observer Interrupt on success is not swallowed"
+          val interrupted = with_observer (SOME (fn _ => raise Interrupt))
+            (fn () => (invoke (); false) handle Interrupt => true)
+          val _ = ensure "observer interruption changed ordinary profiling"
+            (interrupted andalso count "action" = 1)
+          val _ = testutils.tprint
+            "Local diagnostics preserve enabled/disabled tracing"
+          val trace_name = "HolSmt observation control"
+          val _ = Feedback.register_btrace (trace_name, ref false)
+          val traces = ref 0
+          fun trace_event () =
+            if Feedback.current_trace trace_name = 1 then traces := !traces + 1
+            else ()
+          fun traced_action () = (trace_event (); action ())
+          fun traced_observer _ = (trace_event (); ignore (traced_action ()))
+          fun traced mode level = Feedback.trace (trace_name, level)
+            (fn () => with_observer mode (fn () =>
+              O.run inputs project traced_action)) ()
+          val _ = traced NONE 0
+          val _ = traced (SOME traced_observer) 0
+          val _ = traced NONE 1
+          val _ = traced (SOME traced_observer) 1
+          val _ = ensure "observer changed trace state or hid reentrant traces"
+            (!traces = 4 andalso Feedback.current_trace trace_name = 0)
+          val _ = Profile.reset_all ()
+        in () end
+      val result = Exn.capture controls ()
+      val _ = O.observer := previous
+      val _ = O.retained := retained
+      val _ = Exn.release result
     in () end)
 end;
 
@@ -26170,9 +26323,8 @@ in
     let
   val _ = testutils.tprint "Inactive diagnostics preserve legacy scope proof"
   val _ = let val ((theorem,_),observed) =
-      Profile.without_profiling (fn () =>
-        CPC_ProofReplay.with_operation_statistics (fn () =>
-          CPC_ProofReplay.graph_bounded_worker [] (command,[premise])))
+      CPC_ProofReplay.with_operation_statistics (fn () =>
+        CPC_ProofReplay.graph_bounded_worker [] (command,[premise]))
     in ensure "legacy scope proof or direct scope type-inst observation changed"
       (valid theorem andalso #inst_type_calls observed = 0) end
 
@@ -26183,10 +26335,10 @@ in
       val work = W.begin graph root sources
         {limits = {input_limit = 100,output_limit = 100,template_limit = 512},
          work_limit = 10000000}
-      val (result,observed) = Profile.without_profiling (fn () =>
+      val (result,observed) =
         CPC_ProofReplay.with_operation_statistics (fn () =>
           CPC_ProofReplay.graph_bounded_worker_with_clause work []
-            (command,[premise])))
+            (command,[premise]))
       val genuine = case #clause result of NONE => false
         | SOME held =>
             let val data = SmtClause.description_for work held
