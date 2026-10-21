@@ -104,6 +104,70 @@ Tooling prerequisites: local Git objects for both pins, Python 3.9 or newer,
     Leave these immutable inputs and caller-owned artifacts alone. Put fresh
     observations in a new source-tied results directory.
 
+## Maintained executable paired gate (TASK_02)
+
+Use a **new** output directory on every invocation. From the repository root:
+
+```sh
+bin/Holmake --no-project --no-cache --no_prereqs \
+  --holstate="$PWD/bin/hol.state0" \
+  -C src/simp/tests/compatibility -j1 \
+  PAIRED_OUTPUT=/tmp/my-paired-evidence check
+```
+
+This runs 13 Python validator tests, then private Holmake-built SML launchers
+for both exact pinned source revisions, including all six negative controls.
+No SML is piped to `bin/hol`. Expected reviewed-candidate staging/signature
+regressions are explicitly **expected-red**, not compatibility passes.
+
+Direct driver and baseline-versus-baseline control:
+
+```sh
+python3 -B src/simp/tests/compatibility/run_paired.py \
+  --negative-controls --output /tmp/my-paired-run
+python3 -B src/simp/tests/compatibility/run_paired.py \
+  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
+  --candidate-signature pass --candidate-behavior baseline \
+  --negative-controls --output /tmp/my-baseline-control
+```
+
+For future repairs explicitly select `--candidate HEAD` (or another Git ref)
+and choose `--candidate-signature pass` / `--candidate-behavior baseline` only
+when those contracts are intended to pass. Defaults reproduce the reviewed
+candidate, NOT an implicit dirty-worktree snapshot. Dirty sources are never
+silently substituted for a selected Git object. Resolved revisions, exact
+Git blobs/source bytes, generated products, inputs, runtime/heap/config
+fingerprints, commands, exits and complete ordered source/observation streams
+are retained in compact JSON/gzip receipts. The output folder is never reused.
+
+See [`SCHEMA.md`](SCHEMA.md) for ordered event/result contracts and controls,
+[`TASK_02_HANDOFF.md`](TASK_02_HANDOFF.md) for acceptance/commands, and
+[`evidence/task02/`](evidence/task02/) for fresh paired and baseline-control
+receipts. `paired/Holmakefile` is an installation template, not a standalone
+source tree: the driver adds the exact Git modules and signature fixture to
+private directories before invoking it. `paired/selftest.sml` follows the
+normal testutils convention; the deliberately ill-typed `Deferred.sml` is a
+harness-only control, never a production import.
+
+### Isolation limits
+
+These are **mixed-source isolation experiments**, not independent repository
+builds. Both sides use today's same prebuilt HOL runtime, state0/min heaps and
+shared libraries. Initial heap source maps are metadata, not proof that current
+source bytes built those heaps. The driver rejects preloaded simplifier modules,
+forces identical private-first search paths, traces actual source elaboration,
+audits complete source inventories, and checks source/product hashes again
+before cleanup. Shared products are not rebuilt. Undeclared dynamic loads fail
+closed if they extend the source map without a traced use.
+
+This is not an OS security sandbox, a certified clean build, a downstream
+loading test, or a performance measurement. Do not mutate dependencies or run
+builds concurrently; fingerprints detect changes but do not provide filesystem
+locking against malicious transient edits. Launcher/compiler/runtime are
+trusted. Tested scope is the configured Linux/Poly/ML runtime only. Timing
+calibration, output-consuming performance probes and samples belong to TASK_03;
+independent clean builds remain separate later gates.
+
 See [`../performance/README.md`](../performance/README.md) for the historical
 findings and limitations, and [`TASK_01_HANDOFF.md`](TASK_01_HANDOFF.md) for
 this task's validation and acceptance receipt. No production API changes.

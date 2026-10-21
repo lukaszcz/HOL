@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evidence_id": "TASK_02-paired-v1",
+  "source_head": "0ff88e4171cf3178d81ba263901c608b3aeb3c93",
+  "source_pins": {
+    "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+    "candidate": "cf1f863b4e5a9712ce1b179f18274eb3451f3954"
+  },
+  "commands": [
+    {
+      "command": "bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 1,
+      "log": "routine-initial.log.gz",
+      "stdout_sha256": "cb493a6cc21a0d7958a68d9f76df80f1845b8c706c17049dc189224feecfd3d4",
+      "stdout_bytes": 6921
+    },
+    {
+      "command": "bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 0,
+      "log": "routine-final.log.gz",
+      "stdout_sha256": "ee1b03ee35a176b65ef54db29b465ff7c5bd248374ded5a43fa61d32a1bf18c4",
+      "stdout_bytes": 25210
+    },
+    {
+      "command": "bin/Holmake --no-project --no-cache --no_prereqs --holstate=\"$PWD/bin/hol.state0\" -C src/simp/tests/compatibility -j1 PAIRED_OUTPUT=evidence/task02/paired check",
+      "exit": 0,
+      "log": "holmake-check.log.gz",
+      "stdout_sha256": "e274357f77b970425ec8af1f4719c37f3aeb96bf5f3556b9b523c1b5a3818a38",
+      "stdout_bytes": 323
+    }
+  ],
+  "additional_checks": [
+    {
+      "command": "python3 -B src/simp/tests/compatibility/run_paired.py --candidate cccaa27d7099cbadc886983020cbe745db7793f3 --candidate-signature pass --candidate-behavior baseline --negative-controls --output src/simp/tests/compatibility/evidence/task02/baseline-control",
+      "exit": 0,
+      "evidence": "baseline-control/manifest.json"
+    },
+    {
+      "command": "python3 src/simp/tests/compatibility/verify_evidence.py",
+      "exit": 0,
+      "observation": "37 immutable artifacts verified; exact baseline Git inputs and ABI derivation match"
+    },
+    {
+      "command": "git diff --check; git diff --cached --check",
+      "exit": 0,
+      "observation": "No whitespace errors"
+    }
+  ],
+  "observations": {
+    "python_validator_tests": 13,
+    "paired_launches": 16,
+    "baseline_control_launches": 16,
+    "negative_controls_rejected": 24,
+    "expected_candidate_red": [
+      "staging",
+      "complete old Traverse signature"
+    ]
+  },
+  "build_note": "Initial routine check failed on 20 pre-existing long lines in immutable review inputs; holproject.toml now disables only line-length checks for that exact preserved directory. Final routine check passed. Original bytes and all other style checks preserved.",
+  "scope": "Mixed-source isolation only. No production repair or performance claim.",
+  "manifests": {
+    "paired/manifest.json": "8580f18ce47c5bde0d23aef77e1e13c28611d60d3041e694bf93792c5c5f8174",
+    "baseline-control/manifest.json": "57ade35b675f4ad371cb04d11037522805850ff1fa50c317c89fd4859b245f28"
+  }
+}

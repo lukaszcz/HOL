@@ -155,3 +155,8 @@ linelen = 0
 path = "src/simp/src"
 linelen = 0
 
+[[h4pedant.dir]]
+# Immutable, hashed review inputs; retain original bytes, not reformatted SML.
+path = "src/simp/tests/performance/review-20261021"
+linelen = 0
+
