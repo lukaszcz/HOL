@@ -251,32 +251,20 @@ end handle HOL_ERR _ => failwith "loops"
  *------------------------------------------------------------------------*)
 
 
-val (CONJ_DISCH,captured_conj_discharge_data,
-     captured_conj_discharge_origin) =
-  let val (IMP_CONJ_RULE,captured,origin) =
-      let val (t1,t2,t3) =
-            triple_of_list(fst(strip_forall(concl AND_IMP_INTRO)))
-          val specialized = SPEC_ALL AND_IMP_INTRO
-          val IMP_CONJ_THM = fst(EQ_IMP_RULE specialized)
-          (* The nonempty SPEC_ALL ends in eager SPEC of a VAR.
-             Its result is bare; EQ_IMP_RULE builds the implication.
-             Existing bootstrap inspection is not a Work invoice. *)
-          val statement = Thm.concl IMP_CONJ_THM
-          val bare = List.all Term.is_var [t1,t2,t3]
-          val closed = null (Thm.hyp IMP_CONJ_THM)
-      in (fn th =>
+val CONJ_DISCH =
+  let val IMP_CONJ_RULE =
+      let val (t1,t2,t3) = triple_of_list(fst(strip_forall(concl AND_IMP_INTRO)))
+          val IMP_CONJ_THM = fst(EQ_IMP_RULE (SPEC_ALL AND_IMP_INTRO))
+      in fn th =>
         let val (p,qr) = dest_imp(concl th)
             val (q,r) = dest_imp qr
         in MP (INST [t1 |-> p, t2 |-> q, t3 |-> r] IMP_CONJ_THM) th
-        end,
-        fn () => {proof=IMP_CONJ_THM,first=t1,second=t2,third=t3},
-        fn () => {statement=statement,tag=Thm.tag IMP_CONJ_THM,
-                  bare=bare,closed=closed})
+        end
       end;
-  in (fn asms => fn th =>
+  in fn asms => fn th =>
     itlist (fn tm => (fn th => IMP_CONJ_RULE th
                       handle HOL_ERR _ => th) o DISCH tm)
-    asms th, captured, origin)
+    asms th
   end;
 
 
@@ -531,81 +519,12 @@ fun false_template_data(FalseTemplate kind)=
       {proof=FT_EQ_F,condition=hd(hyp FT_EQ_F),
        result=concl FT_EQ_F}
 
-(* Same lexical namespace theorem used by the existing REWR_CONV branch. *)
-val captured_eq_sym_template=EQ_SYM_EQ
+(* Same lexical namespace theorem used by the existing REWR_CONV branch.
+   SmtLib_OwnedPairedEqTFlip reads this only on explicit SMT activity. *)
 datatype eq_sym_template=EqSymTemplate
 fun eq_sym_template()=EqSymTemplate
 fun eq_sym_template_data EqSymTemplate=
-  {proof=captured_eq_sym_template,statement=concl captured_eq_sym_template}
-
-datatype conj_discharge_template=ConjDischargeTemplate
-fun conj_discharge_template()=ConjDischargeTemplate
-fun conj_discharge_template_data ConjDischargeTemplate=
-  captured_conj_discharge_data()
-
-(* Immutable producer relation only. Fresh lifetime validity is separate. *)
-fun conj_discharge_constructor_data ConjDischargeTemplate=
-  captured_conj_discharge_origin()
-
-(* Read-only existing law. Cold public projections are metadata bootstrap;
-   no theorem/genvar, Scope permission or future Work credit is produced. *)
-val captured_left_forall_imp_data =
-  let
-    val proof = LEFT_FORALL_IMP_THM
-    val statement = Thm.concl proof
-    val _ = if null (Thm.hyp proof) andalso Term.uptodate_term statement
-      then () else ERR ("left_forall_imp_template","fixed law changed")
-    val (p,outer) = boolSyntax.dest_forall statement
-    val (q,equation) = boolSyntax.dest_forall outer
-    val (left,right) = boolSyntax.dest_eq equation
-    val (lx,left_body) = boolSyntax.dest_forall left
-    val (left_predicate,left_result) = boolSyntax.dest_imp_only left_body
-    val (lf,la) = Term.dest_comb left_predicate
-    val (right_condition,right_result) = boolSyntax.dest_imp_only right
-    val (rx,right_predicate) = boolSyntax.dest_exists right_condition
-    val (rf,ra) = Term.dest_comb right_predicate
-    val _ = if List.all Term.is_var [p,q,lx,rx] then () else
-      ERR ("left_forall_imp_template","non-variable fixed binder")
-    val (domain,range) = Type.dom_rng (Term.type_of p)
-    fun same_type a b = Type.compare (a,b) = EQUAL
-    val _ = if Type.is_vartype domain andalso same_type range Type.bool
-        andalso same_type (Term.type_of q) Type.bool
-        andalso same_type (Term.type_of lx) domain
-        andalso same_type (Term.type_of rx) domain
-        andalso same_type (Term.type_of statement) Type.bool
-      then () else ERR ("left_forall_imp_template","fixed Types changed")
-    val _ = if Term.term_eq lf p andalso Term.term_eq rf p andalso
-        Term.term_eq la lx andalso Term.term_eq ra rx andalso
-        Term.term_eq left_result q andalso Term.term_eq right_result q
-      then () else ERR ("left_forall_imp_template",
-        "fixed lexical predicate or consequent changed")
-  in {proof=proof,statement=statement,outer_predicate=p,outer_consequent=q,
-      forall_binder=lx,exists_binder=rx} end
-
-datatype left_forall_imp_template = LeftForallImpTemplate
-fun left_forall_imp_template () = LeftForallImpTemplate
-fun left_forall_imp_template_data LeftForallImpTemplate =
-  captured_left_forall_imp_data
-
-(* No new law getter or generic adoption. A missing/foreign/reconstructed
-   law remains unresolved. The existing cold fixed-law projections above
-   are unchanged bootstrap, not priced or gated by this later query. *)
-datatype left_forall_imp_decode_origin = LeftForallImpDecodeOrigin of
-  TheoryReader.bool_left_decode_origin
-fun left_forall_imp_decode_origin () =
-  case TheoryReader.bool_left_decode_origin () of
-    NONE => NONE
-  | SOME origin =>
-      let
-        val {proof,statement,...} = captured_left_forall_imp_data
-        val {hypotheses} =
-          TheoryReader.bool_left_decode_origin_counts origin
-      in
-        if hypotheses = 0 andalso
-            TheoryReader.bool_left_decode_origin_matches origin
-              {proof=proof,statement=statement}
-        then SOME (LeftForallImpDecodeOrigin origin) else NONE
-      end
+  {proof=EQ_SYM_EQ,statement=concl EQ_SYM_EQ}
 
 
 end;

@@ -22880,13 +22880,20 @@ in
 end
 
 
-(* Root executes these tiny controls on both unchanged public kernels. *)
-val _=Cond_rewr.left_forall_imp_template
-val _=Cond_rewr.left_forall_imp_template_data
+(* Public fixed-law controls need no loader-origin or shared sidecar. *)
 local
   fun ensure why yes=if yes then testutils.OK()else raise Fail why
-  fun data()=Cond_rewr.left_forall_imp_template_data
-    (Cond_rewr.left_forall_imp_template())
+  fun data()=
+    let val proof=boolTheory.LEFT_FORALL_IMP_THM
+        val statement=Thm.concl proof
+        val(p,outer)=boolSyntax.dest_forall statement
+        val(q,equation)=boolSyntax.dest_forall outer
+        val(left,right)=boolSyntax.dest_eq equation
+        val(lx,_)=boolSyntax.dest_forall left
+        val(condition,_)=boolSyntax.dest_imp_only right
+        val(rx,_)=boolSyntax.dest_exists condition
+    in {proof=proof,statement=statement,outer_predicate=p,
+        outer_consequent=q,forall_binder=lx,exists_binder=rx}end
   fun observed action=
     let val _=Count.counting_thms true val _=Count.reset_thm_count()
         val result=Exn.capture action()val counts=Count.thm_count()
@@ -22896,7 +22903,7 @@ local
 in
   val _ = run_postlude 145 "postlude-0222-line-22260" (fn () =>
     let
-  val _=testutils.tprint "Left-forall selector retains exact native law object"
+  val _=testutils.tprint "Public left-forall view retains exact law object"
   val _=let val(d,counts)=observed data
       val law=boolTheory.LEFT_FORALL_IMP_THM
     in ensure "selector changed law/statement/native Hyp/full Tag"
@@ -22934,16 +22941,16 @@ in
        not(Term.term_eq p q)andalso not(Term.term_eq p lx)andalso
        not(Term.term_eq q lx)andalso #total counts=0)end
 
-  val _=testutils.tprint "Left-forall getter repeats immutable metadata only"
+  val _=testutils.tprint "Left-forall public projections repeat proof-free"
   val _=let val((first,second),counts)=observed(fn()=>(data(),data()))
-    in ensure "getter reopened or replaced captured typed metadata"
+    in ensure "public projection changed fixed law or lexical roles"
       (Portable.pointer_eq(#proof first,#proof second)andalso
        Portable.pointer_eq(#statement first,#statement second)andalso
-       Portable.pointer_eq(#outer_predicate first,#outer_predicate second)
-       andalso Portable.pointer_eq(#outer_consequent first,
-         #outer_consequent second)andalso
-       Portable.pointer_eq(#forall_binder first,#forall_binder second)andalso
-       Portable.pointer_eq(#exists_binder first,#exists_binder second)andalso
+       Term.term_eq(#outer_predicate first)(#outer_predicate second)
+       andalso Term.term_eq(#outer_consequent first)
+         (#outer_consequent second)andalso
+       Term.term_eq(#forall_binder first)(#forall_binder second)andalso
+       Term.term_eq(#exists_binder first)(#exists_binder second)andalso
        #total counts=0)end
 
     in () end)
@@ -24573,8 +24580,8 @@ local
             andalso not(boolSyntax.is_imp_only target)
             andalso not(boolSyntax.is_eq target)
           then ()else raise Fail "nonempty INST/MP did not reach predicate"
-        val template=Cond_rewr.conj_discharge_template()
-        val law=Cond_rewr.conj_discharge_template_data template
+        val template=SmtReplayConj.conj_discharge_template()
+        val law=SmtReplayConj.conj_discharge_template_data template
         val raw=P.prepare_source_predicate_conditional work
           {evidence=transformed,statement=Thm.concl(#proof law),
            first= #first law,second= #second law,third= #third law,
@@ -24634,8 +24641,8 @@ local
             andalso boolSyntax.is_imp_only target
             andalso not(boolSyntax.is_eq target)
           then ()else raise Fail "nonempty INST/MP did not reach predicate"
-        val template=Cond_rewr.conj_discharge_template()
-        val law=Cond_rewr.conj_discharge_template_data template
+        val template=SmtReplayConj.conj_discharge_template()
+        val law=SmtReplayConj.conj_discharge_template_data template
         val raw=P.prepare_source_predicate_conditional work
           {evidence=transformed,statement=Thm.concl(#proof law),
            first= #first law,second= #second law,third= #third law,
@@ -25155,8 +25162,8 @@ local
             andalso not(boolSyntax.is_imp_only target)
             andalso not(boolSyntax.is_eq target)
           then ()else raise Fail "nonempty INST/MP did not reach predicate"
-        val template=Cond_rewr.conj_discharge_template()
-        val law=Cond_rewr.conj_discharge_template_data template
+        val template=SmtReplayConj.conj_discharge_template()
+        val law=SmtReplayConj.conj_discharge_template_data template
         val raw=P.prepare_source_predicate_conditional work
           {evidence=transformed,statement=Thm.concl(#proof law),
            first= #first law,second= #second law,third= #third law,
@@ -40306,7 +40313,7 @@ open HolKernel Parse boolLib bossLib;
 val _=case Thm.getCT()of NONE=>new_theory "scratch" | SOME _=>()
 val _=SmtLib_OwnedConditionalPredicate.prepare
 val _=SmtReplayProof.prepare_source_predicate_conditional
-val _=Cond_rewr.conj_discharge_template_data
+val _=SmtReplayConj.conj_discharge_template_data
 local
   structure G=SmtReplayGraph
   structure S=SmtReplaySource
@@ -40340,6 +40347,8 @@ local
     Term.aconv(Thm.concl actual)(Thm.concl expected)andalso
     ListPair.allEq(fn(a,b)=>Term.aconv a b)(Thm.hyp actual,Thm.hyp expected)
     andalso Tag.dest_tag(Thm.tag actual)=Tag.dest_tag(Thm.tag expected)
+    andalso Tag.axioms_of(Thm.tag actual)=Tag.axioms_of(Thm.tag expected)
+    andalso Tag.dep_of(Thm.tag actual)=Tag.dep_of(Thm.tag expected)
   fun oracle theorem=
     let val ants= #1(liteLib.strip_imp(Thm.concl theorem))
         fun undisch current=if boolSyntax.is_imp_only(Thm.concl current)
@@ -40480,8 +40489,8 @@ in
       val source_alias=Term.aconv antecedent original_a andalso
         List.exists(fn hyp=>Portable.pointer_eq(hyp,original_a))
           (Thm.hyp semantic)
-      val law=Cond_rewr.conj_discharge_template_data
-        (Cond_rewr.conj_discharge_template())
+      val law=SmtReplayConj.conj_discharge_template_data
+        (SmtReplayConj.conj_discharge_template())
       val calls=ref 0
       val(denied,counts)=count(fn()=>
         (ignore(P.prepare_source_predicate_conditional work

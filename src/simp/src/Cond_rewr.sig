@@ -47,7 +47,7 @@ sig
   (* run something, and report which rewrites fired while it ran *)
   val with_tracking : ('a -> 'b) -> 'a -> 'b * thm list
 
-  (* Read-only access to the exact captured stock false templates.
+  (* SmtLib_OwnedBooleanImpEq reads these existing stock false templates.
      No new genvar/theorem is produced by selecting or reading a handle. *)
   datatype false_template_kind=FalseConclusion | TruthEqualsFalse
     | FalseEqualsTruth
@@ -61,33 +61,9 @@ sig
   val eq_sym_template : unit -> eq_sym_template
   val eq_sym_template_data : eq_sym_template -> {proof:thm,statement:term}
 
-  (* Exact existing Cond operator/law capture. Selector/getter create no
-     theorem, variable or Source admission; P does not depend on Cond. *)
+  (* Existing operator, exposed for HolSmt's independent regression oracle.
+     Its definition and ordinary simplifier callers are unchanged. *)
   val CONJ_DISCH : term list -> thm -> thm
-  type conj_discharge_template
-  val conj_discharge_template : unit -> conj_discharge_template
-  val conj_discharge_template_data : conj_discharge_template ->
-    {proof:thm,first:term,second:term,third:term}
-
-  (* Immutable native-constructor DATA beside the SAME existing cache.
-     No current declaration validity, fee, Scope or proof admission. *)
-  val conj_discharge_constructor_data : conj_discharge_template ->
-    {statement:term,tag:Tag.tag,bare:bool,closed:bool}
-
-  (* SAME existing law and actual separate forall/exists binder DATA only.
-     Selecting/reading this handle grants no Source, Scope or Work credit. *)
-  type left_forall_imp_template
-  val left_forall_imp_template : unit -> left_forall_imp_template
-  val left_forall_imp_template_data : left_forall_imp_template ->
-    {proof:thm,statement:term,outer_predicate:term,
-     outer_consequent:term,forall_binder:term,exists_binder:term}
-
-  (* A unit-only fixed-law match to genuine default-decoder origin.
-     This supplies no current declaration validity, scoped permission,
-     proof getter, FV fact, invoice or executable Ready authority. *)
-  type left_forall_imp_decode_origin
-  val left_forall_imp_decode_origin : unit ->
-    left_forall_imp_decode_origin option
 
 
 end

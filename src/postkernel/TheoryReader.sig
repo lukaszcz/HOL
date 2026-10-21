@@ -19,18 +19,6 @@ sig
       ({thyname:string,path:string,hash:string} ->
        (Thm.thm * DB_dtype.thminfo) Symtab.table) ref
 
-  (* Intrinsic immutable default-decoder constructor origin only. The
-     equality query cannot mint or register a theorem/forest certificate.
-     Current declarations, epochs, Scope and Work remain a later reader's
-     separate responsibility. No proof or term getter is exposed here. *)
-  type bool_left_decode_origin
-  val bool_left_decode_origin : unit -> bool_left_decode_origin option
-  val bool_left_decode_origin_matches : bool_left_decode_origin ->
-    {proof: Thm.thm, statement: Term.term} -> bool
-  val bool_left_decode_origin_counts : bool_left_decode_origin ->
-    {hypotheses: int}
-
-
 end
 
 (* [load_thydata thyname fname] loads the filename and makes the appropriate

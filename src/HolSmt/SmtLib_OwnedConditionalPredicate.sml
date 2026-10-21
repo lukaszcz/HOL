@@ -7,12 +7,12 @@ struct
   structure O=SmtLib_OwnedContextImpCanon
   structure Scope=SmtReplayOwnedScopeReceipt
   val _=SmtReplayProof.prepare_source_predicate_conditional
-  val _=Cond_rewr.conj_discharge_template_data
+  val _=SmtReplayConj.conj_discharge_template_data
   val ERR=Feedback.mk_HOL_ERR "SmtLib_OwnedConditionalPredicate"
   datatype plan=Plan of
     {work:W.portfolio,incoming:O.receipt_validation,index:int,
      evidence:P.source_condition_evidence,
-     template:Cond_rewr.conj_discharge_template,
+     template:SmtReplayConj.conj_discharge_template,
      proof:Thm.thm,first:Term.term,second:Term.term,third:Term.term,
      lower:P.source_predicate_conditional_plan,used:bool ref}
   fun protect expected action=action()handle primary=>
@@ -21,7 +21,7 @@ struct
       proof first second third=
     let val original=O.receipt_validation_for expected incoming
         val actual=List.nth(#entries original,index)
-        val d=Cond_rewr.conj_discharge_template_data template
+        val d=SmtReplayConj.conj_discharge_template_data template
         val _=if Portable.pointer_eq(actual,evidence)then ()else raise ERR
           "guard" "different authentic incoming row"
         val _=ignore(P.source_condition_statement_for expected evidence)
@@ -41,8 +41,8 @@ struct
     protect expected(fn()=>
       let val original=O.receipt_validation_for expected incoming
           val evidence=List.nth(#entries original,index)
-          val template=Cond_rewr.conj_discharge_template()
-          val d=Cond_rewr.conj_discharge_template_data template
+          val template=SmtReplayConj.conj_discharge_template()
+          val d=SmtReplayConj.conj_discharge_template_data template
           fun live()=backing expected incoming index evidence template
             (#proof d)(#first d)(#second d)(#third d)
           fun policy ty=(live();check_type ty;live())

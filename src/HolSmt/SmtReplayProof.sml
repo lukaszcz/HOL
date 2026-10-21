@@ -13902,16 +13902,16 @@ struct
   datatype nc_conj_cache=NCConjCache of
     {work:W.portfolio,graph:G.graph,root:G.scope,
      sources:SmtReplaySource.sources,limits:W.limits,epoch:int,symbols:int,
-     template:Cond_rewr.conj_discharge_template,law:ncc_law_ports,
+     template:SmtReplayConj.conj_discharge_template,law:ncc_law_ports,
      origin:ncc_origin_ports,type_nodes:int,name_bytes:int}
   fun ncc_fail text=raise ERR "conj_cache_read" text
   fun ncc_context expected graph root sources limits=
     W.validate expected graph root sources limits
   (* Re-read the fixed producer. No caller tuple can enter this reader. *)
   fun ncc_export ()=
-    let val template=Cond_rewr.conj_discharge_template()
-        val law=Cond_rewr.conj_discharge_template_data template
-        val origin=Cond_rewr.conj_discharge_constructor_data template
+    let val template=SmtReplayConj.conj_discharge_template()
+        val law=SmtReplayConj.conj_discharge_template_data template
+        val origin=SmtReplayConj.conj_discharge_constructor_data template
     in(template,law,origin)end
   fun guard_conj_cache_inside_using expected
       (NCConjCache{work,graph,root,sources,limits,epoch,symbols,
