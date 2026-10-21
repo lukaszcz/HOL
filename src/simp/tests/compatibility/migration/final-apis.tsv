@@ -1,0 +1,194 @@
+group	old_api	replacement	domain	construction	witness	owners
+A1	simpLib.simp_mode	simpExtLib.simp_mode	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+A1	simpLib.xsimptac_config	simpExtLib.xsimptac_config	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+A1	simpLib.GEN_GLOBAL_SIMP_TAC	simpExtLib.GEN_GLOBAL_SIMP_TAC	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+A1	simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST	simpExtLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+A1	simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND	simpExtLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+A1	simpLib.GEN_SIMP_TAC	simpExtLib.GEN_SIMP_TAC	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+A1	simpLib.GEN_SIMP_TAC_CHILD_FIRST	simpExtLib.GEN_SIMP_TAC_CHILD_FIRST	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+B1	simpLib.SF	simpExtLib.SF	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.SSFRAG	simpExtLib.SSFRAG	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ac_ss	simpExtLib.ac_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.add_relsimp	simpExtLib.add_relsimp	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.add_weakener	simpExtLib.add_weakener	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.all_named_frags	simpExtLib.all_named_frags	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.conv_ss	simpExtLib.conv_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.dproc_ss	simpExtLib.dproc_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.empty_ss	simpExtLib.empty_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.empty_ssfrag	simpExtLib.empty_ssfrag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.lookup_named_frag	simpExtLib.lookup_named_frag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.merge_ss	simpExtLib.merge_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.mk_simpset	simpExtLib.mk_simpset	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.name_ss	simpExtLib.name_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.named_merge_ss	simpExtLib.named_merge_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.named_rewrites	simpExtLib.named_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.named_rewrites_with_names	simpExtLib.named_rewrites_with_names	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.register_frag	simpExtLib.register_frag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.relsimp_ss	simpExtLib.relsimp_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.rewrites	simpExtLib.rewrites	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.rewrites_with_names	simpExtLib.rewrites_with_names	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ssf_upd_rewrs	simpExtLib.ssf_upd_rewrs	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ssfrags_of	simpExtLib.ssfrags_of	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.traversedata_for_ss	simpExtLib.traversedata_for_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.tyi_to_ssdata	simpExtLib.tyi_to_ssdata	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.type_ssfrag	simpExtLib.type_ssfrag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.weakener_data	simpExtLib.weakener_data	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+C1	Opening.THREADED_CONGPROC	OpeningExt.THREADED_CONGPROC	extension; ordinary API unchanged	extension fragment/congruence factory before installation	O	10,13,14;27
+C1	Travrules.mk_threaded_travrules	TravrulesExt.mk_threaded_travrules	extension; ordinary API unchanged	extension fragment/congruence factory before installation	R	10,13,14;27
+C1	simpLib.threaded_cong_ss	simpExtLib.threaded_cong_ss	extension; ordinary API unchanged	extension fragment/congruence factory before installation	S	10,13,14;27
+C2	congLib.CONGRUENCE_EQ_SIMP_CONV	congExtLib.CONGRUENCE_EQ_SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CONGRUENCE_EQ_SIMP_RULE	congExtLib.CONGRUENCE_SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CONGRUENCE_SIMP_CONV	congExtLib.CONGRUENCE_SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CONGRUENCE_SIMP_QCONV	congExtLib.CONGRUENCE_SIMP_QCONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CSFRAG	congExtLib.CSFRAG	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+D1	aesopData.aesop_ss	aesopData.aesop_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	aesopData.cached_simpset	aesopData.cached_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	aesopRule.simp_rule_with	aesopRule.simp_rule_with	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	benchLib.clean_simpset	benchLib.clean_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	benchLib.simp_controls	benchLib.simp_controls	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	benchLib.translation_frag	benchLib.translation_frag	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.add_supplied_views	clasimpLib.add_supplied_views	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.asm_full_simp	clasimpLib.asm_full_simp	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.bottom_up_fragment	clasimpLib.bottom_up_fragment	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.bound_simplification_simpset	clasimpLib.bound_simplification_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.clasimp_bu_head_ss	clasimpLib.clasimp_bu_head_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.clasimp_bu_reduce	clasimpLib.clasimp_bu_reduce	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.clasimp_ss	clasimpLib.clasimp_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.derive_clasimp_ss	clasimpLib.derive_clasimp_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.derive_simpset	clasimpLib.derive_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.extend_invocation	clasimpLib.extend_invocation	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.install_supplied_rules	clasimpLib.install_supplied_rules	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.install_supplied_views	clasimpLib.install_supplied_views	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.lhs_view_table	clasimpLib.lhs_view_table	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.normalised_subject_fragment	clasimpLib.normalised_subject_fragment	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.supplied_converse_working	clasimpLib.supplied_converse_working	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.working_decision_base	clasimpLib.working_decision_base	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.working_full_simpset	clasimpLib.working_full_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.working_original	clasimpLib.working_original	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.working_plain_decision_base	clasimpLib.working_plain_decision_base	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	clasimpLib.working_simpset	clasimpLib.working_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	iffTestSupport.has_iff_rewrite	iffTestSupport.has_iff_rewrite	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	iffTestSupport.iff_fragment_count	iffTestSupport.iff_fragment_count	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	iffTestSupport.rewrite_changes	iffTestSupport.rewrite_changes	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	iffTestSupport.rewrites_to	iffTestSupport.rewrites_to	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	linarithLib.LINARITH_ss	linarithLib.LINARITH_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	linarithLib.LINARITH_ss_budgeted	linarithLib.LINARITH_ss_budgeted	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	linarithLib.linarith_solver	linarithLib.linarith_solver	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	linarithLib.linarith_solver_budgeted	linarithLib.linarith_solver_budgeted	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	orderLib.ORDER_ss	orderLib.ORDER_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	orderLib.ORDER_ss_budgeted	orderLib.ORDER_ss_budgeted	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	seedCollections.algebra_ss	seedCollections.algebra_ss	ordinary producer retained; explicit extension recipe if selected	typed provider/producer before source use; explicit typed updates	Default	25;27
+D1	seedCollections.field_ss	seedCollections.field_ss	ordinary producer retained; explicit extension recipe if selected	typed provider/producer before source use; explicit typed updates	Default	25;27
+E1	simpLib.filter_rewrites	simpExtLib.filter_rewrites	extension; ordinary API unchanged	already tracked input; reset versus preserving replay explicit	S	17,19,21;27
+E1	simpLib.filter_rewrites_preserving_controls	simpExtLib.filter_rewrites_preserving_controls	extension; ordinary API unchanged	already tracked input; reset versus preserving replay explicit	S	17,19,21;27
+E1	simpLib.remove_ssfrags_preserving_controls	simpExtLib.remove_ssfrags_preserving_controls	extension; ordinary API unchanged	already tracked input; reset versus preserving replay explicit	S	17,19,21;27
+H1	simpLib.SIMP_CONV_CHILD_FIRST	simpExtLib.SIMP_CONV_CHILD_FIRST	extension; ordinary API unchanged	tracked ambient net before private derivation; opaque internals excluded	S	10,22;27
+H1	simpLib.prepare_child_first	simpExtLib.prepare_child_first	extension; ordinary API unchanged	tracked ambient net before private derivation; opaque internals excluded	S	10,22;27
+H1	simpLib.prepare_child_first_observed	simpExtLib.prepare_child_first_observed	extension; ordinary API unchanged	tracked ambient net before private derivation; opaque internals excluded	S	10,22;27
+I1	SplitData.Add	SplitData.Add	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.Remove	SplitData.Remove	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.raw_delta	SplitData.raw_delta	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.current_data	SplitData.current_data	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.exclude	SplitData.exclude	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.initialize	SplitData.initialize	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.named_rules	SplitData.named_rules	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	SplitData.theory_data	SplitData.theory_data	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	ThmAttribute.attribute_fns	ThmAttribute.attribute_fns	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	ThmAttribute.attribute_fns_of	ThmAttribute.attribute_fns_of	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.split_rule	splitLib.split_rule	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.SPLIT_ASM_TAC	splitLib.SPLIT_ASM_TAC	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.SPLIT_CONV	splitLib.SPLIT_CONV	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.SPLIT_RULE_TAC	splitLib.SPLIT_RULE_TAC	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.SPLIT_TAC	splitLib.SPLIT_TAC	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.enable_split_attribute	splitLib.enable_split_attribute	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.exclude_split	splitLib.exclude_split	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.goal_split_rule_groups	splitLib.goal_split_rule_groups	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.goal_split_rules	splitLib.goal_split_rules	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.is_asm_split	splitLib.is_asm_split	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.mk_asm_split	splitLib.mk_asm_split	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.named_split_thms	splitLib.named_split_thms	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.split_forms	splitLib.split_forms	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.split_thm_name	splitLib.split_thm_name	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.split_thms	splitLib.split_thms	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.type_asm_split_of	splitLib.type_asm_split_of	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.type_split_of	splitLib.type_split_of	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+I1	splitLib.type_split_rules	splitLib.type_split_rules	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
+M1	simpLib.ExclX	simpExtLib.ExclX	extension; ordinary API unchanged	pure marker construction/classification; typed engine at processing	S	18,20,23;27
+M1	simpLib.Split	simpExtLib.Split	extension; ordinary API unchanged	pure marker construction/classification; typed engine at processing	S	18,20,23;27
+M1	simpMarkerLib.DExclX	simpMarkerLib.DExclX	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.DSplit	simpMarkerLib.DSplit	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.Legacy	simpMarkerLib.Legacy	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.directive	simpMarkerLib.directive	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.ExclX	simpMarkerLib.ExclX	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.Split	simpMarkerLib.Split	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.Split_tm	simpMarkerLib.Split_tm	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.destExclX	simpMarkerLib.destExclX	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.destSplit	simpMarkerLib.destSplit	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.dest_directive	simpMarkerLib.dest_directive	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.is_directive	simpMarkerLib.is_directive	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.process_taclist_then_recur	simpMarkerLib.process_taclist_then_recur	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+M1	simpMarkerLib.strip_wrappers	simpMarkerLib.strip_wrappers	shared singleton; no type migration	pure marker construction/classification; typed engine at processing	shared	18,20,23;27
+P1	simpLib.legacy_traversedata_for_ss	REMOVED; use simpExtLib.traversedata_for_ss	extension; ordinary API unchanged	already tracked object; shallow extraction shares actual controls	S	08,10,11,14,16;27
+P1	simpLib.traverseconfig_for_ss	simpExtLib.traverseconfig_for_ss	extension; ordinary API unchanged	already tracked object; shallow extraction shares actual controls	S	08,10,11,14,16;27
+P1	simpLib.xtraversedata_for_ss	simpExtLib.xtraversedata_for_ss	extension; ordinary API unchanged	already tracked object; shallow extraction shares actual controls	S	08,10,11,14,16;27
+R1	Cond_rewr.COND_REWR_CONVS	Cond_rewrExt.COND_REWR_CONVS	extension; ordinary API unchanged	tracked rule installation; paired preparation once	C	12,14;27
+R1	Cond_rewr.COND_REWR_CONV_WITH_CONFIG	Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG	extension; ordinary API unchanged	tracked rule installation; paired preparation once	C	12,14;27
+R1	Cond_rewr.COND_REWR_CONV_WITH_CONTEXT	Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT	extension; ordinary API unchanged	tracked rule installation; paired preparation once	C	12,14;27
+R1	Cond_rewr.is_var_perm	Cond_rewrExt.is_var_perm	extension; ordinary API unchanged	tracked rule installation; paired preparation once	C	12,14;27
+S1	simpLib.add_looper	simpExtLib.add_looper	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.add_safe_solver	simpExtLib.add_safe_solver	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.add_split	simpExtLib.add_split	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.add_unsafe_solver	simpExtLib.add_unsafe_solver	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.clear_rules	simpExtLib.clear_rules	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.del_looper	simpExtLib.del_looper	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.del_split	simpExtLib.del_split	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.looper_ss	simpExtLib.looper_ss	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.mk_tactic_solver	simpExtLib.mk_tactic_solver	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.remove_solver	simpExtLib.remove_solver	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.safe_solver_ss	simpExtLib.safe_solver_ss	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.set_cond_depth	simpExtLib.set_cond_depth	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.set_looper	simpExtLib.set_looper	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.set_safe_solvers	simpExtLib.set_safe_solvers	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.set_subgoaler	simpExtLib.set_subgoaler	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.set_term_ord	simpExtLib.set_term_ord	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.set_unsafe_solvers	simpExtLib.set_unsafe_solvers	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.solver_ss	simpExtLib.solver_ss	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+S1	simpLib.split_ss	simpExtLib.split_ss	extension; ordinary API unchanged	typed extension base before strategy installation	S	10,20,24;27
+T1	Traverse.CONFIG_REDUCER	TraverseExt.CONFIG_REDUCER	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.CONTEXT_REDUCER	TraverseExt.CONTEXT_REDUCER	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.ChildFirst	TraverseExt.ChildFirst	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.ParentFirst	TraverseExt.ParentFirst	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.traversal_policy	TraverseExt.traversal_policy	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.child_first_policy	TraverseExt.child_first_policy	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.reducer_config_data	TraverseExt.reducer_config_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.simp_prover_ctxt	TraverseExt.simp_prover_ctxt	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.ssolver	TraverseExt.ssolver	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.subgoaler	TraverseExt.subgoaler	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.traverse_config	TraverseExt.traverse_config	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.xtraverse_data	TraverseExt.xtraverse_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.CHILD_FIRST_WITH_OBSERVER	TraverseExt.CHILD_FIRST_WITH_OBSERVER	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.NORMALIZE_ARGUMENTS	TraverseExt.NORMALIZE_ARGUMENTS	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.ROOT_REWRITE	TraverseExt.ROOT_REWRITE	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.ROOT_REWRITE_WITH_CONTEXT	TraverseExt.ROOT_REWRITE_WITH_CONTEXT	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.TRAVERSE_WITH_CONTEXT	TraverseExt.TRAVERSE_WITH_CONTEXT	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.XTRAVERSE	TraverseExt.XTRAVERSE	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.charge_only	TraverseExt.charge_only	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.default_config	TraverseExt.default_config	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.keep_abstraction	TraverseExt.keep_abstraction	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.reducer_config_data	TraverseExt.reducer_config_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.reducer_data	TraverseExt.reducer_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+V1	simpLib.rewrite_bundle	simpExtLib.rewrite_bundle	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_source	simpExtLib.rewrite_source	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.combine_rewrite_bundles	simpExtLib.combine_rewrite_bundles	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.install_rewrite_bundle	simpExtLib.install_rewrite_bundle	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.prepare_rewrite_arguments	simpExtLib.prepare_rewrite_arguments	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.prepare_rewrite_bundle	simpExtLib.prepare_rewrite_bundle	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_bundle_rules	simpExtLib.rewrite_bundle_rules	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_context_changes	simpExtLib.rewrite_context_changes	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_source_compare	simpExtLib.rewrite_source_compare	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_source_handles	simpExtLib.rewrite_source_handles	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_sources	simpExtLib.rewrite_sources	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.rewrite_views	simpExtLib.rewrite_views	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.same_rewrite_source	simpExtLib.same_rewrite_source	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.source_rewrite	simpExtLib.source_rewrite	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27
+V1	simpLib.suspend_rewrite_sources	simpExtLib.suspend_rewrite_sources	extension; ordinary API unchanged	tracked fragment slots then install events; prepare bundle once	S	14,19,21;27

@@ -1,0 +1,20 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+INCLUDES = ../../../src
+EXTRA_CLEANS = selftest.exe
+
+# Signature-only clients still require executable elaboration.
+Task08TraverseExt.uo: Task08ReducerTypes.uo
+Task08Reducers.uo: Task08ReducerTypes.uo
+Task08API.uo: Task08TraverseExt.uo
+Task08Clients.uo Task08Cutovers.uo: Task08API.uo
+selftest.exe: selftest.uo Task08Clients.uo Task08Cutovers.uo \
+  Task08Reducers.uo Task08Controls.uo
+	$(HOLMOSMLC) -o $@ $<
+
+.PHONY: check design-check
+check: selftest.exe
+	./selftest.exe
+
+design-check:
+	python3 -B -m unittest discover -s . -p 'test_*.py'
+	python3 -B check_design.py --run --negative-controls

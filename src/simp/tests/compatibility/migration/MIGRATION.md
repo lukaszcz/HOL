@@ -5,7 +5,11 @@ Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 External source: `442009a1f7f04366573dc2b649d31650ea7b113b`.
 
 This is an inventory/design input, **not an engine migration or compatibility
-pass**. Module names below are provisional until TASK_08's type-checked design.
+pass**. TASK_08 has finalized the names/types in
+[the interface design](../interfaces/DESIGN.md),
+[compile-checked prototypes](../interfaces/Task08API.sml) and
+[final-apis.tsv](final-apis.tsv). The TASK_07 snapshot below remains the
+source-tied caller inventory, not an implementation claim.
 Every current symbol is indexed in [apis.tsv](apis.tsv); every lexical reference
 has a file, line and task owner in [references.tsv](references.tsv). Actual
 callers, including construction sites, are classified in
@@ -72,8 +76,9 @@ assertions and TASK_25 ownership are mandatory, not just lexical references.
 The `group` key joins all three tables. Every member of each family is listed
 individually in `apis.tsv`; this table supplies the replacement **type**, earliest
 construction, and assertions that a mere module rename would miss. Every actual
-caller is assigned a completion owner in CONSUMERS/EXTERNAL. TASK_08 finalizes
-interfaces; TASK_26 owns test relocation; TASK_27 owns docs/dependency closure
+caller is assigned a completion owner in CONSUMERS/EXTERNAL. TASK_08's final
+interfaces are linked above; TASK_10/11 retype active test dependencies before
+constructor removal, TASK_26 owns final test relocation; TASK_27 owns docs/dependency closure
 for every family, in addition to the implementation owners below.
 
 | Group / old module, type, API | Replacement module/type | Caller and earliest tracked construction | Semantic assertions / owners |
@@ -81,9 +86,9 @@ for every family, in addition to the implementation owners below.
 | T1: `Traverse.reducer` additions `CONTEXT_REDUCER`, `CONFIG_REDUCER`; `reducer_config_data`, `reducer_data`, `reducer_config_data` accessor; `simp_prover_ctxt`, `ssolver`, `subgoaler`; `traverse_config`, `xtraverse_data`, `default_config`; `child_first_policy`, `traversal_policy`, `ParentFirst`, `ChildFirst`; all extended traversal/root/observer/argument entry points | `TraverseExt.reducer`, configuration/data/policy types and entry points; explicit lift of an ordinary `Traverse.reducer`. Ordinary `Traverse.reducer` returns to exactly `REDUCER` | `simpLib` compiler/tactics, configured `congLib`, native tests, external clasimp/aesop/linarith signatures. Choose extended reducer at its factory and tracked set before dproc installation | Preserve exception-valued contexts, collector schedules, per-application refresh, solver facts/binder protection, live `NONE` vs explicit depth, custom order, observation and charges. Lift does not invent source inventory. **09–11**, completion **22/24/25** |
 | R1: `Cond_rewr.is_var_perm`, `COND_REWR_CONVS`, `COND_REWR_CONV_WITH_CONTEXT`, `COND_REWR_CONV_WITH_CONFIG` | `Cond_rewrExt` constructors/pure helper; paired runners created only by extension compiler | `simpLib.sml:126`, native paired/conditional tests; external `clasimpLib.sml:2051`. Prepare once when installing a tracked rule, never when extracting its second projection | Same matcher and actual bounded ref; live depth checks within candidate sequence, exact trace/tracking/exception behavior. Ordinary `COND_REWR_CONV` direct again. **12**, integration **14**, external **25** |
 | C1: `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `OpeningExt`, `TravrulesExt`, `simpExtLib.ssfrag`; share structural ordinary congruence/preorder types where implementable | `Travrules.sml:128`, `simpLib.sml:1628`, native congruence cases `:114–220`. Extension PURE/BOOL and extension fragment before `++`, merge or `SF` | Thread results into later premises, preserve root/LHS and rebuilt RHS beta reduction; ordinary factories keep baseline staging. **10/13/14**, caller completion **24** |
-| C2: existing `congLib.CSFRAG`, `congset`, `CONGRUENCE_*` with configured simpsets/reducers | `congExtLib` with extension-typed dprocs and simpset; legacy entry points/types remain ordinary | `congLib.sml:178–205,271–306`; `selftest.sml:1482–1531,5031–5142`. Tracked PURE before contextual reducer installation | Configured solver/subgoaler/depth/order; ordinary reflexivity/factory exception stage unchanged. No opaque `congset` promotion: TASK_08 must specify explicit construction/lifting of public fragments. **08/11/13** |
+| C2: existing `congLib.CSFRAG`, `congset`, `CONGRUENCE_*` with configured simpsets/reducers | `congExtLib` with extension-typed dprocs and simpset; legacy entry points/types remain ordinary | `congLib.sml:178–205,271–306`; `selftest.sml:1482–1531,5031–5142`. Tracked PURE before contextual reducer installation | Configured solver/subgoaler/depth/order; ordinary reflexivity/factory exception stage unchanged. No opaque `congset` promotion: `congExtLib.lift_fragment` explicitly lifts public CSFRAG data; construct the extension congset anew before installation. **08/11/13** |
 | B1: existing `simpLib.dproc_ss`, `SSFRAG.dprocs`, `weakener_data`, `add_weakener`; existing construction, named-fragment, AC, conversion, TypeBase and relsimp APIs | Ordinary APIs retain original `Traverse.reducer`, `simpLib.ssfrag/simpset`; parallel `simpExtLib.ssfrag/simpset` constructors consume `TraverseExt.reducer` | All extension factories/tests/default recipes and external public type surfaces. Select extension empty/PURE/BOOL recipe **before** first relevant fragment/rule/maker/dproc installation | No implicit reverse adapter, source slots/counters in legacy constructors, callback duplication or `ssfrags_of` promotion. Keep ordinary dproc consumers unchanged. **10/14–16/24**, external **25** |
-| P1: `legacy_traversedata_for_ss`, `traverseconfig_for_ss`, `xtraversedata_for_ss`; existing `traversedata_for_ss` cooperation | Extension-owned default/configured projections of one tracked object; `TraverseExt` data. Ordinary `traversedata_for_ss` remains unconditional original data; ordinary eligibility/fallback removed | `simpLib.sml:2095–2150`, configured `congLib`, native `:6010–6297`, external config reads. Track before installing the bounded rules even when extracting **after** consumption | No maker/collector/trace at extraction; same actual counters after partial use/exhaustion in either extraction/use order. Extended reducers cannot inhabit restored ordinary datatype: **08** decides projection type, **10/11/14**, legacy removal **16** |
+| P1: `legacy_traversedata_for_ss`, `traverseconfig_for_ss`, `xtraversedata_for_ss`; existing `traversedata_for_ss` cooperation | Extension-owned default/configured projections of one tracked object; `TraverseExt` data. Ordinary `traversedata_for_ss` remains unconditional original data; ordinary eligibility/fallback removed | `simpLib.sml:2095–2150`, configured `congLib`, native `:6010–6297`, external config reads. Track before installing the bounded rules even when extracting **after** consumption | No maker/collector/trace at extraction; same actual counters after partial use/exhaustion in either extraction/use order. Both projections return **TraverseExt data**, never ordinary reducers/sets; delete the optional legacy eligibility API. **10/11/14**, legacy removal **16** |
 | S1: `looper_ss`, `solver_ss`, `safe_solver_ss`; `add_looper`, `del_looper`, `set_looper`; `add_split`, `del_split`, `split_ss`; `add_unsafe_solver`, `add_safe_solver`, `set_unsafe_solvers`, `set_safe_solvers`, `remove_solver`; `set_subgoaler`, `set_cond_depth`, `set_term_ord`, `mk_tactic_solver`, `clear_rules` | `simpExtLib` operations on extension simpsets/fragments; solver/context identities in `TraverseExt` | Native strategies/SF tests and external clasimp/aesop/benchmark recipes. Tracked base before installing strategy fragments or rules; clearing preserves configuration/history | Ordered replacement/removal, safe/unsafe distinction, live depth vs explicit, no context rebuild for identical solver identities, goal-time FRAG resolution, split suppression and loop limits. **10/20/24**, external **25** |
 | M1: `simpLib.Split`, `ExclX`; `simpMarkerLib` marker/inspection/recursive-processing API and directive datatype | Public extension entry points in `simpExtLib`; keep one simplifier-owned `simpMarkerLib.directive`, `simpMarker` theory and generic `markerLib.directive` identity | Native/focused marker tests, all Split/ExclX docfiles, exported marker theories, external old `markerLib.Split` callers and actual classifier/forwarding/inert-fact consumers in EXTERNAL_MARKERS.md (MC01–14). Extension set/registry selected before interpretation; marker construction/classification itself stays pure, no tracking required on the no-simpset fact path | Literal legacy `Excl` never becomes namespace resolution. Preserve wrapper ordering, late lookup, callback/exception provenance, strict/resolved replay distinction; no implicit persistent registration. External claset forwards controls unchanged with a simpset, discards inert controls without one, unwraps content-bearing wrappers to facts; retain generic datatype identities via Legacy and all exact fact/bucket assertions. **18/20/23**, external **25** |
 | E1: `remove_ssfrags_preserving_controls`, `filter_rewrites`, `filter_rewrites_preserving_controls` | `simpExtLib` replay/filter operations on tracked sets; ordinary removal/exclusion uses baseline history/net only | Native replay/filter fixtures, external decision stripping/cache invalidation. Input already tracked before original install; no rebuilding arbitrary legacy input in filter | Preserve exhausted/partially spent actual controls for preserving variants, ordinary reset replay remains distinct, exclusions/limit/maker/strategy retained, no-op pointer and UNCHANGED contracts. **17/19/21** |
@@ -148,14 +153,18 @@ metadata, or subscribe every ordinary update to tracking.
 Initial parallel recipes: **TASK_10**; tracked compiler: **14**; complete
 in-repository recipes and typed default-provider boundary: **24**; downstream
 recipes/producer variants and public signatures: **25**, isolated only.
-**TASK_08 must settle the default-provider boundary explicitly**: an arbitrary
-legacy BasicProvers transform cannot have a free tracking-preserving translation.
-This is a recorded interface obligation, not a remaining TASK_07 inventory gap.
+**TASK_08 decision:** `trackedSimpDefaults` builds an explicit ordered typed
+recipe before source use. Its getters only retrieve prepared state; they never
+translate ordinary BasicProvers state/closures. Ordinary temporary/logged/window
+updates require explicit extension-typed counterparts in extension callers.
+No automatic mirroring or arbitrary-state import is offered. See DESIGN.md §6
+for batch order, TypeBase inputs, unprepared-provider errors and update ownership.
 
 ## Acceptance boundary
 
 All API/consumer paths have a subsequent task owner and a construction decision.
-TASK_08 still has to finalize and type-check interfaces/cutovers. TASK_25 still
-has to build the actual external migration in an isolated checkout. Neither
-is claimed complete by this inventory. No compiled source, frozen fixture,
+TASK_08's finalized interfaces/cutovers are in ../interfaces; its handoff records
+executed prototype checks, not an engine migration. TASK_25 still has to build
+the actual external migration in an isolated checkout. No implementation
+migration is claimed complete by this inventory. No compiled source, frozen fixture,
 existing assertions or external worktree was changed here.

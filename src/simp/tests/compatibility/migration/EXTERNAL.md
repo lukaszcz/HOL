@@ -121,7 +121,7 @@ iff theories, is in [EXTERNAL_TYPES.md](EXTERNAL_TYPES.md). Those are additional
 
 | Current path | Construction/migration decision (TASK_25 unless noted) |
 | --- | --- |
-| Default S:1682–1692 derives from BasicProvers.make_simpset_derived_value | Track in an extension-owned default seed **before** BasicProvers's initial additions/TypeBase/theory deltas, not in this callback. Provider boundary/recipes **08/24**, external integration **25** |
+| Default S:1682–1692 derives from BasicProvers.make_simpset_derived_value | Construct an independent extension default seed **before its own** counterparts of BasicProvers's additions/TypeBase/theory deltas, not by promoting this callback's ordinary input. Provider boundary/recipes **08/24**, external integration **25** |
 | Explicit derivation S:843–854; incremental tables/cache 943–1116 | Public arguments already tracked; change constructors/callers, not just source getter qualification |
 | Native converse inventory 1296–1318; working-state wrapping/cache 1644–1710; extensionality 1885 | Same tracked input ownership through cached generations/context; late metadata reads must not recompile or reset counters |
 | Supplied originals S:1127–1138,1146–1147 | Prepare/compile originals once and install once; reuse bundle/actual controls before deriving views |
@@ -138,7 +138,11 @@ External `src/basicProof/BasicProvers.sml:1156–1173` builds the seed;
 typed extension-facing alternatives. Merely mirroring their already-built
 ordinary result is not tracking-preserving. Any explicit rebuilding operation
 must be named as such and cannot satisfy actual-counter sharing. See recipes
-4–8 in MIGRATION.md. This is the most important TASK_08 design input.
+4–8 in MIGRATION.md. TASK_08 resolves this in
+[DESIGN.md §6](../interfaces/DESIGN.md): explicit typed recipe/provider and
+update paths, no arbitrary-state automatic mirroring or lazy rebuild in getters.
+Persistent declaration preparation does not recover local ordinary transforms;
+TASK_25 must migrate those consumers and their contexts/windows together.
 
 ## Transitive external consumers (all migration/validation owned by TASK_25)
 

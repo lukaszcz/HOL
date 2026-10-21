@@ -3,7 +3,9 @@
 Continuation of [EXTERNAL.md](EXTERNAL.md), same pinned external revision.
 **TASK_25 owns every external caller/migration below**, including compilation,
 assertion-preserving tests, signatures, inferred helper types, docs and build
-edges. TASK_08 finalizes type interfaces and TASK_24 supplies standard tracked
+edges. TASK_08's [final interfaces](../interfaces/DESIGN.md) require an explicit typed
+provider/update path, never automatic mirroring of arbitrary ordinary state.
+TASK_24 supplies standard tracked
 recipes/provider boundaries. These callers often use **ordinary API spellings
 on future extension-typed values**, so a direct added-API token search alone
 would miss them. D1 indexes producer/helper references in references.tsv.
