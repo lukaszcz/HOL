@@ -111,9 +111,7 @@ in
   val upd_data_map = Context.Data.modify data_map_slot
 end
 
-fun data_exportfns_of ctxt {settype = s} =
-    Option.map #2 (Symtab.lookup (data_map_of ctxt) s)
-fun data_exportfns arg = data_exportfns_of (Context.snapshot()) arg
+fun data_exportfns {settype = s} = Option.map #2 (Symtab.lookup (data_map ()) s)
 
 fun all_set_types () = Symtab.keys (data_map ())
 

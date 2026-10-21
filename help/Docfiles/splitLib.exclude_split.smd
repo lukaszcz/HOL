@@ -7,7 +7,7 @@ splitLib.exclude_split : string -> unit
 
 ------------------------------------------------------------------------
 
-Persistently retracts a named split rule from the library-owned theorem set.
+Persistently retracts a named split rule from the library-owned private store.
 
 The argument is `"Thy.Name"`, or `"Name"` for the current theory. It is
 resolved when written, not when a descendant replays it. For example,
@@ -30,7 +30,7 @@ splitting remain available without it.
 
 ### Failure
 
-Fails without mutation if registration is absent or either namespace is
+Fails without mutation if registration is absent or its attribute is
 foreign-owned, or if the name is malformed. Also rejects retractions
 inside a pinned context rather than writing to a different live context.
 

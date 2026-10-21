@@ -112,19 +112,12 @@ val AC_DEF = new_definition("AC_DEF", ``AC b1 b2 <=> b1 /\ b2``);
 val Req0_def = new_definition("Req0_def", “Req0 = T”);
 val ReqD_def = new_definition("ReqD_def", “ReqD = T”);
 val Cong_def = new_definition("Cong_def", ``Cong (x:bool) = x``);
-val Split_def = new_definition("Split_def", ``Split (x:bool) = x``);
-val _ = remove_ovl_mapping "Split" {Name = "Split", Thy = "marker"}
 val Exclude_def = new_definition("Exclude_def", “Exclude (x:'a) = T”);
-val ExcludeX_def = new_definition("ExcludeX_def", “ExcludeX (x:'a) = T”);
-val _ = remove_ovl_mapping "ExcludeX" {Name = "ExcludeX", Thy = "marker"}
 val ExcludeFrag_def = new_definition("ExcludeFrag_def", “ExcludeFrag (x:'a) = T”);
 val FRAG_def = new_definition("FRAG_def", “FRAG (x:'a) = T”);
 val _ = OpenTheoryMap.OpenTheory_const_name{const={Thy="marker",Name="AC"},name=(["Data","Bool"],"/\\")}
 val _ = OpenTheoryMap.OpenTheory_const_name{const={Thy="bool",Name="/\\"},name=(["Data","Bool"],"/\\")}
 val _ = OpenTheoryMap.OpenTheory_const_name{const={Thy="marker",Name="Cong"},name=(["Unwanted"],"id")}
-val _ = OpenTheoryMap.OpenTheory_const_name{
-  const={Thy="marker",Name="Split"}, name=(["Unwanted"],"id")
-}
 
 
 (*---------------------------------------------------------------------------*)

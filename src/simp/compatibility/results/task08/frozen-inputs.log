@@ -1,8 +1,0 @@
-inputs/develop/selftest.sml: OK
-inputs/investigation/README.md: OK
-inputs/investigation/branch-compat.log: OK
-inputs/investigation/branch-namespace.log: OK
-inputs/investigation/compat-selftest.sml: OK
-inputs/investigation/develop-compat.log: OK
-inputs/investigation/develop-namespace.log: OK
-inputs/investigation/namespace-selftest.sml: OK

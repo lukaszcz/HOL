@@ -20,22 +20,11 @@ sig
   val AC     : thm -> thm -> thm
   val unAC   : thm -> thm * thm
 
-  val Cong      : thm -> thm
-  val unCong    : thm -> thm
-  val Split     : thm -> thm
-  val destSplit : thm -> thm
-
-  val genmktagged : thm -> string -> thm
-  val gendest_tagged : term -> thm -> string option
-  val genCong : thm -> thm -> thm
-  val genUnCong : term -> thm -> thm -> thm option
+  val Cong   : thm -> thm
+  val unCong : thm -> thm
 
   val Excl   : string -> thm
   val destExcl : thm -> string option
-  (* Distinct opt-in marker; strings are preserved literally. simpLib
-     resolves extended exclusion targets when processing theorem lists. *)
-  val ExclX : string -> thm
-  val destExclX : thm -> string option
   val ExclSF : string -> thm
   val destExclSF : thm -> string option
 
@@ -57,9 +46,7 @@ sig
   datatype directive =
       DAC of thm * thm
     | DCong of thm
-    | DSplit of thm
     | DExcl of string
-    | DExclX of string
     | DExclSF of string
     | DFRAG of string
     | DReq0 of thm
@@ -71,8 +58,6 @@ sig
     | DLabel of string
   val dest_directive : thm -> directive option
   val is_directive   : thm -> bool
-  (* The payload under any Req0, ReqD and bound wrappers. *)
-  val strip_wrappers : thm -> thm
 
   val ABB                 : term -> term -> tactic
   val ABB'                : {redex : term, residue : term} -> tactic
@@ -143,9 +128,6 @@ sig
   val NoAsms : thm
 
   val process_taclist_then : {arg: thm list} -> (thm list -> tactic) -> tactic
-  val process_taclist_then_recur :
-    {arg: thm list} ->
-    (((thm list -> tactic) -> tactic) -> thm list -> tactic) -> tactic
 
   val suspend : string -> tactic
   val prim_resume : (thm * string * tactic) -> {updated_main: thm, subresult:thm}

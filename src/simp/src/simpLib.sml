@@ -2151,15 +2151,15 @@ fun rewrite_context_changes (SS old,SS current) =
          end;
 
 val Cong   = markerLib.Cong
-val Split  = markerLib.Split
+val Split  = simpMarkerLib.Split
 val AC     = markerLib.AC;
 val Excl   = markerLib.Excl
-val ExclX  = markerLib.ExclX
+val ExclX  = simpMarkerLib.ExclX
 val ExclSF = markerLib.ExclSF
 val Req0   = markerLib.mk_Req0
 val ReqD   = markerLib.mk_ReqD
 
-local open markerLib
+local open markerLib simpMarkerLib
 in
 fun frag_of fragnm =
     case lookup_named_frag fragnm of
@@ -2220,25 +2220,25 @@ fun process_tags0 {report} ss thl =
           case dest_directive th of
               NONE =>
                 (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME (DCong c) =>
+            | SOME (Legacy (DCong c)) =>
                 (normCong c :: congs, splits, acs, excls, exclfrags, frags,
                  rest)
             | SOME (DSplit sp) =>
                 (congs, sp :: splits, acs, excls, exclfrags, frags, rest)
-            | SOME (DAC p) =>
+            | SOME (Legacy (DAC p)) =>
                 (congs, splits, p :: acs, excls, exclfrags, frags, rest)
-            | SOME (DExcl nm) =>
+            | SOME (Legacy (DExcl nm)) =>
                 (congs, splits, acs, LiteralExclusion nm :: excls,
                  exclfrags, frags, rest)
             | SOME (DExclX nm) =>
                 (congs, splits, acs, ExtendedExclusion nm :: excls,
                  exclfrags, frags, rest)
-            | SOME (DExclSF nm) =>
+            | SOME (Legacy (DExclSF nm)) =>
                 (congs, splits, acs, excls, nm :: exclfrags, frags, rest)
-            | SOME (DFRAG nm) =>
+            | SOME (Legacy (DFRAG nm)) =>
                 (congs, splits, acs, excls, exclfrags, frag_of nm :: frags,
                  rest)
-            | SOME (DBounded _) =>
+            | SOME (Legacy (DBounded _)) =>
                 (case destExclX th of
                      SOME nm =>
                        (congs, splits, acs, ExtendedExclusion nm :: excls,
@@ -2246,16 +2246,16 @@ fun process_tags0 {report} ss thl =
                    | NONE =>
                        (congs, splits, acs, excls, exclfrags, frags,
                         th :: rest))
-            | SOME (DReq0 _) =>
+            | SOME (Legacy (DReq0 _)) =>
                 if report then tactic_only "Req0"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME (DReqD _) =>
+            | SOME (Legacy (DReqD _)) =>
                 if report then tactic_only "ReqD"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME DNoAsms => acc
-            | SOME (DIgnAsm _) => acc
-            | SOME (DAbbr _) => acc
-            | SOME (DLabel _) => acc
+            | SOME (Legacy DNoAsms) => acc
+            | SOME (Legacy (DIgnAsm _)) => acc
+            | SOME (Legacy (DAbbr _)) => acc
+            | SOME (Legacy (DLabel _)) => acc
       val (congs, splits, acs, excludes, exclfrags, frags, rst) =
           List.foldr sort ([], [], [], [], [], [], []) thl
     in
@@ -2559,7 +2559,7 @@ fun gen_simp_tac_with_xdata traversal
           main
         end
     in
-      markerLib.process_taclist_then_recur {arg=ths} start g
+      simpMarkerLib.process_taclist_then_recur {arg=ths} start g
     end
 
 fun GEN_SIMP_TAC mode =
@@ -2580,7 +2580,7 @@ fun strategy_free ss ths =
        bound falls through to that same head. Do not build proofs or run
        monitor hooks here, nor inspect payloads underneath AC or Cong. *)
     fun arg_free th =
-      if (same_const markerSyntax.Split_tm
+      if (same_const simpMarkerLib.Split_tm
             (#1 (strip_comb (concl th))) handle HOL_ERR _ => false) then
         false
       else

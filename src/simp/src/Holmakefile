@@ -1,10 +1,12 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   traversal-contracts.log exclusion-contracts.log split-registration.log \
-  split-persistence.log $(FRESH_LOAD)/selftest.exe $(FRESH_LOAD)/.hol/ \
+  split-persistence.log simp-marker-tests.log replay-order.log \
+  $(FRESH_LOAD)/selftest.exe $(FRESH_LOAD)/.hol/ \
   $(SPLIT_REGISTRATION)/selftest.exe $(SPLIT_REGISTRATION)/.hol/ \
   $(SPLIT_PERSISTENCE)/selftest.exe $(SPLIT_PERSISTENCE)/.hol/ \
-  $(SPLIT_PERSISTENCE)/split-lifecycle.state
+  $(SPLIT_PERSISTENCE)/split-lifecycle.state \
+  ../tests/markers/selftest.exe ../tests/replay-order/selftest.exe
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
@@ -14,11 +16,12 @@ selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo splitLib.uo simpLib.uo
 
 # Clean-heap namespace/syntax regressions. Only the launcher is linked;
 # library prerequisites are not imports.
-FRESH_LOAD = ../compatibility/probes/fresh-load
+FRESH_LOAD = ../tests/fresh-load
 FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after \
   syntax-first
 
-fresh-load-selftest.exe: $(FRESH_LOAD)/selftest.sml simpLib.uo boolSimps.uo
+fresh-load-selftest.exe: $(FRESH_LOAD)/selftest.sml simpLib.uo boolSimps.uo \
+  Holmakefile
 	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C $(FRESH_LOAD) selftest.uo
 	$(HOLMOSMLC) -o $@ $(FRESH_LOAD)/selftest.uo
@@ -43,7 +46,7 @@ fresh-load-control fresh-load-attribute-first fresh-load-set-first \
 
 # Shared legacy-only fixtures have their own dependency scope: they must
 # see these private modules before this directory is uploaded to sigobj.
-CONTRACTS = ../compatibility/probes/support
+CONTRACTS = ../tests/contracts
 .PHONY: traversal-contracts
 traversal-contracts: selftest.exe
 	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 -C $(CONTRACTS) \
@@ -58,7 +61,7 @@ exclusion-contracts: selftest.exe
 	$(tee cd $(CONTRACTS) && ./exclusion-contracts.exe,\
 exclusion-contracts.log)
 
-SPLIT_REGISTRATION = ../compatibility/probes/split-registration
+SPLIT_REGISTRATION = ../tests/split-registration
 .PHONY: split-registration
 split-registration: selftest.exe
 	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
@@ -66,7 +69,7 @@ split-registration: selftest.exe
 	$(tee cd $(SPLIT_REGISTRATION) && ./selftest.exe,\
 split-registration.log)
 
-SPLIT_PERSISTENCE = ../compatibility/probes/split-persistence
+SPLIT_PERSISTENCE = ../tests/split-persistence
 .PHONY: split-persistence
 split-persistence: selftest.exe splitPersistLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
@@ -78,4 +81,22 @@ all: simp-selftest.log traversal-contracts exclusion-contracts \
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)
+endif
+
+# Simplifier-owned directives and the characterized generic replay contract.
+.PHONY: simp-marker-tests replay-order
+simp-marker-tests: selftest.exe
+	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 -C ../tests/markers selftest.exe
+	$(tee cd ../tests/markers && ./selftest.exe,simp-marker-tests.log)
+
+replay-order:
+	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 -C ../tests/replay-order selftest.exe
+	$(tee cd ../tests/replay-order && ./selftest.exe,replay-order.log)
+
+ifdef HOLSELFTESTLEVEL
+all: simp-marker-tests replay-order
+endif
+
+ifeq ($(KERNELID),otknl)
+all: simpMarker.ot.art
 endif

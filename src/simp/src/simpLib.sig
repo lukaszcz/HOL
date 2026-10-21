@@ -89,6 +89,7 @@ sig
   (*------------------------------------------------------------------------*)
 
   val Cong        : thm -> thm
+  (* Simplifier-owned marker (simpMarker theory); no persistence opt-in. *)
   val Split       : thm -> thm
   val AC          : thm -> thm -> thm
   (* Literal strict rule/conversion/dproc deletion, as with ss -* [name].
@@ -101,6 +102,8 @@ sig
      Missing/ambiguous targets fail when processed, not at construction.
      History keeps resolved rules/displays; split/case suppression also
      applies to later additions. Does not enable persistent registration. *)
+  (* Simplifier-owned ExcludeX marker; generic marker tactics do not
+     interpret extended exclusions. *)
   val ExclX       : string -> thm
   val ExclSF      : string -> thm
   val Req0        : thm -> thm

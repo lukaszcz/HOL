@@ -1618,3 +1618,30 @@ val _ =
   in
     check ("variable hypothesis", th)
   end
+
+(* Handler inspection is pure and selects the supplied Context. *)
+val _ =
+  let
+    val entry = Context.snapshot ()
+    val calls = ref 0
+    val handlers = {localf=fn _ => calls := !calls + 1,
+                    storedf=fn _ => calls := !calls + 1}
+    val _ = ThmAttribute.register_attribute ("lookup_test",handlers)
+    val owned = Context.snapshot ()
+    val _ = Context.restore entry
+    val absent = Context.snapshot ()
+    val _ = tprint "attribute_fns_of reads supplied context without callbacks or mutation"
+    val _ = require (check_result I) (fn () =>
+      not (Option.isSome (ThmAttribute.attribute_fns "lookup_test")) andalso
+      Portable.pointer_eq (handlers,
+        valOf (ThmAttribute.attribute_fns_of owned "lookup_test")) andalso
+      Portable.pointer_eq (absent,Context.snapshot ()) andalso !calls = 0) ()
+    val _ = Context.restore owned
+    val _ = tprint "attribute_fns follows restored ambient context"
+    val _ = require (check_result I) (fn () =>
+      Portable.pointer_eq (handlers,valOf (ThmAttribute.attribute_fns "lookup_test"))
+      andalso not (Option.isSome (ThmAttribute.attribute_fns_of entry "lookup_test"))
+      andalso Portable.pointer_eq (owned,Context.snapshot ()) andalso !calls = 0) ()
+  in
+    Context.restore entry
+  end

@@ -58,6 +58,13 @@ pureSimps.sml: A simpset that transforms rewrites according to
                mk_cond_rewr from Cond_rewr.sml, but wrapping each in
                the BOUNDED/UNBOUNDED tag.
 
+SplitData.sml: Private split-rule event stream, attribute ownership and
+               context-selecting dispatcher; explicit initialization only.
+
+simpMarkerScript.sml, simpMarkerLib.sml:
+               Simplifier-owned Split/ExcludeX constants and recursive
+               tactic argument processing. Legacy markerLib is unchanged.
+
 splitLib.sml:  Pure/local datatype splitting and explicit persistent-rule
                registration. Queries alone claim no attribute namespace.
 

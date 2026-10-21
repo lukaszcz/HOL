@@ -60,7 +60,7 @@ a later addition can reinstall the target.
 Split/case exclusions instead record suppression of the resolved displays,
 including across fragment removal/replay and `Context.restore`. A later
 local addition with the same excluded display remains suppressed. This is
-local simpset state, not a persistent theorem-set REMOVE; use
+local simpset state, not a persistent split-rule REMOVE; use
 `splitLib.exclude_split` for the latter.
 
 Replaying suppression is idempotent, but a newly processed `ExclX` must
@@ -73,6 +73,12 @@ removed local-only split no longer matches.
 controls, not bounded deletions: the bound does not count exclusions or
 rewrite uses. Requirement wrappers (`Req0`, `ReqD`) retain their usual
 precedence and checks; wrapping an exclusion does not bypass them.
+
+This simplifier-specific marker uses `simpMarker$ExcludeX` and preserves
+the string literally. It introduces no unqualified parser mapping.
+`Req0`, `ReqD`, and bounded wrappers are processed before the marker.
+Generic marker tactics do not interpret this extension; use it only in
+simplifier theorem lists. The legacy `markerLib` interface is unchanged.
 
 ### Failure
 
@@ -102,7 +108,6 @@ Kernel qualification also permits rewrite names containing several dots:
 ### See also
 
 [`simpLib.Excl`](#simpLib.Excl),
-[`markerLib.ExclX`](#markerLib.ExclX),
 [`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV),
 [`simpLib.add_looper`](#simpLib.add_looper),
 [`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),

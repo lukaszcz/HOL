@@ -19,9 +19,6 @@ sig
   val current_data : {settype:string} -> setdelta list
   val theory_data : {settype : string, thy: string} -> setdelta list
   val all_data : {settype:string} -> (string * setdelta list) list
-  (* Read-only lookup in the same snapshot as a client's ownership data. *)
-  val data_exportfns_of :
-      Context.t -> {settype:string} -> exportfns option
   val data_exportfns : {settype:string} -> exportfns option
 
   val all_set_types : unit -> string list

@@ -24,8 +24,6 @@ These opt-ins are not interchangeable compatibility wrappers. For example,
 at construction; `ExclX` rejects missing targets, while literal `Excl` is
 silent. Both traversal projections share installed bounded controls.
 Finite regression results do not establish universal callback equivalence.
-The maintained search/disposition and validation handoff is
-`../compatibility/API_MIGRATION.md`.
 
 ## Persistent split rules (explicit opt-in)
 
@@ -47,7 +45,7 @@ before loading the whole graph is also supported.
 rule; an unqualified name resolves in the writing theory. Exported REMOVE
 keys are already resolved and cannot delete a descendant's same-named rule.
 This differs from local `del_split` or `ExclX` exclusions. The theorem stays
-in DB. Both the attribute and exporter must remain library-owned; explicit
+in DB. The attribute must remain library-owned; explicit
 initialization/removal rejects foreign ownership instead of replacing it.
 
 Ownership/data follow `Context.restore`, but the ML loader is process-global.
@@ -55,7 +53,30 @@ After rewind to before opt-in, explicitly call the initialization API again;
 merely loading an already-loaded module may not execute its body. Arrange
 registration as serialized theory initialization, not during concurrent
 proofs. Arbitrary late/current-segment replay is not the supported contract.
-See `../compatibility/SPLIT_PERSISTENCE.md` for runnable fresh-process tests.
+The fresh-process fixtures live in `../tests/split-persistence`; run them
+from the repository root with:
+
+```sh
+bin/Holmake --holstate="$PWD/bin/hol.state0" \
+  -C src/simp/src split-persistence
+```
+
+Persistent splits use a private ordered event stream
+`splitLib.persistent.rules.v1`, a direct `[split]` attribute, and one private
+listener. There is no library-owned generic `ThmSetData` split set or
+exporter. Query with `splitLib.split_thms`/`named_split_thms`, and retract
+with `exclude_split`. Local attributes update only live rules. The dispatcher
+selects the active context's registration on every event; ordinary loading
+installs neither persistence operations nor a listener.
+
+Rebuild pre-cleanup branch split theories and saved heaps from scripts.
+The branch's internal persistent format changed, and the extension constants
+moved from `marker$Split`/`marker$ExcludeX` to `simpMarker$Split`/
+`simpMarker$ExcludeX`. Rebuild extension theorem consumers as well. These
+branch artifacts have no binary compatibility guarantee; legacy develop
+formats and generic marker APIs remain unchanged. Marker extensions and
+recursive argument handling belong to the simplifier, and only simplifier
+theorem-list consumers interpret them.
 
 ## Important Types
 

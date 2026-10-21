@@ -40,13 +40,6 @@ val compare : t * t -> order
 val alist_merge : {old: t, new : t} -> t
 val append_merge : {old : t, new : t} -> t
 
-(* Preflight hook-name ownership without mutation. Useful before a client
-   allocates context slots for several related theory-data registrations.
-   Rejects foreign listeners under the reserved onload hook names. *)
-val check_registration : string list -> unit
-
-(* Handlers travel with Context; permanent listeners dispatch to the active
-   instance. Listener ordering remains process-first-registration order. *)
 val new : {thydataty : string,
            merge : {old : t, new : t} -> t,
            load : {thyname : string, data : t option} -> unit,

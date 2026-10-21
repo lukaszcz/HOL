@@ -13,7 +13,7 @@ Marks a theorem as a split rule for one simplifier call.
 call's simpset as `add_split` does. A malformed rule is ignored with a
 warning. This is a local rule: it requires no persistent registration and
 neither claims the `split` attribute nor exports theorem-set data. Use the
-ML constructor or the qualified `marker$Split` constant; no new unqualified
+ML constructor or the qualified `simpMarker$Split` constant; no new unqualified
 `Split` parser mapping is installed.
 
 ### Failure

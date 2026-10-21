@@ -2724,9 +2724,9 @@ val _ = let
     else die "ordinary loading claimed split registration"
 
   val _ = enable_split_attribute ()
-  val _ = tprint "explicit split settype and attribute are registered"
+  val _ = tprint "explicit split attribute has private storage and no generic set"
   val _ =
-    if List.exists (equal "split") (ThmSetData.all_set_types ()) andalso
+    if not (List.exists (equal "split") (ThmSetData.all_set_types ())) andalso
        ThmAttribute.is_attribute "split"
     then OK()
     else die "split registration is absent"
@@ -2892,17 +2892,13 @@ val _ = let
       val _ = replay_checks "split exclusion after add"
         (add_split named_if_split base && [ExclX ("split:" ^ key)])
 
-      (* Install persistent rules using the registered set's delta API.
-         TypeBase splitting is excluded separately so these controls cannot
-         pass merely because a different splitter produced the result. *)
+      (* Local attributes replace the former generic exporter callbacks;
+         the live rules are private and TypeBase is excluded independently. *)
       val _ = enable_split_attribute ()
-      val efns = valOf (ThmSetData.data_exportfns {settype="split"})
-      val _ = #add efns
-        {thy=thy,named_thm=({Thy=thy,Name="simp_split_selftest_rule"},
-                            named_if_split)}
-      val _ = #add efns
-        {thy=thy,named_thm=({Thy=thy,Name="simp_split_selftest_asm_rule"},
-                            named_if_asm_split)}
+      val _ = ThmAttribute.local_attribute
+        {name="simp_split_selftest_rule",attrname="split",args=[],thm=named_if_split}
+      val _ = ThmAttribute.local_attribute
+        {name="simp_split_selftest_asm_rule",attrname="split",args=[],thm=named_if_asm_split}
       val registered = Context.snapshot ()
       val persistent_base = (base ++ split_ss) && [ExclX "case:bool"]
       val _ = tprint "persistent split replay control really splits"
@@ -5604,7 +5600,7 @@ end;
 local
   val missing = markerSyntax.L "r7_branch_missing_label"
   val goal = ([],mk_var ("r7_branch_goal",bool))
-  val split = markerLib.Split TRUTH
+  val split = simpMarkerLib.Split TRUTH
   fun bound name th = ADD_ASSUM
     (mk_comb (boolSyntax.bounded_tm,mk_var (name,bool))) th
   fun counted f = let
@@ -5612,7 +5608,7 @@ local
     val result = Exn.capture f ()
   in (result,#prims (Count.read meter)) end
   fun stage_count (name,th) = let
-    val (_,expected) = counted (fn () => markerLib.dest_directive th)
+    val (_,expected) = counted (fn () => simpMarkerLib.dest_directive th)
     val (result,actual) = counted
       (fn () => runtac (SIMP_TAC empty_ss [th,missing]) goal)
     val correct = case result of
