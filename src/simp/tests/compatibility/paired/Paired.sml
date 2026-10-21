@@ -14,10 +14,14 @@ struct
   fun observe key value =
     if env "PAIR_CONTROL" = "missing" andalso key = "second.printers" then ()
     else emit ["observation", key, value]
+  (* Installed after private-first paths and tracing are active. Keeping the
+     bootstrap independent of testutils permits a genuinely fresh min heap. *)
+  val report : (string * bool -> unit) ref =
+    ref (fn (_ : string, _ : bool) =>
+                     raise Fail "check reporter not initialized")
   val checks = ref 0
   fun check name b =
-    (testutils.tprint name;
-     if b then testutils.OK () else testutils.die name;
+    (!report (name, b);
      checks := !checks + 1;
      emit ["check", name, "pass"])
 end

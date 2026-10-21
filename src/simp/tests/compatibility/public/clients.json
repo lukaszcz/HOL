@@ -1,0 +1,41 @@
+{
+  "policy": "Baseline-only clients. Do not edit to accommodate candidate APIs; add new clients alongside them.",
+  "clients": {
+    "PublicCond_rewr.sml": {
+      "sha256": "41cb7c1bac39e6fa087a0ff0715e4a843ee7208c79d6c043dd96e33bb9a59419",
+      "bytes": 1140
+    },
+    "PublicCongLib.sml": {
+      "sha256": "8506289f4c94126f406ef231dc6aede86aab9655b741970e10b14a307ca1d715",
+      "bytes": 1018
+    },
+    "PublicOpening.sml": {
+      "sha256": "da7600e7f3fff4a124afdc25368034c9a6c6342650c94e110a63af95284cd800",
+      "bytes": 814
+    },
+    "PublicSimpLib.sml": {
+      "sha256": "74e688c2e0be8917d2dead0c60c3861241aa6f05d7aa55ef93008fdba0f764ea",
+      "bytes": 2114
+    },
+    "PublicThmAttribute.sml": {
+      "sha256": "bfe46c6400ca4d399a29b0f80e5237c2450cf896940d24a5176d4f610eb5f07a",
+      "bytes": 2342
+    },
+    "PublicTraverseAscription.sml": {
+      "sha256": "ea5d655e811b448797963bc41349d5acf0f3ba492d682e29d407126e117600d5",
+      "bytes": 186
+    },
+    "PublicTraverseClient.sml": {
+      "sha256": "2a8c4933dcc9851b18461966ded445d2ac18b2f78417ccfa4292a601262c5d4e",
+      "bytes": 3079
+    },
+    "PublicTraverseFunctor.sml": {
+      "sha256": "b92d2cdbe718a1d2ca9e42685b92c5f6dc919f52d51e79c76cff0bbd1ae90f63",
+      "bytes": 419
+    },
+    "PublicTravrules.sml": {
+      "sha256": "1f1b57477b41f07d6aba9628632863bff575d7e66947bf120249ed7168b67128",
+      "bytes": 1317
+    }
+  }
+}

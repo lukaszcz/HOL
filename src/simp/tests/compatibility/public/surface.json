@@ -1,0 +1,227 @@
+{
+  "ThmAttribute": {
+    "source": "src/1/ThmAttribute.sig",
+    "ordinary_types": [
+      "attrfun",
+      "attrfuns",
+      "attrblock",
+      "abbrevinfo"
+    ],
+    "datatypes": {},
+    "values": [
+      "register_attribute",
+      "reserve_word",
+      "is_attribute",
+      "all_attributes",
+      "store_at_attribute",
+      "local_attribute",
+      "extract_attributes",
+      "toString",
+      "insert_attribute",
+      "define_abbreviation",
+      "remove_abbreviation",
+      "current_abbreviations"
+    ],
+    "include_Abbrev": false,
+    "ascription_clients": [
+      "PublicThmAttribute"
+    ]
+  },
+  "Cond_rewr": {
+    "source": "src/simp/src/Cond_rewr.sig",
+    "ordinary_types": [
+      "controlled_thm"
+    ],
+    "datatypes": {},
+    "values": [
+      "ac_term_ord",
+      "mk_cond_rewrs",
+      "IMP_EQ_CANON",
+      "COND_REWR_CONV",
+      "QUANTIFY_CONDITIONS",
+      "stack_limit",
+      "with_tracking"
+    ],
+    "include_Abbrev": true,
+    "ascription_clients": [
+      "PublicCond_rewr"
+    ]
+  },
+  "Opening": {
+    "source": "src/simp/src/Opening.sig",
+    "ordinary_types": [
+      "congproc"
+    ],
+    "datatypes": {},
+    "values": [
+      "samerel",
+      "CONGPROC",
+      "rel_of_congrule",
+      "nconds_of_congrule",
+      "EQ_CONGPROC"
+    ],
+    "include_Abbrev": true,
+    "ascription_clients": [
+      "PublicOpening"
+    ]
+  },
+  "Traverse": {
+    "source": "src/simp/src/Traverse.sig",
+    "ordinary_types": [
+      "context",
+      "traverse_data"
+    ],
+    "datatypes": {
+      "reducer": "REDUCER"
+    },
+    "values": [
+      "dest_reducer",
+      "addctxt",
+      "TRAVERSE"
+    ],
+    "include_Abbrev": true,
+    "ascription_clients": [
+      "PublicTraverseAscription",
+      "PublicTraverseFunctor"
+    ]
+  },
+  "Travrules": {
+    "source": "src/simp/src/Travrules.sig",
+    "ordinary_types": [],
+    "datatypes": {
+      "preorder": "PREORDER",
+      "travrules": "TRAVRULES"
+    },
+    "values": [
+      "samerel",
+      "mk_preorder",
+      "find_relation",
+      "merge_travrules",
+      "gen_mk_travrules",
+      "mk_travrules",
+      "cong2proc",
+      "EQ_preorder",
+      "EQ_tr"
+    ],
+    "include_Abbrev": true,
+    "ascription_clients": [
+      "PublicTravrules"
+    ]
+  },
+  "simpLib": {
+    "source": "src/simp/src/simpLib.sig",
+    "ordinary_types": [
+      "thname",
+      "convdata",
+      "stdconvdata",
+      "relsimpdata",
+      "controlled_thm",
+      "ssfrag",
+      "simpset",
+      "weakener_data",
+      "simptac_config"
+    ],
+    "datatypes": {},
+    "values": [
+      "SSFRAG",
+      "empty_ssfrag",
+      "ssf_upd_rewrs",
+      "frag_rewrites",
+      "frag_name",
+      "register_frag",
+      "lookup_named_frag",
+      "all_named_frags",
+      "Cong",
+      "AC",
+      "Excl",
+      "ExclSF",
+      "Req0",
+      "ReqD",
+      "SF",
+      "rewrites",
+      "rewrites_with_names",
+      "dproc_ss",
+      "ac_ss",
+      "conv_ss",
+      "relsimp_ss",
+      "std_conv_ss",
+      "merge_ss",
+      "name_ss",
+      "named_rewrites",
+      "named_rewrites_with_names",
+      "named_merge_ss",
+      "type_ssfrag",
+      "tyi_to_ssdata",
+      "partition_ssfrags",
+      "empty_ss",
+      "ssfrags_of",
+      "mk_simpset",
+      "remove_ssfrags",
+      "exclude_ssfrags",
+      "force_add",
+      "ssfrag_names_of",
+      "++",
+      "-*",
+      "remove_simps",
+      "&&",
+      "limit",
+      "unlimit",
+      "add_named_rwt",
+      "add_weakener",
+      "add_relsimp",
+      "traversedata_for_ss",
+      "SIMP_PROVE",
+      "SIMP_CONV",
+      "SIMP_TAC",
+      "simp_tac",
+      "ASM_SIMP_TAC",
+      "asm_simp_tac",
+      "FULL_SIMP_TAC",
+      "full_simp_tac",
+      "REV_FULL_SIMP_TAC",
+      "rev_full_simp_tac",
+      "NO_STRIP_FULL_SIMP_TAC",
+      "NO_STRIP_REV_FULL_SIMP_TAC",
+      "psr",
+      "allasms",
+      "global_simp_tac",
+      "SIMP_RULE",
+      "ASM_SIMP_RULE",
+      "track",
+      "pp_ssfrag",
+      "pp_simpset"
+    ],
+    "include_Abbrev": true,
+    "ascription_clients": [
+      "PublicSimpLib"
+    ]
+  },
+  "congLib": {
+    "source": "src/simp/src/congLib.sig",
+    "ordinary_types": [
+      "congset"
+    ],
+    "datatypes": {
+      "congsetfrag": "CSFRAG"
+    },
+    "values": [
+      "empty_congset",
+      "mk_congset",
+      "cs_addfrag",
+      "merge_cs",
+      "csfrag_rewrites",
+      "add_csfrag_rewrites",
+      "CONGRUENCE_SIMP_CONV",
+      "CONGRUENCE_SIMP_QCONV",
+      "CONGRUENCE_EQ_SIMP_CONV",
+      "CONGRUENCE_SIMP_RULE",
+      "CONGRUENCE_SIMP_TAC",
+      "ASM_CONGRUENCE_SIMP_TAC",
+      "FULL_CONGRUENCE_SIMP_TAC"
+    ],
+    "include_Abbrev": true,
+    "ascription_clients": [
+      "PublicCongLib"
+    ]
+  }
+}

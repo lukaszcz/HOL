@@ -5,7 +5,7 @@ kinds, wrong arities, reordered/missing/duplicate events, mismatching source
 paths/hashes, wrong process exits and timeouts are errors. `test_runner.py`
 mutates valid receipts to exercise the validator independently of HOL.
 All counts are exact, not minima. TASK_03 adds the optional performance
-fixture below; non-performance TASK_02 contracts remain unchanged.
+fixture; TASK_04 adds frozen public clients. TASK_02 observations are unchanged.
 
 ## Ordered process protocol
 
@@ -28,7 +28,8 @@ The complete ordered stream is:
 6. Exactly two `search path` events: private directory, shared repo `sigobj`.
 7. `use path`, followed by `used path` after successful elaboration. Uses are
    sequential, not nested. Observations/checks may occur between them. The
-   only permitted unfinished use is expected-red `SignatureCheck.sml`.
+   only permitted unfinished use is the explicitly selected expected-red
+   signature/ascription/functor fixture.
 8. Unique `loaded path` events in `Meta.fileDirMap` order. The set must equal
    initial heapfiles union successfully elaborated files. Untraced additions
    or missing inventory entries fail closed. Every source is path-audited,
@@ -134,6 +135,47 @@ incomplete loaded inventories, source mutations, arbitrary static errors,
 wrong-but-byte-identical source paths and killing descendants on timeout.
 Baseline-versus-baseline executes the wrong-path control too: rejecting it
 cannot depend on a behavioral difference between the two revisions.
+
+## TASK_04 optional public clients
+
+`--public-contracts` additionally extracts exact selected
+`src/1/ThmAttribute.{sig,sml}` and installs the nine sealed baseline-only
+`public/*.sml` clients plus complete original renamed `Legacy*.sig` inputs.
+`public_contracts.py` defines each exact ordered check array and required
+implementation/signature elaborations; `PUBLIC_CONTRACTS.md` maps all exports.
+Every changed baseline-existing signature must appear in this inventory.
+
+`PublicTraverseAscription` and `PublicTraverseFunctor` use the existing
+`--candidate-signature reject|pass` choice. Reject means the same mandatory
+exception, BOTH constructor errors, exit 1, zero checks and error footer as the
+old signature fixture, but in the exact selected new client. Exactly those
+TWO compiler error lines are permitted; additional static errors fail validation
+even when both constructor errors are present. Pass requires one check, exit 0
+and no unfinished source. `PublicTraverseClient` always
+executes three checks; reject additionally requires exactly one nonexhaustive
+match warning attributed to that client's source path. Its outcome is then
+`expected-candidate-red`, despite exit 0. Other public clients require all
+checks, complete frozen-signature elaboration, exit 0 and pass footer.
+
+The bootstrap no longer imports testutils/HolKernel before tracing.
+`CheckSupport.sml` installs the unchanged testutils reporting behavior after
+recording the initial heap and setting private-first paths. The ordinary
+launcher still uses state0. For the early `PublicThmAttribute` fixture,
+Holmake builds a second `attribute.exe` launcher using **state.min on both
+selections**, with one GC thread. Its source must NOT be preloaded and both
+selected implementation and reference must actually elaborate. Every source
+map/path/hash/exit guard still applies; no shared ThmAttribute is allowed in
+that fixture. Other fixtures use the normal preloaded early libraries.
+
+The manifest uses `evidence_id: TASK_04-public-contracts-v1`, adds
+`public_contracts` (references, fixtures, complete signature diffs and changed/
+branch-only/unchanged-dependency inventories per selection), and records each
+selection's `attribute_launcher` and `attribute_holmakefile`. There are two
+extra `*-attribute-build.json.gz` receipts. Sources/clients/references and
+validators are all input-hashed. The transient private Holmakefile's sole heap
+change is recorded and then restored before process/path audits. Common
+`runtime_options` describe the normal launcher; the early launcher's actual
+options are explicitly retained in its text and process command.
 
 ## TASK_03 optional performance fixture
 

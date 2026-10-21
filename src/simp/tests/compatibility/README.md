@@ -1,5 +1,11 @@
 # Pinned simplifier review inputs
 
+TASK_04's complete public-interface inventory, sealed baseline clients,
+expected initial reds and reproduction commands are in
+[`PUBLIC_CONTRACTS.md`](PUBLIC_CONTRACTS.md). Its coverage includes all six
+changed baseline signatures and unchanged `congLib` interoperability; these
+are diagnostic contracts, not claims that source compatibility is restored.
+
 TASK_01 preserves inputs and observations, **not a compatibility or performance
 pass**. Starting HEAD is the reviewed candidate; see
 [`initial-state.json`](initial-state.json) for the actual checkout, dirty-state,

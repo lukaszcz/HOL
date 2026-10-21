@@ -1,6 +1,6 @@
 (* The launcher imports no simplifier module. Dependencies are loaded only
    after recording the initial heap and setting the exact search path. *)
-open HolKernel testutils Paired
+open Paired
 val _ = Paired.emit ["begin", Paired.env "PAIR_SELECTION",
                      Paired.env "PAIR_FIXTURE", Paired.env "PAIR_CONTROL"]
 val _ = Paired.emit ["cwd", OS.FileSys.getDir ()]
@@ -26,7 +26,8 @@ fun files () =
     Paired.emit ["loaded", OS.Path.concat (dir, file)])
     (Binarymap.listItems (Meta.fileDirMap ()))
 val result =
-  (Meta.loadPlan tracedUse (Paired.env "PAIR_TARGET"); "pass")
+  (Meta.loadPlan tracedUse "CheckSupport";
+   Meta.loadPlan tracedUse (Paired.env "PAIR_TARGET"); "pass")
   handle e => (Paired.emit ["exception", General.exnName e,
                             String.toString (General.exnMessage e)];
                "error")

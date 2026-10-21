@@ -75,7 +75,7 @@ def parse_events(text):
 
 def validate(receipt, *, selection, fixture, control, private, repo,
              private_names, flavor, signature, source_hashes,
-             expected_observations=None):
+             expected_observations=None, contract=None):
     """Strict ordered protocol + exit + source/path audit. Never infer success
     from .uo creation, expected exit alone, or a success substring in a log.
     The only allowed error is the explicitly requested old-datatype rejection.
@@ -94,6 +94,9 @@ def validate(receipt, *, selection, fixture, control, private, repo,
     preloaded = events[3][1].split(",")
     require(not (set(preloaded) & private_names),
             "simplifier already present in shared heap")
+    if contract:
+        require(not (set(preloaded) & set(contract.get("fresh", []))),
+                "selected early module already present in heap")
     searches = [["search", str(private)], ["search", str(repo / "sigobj")]]
     start = 4
     heapfiles = []
@@ -109,6 +112,9 @@ def validate(receipt, *, selection, fixture, control, private, repo,
                 behavior_events(flavor) if fixture == "selftest" else
                 [["check", "legacy signature", "pass"]])
     red = fixture == "signature" and signature == "reject"
+    if contract:
+        expected = contract["observations"]
+        red = contract["red"]
     if red:
         expected = [["exception", "Fail", r'Fail \"Static Errors\"']]
     checks = sum(e[0] == "check" for e in expected)
@@ -144,14 +150,22 @@ def validate(receipt, *, selection, fixture, control, private, repo,
     require(len(loaded) == len(set(loaded)), "duplicate loaded-source inventory")
     require(set(loaded) == set(heapfiles + completed),
             "incomplete or untraced loaded-source inventory")
+    target_file = contract["target"] + ".sml" if contract else "SignatureCheck.sml"
     if red:
-        require(pending == str(private / "SignatureCheck.sml"),
+        require(pending == str(private / target_file),
                 "error was not in the signature fixture")
         for constructor in ("CONFIG_REDUCER", "CONTEXT_REDUCER"):
             require(re.search(r"constructor " + constructor +
                               r" was present in the structure but not in the "
                               r"signature", receipt["stdout"]),
                     "missing exact datatype rejection: " + constructor)
+        errors = re.findall(r"^.*error:.*$", receipt["stdout"], re.MULTILINE)
+        allowed = (re.escape(str(private / target_file)) +
+                   r":\d+: error: Error while matching datatype reducer: "
+                   r"constructor (CONFIG_REDUCER|CONTEXT_REDUCER) was present "
+                   r"in the structure but not in the signature\.")
+        require(len(errors) == 2 and all(re.fullmatch(allowed, e) for e in errors),
+                "unexpected static error alongside datatype rejection")
     else:
         require(pending is None, "unfinished source elaboration")
     # Both attempted and completed paths matter: expected-red elaboration
@@ -160,7 +174,8 @@ def validate(receipt, *, selection, fixture, control, private, repo,
     for raw in dict.fromkeys(used + loaded):
         p = physical(raw)
         name = p.stem
-        if name in private_names or p.is_relative_to(private):
+        if (name in private_names or p.is_relative_to(private) or
+                (contract and name in contract.get("fresh", []))):
             require(p.is_relative_to(private), "wrong loaded simplifier path: " + raw)
         else:
             require(p.is_relative_to(repo), "source outside shared repository: " + raw)
@@ -181,13 +196,26 @@ def validate(receipt, *, selection, fixture, control, private, repo,
     require(observations == expected, "incomplete or wrong ordered observations")
     target = {"signature": "SignatureCheck.sml",
               "performance": "Performance.sml"}
-    target = target.get(fixture, "selftest.sml")
+    target = contract["target"] + ".sml" if contract else target.get(fixture, "selftest.sml")
     require(str(private / target) in used, "requested fixture never elaborated")
-    for name in ("Traverse",) if fixture == "signature" else ("Traverse", "simpLib"):
+    modules = (("Traverse",) if fixture == "signature" else ("Traverse", "simpLib"))
+    if contract:
+        modules = contract["modules"]
+        for name in contract["signatures"]:
+            require(str(private / (name + ".sig")) in completed,
+                    "complete frozen signature not elaborated: " + name)
+        if contract.get("exhaustive_match"):
+            warning = (re.escape(str(private / target)) +
+                       r":\d+: warning: Matches are not exhaustive\.")
+            count = len(re.findall(warning, receipt["stdout"]))
+            require(count == (1 if contract["warning"] else 0),
+                    "wrong exhaustive REDUCER match diagnostic")
+    for name in modules:
         require(str(private / (name + ".sml")) in used,
                 "selected implementation not elaborated: " + name)
     outcome = "pass"
-    if red or (fixture == "selftest" and flavor == "reviewed"):
+    if red or (contract and contract["warning"]) or (
+            fixture == "selftest" and flavor == "reviewed"):
         outcome = "expected-candidate-red"
     return {"observations": observations, "expected_test_count": checks,
             "outcome": outcome,
@@ -221,16 +249,19 @@ def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args])
 
 
-def extract(repo, rev, dst):
+def extract(repo, rev, dst, public=False):
     inventory = []
+    roots = ["src/simp/src"]
+    if public:
+        roots += ["src/1/ThmAttribute.sig", "src/1/ThmAttribute.sml"]
     for path in git(repo, "ls-tree", "-r", "--name-only", rev,
-                    "src/simp/src").decode().splitlines():
+                    *roots).decode().splitlines():
         p = Path(path)
         if p.suffix not in (".sml", ".sig") or p.name == "selftest.sml":
             continue
         if p.parent.name == "mosml":
             continue
-        require(p.parent.as_posix() in ("src/simp/src", "src/simp/src/poly"),
+        require(p.parent.as_posix() in ("src/simp/src", "src/simp/src/poly", "src/1"),
                 "unexpected source layout: " + path)
         data = git(repo, "show", rev + ":" + path)
         out = dst / p.name
@@ -303,6 +334,8 @@ def main():
     p.add_argument("--candidate-signature", choices=("reject", "pass"), default="reject")
     p.add_argument("--candidate-behavior", choices=("reviewed", "baseline"), default="reviewed")
     p.add_argument("--negative-controls", action="store_true")
+    p.add_argument("--public-contracts", action="store_true",
+                   help="execute frozen complete public-interface clients")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--timeout", type=int, default=300)
     p.add_argument("--performance-pairs", type=int, default=0)
@@ -312,6 +345,9 @@ def main():
     if (args.performance_pairs < 0 or args.samples < 3 or
             not 0.1 <= args.batch_seconds <= 60):
         p.error("require nonnegative pairs, >=3 samples, 0.1..60 second batches")
+    public = None
+    if args.public_contracts:
+        import public_contracts as public
     performance = None
     if args.performance_pairs:
         import sys
@@ -371,6 +407,20 @@ def main():
                 repo, "diff", REVIEWED, "HEAD", "--", "src/simp/src").decode()
             manifest["working_simplifier_diff"] = git(
                 repo, "diff", "HEAD", "--", "src/simp/src").decode()
+        refs = None
+        if public:
+            refs = public.references(HERE, repo, git, require, fingerprint)
+            manifest["evidence_id"] = "TASK_04-public-contracts-v1"
+            manifest["public_contracts"] = {
+                "references": refs, "fixtures": public.CONTRACTS,
+                "inventory": {selection: public.inventory(
+                    repo, BASE, ref, refs, git, require)
+                    for selection, ref in (("baseline", args.baseline),
+                                           ("candidate", args.candidate))},
+                "signature_diffs": {selection: git(
+                    repo, "diff", BASE, ref, "--", "*.sig").decode()
+                    for selection, ref in (("baseline", args.baseline),
+                                           ("candidate", args.candidate))}}
         inputs = [HERE / "run_paired.py", HERE / "test_runner.py",
                   HERE / "Holmakefile", HERE / "SCHEMA.md",
                   HERE / "paired/Holmakefile",
@@ -381,6 +431,11 @@ def main():
             inputs += [HERE.parent / "performance" / name for name in
                        ("Performance.sml", "performance_schema.py",
                         "summarize.py", "test_performance.py", "Holmakefile")]
+        if public:
+            inputs += [HERE / "public_contracts.py",
+                       HERE / "test_public_contracts.py",
+                       *sorted((HERE / "public").glob("*")),
+                       *sorted((HERE / "inputs/develop").glob("*.sig"))]
         for path in inputs:
             manifest["inputs"][str(path.relative_to(repo))] = fingerprint(path)
         sources = {}
@@ -390,8 +445,10 @@ def main():
                 dst = root / selection
                 dst.mkdir()
                 rev = git(repo, "rev-parse", ref + "^{commit}").decode().strip()
-                inventory = extract(repo, rev, dst)
+                inventory = extract(repo, rev, dst, public=bool(public))
                 install_fixtures(dst, performance=bool(performance))
+                if public:
+                    public.install(HERE, dst, refs)
                 manifest["selections"][selection] = {
                     "requested_ref": ref, "revision": rev, "private": str(dst),
                     "sources": inventory,
@@ -403,6 +460,11 @@ def main():
                         sources[str(f)] = fingerprint(f)
             names = {Path(s["git_path"]).stem for v in manifest["selections"].values()
                      for s in v["sources"]}
+            # ThmAttribute is already in state0. Its dedicated fixture uses
+            # state.min and requires fresh elaboration of the selected source.
+            # Other clients retain their normal preloaded dependency.
+            if public:
+                names.discard("ThmAttribute")
             # Signature files are copied, never weakened to make candidate pass.
             original = (HERE / "inputs/develop/Traverse.sig").read_bytes()
             from_git = git(repo, "show", BASE + ":src/simp/src/Traverse.sig")
@@ -426,6 +488,36 @@ def main():
                         "--holstate=" + str(repo / "bin/hol.state0") in text,
                         "unexpected launcher runtime/options")
                 manifest["selections"][selection]["launcher"] = text
+                if public:
+                    # The early public module cannot be honestly tested from
+                    # state0: Context.Data correctly rejects duplicate slots.
+                    # The same minimal bootstrap runs on state.min on BOTH sides.
+                    minheap = str(repo / "bin/hol.state.min")
+                    early_cmd = ["--holstate=" + minheap
+                                 if c.startswith("--holstate=") else c
+                                 for c in cmd[:-1]]
+                    makefile = dst / "Holmakefile"
+                    ordinary_makefile = makefile.read_text()
+                    early_makefile = ordinary_makefile.replace(
+                        "HOLHEAP = $(HOLDIR)/bin/hol.state0",
+                        "HOLHEAP = $(HOLDIR)/bin/hol.state.min")
+                    require(early_makefile != ordinary_makefile,
+                            "missing ordinary heap setting")
+                    manifest["selections"][selection]["attribute_holmakefile"] = early_makefile
+                    try:
+                        makefile.write_text(early_makefile)
+                        early = execute(early_cmd + ["attribute.exe"], root,
+                                        env, args.timeout)
+                    finally:
+                        makefile.write_text(ordinary_makefile)
+                    compact(dict(early), output, selection + "-attribute-build")
+                    require(early["exit"] == 0 and not early["timed_out"],
+                            selection + " early module launcher build failed")
+                    early_text = (dst / "attribute.exe").read_text()
+                    require("--holstate=" + minheap in early_text and
+                            " --gcthreads=1 run " in early_text,
+                            "wrong early module heap/options: " + early_text)
+                    manifest["selections"][selection]["attribute_launcher"] = early_text
                 products = {}
                 for pattern in ("*.exe", ".hol/objs/*", ".hol/make-deps/*"):
                     for f in sorted(dst.glob(pattern)):
@@ -438,12 +530,17 @@ def main():
                 flavor = "baseline" if selection == "baseline" else args.candidate_behavior
                 signature = "pass" if selection == "baseline" else args.candidate_signature
                 cases = [("selftest", "none"), ("signature", "none")]
+                if public:
+                    cases += [(target, "none") for target in public.CONTRACTS]
                 if args.negative_controls:
                     cases += [("selftest", c) for c in
                               ("missing", "truncated", "failed", "wrong-path",
                                "deferred", "unexecuted")]
                 for fixture, control in cases:
-                    target = "SignatureCheck" if fixture == "signature" else "selftest"
+                    contract = (public.expectation(fixture, signature)
+                                if public and fixture in public.CONTRACTS else None)
+                    target = (contract["target"] if contract else
+                              "SignatureCheck" if fixture == "signature" else "selftest")
                     if control == "wrong-path":
                         other = "candidate" if selection == "baseline" else "baseline"
                         target = str(root / other / "selftest")
@@ -451,7 +548,9 @@ def main():
                         target = "Deferred"
                     runenv = dict(env, PAIR_SELECTION=selection, PAIR_FIXTURE=fixture,
                                   PAIR_CONTROL=control, PAIR_PRIVATE=str(dst), PAIR_TARGET=target)
-                    command = [str(dst / "paired.exe")]
+                    executable = ("attribute.exe" if contract and
+                                  contract.get("fresh") else "paired.exe")
+                    command = [str(dst / executable)]
                     if control == "unexecuted":
                         command = [shutil.which("true", path=env["PATH"])]
                     receipt = execute(command, dst, runenv, args.timeout)
@@ -464,7 +563,8 @@ def main():
                         result = validate(receipt, selection=selection, fixture=fixture,
                                           control=control, private=dst, repo=repo,
                                           private_names=names, flavor=flavor,
-                                          signature=signature, source_hashes=sources)
+                                          signature=signature, source_hashes=sources,
+                                          contract=contract)
                         receipt["result"] = result
                         receipt["accepted"] = True
                     except (InvalidRun, OSError) as e:

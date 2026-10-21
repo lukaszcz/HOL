@@ -1,0 +1,2712 @@
+{
+  "schema_version": 1,
+  "evidence_id": "TASK_04-public-contracts-v1",
+  "scope": "mixed-source isolation, not independent repository builds",
+  "command": [
+    "python3",
+    "run_paired.py",
+    "--public-contracts",
+    "--negative-controls",
+    "--candidate",
+    "HEAD",
+    "--candidate-signature",
+    "reject",
+    "--candidate-behavior",
+    "reviewed",
+    "--output",
+    "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task04/current-head-final"
+  ],
+  "repo": "/home/lukasz/dev/HOL/worktrees/simplifier",
+  "head": "8b1e8c69f5dd819d1fbe8b75cf5755f21b450499",
+  "dirty": [
+    "M  holproject.toml",
+    "M  src/simp/tests/compatibility/Holmakefile",
+    "AM src/simp/tests/compatibility/PUBLIC_CONTRACTS.md",
+    "M  src/simp/tests/compatibility/README.md",
+    "MM src/simp/tests/compatibility/SCHEMA.md",
+    "A  src/simp/tests/compatibility/inputs/develop/Cond_rewr.sig",
+    "A  src/simp/tests/compatibility/inputs/develop/Opening.sig",
+    "A  src/simp/tests/compatibility/inputs/develop/ThmAttribute.sig",
+    "A  src/simp/tests/compatibility/inputs/develop/Travrules.sig",
+    "A  src/simp/tests/compatibility/inputs/develop/congLib.sig",
+    "A  src/simp/tests/compatibility/inputs/develop/simpLib.sig",
+    "A  src/simp/tests/compatibility/paired/CheckSupport.sml",
+    "M  src/simp/tests/compatibility/paired/Holmakefile",
+    "M  src/simp/tests/compatibility/paired/Paired.sml",
+    "M  src/simp/tests/compatibility/paired/runner.sml",
+    "A  src/simp/tests/compatibility/public/PublicCond_rewr.sml",
+    "A  src/simp/tests/compatibility/public/PublicCongLib.sml",
+    "A  src/simp/tests/compatibility/public/PublicOpening.sml",
+    "A  src/simp/tests/compatibility/public/PublicSimpLib.sml",
+    "A  src/simp/tests/compatibility/public/PublicThmAttribute.sml",
+    "A  src/simp/tests/compatibility/public/PublicTraverseAscription.sml",
+    "A  src/simp/tests/compatibility/public/PublicTraverseClient.sml",
+    "A  src/simp/tests/compatibility/public/PublicTraverseFunctor.sml",
+    "A  src/simp/tests/compatibility/public/PublicTravrules.sml",
+    "A  src/simp/tests/compatibility/public/clients.json",
+    "A  src/simp/tests/compatibility/public/references.json",
+    "A  src/simp/tests/compatibility/public/surface.json",
+    "A  src/simp/tests/compatibility/public_contracts.py",
+    "MM src/simp/tests/compatibility/run_paired.py",
+    "AM src/simp/tests/compatibility/test_public_contracts.py",
+    "?? src/simp/tests/compatibility/evidence/task04/"
+  ],
+  "runtime_options": [
+    "--gcthreads=1",
+    "run",
+    "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0"
+  ],
+  "environment": {
+    "TERM": "dumb",
+    "PATH": "/home/lukasz/.pi/agent/bin:/home/lukasz/.opam/default/bin:/home/lukasz/.local/bin:/home/lukasz/.local/bin:/home/lukasz/.local/go/bin:/home/lukasz/HOL/bin:/home/lukasz/dev/HOL/worktrees/simplifier/bin:/home/lukasz/.local/bin:/home/lukasz/.local/go/bin:/home/lukasz/HOL/bin:/home/lukasz/.local/bin:/home/lukasz/.local/bin:/home/lukasz/dev/HOL/worktrees/isabelle-tactics/bin:/home/lukasz/.local/bin:/home/lukasz/.local/go/bin:/home/lukasz/HOL/bin:/home/lukasz/.local/bin:/home/lukasz/.local/bin:/home/lukasz/dev/HOL/repo/bin:/home/lukasz/.local/bin:/home/lukasz/.local/go/bin:/home/lukasz/HOL/bin:/home/lukasz/.local/bin:/home/lukasz/.local/bin:/home/lukasz/.local/bin:/home/lukasz/.local/go/bin:/home/lukasz/HOL/bin:/home/lukasz/.local/bin:/home/lukasz/.nvm/versions/node/v25.9.0/bin:/home/lukasz/.local/bin:/home/lukasz/.local/go/bin:/home/lukasz/HOL/bin:/home/lukasz/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/home/lukasz/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "HOLDIR": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "LC_ALL": "C",
+    "TZ": "UTC"
+  },
+  "tools": {
+    "bin/hol": {
+      "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+      "bytes": 43099640
+    },
+    "bin/hol.state0": {
+      "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+      "bytes": 20469336
+    },
+    "bin/hol.state.min": {
+      "sha256": "4f73a07180cf088c592828006584d2160b6cba928e972f5377444ff263a1adea",
+      "bytes": 7623888
+    },
+    "bin/Holmake": {
+      "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+      "bytes": 3409600
+    },
+    "holproject.toml": {
+      "sha256": "e5edfdfa427248d29611b2da398f8f3e438868ffed563b6528e4cd14e797d72a",
+      "bytes": 2747
+    },
+    "/usr/local/bin/poly": {
+      "sha256": "1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311",
+      "bytes": 17381496
+    }
+  },
+  "inputs": {
+    "src/simp/tests/compatibility/run_paired.py": {
+      "sha256": "ee7a69e483e732f5d64a909ba14f53643da61b31e824ec45cd75b54605f47087",
+      "bytes": 35113
+    },
+    "src/simp/tests/compatibility/test_runner.py": {
+      "sha256": "650e1679435bd9a10ba804141b69b7d68abb47c9026cacc620ad1eee589b2e71",
+      "bytes": 7375
+    },
+    "src/simp/tests/compatibility/Holmakefile": {
+      "sha256": "a6f3a0c434cfd0de3de6159dababfebe7bbd0ddb75e76432624d8ad40ae52ce1",
+      "bytes": 994
+    },
+    "src/simp/tests/compatibility/SCHEMA.md": {
+      "sha256": "58992a8671ac52ea2b0c68ccd0a03f5e65b3420197c70ee5e6c0a86eec7361dc",
+      "bytes": 13861
+    },
+    "src/simp/tests/compatibility/paired/Holmakefile": {
+      "sha256": "81f45c792e78bd184e1cdef836a66cd6cadccd35d546729730b64380a38c44cf",
+      "bytes": 241
+    },
+    "src/simp/tests/compatibility/paired/CheckSupport.sml": {
+      "sha256": "29ddc7757b9b7836f5e52730f56fec2ee7714aa7d49afdb8e5ba56fd80443ecc",
+      "bytes": 208
+    },
+    "src/simp/tests/compatibility/paired/Deferred.sml": {
+      "sha256": "ed36fcce0415ed72169e5748730ee666740c850ad5bb936bf1eb8145aa789a42",
+      "bytes": 136
+    },
+    "src/simp/tests/compatibility/paired/Paired.sml": {
+      "sha256": "a930932897e0728e72c048124b0fce7f038bed469e062affa8ebc23a7c8e47b7",
+      "bytes": 1043
+    },
+    "src/simp/tests/compatibility/paired/runner.sml": {
+      "sha256": "ba2112e5aa2a5df9b1b20be9a86a73ce14ad1990ff5106d81afa60c4a5284542",
+      "bytes": 1783
+    },
+    "src/simp/tests/compatibility/paired/selftest.sml": {
+      "sha256": "41583212047d466d897c4f9478b00ce20cefa7d0fb8d98b659c8ffc29a085aa5",
+      "bytes": 2125
+    },
+    "src/simp/tests/compatibility/inputs/develop/Traverse.sig": {
+      "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+      "bytes": 5286
+    },
+    "src/simp/tests/performance/review-20261021/abicheck.sml": {
+      "sha256": "0326ab4522fed21de2253eaa0a511556162abf4577bc39459587bc15a6f6a75f",
+      "bytes": 5435
+    },
+    "src/simp/tests/compatibility/public_contracts.py": {
+      "sha256": "fda00aa8e01ef2335b8205cb0791aa5c9cfa380ef33c154ab1653305bc1a8323",
+      "bytes": 6341
+    },
+    "src/simp/tests/compatibility/test_public_contracts.py": {
+      "sha256": "d72d7298b6975f3a2eb47939ac9c134c6285b7087e69f31042b31e04d7c77c8d",
+      "bytes": 7081
+    },
+    "src/simp/tests/compatibility/public/PublicCond_rewr.sml": {
+      "sha256": "41cb7c1bac39e6fa087a0ff0715e4a843ee7208c79d6c043dd96e33bb9a59419",
+      "bytes": 1140
+    },
+    "src/simp/tests/compatibility/public/PublicCongLib.sml": {
+      "sha256": "8506289f4c94126f406ef231dc6aede86aab9655b741970e10b14a307ca1d715",
+      "bytes": 1018
+    },
+    "src/simp/tests/compatibility/public/PublicOpening.sml": {
+      "sha256": "da7600e7f3fff4a124afdc25368034c9a6c6342650c94e110a63af95284cd800",
+      "bytes": 814
+    },
+    "src/simp/tests/compatibility/public/PublicSimpLib.sml": {
+      "sha256": "74e688c2e0be8917d2dead0c60c3861241aa6f05d7aa55ef93008fdba0f764ea",
+      "bytes": 2114
+    },
+    "src/simp/tests/compatibility/public/PublicThmAttribute.sml": {
+      "sha256": "bfe46c6400ca4d399a29b0f80e5237c2450cf896940d24a5176d4f610eb5f07a",
+      "bytes": 2342
+    },
+    "src/simp/tests/compatibility/public/PublicTraverseAscription.sml": {
+      "sha256": "ea5d655e811b448797963bc41349d5acf0f3ba492d682e29d407126e117600d5",
+      "bytes": 186
+    },
+    "src/simp/tests/compatibility/public/PublicTraverseClient.sml": {
+      "sha256": "2a8c4933dcc9851b18461966ded445d2ac18b2f78417ccfa4292a601262c5d4e",
+      "bytes": 3079
+    },
+    "src/simp/tests/compatibility/public/PublicTraverseFunctor.sml": {
+      "sha256": "b92d2cdbe718a1d2ca9e42685b92c5f6dc919f52d51e79c76cff0bbd1ae90f63",
+      "bytes": 419
+    },
+    "src/simp/tests/compatibility/public/PublicTravrules.sml": {
+      "sha256": "1f1b57477b41f07d6aba9628632863bff575d7e66947bf120249ed7168b67128",
+      "bytes": 1317
+    },
+    "src/simp/tests/compatibility/public/clients.json": {
+      "sha256": "86443243263502d0bac5f78bcdfe236a59beb2d7d115a4a07d060ac5475444f1",
+      "bytes": 1409
+    },
+    "src/simp/tests/compatibility/public/references.json": {
+      "sha256": "21ff0143d8e3272e8730f814f538c0ba787e965ec4f071c2ad3c97d495a3d9f3",
+      "bytes": 1977
+    },
+    "src/simp/tests/compatibility/public/surface.json": {
+      "sha256": "9b756972422009378231540c9e5b1d22f91f3bee2461fc1a06e754ae746f6372",
+      "bytes": 4641
+    },
+    "src/simp/tests/compatibility/inputs/develop/Cond_rewr.sig": {
+      "sha256": "40d92a9c084ae43b90276a68c3bae036b295cfd8c71062059ee7342d44e95859",
+      "bytes": 1977
+    },
+    "src/simp/tests/compatibility/inputs/develop/Opening.sig": {
+      "sha256": "195391d1e406abf82b45a12790be91936bb222dd8b2a87cbc2aa17300837ad6d",
+      "bytes": 3845
+    },
+    "src/simp/tests/compatibility/inputs/develop/ThmAttribute.sig": {
+      "sha256": "eb33b7107481155d4421db7542abedff166a290a004f82cce3a89004f048b3b3",
+      "bytes": 1502
+    },
+    "src/simp/tests/compatibility/inputs/develop/Travrules.sig": {
+      "sha256": "1bfcce2a17b0289f251d9fad73fa314f371c6e671e7809c35aad3af454c840df",
+      "bytes": 3864
+    },
+    "src/simp/tests/compatibility/inputs/develop/congLib.sig": {
+      "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+      "bytes": 5909
+    },
+    "src/simp/tests/compatibility/inputs/develop/simpLib.sig": {
+      "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666",
+      "bytes": 10369
+    }
+  },
+  "selections": {
+    "baseline": {
+      "requested_ref": "cccaa27d7099cbadc886983020cbe745db7793f3",
+      "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+      "private": "/tmp/claude/simp-paired-_e0735vv/baseline",
+      "sources": [
+        {
+          "git_path": "src/1/ThmAttribute.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/ThmAttribute.sig",
+          "git_blob": "1556c516004b961b4dcd39db4e8fac66eda400d2",
+          "sha256": "eb33b7107481155d4421db7542abedff166a290a004f82cce3a89004f048b3b3",
+          "bytes": 1502
+        },
+        {
+          "git_path": "src/1/ThmAttribute.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/ThmAttribute.sml",
+          "git_blob": "be41858048997588112d5ae19a8dcb273fd01a3b",
+          "sha256": "67120cd404be4b86750e0aa16e6913b4b89532f37e5240a26f697019ffcccd14",
+          "bytes": 7472
+        },
+        {
+          "git_path": "src/simp/src/Cache.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Cache.sig",
+          "git_blob": "fe9d970ac963a44f63e2900e09f46d4ec4850d8e",
+          "sha256": "2a77a34f146badd3a58bac60026e9cbc54e1f79cc022e4bd3e8145fb936cc892",
+          "bytes": 2748
+        },
+        {
+          "git_path": "src/simp/src/Cache.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Cache.sml",
+          "git_blob": "b4c68b797d0495910d2f65e580a4798acfcb2f3f",
+          "sha256": "fab1bb74537cbf94950c2912ecf52825de787cd8c2f95ddad72855a4fffb77fa",
+          "bytes": 23147
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Cond_rewr.sig",
+          "git_blob": "7d79866a5b57a97a2a898d9645b3aa62a6acf43e",
+          "sha256": "40d92a9c084ae43b90276a68c3bae036b295cfd8c71062059ee7342d44e95859",
+          "bytes": 1977
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Cond_rewr.sml",
+          "git_blob": "7df15d67b3c3e427e530639b5d16627346ed41fc",
+          "sha256": "b9b4307779ab9e14f90cbabef048b31d46cff05d45cb3659ba481887a23f895d",
+          "bytes": 19977
+        },
+        {
+          "git_path": "src/simp/src/Opening.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Opening.sig",
+          "git_blob": "e1a0e727dc071eb06884828b98c01cab529e0799",
+          "sha256": "195391d1e406abf82b45a12790be91936bb222dd8b2a87cbc2aa17300837ad6d",
+          "bytes": 3845
+        },
+        {
+          "git_path": "src/simp/src/Opening.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Opening.sml",
+          "git_blob": "a1e21ed229719470eefa85695009fc09fff36bd2",
+          "sha256": "0bca9045e8c824a12d25a253c068b0931b47479468d0b6740644d5e1dfd7d54e",
+          "bytes": 11187
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Satisfy.sig",
+          "git_blob": "26eaf638b891fe053f8b022ba13d721844e43f59",
+          "sha256": "5a235e1a03671fe9da52ded986d6c296234f8f7cd59686ba906b6527dde49054",
+          "bytes": 2078
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Satisfy.sml",
+          "git_blob": "5f6ef5bd585edfadbea87402fa260b69e368ef50",
+          "sha256": "794daf056fe40485da0239d92c37faab82f019b9ea3320a055225dcfc43e7841",
+          "bytes": 5862
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/SatisfySimps.sig",
+          "git_blob": "9b410118c720250bb1ae50f785c5a9e539f7527d",
+          "sha256": "c8a185b80052821facb9d9e76fe0ebd23c035f3f59052b85459cdd3c8a1c66a3",
+          "bytes": 120
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/SatisfySimps.sml",
+          "git_blob": "3ea0e548635f097c56602517d00a97a52f084269",
+          "sha256": "f4a33ecd65a74932db42ac9b28de8cfa1c872b94a9c6ddeb8aa6d7d6dcb8a968",
+          "bytes": 489
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Sequence.sig",
+          "git_blob": "b38b58dc28b41c725cff79a72418dcc269e410bd",
+          "sha256": "c3230ffb1519bccf5853354155dfb829f630ba9b019d4827a328e73585b8adcd",
+          "bytes": 1591
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Sequence.sml",
+          "git_blob": "b58c5005dfacee520e4b3302fa4de8599437aaf3",
+          "sha256": "26ea613a5c1ea4ba58e47ee29dde42cd2b0ec1ccdc450113f5bc4897baa15151",
+          "bytes": 6123
+        },
+        {
+          "git_path": "src/simp/src/Trace.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Trace.sig",
+          "git_blob": "9a07d43a5f9fac5ecf44f6f7e6f1becd9c4c48d0",
+          "sha256": "66764f790df3c5ac671c063bd0ddf8316bd710f6f8e1c71bb2e7520f44baaa90",
+          "bytes": 746
+        },
+        {
+          "git_path": "src/simp/src/Trace.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Trace.sml",
+          "git_blob": "6735cef75f308d1707c3c71373a83ac77f873ac6",
+          "sha256": "b2fad49313ed4dded54eb26f3146a8d69e237c5ac52b6ec08926ec8cde95c321",
+          "bytes": 2881
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Traverse.sig",
+          "git_blob": "620c95336b8446c7633e1fb92c6b94089bb03fea",
+          "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+          "bytes": 5286
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Traverse.sml",
+          "git_blob": "1d0f300cf42123f05a6365ddc2f4f7db210f4032",
+          "sha256": "06138c3ad708bd5993718ff0e7d6d7e9a37d4d5ed9c4e72955e6795aeb201d31",
+          "bytes": 11575
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Travrules.sig",
+          "git_blob": "120557a95f09ce2fea2155200dbbd2935ad0ac91",
+          "sha256": "1bfcce2a17b0289f251d9fad73fa314f371c6e671e7809c35aad3af454c840df",
+          "bytes": 3864
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Travrules.sml",
+          "git_blob": "0e2bd6ec5a3349d5784cf8e24478e5cfbd2b5b97",
+          "sha256": "edd36ae4fcf0bac39a2134549bd0cbd2e38102af1c051d46dea4fa7d0c2fab2f",
+          "bytes": 3754
+        },
+        {
+          "git_path": "src/simp/src/Unify.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Unify.sig",
+          "git_blob": "097e2b8ed58e213c5e38aad6edff50306e43518b",
+          "sha256": "5fc292158f2346b7b9bc0625a87357dab1bf53ca76ff4c09bead79969b2cca0e",
+          "bytes": 750
+        },
+        {
+          "git_path": "src/simp/src/Unify.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Unify.sml",
+          "git_blob": "d15814e01ac9b614a1b0ec6a3cdf97f349ca57f5",
+          "sha256": "5aeef9e9919dd64b1ca43798a2f36ac0f83e1ad9406e299f959a53f948956630",
+          "bytes": 3286
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Unwind.sig",
+          "git_blob": "13b36db8484d81fa625d3d0ae1d2dd8e1fa597ce",
+          "sha256": "3c9848bf5b13ea82b758142b31f57b3c6da375dcf886d109b4330e7468700a0c",
+          "bytes": 2733
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/Unwind.sml",
+          "git_blob": "de74b474731b07f2773d2335810d3353086c0eec",
+          "sha256": "b1e06bcba8d3e630d71980024f7cb22054327e89602d3b9e1d0afb9ac1f8ffd4",
+          "bytes": 19350
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/boolSimps.sig",
+          "git_blob": "0a86c6179a0964a5ea8c83003fa60ffff9d4f86a",
+          "sha256": "8a2eda5d2240ad6a9961cf019bb27532d54b8601ffa85e38c5378c959c5bf4ef",
+          "bytes": 3845
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/boolSimps.sml",
+          "git_blob": "d436206ee6e55a8c2050ce56e09107de737eeebc",
+          "sha256": "e2762de1dd76120dbe1381526e2730144f164d4f5c9e821937a880dc0b04bdd7",
+          "bytes": 15037
+        },
+        {
+          "git_path": "src/simp/src/boolSimpsContextScript.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/boolSimpsContextScript.sml",
+          "git_blob": "29fb0459696b638885e86c54ff78eab2304eccd4",
+          "sha256": "099f899a06531cc7e7c5e57aa4d4accce1753179faec1a12510cffb413f570d0",
+          "bytes": 1192
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/combinSimps.sig",
+          "git_blob": "00ab56a96157bdeafb8dc2984af93c1008c84392",
+          "sha256": "a89092ad9d7c0484ff71c0886883181e0870248b22b20cda9bbedb6da8c2ec3b",
+          "bytes": 68
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/combinSimps.sml",
+          "git_blob": "5074aae15f0ccd84b478e0502c85c0f1593ffd4d",
+          "sha256": "1ea352acf191d5143593b5df093eb39a1431bf031c3b1ea655722a881c1c5a9d",
+          "bytes": 461
+        },
+        {
+          "git_path": "src/simp/src/congLib.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/congLib.sig",
+          "git_blob": "8deb93c0649f51ab8e96e0a51642466acf0b88f8",
+          "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+          "bytes": 5909
+        },
+        {
+          "git_path": "src/simp/src/congLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/congLib.sml",
+          "git_blob": "e357326f63ee7201d3dac57f4153efe9c2bfba68",
+          "sha256": "93ac1108d48c01830f076071b60e221bc2af8eac5e2a19dcf439079be7290582",
+          "bytes": 10354
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/BloomApprox.sig",
+          "git_blob": "148e8609bfed5259608a13ac3ec224a1926338a4",
+          "sha256": "3ddae79c1edac24dbf3ca28bd2d1a60cb117c865da5fc6d3bb52b5a98ca8f98d",
+          "bytes": 532
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/BloomApprox.sml",
+          "git_blob": "c3f49b438b6e84eff48ff7ea861e868c289b751e",
+          "sha256": "8cbc34d0ebe74442c8366e9ecaa0897c43c5f4db113e17d3a5bed5924654e7f4",
+          "bytes": 1537
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/pureSimps.sig",
+          "git_blob": "47d573b0a43dcd204dba59fb283135775d2e5128",
+          "sha256": "6b54e2e5dea6922d38806949006f70159dc3e0c193f1284e51398b43d2b8377a",
+          "bytes": 95
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/pureSimps.sml",
+          "git_blob": "6218f45c8cbd7cadc089077d618b3c84abf889fb",
+          "sha256": "89b7b98b8e9d9fd616dcd9669524c168cf6714529924aa78d06ebd9777dfcf71",
+          "bytes": 279
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/simpLib.sig",
+          "git_blob": "26558fd43811a84f1b98b625230aae3fef3d97ad",
+          "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666",
+          "bytes": 10369
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/baseline/simpLib.sml",
+          "git_blob": "02914a4385d1ab8eedbe84ae31cbb080ebd80f9f",
+          "sha256": "ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd",
+          "bytes": 44419
+        }
+      ],
+      "fixture_products": {
+        "PublicThmAttribute.sml": {
+          "sha256": "bfe46c6400ca4d399a29b0f80e5237c2450cf896940d24a5176d4f610eb5f07a",
+          "bytes": 2342
+        },
+        "LegacyCongLib.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "selftest.sml": {
+          "sha256": "41583212047d466d897c4f9478b00ce20cefa7d0fb8d98b659c8ffc29a085aa5",
+          "bytes": 2125
+        },
+        "SignatureCheck.sml": {
+          "sha256": "c2a1ea9d8d5690c5c6c91708153c259f639c464d1dd64febc14762d09e0dc785",
+          "bytes": 5437
+        },
+        "LegacyTraverse.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "CheckSupport.sml": {
+          "sha256": "29ddc7757b9b7836f5e52730f56fec2ee7714aa7d49afdb8e5ba56fd80443ecc",
+          "bytes": 208
+        },
+        "PublicOpening.sml": {
+          "sha256": "da7600e7f3fff4a124afdc25368034c9a6c6342650c94e110a63af95284cd800",
+          "bytes": 814
+        },
+        "PublicTraverseAscription.sml": {
+          "sha256": "ea5d655e811b448797963bc41349d5acf0f3ba492d682e29d407126e117600d5",
+          "bytes": 186
+        },
+        "Deferred.sml": {
+          "sha256": "ed36fcce0415ed72169e5748730ee666740c850ad5bb936bf1eb8145aa789a42",
+          "bytes": 136
+        },
+        "LegacyThmAttribute.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "LegacyThmAttribute.sig": {
+          "sha256": "9ae3e93266a1128e0035ca63c71fa0bfe455c2f4b8a15b41e1262ac66a0a3ce8",
+          "bytes": 1508
+        },
+        "PublicSimpLib.sml": {
+          "sha256": "74e688c2e0be8917d2dead0c60c3861241aa6f05d7aa55ef93008fdba0f764ea",
+          "bytes": 2114
+        },
+        "LegacyCond_rewr.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "PublicTraverseClient.sml": {
+          "sha256": "2a8c4933dcc9851b18461966ded445d2ac18b2f78417ccfa4292a601262c5d4e",
+          "bytes": 3079
+        },
+        "runner.sml": {
+          "sha256": "ba2112e5aa2a5df9b1b20be9a86a73ce14ad1990ff5106d81afa60c4a5284542",
+          "bytes": 1783
+        },
+        "Holmakefile": {
+          "sha256": "ff6b2180c657963536a0b3d203d290b2b4900d24b1152d934dd722eb7df00d58",
+          "bytes": 916
+        },
+        "LegacyOpening.sig": {
+          "sha256": "ea57c2fba47a3620587d5a793b2f8b2dad922a358b7748dd21608595d978f337",
+          "bytes": 3851
+        },
+        "LegacyTraverse.sig": {
+          "sha256": "3810731b4330ab043cac9062069048f4555df04cc5bbc2324b87c8771d67ebb1",
+          "bytes": 5292
+        },
+        "LegacySimpLib.sig": {
+          "sha256": "505e5b49550892e1dafc3253822673fa1843e15179f57cb4ec0ca21d534023e4",
+          "bytes": 10375
+        },
+        "PublicTravrules.sml": {
+          "sha256": "1f1b57477b41f07d6aba9628632863bff575d7e66947bf120249ed7168b67128",
+          "bytes": 1317
+        },
+        "LegacyCongLib.sig": {
+          "sha256": "8f7c40250218a5479d38e47ba7b3d5a613a3459bb129b84f3c5a71bffa1303a1",
+          "bytes": 5915
+        },
+        "PublicTraverseFunctor.sml": {
+          "sha256": "b92d2cdbe718a1d2ca9e42685b92c5f6dc919f52d51e79c76cff0bbd1ae90f63",
+          "bytes": 419
+        },
+        "LegacyOpening.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "PublicCongLib.sml": {
+          "sha256": "8506289f4c94126f406ef231dc6aede86aab9655b741970e10b14a307ca1d715",
+          "bytes": 1018
+        },
+        "PublicCond_rewr.sml": {
+          "sha256": "41cb7c1bac39e6fa087a0ff0715e4a843ee7208c79d6c043dd96e33bb9a59419",
+          "bytes": 1140
+        },
+        "LegacyCond_rewr.sig": {
+          "sha256": "24116741bababcf2d0222ffae8f34cec4b78cd25e6f3047bdc4a7cfb5d1f560c",
+          "bytes": 1983
+        },
+        "Paired.sml": {
+          "sha256": "a930932897e0728e72c048124b0fce7f038bed469e062affa8ebc23a7c8e47b7",
+          "bytes": 1043
+        },
+        "LegacyTravrules.sig": {
+          "sha256": "6631cb96453946909e176bfe42f3510ab860e19c3f22fe5d3e906b456a90b041",
+          "bytes": 3870
+        },
+        "LegacySimpLib.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "LegacyTravrules.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        }
+      },
+      "build_exit": 0,
+      "launcher": "#!/bin/sh\nset -e\n/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol --gcthreads=1 run --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0  runner\nexit 0\n",
+      "attribute_holmakefile": "HOLHEAP = $(HOLDIR)/bin/hol.state.min\nEXTRA_CLEANS = paired.exe\n\n# Only runner.uo is linked: the test .uo products defer elaboration to run.\npaired.exe: runner.uo CheckSupport.uo selftest.uo SignatureCheck.uo Deferred.uo\n\t$(HOLMOSMLC) -o $@ $<\n\nPublicThmAttribute.uo: LegacyThmAttribute.uo ThmAttribute.uo\n\nPublicCond_rewr.uo: LegacyCond_rewr.uo Cond_rewr.uo\n\nPublicOpening.uo: LegacyOpening.uo Opening.uo\n\nPublicTraverseAscription.uo: LegacyTraverse.uo Traverse.uo\n\nPublicTraverseFunctor.uo: LegacyTraverse.uo Traverse.uo\n\nPublicTravrules.uo: LegacyTravrules.uo Travrules.uo\n\nPublicSimpLib.uo: LegacySimpLib.uo simpLib.uo\n\nPublicCongLib.uo: LegacyCongLib.uo congLib.uo\n\npaired.exe: PublicThmAttribute.uo PublicCond_rewr.uo PublicOpening.uo PublicTravrules.uo PublicSimpLib.uo PublicCongLib.uo PublicTraverseAscription.uo PublicTraverseFunctor.uo PublicTraverseClient.uo\nattribute.exe: runner.uo\n\t$(HOLMOSMLC) -o $@ $<\n",
+      "attribute_launcher": "#!/bin/sh\nset -e\n/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol --gcthreads=1 run --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state.min  runner\nexit 0\n",
+      "products": {
+        "attribute.exe": {
+          "sha256": "045edf8645e120ccc9832e55390400806cd2843aeff8288894fb78afee1d46be",
+          "bytes": 171
+        },
+        "paired.exe": {
+          "sha256": "ba70c3f59cae477460bd4b3c67b6ca21cb7e784ea6e9d8cc377b67dc0c4afafa",
+          "bytes": 168
+        },
+        ".hol/objs/CheckSupport.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/CheckSupport.uo": {
+          "sha256": "4db3818455234acee03e4a6b5baf3d66e77373e8044b41e04b472fd3a384da55",
+          "bytes": 215
+        },
+        ".hol/objs/Cond_rewr.ui": {
+          "sha256": "907902d40ac6f6d0f7a75b5380bc9ffefc208afd9f350db22943caa12bb2cf73",
+          "bytes": 190
+        },
+        ".hol/objs/Cond_rewr.uo": {
+          "sha256": "4180f3ac5fc9ca3321cd206d491501fe33a801c50ff482d1bd97f592a3bf8d00",
+          "bytes": 523
+        },
+        ".hol/objs/Deferred.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/Deferred.uo": {
+          "sha256": "32569e2d4c4e2706093e332126cff64a35f47827efe5f24c9617212378cb80cb",
+          "bytes": 131
+        },
+        ".hol/objs/LegacyCond_rewr.ui": {
+          "sha256": "8d238ac886bd03cf48e57bd117af6800121cdf46911e5291727233ff4b6b8be6",
+          "bytes": 202
+        },
+        ".hol/objs/LegacyCond_rewr.uo": {
+          "sha256": "9e97ffc7f9a68c551d1a22564455dfb4e3a31987ebb77fed708a1ddb8fda0a33",
+          "bytes": 203
+        },
+        ".hol/objs/LegacyCongLib.ui": {
+          "sha256": "9ffc7e5001506fe6b964d6570cddabbe008931e228d6c51b95a958922aa9331c",
+          "bytes": 318
+        },
+        ".hol/objs/LegacyCongLib.uo": {
+          "sha256": "a1299a5b5ff05a6c42e0c9f7fac2d7e317e357252b51b9c94db9e6777ff13980",
+          "bytes": 197
+        },
+        ".hol/objs/LegacyOpening.ui": {
+          "sha256": "fbee00056e6bec70162e3e3c3e341b994dd9bf167b596ae28043f8df83805b41",
+          "bytes": 165
+        },
+        ".hol/objs/LegacyOpening.uo": {
+          "sha256": "37d44f0256e4e600c787bd1500c6b114f2fae8c218110de638f9a4fbdf47e600",
+          "bytes": 197
+        },
+        ".hol/objs/LegacySimpLib.ui": {
+          "sha256": "6c083b246dcebcc74a29417a6906ea192031ac430a73643b885cf31059ca24bd",
+          "bytes": 381
+        },
+        ".hol/objs/LegacySimpLib.uo": {
+          "sha256": "436d94ae3e27615108589625f6efaa7ce83f49058c709504d64da1674b048c84",
+          "bytes": 197
+        },
+        ".hol/objs/LegacyThmAttribute.ui": {
+          "sha256": "4f892065f4f876febbc7c0bab1fccd0ba4dfcdda53d981eba7582a206e459a35",
+          "bytes": 172
+        },
+        ".hol/objs/LegacyThmAttribute.uo": {
+          "sha256": "1a48629ef927272932d09d3c86050f1ac4d52fb609496e321d12e278091aaa98",
+          "bytes": 212
+        },
+        ".hol/objs/LegacyTraverse.ui": {
+          "sha256": "d7f199ad2e38704bc7897c0834498bb013c64ccfd84083644b40bd8df3122547",
+          "bytes": 219
+        },
+        ".hol/objs/LegacyTraverse.uo": {
+          "sha256": "a6e2c06ed5e6ef88f11f2c84cefbfecdbd4d459d3cf722638780f33e0fe3680f",
+          "bytes": 200
+        },
+        ".hol/objs/LegacyTravrules.ui": {
+          "sha256": "dca340b749a6141d80f3cdae52d88fda8602a33bda9b1555e7984927550704fa",
+          "bytes": 219
+        },
+        ".hol/objs/LegacyTravrules.uo": {
+          "sha256": "715b455a8d507c542f5a1fbc366920eec37f3f11edf478784600595fa09604c8",
+          "bytes": 203
+        },
+        ".hol/objs/Opening.ui": {
+          "sha256": "147b675977f92fae1be43410a065bb6ca1ecc9c065cd04e022d66c18e20c1844",
+          "bytes": 153
+        },
+        ".hol/objs/Opening.uo": {
+          "sha256": "aa5b4bc726072eb6be9f2df21c74f9d315a9ced3d6df411e78f7119e4593a9b1",
+          "bytes": 375
+        },
+        ".hol/objs/Paired.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/Paired.uo": {
+          "sha256": "56670e6ef22ddb7c8ee5e4077cf1e66c984e2295a3fbaf1b9ef1a4ffd06cce9d",
+          "bytes": 127
+        },
+        ".hol/objs/PublicCond_rewr.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicCond_rewr.uo": {
+          "sha256": "40e081676e5bdfc84bc2336b49d7c4f9ec96b11721da365df30fff82bd3912fc",
+          "bytes": 441
+        },
+        ".hol/objs/PublicCongLib.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicCongLib.uo": {
+          "sha256": "f838fb0d6183fafc4405660d7a2cb215be9d2c6175f104a025a431eaf8b9cbca",
+          "bytes": 452
+        },
+        ".hol/objs/PublicOpening.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicOpening.uo": {
+          "sha256": "68cf452f55cc3938afa7d2954ec911febc000baada791d1dcd0c9045bbd790ba",
+          "bytes": 376
+        },
+        ".hol/objs/PublicSimpLib.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicSimpLib.uo": {
+          "sha256": "cb69e44c14f8e4610ba25f1a25f24d09ec8c784ba66b4025d5b0f4a3b2aa9e11",
+          "bytes": 536
+        },
+        ".hol/objs/PublicThmAttribute.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicThmAttribute.uo": {
+          "sha256": "0cb2cb3980a8057a050f58b632e1ba46ca1e512322795d0bec5ac6d525263625",
+          "bytes": 365
+        },
+        ".hol/objs/PublicTraverseAscription.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTraverseAscription.uo": {
+          "sha256": "bd58173b4101d3409d19bb24a8063bab91b44d8d1f1d61fca3aaafd261477d91",
+          "bytes": 320
+        },
+        ".hol/objs/PublicTraverseClient.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTraverseClient.uo": {
+          "sha256": "c793879351ee7baa647c75be670f588ccbfe2cb7364716997c3ad70493216370",
+          "bytes": 459
+        },
+        ".hol/objs/PublicTraverseFunctor.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTraverseFunctor.uo": {
+          "sha256": "01131db9fa6ac5d2569632cfbd8259255b5930e18bba2d85972e0994160ed82e",
+          "bytes": 314
+        },
+        ".hol/objs/PublicTravrules.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTravrules.uo": {
+          "sha256": "7040ea60e6d11ae75046f4a6e9029ab8a5277630e4f4168166571e3189c927bf",
+          "bytes": 434
+        },
+        ".hol/objs/SignatureCheck.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/SignatureCheck.uo": {
+          "sha256": "967ed0d8c539fed045cfb60470b834c4238349147e517ff5455b158b36510537",
+          "bytes": 319
+        },
+        ".hol/objs/ThmAttribute.ui": {
+          "sha256": "fa37c6e4fdff8ac0cee0f1c0281e686ac43cd0f0ce4140db9e0eab710a2bf35a",
+          "bytes": 160
+        },
+        ".hol/objs/ThmAttribute.uo": {
+          "sha256": "6f1735a16e5bcaf7fad5b79d347f7549205770f7d9e6ff07ed6d0c724ad4e3fe",
+          "bytes": 386
+        },
+        ".hol/objs/Trace.ui": {
+          "sha256": "61c43db9e54e20a2fe44b17c67b58172deb005a21a4cb1c7cfd79703a91bb67f",
+          "bytes": 175
+        },
+        ".hol/objs/Trace.uo": {
+          "sha256": "9a28525226b510890c37f4a333cc44c8254576e9cf240f70bc2775d74853e1fc",
+          "bytes": 464
+        },
+        ".hol/objs/Traverse.ui": {
+          "sha256": "4d296f4db27cedbf1bc4e21c7b74d588dfe116a6d444c3102ab00eb3eb62d9ae",
+          "bytes": 207
+        },
+        ".hol/objs/Traverse.uo": {
+          "sha256": "f82fffb22e1169ec8ee41db210fb9b6afc64e01a959fac3ce792e7c5846d3b32",
+          "bytes": 549
+        },
+        ".hol/objs/Travrules.ui": {
+          "sha256": "abe89fb853959b5f89e667eeaa7828e174781da1ad64d8d1954600c20a35596a",
+          "bytes": 207
+        },
+        ".hol/objs/Travrules.uo": {
+          "sha256": "f4af04e4bfbf47f93fa527043caccfce5d73f683b9d917c8ca68043ad74c745e",
+          "bytes": 433
+        },
+        ".hol/objs/Unwind.ui": {
+          "sha256": "e0d70dde48ed1e969dcc5399f4d1d821819bb1221fb6b73e0ce9138ed63a03e0",
+          "bytes": 151
+        },
+        ".hol/objs/Unwind.uo": {
+          "sha256": "c5e9d27ab1a6058f8842674f1c8b30a7f13029253a1d6da2adcda95d24ed4396",
+          "bytes": 448
+        },
+        ".hol/objs/boolSimps.ui": {
+          "sha256": "4c2346b7c3dea1f92ac2dc8a2988524a0f86dfdc607c0d513367fe95dbde86ce",
+          "bytes": 207
+        },
+        ".hol/objs/boolSimps.uo": {
+          "sha256": "0da199603352cc0b447f5f795d9482b80e91175015566a40dc1788d972b027a9",
+          "bytes": 791
+        },
+        ".hol/objs/boolSimpsContextTheory.cachekey": {
+          "sha256": "78d34eba0886cba7244002276982c68f0f3c4a876b1bb06fb202e1be4446a2e2",
+          "bytes": 41
+        },
+        ".hol/objs/boolSimpsContextTheory.dat": {
+          "sha256": "ff26c51cc53c38d1fa7164b38f54515af51a5f79754417ce839bcd1a4c971159",
+          "bytes": 1604
+        },
+        ".hol/objs/boolSimpsContextTheory.sig": {
+          "sha256": "84c20651d202f099b7c41ff462951f94e23d3457885a482db83fa0332e4b95a2",
+          "bytes": 214
+        },
+        ".hol/objs/boolSimpsContextTheory.sml": {
+          "sha256": "e5b72ec0dec5c5470de8ca0dabce81f8e0196543b318b4eed460d8f400dcb24c",
+          "bytes": 1186
+        },
+        ".hol/objs/boolSimpsContextTheory.ui": {
+          "sha256": "6b3fa4bdd21ab98f51f3e362ed48e87c568f1180eb6446f7cf67b1115a82bec3",
+          "bytes": 180
+        },
+        ".hol/objs/boolSimpsContextTheory.uo": {
+          "sha256": "eba0071eaa6b0bedc3671143ad4dd067c058e6679cfbde838b16c3c6b9c828d8",
+          "bytes": 422
+        },
+        ".hol/objs/congLib.ui": {
+          "sha256": "eced0d7aa83500d1f6fe4874dbf6375e297efb9c8e338cb110b1a4ae1cfc7501",
+          "bytes": 306
+        },
+        ".hol/objs/congLib.uo": {
+          "sha256": "858bdb7a952616b22e41712df7f74090a52bf62fbe20d10134445ac5812724f1",
+          "bytes": 689
+        },
+        ".hol/objs/pureSimps.ui": {
+          "sha256": "6283c40287700667fb496c0d77438c24892fe7eab3a6989c721b1b10b466f439",
+          "bytes": 183
+        },
+        ".hol/objs/pureSimps.uo": {
+          "sha256": "021aaa8aada313bf06cc545698f4c06094e8a72127d8e71831fc2c021f9a25ea",
+          "bytes": 287
+        },
+        ".hol/objs/runner.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/runner.uo": {
+          "sha256": "7bdbe2bebcd050dcce874466465da6f7a8d80c43e5badbebf642bcd57707efc6",
+          "bytes": 201
+        },
+        ".hol/objs/selftest.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/selftest.uo": {
+          "sha256": "4b54e28d70dfc9c271094569b57b1a103f19f6e728b82291cc6ac32e63889378",
+          "bytes": 493
+        },
+        ".hol/objs/simpLib.ui": {
+          "sha256": "61032cd062ff05799408c8d840461d47d110040d52183932f2fed67c415b6e1e",
+          "bytes": 369
+        },
+        ".hol/objs/simpLib.uo": {
+          "sha256": "557681185a26900f210621ab49253189663ee9aba9890cad23183fa01d025ca1",
+          "bytes": 1072
+        },
+        ".hol/make-deps/BloomApprox.sig.d": {
+          "sha256": "2ff323c5baa60263637485adb9f024564aea280af95c67b6525afa548894aa43",
+          "bytes": 74
+        },
+        ".hol/make-deps/BloomApprox.sml.d": {
+          "sha256": "8ded02d25c1ca0299659a32146448de04c2d70b580cde9f651f457e01891890d",
+          "bytes": 94
+        },
+        ".hol/make-deps/Cache.sig.d": {
+          "sha256": "88955f092043c13e08862c1fef5e341f1433d77961671a03130e72eb1e29b00a",
+          "bytes": 70
+        },
+        ".hol/make-deps/Cache.sml.d": {
+          "sha256": "a1e6988d5489472c2e8a767af22df0dbb906c45bb84fb15d9a2fbbca76fc6444",
+          "bytes": 694
+        },
+        ".hol/make-deps/CheckSupport.sml.d": {
+          "sha256": "06027125aa0c63d1a76ab05f42d2514d139f5830552f8b65e7ea9e9514b82857",
+          "bytes": 90
+        },
+        ".hol/make-deps/Cond_rewr.sig.d": {
+          "sha256": "b0da6c72d0fedac55539ac3468d2e210564b285562c04862af4bcbc3112770b5",
+          "bytes": 142
+        },
+        ".hol/make-deps/Cond_rewr.sml.d": {
+          "sha256": "825c8a9bf5f38f0fb9a98ae13df7150e307808cec7954607fe1e1490e656b215",
+          "bytes": 712
+        },
+        ".hol/make-deps/Deferred.sml.d": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/make-deps/LegacyCond_rewr.sig.d": {
+          "sha256": "549d50c17153c757a24aa32a5c2e29fc97f87a65ea5228603910e1bbaa2f4855",
+          "bytes": 148
+        },
+        ".hol/make-deps/LegacyCond_rewr.sml.d": {
+          "sha256": "5ac27d7bc1b30e9412a58f39e8d4b4d31b4291edb9601a6e957859a1c5244546",
+          "bytes": 40
+        },
+        ".hol/make-deps/LegacyCongLib.sig.d": {
+          "sha256": "462d0dfde379ae385d1df2aeaa5abc555de1ac9cd12697569caefcbbc6168e03",
+          "bytes": 114
+        },
+        ".hol/make-deps/LegacyCongLib.sml.d": {
+          "sha256": "12138a357de8059cc2080f18449a2b961a772d30000cefe1170788d052f09d96",
+          "bytes": 36
+        },
+        ".hol/make-deps/LegacyOpening.sig.d": {
+          "sha256": "9de9ae6cdf17469aba3957971aa639fd5059b4b1b2341a7c01f480498fe2bf15",
+          "bytes": 78
+        },
+        ".hol/make-deps/LegacyOpening.sml.d": {
+          "sha256": "59713540c4105dfe28d982578167e08ecabb83d6123d2f675483c69da983efb0",
+          "bytes": 36
+        },
+        ".hol/make-deps/LegacySimpLib.sig.d": {
+          "sha256": "70511451c25803132997e2330e28afaeabd8332e26858fa82dfaea11f752379c",
+          "bytes": 356
+        },
+        ".hol/make-deps/LegacySimpLib.sml.d": {
+          "sha256": "fe099e7376577af28c968ac482f88e961fc5929929f40edafb2d2c775220d927",
+          "bytes": 36
+        },
+        ".hol/make-deps/LegacyThmAttribute.sig.d": {
+          "sha256": "302d540a9f161ae034ae271fb73ca47c130e1ed9f1bb107045c14586235a0fef",
+          "bytes": 80
+        },
+        ".hol/make-deps/LegacyThmAttribute.sml.d": {
+          "sha256": "1d28b4d28eacb99038dddb4e25ae019f90952028e493b4ec38706735d4ecd1a5",
+          "bytes": 46
+        },
+        ".hol/make-deps/LegacyTraverse.sig.d": {
+          "sha256": "c53ab8c7b6e761139047c8b08f8c25b78cb39c1099f098b0df0ae7594a709a51",
+          "bytes": 92
+        },
+        ".hol/make-deps/LegacyTraverse.sml.d": {
+          "sha256": "62d00a29a9ea9f0f7b85727274f7d0f8bc0f42ffb3b5d85eb35201dd75dc31b7",
+          "bytes": 38
+        },
+        ".hol/make-deps/LegacyTravrules.sig.d": {
+          "sha256": "92db83a823563070f71ac71498fb66f8ff6a0464582549aeca1a638b132683e9",
+          "bytes": 91
+        },
+        ".hol/make-deps/LegacyTravrules.sml.d": {
+          "sha256": "d242294531c2e2249e402f4e82fdbcf381ea1adc402867a1279c136929981418",
+          "bytes": 40
+        },
+        ".hol/make-deps/Opening.sig.d": {
+          "sha256": "70f8adcdc3b1e28742bbab4b12787325613375c571ff744af97f085514db89d8",
+          "bytes": 72
+        },
+        ".hol/make-deps/Opening.sml.d": {
+          "sha256": "17639244437828ef023ecd75c4bacedac450a588ddc2044a6c9dd7fe5463f7b0",
+          "bytes": 391
+        },
+        ".hol/make-deps/Paired.sml.d": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/make-deps/PublicCond_rewr.sml.d": {
+          "sha256": "b113787e667f6425cba03f5b69ccf1772fbc48e8427899bb3373e8b810f4a02c",
+          "bytes": 343
+        },
+        ".hol/make-deps/PublicCongLib.sml.d": {
+          "sha256": "bfa946b187369c0929d225799581e6d8e98cef263abed321f673539993d07fa6",
+          "bytes": 188
+        },
+        ".hol/make-deps/PublicOpening.sml.d": {
+          "sha256": "fa39e5d783f2e761338734c479a1f6ea10b938c6079c4f53c2bbfef4aa7b57aa",
+          "bytes": 225
+        },
+        ".hol/make-deps/PublicSimpLib.sml.d": {
+          "sha256": "3cf9348531d546ef7ac511252d9c56bc5218a269deece09cb83d8e1876edc49a",
+          "bytes": 377
+        },
+        ".hol/make-deps/PublicThmAttribute.sml.d": {
+          "sha256": "b1a1f66dd0c90159a12db60c22d89eef6992b3158d3ba706889b46c716b4ed77",
+          "bytes": 153
+        },
+        ".hol/make-deps/PublicTraverseAscription.sml.d": {
+          "sha256": "212709971ff3cf64c6d54480b8b26ca2909c1e97e9eeead5d629fb3f53c075a0",
+          "bytes": 40
+        },
+        ".hol/make-deps/PublicTraverseClient.sml.d": {
+          "sha256": "c30347a92a79060b0757e8ea75cfab6506519bdc8ca40cf0598bba8d7b984255",
+          "bytes": 205
+        },
+        ".hol/make-deps/PublicTraverseFunctor.sml.d": {
+          "sha256": "f0b01ebbee2e788c68ce864c589729d7659a893011e477792592d071ad851b23",
+          "bytes": 37
+        },
+        ".hol/make-deps/PublicTravrules.sml.d": {
+          "sha256": "11798056586c4e4ca67a60d99e37b40dc94490fc97099327b0ff103b4c77c33f",
+          "bytes": 240
+        },
+        ".hol/make-deps/Satisfy.sig.d": {
+          "sha256": "f4475ef46a1908de6f86a7f704dd5ff078cf4541144119e9d9234b082eb5c564",
+          "bytes": 185
+        },
+        ".hol/make-deps/Satisfy.sml.d": {
+          "sha256": "f44e9810c2fca9ba5812063e695cca0c5d3abb4cc5bdc479f7ccaa5bd0e818d9",
+          "bytes": 236
+        },
+        ".hol/make-deps/SatisfySimps.sig.d": {
+          "sha256": "f776d5d7dc1589d68c374886093084272fccb85f9894fc6c4112290e51848a2d",
+          "bytes": 41
+        },
+        ".hol/make-deps/SatisfySimps.sml.d": {
+          "sha256": "6852a6baa58eef531b9fab5fb9619be65a65ebcd3515ee3d6cc19a5fb721ee4c",
+          "bytes": 124
+        },
+        ".hol/make-deps/Sequence.sig.d": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/make-deps/Sequence.sml.d": {
+          "sha256": "f54e9aac1a82653b9a566229a53b54751574f4188a6efd1ddf10a8ea2dd6411d",
+          "bytes": 147
+        },
+        ".hol/make-deps/SignatureCheck.sml.d": {
+          "sha256": "baf98a37bf9a4a77c038cb30fec34bbd0e625511c652e95b62d110d0b9f097d6",
+          "bytes": 114
+        },
+        ".hol/make-deps/ThmAttribute.sig.d": {
+          "sha256": "6fe2c588b24695bf25c6686b213b088264de91fbcfc6322e042a08e9bc874c98",
+          "bytes": 74
+        },
+        ".hol/make-deps/ThmAttribute.sml.d": {
+          "sha256": "0404fbc326cd4473d8df42d27751e2c342e62eb7c79278be50fca45e55fd74ef",
+          "bytes": 506
+        },
+        ".hol/make-deps/Trace.sig.d": {
+          "sha256": "7d53f04502cd9a490eb3110ec62e2ccb729d7be5c0e78b5b2eb89e40c50740ab",
+          "bytes": 131
+        },
+        ".hol/make-deps/Trace.sml.d": {
+          "sha256": "1b5dc23221ca1df9139ad879b03c97580b84d0a59b9f074c8ac2a11423c9dcec",
+          "bytes": 731
+        },
+        ".hol/make-deps/Traverse.sig.d": {
+          "sha256": "7a029d3ea9c2d5408e6c60343e7000c2f58ef95ca82be1620be5c3908e0ed7de",
+          "bytes": 86
+        },
+        ".hol/make-deps/Traverse.sml.d": {
+          "sha256": "bac8cbc8fc4a4809f0221e4f0ce466e8eda3a0a600cae30e1da7f08d6e25ad5d",
+          "bytes": 591
+        },
+        ".hol/make-deps/Travrules.sig.d": {
+          "sha256": "2af25e84932cccce2c835df1e3fb993f91fe8d87a8d337dbd91e1f37a137fc06",
+          "bytes": 85
+        },
+        ".hol/make-deps/Travrules.sml.d": {
+          "sha256": "6b9d3dd7dd7121c265994e11214e4ee6439ee9a8ed89d556c6a6219ae1a49cda",
+          "bytes": 408
+        },
+        ".hol/make-deps/Unify.sig.d": {
+          "sha256": "95639445070dba527ad877a55eaa273ec42ac1cc47e5675c3a6dbe2a7eace609",
+          "bytes": 70
+        },
+        ".hol/make-deps/Unify.sml.d": {
+          "sha256": "9227aba16f8055ab12d753243b8f7f81804addcaaae2c2bf1a1013a10af6a30d",
+          "bytes": 261
+        },
+        ".hol/make-deps/Unwind.sig.d": {
+          "sha256": "a96ea769865a3301027650d1875c121889c91127b4ae73b1fbf44488da736684",
+          "bytes": 71
+        },
+        ".hol/make-deps/Unwind.sml.d": {
+          "sha256": "827d9c5209335fe85befc8398b94499b79af986af2e36b174190b26d83ceb24f",
+          "bytes": 570
+        },
+        ".hol/make-deps/boolSimps.sig.d": {
+          "sha256": "961465930f36eafcf26cf6ca561a697865e49dc7aebd80817364d3f45e44a780",
+          "bytes": 85
+        },
+        ".hol/make-deps/boolSimps.sml.d": {
+          "sha256": "8ae1cc26b5205a5fa0b185d258005a0ab9d94127d617eb768ea54d2ad38c0c08",
+          "bytes": 1003
+        },
+        ".hol/make-deps/boolSimpsContextScript.sml.d": {
+          "sha256": "ea4441415ed7a1464bc76a9420c85f93d2835b55c3fe99c938b371d0b80ce560",
+          "bytes": 568
+        },
+        ".hol/make-deps/boolSimpsContextTheory.sig.d": {
+          "sha256": "92d19e501ff168ff4451ce1c5658aeb44e2bbfa5aea8707418301d1e8fae8993",
+          "bytes": 84
+        },
+        ".hol/make-deps/boolSimpsContextTheory.sml.d": {
+          "sha256": "af60715439cf8b42ca2c49054772b2f3291cc963bef38765e3d03a4d392e5aa6",
+          "bytes": 532
+        },
+        ".hol/make-deps/combinSimps.sig.d": {
+          "sha256": "d9533a1385dbb5a8b5da08eff2711b3ea57c0ab2f3a0fe4196da32ff35bdb744",
+          "bytes": 28
+        },
+        ".hol/make-deps/combinSimps.sml.d": {
+          "sha256": "2484ab1a8fa9f988669e55aac8849c73a1972af708093bbb66da3ca9e56905a2",
+          "bytes": 223
+        },
+        ".hol/make-deps/congLib.sig.d": {
+          "sha256": "a40c9b9d6b58caef289f804bc184cd7b77cb4f7740da91e5e77810458829b34e",
+          "bytes": 108
+        },
+        ".hol/make-deps/congLib.sml.d": {
+          "sha256": "8f6ba1d73ff854819201541dbdc5e108016c33dc872259e59cdded2cc16dfe80",
+          "bytes": 580
+        },
+        ".hol/make-deps/lastmaker": {
+          "sha256": "8c725b147bd9c158f64752ef1bc82d75a69b419e4b45fded83ee6d84d5233789",
+          "bytes": 54
+        },
+        ".hol/make-deps/pureSimps.sig.d": {
+          "sha256": "0bae04257cb20c1910a382fdb1667fc0e91bdfe2d40812a3e92d8e091bf22b8d",
+          "bytes": 26
+        },
+        ".hol/make-deps/pureSimps.sml.d": {
+          "sha256": "4e934308657d46c9e1ae862ec3de2c18bf76674ae3168147252c9e4aa1f9b8d6",
+          "bytes": 52
+        },
+        ".hol/make-deps/runner.sml.d": {
+          "sha256": "4d7f714be98b7c7029fc8d0f85f2fa167040d2658939371262886de789cc5eb4",
+          "bytes": 82
+        },
+        ".hol/make-deps/selftest.sml.d": {
+          "sha256": "e1322199c45c2634a513f0b12a8bb4be386b7533f702505fa8c4af4aae87b4b8",
+          "bytes": 539
+        },
+        ".hol/make-deps/simpLib.sig.d": {
+          "sha256": "a1f050df58ffd82d36a001b2abe6308c73b0470ffdd3eab4a85f316f112748ce",
+          "bytes": 350
+        },
+        ".hol/make-deps/simpLib.sml.d": {
+          "sha256": "c577db9855c8c744c690886223b388ea847fc7f1e08cb1ceb6a15d4e513c3fd3",
+          "bytes": 1632
+        }
+      }
+    },
+    "candidate": {
+      "requested_ref": "HEAD",
+      "revision": "8b1e8c69f5dd819d1fbe8b75cf5755f21b450499",
+      "private": "/tmp/claude/simp-paired-_e0735vv/candidate",
+      "sources": [
+        {
+          "git_path": "src/1/ThmAttribute.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/ThmAttribute.sig",
+          "git_blob": "f6dee4ff48c8c78ebf03c5cf28812c021659c2bf",
+          "sha256": "97b037c97681bb574442cf148506a97738dc2342285df9defdaf57c48aa77b1d",
+          "bytes": 1837
+        },
+        {
+          "git_path": "src/1/ThmAttribute.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/ThmAttribute.sml",
+          "git_blob": "09d0cb7d2923adbdcb1d8c0e0bc0c26e3bfa3af0",
+          "sha256": "f3e73a24b02284a185bd87cac5280083989e7d3b3ef4549356f5465fe53cb20d",
+          "bytes": 7600
+        },
+        {
+          "git_path": "src/simp/src/Cache.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Cache.sig",
+          "git_blob": "fe9d970ac963a44f63e2900e09f46d4ec4850d8e",
+          "sha256": "2a77a34f146badd3a58bac60026e9cbc54e1f79cc022e4bd3e8145fb936cc892",
+          "bytes": 2748
+        },
+        {
+          "git_path": "src/simp/src/Cache.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Cache.sml",
+          "git_blob": "b4c68b797d0495910d2f65e580a4798acfcb2f3f",
+          "sha256": "fab1bb74537cbf94950c2912ecf52825de787cd8c2f95ddad72855a4fffb77fa",
+          "bytes": 23147
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Cond_rewr.sig",
+          "git_blob": "8d1d460834542952c3499684b78fc152af7ad83e",
+          "sha256": "ec6701ea502555edde7b0d903e2893d4139b5a5e6decc26e781d83d8921e42b2",
+          "bytes": 4237
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Cond_rewr.sml",
+          "git_blob": "7de51b247d3415724b3e564224d8b9c57d152aed",
+          "sha256": "ede2360c41eb16468e93c717a20cb0503a4e28403b2d76e45e4a5926e92cec35",
+          "bytes": 23296
+        },
+        {
+          "git_path": "src/simp/src/Opening.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Opening.sig",
+          "git_blob": "951c5471959c7c9f4301596d485aec12c3d9d0fe",
+          "sha256": "4208a49bd1fe3b13325e421713130c5f9ba6d508dafb6bebcdad83a8811a3891",
+          "bytes": 3923
+        },
+        {
+          "git_path": "src/simp/src/Opening.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Opening.sml",
+          "git_blob": "82bbcd78aff77cefe3bacf3846069b5bce23e687",
+          "sha256": "79f0a21c775bcb5f3dbc8412f9a586f001d2cbe8ea2be701c5ca0d326e758df4",
+          "bytes": 15715
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Satisfy.sig",
+          "git_blob": "26eaf638b891fe053f8b022ba13d721844e43f59",
+          "sha256": "5a235e1a03671fe9da52ded986d6c296234f8f7cd59686ba906b6527dde49054",
+          "bytes": 2078
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Satisfy.sml",
+          "git_blob": "5f6ef5bd585edfadbea87402fa260b69e368ef50",
+          "sha256": "794daf056fe40485da0239d92c37faab82f019b9ea3320a055225dcfc43e7841",
+          "bytes": 5862
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/SatisfySimps.sig",
+          "git_blob": "9b410118c720250bb1ae50f785c5a9e539f7527d",
+          "sha256": "c8a185b80052821facb9d9e76fe0ebd23c035f3f59052b85459cdd3c8a1c66a3",
+          "bytes": 120
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/SatisfySimps.sml",
+          "git_blob": "3ea0e548635f097c56602517d00a97a52f084269",
+          "sha256": "f4a33ecd65a74932db42ac9b28de8cfa1c872b94a9c6ddeb8aa6d7d6dcb8a968",
+          "bytes": 489
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Sequence.sig",
+          "git_blob": "b38b58dc28b41c725cff79a72418dcc269e410bd",
+          "sha256": "c3230ffb1519bccf5853354155dfb829f630ba9b019d4827a328e73585b8adcd",
+          "bytes": 1591
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Sequence.sml",
+          "git_blob": "b58c5005dfacee520e4b3302fa4de8599437aaf3",
+          "sha256": "26ea613a5c1ea4ba58e47ee29dde42cd2b0ec1ccdc450113f5bc4897baa15151",
+          "bytes": 6123
+        },
+        {
+          "git_path": "src/simp/src/SplitData.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/SplitData.sig",
+          "git_blob": "d725f21324e088d5a261beb825c0b89812785340",
+          "sha256": "174ab18e90f0d1ab8e9f88c05bfa0a7e036075a392cc6fd330259eca4d3c4220",
+          "bytes": 472
+        },
+        {
+          "git_path": "src/simp/src/SplitData.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/SplitData.sml",
+          "git_blob": "c68df6e03b18723cd86a98122d951266a5a82851",
+          "sha256": "bfc574c5789a3ede0d9860a8a139346d6c5891071f5e6af0ebb3f81e6704ddce",
+          "bytes": 8399
+        },
+        {
+          "git_path": "src/simp/src/Trace.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Trace.sig",
+          "git_blob": "9a07d43a5f9fac5ecf44f6f7e6f1becd9c4c48d0",
+          "sha256": "66764f790df3c5ac671c063bd0ddf8316bd710f6f8e1c71bb2e7520f44baaa90",
+          "bytes": 746
+        },
+        {
+          "git_path": "src/simp/src/Trace.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Trace.sml",
+          "git_blob": "6735cef75f308d1707c3c71373a83ac77f873ac6",
+          "sha256": "b2fad49313ed4dded54eb26f3146a8d69e237c5ac52b6ec08926ec8cde95c321",
+          "bytes": 2881
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Traverse.sig",
+          "git_blob": "ce940c0daae72761f68f890d25377ae3131e5ad3",
+          "sha256": "e7384d575741ad5a5546afc95edfb0174ca50bcd0b35c4e1c1a99e863ac96e7d",
+          "bytes": 10760
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Traverse.sml",
+          "git_blob": "4cf19fe875a5169f1b323fc392ff4e4fa404b97a",
+          "sha256": "87ba07aeb225cd1a6432654627847a5d1fce1fc9ef4bcd8d387b0cb335cf3ab9",
+          "bytes": 37019
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Travrules.sig",
+          "git_blob": "610446feb4f7eba934088543529de08c55c6c45f",
+          "sha256": "f2ec7bb21a2015abade5b6a40fb6ddf1b577e4b5ff7ab76004a553a9a46ec31c",
+          "bytes": 3933
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Travrules.sml",
+          "git_blob": "dc7c8dde0cc0eca38be9554197e7821704216db3",
+          "sha256": "cadf58241d8b67bdd048ef0663b7dee47fc1f6d60b5d48fa595c8528f7acd6c0",
+          "bytes": 4169
+        },
+        {
+          "git_path": "src/simp/src/Unify.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Unify.sig",
+          "git_blob": "097e2b8ed58e213c5e38aad6edff50306e43518b",
+          "sha256": "5fc292158f2346b7b9bc0625a87357dab1bf53ca76ff4c09bead79969b2cca0e",
+          "bytes": 750
+        },
+        {
+          "git_path": "src/simp/src/Unify.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Unify.sml",
+          "git_blob": "d15814e01ac9b614a1b0ec6a3cdf97f349ca57f5",
+          "sha256": "5aeef9e9919dd64b1ca43798a2f36ac0f83e1ad9406e299f959a53f948956630",
+          "bytes": 3286
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Unwind.sig",
+          "git_blob": "13b36db8484d81fa625d3d0ae1d2dd8e1fa597ce",
+          "sha256": "3c9848bf5b13ea82b758142b31f57b3c6da375dcf886d109b4330e7468700a0c",
+          "bytes": 2733
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/Unwind.sml",
+          "git_blob": "de74b474731b07f2773d2335810d3353086c0eec",
+          "sha256": "b1e06bcba8d3e630d71980024f7cb22054327e89602d3b9e1d0afb9ac1f8ffd4",
+          "bytes": 19350
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/boolSimps.sig",
+          "git_blob": "0a86c6179a0964a5ea8c83003fa60ffff9d4f86a",
+          "sha256": "8a2eda5d2240ad6a9961cf019bb27532d54b8601ffa85e38c5378c959c5bf4ef",
+          "bytes": 3845
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/boolSimps.sml",
+          "git_blob": "d436206ee6e55a8c2050ce56e09107de737eeebc",
+          "sha256": "e2762de1dd76120dbe1381526e2730144f164d4f5c9e821937a880dc0b04bdd7",
+          "bytes": 15037
+        },
+        {
+          "git_path": "src/simp/src/boolSimpsContextScript.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/boolSimpsContextScript.sml",
+          "git_blob": "29fb0459696b638885e86c54ff78eab2304eccd4",
+          "sha256": "099f899a06531cc7e7c5e57aa4d4accce1753179faec1a12510cffb413f570d0",
+          "bytes": 1192
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/combinSimps.sig",
+          "git_blob": "00ab56a96157bdeafb8dc2984af93c1008c84392",
+          "sha256": "a89092ad9d7c0484ff71c0886883181e0870248b22b20cda9bbedb6da8c2ec3b",
+          "bytes": 68
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/combinSimps.sml",
+          "git_blob": "5074aae15f0ccd84b478e0502c85c0f1593ffd4d",
+          "sha256": "1ea352acf191d5143593b5df093eb39a1431bf031c3b1ea655722a881c1c5a9d",
+          "bytes": 461
+        },
+        {
+          "git_path": "src/simp/src/congLib.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/congLib.sig",
+          "git_blob": "8deb93c0649f51ab8e96e0a51642466acf0b88f8",
+          "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+          "bytes": 5909
+        },
+        {
+          "git_path": "src/simp/src/congLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/congLib.sml",
+          "git_blob": "0eb7e63ab796fba7415587e636374d4d6186bf78",
+          "sha256": "e1a516de761c46d0573688a7de784ed4559ec48e2f2719ec6db9d123605da01e",
+          "bytes": 10780
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/BloomApprox.sig",
+          "git_blob": "148e8609bfed5259608a13ac3ec224a1926338a4",
+          "sha256": "3ddae79c1edac24dbf3ca28bd2d1a60cb117c865da5fc6d3bb52b5a98ca8f98d",
+          "bytes": 532
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/BloomApprox.sml",
+          "git_blob": "c3f49b438b6e84eff48ff7ea861e868c289b751e",
+          "sha256": "8cbc34d0ebe74442c8366e9ecaa0897c43c5f4db113e17d3a5bed5924654e7f4",
+          "bytes": 1537
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/pureSimps.sig",
+          "git_blob": "47d573b0a43dcd204dba59fb283135775d2e5128",
+          "sha256": "6b54e2e5dea6922d38806949006f70159dc3e0c193f1284e51398b43d2b8377a",
+          "bytes": 95
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/pureSimps.sml",
+          "git_blob": "6218f45c8cbd7cadc089077d618b3c84abf889fb",
+          "sha256": "89b7b98b8e9d9fd616dcd9669524c168cf6714529924aa78d06ebd9777dfcf71",
+          "bytes": 279
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/simpLib.sig",
+          "git_blob": "f532722f7666033eb9a9798bef85069d316bf849",
+          "sha256": "acfe3cded8f2bfd32bb142d948448f22a24f5f01d35348efc22922b409610518",
+          "bytes": 20769
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/simpLib.sml",
+          "git_blob": "a9df215ac11107bdcb5021a4de89a089e9384b26",
+          "sha256": "3417be05df71bbb71a4fe917d597ef494699eeeea012f801a2f5696314fbcb2d",
+          "bytes": 129905
+        },
+        {
+          "git_path": "src/simp/src/simpMarkerLib.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/simpMarkerLib.sig",
+          "git_blob": "b1fcb7e33efe651cb4c7053212c1182950d4cc3a",
+          "sha256": "0b7d01e91408d3cd7edceb648f0d7c7fa5988f5bfce567be92194b3f4b9e49dc",
+          "bytes": 742
+        },
+        {
+          "git_path": "src/simp/src/simpMarkerLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/simpMarkerLib.sml",
+          "git_blob": "0eba8646adcbab99729b01be543e4d26b06c7a83",
+          "sha256": "a0ac2cce6c640b2ae3833e33bc08ae9978e99a4bb05bc5b8924937085743f152",
+          "bytes": 5442
+        },
+        {
+          "git_path": "src/simp/src/simpMarkerScript.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/simpMarkerScript.sml",
+          "git_blob": "eb14813d7078e882ae532ae02ee790cbb1d90eef",
+          "sha256": "3826b44efa5c741c2f0b5e950b8d98794f4e9826fbe4c15dc0b0ad6b803070c3",
+          "bytes": 491
+        },
+        {
+          "git_path": "src/simp/src/splitLib.sig",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/splitLib.sig",
+          "git_blob": "aeab77130ba827738fa48d34d45f984897d4354b",
+          "sha256": "a503ebcf09002d965094f27fa100a6ce07e4ddf47a33a954b575234b1586bcff",
+          "bytes": 3623
+        },
+        {
+          "git_path": "src/simp/src/splitLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/splitLib.sml",
+          "git_blob": "caaf1bd301bb40700cb4fd6bf2ca5664e812255b",
+          "sha256": "18d2c693c60fff2ee4ca56f66c68ccc96bb26564eb3aeb42f3d6dc320d5e1436",
+          "bytes": 21523
+        },
+        {
+          "git_path": "src/simp/src/splitPersistLib.sml",
+          "private_path": "/tmp/claude/simp-paired-_e0735vv/candidate/splitPersistLib.sml",
+          "git_blob": "010eb7ed941a04492fb2728ddf1b6906eede0654",
+          "sha256": "9ceafc14560a5130b5c4cb06d5f6ad9e72069f2ced102fd14f66031c52f22d7f",
+          "bytes": 304
+        }
+      ],
+      "fixture_products": {
+        "PublicThmAttribute.sml": {
+          "sha256": "bfe46c6400ca4d399a29b0f80e5237c2450cf896940d24a5176d4f610eb5f07a",
+          "bytes": 2342
+        },
+        "LegacyCongLib.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "selftest.sml": {
+          "sha256": "41583212047d466d897c4f9478b00ce20cefa7d0fb8d98b659c8ffc29a085aa5",
+          "bytes": 2125
+        },
+        "SignatureCheck.sml": {
+          "sha256": "c2a1ea9d8d5690c5c6c91708153c259f639c464d1dd64febc14762d09e0dc785",
+          "bytes": 5437
+        },
+        "LegacyTraverse.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "CheckSupport.sml": {
+          "sha256": "29ddc7757b9b7836f5e52730f56fec2ee7714aa7d49afdb8e5ba56fd80443ecc",
+          "bytes": 208
+        },
+        "PublicOpening.sml": {
+          "sha256": "da7600e7f3fff4a124afdc25368034c9a6c6342650c94e110a63af95284cd800",
+          "bytes": 814
+        },
+        "PublicTraverseAscription.sml": {
+          "sha256": "ea5d655e811b448797963bc41349d5acf0f3ba492d682e29d407126e117600d5",
+          "bytes": 186
+        },
+        "Deferred.sml": {
+          "sha256": "ed36fcce0415ed72169e5748730ee666740c850ad5bb936bf1eb8145aa789a42",
+          "bytes": 136
+        },
+        "LegacyThmAttribute.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "LegacyThmAttribute.sig": {
+          "sha256": "9ae3e93266a1128e0035ca63c71fa0bfe455c2f4b8a15b41e1262ac66a0a3ce8",
+          "bytes": 1508
+        },
+        "PublicSimpLib.sml": {
+          "sha256": "74e688c2e0be8917d2dead0c60c3861241aa6f05d7aa55ef93008fdba0f764ea",
+          "bytes": 2114
+        },
+        "LegacyCond_rewr.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "PublicTraverseClient.sml": {
+          "sha256": "2a8c4933dcc9851b18461966ded445d2ac18b2f78417ccfa4292a601262c5d4e",
+          "bytes": 3079
+        },
+        "runner.sml": {
+          "sha256": "ba2112e5aa2a5df9b1b20be9a86a73ce14ad1990ff5106d81afa60c4a5284542",
+          "bytes": 1783
+        },
+        "Holmakefile": {
+          "sha256": "ff6b2180c657963536a0b3d203d290b2b4900d24b1152d934dd722eb7df00d58",
+          "bytes": 916
+        },
+        "LegacyOpening.sig": {
+          "sha256": "ea57c2fba47a3620587d5a793b2f8b2dad922a358b7748dd21608595d978f337",
+          "bytes": 3851
+        },
+        "LegacyTraverse.sig": {
+          "sha256": "3810731b4330ab043cac9062069048f4555df04cc5bbc2324b87c8771d67ebb1",
+          "bytes": 5292
+        },
+        "LegacySimpLib.sig": {
+          "sha256": "505e5b49550892e1dafc3253822673fa1843e15179f57cb4ec0ca21d534023e4",
+          "bytes": 10375
+        },
+        "PublicTravrules.sml": {
+          "sha256": "1f1b57477b41f07d6aba9628632863bff575d7e66947bf120249ed7168b67128",
+          "bytes": 1317
+        },
+        "LegacyCongLib.sig": {
+          "sha256": "8f7c40250218a5479d38e47ba7b3d5a613a3459bb129b84f3c5a71bffa1303a1",
+          "bytes": 5915
+        },
+        "PublicTraverseFunctor.sml": {
+          "sha256": "b92d2cdbe718a1d2ca9e42685b92c5f6dc919f52d51e79c76cff0bbd1ae90f63",
+          "bytes": 419
+        },
+        "LegacyOpening.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "PublicCongLib.sml": {
+          "sha256": "8506289f4c94126f406ef231dc6aede86aab9655b741970e10b14a307ca1d715",
+          "bytes": 1018
+        },
+        "PublicCond_rewr.sml": {
+          "sha256": "41cb7c1bac39e6fa087a0ff0715e4a843ee7208c79d6c043dd96e33bb9a59419",
+          "bytes": 1140
+        },
+        "LegacyCond_rewr.sig": {
+          "sha256": "24116741bababcf2d0222ffae8f34cec4b78cd25e6f3047bdc4a7cfb5d1f560c",
+          "bytes": 1983
+        },
+        "Paired.sml": {
+          "sha256": "a930932897e0728e72c048124b0fce7f038bed469e062affa8ebc23a7c8e47b7",
+          "bytes": 1043
+        },
+        "LegacyTravrules.sig": {
+          "sha256": "6631cb96453946909e176bfe42f3510ab860e19c3f22fe5d3e906b456a90b041",
+          "bytes": 3870
+        },
+        "LegacySimpLib.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        },
+        "LegacyTravrules.sml": {
+          "sha256": "f8b8e01362f3ec39530bd5857113ecc3071e35ea7519e5bf7e912557c72cccfd",
+          "bytes": 47
+        }
+      },
+      "build_exit": 0,
+      "launcher": "#!/bin/sh\nset -e\n/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol --gcthreads=1 run --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0  runner\nexit 0\n",
+      "attribute_holmakefile": "HOLHEAP = $(HOLDIR)/bin/hol.state.min\nEXTRA_CLEANS = paired.exe\n\n# Only runner.uo is linked: the test .uo products defer elaboration to run.\npaired.exe: runner.uo CheckSupport.uo selftest.uo SignatureCheck.uo Deferred.uo\n\t$(HOLMOSMLC) -o $@ $<\n\nPublicThmAttribute.uo: LegacyThmAttribute.uo ThmAttribute.uo\n\nPublicCond_rewr.uo: LegacyCond_rewr.uo Cond_rewr.uo\n\nPublicOpening.uo: LegacyOpening.uo Opening.uo\n\nPublicTraverseAscription.uo: LegacyTraverse.uo Traverse.uo\n\nPublicTraverseFunctor.uo: LegacyTraverse.uo Traverse.uo\n\nPublicTravrules.uo: LegacyTravrules.uo Travrules.uo\n\nPublicSimpLib.uo: LegacySimpLib.uo simpLib.uo\n\nPublicCongLib.uo: LegacyCongLib.uo congLib.uo\n\npaired.exe: PublicThmAttribute.uo PublicCond_rewr.uo PublicOpening.uo PublicTravrules.uo PublicSimpLib.uo PublicCongLib.uo PublicTraverseAscription.uo PublicTraverseFunctor.uo PublicTraverseClient.uo\nattribute.exe: runner.uo\n\t$(HOLMOSMLC) -o $@ $<\n",
+      "attribute_launcher": "#!/bin/sh\nset -e\n/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol --gcthreads=1 run --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state.min  runner\nexit 0\n",
+      "products": {
+        "attribute.exe": {
+          "sha256": "045edf8645e120ccc9832e55390400806cd2843aeff8288894fb78afee1d46be",
+          "bytes": 171
+        },
+        "paired.exe": {
+          "sha256": "ba70c3f59cae477460bd4b3c67b6ca21cb7e784ea6e9d8cc377b67dc0c4afafa",
+          "bytes": 168
+        },
+        ".hol/objs/CheckSupport.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/CheckSupport.uo": {
+          "sha256": "287a5e1e3fb3e34e971bf1364ef3d018f9fcaf27d0f485fe3c1a2b3e1b80ab4a",
+          "bytes": 218
+        },
+        ".hol/objs/Cond_rewr.ui": {
+          "sha256": "05618b1fffb56c4ed72b9bf79c29904ceb024a1bc192d10e32825ab7e4ab30c8",
+          "bytes": 192
+        },
+        ".hol/objs/Cond_rewr.uo": {
+          "sha256": "982c3898a51864d4aa2f2d11528cafce9cf925bb41d5a3a76656aa9d2d62cc4f",
+          "bytes": 527
+        },
+        ".hol/objs/Deferred.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/Deferred.uo": {
+          "sha256": "e77d3f0934961f14c413c1adc8ea83be22ce5da81e5b2136cd71d31ec910af7b",
+          "bytes": 133
+        },
+        ".hol/objs/LegacyCond_rewr.ui": {
+          "sha256": "2cf1b6c0590e821f7b60f8c5b8f30c3cbdb9f95cd7a045103e362704e647af9f",
+          "bytes": 204
+        },
+        ".hol/objs/LegacyCond_rewr.uo": {
+          "sha256": "d3aafa67ad176ae3bf45dc449ca6b95bfb0c07a467132ec96b6eda29df5b2333",
+          "bytes": 206
+        },
+        ".hol/objs/LegacyCongLib.ui": {
+          "sha256": "d701b15e17c4676aedb7fd022767d646caf6925cd5dbe1658fe3858a1128d5eb",
+          "bytes": 323
+        },
+        ".hol/objs/LegacyCongLib.uo": {
+          "sha256": "1c364b2223b7785dfdde84651ae04a2a1d1decce138e0bcb10bf46e75f3aae4c",
+          "bytes": 200
+        },
+        ".hol/objs/LegacyOpening.ui": {
+          "sha256": "843b4fa6e707a59edecbeb786047d93b5d6e0d50351c6f929766c7f670b1dba4",
+          "bytes": 167
+        },
+        ".hol/objs/LegacyOpening.uo": {
+          "sha256": "45f6221559eea898a1054e17b95dea0aa61a2c2e409ce1e2155eb260e41ba0cb",
+          "bytes": 200
+        },
+        ".hol/objs/LegacySimpLib.ui": {
+          "sha256": "8650bfc327b42bce762d5285c1c05ae8c1293168df56468b1258d08325fcb248",
+          "bytes": 385
+        },
+        ".hol/objs/LegacySimpLib.uo": {
+          "sha256": "a70b5a9bd1176cfc08c8a168716fb6bbc165808c45e4683adc4d50641cdae40d",
+          "bytes": 200
+        },
+        ".hol/objs/LegacyThmAttribute.ui": {
+          "sha256": "8eac59cbf0d523e64304082158bdd138f7ea2fe244b7ba5412258272a09039ca",
+          "bytes": 174
+        },
+        ".hol/objs/LegacyThmAttribute.uo": {
+          "sha256": "676a19198c8c3011613e320c0045a1ad36decd28772d09151f010709fac98263",
+          "bytes": 215
+        },
+        ".hol/objs/LegacyTraverse.ui": {
+          "sha256": "90740fceda5fbb17ca5778fdc244492f740bfc0aec18b3c8e649d4ae731be7cd",
+          "bytes": 222
+        },
+        ".hol/objs/LegacyTraverse.uo": {
+          "sha256": "c7492766ff3657a131e6d9bdff58f97b51ca19baff6d80d00b15240b37b63b04",
+          "bytes": 203
+        },
+        ".hol/objs/LegacyTravrules.ui": {
+          "sha256": "ef18a5dfe651b0c815a51e24714dfc9da80b330e6114ac7a20223f5d3a8d4fc2",
+          "bytes": 222
+        },
+        ".hol/objs/LegacyTravrules.uo": {
+          "sha256": "b0b8e99c6f35d426aec225a9cb3d7cf5f79352d3cc6a6871233c7ab0e1f83e22",
+          "bytes": 206
+        },
+        ".hol/objs/Opening.ui": {
+          "sha256": "9fc2f4a4b35d8e910a4e51d4769a40d8cc1015462ccbe5f8366cfa13af918fd1",
+          "bytes": 155
+        },
+        ".hol/objs/Opening.uo": {
+          "sha256": "2cfadf9429b416054db88116d4006a868fc0bbc229f60ec1f559b841c4df2be6",
+          "bytes": 379
+        },
+        ".hol/objs/Paired.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/Paired.uo": {
+          "sha256": "12e2a270ed48f90e5edcdf53e6ff5a0440651a23555325c2b527e8b3460fadbd",
+          "bytes": 129
+        },
+        ".hol/objs/PublicCond_rewr.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicCond_rewr.uo": {
+          "sha256": "68a9d53a479a9b45613414019d0c319c4c2a2076f02512dbe019bd33b5817497",
+          "bytes": 446
+        },
+        ".hol/objs/PublicCongLib.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicCongLib.uo": {
+          "sha256": "81ba7cba2b0a125f4d95f4706408c817a9f326147716d65fdf67fd52aaa5e353",
+          "bytes": 459
+        },
+        ".hol/objs/PublicOpening.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicOpening.uo": {
+          "sha256": "d4bd1c8813d92643a213f193d562a8a97a4072ced32c9ed3fe1d10b9922ce11b",
+          "bytes": 381
+        },
+        ".hol/objs/PublicSimpLib.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicSimpLib.uo": {
+          "sha256": "3f0c20d7d70d390721c1259696805ba020a8a7fed5ee2f3942d0fb5968252af5",
+          "bytes": 543
+        },
+        ".hol/objs/PublicThmAttribute.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicThmAttribute.uo": {
+          "sha256": "b8a37f99eae7d62feb5048f4cc94cad4b331d048166c8981b3d378fbd0aa30f8",
+          "bytes": 370
+        },
+        ".hol/objs/PublicTraverseAscription.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTraverseAscription.uo": {
+          "sha256": "ef2f52d248f895b871a5b47c2bb2d2cad6f257851d61fe5571379a433f974412",
+          "bytes": 325
+        },
+        ".hol/objs/PublicTraverseClient.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTraverseClient.uo": {
+          "sha256": "14b828acea59bd71e083d19219aebc0ce513e57e066f08d3fb4aee3b14405b24",
+          "bytes": 466
+        },
+        ".hol/objs/PublicTraverseFunctor.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTraverseFunctor.uo": {
+          "sha256": "f21d694ed634925e20366e86e83642c7944c3376f875b089ba9b97fb21f21836",
+          "bytes": 319
+        },
+        ".hol/objs/PublicTravrules.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/PublicTravrules.uo": {
+          "sha256": "683357ce444fa79a42686eb47df1280f1c20b4df87695d4fb539729ee7ab76d5",
+          "bytes": 440
+        },
+        ".hol/objs/SignatureCheck.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/SignatureCheck.uo": {
+          "sha256": "0a4b7a69e2cfd2cbedf7208bcfba953e08f24aea6aa70fb0605164ed1161f8ae",
+          "bytes": 324
+        },
+        ".hol/objs/SplitData.ui": {
+          "sha256": "d6ae3e06953f73bdff840be827292e3517e508a31ef2d0aec38edd004a4d9981",
+          "bytes": 183
+        },
+        ".hol/objs/SplitData.uo": {
+          "sha256": "4207230981829d5134c8cec4b78002c57f4492022a36b9a6246c5aa534efecdd",
+          "bytes": 551
+        },
+        ".hol/objs/ThmAttribute.ui": {
+          "sha256": "65fe206b61e5c5a32f272bea9cd82318422e383762645fb7f2ea833824ddbf38",
+          "bytes": 187
+        },
+        ".hol/objs/ThmAttribute.uo": {
+          "sha256": "8628032901175769f0789014c8562a2ebaed22e9ea757e4d08355a46be8a60cd",
+          "bytes": 389
+        },
+        ".hol/objs/Trace.ui": {
+          "sha256": "654133691a87e0e4aa3fead97301c3eacddec5dc37333620df7998e5b6624144",
+          "bytes": 177
+        },
+        ".hol/objs/Trace.uo": {
+          "sha256": "b30f7d1c90f67485e654416cac648ca0fdd1988d14823fa0a6b6354bb5735e1a",
+          "bytes": 467
+        },
+        ".hol/objs/Traverse.ui": {
+          "sha256": "33b9fd3df220ec575e2cefe2e6d10c3f176db05d3d28d31402b9d9ca5bfc01c0",
+          "bytes": 210
+        },
+        ".hol/objs/Traverse.uo": {
+          "sha256": "c41cc78c31b8f71107963b93c11162414b7a3ebe171f0cad16f3825bc2c3c51c",
+          "bytes": 632
+        },
+        ".hol/objs/Travrules.ui": {
+          "sha256": "1361cde03ff88a36a233266c164f3e31fda1ec0a2bf32762ee70a78e4fe3f0fa",
+          "bytes": 210
+        },
+        ".hol/objs/Travrules.uo": {
+          "sha256": "29f57e5fe7366d2cf79b941a0e37be6e6f1bea23c0d6b874952044922a1e7da9",
+          "bytes": 438
+        },
+        ".hol/objs/Unwind.ui": {
+          "sha256": "0daf831112cc79b55c8c9152009bdb1db02d847c1fac7c93b239ab72c52518fa",
+          "bytes": 153
+        },
+        ".hol/objs/Unwind.uo": {
+          "sha256": "768858ec7e4e1083ba62c28e07f2de780ca93ab9fd58f7bc365b8d6c109823bd",
+          "bytes": 452
+        },
+        ".hol/objs/boolSimps.ui": {
+          "sha256": "660cd06f31756b6e2ee509b66a9c1b6f33b71cb50ef717d6284cfee638923d53",
+          "bytes": 210
+        },
+        ".hol/objs/boolSimps.uo": {
+          "sha256": "01030985a1dec606ca180a50a234419125240a823384f26819dbdcad9e1ab243",
+          "bytes": 798
+        },
+        ".hol/objs/boolSimpsContextTheory.cachekey": {
+          "sha256": "78d34eba0886cba7244002276982c68f0f3c4a876b1bb06fb202e1be4446a2e2",
+          "bytes": 41
+        },
+        ".hol/objs/boolSimpsContextTheory.dat": {
+          "sha256": "a289d286e59acd4e0eedf958087ba020d6221c9bf33e86bed127c8e087477679",
+          "bytes": 1605
+        },
+        ".hol/objs/boolSimpsContextTheory.sig": {
+          "sha256": "84c20651d202f099b7c41ff462951f94e23d3457885a482db83fa0332e4b95a2",
+          "bytes": 214
+        },
+        ".hol/objs/boolSimpsContextTheory.sml": {
+          "sha256": "33c9029207f13f666e1d8223e6d2d3a571511b5f560afb8c7a97672aebea1de3",
+          "bytes": 1186
+        },
+        ".hol/objs/boolSimpsContextTheory.ui": {
+          "sha256": "38bf39bdc0d29ffca561f3ee9c0868bd46fb7b9561c458d36210ceabe63767ac",
+          "bytes": 182
+        },
+        ".hol/objs/boolSimpsContextTheory.uo": {
+          "sha256": "f473fa5e81cb5b7c96c1f765d4690e8757e531d4002e8f262932e62c71fbcdab",
+          "bytes": 425
+        },
+        ".hol/objs/congLib.ui": {
+          "sha256": "47643c41951291c8384995a25356c8129e4c124cc4a739e9f6ea1d9ba48a98f8",
+          "bytes": 311
+        },
+        ".hol/objs/congLib.uo": {
+          "sha256": "72de16d7dbd53898f29f6900eda45f70c04585854f4564bf65d9bf5f23b00ad4",
+          "bytes": 698
+        },
+        ".hol/objs/pureSimps.ui": {
+          "sha256": "4177937f2778a4980f5ecbdca9cbba1efa634dcae26e2cdf8759b8318e0b7860",
+          "bytes": 186
+        },
+        ".hol/objs/pureSimps.uo": {
+          "sha256": "e3f6a3e33b9896f84d2ff41356bc8e99af1beba25361ccb63e0e71cf798a5a63",
+          "bytes": 292
+        },
+        ".hol/objs/runner.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/runner.uo": {
+          "sha256": "72c8ab6c5c285fa82e9a3b328802e58123d7b54f1322e6645a8d2cc927bae44e",
+          "bytes": 204
+        },
+        ".hol/objs/selftest.ui": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/objs/selftest.uo": {
+          "sha256": "23d267e311a62781420cc7cb615ec46a72e33e2e33f20782edf7b25c6a72a4a9",
+          "bytes": 498
+        },
+        ".hol/objs/simpLib.ui": {
+          "sha256": "730dc5b651d112b78aefbba1497480321dd9765f7cb8f29037b533471315cbeb",
+          "bytes": 373
+        },
+        ".hol/objs/simpLib.uo": {
+          "sha256": "07acedafb2ebe576f52c836167a7ccf5f8e77fcd5a6e4f2b0b76d4e9faf72458",
+          "bytes": 1250
+        },
+        ".hol/objs/simpMarkerLib.ui": {
+          "sha256": "7519dcf56b7171f33db2535c71d8fcc3910eb5ba80abe55d31e2b676942629fe",
+          "bytes": 194
+        },
+        ".hol/objs/simpMarkerLib.uo": {
+          "sha256": "2f44fd27186f6be77a5207163af3f89e577f810ba0454ab59b86b344672e89cd",
+          "bytes": 548
+        },
+        ".hol/objs/simpMarkerTheory.cachekey": {
+          "sha256": "1e02c7a4b2dc5d58eea6fdd2387438ddddea815dc00e941be67b4bb7228efceb",
+          "bytes": 41
+        },
+        ".hol/objs/simpMarkerTheory.dat": {
+          "sha256": "b5f124a36f8bdb5592e0548046c8d0d85c73f108a479f3a8c45663a555a6021d",
+          "bytes": 834
+        },
+        ".hol/objs/simpMarkerTheory.sig": {
+          "sha256": "457e679189e1f36a27239ec647e0038d9ad238b32bae8f906e37ae5599df8c1b",
+          "bytes": 134
+        },
+        ".hol/objs/simpMarkerTheory.sml": {
+          "sha256": "0ff9a5a81a35496c7e428cbfcb7525fb55dbb8985125cbe04f530dc080bfabf5",
+          "bytes": 935
+        },
+        ".hol/objs/simpMarkerTheory.ui": {
+          "sha256": "870e61089aadd19cf2d755cdec35896cf24b1ff08feb27418fe4312aa8b680e4",
+          "bytes": 170
+        },
+        ".hol/objs/simpMarkerTheory.uo": {
+          "sha256": "d9c397f90ff29cf9aeae6cab6fce4c04dbe494be3ebb5b726eb8fae4cb5e0b00",
+          "bytes": 407
+        },
+        ".hol/objs/splitLib.ui": {
+          "sha256": "64d56a3b00b9ce1e052c4beb0d2a071e44e54821a4cf2cf2b38072975c98b9d0",
+          "bytes": 157
+        },
+        ".hol/objs/splitLib.uo": {
+          "sha256": "911cb80cc61beea21b1d890a6f84a8b3ea0938f6eb1da48e72423ae7d944db44",
+          "bytes": 610
+        },
+        ".hol/make-deps/BloomApprox.sig.d": {
+          "sha256": "2ff323c5baa60263637485adb9f024564aea280af95c67b6525afa548894aa43",
+          "bytes": 74
+        },
+        ".hol/make-deps/BloomApprox.sml.d": {
+          "sha256": "8ded02d25c1ca0299659a32146448de04c2d70b580cde9f651f457e01891890d",
+          "bytes": 94
+        },
+        ".hol/make-deps/Cache.sig.d": {
+          "sha256": "88955f092043c13e08862c1fef5e341f1433d77961671a03130e72eb1e29b00a",
+          "bytes": 70
+        },
+        ".hol/make-deps/Cache.sml.d": {
+          "sha256": "a1e6988d5489472c2e8a767af22df0dbb906c45bb84fb15d9a2fbbca76fc6444",
+          "bytes": 694
+        },
+        ".hol/make-deps/CheckSupport.sml.d": {
+          "sha256": "06027125aa0c63d1a76ab05f42d2514d139f5830552f8b65e7ea9e9514b82857",
+          "bytes": 90
+        },
+        ".hol/make-deps/Cond_rewr.sig.d": {
+          "sha256": "b0da6c72d0fedac55539ac3468d2e210564b285562c04862af4bcbc3112770b5",
+          "bytes": 142
+        },
+        ".hol/make-deps/Cond_rewr.sml.d": {
+          "sha256": "825c8a9bf5f38f0fb9a98ae13df7150e307808cec7954607fe1e1490e656b215",
+          "bytes": 712
+        },
+        ".hol/make-deps/Deferred.sml.d": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/make-deps/LegacyCond_rewr.sig.d": {
+          "sha256": "549d50c17153c757a24aa32a5c2e29fc97f87a65ea5228603910e1bbaa2f4855",
+          "bytes": 148
+        },
+        ".hol/make-deps/LegacyCond_rewr.sml.d": {
+          "sha256": "5ac27d7bc1b30e9412a58f39e8d4b4d31b4291edb9601a6e957859a1c5244546",
+          "bytes": 40
+        },
+        ".hol/make-deps/LegacyCongLib.sig.d": {
+          "sha256": "462d0dfde379ae385d1df2aeaa5abc555de1ac9cd12697569caefcbbc6168e03",
+          "bytes": 114
+        },
+        ".hol/make-deps/LegacyCongLib.sml.d": {
+          "sha256": "12138a357de8059cc2080f18449a2b961a772d30000cefe1170788d052f09d96",
+          "bytes": 36
+        },
+        ".hol/make-deps/LegacyOpening.sig.d": {
+          "sha256": "9de9ae6cdf17469aba3957971aa639fd5059b4b1b2341a7c01f480498fe2bf15",
+          "bytes": 78
+        },
+        ".hol/make-deps/LegacyOpening.sml.d": {
+          "sha256": "59713540c4105dfe28d982578167e08ecabb83d6123d2f675483c69da983efb0",
+          "bytes": 36
+        },
+        ".hol/make-deps/LegacySimpLib.sig.d": {
+          "sha256": "70511451c25803132997e2330e28afaeabd8332e26858fa82dfaea11f752379c",
+          "bytes": 356
+        },
+        ".hol/make-deps/LegacySimpLib.sml.d": {
+          "sha256": "fe099e7376577af28c968ac482f88e961fc5929929f40edafb2d2c775220d927",
+          "bytes": 36
+        },
+        ".hol/make-deps/LegacyThmAttribute.sig.d": {
+          "sha256": "302d540a9f161ae034ae271fb73ca47c130e1ed9f1bb107045c14586235a0fef",
+          "bytes": 80
+        },
+        ".hol/make-deps/LegacyThmAttribute.sml.d": {
+          "sha256": "1d28b4d28eacb99038dddb4e25ae019f90952028e493b4ec38706735d4ecd1a5",
+          "bytes": 46
+        },
+        ".hol/make-deps/LegacyTraverse.sig.d": {
+          "sha256": "c53ab8c7b6e761139047c8b08f8c25b78cb39c1099f098b0df0ae7594a709a51",
+          "bytes": 92
+        },
+        ".hol/make-deps/LegacyTraverse.sml.d": {
+          "sha256": "62d00a29a9ea9f0f7b85727274f7d0f8bc0f42ffb3b5d85eb35201dd75dc31b7",
+          "bytes": 38
+        },
+        ".hol/make-deps/LegacyTravrules.sig.d": {
+          "sha256": "92db83a823563070f71ac71498fb66f8ff6a0464582549aeca1a638b132683e9",
+          "bytes": 91
+        },
+        ".hol/make-deps/LegacyTravrules.sml.d": {
+          "sha256": "d242294531c2e2249e402f4e82fdbcf381ea1adc402867a1279c136929981418",
+          "bytes": 40
+        },
+        ".hol/make-deps/Opening.sig.d": {
+          "sha256": "70f8adcdc3b1e28742bbab4b12787325613375c571ff744af97f085514db89d8",
+          "bytes": 72
+        },
+        ".hol/make-deps/Opening.sml.d": {
+          "sha256": "17639244437828ef023ecd75c4bacedac450a588ddc2044a6c9dd7fe5463f7b0",
+          "bytes": 391
+        },
+        ".hol/make-deps/Paired.sml.d": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/make-deps/PublicCond_rewr.sml.d": {
+          "sha256": "b113787e667f6425cba03f5b69ccf1772fbc48e8427899bb3373e8b810f4a02c",
+          "bytes": 343
+        },
+        ".hol/make-deps/PublicCongLib.sml.d": {
+          "sha256": "bfa946b187369c0929d225799581e6d8e98cef263abed321f673539993d07fa6",
+          "bytes": 188
+        },
+        ".hol/make-deps/PublicOpening.sml.d": {
+          "sha256": "fa39e5d783f2e761338734c479a1f6ea10b938c6079c4f53c2bbfef4aa7b57aa",
+          "bytes": 225
+        },
+        ".hol/make-deps/PublicSimpLib.sml.d": {
+          "sha256": "3cf9348531d546ef7ac511252d9c56bc5218a269deece09cb83d8e1876edc49a",
+          "bytes": 377
+        },
+        ".hol/make-deps/PublicThmAttribute.sml.d": {
+          "sha256": "b1a1f66dd0c90159a12db60c22d89eef6992b3158d3ba706889b46c716b4ed77",
+          "bytes": 153
+        },
+        ".hol/make-deps/PublicTraverseAscription.sml.d": {
+          "sha256": "212709971ff3cf64c6d54480b8b26ca2909c1e97e9eeead5d629fb3f53c075a0",
+          "bytes": 40
+        },
+        ".hol/make-deps/PublicTraverseClient.sml.d": {
+          "sha256": "c30347a92a79060b0757e8ea75cfab6506519bdc8ca40cf0598bba8d7b984255",
+          "bytes": 205
+        },
+        ".hol/make-deps/PublicTraverseFunctor.sml.d": {
+          "sha256": "f0b01ebbee2e788c68ce864c589729d7659a893011e477792592d071ad851b23",
+          "bytes": 37
+        },
+        ".hol/make-deps/PublicTravrules.sml.d": {
+          "sha256": "11798056586c4e4ca67a60d99e37b40dc94490fc97099327b0ff103b4c77c33f",
+          "bytes": 240
+        },
+        ".hol/make-deps/Satisfy.sig.d": {
+          "sha256": "f4475ef46a1908de6f86a7f704dd5ff078cf4541144119e9d9234b082eb5c564",
+          "bytes": 185
+        },
+        ".hol/make-deps/Satisfy.sml.d": {
+          "sha256": "f44e9810c2fca9ba5812063e695cca0c5d3abb4cc5bdc479f7ccaa5bd0e818d9",
+          "bytes": 236
+        },
+        ".hol/make-deps/SatisfySimps.sig.d": {
+          "sha256": "f776d5d7dc1589d68c374886093084272fccb85f9894fc6c4112290e51848a2d",
+          "bytes": 41
+        },
+        ".hol/make-deps/SatisfySimps.sml.d": {
+          "sha256": "6852a6baa58eef531b9fab5fb9619be65a65ebcd3515ee3d6cc19a5fb721ee4c",
+          "bytes": 124
+        },
+        ".hol/make-deps/Sequence.sig.d": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        ".hol/make-deps/Sequence.sml.d": {
+          "sha256": "f54e9aac1a82653b9a566229a53b54751574f4188a6efd1ddf10a8ea2dd6411d",
+          "bytes": 147
+        },
+        ".hol/make-deps/SignatureCheck.sml.d": {
+          "sha256": "baf98a37bf9a4a77c038cb30fec34bbd0e625511c652e95b62d110d0b9f097d6",
+          "bytes": 114
+        },
+        ".hol/make-deps/SplitData.sig.d": {
+          "sha256": "1f7e42d1e30e8f68d455b126f3e18f0bf15f9cf7f3b4df34ac751b2d72738437",
+          "bytes": 133
+        },
+        ".hol/make-deps/SplitData.sml.d": {
+          "sha256": "844b629d8efb420ba17e5f1bce99d2b5034822f8edbe9064020429402595d5b9",
+          "bytes": 771
+        },
+        ".hol/make-deps/ThmAttribute.sig.d": {
+          "sha256": "4c6b970f7bac6de6bdf3c7b75e950e7e0663a0c0a402e48214217110c42bcb9d",
+          "bytes": 134
+        },
+        ".hol/make-deps/ThmAttribute.sml.d": {
+          "sha256": "0404fbc326cd4473d8df42d27751e2c342e62eb7c79278be50fca45e55fd74ef",
+          "bytes": 506
+        },
+        ".hol/make-deps/Trace.sig.d": {
+          "sha256": "7d53f04502cd9a490eb3110ec62e2ccb729d7be5c0e78b5b2eb89e40c50740ab",
+          "bytes": 131
+        },
+        ".hol/make-deps/Trace.sml.d": {
+          "sha256": "1b5dc23221ca1df9139ad879b03c97580b84d0a59b9f074c8ac2a11423c9dcec",
+          "bytes": 731
+        },
+        ".hol/make-deps/Traverse.sig.d": {
+          "sha256": "7a029d3ea9c2d5408e6c60343e7000c2f58ef95ca82be1620be5c3908e0ed7de",
+          "bytes": 86
+        },
+        ".hol/make-deps/Traverse.sml.d": {
+          "sha256": "26f0b0bb8ffcc30d8f70a316939afabc5de7b51532e3e74dd0fdff30ff031804",
+          "bytes": 663
+        },
+        ".hol/make-deps/Travrules.sig.d": {
+          "sha256": "2af25e84932cccce2c835df1e3fb993f91fe8d87a8d337dbd91e1f37a137fc06",
+          "bytes": 85
+        },
+        ".hol/make-deps/Travrules.sml.d": {
+          "sha256": "6b9d3dd7dd7121c265994e11214e4ee6439ee9a8ed89d556c6a6219ae1a49cda",
+          "bytes": 408
+        },
+        ".hol/make-deps/Unify.sig.d": {
+          "sha256": "95639445070dba527ad877a55eaa273ec42ac1cc47e5675c3a6dbe2a7eace609",
+          "bytes": 70
+        },
+        ".hol/make-deps/Unify.sml.d": {
+          "sha256": "9227aba16f8055ab12d753243b8f7f81804addcaaae2c2bf1a1013a10af6a30d",
+          "bytes": 261
+        },
+        ".hol/make-deps/Unwind.sig.d": {
+          "sha256": "a96ea769865a3301027650d1875c121889c91127b4ae73b1fbf44488da736684",
+          "bytes": 71
+        },
+        ".hol/make-deps/Unwind.sml.d": {
+          "sha256": "827d9c5209335fe85befc8398b94499b79af986af2e36b174190b26d83ceb24f",
+          "bytes": 570
+        },
+        ".hol/make-deps/boolSimps.sig.d": {
+          "sha256": "961465930f36eafcf26cf6ca561a697865e49dc7aebd80817364d3f45e44a780",
+          "bytes": 85
+        },
+        ".hol/make-deps/boolSimps.sml.d": {
+          "sha256": "8ae1cc26b5205a5fa0b185d258005a0ab9d94127d617eb768ea54d2ad38c0c08",
+          "bytes": 1003
+        },
+        ".hol/make-deps/boolSimpsContextScript.sml.d": {
+          "sha256": "ea4441415ed7a1464bc76a9420c85f93d2835b55c3fe99c938b371d0b80ce560",
+          "bytes": 568
+        },
+        ".hol/make-deps/boolSimpsContextTheory.sig.d": {
+          "sha256": "92d19e501ff168ff4451ce1c5658aeb44e2bbfa5aea8707418301d1e8fae8993",
+          "bytes": 84
+        },
+        ".hol/make-deps/boolSimpsContextTheory.sml.d": {
+          "sha256": "af60715439cf8b42ca2c49054772b2f3291cc963bef38765e3d03a4d392e5aa6",
+          "bytes": 532
+        },
+        ".hol/make-deps/combinSimps.sig.d": {
+          "sha256": "d9533a1385dbb5a8b5da08eff2711b3ea57c0ab2f3a0fe4196da32ff35bdb744",
+          "bytes": 28
+        },
+        ".hol/make-deps/combinSimps.sml.d": {
+          "sha256": "2484ab1a8fa9f988669e55aac8849c73a1972af708093bbb66da3ca9e56905a2",
+          "bytes": 223
+        },
+        ".hol/make-deps/congLib.sig.d": {
+          "sha256": "a40c9b9d6b58caef289f804bc184cd7b77cb4f7740da91e5e77810458829b34e",
+          "bytes": 108
+        },
+        ".hol/make-deps/congLib.sml.d": {
+          "sha256": "8f6ba1d73ff854819201541dbdc5e108016c33dc872259e59cdded2cc16dfe80",
+          "bytes": 580
+        },
+        ".hol/make-deps/lastmaker": {
+          "sha256": "8c725b147bd9c158f64752ef1bc82d75a69b419e4b45fded83ee6d84d5233789",
+          "bytes": 54
+        },
+        ".hol/make-deps/pureSimps.sig.d": {
+          "sha256": "0bae04257cb20c1910a382fdb1667fc0e91bdfe2d40812a3e92d8e091bf22b8d",
+          "bytes": 26
+        },
+        ".hol/make-deps/pureSimps.sml.d": {
+          "sha256": "4e934308657d46c9e1ae862ec3de2c18bf76674ae3168147252c9e4aa1f9b8d6",
+          "bytes": 52
+        },
+        ".hol/make-deps/runner.sml.d": {
+          "sha256": "4d7f714be98b7c7029fc8d0f85f2fa167040d2658939371262886de789cc5eb4",
+          "bytes": 82
+        },
+        ".hol/make-deps/selftest.sml.d": {
+          "sha256": "e1322199c45c2634a513f0b12a8bb4be386b7533f702505fa8c4af4aae87b4b8",
+          "bytes": 539
+        },
+        ".hol/make-deps/simpLib.sig.d": {
+          "sha256": "a1f050df58ffd82d36a001b2abe6308c73b0470ffdd3eab4a85f316f112748ce",
+          "bytes": 350
+        },
+        ".hol/make-deps/simpLib.sml.d": {
+          "sha256": "83c00ee87683ba29a80f403fcfcb9f402a6bcea3920c69c0e55582060b1a3eb8",
+          "bytes": 1792
+        },
+        ".hol/make-deps/simpMarkerLib.sig.d": {
+          "sha256": "8e8cfaa8d3a2ef5caa64ff32ae04d55476a2faadb76aaa1f89f6ded5aac88c70",
+          "bytes": 140
+        },
+        ".hol/make-deps/simpMarkerLib.sml.d": {
+          "sha256": "2c9928f4ebe45c613e8fe69c4ad2ef2d793cefb9aac66e76325341715c4ce721",
+          "bytes": 729
+        },
+        ".hol/make-deps/simpMarkerScript.sml.d": {
+          "sha256": "62f73d2b68d3f1dd26c1faa82f9881796c145b04239ca20f645ba6605cb75457",
+          "bytes": 392
+        },
+        ".hol/make-deps/simpMarkerTheory.sig.d": {
+          "sha256": "4acd4f01561714de28cee3e6ea45a641b032b6fc666ff4df5c5ec871030a3325",
+          "bytes": 78
+        },
+        ".hol/make-deps/simpMarkerTheory.sml.d": {
+          "sha256": "41ef1c19c5e59c16d21247c982b552c879ae2da74b510a8441a4f3bd3f73eadc",
+          "bytes": 520
+        },
+        ".hol/make-deps/splitLib.sig.d": {
+          "sha256": "a309eaae0174f5ecc6d754c27dcbdc371e54e5ff1df1149dc387abe853a5c609",
+          "bytes": 73
+        },
+        ".hol/make-deps/splitLib.sml.d": {
+          "sha256": "0c60e9b6a9346296c10704a31b16b151480c8598b51fac40f6ce5ea8d9ca997f",
+          "bytes": 936
+        },
+        ".hol/make-deps/splitPersistLib.sml.d": {
+          "sha256": "0fa3836c2321358f8432dbdc00b9db5e7f62287f75518e482072c07b8e6183da",
+          "bytes": 33
+        }
+      }
+    }
+  },
+  "runs": [
+    {
+      "receipt": "baseline-selftest-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-signature-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicThmAttribute-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicCond_rewr-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicOpening-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicTravrules-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicSimpLib-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicCongLib-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicTraverseAscription-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicTraverseFunctor-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-PublicTraverseClient-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-selftest-missing.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-selftest-truncated.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-selftest-failed.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 1
+    },
+    {
+      "receipt": "baseline-selftest-wrong-path.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "baseline-selftest-deferred.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 1
+    },
+    {
+      "receipt": "baseline-selftest-unexecuted.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-selftest-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-signature-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 1
+    },
+    {
+      "receipt": "candidate-PublicThmAttribute-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-PublicCond_rewr-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-PublicOpening-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-PublicTravrules-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-PublicSimpLib-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-PublicCongLib-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-PublicTraverseAscription-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 1
+    },
+    {
+      "receipt": "candidate-PublicTraverseFunctor-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 1
+    },
+    {
+      "receipt": "candidate-PublicTraverseClient-none.json.gz",
+      "accepted": true,
+      "expected_acceptance": true,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-selftest-missing.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-selftest-truncated.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-selftest-failed.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 1
+    },
+    {
+      "receipt": "candidate-selftest-wrong-path.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    },
+    {
+      "receipt": "candidate-selftest-deferred.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 1
+    },
+    {
+      "receipt": "candidate-selftest-unexecuted.json.gz",
+      "accepted": false,
+      "expected_acceptance": false,
+      "exit": 0
+    }
+  ],
+  "success": true,
+  "poly_version": {
+    "command": [
+      "/usr/local/bin/poly",
+      "--version"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "timed_out": false,
+    "stdout": "Poly/ML 5.9.2 Release\n",
+    "stdout_sha256": "7ecc5458e3d0e51d9e743be2abc48bd27bf62c3f7a562551082232e4b38bf512",
+    "stdout_bytes": 22
+  },
+  "public_contracts": {
+    "references": {
+      "ThmAttribute": {
+        "path": "src/1/ThmAttribute.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "1556c516004b961b4dcd39db4e8fac66eda400d2",
+        "sha256": "eb33b7107481155d4421db7542abedff166a290a004f82cce3a89004f048b3b3",
+        "bytes": 1502
+      },
+      "Cond_rewr": {
+        "path": "src/simp/src/Cond_rewr.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "7d79866a5b57a97a2a898d9645b3aa62a6acf43e",
+        "sha256": "40d92a9c084ae43b90276a68c3bae036b295cfd8c71062059ee7342d44e95859",
+        "bytes": 1977
+      },
+      "Opening": {
+        "path": "src/simp/src/Opening.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "e1a0e727dc071eb06884828b98c01cab529e0799",
+        "sha256": "195391d1e406abf82b45a12790be91936bb222dd8b2a87cbc2aa17300837ad6d",
+        "bytes": 3845
+      },
+      "Traverse": {
+        "path": "src/simp/src/Traverse.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "620c95336b8446c7633e1fb92c6b94089bb03fea",
+        "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+        "bytes": 5286
+      },
+      "Travrules": {
+        "path": "src/simp/src/Travrules.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "120557a95f09ce2fea2155200dbbd2935ad0ac91",
+        "sha256": "1bfcce2a17b0289f251d9fad73fa314f371c6e671e7809c35aad3af454c840df",
+        "bytes": 3864
+      },
+      "simpLib": {
+        "path": "src/simp/src/simpLib.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "26558fd43811a84f1b98b625230aae3fef3d97ad",
+        "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666",
+        "bytes": 10369
+      },
+      "congLib": {
+        "path": "src/simp/src/congLib.sig",
+        "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "git_blob": "8deb93c0649f51ab8e96e0a51642466acf0b88f8",
+        "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+        "bytes": 5909
+      }
+    },
+    "fixtures": {
+      "PublicThmAttribute": {
+        "reference": "ThmAttribute",
+        "checks": [
+          "complete ThmAttribute ascription",
+          "original attribute records and registry",
+          "original attribute callbacks and formatting"
+        ],
+        "modules": [
+          "ThmAttribute"
+        ],
+        "fresh": [
+          "ThmAttribute"
+        ]
+      },
+      "PublicCond_rewr": {
+        "reference": "Cond_rewr",
+        "checks": [
+          "complete Cond_rewr ascription",
+          "original conditional rewrite types and execution"
+        ],
+        "modules": [
+          "Cond_rewr"
+        ]
+      },
+      "PublicOpening": {
+        "reference": "Opening",
+        "checks": [
+          "complete Opening ascription",
+          "original congruence procedure record and execution"
+        ],
+        "modules": [
+          "Opening"
+        ]
+      },
+      "PublicTravrules": {
+        "reference": "Travrules",
+        "checks": [
+          "complete Travrules ascription",
+          "original traversal datatypes and type identities"
+        ],
+        "modules": [
+          "Travrules"
+        ]
+      },
+      "PublicSimpLib": {
+        "reference": "simpLib",
+        "checks": [
+          "complete simpLib ascription",
+          "original simplifier records and ordinary execution"
+        ],
+        "modules": [
+          "Traverse",
+          "simpLib"
+        ]
+      },
+      "PublicCongLib": {
+        "reference": "congLib",
+        "checks": [
+          "complete congLib ascription",
+          "original congruence datatype and simpset identity"
+        ],
+        "modules": [
+          "Traverse",
+          "simpLib",
+          "congLib"
+        ]
+      },
+      "PublicTraverseAscription": {
+        "reference": "Traverse",
+        "checks": [
+          "complete Traverse ascription"
+        ],
+        "modules": [
+          "Traverse"
+        ],
+        "exact_datatype": true
+      },
+      "PublicTraverseFunctor": {
+        "reference": "Traverse",
+        "checks": [
+          "complete Traverse functor argument"
+        ],
+        "modules": [
+          "Traverse"
+        ],
+        "exact_datatype": true
+      },
+      "PublicTraverseClient": {
+        "checks": [
+          "replication and every reducer field",
+          "every traverse_data field",
+          "ordinary reducer/simpset/congset interoperability"
+        ],
+        "modules": [
+          "Traverse",
+          "simpLib",
+          "congLib"
+        ],
+        "exhaustive_match": true
+      }
+    },
+    "inventory": {
+      "baseline": {
+        "changed_baseline": [],
+        "branch_only": [],
+        "unchanged_dependencies": [
+          "src/1/ThmAttribute.sig",
+          "src/simp/src/Cond_rewr.sig",
+          "src/simp/src/Opening.sig",
+          "src/simp/src/Traverse.sig",
+          "src/simp/src/Travrules.sig",
+          "src/simp/src/congLib.sig",
+          "src/simp/src/simpLib.sig"
+        ]
+      },
+      "candidate": {
+        "changed_baseline": [
+          "src/1/ThmAttribute.sig",
+          "src/simp/src/Cond_rewr.sig",
+          "src/simp/src/Opening.sig",
+          "src/simp/src/Traverse.sig",
+          "src/simp/src/Travrules.sig",
+          "src/simp/src/simpLib.sig"
+        ],
+        "branch_only": [
+          "src/simp/src/SplitData.sig",
+          "src/simp/src/simpMarkerLib.sig",
+          "src/simp/src/splitLib.sig",
+          "src/simp/tests/compatibility/inputs/develop/Traverse.sig"
+        ],
+        "unchanged_dependencies": [
+          "src/simp/src/congLib.sig"
+        ]
+      }
+    },
+    "signature_diffs": {
+      "baseline": "",
+      "candidate": "diff --git a/src/1/ThmAttribute.sig b/src/1/ThmAttribute.sig\nindex 1556c5160..f6dee4ff4 100644\n--- a/src/1/ThmAttribute.sig\n+++ b/src/1/ThmAttribute.sig\n@@ -16,6 +16,11 @@ sig\n   val reserve_word : string -> unit\n \n \n+  (* Read-only lookup of the exact installed handler record. The _of\n+     variant reads the supplied context; neither variant invokes callbacks\n+     or changes the registry. Useful for context-specific ownership checks. *)\n+  val attribute_fns_of : Context.t -> string -> attrfuns option\n+  val attribute_fns : string -> attrfuns option\n   val is_attribute : string -> bool\n   val all_attributes : unit -> string list\n   val store_at_attribute : attrfun\ndiff --git a/src/simp/src/Cond_rewr.sig b/src/simp/src/Cond_rewr.sig\nindex 7d79866a5..8d1d46083 100644\n--- a/src/simp/src/Cond_rewr.sig\n+++ b/src/simp/src/Cond_rewr.sig\n@@ -37,11 +37,53 @@ sig\n   include Abbrev\n   type controlled_thm = BoundedRewrites.controlled_thm\n   val ac_term_ord    : term * term -> order\n+\n+  (* Whether an equation is permutative: its two sides are the same term\n+     up to where the variables sit, and they carry the same variables.\n+     This is the test COND_REWR_CONV applies before refusing a rewrite\n+     that a term ordering does not take downwards. *)\n+  val is_var_perm    : term * term -> bool\n   val mk_cond_rewrs  : controlled_thm -> controlled_thm list\n   val IMP_EQ_CANON   : controlled_thm -> controlled_thm list\n   val COND_REWR_CONV : string * thm -> bool ->\n                        (term list -> term -> thm) -> term list -> conv\n+\n+  (* Prepare a conditional rewrite once and share its matcher between\n+     the original curried runner and an explicitly configured runner.\n+     The caller retains the actual bound reference; bounded is its status.\n+     The legacy runner reads stack_limit live at each candidate check.\n+     Configured NONE does likewise; SOME n is independent of stack_limit. *)\n+  val COND_REWR_CONVS : string * thm -> bool ->\n+                       {legacy : (term list -> term -> thm) ->\n+                                 term list -> conv,\n+                        configured :\n+                          {solver : term list -> term -> thm,\n+                           stack : term list,\n+                           cond_depth : int option,\n+                           term_ord : term * term -> order} -> conv}\n+\n+  (* As COND_REWR_CONV, but with an explicit integer side-condition depth\n+     and permutative term order.  This adapter passes SOME cond_depth to\n+     the configured runner.  Unlike COND_REWR_CONV, it does not read the\n+     live stack_limit reference at candidate checks. *)\n+  val COND_REWR_CONV_WITH_CONTEXT :\n+                       string * thm -> bool ->\n+                       {solver : term list -> term -> thm,\n+                        stack : term list,\n+                        cond_depth : int,\n+                        term_ord : term * term -> order} -> conv\n+  (* NONE reads stack_limit at each candidate's depth check; SOME n is\n+     an explicit invocation-local depth, independent of the reference. *)\n+  val COND_REWR_CONV_WITH_CONFIG :\n+                       string * thm -> bool ->\n+                       {solver : term list -> term -> thm,\n+                        stack : term list,\n+                        cond_depth : int option,\n+                        term_ord : term * term -> order} -> conv\n   val QUANTIFY_CONDITIONS : controlled_thm -> controlled_thm list\n+\n+  (* The user-level default for the side-condition depth.  It applies to\n+     every traversal whose simpset does not configure the depth. *)\n   val stack_limit : int ref\n \n   (* run something, and report which rewrites fired while it ran *)\ndiff --git a/src/simp/src/Opening.sig b/src/simp/src/Opening.sig\nindex e1a0e727d..951c54719 100644\n--- a/src/simp/src/Opening.sig\n+++ b/src/simp/src/Opening.sig\n@@ -76,6 +76,7 @@ signature Opening = sig\n                     depther : (thm list * term) -> conv} -> conv\n    val samerel            : term -> term -> bool\n    val CONGPROC           : ({Rinst:term,arg:term} -> thm) -> thm -> congproc\n+   val THREADED_CONGPROC  : ({Rinst:term,arg:term} -> thm) -> thm -> congproc\n    val rel_of_congrule    : thm -> term\n    val nconds_of_congrule : thm -> int\n \ndiff --git a/src/simp/src/SplitData.sig b/src/simp/src/SplitData.sig\nnew file mode 100644\nindex 000000000..d725f2132\n--- /dev/null\n+++ b/src/simp/src/SplitData.sig\n@@ -0,0 +1,11 @@\n+(* Internal persistence for splitLib. Loading this module claims no public\n+   namespace and installs no theory-data operations or listeners. *)\n+signature SplitData =\n+sig\n+  datatype raw_delta = Add of KernelSig.kernelname | Remove of string\n+  val initialize : {validate : Thm.thm -> unit} -> unit\n+  val exclude : string -> unit\n+  val named_rules : unit -> (string * Thm.thm) list\n+  val theory_data : string -> raw_delta list\n+  val current_data : unit -> raw_delta list\n+end\ndiff --git a/src/simp/src/Traverse.sig b/src/simp/src/Traverse.sig\nindex 620c95336..ce940c0da 100644\n--- a/src/simp/src/Traverse.sig\n+++ b/src/simp/src/Traverse.sig\n@@ -64,6 +64,20 @@ sig\n     * initial:  The inital context.\n     * ---------------------------------------------------------------------*)\n \n+  (* Option-valued depth transport keeps the live default distinguishable\n+     from a configured integer, without changing either older constructor. *)\n+  type reducer_config_data =\n+        {name : string option,\n+         initial: context,\n+         addcontext : context * thm list -> context,\n+         apply: {solver:term list -> term -> thm,\n+                 conv: term list -> term -> thm,\n+                 context: context,\n+                 stack:term list,\n+                 cond_depth:int option,\n+                 term_ord:term * term -> order,\n+                 relation : (term * (term -> thm))} -> conv}\n+\n   datatype reducer = REDUCER of {\n          name : string option,\n          initial: context,\n@@ -74,6 +88,25 @@ sig\n                  stack:term list,\n                  relation : (term * (term -> thm))} -> conv\n        }\n+       | CONTEXT_REDUCER of {\n+         name : string option,\n+         initial: context,\n+         addcontext : context * thm list -> context,\n+         apply: {solver:term list -> term -> thm,\n+                 conv: term list -> term -> thm,\n+                 context: context,\n+                 stack:term list,\n+                 cond_depth:int,\n+                 term_ord:term * term -> order,\n+                 relation : (term * (term -> thm))} -> conv\n+       }\n+       | CONFIG_REDUCER of reducer_config_data\n+\n+  (* Through dest_reducer a CONTEXT_REDUCER runs at the default\n+     side-condition depth (!Cond_rewr.stack_limit) and term order\n+     (Cond_rewr.ac_term_ord); a CONFIG_REDUCER receives NONE for live depth.\n+     reducer_data supplies an explicit depth; reducer_config_data preserves\n+     NONE for CONFIG_REDUCER and samples it for CONTEXT_REDUCER. *)\n \n   val dest_reducer : reducer ->\n         {name : string option,\n@@ -85,8 +118,30 @@ sig\n                  stack:term list,\n                  relation : (term * (term -> thm))} -> conv}\n \n+  val reducer_data : reducer ->\n+        {name : string option,\n+         initial: context,\n+         addcontext : context * thm list -> context,\n+         apply: {solver:term list -> term -> thm,\n+                 conv: term list -> term -> thm,\n+                 context: context,\n+                 stack:term list,\n+                 cond_depth:int,\n+                 term_ord:term * term -> order,\n+                 relation : (term * (term -> thm))} -> conv}\n+\n+  val reducer_config_data : reducer -> reducer_config_data\n+\n   val addctxt : thm list -> reducer -> reducer\n \n+  type simp_prover_ctxt =\n+       {stack        : term list,\n+        context_thms : thm list,\n+        recurse      : term -> thm}\n+  type ssolver =\n+       {name : string, solve : simp_prover_ctxt -> term -> thm}\n+  type subgoaler = simp_prover_ctxt -> term -> thm\n+\n  (* ----------------------------------------------------------------------\n      TRAVERSE : {rewriters: reducer list,\n                  dprocs: reducer list,\n@@ -129,6 +184,70 @@ sig\n                          travrules: Travrules.travrules,\n                          relation: term};\n \n+   (* Initialize reducer contexts once when the conversion is constructed. *)\n    val TRAVERSE : traverse_data -> thm list -> conv\n \n+   (* The traversal-strategy settings that traverse_data does not carry.\n+      An unset field takes the value TRAVERSE runs at: no subgoaler, no\n+      extra solvers, !Cond_rewr.stack_limit as the side-condition depth\n+      and Cond_rewr.ac_term_ord as the permutative term order.\n+      default_config supplies these unconfigured settings. *)\n+   type traverse_config = {subgoaler: subgoaler option,\n+                           solvers: ssolver list,\n+                           cond_depth: int option,\n+                           term_ord: (term * term -> order) option};\n+\n+   type xtraverse_data = traverse_data * traverse_config\n+\n+   val default_config : traverse_config\n+\n+   (* Unlike TRAVERSE, refresh supplied reducer contexts on each application,\n+      even with default_config. *)\n+   val XTRAVERSE : xtraverse_data -> thm list -> conv\n+\n+   (* ParentFirst is XTRAVERSE's order.  ChildFirst is opt-in child-first\n+      traversal. A certified eta contraction of a function argument may\n+      run before descent to preserve its head; logical binder predicates\n+      are excluded. keep_abstraction selects applications whose argument\n+      must retain its abstraction. Congruence rules decide which children\n+      are visited and their context. charge runs before head preservation,\n+      descent or a reducer attempt, and its exception propagates to the\n+      invocation owner. Caller-supplied reducers control their own\n+      conversions; simpLib also protects against its standard ETA reducer. *)\n+   type child_first_policy =\n+       {charge : unit -> unit, keep_abstraction : term -> bool}\n+   datatype traversal_policy =\n+       ParentFirst | ChildFirst of child_first_policy\n+\n+   val charge_only : (unit -> unit) -> child_first_policy\n+   val keep_abstraction : child_first_policy -> term -> bool\n+\n+   (* Normalize proper arguments (or an abstraction's body), preserving\n+      the root. Repeat policy-selected eta contraction and child\n+      normalization until stable; charge bounds repeated passes. *)\n+   val NORMALIZE_ARGUMENTS : child_first_policy -> conv -> conv\n+\n+   (* As XTRAVERSE in the given order, but keep initial reducer additions\n+      separate from theorems which extend generic solver and\n+      binder-capture contexts only. *)\n+   val TRAVERSE_WITH_CONTEXT :\n+       traversal_policy -> xtraverse_data ->\n+       {reducer_context : thm list, solver_context : thm list} -> conv\n+\n+   (* Opt-in dependency observation for child-first derivation. Observe\n+      each term offered to descent/reducers, including unchanged terms\n+      and side conditions whose proof attempts fail. This does not\n+      change charging or catch exceptions from the observer. *)\n+   val CHILD_FIRST_WITH_OBSERVER :\n+       (term -> unit) -> child_first_policy -> xtraverse_data ->\n+       {reducer_context : thm list, solver_context : thm list} -> conv\n+\n+   (* Apply one reducer at the root, without descending.  Recursive\n+      side-condition proving still uses the full traversal. *)\n+   val ROOT_REWRITE : xtraverse_data -> thm list -> conv\n+\n+   val ROOT_REWRITE_WITH_CONTEXT :\n+       xtraverse_data ->\n+       {reducer_context : thm list, solver_context : thm list} -> conv\n+\n end (* sig *)\ndiff --git a/src/simp/src/Travrules.sig b/src/simp/src/Travrules.sig\nindex 120557a95..610446feb 100644\n--- a/src/simp/src/Travrules.sig\n+++ b/src/simp/src/Travrules.sig\n@@ -87,6 +87,7 @@ sig\n \n \n   val mk_travrules : preorder list -> thm list -> travrules\n+  val mk_threaded_travrules : preorder list -> thm list -> travrules\n   val cong2proc : preorder list -> thm -> Opening.congproc\n \n   (* the equality case - all theorems are interpeted as equality congruences *)\ndiff --git a/src/simp/src/simpLib.sig b/src/simp/src/simpLib.sig\nindex 26558fd43..f532722f7 100644\n--- a/src/simp/src/simpLib.sig\n+++ b/src/simp/src/simpLib.sig\n@@ -61,6 +61,8 @@ sig\n   type controlled_thm = BoundedRewrites.controlled_thm\n \n   type ssfrag\n+  type simpset\n+  type rewrite_source\n \n   val SSFRAG :\n     {name : string option,\n@@ -72,9 +74,9 @@ sig\n      congs: thm list} -> ssfrag\n \n   val empty_ssfrag : ssfrag\n-  val ssf_upd_rewrs : ((thname option * thm) list -> (thname option * thm) list)\n-                      ->\n-                      ssfrag -> ssfrag\n+  val ssf_upd_rewrs :\n+    ((thname option * thm) list -> (thname option * thm) list) ->\n+    ssfrag -> ssfrag\n   val frag_rewrites : ssfrag -> thm list\n   val frag_name : ssfrag -> string option\n \n@@ -87,8 +89,22 @@ sig\n   (*------------------------------------------------------------------------*)\n \n   val Cong        : thm -> thm\n+  (* Simplifier-owned marker (simpMarker theory); no persistence opt-in. *)\n+  val Split       : thm -> thm\n   val AC          : thm -> thm -> thm\n+  (* Literal strict rule/conversion/dproc deletion, as with ss -* [name].\n+     No namespace/fallback interpretation. Unmatched names are silent;\n+     history reparses strict names in the current theory on replay. *)\n   val Excl        : string -> thm\n+  (* Explicit target resolution: rule:, looper:, solver:, split:, case:.\n+     rule: accepts relaxed Thy.Name and Thy$Name. Bare names first use the\n+     strict parser and rule/dproc priority, then strategy fallback.\n+     Missing/ambiguous targets fail when processed, not at construction.\n+     History keeps resolved rules/displays; split/case suppression also\n+     applies to later additions. Does not enable persistent registration. *)\n+  (* Simplifier-owned ExcludeX marker; generic marker tactics do not\n+     interpret extended exclusions. *)\n+  val ExclX       : string -> thm\n   val ExclSF      : string -> thm\n   val Req0        : thm -> thm\n   val ReqD        : thm -> thm\n@@ -96,10 +112,14 @@ sig\n \n   val rewrites       : thm list -> ssfrag\n   val rewrites_with_names : (thname * thm) list -> ssfrag\n+  val threaded_cong_ss : thm list -> ssfrag\n   val dproc_ss       : Traverse.reducer -> ssfrag\n   val ac_ss          : (thm * thm) list -> ssfrag\n   val conv_ss        : convdata -> ssfrag\n   val relsimp_ss     : relsimpdata -> ssfrag\n+  val looper_ss      : string * (simpset -> tactic) -> ssfrag\n+  val solver_ss      : Traverse.ssolver -> ssfrag\n+  val safe_solver_ss : Traverse.ssolver -> ssfrag\n   val std_conv_ss    : stdconvdata -> ssfrag\n   val merge_ss       : ssfrag list -> ssfrag\n   val name_ss        : string -> ssfrag -> ssfrag\n@@ -124,13 +144,74 @@ sig\n     * and rewrite makers.\n     * ---------------------------------------------------------------------*)\n \n-  type simpset\n   type weakener_data = Travrules.preorder list * thm list * Traverse.reducer\n \n   val empty_ss        : simpset\n   val ssfrags_of      : simpset -> ssfrag list\n+  (* Actual compiled rewrite sources after the supplied controls, and\n+     untagged supplied rewrites. Conversions are excluded. Strategy and\n+     decision-procedure copies share the source list; new rules prepend\n+     their sources. Filtering, exclusions and clearing remove sources. *)\n+  val rewrite_sources : simpset -> thm list ->\n+      (thname option * thm) list * thm list\n+  (* Handles identify native rule occurrences across history replay;\n+     installed views are omitted. Views share the current source's\n+     exact compiled name and rewrite allowance, and disappear if that\n+     source is removed or its compiled statement changes. *)\n+  val rewrite_source_handles : simpset -> rewrite_source list\n+  (* Apply ordinary argument directives before binding supplied rewrites.\n+     Compatible surviving native occurrences retain their remaining uses. *)\n+  val prepare_rewrite_arguments : simpset -> thm list -> simpset * thm list\n+  val source_rewrite : rewrite_source -> thname option * thm\n+  val same_rewrite_source : rewrite_source * rewrite_source -> bool\n+  (* Stable origin order; compatibility also requires same_rewrite_source. *)\n+  val rewrite_source_compare : rewrite_source * rewrite_source -> order\n+  val rewrite_views : (rewrite_source * thm) list -> ssfrag\n+  type rewrite_bundle\n+  (* Compile supplied rules without installing or priming ambient reducers.\n+     Install once per simpset; nested consumers of the same binding and its\n+     associated views share the compiled rules' actual controls. History\n+     replay retains these compiled shapes without calling the rewrite maker\n+     again. Ordinary replay resets declared quotas, preserving sharing\n+     between conjuncts; opt-in control preservation keeps remaining uses. *)\n+  val prepare_rewrite_bundle : simpset -> thm list -> rewrite_bundle\n+  (* Combine existing compiled bundles without refreshing quotas or origins.\n+     Duplicate bindings are rejected; installation retains each event. *)\n+  val combine_rewrite_bundles : rewrite_bundle list -> rewrite_bundle\n+  val rewrite_bundle_rules : rewrite_bundle ->\n+    (thm * rewrite_source list) list\n+  val install_rewrite_bundle : rewrite_bundle ->\n+    (rewrite_source * thm) list -> simpset -> simpset\n+  (* Suspend exact active compiled occurrences and their attached views.\n+     Other conjuncts keep their names and remaining rewrite allowances;\n+     history replay retains suspension and opaque contexts lose the\n+     suspended conjuncts. Missing/incompatible handles change nothing. *)\n+  val suspend_rewrite_sources : rewrite_source list -> simpset -> simpset\n+  (* Changed conversion keys and opaque traversal/context changes.\n+     Existing decision procedures may depend on every added context rule. *)\n+  val rewrite_context_changes : simpset * simpset ->\n+    {keys : (term list * term) list, rebuild : bool,\n+     context_sensitive : bool}\n   val mk_simpset      : ssfrag list -> simpset\n   val remove_ssfrags  : string list -> simpset -> simpset\n+  (* Opt-in fragment removal sharing surviving sources' actual controls,\n+     including exhausted counters, with the input and its existing views.\n+     Missing names raise UNCHANGED, as with ordinary removal. *)\n+  val remove_ssfrags_preserving_controls :\n+    string list -> simpset -> simpset\n+\n+  (* Removes from every fragment the rewrites the predicate rejects,\n+     keeping the rest of the simpset's history -- what it has excluded\n+     by name, its limit, its rewrite maker, its strategy -- as it\n+     stands.  Rebuilding from ssfrags_of does not: that keeps the\n+     fragments alone.  Returns the simpset itself where nothing is\n+     rejected, and never raises Conv.UNCHANGED. *)\n+  val filter_rewrites :\n+    ((thname option * thm) -> bool) -> simpset -> simpset\n+  (* Invocation filtering retains surviving sources' actual controls,\n+     including exhausted quotas shared with their installed aliases. *)\n+  val filter_rewrites_preserving_controls :\n+    ((thname option * thm) -> bool) -> simpset -> simpset\n \n   (* Like remove_ssfrags, but additionally records the names so that any\n      subsequent ++ of a named fragment with one of those names is silently\n@@ -148,12 +229,52 @@ sig\n   val unlimit         : simpset -> simpset\n   val add_named_rwt   : (thname * thm) -> ssfrag -> ssfrag\n \n+  val add_looper : string * (simpset -> tactic) -> simpset -> simpset\n+  val del_looper : string -> simpset -> simpset\n+  val set_looper : string * (simpset -> tactic) -> simpset -> simpset\n+  val add_split : thm -> simpset -> simpset\n+  val del_split : string -> simpset -> simpset\n+  val split_ss : ssfrag\n+  val add_unsafe_solver : Traverse.ssolver -> simpset -> simpset\n+  val add_safe_solver : Traverse.ssolver -> simpset -> simpset\n+  val set_unsafe_solvers : Traverse.ssolver list -> simpset -> simpset\n+  val set_safe_solvers : Traverse.ssolver list -> simpset -> simpset\n+  val remove_solver : string -> simpset -> simpset\n+  val set_subgoaler : Traverse.subgoaler -> simpset -> simpset\n+  val set_cond_depth : int -> simpset -> simpset\n+  val set_term_ord : (term * term -> order) -> simpset -> simpset\n+  val mk_tactic_solver : string * tactic -> Traverse.ssolver\n+  val clear_rules : simpset -> simpset\n+\n   val add_weakener : weakener_data -> simpset -> simpset\n \n   val add_relsimp  : relsimpdata -> simpset -> simpset\n \n+  (* Unconditional legacy projection: the native rewriter is a REDUCER,\n+     supplied decision procedures are unchanged, and simpset-specific\n+     traversal configuration is omitted. No migration for legacy clients.\n+     Extraction runs no collectors and shares installed rewrite controls;\n+     TRAVERSE initializes private contexts at conversion construction. *)\n   val traversedata_for_ss: simpset -> Traverse.traverse_data\n \n+  (* Additive cooperation API for original-ABI consumers such as congLib.\n+     NONE means conversion settings or nonordinary decision procedures\n+     require the configured projection. Eligibility runs no callbacks;\n+     SOME is the same default projection as traversedata_for_ss, sharing\n+     the existing index, matchers and actual bound controls. *)\n+  val legacy_traversedata_for_ss:\n+    simpset -> Traverse.traverse_data option\n+\n+  (* Explicit configured extraction: xtraversedata_for_ss pairs a native\n+     CONFIG_REDUCER with the simpset's traversal-strategy settings for the\n+     extended Traverse entry points. XTRAVERSE refreshes private contexts\n+     per application, even with default settings. Extraction itself runs\n+     no collectors and shares installed bounded controls with the legacy\n+     projection. For configured reducer data alone, use\n+     #1 (xtraversedata_for_ss ss), not traversedata_for_ss ss. *)\n+  val traverseconfig_for_ss: simpset -> Traverse.traverse_config\n+  val xtraversedata_for_ss: simpset -> Traverse.xtraverse_data\n+\n \n    (* ---------------------------------------------------------------------\n     * SIMP_CONV : simpset -> conv\n@@ -170,6 +291,36 @@ sig\n \n    val SIMP_PROVE : simpset -> thm list -> term -> thm\n    val SIMP_CONV  : simpset -> thm list -> conv\n+   (* Opt-in child-first conversion. A certified eta contraction preserves\n+      function argument heads before child descent, except at logical\n+      binders and applications selected by keep_abstraction. The standard\n+      ETA fragment also respects this selection after descent. Congruence\n+      rules control descent; charge runs before contraction, descent and\n+      reducer work. Traverse.charge_only retains the contraction policy.\n+      The ordinary SIMP_CONV strategy is unchanged. *)\n+   val SIMP_CONV_CHILD_FIRST :\n+     Traverse.child_first_policy -> simpset -> thm list -> conv\n+\n+   (* Prepare one ambient child-first traversal for rewrite-view\n+      derivation. Arguments preserves the root. Each conversion uses\n+      fresh declared bounded allowances privately and restores the\n+      caller's counters, including on exceptions. Derivation cannot\n+      spend an invocation's allowance or depend on earlier consumption.\n+      The indexed\n+      pre-test is conservative for opaque reducers and congruences;\n+      conditional premises require attempting normalization regardless. *)\n+   val prepare_child_first : Traverse.child_first_policy -> simpset ->\n+     {normalize : thm list -> conv,\n+      arguments : thm list -> conv,\n+      may_reduce_arguments : term -> bool}\n+   (* As prepare_child_first, also observing inputs, results and every\n+      child/condition offered to traversal. Failed conditional attempts\n+      and unchanged terms remain dependencies. *)\n+   val prepare_child_first_observed :\n+     (term -> unit) -> Traverse.child_first_policy -> simpset ->\n+     {normalize : thm list -> conv,\n+      arguments : thm list -> conv,\n+      may_reduce_arguments : term -> bool}\n \n    (* ---------------------------------------------------------------------\n     * SIMP_TAC : simpset -> tactic\n@@ -195,6 +346,10 @@ sig\n     * These tactics never fail, though they may diverge.\n     * ---------------------------------------------------------------------*)\n \n+   type simp_mode = {safe : bool}\n+   val GEN_SIMP_TAC  : simp_mode -> simpset -> thm list -> tactic\n+   val GEN_SIMP_TAC_CHILD_FIRST :\n+     Traverse.child_first_policy -> simp_mode -> simpset -> thm list -> tactic\n    val SIMP_TAC      : simpset -> thm list -> tactic\n    val simp_tac      : simpset -> thm list -> tactic\n    val ASM_SIMP_TAC  : simpset -> thm list -> tactic\n@@ -213,6 +368,27 @@ sig\n      (* Pop, Simp, Rotate to back *)\n    val allasms : simptac_config -> simpset -> tactic\n      (* do the above to all the assumptions in turn *)\n+   type xsimptac_config =\n+        {base : simptac_config, concl_in_fixpoint : bool,\n+         imp_rebuild : bool, imp_premises : bool}\n+     (* imp_premises discharges the conclusion's leading implications\n+        into the assumptions before the fixpoint, so that a premise\n+        written as an antecedent is simplified with the others in\n+        context rather than only with the ones before it. *)\n+   val GEN_GLOBAL_SIMP_TAC :\n+     simp_mode -> xsimptac_config -> simpset -> thm list -> tactic\n+   (* The same assumption/conclusion fixpoint, with opt-in child-first\n+      traversal for each simplification pass. Root-rebuild flags retain\n+      their explicit wrapper behavior. *)\n+   val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST :\n+     Traverse.child_first_policy -> simp_mode -> xsimptac_config ->\n+     simpset -> thm list -> tactic\n+   (* The bundle is already installed in the given invocation simpset.\n+      Retain its untagged solver context and own rewrite controls across\n+      local marker replay; never reinstall or recompile it as arguments. *)\n+   val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND :\n+     Traverse.child_first_policy -> simp_mode -> xsimptac_config ->\n+     simpset -> rewrite_bundle -> thm list -> tactic\n    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic\n      (* do allasms until quiescence, then simp in the goal as well *)\n \ndiff --git a/src/simp/src/simpMarkerLib.sig b/src/simp/src/simpMarkerLib.sig\nnew file mode 100644\nindex 000000000..b1fcb7e33\n--- /dev/null\n+++ b/src/simp/src/simpMarkerLib.sig\n@@ -0,0 +1,19 @@\n+(* Simplifier directives: legacy classification remains in markerLib. *)\n+signature simpMarkerLib =\n+sig\n+  include Abbrev\n+  val Split_tm : term\n+  val Split : thm -> thm\n+  val destSplit : thm -> thm\n+  val ExclX : string -> thm\n+  val destExclX : thm -> string option\n+  datatype directive =\n+    Legacy of markerLib.directive | DSplit of thm | DExclX of string\n+  val dest_directive : thm -> directive option\n+  val is_directive : thm -> bool\n+  val strip_wrappers : thm -> thm\n+  (* Run pretactics and requirement checks once; recursive passes reapply\n+     the saved assumption policy and pass the stripped arguments. *)\n+  val process_taclist_then_recur : {arg : thm list} ->\n+    (((thm list -> tactic) -> tactic) -> thm list -> tactic) -> tactic\n+end\ndiff --git a/src/simp/src/splitLib.sig b/src/simp/src/splitLib.sig\nnew file mode 100644\nindex 000000000..aeab77130\n--- /dev/null\n+++ b/src/simp/src/splitLib.sig\n@@ -0,0 +1,75 @@\n+signature splitLib =\n+sig\n+  include Abbrev\n+\n+  (* Analyse the supplied rules when the conversion is constructed. *)\n+  val SPLIT_CONV : thm list -> conv\n+\n+  (* Split the first assumption an assumption rule applies to.  Naming a\n+     rule's head constant does not make an assumption splittable, so a\n+     later assumption is reached when an earlier one only mentions it. *)\n+  val SPLIT_ASM_TAC : thm list -> tactic\n+\n+  (* Perform one split, preferring the conclusion to assumptions. *)\n+  val SPLIT_TAC : thm list -> tactic\n+\n+  (* Derive the assumption-splitting form of a conclusion split rule. *)\n+  val mk_asm_split : thm -> thm\n+\n+  (* A rule as the splitter analyses it.  [split_forms] answers the\n+     forms of one rule the splitter applies -- an assumption rule as it\n+     stands, a conclusion rule together with the assumption rule\n+     [mk_asm_split] derives from it -- already analysed, so that a\n+     caller deciding which of the two a rule is gets that answer out of\n+     the analysis the splitter goes on to use rather than out of a walk\n+     of its own.  [SPLIT_RULE_TAC] is [SPLIT_TAC] over rules so\n+     analysed. *)\n+  type split_rule\n+  val split_forms : thm -> split_rule list\n+  val SPLIT_RULE_TAC : split_rule list -> tactic\n+\n+  (* Cached datatype split rules.  [type_split_rules] is the derived pair\n+     the splitter applies. *)\n+  val type_split_of : hol_type -> thm\n+  val type_asm_split_of : hol_type -> thm\n+  val type_split_rules : hol_type -> thm list\n+\n+  (* Datatype split rules whose case constants occur as saturated\n+     applications in the supplied terms.  The grouped form lets a caller\n+     apply per-type policy without repeating the goal walk. *)\n+  val goal_split_rule_groups : term list -> (hol_type * thm list) list\n+  val goal_split_rules : term list -> thm list\n+\n+  (* Explicitly claim the persistent [split] attribute with private rule storage.\n+     Idempotent only for this library's ownership in the current Context;\n+     foreign attributes and generic split theorem sets are rejected\n+     before mutation.\n+     Call before using [split] or loading theories whose data must replay.\n+     Exported theories explicitly load splitPersistLib and record it with\n+     Theory.add_ML_dependency on the earliest split-bearing theory.\n+     No simpLib dependency is needed for this initialization. Ownership\n+     and rules follow Context.restore; after rewinding before opt-in,\n+     call this API again rather than relying on a cached module load.\n+     Serialized theory initialization, not a concurrent proof operation.\n+     Registers no generic ThmSetData set. Pre-cleanup branch theories and\n+     heaps must be rebuilt: the private stream and marker theory changed. *)\n+  val enable_split_attribute : unit -> unit\n+\n+  (* Persistently retract [Thy.]Name, resolving an unqualified name in the\n+     current theory. Requires owned registration; never implicitly opts in.\n+     Unlike simpLib.del_split this writes a REMOVE for descendant replay.\n+     Retracting an absent name is harmless. Does not delete the theorem.\n+     REMOVE keys stay resolved across replay and Context.restore.\n+     Pinned contexts reject writes, including initialization above. *)\n+  val exclude_split : string -> unit\n+\n+  (* The private persistent [split] rules.  Before opt-in (or under foreign\n+     ownership), these return [] without registering or adopting data.\n+     Pure/local and TypeBase splitting never require opt-in. *)\n+  val split_thms : unit -> thm list\n+  val named_split_thms : unit -> (string * thm) list\n+\n+  (* Registration helpers used by simpLib. *)\n+  val is_asm_split : thm -> bool\n+  val split_thm_name : thm -> string\n+end\ndiff --git a/src/simp/tests/compatibility/inputs/develop/Traverse.sig b/src/simp/tests/compatibility/inputs/develop/Traverse.sig\nnew file mode 100644\nindex 000000000..620c95336\n--- /dev/null\n+++ b/src/simp/tests/compatibility/inputs/develop/Traverse.sig\n@@ -0,0 +1,134 @@\n+(* =====================================================================\n+ * FILE          : traverse.sig\n+ * DESCRIPTION   : A programmable term traversal engine for hol90\n+ *\n+ * AUTHOR        : Donald Syme\n+ * ===================================================================== *)\n+\n+signature Traverse =\n+sig\n+  include Abbrev\n+\n+   (* ---------------------------------------------------------------------\n+    * type context\n+    *\n+    * Each reducer collects the working context on its own.\n+    * A context object is the current state of a single reducer.\n+    * ---------------------------------------------------------------------*)\n+\n+  type context = exn (* well known SML hack to allow any kind of data *)\n+\n+   (* ---------------------------------------------------------------------\n+    * Reducers\n+    *   These are the things that get applied to terms during\n+    * traversal.  They prove theorems which state that the\n+    * current term reduces to a related\n+    *\n+    * Each reducer manages its own storage of the working context (of one\n+    * of the forms above - Nb. in SML exceptions are able to contain\n+    * any kind of data, so contexts can be any appropriate format.  This\n+    * is a hack, but it is the best way to get good data hiding in SML\n+    * without resorting to functors)\n+    *\n+    * The fields of a reducer are:\n+    *\n+    * apply:  This is the reducer itself.  The arguments passed by\n+    *   the traversal engine to the reduce routine are:\n+    *    solver:\n+    *      A continuation function, to be used if the reducer needs to\n+    *      solve some side conditions and want to continue traversing\n+    *      in order to do so.  The continuation invokes traversal\n+    *      under equality, then calls EQT_ELIM.\n+    *\n+    *      At the moment the continuation is primarily designed to\n+    *      be used to solve side conditions in context.\n+    *\n+    *      Note that this function is *not* the same as\n+    *      the congruence side condition solver.\n+    *\n+    *    context:\n+    *      The reducer's current view of the context, as\n+    *      collected by its \"addcontext\" function.\n+    *    term list:\n+    *      The current side condition stack, which grows as nested calls\n+    *      to the solver are made.\n+    *\n+    * conv:\n+    *   A continuation function, to be used if the reducer\n+    *   wants to continue traversing. The continuation invokes traversal\n+    *   under equality. Similar to solver, but does not call EQT_ELIM.\n+    *\n+    * addcontext: routine is invoked every time more context is added\n+    *   to the current environment by virtue of congruence routines.\n+    *\n+    * initial:  The inital context.\n+    * ---------------------------------------------------------------------*)\n+\n+  datatype reducer = REDUCER of {\n+         name : string option,\n+         initial: context,\n+         addcontext : context * thm list -> context,\n+         apply: {solver:term list -> term -> thm,\n+                 conv: term list -> term -> thm,\n+                 context: context,\n+                 stack:term list,\n+                 relation : (term * (term -> thm))} -> conv\n+       }\n+\n+  val dest_reducer : reducer ->\n+        {name : string option,\n+         initial: context,\n+         addcontext : context * thm list -> context,\n+         apply: {solver:term list -> term -> thm,\n+                 conv: term list -> term -> thm,\n+                 context: context,\n+                 stack:term list,\n+                 relation : (term * (term -> thm))} -> conv}\n+\n+  val addctxt : thm list -> reducer -> reducer\n+\n+ (* ----------------------------------------------------------------------\n+     TRAVERSE : {rewriters: reducer list,\n+                 dprocs: reducer list,\n+                 travrules: travrules,\n+                 relation: term,\n+                 limit : int option}\n+                -> thm list -> conv\n+\n+     Implements a procedure which tries to prove a term is related\n+     to a (simpler) term by the relation given in the travrules.\n+     This is done by traversing the term, applying the\n+     procedures specified in the travrules at certain subterms.\n+     The traversal strategy is similar to TOP_DEPTH_CONV.\n+\n+     The traversal has to be justified by congruence rules.\n+     These are also in the travrules.  See \"Congprocs\" for a more\n+     detailed description of congruence rules.\n+\n+     In the case of rewriting and simplification, the relation used is\n+     equality (--`$=`--).  However traversal can also be used with\n+     other congruences and preorders.\n+\n+     The behaviour of TRAVERSE depends almost totally on what\n+     is contained in the input travrules.\n+\n+     The theorem list is a set of theorems to add initially as context\n+     to the traversal.\n+\n+     FAILURE CONDITIONS\n+\n+     TRAVERSE never fails, though it may diverge or raise an exception\n+     indicating that a term is unchanged by the traversal.\n+\n+     Bad congruence rules may cause very strange behaviour.\n+    ---------------------------------------------------------------------- *)\n+\n+   type traverse_data = {rewriters: reducer list,\n+                         limit : int option,\n+                         dprocs: reducer list,\n+                         travrules: Travrules.travrules,\n+                         relation: term};\n+\n+   val TRAVERSE : traverse_data -> thm list -> conv\n+\n+end (* sig *)\n"
+    }
+  }
+}
