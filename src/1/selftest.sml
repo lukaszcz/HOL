@@ -1573,6 +1573,74 @@ in
 end
 
 
+(* Independent fixed-law view: it must not change ordinary EQT_INTRO,
+   allocate proofs/names, or depend on a captured declaration epoch. *)
+local
+  fun same_tag a b =
+    Tag.dest_tag a = Tag.dest_tag b andalso
+    Tag.axioms_of a = Tag.axioms_of b andalso Tag.dep_of a = Tag.dep_of b
+  val p = mk_var ("eqt_control_p", bool)
+  val q = mk_var ("eqt_control_q", bool)
+  fun check_intro th =
+    let val actual = Drule.EQT_INTRO th
+        val expected = SYM (CONJUNCT1 (CONJUNCT2
+          (SPEC (concl th) boolTheory.EQ_CLAUSES)))
+    in
+      aconv (concl actual) (mk_eq (concl th, T)) andalso
+      HOLset.equal (hypset actual, hypset th) andalso
+      same_tag (tag actual) (Tag.merge (tag expected) (tag th))
+    end
+  fun counter v =
+    valOf (IntInf.fromString
+      (String.extract (fst (dest_var v), String.size "%%genvar%%", NONE)))
+in
+  val _ = tprint "EQT_INTRO exact endpoint, Hyp and full tags"
+  val _ = require (check_result (List.all check_intro)) I
+    [TRUTH, ADD_ASSUM q (ASSUME p),
+     mk_oracle_thm "eqt_control_only" ([p,q], mk_conj (p,q))]
+  val _ = tprint "EQT law view is proof-free, name-free and exact"
+  val _ = let
+    val before_name = genvar bool
+    val _ = Count.counting_thms true
+    val _ = Count.reset_thm_count ()
+    val a = Drule.eqt_intro_cache_data ()
+    val b = Drule.eqt_intro_cache_data ()
+    val count = #total (Count.thm_count ())
+    val _ = Count.counting_thms false
+    val after_name = genvar bool
+    val (v, body) = dest_forall (#statement a)
+  in
+    if count = 0 andalso counter after_name = counter before_name + 1
+       andalso #bare a andalso #closed a andalso
+       aconv body (mk_eq (v, mk_eq (v, T))) andalso
+       aconv body (#body a) andalso aconv body (#body b) andalso
+       aconv v (#quantifier_variable a) andalso
+       same_tag (#tag a) (tag boolTheory.EQ_CLAUSES)
+    then OK () else die "fixed EQT law view changed"
+  end
+  val _ = tprint "EQT law view survives unrelated declaration changes"
+  val _ = let
+    val a = Drule.eqt_intro_cache_data ()
+    val _ = new_type ("eqt_control_epoch", 0)
+    val _ = delete_type "eqt_control_epoch"
+    val b = Drule.eqt_intro_cache_data ()
+  in
+    if aconv (#statement a) (#statement b) andalso
+       aconv (#body a) (#body b) andalso same_tag (#tag a) (#tag b)
+    then OK () else die "law view acquired an epoch dependency"
+  end
+  val _ = shouldfail {
+    checkexn = (fn HOL_ERR e =>
+      top_structure_of e = "HolKernel" andalso
+      top_function_of e = "ho_match_term" andalso
+      message_of e = "term_pmatch: can't instantiate local constant"
+      | _ => false),
+    printarg = K "Higher-order matcher rejects rigid mismatch",
+    printresult = K "unexpected match",
+    testfn = fn () => ho_match_term [] (HOLset.add (empty_tmset, p)) p q
+  } ()
+end
+
 (* Restarting a segment fires Parse.clear_consts_from_grammar, which must
    drop the zapped segment's constants from the overload map even when the
    map holds a pattern overload.  Must stay last in the file: it retires

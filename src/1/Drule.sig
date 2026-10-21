@@ -111,14 +111,9 @@ sig
   val pp    : thmpos_dtype.match_position -> thm -> thm
 
 
-  (* Read-only origin of THIS instance's existing EQT_INTRO cache.
-     No native operation fee, Scope, proof or Ready grant. *)
-  type eqt_intro_constructor_origin
-  val eqt_intro_constructor_origin : unit -> eqt_intro_constructor_origin
-  val eqt_intro_constructor_origin_data : eqt_intro_constructor_origin ->
-    {bare:bool,closed:bool,statement:term,quantifier_variable:term,tag:Tag.tag}
-  (* Immutable actual cached GEN relation; no fresh validity/token grant.
-     Caller-owned P inspection must be paid before this fixed DATA read. *)
+  (* On-demand view of the fixed EQT_INTRO law. The body is decoded, not
+     retained from construction; no pointer identity or validity grant.
+     bare means the decoded argument is a variable, not a kernel hook. *)
   val eqt_intro_cache_data : unit ->
     {statement:term,body:term,quantifier_variable:term,tag:Tag.tag,
      bare:bool,closed:bool}

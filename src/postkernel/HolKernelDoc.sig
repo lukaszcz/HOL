@@ -21,7 +21,6 @@ sig
   val find_maximal_terms: (term -> bool) -> term -> term set
   val find_term: (term -> bool) -> term -> term
   val find_terms: (term -> bool) -> term -> term list
-  val ho_match_dummy_name_bytes: unit -> int
   val ho_match_term0:
      hol_type list -> term set -> term -> term ->
      {redex: term, residue: int} list *

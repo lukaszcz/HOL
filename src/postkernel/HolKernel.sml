@@ -520,9 +520,9 @@ local
       if residue = z then l
       else failwith "match: safe_insert"
     end handle NOT_FOUND => n::l
-  val (mk_dummy, cached_ho_dummy_name_bytes) = let
+  val mk_dummy = let
     val name = fst (dest_var (genvar Type.alpha))
-  in (fn ty => mk_var (name, ty), String.size name)
+  in fn ty => mk_var (name, ty)
   end
 
 
@@ -755,8 +755,6 @@ in
 end
 
 in
-
-fun ho_match_dummy_name_bytes () = cached_ho_dummy_name_bytes
 
 fun ho_match_term0 tyavoids lconsts vtm ctm = let
   val pinsts_homs = term_pmatch lconsts [] vtm ctm ([], [])

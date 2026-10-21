@@ -14953,27 +14953,13 @@ struct
 
   (* These fixed groups price this Source reader's explicit instructions.
      Borrowed kernel/signature tables and machine costs remain qualified. *)
-  val eqc_library_export_fee=length
-    ["export group 1 instruction 1","export group 1 instruction 2",
-     "export group 2 instruction 1","export group 3 instruction 1",
-     "export group 3 instruction 2","export group 3 instruction 3",
-     "export group 3 instruction 4","export group 3 instruction 5",
-     "export group 3 instruction 6","export group 4 instruction 1",
-     "export group 4 instruction 2","export group 4 instruction 3",
-     "export group 4 instruction 4","export group 4 instruction 5",
-     "export group 4 instruction 6","export group 4 instruction 7",
-     "export group 4 instruction 8","export group 4 instruction 9",
-     "export group 4 instruction 10","export group 4 instruction 11",
-     "export group 4 instruction 12","export group 4 instruction 13",
-     "export group 4 instruction 14","export group 4 instruction 15",
-     "export group 5 instruction 1","export group 5 instruction 2",
-     "export group 6 instruction 1","export group 6 instruction 2",
-     "export group 7 instruction 1","export group 7 instruction 2",
-     "export group 8 instruction 1","export group 9 instruction 1",
-     "export group 9 instruction 2","export group 9 instruction 3",
-     "export group 9 instruction 4","export group 9 instruction 5",
-     "export group 9 instruction 6","export group 9 instruction 7",
-     "export group 9 instruction 8"]
+  (* Public dest_forall opens only this fixed nine-node Boolean body.
+     Per-node reserves cover opening/comparing it and its scalar Types on
+     either kernel; no realized caller operand is opened or compared. *)
+  val eqc_library_export_fee=9*16+32*4+length
+    ["accessor entry","cached conclusion","dest_forall","port record",
+     "tag getter","argument VAR check","Hyp getter","empty Hyp check",
+     "accessor return"]
   val eqc_export_fee=eqc_library_export_fee+length
     ["entry","Sources getter","graph getter","scope getter",
      "limits getter","guard closure","guard call","exporter call",
@@ -15014,7 +15000,8 @@ struct
   val eqc_get_fee=eqc_library_export_fee+length
     ["getter entry","owner comparison","owner branch","Work guard",
      "Type stamp","Term stamp","stamp comparisons","stamp branch",
-     "fixed exporter call","three pointer comparisons","Tag pointer",
+     "fixed exporter call","statement pointer comparison","Tag pointer",
+     "nine-node body comparison","Boolean variable comparison",
      "origin fact comparisons","identity branch","data projection",
      "getter return"]
   type eqc_ports=
@@ -15041,9 +15028,9 @@ struct
      debit();
      let val actual=Drule.eqt_intro_cache_data()
      in if Portable.pointer_eq(#statement actual,#statement ports)andalso
-         Portable.pointer_eq(#body actual,#body ports)andalso
-         Portable.pointer_eq(#quantifier_variable actual,
-           #quantifier_variable ports)andalso
+         Term.term_eq(#body actual)(#body ports)andalso
+         Term.term_eq(#quantifier_variable actual)
+           (#quantifier_variable ports)andalso
          Portable.pointer_eq(#tag actual,#tag ports)andalso
          #bare actual= #bare ports andalso #closed actual= #closed ports
        then ()else eqc_fail "fixed producer changed"end;
@@ -15088,8 +15075,8 @@ struct
       val _=constant all
       val _=if Term.is_abs abstraction then ()else
         eqc_fail "fixed GEN constructor endpoint changed"
-      (* No destructor opens this Abs. The exporter retains actual GEN
-         input/output; only that genuine constructor relation is used. *)
+      (* Only the fixed law's Abs was opened by the accessor. The decoded
+         body is bounded; it is not retained construction provenance. *)
       val terms=[#body ports,outer_left,eq1,left,inner,inner_left,eq2,
         right,truth,argument,#statement ports,all]
       val type_nodes=ref 0 val name_bytes=ref 0

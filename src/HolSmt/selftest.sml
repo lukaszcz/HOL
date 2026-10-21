@@ -23234,8 +23234,7 @@ in
 end;
 val _=print "FOCUSED_CURRENT_NATIVE_PORTFOLIO_COMPLETE\n"
 
-(* Count0 does not observe genvar. Stream and source coupling are separate. *)
-val _=HolKernel.ho_match_dummy_name_bytes
+(* Ordinary matcher controls: no replay-only shared initialization. *)
 val _=HolKernel.ho_match_term
 local
   fun ensure why yes=if yes then testutils.OK()else raise Fail why
@@ -23277,19 +23276,16 @@ local
           (Term.mk_comb(f,v),consequent))
         fun matched()=HolKernel.ho_match_term [] Term.empty_tmset
           pattern target
-        val((initial,b1,b2,after),counts)=observed(fn()=>
-          let val initial=matched()
-              val b1=HolKernel.ho_match_dummy_name_bytes()
-              val b2=HolKernel.ho_match_dummy_name_bytes()
-              val after=matched()
-          in(initial,b1,b2,after)end)
+        val((initial,after),counts)=observed(fn()=>
+          let val initial=matched() val after=matched()
+          in(initial,after)end)
         val(insts,types)=initial val(insts2,types2)=after
         val actual_p=Term.inst types p val actual_q=Term.inst types q
         val wanted_types=if want_empty then null types else
           length types=1 andalso List.exists
             (fn{redex=a,residue=b}=>Type.compare(a,domain)=EQUAL andalso
               Type.compare(b,actual_domain)=EQUAL)types
-    in b1>0 andalso b1=b2 andalso #total counts=0 andalso
+    in #total counts=0 andalso
        Term.is_genvar v andalso Term.is_genvar f andalso
        Term.is_genvar b andalso Term.is_genvar c andalso
        length insts=2 andalso same_bindings(insts,insts2)andalso
@@ -23300,32 +23296,23 @@ local
 in
   val _ = run_postlude 147 "postlude-0227-line-22606" (fn () =>
     let
-  val _=testutils.tprint "Cached matcher bytes are immutable metadata"
-  val _=let val((a,b,c),counts)=observed(fn()=>
-        (HolKernel.ho_match_dummy_name_bytes(),
-         HolKernel.ho_match_dummy_name_bytes(),
-         HolKernel.ho_match_dummy_name_bytes()))
-    in ensure "getter changed bytes or constructed a proof"
-      (a>0 andalso a=b andalso b=c andalso #total counts=0)end
-
-  val _=testutils.tprint "Cached-byte reads do not advance public genvar"
-  val _=let val first=Term.genvar Type.alpha
-        val((a,b),counts)=observed(fn()=>
-          (HolKernel.ho_match_dummy_name_bytes(),
-           HolKernel.ho_match_dummy_name_bytes()))
-        val second=Term.genvar Type.alpha
-    in ensure "getter advanced the public genvar stream"
-      (a=b andalso #total counts=0 andalso
-       counter second=counter first+1)end
-
-  val _=testutils.tprint "Cached-byte reads preserve same-Type dummy filtering"
+  val _=testutils.tprint "Matcher preserves same-Type dummy filtering"
   val _=ensure "same-domain matcher binding/Type/filter changed"
     (matcher_control domain true)
 
-  val _=testutils.tprint "Cached-byte reads preserve typed dummy filtering"
+  val _=testutils.tprint "Matcher preserves typed dummy filtering"
   val _=ensure "different-domain matcher binding/Type/filter changed"
     (Type.compare(domain,Type.bool)<>EQUAL andalso
      matcher_control Type.bool false)
+
+  val _=testutils.tprint "Fixed law reads do not advance public genvar"
+  val _=let val first=Term.genvar Type.alpha
+        val((a,b),counts)=observed(fn()=>
+          (Drule.eqt_intro_cache_data(),Drule.eqt_intro_cache_data()))
+        val second=Term.genvar Type.alpha
+    in ensure "law reader allocated a proof or advanced genvar"
+      (Term.term_eq(#body a)(#body b)andalso #total counts=0 andalso
+       counter second=counter first+1)end
 
     in () end)
 end
