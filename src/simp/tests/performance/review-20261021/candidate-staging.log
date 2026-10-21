@@ -1,0 +1,5 @@
+<<HOL message: Created theory "reviewstaging">>
+STAGE construction printers=0 primitives=0
+STAGE first printers=1 HOL_ERR
+STAGE second printers=2 HOL_ERR
+OUTCOME PrinterFailure

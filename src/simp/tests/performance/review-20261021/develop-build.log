@@ -1,0 +1,16 @@
+Holmake: Scanning [1m$(HOLDIR)/src/simp/src/poly[0m
+Holmake: Scanned 2 directories
+Holmake: Building 1 theory file
+Holmake: Linking /tmp/simplifier-review-20261021/develop/boolSimpsContextScript.uo to produce theory-builder executable
+<<HOL message: Created theory "boolSimpsContext">>
+Saved theorem _______ "literal_cong"
+Saved theorem _______ "literal_I_thm"
+Saved theorem _______ "let_cong"
+Saved theorem _______ "let_I_thm"
+Saved theorem _______ "NESTED_COND"
+Exporting theory "boolSimpsContext" ... done.
+Theory "boolSimpsContext" took 0.02296s to build
+Holmake: [1/1] boolSimpsContext
+HOLMOSMLC -o exclusion.exe RunExclusionContracts.uo
+HOLMOSMLC -o legacytest.exe legacytest.uo
+HOLMOSMLC -o traversal.exe RunTraversalContracts.uo

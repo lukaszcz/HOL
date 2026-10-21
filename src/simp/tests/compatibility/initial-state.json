@@ -1,0 +1,698 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-10-21T18:08:09.010888+00:00",
+  "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+  "head": "cf1f863b4e5a9712ce1b179f18274eb3451f3954",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "reviewed_candidate": "cf1f863b4e5a9712ce1b179f18274eb3451f3954",
+  "origin_develop_at_capture": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "branch": "simplifier",
+  "initial_git_status_porcelain": "",
+  "initial_status_command": "git status --porcelain=v1 --untracked-files=all (before TASK_01 writes)",
+  "drift_from_reviewed_candidate": "none; actual starting HEAD equals reviewed candidate, tracked and nonignored untracked status clean",
+  "caller_owned_ignored_state": {
+    "agent_files": "Ignored by main repo info/exclude; separate Git repository at .agent-files.",
+    "agent_files_head": "56d0591beee68f81e102cd223bc5de0404643c84",
+    "agent_files_initial_status": "?? PLAN_postkernel_cleanup.md\n?? logs/\n?? tasks-postkernel-cleanup/\n?? tasks/",
+    "other": "Existing generated heaps, launchers, .hol products, build logs, and /tmp review bundle are caller-owned and untouched. Clean git status is not a clean build."
+  },
+  "runtime": {
+    "version": "Poly/ML 5.9.2 Release",
+    "poly": "/usr/local/bin/poly",
+    "os": "Linux-7.0.0-1011-aws-aarch64-with-glibc2.39",
+    "uname": "Linux ip-172-31-27-25 7.0.0-1011-aws #11~24.04.1-Ubuntu SMP PREEMPT Mon Aug 10 15:07:40 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux",
+    "machine": "aarch64",
+    "cpu_model": "Neoverse-V2",
+    "logical_cpus": 32,
+    "available_cpus": "32",
+    "review_gc_threads": 1,
+    "gc_thread_basis": "review-results.json and current tools/Holmake/poly/BuildCommand.sml poly_link emits bin/hol --gcthreads=1 run",
+    "current_benchmark_process": "not started; no independent measurement of a live GC configuration"
+  },
+  "environment": {
+    "HOLDIR": "/home/lukasz/HOL",
+    "LD_LIBRARY_PATH": "/usr/local/lib:/home/lukasz/lib",
+    "POLY_CLINE_OPTIONS": null,
+    "HOLHEAP": null,
+    "HOLSELFTESTLEVEL": null
+  },
+  "build": {
+    "configured_holdir": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "ml_system": "poly",
+    "kernel": "stdknl",
+    "poly_ldflags": [
+      "-L/usr/local/lib",
+      "-lpolyml",
+      "-lpolymain",
+      "-Wl,-rpath,/usr/local/lib"
+    ],
+    "lastbuildoptions": "--stdknl\n",
+    "build_stamp": "built Wed Oct 21 16:48:51 2026",
+    "sequence": "tools/build/build-sequence (default full include chain); lastbuildoptions has no --seq override",
+    "heap_for_simplifier": "bin/hol.state0",
+    "review_includes": "src/simp/src/poly",
+    "review_runner_build_options": [
+      "--no-project",
+      "--holstate=<repo>/bin/hol.state0",
+      "-C <isolated sources>",
+      "-j1"
+    ],
+    "review_runner_holmakefile": "HOLHEAP = <repo>/bin/hol.state0; INCLUDES = <repo>/src/simp/src/poly",
+    "heap_size_options": "No --minheap/--maxheap in original reproduce.py. Current launcher adds --gcthreads=1; historical exact effective heap sizing unavailable.",
+    "review_scope": "Exact simplifier source snapshots sharing candidate heap/libraries, not two independently built repositories.",
+    "current_build_trust": "Existing products fingerprinted, not rebuilt or certified by this task.",
+    "environment_drift": "Inherited HOLDIR=/home/lukasz/HOL differs from configured Systeml.HOLDIR. Use explicit absolute repo/tool/heap paths and record effective module paths in TASK_02."
+  },
+  "shared_boundary_comparison": {
+    "command": "git diff --exit-code cccaa27d7099cbadc886983020cbe745db7793f3 HEAD -- src/marker src/1/ThmSetData.sig src/1/ThmSetData.sml src/postkernel",
+    "exit_status": 0,
+    "observation": "Shared marker, ThmSetData and postkernel sources match baseline. ThmAttribute read-only accessors/selftests remain branch additions; no changes here."
+  },
+  "simp_source_diff_from_baseline": [
+    "42\t0\tsrc/simp/src/Cond_rewr.sig",
+    "71\t2\tsrc/simp/src/Cond_rewr.sml",
+    "90\t3\tsrc/simp/src/Holmakefile",
+    "15\t0\tsrc/simp/src/MANIFEST",
+    "1\t0\tsrc/simp/src/Opening.sig",
+    "108\t11\tsrc/simp/src/Opening.sml",
+    "11\t0\tsrc/simp/src/SplitData.sig",
+    "208\t0\tsrc/simp/src/SplitData.sml",
+    "119\t0\tsrc/simp/src/Traverse.sig",
+    "636\t21\tsrc/simp/src/Traverse.sml",
+    "1\t0\tsrc/simp/src/Travrules.sig",
+    "15\t0\tsrc/simp/src/Travrules.sml",
+    "44\t29\tsrc/simp/src/congLib.sml",
+    "211\t3\tsrc/simp/src/notes.md",
+    "5786\t4\tsrc/simp/src/selftest.sml",
+    "180\t4\tsrc/simp/src/simpLib.sig",
+    "2327\t246\tsrc/simp/src/simpLib.sml",
+    "19\t0\tsrc/simp/src/simpMarkerLib.sig",
+    "151\t0\tsrc/simp/src/simpMarkerLib.sml",
+    "13\t0\tsrc/simp/src/simpMarkerScript.sml",
+    "75\t0\tsrc/simp/src/splitLib.sig",
+    "603\t0\tsrc/simp/src/splitLib.sml",
+    "7\t0\tsrc/simp/src/splitPersistLib.sml"
+  ],
+  "current_configuration_and_runtime_fingerprints": [
+    {
+      "path": "/usr/local/bin/poly",
+      "sha256": "1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311",
+      "bytes": 17381496
+    },
+    {
+      "path": "/usr/local/bin/polyc",
+      "sha256": "49fb823e78531200aefee94d73c6940f84659f4eaa0c497a68653644c3f936c8",
+      "bytes": 3173
+    },
+    {
+      "path": "/usr/local/lib/libpolyml.so.16.0.0",
+      "sha256": "8e39afa6fd362322a6e19b16e0055c39a6b3f8aae67d3fb04191feec4961fd7d",
+      "bytes": 784008
+    },
+    {
+      "path": "/usr/local/lib/libpolyml.a",
+      "sha256": "ce89254a16856bd7662f721fd5cc8227209b415dc9fc523dae455a243df2d731",
+      "bytes": 1427596
+    },
+    {
+      "path": "bin/hol",
+      "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+      "bytes": 43099640
+    },
+    {
+      "path": "bin/Holmake",
+      "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+      "bytes": 3409600
+    },
+    {
+      "path": "bin/build",
+      "sha256": "0c7b61ce2ff9ae1f208813aa1a172dd65c78bf0bd2c96b2821d746d60756552a",
+      "bytes": 1209488
+    },
+    {
+      "path": "bin/hol.state0",
+      "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+      "bytes": 20469336
+    },
+    {
+      "path": "bin/hol.state.min",
+      "sha256": "4f73a07180cf088c592828006584d2160b6cba928e972f5377444ff263a1adea",
+      "bytes": 7623888
+    },
+    {
+      "path": "bin/hol.state",
+      "sha256": "0a76e6c9be5c4707a0639f42d1625d89f24d80c5871c30eb28fdb29c4a267470",
+      "bytes": 19739999
+    },
+    {
+      "path": "tools/Holmake/Systeml.sml",
+      "sha256": "8cf88cd2ec159cf16c7ae34f27845fa217c8c9afa89a01c45c89ae68c4fe52eb",
+      "bytes": 4964
+    },
+    {
+      "path": "tools/Holmake/poly/BuildCommand.sml",
+      "sha256": "cf3db7fc6fa92008f7a42c03def6f37afbb318e6c03fb1ebdc8e1dae26c40484",
+      "bytes": 26030
+    },
+    {
+      "path": "tools/lastbuildoptions",
+      "sha256": "52c9b5b7534700295a3e30baa16a8ed41491c5562d5ab5d0670934f3db938620",
+      "bytes": 9
+    },
+    {
+      "path": "tools/build-stamp",
+      "sha256": "4c447565fa18c6a8e4ada104377966411d61c299de611da4c945812fc16941a8",
+      "bytes": 30
+    },
+    {
+      "path": "tools/build/build-sequence",
+      "sha256": "1676e50bdda11e23330cdca553a55e13fa2c76dc330fb77924529b3945db2816",
+      "bytes": 3043
+    },
+    {
+      "path": "tools/sequences/upto-parallel",
+      "sha256": "043980de47f2eb9b86981fccab652a5f81aab69212d506f9cbfd6100b6bdabd5",
+      "bytes": 59
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "3ef85fa819c7158131e5d72afa53291763c40ec9af85017b28e1095e5d981afa",
+      "bytes": 2163
+    },
+    {
+      "path": ".kernelidstr",
+      "sha256": "e2c4a43260f54b211b1ba99c1e39fb4853bca10cfddc0c3986fd4f4c5e801115",
+      "bytes": 7
+    },
+    {
+      "path": "tools/sequences/base-hol",
+      "sha256": "d1860265bee90219bdd8c78a26b789608cdeb6fcaab5efd7801261dc7be8f45d",
+      "bytes": 1518
+    },
+    {
+      "path": "tools/sequences/core-theories",
+      "sha256": "2f100b1c5f758dd0ae9d41048f8c0a78495954e3c827f046dbcc3dfa83e1bea2",
+      "bytes": 171
+    },
+    {
+      "path": "tools/sequences/final-examples",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "bytes": 1
+    },
+    {
+      "path": "tools/sequences/kernel",
+      "sha256": "6dbc64fb7812f152bc31a8d88f4c2df0bf6d3a4ded0c6b3ca3fac4aa51f3f628",
+      "bytes": 1009
+    },
+    {
+      "path": "tools/sequences/large-theories",
+      "sha256": "f423e73ee81dcb9eb015f71296c38d6f0a06a528711965e66c9e0181281504f9",
+      "bytes": 269
+    },
+    {
+      "path": "tools/sequences/more-theories",
+      "sha256": "024b52d62af81e73f42a6763fe856d831033ecb8c61f9dc4c6fc2cf049109423",
+      "bytes": 128
+    },
+    {
+      "path": "tools/sequences/upto-hol",
+      "sha256": "3a9650c0eda234b4b3c29753e0173a63f26a0d0ee69623f001ae329b73d53c30",
+      "bytes": 54
+    }
+  ],
+  "reviewed_simplifier_and_maintained_test_files": [
+    {
+      "path": "src/simp/src/Cache.sig",
+      "sha256": "2a77a34f146badd3a58bac60026e9cbc54e1f79cc022e4bd3e8145fb936cc892",
+      "bytes": 2748,
+      "git_blob": "fe9d970ac963a44f63e2900e09f46d4ec4850d8e"
+    },
+    {
+      "path": "src/simp/src/Cache.sml",
+      "sha256": "fab1bb74537cbf94950c2912ecf52825de787cd8c2f95ddad72855a4fffb77fa",
+      "bytes": 23147,
+      "git_blob": "b4c68b797d0495910d2f65e580a4798acfcb2f3f"
+    },
+    {
+      "path": "src/simp/src/Cond_rewr.sig",
+      "sha256": "ec6701ea502555edde7b0d903e2893d4139b5a5e6decc26e781d83d8921e42b2",
+      "bytes": 4237,
+      "git_blob": "8d1d460834542952c3499684b78fc152af7ad83e"
+    },
+    {
+      "path": "src/simp/src/Cond_rewr.sml",
+      "sha256": "ede2360c41eb16468e93c717a20cb0503a4e28403b2d76e45e4a5926e92cec35",
+      "bytes": 23296,
+      "git_blob": "7de51b247d3415724b3e564224d8b9c57d152aed"
+    },
+    {
+      "path": "src/simp/src/Holmakefile",
+      "sha256": "014275679f1712ebce149ef440b94cde7e769214632a00feb5d8b7203e9cd3d2",
+      "bytes": 3997,
+      "git_blob": "ca92f626e386a1751aee4a69658f95d3cb7ace1d"
+    },
+    {
+      "path": "src/simp/src/MANIFEST",
+      "sha256": "950640a68ba7896b1f180387d2674eeac09d113d3def7a02e1dddd686ee850b3",
+      "bytes": 3471,
+      "git_blob": "b9d04e343f7df157da07b6d4b21ecbbb88444263"
+    },
+    {
+      "path": "src/simp/src/Opening.sig",
+      "sha256": "4208a49bd1fe3b13325e421713130c5f9ba6d508dafb6bebcdad83a8811a3891",
+      "bytes": 3923,
+      "git_blob": "951c5471959c7c9f4301596d485aec12c3d9d0fe"
+    },
+    {
+      "path": "src/simp/src/Opening.sml",
+      "sha256": "79f0a21c775bcb5f3dbc8412f9a586f001d2cbe8ea2be701c5ca0d326e758df4",
+      "bytes": 15715,
+      "git_blob": "82bbcd78aff77cefe3bacf3846069b5bce23e687"
+    },
+    {
+      "path": "src/simp/src/Satisfy.sig",
+      "sha256": "5a235e1a03671fe9da52ded986d6c296234f8f7cd59686ba906b6527dde49054",
+      "bytes": 2078,
+      "git_blob": "26eaf638b891fe053f8b022ba13d721844e43f59"
+    },
+    {
+      "path": "src/simp/src/Satisfy.sml",
+      "sha256": "794daf056fe40485da0239d92c37faab82f019b9ea3320a055225dcfc43e7841",
+      "bytes": 5862,
+      "git_blob": "5f6ef5bd585edfadbea87402fa260b69e368ef50"
+    },
+    {
+      "path": "src/simp/src/SatisfySimps.sig",
+      "sha256": "c8a185b80052821facb9d9e76fe0ebd23c035f3f59052b85459cdd3c8a1c66a3",
+      "bytes": 120,
+      "git_blob": "9b410118c720250bb1ae50f785c5a9e539f7527d"
+    },
+    {
+      "path": "src/simp/src/SatisfySimps.sml",
+      "sha256": "f4a33ecd65a74932db42ac9b28de8cfa1c872b94a9c6ddeb8aa6d7d6dcb8a968",
+      "bytes": 489,
+      "git_blob": "3ea0e548635f097c56602517d00a97a52f084269"
+    },
+    {
+      "path": "src/simp/src/Sequence.sig",
+      "sha256": "c3230ffb1519bccf5853354155dfb829f630ba9b019d4827a328e73585b8adcd",
+      "bytes": 1591,
+      "git_blob": "b38b58dc28b41c725cff79a72418dcc269e410bd"
+    },
+    {
+      "path": "src/simp/src/Sequence.sml",
+      "sha256": "26ea613a5c1ea4ba58e47ee29dde42cd2b0ec1ccdc450113f5bc4897baa15151",
+      "bytes": 6123,
+      "git_blob": "b58c5005dfacee520e4b3302fa4de8599437aaf3"
+    },
+    {
+      "path": "src/simp/src/SplitData.sig",
+      "sha256": "174ab18e90f0d1ab8e9f88c05bfa0a7e036075a392cc6fd330259eca4d3c4220",
+      "bytes": 472,
+      "git_blob": "d725f21324e088d5a261beb825c0b89812785340"
+    },
+    {
+      "path": "src/simp/src/SplitData.sml",
+      "sha256": "bfc574c5789a3ede0d9860a8a139346d6c5891071f5e6af0ebb3f81e6704ddce",
+      "bytes": 8399,
+      "git_blob": "c68df6e03b18723cd86a98122d951266a5a82851"
+    },
+    {
+      "path": "src/simp/src/Trace.sig",
+      "sha256": "66764f790df3c5ac671c063bd0ddf8316bd710f6f8e1c71bb2e7520f44baaa90",
+      "bytes": 746,
+      "git_blob": "9a07d43a5f9fac5ecf44f6f7e6f1becd9c4c48d0"
+    },
+    {
+      "path": "src/simp/src/Trace.sml",
+      "sha256": "b2fad49313ed4dded54eb26f3146a8d69e237c5ac52b6ec08926ec8cde95c321",
+      "bytes": 2881,
+      "git_blob": "6735cef75f308d1707c3c71373a83ac77f873ac6"
+    },
+    {
+      "path": "src/simp/src/Traverse.sig",
+      "sha256": "e7384d575741ad5a5546afc95edfb0174ca50bcd0b35c4e1c1a99e863ac96e7d",
+      "bytes": 10760,
+      "git_blob": "ce940c0daae72761f68f890d25377ae3131e5ad3"
+    },
+    {
+      "path": "src/simp/src/Traverse.sml",
+      "sha256": "87ba07aeb225cd1a6432654627847a5d1fce1fc9ef4bcd8d387b0cb335cf3ab9",
+      "bytes": 37019,
+      "git_blob": "4cf19fe875a5169f1b323fc392ff4e4fa404b97a"
+    },
+    {
+      "path": "src/simp/src/Travrules.sig",
+      "sha256": "f2ec7bb21a2015abade5b6a40fb6ddf1b577e4b5ff7ab76004a553a9a46ec31c",
+      "bytes": 3933,
+      "git_blob": "610446feb4f7eba934088543529de08c55c6c45f"
+    },
+    {
+      "path": "src/simp/src/Travrules.sml",
+      "sha256": "cadf58241d8b67bdd048ef0663b7dee47fc1f6d60b5d48fa595c8528f7acd6c0",
+      "bytes": 4169,
+      "git_blob": "dc7c8dde0cc0eca38be9554197e7821704216db3"
+    },
+    {
+      "path": "src/simp/src/Unify.sig",
+      "sha256": "5fc292158f2346b7b9bc0625a87357dab1bf53ca76ff4c09bead79969b2cca0e",
+      "bytes": 750,
+      "git_blob": "097e2b8ed58e213c5e38aad6edff50306e43518b"
+    },
+    {
+      "path": "src/simp/src/Unify.sml",
+      "sha256": "5aeef9e9919dd64b1ca43798a2f36ac0f83e1ad9406e299f959a53f948956630",
+      "bytes": 3286,
+      "git_blob": "d15814e01ac9b614a1b0ec6a3cdf97f349ca57f5"
+    },
+    {
+      "path": "src/simp/src/Unwind.sig",
+      "sha256": "3c9848bf5b13ea82b758142b31f57b3c6da375dcf886d109b4330e7468700a0c",
+      "bytes": 2733,
+      "git_blob": "13b36db8484d81fa625d3d0ae1d2dd8e1fa597ce"
+    },
+    {
+      "path": "src/simp/src/Unwind.sml",
+      "sha256": "b1e06bcba8d3e630d71980024f7cb22054327e89602d3b9e1d0afb9ac1f8ffd4",
+      "bytes": 19350,
+      "git_blob": "de74b474731b07f2773d2335810d3353086c0eec"
+    },
+    {
+      "path": "src/simp/src/boolSimps.sig",
+      "sha256": "8a2eda5d2240ad6a9961cf019bb27532d54b8601ffa85e38c5378c959c5bf4ef",
+      "bytes": 3845,
+      "git_blob": "0a86c6179a0964a5ea8c83003fa60ffff9d4f86a"
+    },
+    {
+      "path": "src/simp/src/boolSimps.sml",
+      "sha256": "e2762de1dd76120dbe1381526e2730144f164d4f5c9e821937a880dc0b04bdd7",
+      "bytes": 15037,
+      "git_blob": "d436206ee6e55a8c2050ce56e09107de737eeebc"
+    },
+    {
+      "path": "src/simp/src/boolSimpsContextScript.sml",
+      "sha256": "099f899a06531cc7e7c5e57aa4d4accce1753179faec1a12510cffb413f570d0",
+      "bytes": 1192,
+      "git_blob": "29fb0459696b638885e86c54ff78eab2304eccd4"
+    },
+    {
+      "path": "src/simp/src/combinSimps.sig",
+      "sha256": "a89092ad9d7c0484ff71c0886883181e0870248b22b20cda9bbedb6da8c2ec3b",
+      "bytes": 68,
+      "git_blob": "00ab56a96157bdeafb8dc2984af93c1008c84392"
+    },
+    {
+      "path": "src/simp/src/combinSimps.sml",
+      "sha256": "1ea352acf191d5143593b5df093eb39a1431bf031c3b1ea655722a881c1c5a9d",
+      "bytes": 461,
+      "git_blob": "5074aae15f0ccd84b478e0502c85c0f1593ffd4d"
+    },
+    {
+      "path": "src/simp/src/congLib.sig",
+      "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+      "bytes": 5909,
+      "git_blob": "8deb93c0649f51ab8e96e0a51642466acf0b88f8"
+    },
+    {
+      "path": "src/simp/src/congLib.sml",
+      "sha256": "e1a516de761c46d0573688a7de784ed4559ec48e2f2719ec6db9d123605da01e",
+      "bytes": 10780,
+      "git_blob": "0eb7e63ab796fba7415587e636374d4d6186bf78"
+    },
+    {
+      "path": "src/simp/src/mosml/BloomApprox.sig",
+      "sha256": "3ddae79c1edac24dbf3ca28bd2d1a60cb117c865da5fc6d3bb52b5a98ca8f98d",
+      "bytes": 532,
+      "git_blob": "148e8609bfed5259608a13ac3ec224a1926338a4"
+    },
+    {
+      "path": "src/simp/src/mosml/BloomApprox.sml",
+      "sha256": "00b68849500313048d0d2d812869279768aa99d5a6a7e11fc922900f64e1a033",
+      "bytes": 580,
+      "git_blob": "6d375f538daf8049ed95d08e443026805451b7f2"
+    },
+    {
+      "path": "src/simp/src/notes.md",
+      "sha256": "4c296b3035e28879848c7d9dbe9815d247fcef8b54368e3d706e68d52fbacb61",
+      "bytes": 18900,
+      "git_blob": "dfa4a3fc6a0e66030390811149b602e7a6f1f2b1"
+    },
+    {
+      "path": "src/simp/src/poly/BloomApprox.sig",
+      "sha256": "3ddae79c1edac24dbf3ca28bd2d1a60cb117c865da5fc6d3bb52b5a98ca8f98d",
+      "bytes": 532,
+      "git_blob": "148e8609bfed5259608a13ac3ec224a1926338a4"
+    },
+    {
+      "path": "src/simp/src/poly/BloomApprox.sml",
+      "sha256": "8cbc34d0ebe74442c8366e9ecaa0897c43c5f4db113e17d3a5bed5924654e7f4",
+      "bytes": 1537,
+      "git_blob": "c3f49b438b6e84eff48ff7ea861e868c289b751e"
+    },
+    {
+      "path": "src/simp/src/poly/Holmakefile",
+      "sha256": "d26358b0354e4b6aa70cbb007a1e91cc79fcf0d6bfa507e39ad4831d9ebf117a",
+      "bytes": 35,
+      "git_blob": "7daef0c8305ed3d7958df60d23c2a75abc71e05c"
+    },
+    {
+      "path": "src/simp/src/pureSimps.sig",
+      "sha256": "6b54e2e5dea6922d38806949006f70159dc3e0c193f1284e51398b43d2b8377a",
+      "bytes": 95,
+      "git_blob": "47d573b0a43dcd204dba59fb283135775d2e5128"
+    },
+    {
+      "path": "src/simp/src/pureSimps.sml",
+      "sha256": "89b7b98b8e9d9fd616dcd9669524c168cf6714529924aa78d06ebd9777dfcf71",
+      "bytes": 279,
+      "git_blob": "6218f45c8cbd7cadc089077d618b3c84abf889fb"
+    },
+    {
+      "path": "src/simp/src/selftest.sml",
+      "sha256": "db024ce962d1c1acf7d768c6c47939a7b946670e871029300168e7dffd11d0fb",
+      "bytes": 270598,
+      "git_blob": "50a2d390ad606406f91f66137fc478bd7533d886"
+    },
+    {
+      "path": "src/simp/src/simpLib.sig",
+      "sha256": "acfe3cded8f2bfd32bb142d948448f22a24f5f01d35348efc22922b409610518",
+      "bytes": 20769,
+      "git_blob": "f532722f7666033eb9a9798bef85069d316bf849"
+    },
+    {
+      "path": "src/simp/src/simpLib.sml",
+      "sha256": "3417be05df71bbb71a4fe917d597ef494699eeeea012f801a2f5696314fbcb2d",
+      "bytes": 129905,
+      "git_blob": "a9df215ac11107bdcb5021a4de89a089e9384b26"
+    },
+    {
+      "path": "src/simp/src/simpMarkerLib.sig",
+      "sha256": "0b7d01e91408d3cd7edceb648f0d7c7fa5988f5bfce567be92194b3f4b9e49dc",
+      "bytes": 742,
+      "git_blob": "b1fcb7e33efe651cb4c7053212c1182950d4cc3a"
+    },
+    {
+      "path": "src/simp/src/simpMarkerLib.sml",
+      "sha256": "a0ac2cce6c640b2ae3833e33bc08ae9978e99a4bb05bc5b8924937085743f152",
+      "bytes": 5442,
+      "git_blob": "0eba8646adcbab99729b01be543e4d26b06c7a83"
+    },
+    {
+      "path": "src/simp/src/simpMarkerScript.sml",
+      "sha256": "3826b44efa5c741c2f0b5e950b8d98794f4e9826fbe4c15dc0b0ad6b803070c3",
+      "bytes": 491,
+      "git_blob": "eb14813d7078e882ae532ae02ee790cbb1d90eef"
+    },
+    {
+      "path": "src/simp/src/splitLib.sig",
+      "sha256": "a503ebcf09002d965094f27fa100a6ce07e4ddf47a33a954b575234b1586bcff",
+      "bytes": 3623,
+      "git_blob": "aeab77130ba827738fa48d34d45f984897d4354b"
+    },
+    {
+      "path": "src/simp/src/splitLib.sml",
+      "sha256": "18d2c693c60fff2ee4ca56f66c68ccc96bb26564eb3aeb42f3d6dc320d5e1436",
+      "bytes": 21523,
+      "git_blob": "caaf1bd301bb40700cb4fd6bf2ca5664e812255b"
+    },
+    {
+      "path": "src/simp/src/splitPersistLib.sml",
+      "sha256": "9ceafc14560a5130b5c4cb06d5f6ad9e72069f2ced102fd14f66031c52f22d7f",
+      "bytes": 304,
+      "git_blob": "010eb7ed941a04492fb2728ddf1b6906eede0654"
+    },
+    {
+      "path": "src/simp/tests/contracts/ExclusionHistory.sml",
+      "sha256": "5e0dcbea8f70a1d7ff482c43293c3b7c6a383e9a702881aecfaacc1b0c32dc47",
+      "bytes": 3498,
+      "git_blob": "0ee8c8227b1c63b2eaf87a3eac56283b29c6d54a"
+    },
+    {
+      "path": "src/simp/tests/contracts/ExclusionParsing.sml",
+      "sha256": "47e8640328fcb0252c73816ca162e8b7c6fe9a3310c4d4bbb98196dd95679aba",
+      "bytes": 6834,
+      "git_blob": "685c648c8fed07341d0ea35a8f85cd195a2f0b56"
+    },
+    {
+      "path": "src/simp/tests/contracts/Holmakefile",
+      "sha256": "b9090ab1f4131f8574a7a9b2fd64cad54b16d8dd3db59b025b3d1b761f7da21f",
+      "bytes": 391,
+      "git_blob": "c792a2db8bdf62f577dc5667d9063f5620f8cde9"
+    },
+    {
+      "path": "src/simp/tests/contracts/LegacyFailures.sml",
+      "sha256": "a923be0278063c4cf125bfff53b52f8b859f786414b44441e379f15ec681aba1",
+      "bytes": 8724,
+      "git_blob": "9f25b7f6b1580158dd9ac0604a0a51f638780cfb"
+    },
+    {
+      "path": "src/simp/tests/contracts/RunExclusionContracts.sml",
+      "sha256": "9807834c63ef2247379eeaa152e29c8cb0ba3df0846b1b5ee0f4c97eb09c635f",
+      "bytes": 419,
+      "git_blob": "15e8c01442c5891db38e317c275ce30f86d2d359"
+    },
+    {
+      "path": "src/simp/tests/contracts/RunTraversalContracts.sml",
+      "sha256": "a3e88ce2fb3790d8dd5aa4ac34c45cad39ea26cd68bc24eb7832ead26b2ffd3f",
+      "bytes": 220,
+      "git_blob": "756a3b65fcc66ad47c05dd94caea18c52f641ca2"
+    },
+    {
+      "path": "src/simp/tests/contracts/TraversalContracts.sml",
+      "sha256": "3c9eaba1d2652803df3e4e481a1d0307c86dcd36655ec40980b31672908eada1",
+      "bytes": 17901,
+      "git_blob": "48db8bd0d95d3932e7e7962e0b9c13d795dd8ac1"
+    },
+    {
+      "path": "src/simp/tests/fresh-load/Holmakefile",
+      "sha256": "2fbc3cdf153882a7b2c7b6b8b14e7a802a60969eb918059a21111477afa58eef",
+      "bytes": 113,
+      "git_blob": "d3c3401d73d02a38fefc1d954347c2ed02574ada"
+    },
+    {
+      "path": "src/simp/tests/fresh-load/control.ML",
+      "sha256": "701d699703c5ff99797a4c8c361edaa09e95732f29c5b064a71286b3abdeceda",
+      "bytes": 684,
+      "git_blob": "eb7d00ced2241cb7c9b050461faa0a2ec8430c10"
+    },
+    {
+      "path": "src/simp/tests/fresh-load/identity-after.ML",
+      "sha256": "e129382676ca05e74e06e18c5545e220ce0fa8127d5876fdda5ed246df5e4c82",
+      "bytes": 1679,
+      "git_blob": "a37b1c4fe5790881f9bfe9c448f793bfed2fe0ed"
+    },
+    {
+      "path": "src/simp/tests/fresh-load/identity-before.ML",
+      "sha256": "5b815ef172a69c4d55f6a9e188c29e09cb97dd3e42f7b2cbf2508090bd0224a5",
+      "bytes": 279,
+      "git_blob": "5c8c6de0a9c77cbc16cd0b7770dbc665fd271160"
+    },
+    {
+      "path": "src/simp/tests/fresh-load/selftest.sml",
+      "sha256": "1fe4ed9539f69f5507b7ecee6cada64370c3ec558b679d0fb6f88a19e622de7c",
+      "bytes": 7965,
+      "git_blob": "44433dc0a049c50eed0117e249e1d8ba90f3fc38"
+    },
+    {
+      "path": "src/simp/tests/fresh-load/syntax.ML",
+      "sha256": "d0aa91ae2abb609d8a689357abebc998c269e685e78ad53080577f885d54cc61",
+      "bytes": 738,
+      "git_blob": "c33e149a483b3856d9bb17125c32f9ee1041ee71"
+    },
+    {
+      "path": "src/simp/tests/markers/Holmakefile",
+      "sha256": "a39a1582805e162d69a73893efafcd11758577b8ef51e9c7968faa407fcf422a",
+      "bytes": 133,
+      "git_blob": "99e20381d3a8348d592f0764417f296ce2a18e0d"
+    },
+    {
+      "path": "src/simp/tests/markers/selftest.sml",
+      "sha256": "fe734a6055ed6d09dce4c7d1eae2b3a14f54f0afe689fb8d1ffcdfa4f6c0d6e1",
+      "bytes": 15669,
+      "git_blob": "37424f42aa29991899b8757f09f2449bb8988db2"
+    },
+    {
+      "path": "src/simp/tests/replay-order/Holmakefile",
+      "sha256": "483e4fe55d85f20c09fca84647e6b5e4af952fc79727889802cfb8173cd43144",
+      "bytes": 133,
+      "git_blob": "55bf91458539655ecd21a5386dae461afaab592a"
+    },
+    {
+      "path": "src/simp/tests/replay-order/selftest.sml",
+      "sha256": "aefd8439667b67517b79e067bec69c9c76afaca82927f2fa84d8909f3118359f",
+      "bytes": 4960,
+      "git_blob": "b85923716346710124e30399000ebca3f017766f"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/Holmakefile",
+      "sha256": "f9286176b045ca57c7770f63e615b4d987e87b7f6bc59f46ce7ec0a08cc1d797",
+      "bytes": 626,
+      "git_blob": "1f9010299a1d1cbfcad88d4ba377bb2cb09c485e"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/heapSave.ML",
+      "sha256": "1488f8c8be127695c93a93aa486b37222d0f19b120440364a63f1dee5f0f850f",
+      "bytes": 914,
+      "git_blob": "f0bfe284644318414b32b33d0fa3b9d135c5c8cb"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/heapVerify.ML",
+      "sha256": "ebe9a5e1a461ad2d2e228ea684a753c836f78966f1332d2936a3d1893fe1ce7f",
+      "bytes": 3879,
+      "git_blob": "32feb89d5cc6837201603a07aaa488fcd0a2ee72"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/optIn.ML",
+      "sha256": "de75e0eae42d3e2912b10650c36eb419329fcc709db50f9052c771dc408ebd4f",
+      "bytes": 249,
+      "git_blob": "54b6ffdc3620a631df7a77c7249be0777f3d2a05"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/selftest.sml",
+      "sha256": "6a905f9c25dd87c79c6ee3354fd2260c2272813f24717fd84be2e39d80b1e424",
+      "bytes": 6304,
+      "git_blob": "77c767f2240f1c0479239b8785c090aef9c2ff0c"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/splitChildScript.sml",
+      "sha256": "6f7f82bc715f8874a9df65cb05d0b9db846bfadd954369f501e338ac73d75424",
+      "bytes": 890,
+      "git_blob": "76259b3612f55634d8c69043eb3a4c70a30f1410"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/splitDescendantScript.sml",
+      "sha256": "6fe1fc6bc864f9630228371d9fa69956a5caae078d34ba3282b6e634d0f584cd",
+      "bytes": 505,
+      "git_blob": "2440903bbf1755f158bef64c137d0fe7876a5fc7"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/splitParentScript.sml",
+      "sha256": "acb45c486d02d20601d4798cbbac8c25e35d954de7a2d342fa8ec0af9200bc38",
+      "bytes": 1025,
+      "git_blob": "c2fc018b05ee9562e8a683e4bf8f159f292f4fb1"
+    },
+    {
+      "path": "src/simp/tests/split-persistence/verify.ML",
+      "sha256": "6bc05bdf72bd8266463a3404e2c94daa3dc13e059415c85b731a703a5437601f",
+      "bytes": 2713,
+      "git_blob": "6e2d1a7b5e4b96d980c9768799d7d03dbc7312b6"
+    },
+    {
+      "path": "src/simp/tests/split-registration/Holmakefile",
+      "sha256": "c28202367089f160700d3057ba7ab5965b41d122e6b860fc2cd5389c228a1cce",
+      "bytes": 106,
+      "git_blob": "6ddaa9b97ab1b88a7f8e53a73282c92b64ebf5b8"
+    },
+    {
+      "path": "src/simp/tests/split-registration/selftest.sml",
+      "sha256": "2e6c6ce5e85c7a514d8c9ec46b347f76e73e6897d3284b15fb9f54f3ff10a1dc",
+      "bytes": 22191,
+      "git_blob": "472b2fd3bda2e32a35998a070f466c41f90e67b1"
+    }
+  ],
+  "blockers": [],
+  "reproduction_limitations": [
+    "Historical process exit manifest and runtime/heap binary hashes were not supplied; do not fabricate them. They are not prerequisites for preserving the supplied evidence. Fresh recording belongs to TASK_02/03.",
+    "No fresh measurements, compatibility execution, independent clean builds, or broad benchmarks in TASK_01."
+  ]
+}

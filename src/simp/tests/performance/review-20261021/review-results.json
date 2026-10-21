@@ -1,0 +1,232 @@
+{
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "candidate": "cf1f863b4e5a9712ce1b179f18274eb3451f3954",
+  "runtime": "Poly/ML 5.9.2; same candidate bin/hol.state0 and unchanged shared libraries for both simplifier source versions; one GC thread",
+  "benchmark_protocol": "17 workloads; five timed samples after calibration and full GC per sample; fresh processes in develop, candidate, candidate, develop order. Separate eight-workload run measured wall, CPU, GC, and retained graph sizes.",
+  "timings_seconds_per_operation": {
+    "rewrites_1000": {
+      "develop": [
+        1.2020690918e-05,
+        1.31347351074e-05
+      ],
+      "candidate": [
+        2.29873657227e-05,
+        2.19873657227e-05
+      ]
+    },
+    "merge_frags_1000": {
+      "develop": [
+        7.40209960937e-06,
+        8.06286621094e-06
+      ],
+      "candidate": [
+        2.41403198242e-05,
+        2.4318359375e-05
+      ]
+    },
+    "append_empty": {
+      "develop": [
+        2.33648300171e-07,
+        2.52058029175e-07
+      ],
+      "candidate": [
+        2.91588783264e-07,
+        2.92214393616e-07
+      ]
+    },
+    "compile_10": {
+      "develop": [
+        1.60769042969e-05,
+        1.74231567383e-05
+      ],
+      "candidate": [
+        1.89469604492e-05,
+        1.87047729492e-05
+      ]
+    },
+    "compile_1000": {
+      "develop": [
+        0.001955109375,
+        0.0021163125
+      ],
+      "candidate": [
+        0.0020973046875,
+        0.0020602734375
+      ]
+    },
+    "delete_missing_1000": {
+      "develop": [
+        8.10085449219e-05,
+        8.63381347656e-05
+      ],
+      "candidate": [
+        0.000222307617188,
+        0.000265559570312
+      ]
+    },
+    "replay_1000": {
+      "develop": [
+        0.00243328125,
+        0.002691953125
+      ],
+      "candidate": [
+        0.0022378359375,
+        0.00283646875
+      ]
+    },
+    "projection": {
+      "develop": [
+        1.59187018871e-08,
+        1.77584886551e-08
+      ],
+      "candidate": [
+        2.88440585136e-08,
+        2.65511274338e-08
+      ]
+    },
+    "raw_construct": {
+      "develop": [
+        1.83355331421e-07,
+        1.97189807892e-07
+      ],
+      "candidate": [
+        1.89018249512e-07,
+        1.92760944366e-07
+      ]
+    },
+    "raw_reuse_hit": {
+      "develop": [
+        1.69313812256e-06,
+        1.82666397095e-06
+      ],
+      "candidate": [
+        1.43529891968e-06,
+        1.48466110229e-06
+      ]
+    },
+    "raw_reuse_bool_depth100": {
+      "develop": [
+        0.000197865722656,
+        0.000213383300781
+      ],
+      "candidate": [
+        0.0001987265625,
+        0.000210654296875
+      ]
+    },
+    "simp_installed_1000": {
+      "develop": [
+        1.84604263306e-06,
+        1.97565841675e-06
+      ],
+      "candidate": [
+        2.04027557373e-06,
+        2.17707061768e-06
+      ]
+    },
+    "simp_supplied_10": {
+      "develop": [
+        3.10671386719e-05,
+        3.40803222656e-05
+      ],
+      "candidate": [
+        3.31160888672e-05,
+        3.40540771484e-05
+      ]
+    },
+    "simp_supplied_1000": {
+      "develop": [
+        0.0031392578125,
+        0.0034301328125
+      ],
+      "candidate": [
+        0.0030845,
+        0.0034478125
+      ]
+    },
+    "asm_simp_supplied_1000": {
+      "develop": [
+        0.003826859375,
+        0.003770640625
+      ],
+      "candidate": [
+        0.00419940625,
+        0.00390184375
+      ]
+    },
+    "asm_simp_no_rules": {
+      "develop": [
+        0.000212442871094,
+        0.000218444824219
+      ],
+      "candidate": [
+        0.000196530761719,
+        0.000187946777344
+      ]
+    },
+    "full_simp_20_assumptions": {
+      "develop": [
+        0.000749630859375,
+        0.000762681640625
+      ],
+      "candidate": [
+        0.0007448359375,
+        0.0007791640625
+      ]
+    }
+  },
+  "validation": {
+    "legacy": {
+      "same_raw": true,
+      "same_excluding_timings": true,
+      "develop_ok_count": 73,
+      "candidate_ok_count": 73,
+      "develop_observations": 0,
+      "candidate_observations": 0
+    },
+    "traversal": {
+      "same_raw": true,
+      "same_excluding_timings": true,
+      "develop_ok_count": 47,
+      "candidate_ok_count": 47,
+      "develop_observations": 273,
+      "candidate_observations": 273
+    },
+    "exclusion": {
+      "same_raw": false,
+      "same_excluding_timings": true,
+      "develop_ok_count": 929,
+      "candidate_ok_count": 929,
+      "develop_observations": 2703,
+      "candidate_observations": 2703
+    },
+    "native": {
+      "ok_count": 1440
+    },
+    "native-selftest": {
+      "ok_count": 630
+    }
+  },
+  "staging": {
+    "develop": "<<HOL message: Created theory \"reviewstaging\">>\nSTAGE construction printers=1 primitives=2\nSTAGE first printers=1 HOL_ERR\nSTAGE second printers=1 HOL_ERR\nOUTCOME goals=1\n",
+    "candidate": "<<HOL message: Created theory \"reviewstaging\">>\nSTAGE construction printers=0 primitives=0\nSTAGE first printers=1 HOL_ERR\nSTAGE second printers=2 HOL_ERR\nOUTCOME PrinterFailure\n"
+  },
+  "signature": {
+    "develop": "LEGACY_SIGNATURE_OK\n",
+    "candidate": "/tmp/simplifier-review-20261021/candidate/abicheck.sml:137: error: Error while matching datatype reducer: constructor CONFIG_REDUCER was present in the structure but not in the signature.\nFound near Traverse\n/tmp/simplifier-review-20261021/candidate/abicheck.sml:137: error: Error while matching datatype reducer: constructor CONTEXT_REDUCER was present in the structure but not in the signature.\nFound near Traverse\nerror in quse /tmp/simplifier-review-20261021/candidate/abicheck.sml : Fail \"Static Errors\"\nerror in load abicheck : Fail \"Static Errors\"\nUncaught exception at ./basis/FinalPolyML.sml:492: Fail \"Static Errors\"\n"
+  },
+  "incremental_compiled_words": {
+    "develop": {
+      "0": 22,
+      "10": 4023,
+      "100": 11205,
+      "1000": 83071
+    },
+    "candidate": {
+      "0": 36,
+      "10": 6448,
+      "100": 17230,
+      "1000": 125096
+    }
+  }
+}

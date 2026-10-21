@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "task": "TASK_01",
+  "evidence_id": "TASK_01-pins-v1",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "reviewed_candidate": "cf1f863b4e5a9712ce1b179f18274eb3451f3954",
+  "historical_review_date": "2026-10-21",
+  "claim": "Preservation and integrity only; no fresh behavior, repair, build, or performance pass.",
+  "layout_note": "All original reproducers remain colocated to preserve reproduce.py HERE paths. Baseline inputs live separately under compatibility/inputs/develop.",
+  "historical_exit_statuses": {
+    "recorded_status_file": null,
+    "note": "No original process-status manifest was supplied. Logs/results do not independently establish exit codes. reproduce.py contains expected codes, not captured historical codes."
+  },
+  "historical_runtime_fingerprints": {
+    "available": false,
+    "note": "Review reports Poly/ML 5.9.2, one GC thread, shared candidate heap/libraries. Their historical binary hashes were not supplied; initial-state.json fingerprints only the current checkout."
+  },
+  "files": [
+    {
+      "path": "src/simp/tests/performance/review-20261021/abicheck.sml",
+      "sha256": "0326ab4522fed21de2253eaa0a511556162abf4577bc39459587bc15a6f6a75f",
+      "bytes": 5435,
+      "origin": "/tmp/simplifier-review-20261021/abicheck.sml",
+      "kind": "historical review input",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/bench.sml",
+      "sha256": "8b8106b6af8f4250437af4f73e20e3822c22d203b709a493fed25ad8042540b7",
+      "bytes": 3403,
+      "origin": "/tmp/simplifier-review-20261021/bench.sml",
+      "kind": "historical review input",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-abicheck.log",
+      "sha256": "a3be59646fdcf52279585f2304a7500049627333c71fe8d293c6388b18d62ae6",
+      "bytes": 627,
+      "origin": "/tmp/simplifier-review-20261021/candidate-abicheck.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-bench-build.log",
+      "sha256": "0119ccabb6555f460a5206c8f8c84186261bd1a7a1dc6cab239336aa5895b7ff",
+      "bytes": 117,
+      "origin": "/tmp/simplifier-review-20261021/candidate-bench-build.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-build.log",
+      "sha256": "86d7500bf278346f7c6a765f85d10f06b9748397564ccc14ca184e1feb72fab3",
+      "bytes": 1012,
+      "origin": "/tmp/simplifier-review-20261021/candidate-build.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-detail-1.log",
+      "sha256": "a80a6dd0633222ef65f93b5f19a49c59bde751a342ffe05a17c5cb27c8f5823b",
+      "bytes": 848,
+      "origin": "/tmp/simplifier-review-20261021/candidate-detail-1.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-detail-2.log",
+      "sha256": "a76882ba7d05962377611912cb83ef1d3185a3f0e33d303d8a365e0f36e7c5ad",
+      "bytes": 851,
+      "origin": "/tmp/simplifier-review-20261021/candidate-detail-2.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-exclusion.log.gz",
+      "sha256": "2ca67c9005db7d7ed2d33623257bb2d7d754eca2790a9e2bd18b678189dd2635",
+      "bytes": 8343,
+      "origin": "/tmp/simplifier-review-20261021/candidate-exclusion.log.gz",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-legacy.log",
+      "sha256": "a448196e4560620fb9232613fdcff061529d45a2c893cfce62ad72b11032464e",
+      "bytes": 8847,
+      "origin": "/tmp/simplifier-review-20261021/candidate-legacy.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-memory.log",
+      "sha256": "f5617534a529fb7b17dff993dc03f6cd130c8d9ba392b6a49e87fabd04e7a963",
+      "bytes": 109,
+      "origin": "/tmp/simplifier-review-20261021/candidate-memory.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-staging.log",
+      "sha256": "06820074863c2cc0385c3b2c08dbfe64fae17e64ca13618b776e9cdb2ff984fb",
+      "bytes": 177,
+      "origin": "/tmp/simplifier-review-20261021/candidate-staging.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-timings-1.log",
+      "sha256": "424de3cf398786bf4889d688b47590e4a6b1e4be1500941c64555ede8b42905d",
+      "bytes": 1801,
+      "origin": "/tmp/simplifier-review-20261021/candidate-timings-1.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-timings-2.log",
+      "sha256": "6b4002e20193451a321971dddcb14ae1dd6b8c6cc34e22a2baf23435f1c570f1",
+      "bytes": 1801,
+      "origin": "/tmp/simplifier-review-20261021/candidate-timings-2.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/candidate-traversal.log.gz",
+      "sha256": "d09b4a577132bc0140f16980f6273fd5d6bc61a4944897b848ef096445139e20",
+      "bytes": 2250,
+      "origin": "/tmp/simplifier-review-20261021/candidate-traversal.log.gz",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/detail.sml",
+      "sha256": "7c1a55d393d36e21c277b272d98afdcd5daf84c9ac8c8bf93f7a341cc5080b33",
+      "bytes": 3031,
+      "origin": "/tmp/simplifier-review-20261021/detail.sml",
+      "kind": "historical review input",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/detailed-benchmarks.json",
+      "sha256": "0d27716a71abda5f598ff75ad114380944e174955991282550944ad721e18b39",
+      "bytes": 4953,
+      "origin": "/tmp/simplifier-review-20261021/detailed-benchmarks.json",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-abicheck.log",
+      "sha256": "604115acbe4f57c79236e44237c1c7292aa3e088e322063aa7baa35a67ca3a5e",
+      "bytes": 20,
+      "origin": "/tmp/simplifier-review-20261021/develop-abicheck.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-bench-build.log",
+      "sha256": "0119ccabb6555f460a5206c8f8c84186261bd1a7a1dc6cab239336aa5895b7ff",
+      "bytes": 117,
+      "origin": "/tmp/simplifier-review-20261021/develop-bench-build.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-build.log",
+      "sha256": "c381429edd2a602feec241ef478df8119676581a79aa2ea62bcc05b7da8d1dc1",
+      "bytes": 739,
+      "origin": "/tmp/simplifier-review-20261021/develop-build.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-detail-1.log",
+      "sha256": "3aca92d76bd6319f72113b3ad8d82737f523175e0756e29cf1586d3248d1dc0f",
+      "bytes": 848,
+      "origin": "/tmp/simplifier-review-20261021/develop-detail-1.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-detail-2.log",
+      "sha256": "90eaa2119839a5353f494fef6112621e70111a08a0acb9b5913b10cf4da6c9a7",
+      "bytes": 849,
+      "origin": "/tmp/simplifier-review-20261021/develop-detail-2.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-exclusion.log.gz",
+      "sha256": "20646bb821195d892fdbd29e52eb8b1bedf5079de90c694dc7958497b3ad60c3",
+      "bytes": 8343,
+      "origin": "/tmp/simplifier-review-20261021/develop-exclusion.log.gz",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-legacy.log",
+      "sha256": "a448196e4560620fb9232613fdcff061529d45a2c893cfce62ad72b11032464e",
+      "bytes": 8847,
+      "origin": "/tmp/simplifier-review-20261021/develop-legacy.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-memory.log",
+      "sha256": "a2b70de7cefc04e0f9f22fb8809a1119b1499b521850f13ccb84fa009442a09d",
+      "bytes": 108,
+      "origin": "/tmp/simplifier-review-20261021/develop-memory.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-staging.log",
+      "sha256": "53857a5befd8b496cf877129a8744553ad4a0844c96f412614c68c7ba5d9c46f",
+      "bytes": 170,
+      "origin": "/tmp/simplifier-review-20261021/develop-staging.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-timings-1.log",
+      "sha256": "40c367843e8630a204a0e6cbe25bbb0bf3bf2abbf3e7253af25fa74403b5d6d0",
+      "bytes": 1801,
+      "origin": "/tmp/simplifier-review-20261021/develop-timings-1.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-timings-2.log",
+      "sha256": "2a9707f3b19f3bc6dc6543d2d6e2a0172679bfb1c6a739fe0c4696046f9010f4",
+      "bytes": 1804,
+      "origin": "/tmp/simplifier-review-20261021/develop-timings-2.log",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/develop-traversal.log.gz",
+      "sha256": "d09b4a577132bc0140f16980f6273fd5d6bc61a4944897b848ef096445139e20",
+      "bytes": 2250,
+      "origin": "/tmp/simplifier-review-20261021/develop-traversal.log.gz",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/memory.sml",
+      "sha256": "56ba17665087e3eaa6495355749ebd941f3dcab6f1b0ae77224a3a210bb0a17f",
+      "bytes": 2241,
+      "origin": "/tmp/simplifier-review-20261021/memory.sml",
+      "kind": "historical review input",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/native-selftest.log.gz",
+      "sha256": "0e5194b740463e75e06e4ae2e712e2730fdfb82965976f4222cf774c9f608d3f",
+      "bytes": 9683,
+      "origin": "/tmp/simplifier-review-20261021/native-selftest.log.gz",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/native.log.gz",
+      "sha256": "733cb851f9635994e63186bd164f5d398945c458edbaf8b4b19255d23913313e",
+      "bytes": 15895,
+      "origin": "/tmp/simplifier-review-20261021/native.log.gz",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/reproduce.py",
+      "sha256": "618b4f73eaf90a6454875e0b187f77626fce8d87e3e7190fccfb85aee5af6cf4",
+      "bytes": 4264,
+      "origin": "/tmp/simplifier-review-20261021/reproduce.py",
+      "kind": "historical review input",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/review-results.json",
+      "sha256": "5650c6e7dd36e5bdebca0465a6270696f0166ad0fad4b8761c4671de842bec32",
+      "bytes": 5973,
+      "origin": "/tmp/simplifier-review-20261021/review-results.json",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/staging.sml",
+      "sha256": "04b7f6139b1744514648828467977bfb55b8e026bbe2aa8d06d29ef0b93262dd",
+      "bytes": 1925,
+      "origin": "/tmp/simplifier-review-20261021/staging.sml",
+      "kind": "historical review input",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/performance/review-20261021/validation-summary.json",
+      "sha256": "5f284d752f9ad4e035900bdb6c6160a24aae09be3b667838845360e779692c5f",
+      "bytes": 704,
+      "origin": "/tmp/simplifier-review-20261021/validation-summary.json",
+      "kind": "historical review observation",
+      "revision_attribution": "review-results.json; not remeasured by TASK_01"
+    },
+    {
+      "path": "src/simp/tests/compatibility/inputs/develop/Traverse.sig",
+      "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+      "bytes": 5286,
+      "origin": "cccaa27d7099cbadc886983020cbe745db7793f3:src/simp/src/Traverse.sig",
+      "git_blob": "620c95336b8446c7633e1fb92c6b94089bb03fea",
+      "kind": "immutable baseline differential input"
+    },
+    {
+      "path": "src/simp/tests/compatibility/inputs/develop/selftest.sml",
+      "sha256": "f3618db1b09fa05d0212bc4e4f3a3b1309d50acbc726389148e58f841d8cf7a9",
+      "bytes": 19385,
+      "origin": "cccaa27d7099cbadc886983020cbe745db7793f3:src/simp/src/selftest.sml",
+      "git_blob": "236c43518d6e1436939e4183b5db80c7ebd32e7b",
+      "kind": "immutable baseline differential input"
+    }
+  ]
+}

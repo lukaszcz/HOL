@@ -1,0 +1,32 @@
+{
+  "legacy": {
+    "same_raw": true,
+    "same_excluding_timings": true,
+    "develop_ok_count": 73,
+    "candidate_ok_count": 73,
+    "develop_observations": 0,
+    "candidate_observations": 0
+  },
+  "traversal": {
+    "same_raw": true,
+    "same_excluding_timings": true,
+    "develop_ok_count": 47,
+    "candidate_ok_count": 47,
+    "develop_observations": 273,
+    "candidate_observations": 273
+  },
+  "exclusion": {
+    "same_raw": false,
+    "same_excluding_timings": true,
+    "develop_ok_count": 929,
+    "candidate_ok_count": 929,
+    "develop_observations": 2703,
+    "candidate_observations": 2703
+  },
+  "native": {
+    "ok_count": 1440
+  },
+  "native-selftest": {
+    "ok_count": 630
+  }
+}
