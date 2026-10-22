@@ -7,8 +7,8 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
   -C src/simp/tests/simp-ext -j1 check
 ```
 
-`check` builds **and executes** `selftest.exe`, `tracked.exe` and
-`exclusions.exe`. Building
+`check` builds **and executes** `selftest.exe`, `tracked.exe`,
+`exclusions.exe`, `strategies.exe` and `tactics.exe`. Building
 `.uo` files alone is not validation. The production `simp-ext` target runs it
 at `HOLSELFTESTLEVEL=1`. Expected Poly/ML type-error diagnostics
 from `negative/*.ML` are normal successful test output.
@@ -130,3 +130,36 @@ strict reparsing versus resolved replay, and ordinary-reset versus explicit
 preserving-control replay stay unchanged. There is no legacy-history identity
 inference, new ordinary import, or ordinary representation change. See the
 [TASK19 handoff](../compatibility/TASK_19_HANDOFF.md) for source-tied evidence.
+
+## Configured tactics and strategies (TASK_20)
+
+`strategies.sml` adds **186 checks / 63 executed validations**;
+`tactics.sml` adds **58 checks / 18 executed validations**. All proofs are
+kernel-derived; residual goals are actually proved, returned validations
+called, and complete hypotheses and ordered goals compared.
+
+| New coverage | Original provenance / added intersection |
+| --- | --- |
+| Final/condition solvers | Native safe/unsafe pipeline; list replacement/removal/order, invalid conclusions/hypotheses, alpha-equivalent contexts, recursion and exact exception payloads |
+| Configured controls | Native live depth, custom order and root rewrite tests; saved conversions/tactics, shared default versus explicit depth |
+| Loopers | Native replacement/round-limit tests; zero/one/multiple/unlimited rounds, UNCHANGED/failure/exception behavior, changed subgoal restart and saved reuse |
+| Counted globals | Native mutual-assumption/fixpoint/root/implication groups; ordered branching and real reconstruction, counted unchanged rotations, conclusion fixpoint reentry and one invocation-wide looper budget |
+| Child-first passes | Native child-first overlap; explicit traversal order and configured global reconstruction (private derivation restoration remains TASK_22) |
+| Supplied invocation binding | Once rules across looper siblings, both traversal policies and saved reuse; final solvers receive untagged facts even when a maker drops their rewrites |
+| Nested directives | Requirement/bound-qualified SF and Split execute; ReqD failures retain provenance; wrapped assumption policy, label and abbreviation options, including non-global ReqD failure retention |
+| Bound local replay | Native `bound_global_fixture`; independent spent ambient quota plus partially spent/exhausted installed bundle and attached view, exact maker/collector schedule, zero bundle/view recompilation traces, same adjusted object observed by loopers and old saved conversions |
+| Generic isolation | Generic classifier/tactic forwards extension markers inertly, no new split set/attribute registrations |
+
+The original 642 native assertions and ordinary saved tactic/staging/load
+fixtures remain unchanged. No fallback promotion or ordinary API is involved.
+Local replay preserves all installed controls directly, rather than resetting
+then repairing only the bundle via a second history replay. Installed view
+matchers (including rejected shapes) are cached immutably in extension history;
+replay checks source compatibility and rebinds only actual counters. Explicit
+ordinary-reset replay still refreshes declared allowances. A public excluded
+addition returns its exact input before entering compilation.
+
+`APIExamples.sml` compiles explicit strategy, global, child-first and bound
+clients. Branch-only help examples now use `simpExtLib`/`TraverseExt` and tracked
+recipes; ordinary callers require no migration. See the
+[TASK20 handoff](../compatibility/TASK_20_HANDOFF.md) for validation/evidence.

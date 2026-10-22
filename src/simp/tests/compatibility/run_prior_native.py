@@ -91,7 +91,16 @@ def main():
             for directory in (repo / "src/simp/src", *[
                 HERE.parent / n for n in ("contracts", "fresh-load", "markers",
                 "replay-order", "split-registration")])
-            for p in (directory / ".hol/objs").glob("*") if p.is_file()}
+            for p in (directory / ".hol/objs").glob("*")
+            if p.is_file() and not (
+                directory == repo / "src/simp/src" and
+                p.name in ("scratchTheory.sml", "scratchTheory.sig",
+                           "scratchTheory.dat"))}
+        # The unchanged native selftest exports scratchTheory on every
+        # execution. Its generated theory hash can differ between the
+        # integrated run and direct launcher; it is an output, not an
+        # imported/compiled input. All .uo/.ui and other theory products
+        # remain sealed, as do the sources and the exact native stream.
         # Existing launchers are executed, not counted from cached log targets.
         cases = {"native": "src/simp/src/selftest.exe",
                  "traversal": "src/simp/tests/contracts/traversal-contracts.exe",

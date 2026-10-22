@@ -23,23 +23,25 @@ rule deletion as `ss -* [name]`. Qualification uses dots, not the kernel
 - A three-part dotted name is read as `Thy.Name.suffix` without an
   ancestry check. More dots raise `User key has too many dots`.
 
-Rewrites are matched by theory (if supplied) and name, including the
-`rewrite:` prefix and generated dotted suffixes used by rewrite entries.
-Named decision procedures are removed by exact string equality.
+Deletion filters the installed rewrite/conversion net, not a source-theorem
+inventory. For a parsed name `n`, an entry matches if its stored name is
+`n`, `rewrite:n`, or begins with `rewrite:n.`, and its theory matches when
+one was supplied. Named decision procedures are removed by exact string
+equality with the original, unparsed string.
 
 There is no namespace interpretation or strategy fallback: `rule:`,
 `looper:`, `solver:`, `split:` and `case:` have no special meaning in an
 `Excl` string. In particular, `Excl "bool$AND_CLAUSES"` does not exclude
-the rewrite `bool.AND_CLAUSES`. Use [`simpLib.ExclX`](#simpLib.ExclX) for
-extended exclusions.
+the rewrite `bool.AND_CLAUSES`. Ordinary `simpLib` has no looper, solver or
+split-strategy state to delete. Use [`simpExtLib.ExclX`](#simpExtLib.ExclX)
+with an explicitly constructed extension simpset for extended exclusions.
 
 An unmatched name is silent, but still records the same deletion history
 as `-*`; it is not discarded just because no current rule matches.
 Strict names are reparsed when that history is replayed, in the then-current
 theory context (including after `Context.restore`). A later addition may
 reinstall a deleted rule; this is not a prohibition on future additions.
-Legacy clients require no migration. Only clients of the branch's earlier
-extended namespace/fallback behavior should switch to `ExclX`.
+Ordinary clients require no migration; `Excl` retains its literal contract.
 
 ### Failure
 
@@ -57,9 +59,9 @@ are not errors.
 
 ### See also
 
-[`simpLib.ExclX`](#simpLib.ExclX),
+[`simpExtLib.ExclX`](#simpExtLib.ExclX),
 [`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV),
-[`simpLib.add_looper`](#simpLib.add_looper),
-[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
-[`simpLib.add_split`](#simpLib.add_split),
-[`simpLib.split_ss`](#simpLib.split_ss).
+[`simpExtLib.add_looper`](#simpExtLib.add_looper),
+[`simpExtLib.add_unsafe_solver`](#simpExtLib.add_unsafe_solver),
+[`simpExtLib.add_split`](#simpExtLib.add_split),
+[`simpExtLib.split_ss`](#simpExtLib.split_ss).

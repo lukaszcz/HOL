@@ -4,6 +4,7 @@ open HolKernel boolLib markerLib markerSyntax
 val ERR = mk_HOL_ERR "simpMarkerLib"
 val Split_tm = prim_mk_const {Thy="simpMarker",Name="Split"}
 val ExclX_tm = prim_mk_const {Thy="simpMarker",Name="ExcludeX"}
+val IgnAsm_tm = prim_mk_const {Thy="marker",Name="IgnAsm"}
 fun Split th = EQ_MP (SYM (SPEC (concl th) simpMarkerTheory.Split_def)) th
 fun destSplit th = PURE_REWRITE_RULE [simpMarkerTheory.Split_def] th
 fun ExclX name =
@@ -66,6 +67,19 @@ fun dest_tacmarked th =
       | SOME (Legacy (DAbbr s)) => TO_Abbr s
       | SOME (Legacy (DLabel s)) => TO_Label s
       | _ => TO_thm th
+
+(* Option wrappers live in hypotheses, so option heads can be classified
+   without decoding/constructing their payload proofs a second time. *)
+fun dest_bound_tacmarked th =
+    case dest_tacmarked th of
+        TO_thm _ =>
+          if aconv (concl th) (concl NoAsms) then TO_NoAsms
+          else if same_const IgnAsm_tm (#1 (strip_comb (concl th))) then
+            TO_IgnAsm (#1 (dest_var (rand (concl th))))
+          else if is_abbr th then TO_Abbr (dest_abbr th)
+          else (case total dest_label_ref th of
+                    SOME s => TO_Label s | NONE => TO_thm th)
+      | option => option
 
 fun optcons NONE l = l
   | optcons (SOME x) xs = x::xs
@@ -147,5 +161,23 @@ fun process_taclist_then_recur {arg} thltac (gl as (asl,g)) =
         (pre, require_tacf (filter_then asms aslPs (thltac recur))) gl
     end
 
+(* Bind supplied rules separately from the changing assumption context.
+   Requirements and pretactics run once; only assumption selection recurs.
+   Bounds on tactic options qualify the option, not a rewrite allowance. *)
+fun process_taclist_then_bind {arg} thltac (gl as (asl,g)) =
+    let
+      val tacoptions = map dest_bound_tacmarked arg
+      val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+      (* Resolve labels before building requirements, but retain checks on
+         options too: classifying NoAsms must not discard its ReqD. *)
+      val (_, require_tacf) = require_split arg
+      fun plain th =
+        let val th = case dest_Req0 th of SOME p => p | NONE => th
+        in case dest_ReqD th of SOME p => p | NONE => th end
+      val asms = map plain asms
+      fun recur next = filter_then [] aslPs next
+    in
+      Tactical.THEN (pre, require_tacf (recur (thltac asms recur))) gl
+    end
 
 end

@@ -29,11 +29,13 @@ are unchanged. Unlike this optional dispatch accessor, `traversedata_for_ss`
 always returns that projection, even for ineligible inputs, omitting their
 simpset-specific traversal configuration.
 
-Use `xtraversedata_for_ss` for a configured native `CONFIG_REDUCER` paired
-with the simpset's traversal configuration. Consumers needing configured
-reducer data alone use `#1 (xtraversedata_for_ss ss)`. Both projections share
-installed bounded controls. This does not imply identical storage usage or
-measured performance.
+Configured extraction now belongs to `simpExtLib.xtraversedata_for_ss`,
+which requires a separately constructed `simpExtLib.simpset`, for example
+`boolSimpsExt.bool_ss`. It returns a `TraverseExt.CONFIG_REDUCER` paired
+with extension traversal configuration for `TraverseExt.XTRAVERSE`.
+Consumers needing only configured reducer data use
+`#1 (simpExtLib.xtraversedata_for_ss ss)` on that extension set, not on an
+ordinary simpset.
 
 ### Failure
 

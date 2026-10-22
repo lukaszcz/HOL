@@ -186,7 +186,10 @@ and ssfrag = SSFRAG_CON of {
     convs          : tagged_convdata list,
     rewrs          : (thname option * thm) source_slot list,
     ac             : (thm * thm) source_slot list,
-    views          : (rewrite_source * thm) list,
+    (* Cache successful and rejected view matchers after installation.
+       Replay checks the source statement and rebinds its actual control. *)
+    views          : (rewrite_source * thm *
+                      tagged_convdata option option) list,
     filter         : (controlled_thm -> controlled_thm list) option,
     dprocs         : TraverseExt.reducer list,
     congs          : thm list,
@@ -349,7 +352,8 @@ fun rewrites rewrs =
 fun rewrites_with_names rewrs =
   setfrag_rewrs (map (source_slot o apfst SOME) rewrs) empty_ssfrag
 
-fun rewrite_views views = setfrag_views views empty_ssfrag
+fun rewrite_views views =
+  setfrag_views (map (fn (source,th) => (source,th,NONE)) views) empty_ssfrag
 
 fun threaded_cong_ss congs =
   SSFRAG_CON
@@ -1531,9 +1535,13 @@ fun mk_tactic_solver (name,tac) =
          native=List.concat (map #native data)} end
 
  fun add_frag_native native_override prepared suspended rebind event
-       (ss as SS sset, f as SSFRAG_CON ssf) =
+       (ss, f) =
    if is_excluded ss f then ss
    else let
+   (* Do not destructure/rebox a prohibited addition's input: the no-op
+      contract includes object identity, not just equal fields. *)
+   val SS sset = ss
+   val SSFRAG_CON ssf = f
    val mk_rewrs' = #mk_rewrs sset
    val history = #history sset
    val travrules = #travrules sset
@@ -1553,22 +1561,32 @@ fun mk_tactic_solver (name,tac) =
      all_native
    val native = case rebind of NONE => retained | SOME bind => map bind retained
    val native_sources = map #2 native @ #native_sources sset
-   fun compile_view (source,view) =
+   fun compile_view (entry as (source,view,cached)) =
      case List.find (fn current => same_rewrite_source (source,current))
                     native_sources of
-         NONE => NONE
+         NONE => (NONE,entry)
        | SOME (RewriteSource {rewrite=(nm,_),bound,...}) =>
            let
              val control =
                case bound of NONE => UNBOUNDED | SOME (r,_) => BOUNDED r
-           in
-             case mk_rewr_convdata (nm,(view,control)) of
-                 NONE => NONE
-               | SOME {thypart,cd,legacy,source,prepared,...} =>
-                   SOME {thypart=thypart,cd=cd,legacy=legacy,
-                         source=source,prepared=prepared,bound=bound}
-           end
-   val newconvdata = convs @ map #1 native @ List.mapPartial compile_view views
+             val compiled = case cached of
+                 NONE => mk_rewr_convdata (nm,(view,control))
+               | SOME data => Option.map
+                   (fn data => case bound of
+                       NONE => data
+                     | SOME pair =>
+                         if case #bound data of SOME (r,_) =>
+                              Portable.pointer_eq (r,#1 pair)
+                            | NONE => false
+                         then data else rebind_convdata data pair) data
+             val compiled = Option.map
+               (fn {thypart,cd,legacy,source,prepared,...} =>
+                   {thypart=thypart,cd=cd,legacy=legacy,
+                    source=source,prepared=prepared,bound=bound}) compiled
+           in (compiled,(source,view,SOME compiled)) end
+   val compiled_views = map compile_view views
+   val newconvdata = convs @ map #1 native @
+     List.mapPartial #1 compiled_views
    val net = net_add_convs initial_net newconvdata
    fun travrel (TRAVRULES{relations,...}) = relations
    val sset_rels = travrel travrules
@@ -1626,7 +1644,8 @@ fun mk_tactic_solver (name,tac) =
  in
    let
      val history = ADDFRAG
-       (f,event,if prepared then SOME all_native else NONE,suspended)
+       (setfrag_views (map #2 compiled_views) f,event,
+        if prepared then SOME all_native else NONE,suspended)
        :: history
      val rewrite_sources =
        List.mapPartial #source newconvdata @ #rewrite_sources sset
@@ -1647,7 +1666,9 @@ fun mk_tactic_solver (name,tac) =
  fun add_frag prepared event args =
    add_frag_native NONE prepared [] NONE event args
 
- fun op++ args = add_frag false (source_token ()) args
+ fun op++ (ss,fragment) =
+   if is_excluded ss fragment then ss
+   else add_frag false (source_token ()) (ss,fragment)
 
  fun install_rewrite_bundle (RewriteBundle {parts,...}) views
        (ss as SS data) =
@@ -1667,7 +1688,7 @@ fun mk_tactic_solver (name,tac) =
              (fn (_,original) => same_rewrite_source (source,original))
              native) views
          val fragment =
-           setfrag_views owned fragment
+           setfrag_views (map (fn (s,th) => (s,th,NONE)) owned) fragment
        in add_frag_native (SOME native) true [] NONE event
             (SS {mk_rewrs = #mk_rewrs data, history = #history data,
                  initial_net = #initial_net data,
@@ -2222,14 +2243,11 @@ fun process_tags0 {report,preserve} ss thl =
             | SOME (Legacy (DFRAG nm)) =>
                 (congs, splits, acs, excls, exclfrags, frag_of nm :: frags,
                  rest)
-            | SOME (Legacy (DBounded _)) =>
-                (case destExclX th of
-                     SOME nm =>
-                       (congs, splits, acs, ExtendedExclusion nm :: excls,
-                        exclfrags, frags, rest)
-                   | NONE =>
-                       (congs, splits, acs, excls, exclfrags, frags,
-                        th :: rest))
+            | SOME (Legacy (DBounded (plain,_))) =>
+                (* Bounds on directives do not turn them into rewrite
+                   facts. Genuine rewrite bounds retain their controls. *)
+                if is_directive plain then sort (plain,acc)
+                else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
             | SOME (Legacy (DReq0 _)) =>
                 if report then tactic_only "Req0"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
@@ -2283,7 +2301,7 @@ fun process_tags0 {report,preserve} ss thl =
 fun process_tags ss thl =
   process_tags0 {report=true,preserve=false} ss thl
 fun process_asm_tags ss thl =
-  process_tags0 {report=false,preserve=false} ss thl
+  process_tags0 {report=false,preserve=true} ss thl
 
 (* Bind survivors while processing removal, not by replaying the resulting
    history a second time. Direct exclusions already retain actual controls. *)
@@ -2508,18 +2526,25 @@ fun bounded_looper rounds tac g =
           end
     | NONE => tac g
 
-(* [xdata_of] compiles a marker-adjusted simpset for traversal. *)
-fun gen_simp_tac_with_xdata traversal
+(* [xdata_of] extracts traversal data from a marker-adjusted tracked set. *)
+fun gen_simp_tac_with_rounds rounds traversal
       xdata_of solver_context (mode : simp_mode) ss ths =
   fn g =>
     let
-      val rounds = ref (getlimit ss)
-      fun start recur =
+      fun start supplied recur =
         let
+          val (base,rules) = prepare_rewrite_arguments ss supplied
+          (* A supplied allowance belongs to the invocation, not to each
+             looper branch or solver recursion. Solver facts are untagged. *)
+          val bundle = prepare_rewrite_bundle base rules
+          val invocation = if null rules then base
+            else install_rewrite_bundle bundle [] base
+          val RewriteBundle {context,...} = bundle
+          val solver_context = context @ solver_context
           fun main tagged_thms =
             let
               val (invocation_ss,context_thms) =
-                process_tags ss tagged_thms
+                process_asm_tags invocation tagged_thms
               val xdata = xdata_of invocation_ss
               val rewr_tac =
                 CONV_TAC
@@ -2539,8 +2564,12 @@ fun gen_simp_tac_with_xdata traversal
           main
         end
     in
-      simpMarkerLib.process_taclist_then_recur {arg=ths} start g
+      simpMarkerLib.process_taclist_then_bind {arg=ths} start g
     end
+
+fun gen_simp_tac_with_xdata traversal xdata solver_context mode ss ths g =
+  gen_simp_tac_with_rounds (ref (getlimit ss)) traversal
+    xdata solver_context mode ss ths g
 
 fun GEN_SIMP_TAC mode =
   gen_simp_tac_with_xdata ParentFirst xtraversedata_for_ss [] mode
@@ -2793,27 +2822,12 @@ fun gen_global_simp_tac_with_bound traversal bound mode
       ({base,concl_in_fixpoint,imp_rebuild,imp_premises} : xsimptac_config)
       ss0 =
   let
-    val (bound_context,bound_controls) = case bound of
-        NONE => ([],NONE)
-      | SOME (RewriteBundle {context,native,...}) =>
-          let
-            val controls = List.foldl
-              (fn ((_,source as RewriteSource {bound,...}),found) =>
-                case bound of NONE => found
-                  | SOME _ => Binarymap.insert (found,source,source))
-              (Binarymap.mkDict rewrite_source_compare) native
-          in (context,if Binarymap.numItems controls = 0 then NONE
-                      else SOME controls) end
-    (* Only marker-adjusted copies need replay; marker-free passes share ss0. *)
-    fun retain_bound_controls (ss as SS data) =
-      case bound_controls of
-          NONE => ss
-        | SOME controls =>
-            if Portable.pointer_eq (ss0,ss) then ss
-            else build_from_history_with
-              (SOME (rebind_source_controls controls)) (#history data)
-              |> fupdlimit (fn _ => #limit data)
-              |> setexcluded (#excluded data)
+    val bound_context = case bound of
+        NONE => []
+      | SOME (RewriteBundle {context,...}) => context
+    (* Local directives preserve all installed controls in one replay.
+       In particular the already installed bundle must not be reconstructed
+       as supplied arguments, or repaired by a second history replay. *)
   in
     markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
@@ -2821,17 +2835,17 @@ fun gen_global_simp_tac_with_bound traversal bound mode
           fn thl =>
              let
                (* Tactic-only assumption controls are not rewrite tags.
-                  Bound passes retain them for each changing proof context. *)
-               val assumption_controls = case bound of NONE => []
-                 | SOME _ => List.filter
-                     (fn th => case markerLib.dest_directive th of
+                  Retain them for every changing proof context. *)
+               val assumption_controls = List.filter
+                     (fn th => case markerLib.dest_directive
+                                      (simpMarkerLib.strip_wrappers th) of
                          SOME markerLib.DNoAsms => true
                        | SOME (markerLib.DIgnAsm _) => true
                        | _ => false) thl
                val assumptions =
                  if null assumption_controls then ASSUM_LIST
-                 else markerLib.process_taclist_then
-                   {arg=assumption_controls}
+                 else fn next => simpMarkerLib.process_taclist_then_bind
+                   {arg=assumption_controls} (fn _ => fn _ => next)
                fun selected_context context target ctxt =
                  if null assumption_controls then context
                  else
@@ -2841,7 +2855,7 @@ fun gen_global_simp_tac_with_bound traversal bound mode
                        (fn ths => (selected := ths; ALL_TAC))
                        (map concl context,target) ctxt
                    in !selected end
-               val (ss1,thl') = process_tags ss0 thl
+               val (ss1,thl') = prepare_rewrite_arguments ss0 thl
                val prepared = prepare_rewrites thl'
                val solver_context = bound_context @ source_thms prepared
                (* Each local marker-adjusted simpset compiles these prepared
@@ -2877,8 +2891,7 @@ fun gen_global_simp_tac_with_bound traversal bound mode
                      let
                        val data =
                          xtraversedata_for_ss_prepared
-                           traversal (retain_bound_controls invocation_ss)
-                           prepared
+                           traversal invocation_ss prepared
                      in
                        traversal_cache := SOME (invocation_ss,data);
                        data
@@ -2891,8 +2904,11 @@ fun gen_global_simp_tac_with_bound traversal bound mode
                      | NONE => build ()
                  end
 
+               (* Conclusion/fixpoint reentry and sibling branches belong
+                  to this same global invocation's looper budget. *)
+               val rounds = ref (getlimit ss)
                val conclusion_tac =
-                 gen_simp_tac_with_xdata
+                 gen_simp_tac_with_rounds rounds
                    traversal traversal_state solver_context mode ss
                    assumption_controls
 
@@ -3170,7 +3186,7 @@ fun pp_ssfrag (SSFRAG_CON {name,convs,rewrs,ac,views,dprocs,congs,
      vblock("AC rewrites",pp_thm_pair,map #item ac) >>
      vblock("Rewrite rules",pp_named_thm,map #item rewrs) >>
      vblock("Rewrite views",pp_named_thm,
-            map (fn (s,th) => (#1 (source_rewrite s),th)) views)
+            map (fn (s,th,_) => (#1 (source_rewrite s),th)) views)
    )
  end
 

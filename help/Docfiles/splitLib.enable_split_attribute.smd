@@ -77,6 +77,6 @@ theory-data formats and marker constants are unchanged.
 ### See also
 
 [`splitLib.exclude_split`](#splitLib.exclude_split),
-[`simpLib.split_ss`](#simpLib.split_ss),
+[`simpExtLib.split_ss`](#simpExtLib.split_ss),
 [`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
-[`simpLib.Split`](#simpLib.Split).
+[`simpExtLib.Split`](#simpExtLib.Split).

@@ -1,0 +1,30 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `set_looper`
+
+``` hol4
+simpExtLib.set_looper : string * (simpExtLib.simpset -> tactic) ->
+  simpExtLib.simpset -> simpExtLib.simpset
+```
+
+------------------------------------------------------------------------
+
+Replaces all extension loopers, including split loopers, with one looper.
+
+### Failure
+
+Never fails.
+
+### Example
+
+``` hol4
+>>_ val cases = simpExtLib.++ (boolSimpsExt.bool_ss,simpExtLib.split_ss);
+>>_ val conjunctions = simpExtLib.set_looper
+     ("conj", fn _ => CONJ_TAC) cases;
+```
+
+Only the conjunction looper remains in `conjunctions`.
+
+### See also
+
+[`simpExtLib.add_looper`](#simpExtLib.add_looper),
+[`simpExtLib.del_looper`](#simpExtLib.del_looper).

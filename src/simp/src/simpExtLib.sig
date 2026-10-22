@@ -347,6 +347,15 @@ sig
     * These tactics never fail, though they may diverge.
     * ---------------------------------------------------------------------*)
 
+   (* safe selects final solvers only; conditional rewriting continues to
+      use the unsafe solver list. Supplied rules are bound once per goal
+      invocation, with shared allowances across looper branches/recursion.
+      Solver facts are untagged. Reusing a tactic starts a fresh supplied
+      binding; installed rules/bundles retain their existing live controls.
+      Local directive replay preserves compatible installed controls.
+      A global invocation shares its looper budget across conclusion
+      fixpoint reentry and siblings, and resets it on saved-tactic reuse.
+      Bounds on directives qualify the directive, not a rewrite rule. *)
    type simp_mode = {safe : bool}
    val GEN_SIMP_TAC  : simp_mode -> simpset -> thm list -> tactic
    val GEN_SIMP_TAC_CHILD_FIRST :
@@ -386,7 +395,10 @@ sig
      simpset -> thm list -> tactic
    (* The bundle is already installed in the given invocation simpset.
       Retain its untagged solver context and own rewrite controls across
-      local marker replay; never reinstall or recompile it as arguments. *)
+      local marker replay; never reinstall or recompile it as arguments.
+      Attached views reuse their compiled matchers on replay and rebind to
+      the surviving source's actual control. Ambient controls also survive;
+      NoAsms/IgnAsm apply to bound and unbound global passes alike. *)
    val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND :
      TraverseExt.child_first_policy -> simp_mode -> xsimptac_config ->
      simpset -> rewrite_bundle -> thm list -> tactic

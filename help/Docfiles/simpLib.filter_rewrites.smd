@@ -29,5 +29,5 @@ Never fails.
 
 ### See also
 
-[`simpLib.clear_rules`](#simpLib.clear_rules),
+[`simpExtLib.clear_rules`](#simpExtLib.clear_rules),
 [`simpLib.remove_ssfrags`](#simpLib.remove_ssfrags).

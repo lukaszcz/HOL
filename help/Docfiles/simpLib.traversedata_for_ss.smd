@@ -25,9 +25,12 @@ contexts at conversion construction and reuses them on application.
 The total `simpLib.SIMP_CONV` wrapper delays construction until application;
 its lifetime must not be inferred from raw `TRAVERSE`.
 
-For configured extraction, use `xtraversedata_for_ss ss` with the extended
-Traverse entry points. Consumers needing only configured reducer data use
-`#1 (xtraversedata_for_ss ss)` instead of this function.
+Configured extraction is a separate extension API:
+`simpExtLib.xtraversedata_for_ss` takes a `simpExtLib.simpset` constructed
+from an extension recipe, such as `boolSimpsExt.bool_ss`, and returns data
+for `TraverseExt.XTRAVERSE`. Consumers needing only configured reducer data
+use `#1 (simpExtLib.xtraversedata_for_ss ss)` on that extension set; this
+is not an adapter for an ordinary simpset.
 
 ### Failure
 
@@ -46,5 +49,5 @@ Legacy constructor inspection needs no opt-in:
 
 ### See also
 
-[`simpLib.xtraversedata_for_ss`](#simpLib.xtraversedata_for_ss),
+[`simpExtLib.xtraversedata_for_ss`](#simpExtLib.xtraversedata_for_ss),
 [`simpLib.legacy_traversedata_for_ss`](#simpLib.legacy_traversedata_for_ss).
