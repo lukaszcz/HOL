@@ -9,7 +9,7 @@
 (*===========================================================================*)
 
 (* Mechanical tracked-engine relocation. Transitional primitive imports:
-   Travrules.mk_threaded_travrules -> TravrulesExt in TASK_13.
+   Threaded construction uses TravrulesExt; structural types stay shared.
    Trace, tracking, bounds, marker and split identities stay shared.
    Diagnostic origin labels deliberately remain simpLib. *)
 structure simpExtLib :> simpExtLib =
@@ -1617,7 +1617,8 @@ fun mk_tactic_solver (name,tac) =
        merge_travrules
          (travrules::mk_travrules relations congs::
           (if null threaded_congs then reltravs
-           else mk_threaded_travrules relations threaded_congs::reltravs))
+           else TravrulesExt.mk_threaded_travrules relations
+                                            threaded_congs::reltravs))
    in
      SS {mk_rewrs = mk_rewrs, history = history, initial_net = net,
          rewrite_sources = rewrite_sources, native_sources = native_sources,

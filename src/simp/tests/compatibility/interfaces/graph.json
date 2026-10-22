@@ -35,7 +35,7 @@
     "pureSimpsExt": {"layer": "extension", "imports": ["simpExtLib"]},
     "boolSimpsExt": {"layer": "extension", "imports": ["simpExtLib", "pureSimpsExt", "boolSimpsContextTheory"]},
     "combinSimpsExt": {"layer": "extension", "imports": ["simpExtLib"]},
-    "congExtLib": {"layer": "extension", "imports": ["simpExtLib", "TraverseExt", "congLib", "Travrules", "Opening"]},
+    "congExtLib": {"layer": "extension", "imports": ["simpExtLib", "TraverseExt", "congLib", "Travrules", "Opening", "OpeningExt"]},
     "trackedSimpDefaults": {"layer": "service", "imports": ["boolSimpsExt", "combinSimpsExt", "Context", "TypeBase", "ThmSetData"]}
   },
   "introduced_nodes": {

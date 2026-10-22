@@ -1,0 +1,225 @@
+[
+  {
+    "command": [
+      "bin/Holmake",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/src",
+      "-j1",
+      "HOLSELFTESTLEVEL=1",
+      "all"
+    ],
+    "exit": 0,
+    "seconds": 56.4275221824646,
+    "receipt": "build-0.log.gz",
+    "uncompressed": {
+      "sha256": "f00003a7e444abb901bd610273444d771f83e5b435848b98b8d4be6fb0548553",
+      "bytes": 428127
+    }
+  },
+  {
+    "command": [
+      "bin/build",
+      "-t",
+      "--seq=tools/sequences/upto-parallel"
+    ],
+    "exit": 0,
+    "seconds": 367.93713212013245,
+    "receipt": "build-1.log.gz",
+    "uncompressed": {
+      "sha256": "21a5160c10dc69002a94413afa433a6b19fd7c9be40ee1a7a0fb4a0ef9edc7e3",
+      "bytes": 38474
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--public-contracts",
+      "--prior-contracts",
+      "--negative-controls",
+      "--candidate",
+      "b5f3a9a94c0c5c26267b83dcfed409bf9cefd235",
+      "--candidate-signature",
+      "pass",
+      "--output",
+      "/tmp/task13-validation/paired"
+    ],
+    "exit": 0,
+    "seconds": 77.46981525421143,
+    "receipt": "contracts-0.log.gz",
+    "uncompressed": {
+      "sha256": "a224710fda4ce987f23d3eb7d71cb722013999c26d1207b71852482bf88aa147",
+      "bytes": 44
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_prior_native.py",
+      "--output",
+      "/tmp/task13-validation/native"
+    ],
+    "exit": 0,
+    "seconds": 100.48019981384277,
+    "receipt": "contracts-1.log.gz",
+    "uncompressed": {
+      "sha256": "90f8cf58c971cf8245542a9462c0dd5bb93af533a4cc39391bec6eeb55d646e3",
+      "bytes": 44
+    }
+  },
+  {
+    "command": [
+      "bin/Holmake",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/tests/compatibility/interfaces",
+      "-j1",
+      "check"
+    ],
+    "exit": 0,
+    "seconds": 2.034822940826416,
+    "receipt": "contracts-2.log.gz",
+    "uncompressed": {
+      "sha256": "81da6bc49dd49f8cecd397366e9d2da222793220af32701d18b3172902854ce7",
+      "bytes": 6749
+    }
+  },
+  {
+    "command": [
+      "bin/Holmake",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/tests/congruence-ext",
+      "-j1",
+      "check"
+    ],
+    "exit": 0,
+    "seconds": 3.1343202590942383,
+    "receipt": "focused.log.gz",
+    "uncompressed": {
+      "sha256": "be47d92f3539953bfa7ae9188ec79f684b1b53aff9cc19d6e6a0f59dfebf8def",
+      "bytes": 8175
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "src/simp/tests/compatibility",
+      "-p",
+      "test_*.py"
+    ],
+    "exit": 0,
+    "seconds": 8.210987567901611,
+    "receipt": "python-compat.log.gz",
+    "uncompressed": {
+      "sha256": "ffe39937395bf294e355957a195a42fa5fd3d7c008ef5c513002aa01e31989bc",
+      "bytes": 193
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "src/simp/tests/performance",
+      "-p",
+      "test_*.py"
+    ],
+    "exit": 0,
+    "seconds": 0.7344644069671631,
+    "receipt": "python-perf.log.gz",
+    "uncompressed": {
+      "sha256": "6efa99ddce637dca5fa3a5690f20a5dbc4df4f30fde8b9525288c939381d3f5f",
+      "bytes": 129
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/audit_task13.py"
+    ],
+    "exit": 0,
+    "seconds": 0.1332385540008545,
+    "receipt": "source-audit.log.gz",
+    "uncompressed": {
+      "sha256": "6df869d5c91fbbda26e568e2da02d1d44f5ec650d696a513385bb585a6effa0e",
+      "bytes": 6886
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/coverage_ledger.py"
+    ],
+    "exit": 0,
+    "seconds": 0.8581967353820801,
+    "receipt": "coverage.log.gz",
+    "uncompressed": {
+      "sha256": "79d708d32602069fcd9c5c022a45660f8b423c9d0d0cd5b4d6ee62b0203db203",
+      "bytes": 24
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/verify_evidence.py"
+    ],
+    "exit": 0,
+    "seconds": 0.2496194839477539,
+    "receipt": "immutable.log.gz",
+    "uncompressed": {
+      "sha256": "0cd5cc47726ce73232cb7ee4653bd42c4c0824af520fc99599a9d561ca82ed15",
+      "bytes": 240
+    }
+  },
+  {
+    "command": [
+      "tools/h4pedant/h4pedant",
+      "src/simp/src",
+      "src/simp/tests/compatibility",
+      "src/simp/tests/congruence-ext"
+    ],
+    "exit": 0,
+    "seconds": 0.04299283027648926,
+    "receipt": "pedant.log.gz",
+    "uncompressed": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "HEAD",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 0.008961200714111328,
+    "receipt": "diff-check.log.gz",
+    "uncompressed": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  }
+]

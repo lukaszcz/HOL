@@ -1,7 +1,7 @@
-(* Typed configured caller closure extracted in TASK_10. Ordinary congLib
-   restoration remains TASK_11. TASK_13 separates the shared congruence
-   primitives; no preorder/exception/control identities are duplicated.
-   Existing congLib diagnostic origins are intentionally preserved. *)
+(* Explicit configured congruences use threaded OpeningExt construction.
+   Ordinary congLib and its primitives remain pinned develop. Shared preorder,
+   exception and control identities are not duplicated; existing congLib
+   diagnostic origins are intentionally preserved. *)
 structure congExtLib :> congExtLib =
 struct
 
@@ -67,7 +67,7 @@ fun mk_congprocs preorders congs =
     val congs = flatten (map BODY_CONJUNCTS congs)
     fun gen_refl(x as {Rinst,arg}) = mk_preorder_refl preorders Rinst x
   in
-    map (CONGPROC gen_refl) congs
+    map (OpeningExt.THREADED_CONGPROC gen_refl) congs
   end
 
 fun mk_refl_rewrite preorder =
@@ -95,7 +95,7 @@ fun mk_eq_congproc preorder =
   in
     (*The only congruence occuring in an antecedent is =. Thus t == ``$=`` holds for all
       calls and we can use REFL *)
-    (CONGPROC (fn {Rinst,arg} => REFL arg)) thm
+    (OpeningExt.THREADED_CONGPROC (fn {Rinst,arg} => REFL arg)) thm
   end;
 
 

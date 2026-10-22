@@ -213,7 +213,7 @@ simpExtLib -> TraverseExt, Cond_rewrExt, TravrulesExt,
 pureSimpsExt -> simpExtLib
 boolSimpsExt -> pureSimpsExt, simpExtLib, shared theorem producers
 combinSimpsExt -> simpExtLib
-congExtLib -> simpExtLib, TraverseExt, shared congruence facilities
+congExtLib -> simpExtLib, TraverseExt, OpeningExt, shared congruence facilities
 trackedSimpDefaults -> extension recipes, explicit declaration inputs
 splitPersistLib -> splitLib -> SplitData [explicit opt-in only]
 ```

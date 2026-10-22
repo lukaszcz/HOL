@@ -4,6 +4,9 @@ EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   cond-rewr-ext.log ../tests/cond-rewr-ext/selftest.exe \
   ../tests/cond-rewr-ext/.hol/ \
   simp-ext.log ../tests/simp-ext/selftest.exe ../tests/simp-ext/.hol/ \
+  congruence-ext.log ../tests/congruence-ext/selftest.exe \
+  ../tests/congruence-ext/ordinary.exe \
+  ../tests/congruence-ext/.hol/ \
   ../tests/traverse-ext/selftest.exe ../tests/traverse-ext/diagnostics.exe \
   ../tests/traverse-ext/.hol/ split-registration.log \
   split-persistence.log simp-marker-tests.log replay-order.log \
@@ -91,6 +94,11 @@ simp-ext: simpExtLib.uo pureSimpsExt.uo boolSimpsExt.uo congExtLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/simp-ext check,simp-ext.log)
 
+.PHONY: congruence-ext
+congruence-ext: OpeningExt.uo TravrulesExt.uo congExtLib.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C ../tests/congruence-ext check,congruence-ext.log)
+
 .PHONY: cond-rewr-ext
 cond-rewr-ext: Cond_rewrExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
@@ -98,7 +106,7 @@ cond-rewr-ext: Cond_rewrExt.uo
 
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
-  simp-ext cond-rewr-ext \
+  simp-ext cond-rewr-ext congruence-ext \
   fresh-load-regressions split-registration split-persistence
 
 simp-selftest.log: selftest.exe

@@ -118,19 +118,4 @@ fun mk_travrules relns congs =
                weakenprocs=[]}
 
 
-fun mk_threaded_travrules relns congs =
-    let
-      fun threaded_cong2proc th =
-          let
-            val r = Opening.rel_of_congrule th
-            val PREORDER(_,_,refl) = find_relation r relns
-          in
-            Opening.THREADED_CONGPROC refl th
-          end
-    in
-      TRAVRULES {relations=relns,
-                 congprocs=map threaded_cong2proc congs,
-                 weakenprocs=[]}
-    end
-
 end (* struct *)
