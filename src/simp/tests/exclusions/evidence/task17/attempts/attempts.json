@@ -1,0 +1,27 @@
+[
+  {
+    "attempt": "/tmp/task17-behavior-initial",
+    "status": 1,
+    "accepted": false
+  },
+  {
+    "attempt": "/tmp/task17-behavior-second",
+    "status": 1,
+    "accepted": false
+  },
+  {
+    "attempt": "/tmp/task17-behavior-third",
+    "status": 1,
+    "accepted": false
+  },
+  {
+    "attempt": "/tmp/task17-behavior-fourth",
+    "status": 1,
+    "accepted": false
+  },
+  {
+    "attempt": "/tmp/task17-behavior-final",
+    "status": 1,
+    "accepted": false
+  }
+]

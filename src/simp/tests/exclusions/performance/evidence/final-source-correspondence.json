@@ -1,0 +1,29 @@
+{
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "files": {
+    "src/simp/src/simpLib.sml": {
+      "baseline": {
+        "bytes": 44419,
+        "sha256": "ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd"
+      },
+      "candidate": {
+        "bytes": 44419,
+        "sha256": "ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd"
+      },
+      "byte_identical": true
+    },
+    "src/simp/src/simpLib.sig": {
+      "baseline": {
+        "bytes": 10369,
+        "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666"
+      },
+      "candidate": {
+        "bytes": 10369,
+        "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666"
+      },
+      "byte_identical": true
+    }
+  },
+  "success": true,
+  "scope": "Whole ordinary source/signature bytes, including literal filter_net_by_names, dproc filter, -* and history replay; does not certify runtime environment, codegen or timing parity"
+}
