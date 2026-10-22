@@ -1,141 +1,143 @@
 # TASK22 — child-first derivation and solver/context lifetimes
 
-Landing identifier: **TASK22-child-first-lifetimes-v2** (containing commit).
-Repair starting HEAD: `a6c21c9d745cc88b55e67200c9bc1dc4286f42fa`.
+Landing identifier: **TASK22-child-first-lifetimes-v3** (containing commit).
+Starting HEAD: `2a1f2f26f956b22d8fabed8c5fbf3f9abbb9a825`.
 Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 Linux/aarch64, Poly/ML 5.9.2, configured `hol.state0`.
-Initial main-tree state: only the supplied untracked `evidence/task22/review/`.
-Pre-existing nested `.agent-files` changes were preserved.
+Initially only supplied untracked `evidence/task22/review2/` in the main tree;
+unrelated nested `.agent-files` changes were preserved.
 
-**All bounded TASK22 criteria now pass, including both review failures.**
-The v1 completion claim was incorrect: its passing tests missed pretest
-poisoning and direct late native-ETA exceptions. The original v1 manifest
-(`evidence/task22/validation.json`) is historical, not current acceptance.
-The supplied red reproducer and result remain unchanged in
-[`evidence/task22/review/`](evidence/task22/review/validation.json).
-Current source-tied acceptance is
-[`evidence/task22/repair/validation.json`](evidence/task22/repair/validation.json).
+**All bounded TASK22 acceptance criteria pass. No TASK22 blocker remains.**
+The v1/v2 completion claims missed callback staging: retaining the original
+exception for eventual rethrow did not stop fallback conversion callbacks.
+Their manifests are historical, not current acceptance. Supplied red evidence
+is preserved unchanged in `evidence/task22/{review,review2}/`.
+Current acceptance is [dispatch/validation.json](evidence/task22/dispatch/validation.json).
 
-## Implementation and control contracts
+## Repair and API/control decisions
 
-- `simpExtLib.sml` factors the existing callback-abort protection into private
-  helpers. Each call saves, clears and finally restores its enclosing abort
-  state, rethrowing the original exception even after conversion combinators
-  have swallowed/wrapped it. This works for HOL_ERR, opaque foreign payloads
-  and the actual shared Interrupt constructor.
-- `may_reduce_arguments` now uses this callback-only scope. A failed nonopaque
-  pretest cannot poison later pretests or an enclosing derivation. It neither
-  resets allowances nor charges/observes/collects/compiles anything. Opaque
-  pretests still short-circuit without invoking the policy.
-- `SIMP_CONV_CHILD_FIRST` passes the **same protected policy** to traversal and
-  the configured native ETA entry, with an application-local abort scope
-  outside TRY_CONV. A descent-created ETA candidate therefore cannot turn
-  policy HOL_ERR into ordinary candidate rejection. Saving a conversion is
-  still inert; reuse starts clean.
-- Prepared normalize/arguments retain their private fresh-declared quota
-  scope. Callback state and quota restoration remain independent: nested
-  pretests preserve partially spent outer counters, nested derivations restore
-  outer allowances, and every outer exit restores actual caller counters.
-  Direct conversions still spend actual caller allowances; aborting one does
-  **not** refill them.
-- Ordinary reducer/solver HOL_ERR remains candidate rejection, not an abort.
-  No charge point, successful callback schedule, context refresh, traversal
-  order, proof rule, congruence selection, public type or entry point changes.
-  `simpExtLib.sig` documents the direct/pretest guarantees. There is no hidden
-  promotion/replay API or new global cache/control/registration.
+- Native child-first dispatch transports a policy exception as a completed
+  search result and releases it **outside** `Lib.tryfind`. Neither a failing
+  nor a successful later candidate can run after that abort. Ordinary
+  conversion HOL_ERR/foreign rejection still tries subsequent candidates;
+  ordinary Interrupt still propagates immediately. Parent-first search is
+  unchanged. No generic `Lib`, conversion or kernel exception behavior changed.
+- An inner search boundary alone is insufficient. Recursive conversions,
+  conditional rewrites and lifted reducers can encounter late ETA inside an
+  enclosing search or solver pipeline. The private configured extractor now
+  threads the owner's same application-local abort check into native searches.
+- Additive `TraverseExt.CHILD_FIRST_WITH_ABORT` lets that owner supply its
+  inert-on-success check, independent of charging and observation. Traversal
+  checks before solver/subgoaler continuations, factories, reducers, context
+  descent and tracing. Existing entry points retain local protection and use
+  an inert external check; no existing client must migrate. No successful
+  policy/charge/observer callback was added or rescheduled.
+- Standalone `NORMALIZE_ARGUMENTS` also checks local abort state before
+  argument descent or user-child invocation; swallowed policy HOL_ERR cannot
+  invoke a child before final rethrow.
+- All existing preparation/pretest scopes remain application-local and
+  reentrant. Fresh declared quota scopes and `Portable.finally` restoration
+  are unchanged. Nested success/HOL_ERR/foreign/Interrupt restores enclosing
+  private counters and abort state. Prepared derivation neither spends nor
+  depends on caller allowances; direct conversion still spends actual caller
+  quotas and never refills them on failure.
 
-Only extension production code changed in this repair. Ordinary `Traverse`,
-`simpLib`, `Opening`, `Travrules` and `congLib` source/signature bytes still
-match pinned develop; all other ordinary sources are unchanged from the repair
-starting HEAD. The existing v1 `TraverseExt` and standalone argument guards
-are retained and freshly tested. Caller ownership is recorded in
-[migration/TASK22.md](migration/TASK22.md).
+Only extension production sources/signatures changed. Ordinary `Traverse`,
+`simpLib`, `Opening`, `Travrules` and `congLib` remain byte-identical to pinned
+Develop. There is no reverse adapter, retrospective promotion, global cache,
+new shared control, registration or persistence change. Caller ownership and
+new driver-hook decisions are in [migration/TASK22.md](migration/TASK22.md).
 
 ## Maintained coverage
 
-`tests/simp-ext/derivation.sml` now executes **1,116 checks** (846 retained,
-270 added). New intersections cover:
+`tests/simp-ext/derivation.sml` executes **1,392 checks**: all 1,116 prior
+assertions plus **276** new checks. `lifetimes.sml` executes **63 checks**:
+all 60 prior assertions plus three explicit child-callback staging checks.
+All eight focused launchers run through normal `check` and selftest level 1.
 
-- Nonopaque plain/observed pretests, partial/exhausted actual counters,
-  immediate recovery and recovery after successful normalization, repeated
-  failures, exact callback counts and no charging/observation/quota reset.
-- Pretests nested in normalize/arguments after witnessed bounded consumption:
-  caught HOL_ERR/foreign/Interrupt restore the outer callback scope and leave
-  its partially spent quota intact; outer proofs still use the second quota.
-- Direct descent-created native ETA checks after a bounded rewrite: exact
-  exception payload/provenance, one callback before abort, successful saved
-  reuse, complete kernel-derived proofs/hypotheses, and no public quota refill.
+New intersections exercise all four paths (direct, prepared normalize,
+observed normalize and prepared arguments), exact HOL_ERR provenance/payload,
+foreign payload identity and the shared Interrupt constructor:
 
-Retained derivation cases cover native/bundle/view/alias/conjunct/composed
-controls; fresh declared uses after public exhaustion; nested success and
-exceptions; observer/charge/head-policy aborts; unchanged children and failed
-conditions; ordinary lifted reducer/solver/collector failures; inert setup,
-exact per-application/per-child collector counts and failed-candidate quotas.
-`lifetimes.sml` still executes **60 checks**: single-step roots, opaque lifting,
-retained generic recurse contexts across nesting/failure/reuse, exact context
-and callback traces, live head policy and congruence-selected descent.
+- Repeated descent-created native ETA aborts with failing AND successful
+  matching fallback conversions; zero callbacks after abort, one policy abort,
+  inert construction, saved recovery and complete theorem/hypothesis checks.
+- Ordinary conversion errors still execute both fallback callbacks, while
+  ordinary Interrupt executes neither. Success callback order is asserted.
+- Nested native conversion, conditional rewrite and opaque reducer recursion;
+  no enclosing fallback, later reducer, unsafe-solver continuation or observer
+  after abort; saved conversions recover. These tests exposed and close the
+  enclosing-search/solver-continuation holes, not merely the original sibling
+  fallback reproducer.
+- Standalone argument normalization never invokes the supplied child after
+  its policy abort, including HOL_ERR swallowed by eta combinators.
 
-Fresh retained coverage: **642 native**, **131 TraverseExt**, **88 focused +
-174 tracked + 159 exclusion + 186 strategy + 88 tactic + 407 source/view/bundle**
-checks; **63 + 18 tactic validations**. These retain live default depth, custom
-order, solver safety/validation, counted global passes, looper limits,
-root-condition recursion, capture avoidance and construction/reuse contracts.
-The immutable legacy streams remain **73 original / 47 traversal / 929
-exclusion**, plus limits. The ledger verifies **2,153 source-tied cases**.
-All eight simp-ext launchers still execute from normal `check` and
-`HOLSELFTESTLEVEL=1 all`; no original assertion was removed or weakened.
+Retained assertions cover private native/bundle/view/alias/conjunct/composed
+quotas, exhaustion, nested scopes, unchanged terms, failed side conditions,
+exact charge/observer/collector counts, opaque reducer lifting, saved contexts
+and generic recurse lifetimes. Retained suites pass: **642 native**, **131
+TraverseExt**, and **88 focused + 174 tracked + 159 exclusion + 186 strategy +
+88 tactic + 407 source/view/bundle** checks, with **63 + 18 real tactic proof
+validations**. These retain live default depth, custom order, solver safety,
+proof validation, counted global passes, loop limits, congruence-selected
+policy/descent and construction/reuse behavior. The immutable legacy streams
+remain 73 original / 47 traversal / 929 exclusion plus limits; the ledger
+verifies **2,153 source-tied cases**. No assertion was removed or weakened.
 
 ## Fresh validation
 
-All commands below exit **0**; exact argv, source/input/runtime/tool/heap
-hashes, log hashes, receipts and observations are in the repair manifest.
+Exact commands, exits, source/input/runtime/tool/heap hashes, wrapper, logs
+and receipt seals are in `evidence/task22/dispatch/validation.json`.
+All acceptance commands exit **0**:
 
-| Command | Evidence under `evidence/task22/repair/` |
+| Command (drivers under `tests/compatibility/`, Python with `-B`) | Evidence under `evidence/task22/dispatch/` |
 | --- | --- |
-| `bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache -C src/simp/tests/simp-ext -j1 check` | Eight executed launchers, 1,116 derivation and 60 lifetime checks; `focused.log.gz` |
+| `bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache -C src/simp/tests/simp-ext -j1 check` | Eight executed launchers; `focused.log.gz` |
 | `bin/build -t --seq=tools/sequences/upto-parallel` | Complete routine sanity build; `routine.log.gz` |
-| `run_prior_native.py --output /tmp/task22-repair/native` | 14 successful receipts; final working-tree sources, normal selftest-level-1 integration, traversal/exclusion/marker/replay/load/listener and fresh split lifecycle; `native/` |
-| `run_paired.py --candidate HEAD --candidate-signature pass --candidate-behavior baseline --prior-contracts --public-contracts --staging-contracts --negative-controls --output /tmp/task22-repair/paired` | 44 receipts, ABI/staging/legacy streams and fail-closed controls; `paired/` |
-| `run_task22_negative.py --output /tmp/task22-repair/negative` | Six isolated semantic negative controls; `negative/` |
-| Supplied review `Holmakefile`/`selftest.sml`, copied unchanged to a private directory, built **and executed** with `check` | Five assertions pass, `REVIEW_FAILURES=0`; `review.log.gz` |
-| `coverage_ledger.py`; `verify_evidence.py`; `audit_task14.py` | 2,153 cases, 37 immutable inputs, tracked compiler/getter/control audit |
-| `tools/h4pedant/h4pedant src/simp/tests/simp-ext`; `tools/h4pedant/h4pedant --nolinelen src/simp/src`; `git diff --check` | All pass |
+| `run_prior_native.py --output /tmp/task22-dispatch.1ybCMc/native-final` | 14 receipts; final working-tree sources, normal integrated selftest-level-1 build/execution, legacy/native/traversal/load/listener/split lifecycle; `native/` |
+| `run_paired.py --candidate HEAD --candidate-signature pass --candidate-behavior baseline --prior-contracts --public-contracts --staging-contracts --negative-controls --output /tmp/task22-dispatch.1ybCMc/paired` | 44 receipts; ordinary ABI/staging/traces and fail-closed controls; `paired/` |
+| `run_task22_negative.py --output /tmp/task22-dispatch.1ybCMc/negative-final2` | Ten isolated semantic negatives, 20 build/run receipts; `negative/` |
+| Both supplied review fixtures, copied unchanged with `review/Holmakefile` into private directories; `Holmake --no-project --no-cache --no_prereqs -C "$tmp" -j1 check` | Both rebuilt and executed; `REVIEW_FAILURES=0`, `REVIEW2_FAILURES=0`; every `POST_ABORT_CALLBACKS=0`; `review*.log.gz` |
+| `coverage_ledger.py`; `verify_evidence.py`; `audit_task14.py` | 2,153 cases, 37 immutable inputs and tracked-control structural contracts |
+| `tools/h4pedant/h4pedant src/simp/tests/simp-ext`; `tools/h4pedant/h4pedant --nolinelen src/simp/src`; `git diff --check` | Pass; compact logs |
 
-Python drivers above are under `src/simp/tests/compatibility/`, run with
-`python3 -B`. The paired driver selects committed starting HEAD `a6c21c9d7`,
-whose **ordinary** sources equal final sources. It establishes ordinary
-compatibility, not execution of this extension repair; focused/native/routine,
-review and negative runs execute the final working-tree extension sources.
+The paired driver selects committed starting HEAD `2a1f2f26f`, whose ordinary
+sources equal final sources. It establishes ordinary compatibility, not final
+extension execution. Focused/native/routine/review/negative runs execute final
+working-tree extension code. All final checks follow the last executable edit.
 
-Each negative control builds successfully (exit **0**) and executes with
-expected exit **1**, failing the intended semantic assertion, never a static
-error. The four v1 controls still reject missing preparation/traversal/argument
-protection. Two new independent mutations remove only the pretest scope or
-only the direct native-ETA predicate guard. They fail, respectively,
-`pretest/false/HOL_ERR: pretest recovers immediately` and
-`direct/native ETA/HOL_ERR: exact abort after descent`. Private module paths,
-source hashes, mutation text and finished-fixture markers are recorded.
+Each semantic negative builds with exit **0** and executes with expected exit
+**1**, failing its intended assertion, never a deferred static error. The six
+prior controls are retained; four independent controls disable native abort
+transport/checking, enclosing-search checking, solver continuation checking,
+and standalone argument-child checking. Private loaded module paths, mutation
+text, source hashes and completed-fixture markers are recorded. Historical
+source negatives now copy their matching signature as well as implementation;
+otherwise the new additive hook would cause a meaningless static failure.
 
-One initial new-fixture run incorrectly expected a recovered pretest to return
-false despite its eta-contractible argument. Corrected to the existing true
-contract; no production change or original assertion weakening was involved.
-All final checks run after the last executable change. Interrupt paths raise
-the shared constructor deterministically after consumption; asynchronous
-signal-timing, whole-plan performance and independent clean builds are not
+Exploratory fixture corrections are not acceptance: fallback keys can match
+before the policy abort, so tests distinguish post-abort callbacks from valid
+earlier attempts; nested `SSFRAG` rules need named theorem pairs; unchanged
+direct conversions require `QCONV` for reflexivity comparison. Original oracles
+were not weakened. Deterministic Interrupt injection is tested; asynchronous
+signal timing, whole-plan performance and independent clean builds are not
 claimed by this bounded task.
 
-This checkout's compiled configuration names `/home/lukasz/dev/...`, while it
-now resides under `/home/lukasz/work/...`. As in v1, commands use a temporary
-`bwrap` same-checkout path alias, fresh `/dev`, and configured cwd/HOLDIR/PATH;
-no config/source rewrite or copied production library. The wrapper is preserved
-in the manifest. Private source/build/negative trees are removed immediately
-by their runners. New task-created launcher/cache products and scratch logs
-are removed after evidence archival; caller-owned pre-existing products and
-unrelated nested changes are preserved. No copied tree, binary or heap is
-committed.
+## Files and cleanup
 
-Changed files: `simpExtLib.{sml,sig}`, maintained `derivation.sml`, negative
-runner, focused coverage README, migration audit, this handoff and compact
-review/repair evidence. Progress gets one TASK22 completion line. No bounded
-TASK22 work remains. TASK23 is next; its persistence scope and TASK24/25's
-recipes/external consumer scopes remain separate, not deferred TASK22 repairs.
+Changed production files: `TraverseExt.{sig,sml}`, `simpExtLib.{sig,sml}`.
+Changed tests: `simp-ext/{derivation,lifetimes}.sml`, negative-control driver,
+focused README, caller migration audit, this handoff and compact evidence.
+
+The configured build path remains `/home/lukasz/dev/...`, while the checkout
+is `/home/lukasz/work/...`. Commands use the archived temporary `bwrap`
+same-checkout alias, fresh `/dev`, and configured cwd/HOLDIR/PATH; no config or
+source rewrite and no copied production libraries. Runners remove their
+private copied sources, caches and heaps immediately. New task-created test
+products and scratch logs are removed after evidence archival; pre-existing
+caller products and unrelated nested changes are preserved. No copied tree,
+heap or generated executable is committed.
+
+Progress has one TASK22 completion line. TASK23 is next; its persistence scope
+and TASK24/25's recipes/external consumer scopes remain separate, not deferred
+TASK22 work.

@@ -77,6 +77,13 @@ sig
   val CHILD_FIRST_WITH_OBSERVER : (term -> unit) -> child_first_policy ->
     xtraverse_data ->
     {reducer_context : thm list, solver_context : thm list} -> conv
+  (* Driver hook for a child-first owner whose native converters also call
+     the policy. Check its application-local abort state before callbacks,
+     including solver continuations after a failed recursive conversion.
+     The check must be inert on success and rethrow a remembered failure. *)
+  val CHILD_FIRST_WITH_ABORT : (unit -> unit) -> (term -> unit) option ->
+    child_first_policy -> xtraverse_data ->
+    {reducer_context : thm list, solver_context : thm list} -> conv
   (* One root rewrite without descent; side conditions use full traversal. *)
   val ROOT_REWRITE : xtraverse_data -> thm list -> conv
   val ROOT_REWRITE_WITH_CONTEXT : xtraverse_data ->

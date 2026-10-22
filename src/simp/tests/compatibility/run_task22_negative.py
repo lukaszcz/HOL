@@ -60,7 +60,15 @@ def main():
         ("pretest", "derivation",
          "pretest/false/HOL_ERR: pretest recovers immediately"),
         ("direct", "derivation",
-         "direct/native ETA/HOL_ERR: exact abort after descent")]
+         "direct/native ETA/HOL_ERR: exact abort after descent"),
+        ("dispatch", "derivation",
+         "direct/dispatch/HOL_ERR: no post-abort candidate callback"),
+        ("enclosing", "derivation",
+         "direct/nested conversion/HOL_ERR: no enclosing callback after abort"),
+        ("solver", "derivation",
+         "direct/nested condition/HOL_ERR: no enclosing callback after abort"),
+        ("argument-child", "lifetimes",
+         "arguments/HOL_ERR: no child callback after abort")]
     try:
         for mode, fixture, marker in cases:
             with tempfile.TemporaryDirectory(prefix="simp-task22-") as tmp:
@@ -69,7 +77,7 @@ def main():
                     for suffix in (".sig", ".sml"):
                         name = module + suffix
                         data = (src / name).read_bytes()
-                        if mode == "starting" and suffix == ".sml":
+                        if mode == "starting":
                             data = subprocess.check_output(
                                 ["git", "-C", str(repo), "show",
                                  BASE + ":src/simp/src/" + name])
@@ -89,9 +97,34 @@ def main():
                             old = ("protect_child_first_callback failure "
                                    "(#keep_abstraction policy)")
                             new = "#keep_abstraction policy"
+                        if (mode in ("dispatch", "enclosing") and
+                                name == "simpExtLib.sml"):
+                            old = ("     fun attempt entry =\n"
+                                   "       case Exn.capture check_abort () of\n"
+                                   "           Exn.Exn e => Exn.Exn e\n"
+                                   "         | Exn.Res () => "
+                                   "Exn.Res (apply_entry entry)\n"
+                                   "             handle PolicyAbort e => "
+                                   "Exn.Exn e")
+                            outcome = ("raise e" if mode == "dispatch"
+                                       else "Exn.Exn e")
+                            new = ("     fun attempt entry = "
+                                   "Exn.Res (apply_entry entry)\n"
+                                   "       handle PolicyAbort e => " + outcome)
+                        if mode == "solver" and name == "TraverseExt.sml":
+                            old = "(check_abort (); solve prover_ctxt tm)"
+                            new = "solve prover_ctxt tm"
                         if mode == "traversal" and name == "TraverseExt.sml":
                             old = "keep_abstraction=protected keep_abstraction"
                             new = "keep_abstraction=keep_abstraction"
+                        if mode == "argument-child" and name == "TraverseExt.sml":
+                            old = ("    fun guarded_child tm = "
+                                   "(check_abort (); child tm)\n"
+                                   "    fun arguments tm =\n"
+                                   "      (check_abort ();\n")
+                            new = ("    fun guarded_child tm = child tm\n"
+                                   "    fun arguments tm =\n"
+                                   "      (();\n")
                         if mode == "arguments" and name == "TraverseExt.sml":
                             old = "keep_abstraction=protected (#keep_abstraction policy)"
                             new = "keep_abstraction= #keep_abstraction policy"

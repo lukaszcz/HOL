@@ -352,22 +352,30 @@ val _ = let
     val policy : E.child_first_policy =
       {charge=fn () => (),keep_abstraction=fn _ =>
          (calls := !calls + 1; if !enabled then raise error else false)}
-    val saved = build policy
+    val children = ref 0
+    fun child tm = (children := !children + 1; REFL tm)
+    val saved = build policy child
     val actual = Exn.capture saved tm
     val _ = check (label ^ "/" ^ error_name ^ ": exact policy abort")
       (case actual of Exn.Exn e => predicate e | _ => false)
     val _ = check (label ^ "/" ^ error_name ^ ": no callback after abort")
       (!calls = 1)
+    val _ = if label = "arguments" then
+        check (label ^ "/" ^ error_name ^ ": no child callback after abort")
+          (!children = 0)
+      else ()
     val _ = enabled := false
   in result (label ^ "/" ^ error_name ^ ": saved entry recovers")
        saved tm expected end
 in
   List.app (fn (label,build) => List.app (entry label build) errors)
-    [("child",fn p => E.TRAVERSE_WITH_CONTEXT (E.ChildFirst p) xd
-        {reducer_context=[],solver_context=[]}),
-     ("observed",fn p => E.CHILD_FIRST_WITH_OBSERVER (fn _ => ()) p xd
-        {reducer_context=[],solver_context=[]}),
-     ("arguments",fn p => E.NORMALIZE_ARGUMENTS p REFL)]
+    [("child",fn p => fn _ =>
+        E.TRAVERSE_WITH_CONTEXT (E.ChildFirst p) xd
+          {reducer_context=[],solver_context=[]}),
+     ("observed",fn p => fn _ =>
+        E.CHILD_FIRST_WITH_OBSERVER (fn _ => ()) p xd
+          {reducer_context=[],solver_context=[]}),
+     ("arguments",fn p => E.NORMALIZE_ARGUMENTS p)]
 end
 
 val _ = print ("TraverseExt lifetime checks: " ^ Int.toString (!checks) ^

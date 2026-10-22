@@ -2118,32 +2118,45 @@ fun rewrite_context_changes (SS old,SS current) =
         {name=SOME "rewriter_for_ss", addcontext=addcontext,
          apply=apply, initial=initial}) end;
 
- fun configured_rewriter_for_ss_prepared traversal ss prepared = let
+ fun configured_rewriter_for_ss_prepared check_abort traversal ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
+   exception PolicyAbort of exn
    fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
      val net = (raise context) handle CONVNET net => net
      val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
                  term_ord=term_ord}
-     (* A protected partial application must also survive the ETA fragment. *)
+     (* Only the policy check is an abort; conversion exceptions remain
+        candidate rejection. Transport an abort as a successful search
+        result, then rethrow OUTSIDE tryfind so no later callback runs. *)
+     fun keep policy =
+       TraverseExt.keep_abstraction policy tm
+       handle e => raise PolicyAbort e
      fun apply_entry
            ({ci = {name,...},configured={conval,...},...} : net_conv_info) =
        case traversal of
            ChildFirst policy =>
              if name = "ETA_CONV (eta reduction)" andalso
                 is_comb tm andalso is_abs (rand tm) andalso
-                TraverseExt.keep_abstraction policy tm then
+                keep policy then
                raise UNCHANGED
              else conval ctxt tm
          | ParentFirst => conval ctxt tm
+     fun attempt entry =
+       case Exn.capture check_abort () of
+           Exn.Exn e => Exn.Exn e
+         | Exn.Res () => Exn.Res (apply_entry entry)
+             handle PolicyAbort e => Exn.Exn e
    in
-     tryfind apply_entry (lookup tm net)
+     case traversal of
+         ParentFirst => tryfind apply_entry (lookup tm net)
+       | ChildFirst _ => Exn.release (tryfind attempt (lookup tm net))
    end
    in CONFIG_REDUCER
         {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
          initial=initial}
    end;
 
- fun configured_traversedata_for_ss_prepared traversal
+ fun configured_traversedata_for_ss_prepared check_abort traversal
        (ss as (SS ssdata)) (prepared : prepared_rewrites)
        : TraverseExt.traverse_data =
    let
@@ -2152,7 +2165,8 @@ fun rewrite_context_changes (SS old,SS current) =
        else
          map (TraverseExt.addctxt (source_thms prepared)) (#dprocs ssdata)
    in
-      {rewriters=[configured_rewriter_for_ss_prepared traversal ss prepared],
+      {rewriters=[configured_rewriter_for_ss_prepared
+                    check_abort traversal ss prepared],
        dprocs=dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
@@ -2178,10 +2192,13 @@ fun rewrite_context_changes (SS old,SS current) =
        term_ord= #term_ord strategy}
    end;
 
- fun xtraversedata_for_ss_prepared traversal ss prepared
+ fun xtraversedata_with_abort check_abort traversal ss prepared
        : TraverseExt.xtraverse_data =
-   (configured_traversedata_for_ss_prepared traversal ss prepared,
+   (configured_traversedata_for_ss_prepared check_abort traversal ss prepared,
     traverseconfig_for_ss ss);
+
+ fun xtraversedata_for_ss_prepared traversal ss prepared =
+   xtraversedata_with_abort (fn () => ()) traversal ss prepared;
 
  fun traversedata_for_ss ss = default_traversedata_for_ss ss;
  fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ParentFirst ss [];
@@ -2390,6 +2407,9 @@ fun protect_child_first_callback failure callback argument =
     | NONE => callback argument
         handle e => (failure := SOME e; raise e)
 
+fun check_child_first_abort failure () =
+  case !failure of NONE => () | SOME e => raise e
+
 fun with_child_first_callbacks failure operation argument =
   let
     val previous = !failure
@@ -2416,10 +2436,11 @@ fun SIMP_CONV_CHILD_FIRST
   in
     with_child_first_callbacks failure
       (TRY_CONV
-        (SIMP_QCONV_WITH_XDATA
-           (ChildFirst policy)
-           (xtraversedata_for_ss_prepared (ChildFirst policy) ss' []) l' []))
-      tm
+        (TraverseExt.CHILD_FIRST_WITH_ABORT
+           (check_child_first_abort failure) NONE policy
+           (xtraversedata_with_abort (check_child_first_abort failure)
+              (ChildFirst policy) ss' [])
+           {reducer_context=l',solver_context=[]})) tm
   end;
 
 fun prepare_child_first_with_observer observer
@@ -2432,7 +2453,8 @@ fun prepare_child_first_with_observer observer
       {charge=protected (#charge policy),
        keep_abstraction=protected (#keep_abstraction policy)}
     val observer = Option.map protected observer
-    val xdata = xtraversedata_for_ss_prepared (ChildFirst policy) ss []
+    val check_abort = check_child_first_abort callback_failure
+    val xdata = xtraversedata_with_abort check_abort (ChildFirst policy) ss []
     val bounds = Ho_Net.fold'
       (fn ({configured={bound,...},...} : net_conv_info) => fn found =>
         case bound of NONE => found | SOME allowance => allowance :: found)
@@ -2447,13 +2469,9 @@ fun prepare_child_first_with_observer observer
       in
         Portable.finally restore run tm
       end
-    val traversal =
-      case observer of
-          NONE => (fn premises =>
-            SIMP_QCONV_WITH_XDATA (ChildFirst policy) xdata premises [])
-        | SOME visit => (fn premises =>
-            TraverseExt.CHILD_FIRST_WITH_OBSERVER visit policy xdata
-              {reducer_context=premises, solver_context=[]})
+    fun traversal premises =
+      TraverseExt.CHILD_FIRST_WITH_ABORT check_abort observer policy xdata
+        {reducer_context=premises,solver_context=[]}
     fun child premises = QCONV (TRY_CONV (traversal premises))
     fun observed conversion tm =
       case observer of

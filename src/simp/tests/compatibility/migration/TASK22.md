@@ -28,8 +28,20 @@ late descent-created candidates cannot swallow policy HOL_ERR. The indexed
 pretest scopes callback state separately, without resetting counters, charging
 or observing; caught nested pretest errors cannot poison an outer derivation.
 All scopes restore enclosing failure state on every exit. The traversal and
-standalone argument normalizer also keep application-local failure state. Arbitrary reducer/solver HOL_ERR remains ordinary candidate
-rejection; foreign payloads and Interrupt retain their original propagation.
+standalone argument normalizer also keep application-local failure state.
+
+Native candidate dispatch transports policy failure as a completed search
+outcome and rethrows outside `tryfind`, never invoking later conversions.
+The private configured extractor threads the same abort check into nested
+native searches. `TraverseExt.CHILD_FIRST_WITH_ABORT` is an additive driver
+hook: its check is inert on success and rethrows a remembered failure before
+callbacks, including solver continuations, factories and reducer descent.
+This is needed when a native policy call occurs outside the traversal's own
+predicate wrapper. Existing traversal entry points use an inert external
+check and retain their own local protection; no existing client must migrate.
+Standalone argument normalization also checks before calling user children.
+Arbitrary reducer/solver HOL_ERR remains ordinary candidate rejection;
+foreign payloads and Interrupt retain their original propagation.
 
 Ordinary `Traverse`, `simpLib`, rewrite/congruence primitives, controls,
 registries and loading paths are untouched. New tests are executed from the

@@ -1,0 +1,30 @@
+{
+  "reviewed_head": "2a1f2f26f956b22d8fabed8c5fbf3f9abbb9a825",
+  "result": "incomplete",
+  "prior_findings": "Both previous review failures repaired; original five-assertion reproducer rebuilt/executed with exit 0, REVIEW_FAILURES=0.",
+  "focused_command": "bin/Holmake --holstate=\"$HOLDIR/bin/hol.state0\" --no-project --no-cache -C src/simp/tests/simp-ext -j1 check",
+  "focused_exit": 0,
+  "focused_observations": [
+    "DERIVATION_CHECKS=1116",
+    "TraverseExt lifetime checks: 60"
+  ],
+  "archived_evidence_audit": "33 repair-manifest source hashes and 12 command/log seals match; ten ordinary sources/signatures equal pinned develop.",
+  "regression_command": "Copy selftest.sml and ../review/Holmakefile to a private directory; bin/Holmake --no-project --no-cache --no_prereqs -C \"$tmp\" -j1 check",
+  "execution": "Same-checkout bwrap configured path alias as repair manifest, no source rewrites. Builds and executes selftest.exe.",
+  "regression_exit": 1,
+  "semantic_failures": 8,
+  "finding": {
+    "source": "src/simp/src/simpExtLib.sml:2130-2140; src/prekernel/Lib.sml:63-68",
+    "issue": "Late native ETA policy HOL_ERR/foreign abort is retained for eventual rethrow, but tryfind proceeds to a matching fallback conversion. Its callback executes after the abort, violating callback/exception staging. Reproduced for direct, prepared normalize, observed normalize and prepared arguments. Interrupt stops dispatch correctly.",
+    "required": "Stop candidate dispatch after policy abort without changing ordinary HOL_ERR candidate rejection; add maintained post-abort callback assertions for these paths."
+  },
+  "sha256": {
+    "src/simp/src/simpExtLib.sml": "e173fdbed57a799a8d30ed9283b3647cb5fd94503d9d550ebd0c3c7f05c11db9",
+    "src/simp/src/TraverseExt.sml": "16e40075874091e970a3504bea3bb9ee4222aebd0f2d4e11916fed890b0be98d",
+    "src/prekernel/Lib.sml": "61ca2f235d3df2b1788171fef9072e993e3e99bcfda3ebbbe933b814104b18c6",
+    "src/simp/tests/compatibility/evidence/task22/review2/selftest.sml": "f375a97985b7eebe6e1e3a87c6789f9178ad296cec4e3643b2b6d2f83d5ef3e4",
+    "src/simp/tests/compatibility/evidence/task22/review2/result.log": "71c1f1f49c2c9810a7ec929d475b180bcc5b55f8dadfbdac65b38e77f7543121",
+    "src/simp/tests/compatibility/evidence/task22/review/Holmakefile": "d10ee83a846d4fd3f6c13b312a66cdc4a024f799f1d99bfccfd978fbd2ae3ad9"
+  },
+  "cleanup": "Private regression trees and newly created derivation/lifetimes test products removed after verification; pre-existing products preserved."
+}

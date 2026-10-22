@@ -200,9 +200,9 @@ See the [migration audit](../compatibility/migration/TASK21.md) and
 
 ## Child-first derivation and solver lifetimes (TASK_22)
 
-`derivation.sml` adds **1,116 checks**, including 270 review-regression
-checks for pretest recovery and direct late-ETA aborts. The pre-existing
-assertions are retained. `lifetimes.sml` adds **60 checks**.
+`derivation.sml` adds **1,392 checks**, including 270 prior review-regression
+checks and 276 checks for post-abort dispatch and nested continuations.
+The pre-existing assertions are retained. `lifetimes.sml` adds **63 checks**.
 Both launchers run under the normal `check`/selftest-level-1 targets.
 
 | New coverage | Original provenance / added intersection |
@@ -214,6 +214,8 @@ Both launchers run under the normal `check`/selftest-level-1 targets.
 | Preparation/reuse | Inert prepare/save/pretest, per-application versus per-child context collection, exact maker/collector counts, no installed-rule recompilation or allowance refresh |
 | Pretest abort lifetime | Nonopaque plain/observed pretests recover immediately and after normalization, for HOL_ERR/foreign/Interrupt; no charge, observation or quota reset; caught nested pretest failures preserve partially spent outer quotas |
 | Direct native ETA abort | Descent-created ETA candidates propagate exact HOL_ERR/foreign/Interrupt, no repeated callback after abort; saved direct conversions recover without refilling spent caller allowances |
+| Post-abort dispatch | Direct, prepared normalize, observed normalize and arguments; repeated HOL_ERR/foreign/Interrupt aborts stop failing and successful fallback conversions; ordinary conversion errors still try both fallbacks, with full proof/hypothesis validation |
+| Nested aborts | Recursive native conversions, conditional rewrites and opaque reducer recursion cannot run enclosing fallback candidates, later reducers, solver continuations or observers after abort; standalone argument normalization cannot call a child after policy failure |
 | Root entries | Native root contracts plus exact priority/fallback and collector counts, no root fixpoint or descent, retained solver-only context separation |
 | Solver closures | Native generic context/stack contracts plus same-data nested use, retained recurse closures, old-context generation identity after later application/failure, exact opaque callback traces |
 | Eta/congruence | Native head/eta policy plus saved live predicate and selected descent/unchanged congruence blocking; direct, observed and argument-only policy aborts retain identity and recover on reuse |

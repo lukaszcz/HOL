@@ -298,6 +298,164 @@ val _ = List.app (fn spent =>
       (!counter = 1-spent)
   in remaining label (spent+1) caller rule end) errors) [0,1]
 
+(* A remembered abort is insufficient: tryfind must not invoke ANY later
+   conversion before rethrowing. Exercise the late native ETA check with
+   failing and successful fallbacks, all routes, and saved reuse. Ordinary
+   conversion errors must still reject candidates rather than abort search. *)
+val _ = List.app (fn route =>
+  List.app (fn (error_name,error,predicate) => let
+    val eta_rule = ASSUME
+      ``(derivation_dispatch_eta:bool -> bool) = (\u:bool. derivation_h u)``
+    val late = ``derivation_hold (derivation_dispatch_eta:bool -> bool):bool``
+    val enabled = ref true
+    val reject = ref false
+    val aborted = ref false
+    val calls = ref 0
+    val post_abort_calls = ref 0
+    val fallbacks = ref ([] : string list)
+    fun fallback name cv tm =
+      (if !aborted then post_abort_calls := !post_abort_calls + 1 else ();
+       if aconv tm hold then fallbacks := !fallbacks @ [name] else ();
+       cv tm)
+    fun eta tm = if !reject then raise error else RAND_CONV ETA_CONV tm
+    val frag = S.SSFRAG
+      {name=NONE,rewrs=[],ac=[],congs=[],dprocs=[],filter=NONE,
+       convs=[{name="ETA_CONV (eta reduction)",trace=0,
+               key=SOME ([],hold),conv=K (K eta)},
+              {name="failed fallback",trace=0,key=SOME ([],hold),
+               conv=K (K (fallback "failed" NO_CONV))},
+              {name="successful fallback",trace=0,key=SOME ([],hold),
+               conv=K (K (fallback "success" (RAND_CONV ETA_CONV)))},
+              {name="create dispatch eta argument",trace=0,
+               key=SOME ([],lhs (concl eta_rule)),
+               conv=K (K (REWR_CONV eta_rule))}]}
+    val ss = S.++ (S.empty_ss,frag)
+    fun keep tm =
+      if aconv tm hold then
+        (calls := !calls + 1;
+         if !enabled then (aborted := true; raise error) else false)
+      else false
+    val policy = {charge=fn () => (),keep_abstraction=keep}
+    val prepared = S.prepare_child_first policy ss
+    val observed = S.prepare_child_first_observed (fn _ => ()) policy ss
+    val cv = case route of
+        "direct" => S.SIMP_CONV_CHILD_FIRST policy ss []
+      | "normalize" => #normalize prepared []
+      | "observed" => #normalize observed []
+      | _ => #arguments prepared []
+    val outer = ``derivation_outer:bool -> bool``
+    val tm = if route = "arguments" then mk_comb (outer,late) else late
+    val expected = TRANS (AP_TERM (rator late) eta_rule)
+                         (RAND_CONV ETA_CONV hold)
+    val expected = if route = "arguments" then AP_TERM outer expected
+                   else expected
+    val label = route ^ "/dispatch/" ^ error_name
+    val _ = check (label ^ ": construction is inert")
+      (!calls = 0 andalso null (!fallbacks))
+    val _ = List.app (fn _ =>
+      (calls := 0; aborted := false; post_abort_calls := 0; fallbacks := [];
+       throws (label ^ ": exact policy abort") predicate (fn () => cv tm);
+       check (label ^ ": one late policy abort") (!aborted andalso !calls = 1);
+       check (label ^ ": no post-abort candidate callback")
+         (!post_abort_calls = 0 andalso null (!fallbacks)))) [1,2]
+    val _ = enabled := false
+    val _ = aborted := false
+    val _ = result (label ^ ": saved conversion recovers") cv tm expected
+    val _ = check (label ^ ": recovery needs no fallback") (null (!fallbacks))
+    val _ = reject := true
+    val _ = fallbacks := []
+    val _ = case error of
+        Portable.Interrupt =>
+          (throws (label ^ ": ordinary Interrupt still propagates")
+             predicate (fn () => cv tm);
+           check (label ^ ": Interrupt invokes no fallback")
+             (null (!fallbacks)))
+      | _ =>
+          (result (label ^ ": ordinary errors still try later candidates")
+             cv tm expected;
+           check (label ^ ": both ordinary fallback callbacks execute")
+             (!fallbacks = ["failed","success"]))
+  in () end) errors) ["direct","normalize","observed","arguments"]
+
+(* The native ETA search may be nested inside another candidate or solver
+   pipeline. Rethrowing at the inner boundary alone is insufficient: outer
+   search and solver continuation must consult the SAME abort state. *)
+val _ = List.app (fn route => List.app (fn nesting =>
+  List.app (fn (error_name,error,predicate) => let
+    val eta_rule = ASSUME
+      ``(derivation_nested_eta:bool -> bool) = (\u:bool. derivation_h u)``
+    val late = ``derivation_hold (derivation_nested_eta:bool -> bool):bool``
+    val trigger = ``derivation_nested_trigger:bool``
+    val aborted = ref false
+    val enabled = ref true
+    val calls = ref 0
+    val post_calls = ref ([] : string list)
+    fun callback name =
+      if !aborted then post_calls := name :: !post_calls else ()
+    fun invoke recurse tm =
+      if aconv tm trigger then (ignore (recurse late); NO_CONV tm)
+      else NO_CONV tm
+    val recurse_conv =
+      {name="nested solver conversion",trace=0,key=SOME ([],trigger),
+       conv=fn solver => fn stack => invoke (solver stack)}
+    val fallback =
+      {name="outer fallback",trace=0,key=SOME ([],trigger),
+       conv=K (K (fn tm => (callback "outer candidate"; NO_CONV tm)))}
+    val eta = S.SSFRAG
+      {name=NONE,ac=[],congs=[],dprocs=[],filter=NONE,
+       rewrs=if nesting = "condition" then
+               [(NONE,DISCH late (ASSUME (mk_eq (trigger,``T``))))]
+             else [],
+       convs=(if nesting = "conversion" then [recurse_conv] else []) @
+             [fallback,
+              {name="ETA_CONV (eta reduction)",trace=0,
+               key=SOME ([],hold),conv=K (K (RAND_CONV ETA_CONV))},
+              {name="create nested eta argument",trace=0,
+               key=SOME ([],lhs (concl eta_rule)),
+               conv=K (K (REWR_CONV eta_rule))}]}
+    exception Context
+    fun reducer name apply = E.CONFIG_REDUCER
+      {name=SOME name,initial=Context,addcontext= #1,
+       apply=fn {conv,...} => fn tm =>
+         (callback name; apply (conv []) tm)}
+    val ss = S.++ (S.empty_ss,eta)
+    val ss =
+      if nesting = "reducer" then
+        S.++ (S.++ (ss,S.dproc_ss (reducer "nested reducer" invoke)),
+          S.dproc_ss (reducer "later reducer" (fn _ => NO_CONV)))
+      else ss
+    val ss = S.set_unsafe_solvers
+      [{name="later solver",solve=fn _ => fn _ =>
+          (callback "solver continuation"; raise holerror)}] ss
+    fun keep tm =
+      if !enabled andalso aconv tm hold then
+        (calls := !calls + 1; aborted := true; raise error)
+      else false
+    val policy = {charge=fn () => (),keep_abstraction=keep}
+    val prepared = S.prepare_child_first policy ss
+    val observed = S.prepare_child_first_observed
+      (fn _ => callback "observer") policy ss
+    val cv = case route of
+        "direct" => S.SIMP_CONV_CHILD_FIRST policy ss []
+      | "normalize" => #normalize prepared []
+      | "observed" => #normalize observed []
+      | _ => #arguments prepared []
+    val tm = if route = "arguments" then
+               mk_comb (``derivation_outer:bool -> bool``,trigger)
+             else trigger
+    val label = route ^ "/nested " ^ nesting ^ "/" ^ error_name
+    val _ = throws (label ^ ": exact late policy abort") predicate
+      (fn () => cv tm)
+    val _ = check (label ^ ": policy reached once") (!calls = 1)
+    val _ = check (label ^ ": no enclosing callback after abort")
+      (null (!post_calls))
+    val _ = enabled := false
+    val _ = aborted := false
+  in result (label ^ ": saved conversion recovers")
+       (total cv) ``T`` (REFL ``T``)
+  end) errors) ["conversion","condition","reducer"])
+  ["direct","normalize","observed","arguments"]
+
 (* A nonopaque indexed pretest calls keep_abstraction without traversal.
    Its abort state must be private too, but it must NEVER reset quotas,
    charge work or observe terms. Exercise both recovery orders. *)

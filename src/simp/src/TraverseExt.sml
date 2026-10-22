@@ -315,11 +315,16 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child tm =
             handle e => (aborted := SOME e; raise e)
     val policy = {charge=protected (#charge policy),
                   keep_abstraction=protected (#keep_abstraction policy)}
+    fun check_abort () =
+      case !aborted of NONE => () | SOME e => raise e
+    fun guarded_child tm = (check_abort (); child tm)
     fun arguments tm =
-      if is_comb tm then
-        Conv.THENC (RATOR_CONV arguments, RAND_CONV (TRY_CONV child)) tm
-      else if is_abs tm then ABS_CONV (TRY_CONV child) tm
-      else REFL tm
+      (check_abort ();
+       if is_comb tm then
+         Conv.THENC (RATOR_CONV arguments,
+                     RAND_CONV (TRY_CONV guarded_child)) tm
+       else if is_abs tm then ABS_CONV (TRY_CONV guarded_child) tm
+       else REFL tm)
     fun normalize tm =
       let
         val _ = #charge policy ()
@@ -337,7 +342,8 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child tm =
       (case !aborted of NONE => raise e | SOME original => raise original)
   end
 
-fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
+fun TRAVERSE_IN_CONTEXT check_external_abort
+      eager_cong_schedule observer policy root_only
       (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
         config as {subgoaler,solvers,cond_depth,term_ord}
           : traverse_config))
@@ -352,6 +358,9 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
      HOL_ERR, and reducer dispatch can treat those as a failed attempt.
      Retain the original callback exception across the whole traversal. *)
   val aborted = ref (NONE : exn option)
+  fun check_abort () =
+    (check_external_abort ();
+     case !aborted of NONE => () | SOME e => raise e)
   fun protected callback argument =
     case !aborted of
         SOME e => raise e
@@ -375,21 +384,23 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
   fun dec r = case !r of NONE => ()
     | SOME n => r := SOME (n - 1)
   fun observe tm =
-    case observer of
+    (check_abort ();
+     case observer of
         NONE => ()
       | SOME visit =>
           (case !aborted of
                SOME e => raise e
              | NONE => visit tm
-                 handle e => (aborted := SOME e; raise e))
+                 handle e => (aborted := SOME e; raise e)))
   fun charge tm =
-    case policy of
+    (check_abort ();
+     case policy of
         ParentFirst => ()
       | ChildFirst {charge,...} =>
           (case !aborted of
                SOME e => raise e
              | NONE => (observe tm; charge ())
-                 handle e => (aborted := SOME e; raise e))
+                 handle e => (aborted := SOME e; raise e)))
   (* Select a root entry only at the outside. Every recursive context
      uses the full loop, including side conditions of a root rewrite. *)
   fun trav_with_rel select_root rel_info stack context = let
@@ -426,6 +437,7 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
            allocate nothing extra. *)
         fun pipeline tm = let
           fun recurse tm = let
+            val _ = check_abort ()
             val recurse_old = !lim_r
           in
             raw_recurse tm
@@ -436,11 +448,12 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
           fun first_solver [] _ =
                 raise ERR "ctxt_solver" "Unsolved condition"
             | first_solver ({solve,...}::rest) tm =
-                solve prover_ctxt tm
+                (check_abort (); solve prover_ctxt tm)
                 handle HOL_ERR _ => first_solver rest tm
           val eq = case subgoaler of
                        NONE => recurse tm
-                     | SOME subgoal => subgoal prover_ctxt tm
+                     | SOME subgoal =>
+                         (check_abort (); subgoal prover_ctxt tm)
           val tm' = rand (concl eq)
         in
           if aconv tm' boolSyntax.T then EQT_ELIM eq
@@ -484,12 +497,14 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
           (check lim_r ;
            FIRST_CONV (mapfilter2 apply_reducer dprocs contexts2) tm)
       fun depther (thms,relation) =
-          trav_with_rel' relation stack (add_context' (context,thms))
+          (check_abort ();
+           trav_with_rel' relation stack (add_context' (context,thms)))
       val congproc_args =
           {solver=(fn tm => ctxt_solver stack tm), (* do not eta-convert! *)
            depther=depther,
            freevars=freevars}
-      fun apply_congproc congproc = congproc congproc_args
+      fun apply_congproc congproc =
+        (check_abort (); congproc congproc_args)
       (* Preserve eager per-context factory construction only for the
          ordinary legacy entry point. Extended paths retain lazy attempts. *)
       val (descend,weaken) =
@@ -528,7 +543,7 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
                   else after_children
                 end
       in
-        (trace(4,REDUCE ("Reducing",tm)); conv tm)
+        (check_abort (); trace(4,REDUCE ("Reducing",tm)); conv tm)
       end;
     in
       if select_root then high_priority ORELSEC low_priority else loop
@@ -554,10 +569,11 @@ end
 (* The explicit extended entry points refresh supplied reducer contexts
    for every application.  Legacy TRAVERSE retains its construction-time
    context, including mutable rewrite controls and user callback results. *)
-fun GEN_TRAVERSE_WITH_CONTEXT observer policy root_only
+fun GEN_TRAVERSE_WITH_CONTEXT check_abort observer policy root_only
       (xdata as (data,config) : xtraverse_data)
       {reducer_context,solver_context} tm =
    let
+     val _ = check_abort ()
      val {dprocs,rewriters,...} = data
      val collect_thms = needs_prover_context config
      val context' =
@@ -566,22 +582,24 @@ fun GEN_TRAVERSE_WITH_CONTEXT observer policy root_only
             (initial_context data,reducer_context),
           solver_context)
    in
-     TRAVERSE_IN_CONTEXT false observer policy root_only
+     TRAVERSE_IN_CONTEXT check_abort false observer policy root_only
        xdata [] context' tm
    end;
 
 fun GEN_TRAVERSE policy root_only xdata thms =
-  GEN_TRAVERSE_WITH_CONTEXT NONE policy root_only xdata
+  GEN_TRAVERSE_WITH_CONTEXT (fn () => ()) NONE policy root_only xdata
     {reducer_context=thms,solver_context=[]}
 
 val XTRAVERSE = GEN_TRAVERSE ParentFirst false
 val ROOT_REWRITE = GEN_TRAVERSE ParentFirst true
 fun TRAVERSE_WITH_CONTEXT policy =
-  GEN_TRAVERSE_WITH_CONTEXT NONE policy false
+  GEN_TRAVERSE_WITH_CONTEXT (fn () => ()) NONE policy false
+fun CHILD_FIRST_WITH_ABORT check_abort observer policy =
+  GEN_TRAVERSE_WITH_CONTEXT check_abort observer (ChildFirst policy) false
 fun CHILD_FIRST_WITH_OBSERVER observe policy =
-  GEN_TRAVERSE_WITH_CONTEXT (SOME observe) (ChildFirst policy) false
+  CHILD_FIRST_WITH_ABORT (fn () => ()) (SOME observe) policy
 val ROOT_REWRITE_WITH_CONTEXT =
-  GEN_TRAVERSE_WITH_CONTEXT NONE ParentFirst true
+  GEN_TRAVERSE_WITH_CONTEXT (fn () => ()) NONE ParentFirst true
 
 
 (* Unlike the explicit extended entries, default TRAVERSE collects once
@@ -591,7 +609,7 @@ fun TRAVERSE (data as {rewriters,dprocs,...} : traverse_data) thms =
     val context =
       add_context false rewriters dprocs (initial_context data,thms)
   in
-    TRAVERSE_IN_CONTEXT true NONE ParentFirst false
+    TRAVERSE_IN_CONTEXT (fn () => ()) true NONE ParentFirst false
       (data,default_config) [] context
   end
 

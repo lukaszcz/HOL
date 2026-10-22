@@ -303,7 +303,8 @@ sig
       rules control descent; charge runs before contraction, descent and
       reducer work. TraverseExt.charge_only retains the contraction policy.
       Policy exceptions, including late native ETA checks, propagate with
-      their original identity. Saved conversions recover after an abort.
+      their original identity, without later candidate or solver callbacks.
+      Saved conversions recover after an abort.
       The ordinary SIMP_CONV strategy is unchanged. *)
    val SIMP_CONV_CHILD_FIRST :
      TraverseExt.child_first_policy -> simpset -> thm list -> conv
