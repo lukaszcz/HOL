@@ -31,6 +31,19 @@ struct
   val _ = SmtLib_CarrierLaws.begin
   val _ = SmtReplayOwnedRealizedLambda.prepare_admitted
   val ERR = Feedback.mk_HOL_ERR "SmtLib_CompactCarrierScheduler"
+  (* Retained guard portfolios are separate from native syntax quotes.
+     This payer uses the original counter in either Idle or Busy. *)
+  fun guard_app work action rows =
+    let fun visit [] = W.spend_guard_policy work 1
+          | visit (row::rest) =
+              (W.spend_guard_policy work 1;action row;visit rest)
+    in visit rows end
+  fun guard_member work wanted rows =
+    let fun visit [] = (W.spend_guard_policy work 1;false)
+          | visit (row::rest) =
+              (W.spend_guard_policy work 1;
+               Portable.pointer_eq (row,wanted) orelse visit rest)
+    in visit rows end
   datatype owner = Owner of
     {marker : unit ref,graph : G.graph,scope : G.scope,sources : S.sources,
      work : W.portfolio,limits : W.limits,epoch : int,symbols : int,
@@ -77,14 +90,14 @@ struct
       val _ = if Type.type_epoch () = epoch andalso
           Term.term_epoch () = symbols then () else
         raise ERR "owner" "retirement epoch changed"
-      val _ = List.app (Scope.validate_lifetime_for work) (!frames)
+      val _ = guard_app work (Scope.validate_lifetime_for work) (!frames)
       val revision = G.validation_revision graph scope
       val rows = !backing
       val hit = case !validated of SOME (old,held) =>
           old=revision andalso Portable.pointer_eq (held,rows)
         | NONE => false
     in if hit then () else
-      (Laws.validate laws;List.app (fn guard => guard ()) rows;
+      (Laws.validate laws;guard_app work (fn guard => guard ()) rows;
        W.validate work graph scope sources limits;
        if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
            andalso G.validation_revision graph scope=revision andalso
@@ -157,9 +170,8 @@ struct
           {dynamic = dynamic,admission = admission,frame = frame,
           receipt = receipt,auxiliary = auxiliary,described = ref NONE}
         val _ = ignore (describe owner focus)
-        val Owner {backing,frames,...} = owner
-        val _ = if List.exists (fn held =>
-            Portable.pointer_eq (held,receipt)) (!frames) then () else
+        val Owner {work,backing,frames,...} = owner
+        val _ = if guard_member work receipt (!frames) then () else
           frames := receipt :: !frames
         val expectation = expected owner frame
         val _ = backing := (fn () =>
@@ -499,9 +511,9 @@ struct
       val held = ref ([] : D.focus list)
       fun guard () =
         (ignore (describe owner focus);
-         List.app (fn item => ignore (D.description_for
+         guard_app work (fn item => ignore (D.description_for
            (expected owner scope) item)) (!held);
-         List.app (G.validate_carrier_alpha graph scope) (!receipts))
+         guard_app work (G.validate_carrier_alpha graph scope) (!receipts))
       val recipe = W.with_step work (fn () =>
         let
           val cap = #template_limit limits
@@ -923,7 +935,8 @@ struct
             val _ = if #frame origin=scope andalso #frame current=scope
               then () else raise ERR "source_target_for"
                 "source handoff left its authentic root frame"
-            val _ = List.app (G.validate_carrier_alpha graph scope) receipts
+            val _ = guard_app work
+              (G.validate_carrier_alpha graph scope) receipts
             val _ = case raw of NONE =>
                   if #node origin= #node current andalso
                       #node origin=raw_source then () else
@@ -937,13 +950,14 @@ struct
             val _ = validate owner
         in {dynamic=dynamic,admission=admission,frame=receipt,raw=raw} end))
      handle primary => (W.close expected_work;raise primary))
-  fun graph_conversion_for (owner as Owner {marker,graph,scope,...})
+  fun graph_conversion_for (owner as Owner {work,marker,graph,scope,...})
       (Result {marker = held,source,target,raw,receipts,...}) =
     protected owner (fn () =>
-      (validate owner;if Portable.pointer_eq (marker,held) then () else
+      (if Portable.pointer_eq (marker,held) then () else
          raise ERR "result" "different scheduler owner";
+       validate owner;
        ignore (describe owner source);ignore (describe owner target);
-       List.app (G.validate_carrier_alpha graph scope) receipts;raw))
+       guard_app work (G.validate_carrier_alpha graph scope) receipts;raw))
   structure PolicyScheduler =
   struct
     structure NC=SmtReplayNativeContract
@@ -969,7 +983,7 @@ struct
        W.validate_policy work graph root sources limits;
        Scope.validate_lifetime_with_policy_for work frame;
        if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then
-         List.app (fn guard=>guard ()) (!backing)
+         guard_app work (fn guard=>guard ()) (!backing)
        else raise ERR "policy_scheduler" "retirement epoch changed")
     fun expected (Owner {work,graph,root,sources,...})=
       {graph=graph,scope=root,sources=sources,work=work}
@@ -1098,12 +1112,14 @@ struct
               {view=view,native_contract=contract,profiles=profiles}
             val admission=Q.initial_goal_with_policy work {view=view}
         in run owner (Focus {dynamic=dynamic,admission=admission}) end)
-    fun result_for expected_work (owner as Owner {marker,...})
+    fun result_for expected_work (owner as Owner {work,marker,...})
         (result as Result {marker=held,...})=
       protected expected_work (fn()=>
-        (validate_for expected_work owner;
+        (if Portable.pointer_eq (expected_work,work) then () else
+           raise ERR "policy_scheduler" "different original Work";
          if marker=held then () else
            raise ERR "policy_scheduler" "different actual scheduler result";
+         validate_for expected_work owner;
          let val Result {owner=saved,original,target,conversion,...}=result
              val _=active saved
              val _=ignore (describe saved original)
@@ -2400,9 +2416,10 @@ struct
             fun guard()=
               ((SmtReplayNativeContract.validate_for work contract;
                 ignore(ST.guard_partial base original partial alpha);
-                List.app(fn saved=>ignore
+                guard_app work(fn saved=>ignore
                   (G.carrier_alpha_data graph root saved))(!paths);
-                List.app(C.validate_conversion_for work)(!recipes))
+                guard_app work
+                  (C.validate_conversion_with_policy work)(!recipes))
                handle primary=>(W.close work;raise primary))
             fun action operation=W.with_step work(fn()=>
               let fun observe()=(guard();W.spend_policy work 1)

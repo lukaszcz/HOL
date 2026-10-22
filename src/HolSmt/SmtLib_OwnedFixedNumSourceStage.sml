@@ -51,6 +51,10 @@ struct
     (phase := Retired;T.close traversal;W.close work)
   fun protected owner action = action () handle primary =>
     (close owner;raise primary)
+  fun guard_app work action rows = case rows of
+      [] => W.spend_guard_policy work 1
+    | row::rest =>
+        (W.spend_guard_policy work 1;action row;guard_app work action rest)
   fun active (Owner {work,graph,root,sources,limits,epoch,symbols,
                     phase,traversal,catalogue,discoveries,
                     targets,proofs,validated,...}) =
@@ -67,10 +71,10 @@ struct
         | NONE => false
     in if hit then () else
       (T.revalidate_for work traversal;Canonical.validate_for work catalogue;
-       List.app (G.validate_partial graph root) ds;
-       List.app (fn target => ignore
+       guard_app work (G.validate_partial graph root) ds;
+       guard_app work (fn target => ignore
          (T.source_target_for work traversal target)) ts;
-       List.app (fn proof => ignore
+       guard_app work (fn proof => ignore
          (Core.conversion_description_for work proof)) ps;
        W.validate work graph root sources limits;
        if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols

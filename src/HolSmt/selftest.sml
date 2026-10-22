@@ -8987,7 +8987,8 @@ in
     let val (request,_) = setup
           ``(\x:bool. \y:bool. x /\ y) y``
           cap 2000000 (fn _=>()) (fn _=>())
-        val {target,...} = B.endpoints (B.execute (B.prepare request))
+        val converted=B.execute (B.prepare request)
+        val {target,...} = B.endpoints converted
         val graph = #graph request val scope = #scope request
         val data = G.binder_closure_data graph scope
           (G.binder_closure graph scope target)
@@ -8996,7 +8997,13 @@ in
     in ensure "beta-cloned canonical variable lost lexical graph identity"
       (#node imported= #body data andalso
        G.resolve_variable graph (#body_frame data)
-         (G.representative graph (#binder data))= #binder data)
+         (G.representative graph (#binder data))= #binder data);
+       G.close_scope graph (G.new_scope graph scope []);
+       B.validate converted;
+       G.close_scope graph (#body_frame data);
+       ensure "paid beta cache hid a retired child with live parent"
+         (rejects (fn()=>B.validate converted) andalso
+          (G.validate_scope graph scope;true))
     end)
   val _=(testutils.tprint "Recorded beta shared nested target reused";
     let val x=Term.mk_var ("x",Type.bool)
@@ -9155,6 +9162,73 @@ in
       (rejects (fn()=>B.validate_for expected conversion) andalso
        #retired (W.audit (#work original)) andalso
        not (#retired (W.audit work))) end)
+  val _=List.app (fn (policy,large) =>
+    (testutils.tprint (if policy then
+       "Policy beta retained guards debit original legacy Work" else
+       "Recorded beta retained guards debit original legacy Work");
+     let val term=if large then
+           ``(\x:bool. x /\ x) ((p /\ q) \/ (r /\ s))``
+           else ``(\x:bool. x) T``
+         val (base,view)=if not policy then
+           setup term cap 2000000 (fn _=>()) (fn _=>())
+         else
+           let val graph=G.new () val scope=G.root_scope graph
+               val sources=S.new graph scope cap
+                 {goal=boolSyntax.T,assumptions=[term]}
+               val view=G.record_opened_view graph scope cap
+                 (hd (S.assumption_nodes sources))
+               val work=W.begin graph scope sources
+                 {limits={input_limit=cap,output_limit=cap,
+                    template_limit=cap},work_limit=2000000}
+           in ({graph=graph,scope=scope,sources=sources,work=work,
+                ordinal=0,redex=G.closure_root graph scope (#node view),
+                check_type=fn _=>(),scope_opened=fn _=>()},view) end
+         val work= #work base
+         val calls=ref 0 val previous=ref NONE val paid=ref true
+         fun check_type _ =
+           let val now= #charged (W.audit work)
+               val _=case !previous of NONE=>() | SOME old=>
+                 paid:= (!paid andalso now-old=10)
+           in previous:=SOME now;calls:= !calls+1 end
+         val request={graph= #graph base,scope= #scope base,
+           sources= #sources base,work=work,ordinal=0,
+           redex= #redex base,check_type=check_type,scope_opened=fn _=>()}
+         val validate=if policy then
+           let val budget=SmtReplayNativeContract.capture work
+                 {semantic_limits=W.semantic_limits work,
+                  import_limit=cap,type_work_limit=2000000}
+               val admission=
+                 SmtReplayFocusAdmission.initial_assumption_with_policy
+                   work {occurrence=1,view=SOME view}
+               val converted=B.execute_with_policy
+                 (B.prepare_admitted_with_policy
+                   {graph= #graph request,scope= #scope request,
+                    sources= #sources request,work=work,ordinal=0,
+                    admission=admission,native_budget=budget,
+                    check_type=check_type,scope_opened=fn _=>()})
+           in fn()=>B.validate_with_policy converted end
+         else let val converted=B.execute (B.prepare request)
+           in fn()=>B.validate converted end
+         (* Four paid suffix hits plus retirement/cache bookkeeping cost
+            five retained-step visits, independently of handle count.
+            Every annotation gap still pays BOTH invocation guards. *)
+         val start_charge= #charged (W.audit work)
+         val (_,warm_stats)=G.with_node_statistics
+           (#graph base) (#scope base) validate
+         val idle= #charged (W.audit work)-start_charge
+         val _=W.with_step work validate
+         val busy= #charged (W.audit work)-start_charge-idle
+         val _=W.with_step work (fn()=>W.spend work
+           (2000000- #charged (W.audit work)))
+         val ((denied,after),stats)=G.with_node_statistics
+           (#graph base) (#scope base) (fn()=>
+             (rejects validate,!calls))
+     in ensure "guard scans escaped payment, action or callback fences"
+       (idle=5 andalso busy=5 andalso !calls>1 andalso !paid andalso
+        denied andalso after= !calls andalso
+        (policy orelse (#node_accesses stats=0 andalso
+          #node_accesses warm_stats=0)) andalso #retired (W.audit work))
+     end)) [(false,false),(true,false),(false,true),(true,true)]
   val _=(testutils.tprint "Recorded beta joint plans exhaust before policy";
     let val term=``(\x:bool. x /\ x) (p \/ q)``
         val (probe,_)=setup term cap 2000000 (fn _=>()) (fn _=>())
@@ -15443,6 +15517,51 @@ in
     in ensure "foreign expected owner or post-close result activated"
       (foreign andalso expected_retired andalso original_live andalso dead) end
 
+  val _=List.app (fn policy=>
+    (testutils.tprint (if policy then
+       "Policy scheduler foreign result precedes exhausted legacy Work"
+     else "Scheduler foreign result precedes exhausted legacy Work");
+     let val term=``(\x:bool. x) p``
+         val a=setup 30 30 [term] term
+         val b=setup 30 30 [term] term
+         val calls=ref 0
+         fun budget e=SmtReplayNativeContract.capture (#work (e:env))
+           {semantic_limits=W.semantic_limits (#work e),
+            import_limit=discovery,type_work_limit=2000000}
+         fun owner e=T.begin_with_policy (#work (e:env))
+           {native_contract=budget e,profiles=[],
+            check_type=fn _=>calls:= !calls+1,scope_opened=fn _=>()}
+         val getter=if policy then
+           let val held=owner a val expected=owner b
+               val result=valOf (T.run_root_beta_assumption_with_policy held
+                 {occurrence=1,view=hd (#views a)})
+               val _=T.validate_with_policy_for (#work b) expected
+           in fn()=>ignore (T.target_with_policy_for
+             (#work b) expected result) end
+         else
+           let val held=traversal a val expected=traversal b
+               val result=valOf (T.run_assumption_owned held
+                 {occurrence=1,view=hd (#views a)})
+               val _=T.validate_for (#work b) expected
+           in fn()=>ignore (T.graph_conversion_for expected result) end
+         val _=W.with_step (#work b) (fn()=>W.spend (#work b)
+           (100000000- #charged (W.audit (#work b))))
+         val held_charge= #charged (W.audit (#work a))
+         val prior_calls= !calls
+         val _=G.close_scope (#graph a) (#scope a)
+         val (message,stats)=G.with_node_statistics (#graph b) (#scope b)
+           (fn()=>(getter ();NONE) handle Feedback.HOL_ERR error=>
+             SOME (Feedback.message_of error))
+     in ensure "foreign result lost its first error or touched held Work"
+       (message=SOME (if policy then "different actual scheduler result"
+          else "different scheduler owner") andalso
+        #retired (W.audit (#work b)) andalso
+        #charged (W.audit (#work b))=100000000 andalso
+        not (#retired (W.audit (#work a))) andalso
+        #charged (W.audit (#work a))=held_charge andalso
+        #node_accesses stats=0 andalso !calls=prior_calls)
+     end)) [false,true]
+
     in () end)
 end
 
@@ -20922,11 +21041,15 @@ in
     "Fixed SIMPLE never reissues consumed plan work"
   val _ = let val e = setup ``(n+m:num) <= q`` []
       val o_ = owner e (fn _ => ()) val prepared = plan e o_
-      val _ = N.execute prepared val charged = #charged (W.audit (#work e))
+      val _ = N.execute prepared
+      val prior = #charged (W.audit (#work e))
+      val _ = N.validate_cached_for (#work e) o_
+      val charged = #charged (W.audit (#work e))
+      val guard_cost = charged-prior
       val stopped = refuses (fn () => N.execute prepared)
     in ensure "used plan replayed or acquired fresh allowance"
       (stopped andalso #retired (W.audit (#work e)) andalso
-       #charged (W.audit (#work e))=charged) end
+       #charged (W.audit (#work e))=charged+guard_cost) end
 
   val _ = testutils.tprint
     "Fixed SIMPLE preserves condition-policy Primary"
@@ -29899,13 +30022,14 @@ in
       val _=W.with_step (#work e) (fn()=>
         (Scope.validate_lifetime_for (#work e) (#binding e);
          Scope.validate_lifetime_for (#work e) (#binding e)))
+      val paid= #charged (W.audit (#work e))
       val before_revision=revision e val _=(#close e) ()
       val after_revision=revision e
       val _=G.validate_scope (#graph e) (#root e)
       val stopped=refuses (fn()=>Scope.validate_lifetime_for
         (#work e) (#binding e))
     in ensure "empty lexical retirement was hidden by unchanged graph"
-      (charged= #charged (W.audit (#work e)) andalso
+      (paid=charged+4 andalso #charged (W.audit (#work e))=paid+2 andalso
        before_revision=after_revision andalso stopped andalso
        #retired (W.audit (#work e))) end
 
@@ -43928,7 +44052,13 @@ in
     in require "policy beta-cloned variable lost lexical graph identity"
       (#node imported= #body data andalso
        G.resolve_variable graph (#body_frame data)
-         (G.representative graph (#binder data))= #binder data)
+         (G.representative graph (#binder data))= #binder data);
+       G.close_scope graph (G.new_scope graph scope []);
+       B.validate_with_policy converted;
+       G.close_scope graph (#body_frame data);
+       require "paid policy beta cache hid retired child with live parent"
+         (refused (fn()=>B.validate_with_policy converted) andalso
+          (G.validate_scope graph scope;true))
     end)
 
   val _ = test "Uncapped metadata preserves native input result and eq gates"

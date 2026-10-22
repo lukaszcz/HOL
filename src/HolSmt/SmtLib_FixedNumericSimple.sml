@@ -50,6 +50,10 @@ struct
   fun close (Owner {work,dead,...}) = (dead := true;W.close work)
   fun protect owner action = action () handle primary =>
     (close owner;raise primary)
+  fun guard_app work action rows = case rows of
+      [] => W.spend_guard_policy work 1
+    | row::rest =>
+        (W.spend_guard_policy work 1;action row;guard_app work action rest)
   fun active (Owner {work,graph,root,sources,catalogue,traversal,
                     symbols,stack_limit,dead,backing,discovery_heads,
                     validated,frames,...}) =
@@ -62,7 +66,7 @@ struct
         raise ERR "active" "fixed conditional stack policy changed"
       (* A lexical zero-binder frame may retire without any G mutation.
          Its authentic private lifetime is checked on EVERY cache hit. *)
-      val _ = List.app (F.validate_lifetime_for work) (!frames)
+      val _ = guard_app work (F.validate_lifetime_for work) (!frames)
       val revision = G.validation_revision graph root
       val rows = !backing
       val hit = case !validated of SOME (old,held) =>
@@ -71,7 +75,7 @@ struct
     in if hit then () else
       (T.revalidate_for work traversal;K.validate_for work catalogue;
        G.validate_discovery_heads graph root discovery_heads;
-       List.app (fn guard => guard ()) rows;
+       guard_app work (fn guard => guard ()) rows;
        W.validate work graph root sources (W.semantic_limits work);
        if Term.term_epoch () = symbols andalso
            !Cond_rewr.stack_limit=stack_limit andalso
@@ -107,11 +111,14 @@ struct
     in case !described of SOME (old,held,answer) =>
          if old=revision andalso held=generation then answer else full ()
        | NONE => full () end
-  fun capture (owner as Owner {backing,frames,...}) frame admission =
+  fun capture (owner as Owner {work,backing,frames,...}) frame admission =
     let val scope = #scope (F.description_for
           (case owner of Owner {work,...} => work) frame)
-        val _ = if List.exists (fn held =>
-            Portable.pointer_eq (held,frame)) (!frames) then () else
+        fun present [] = (W.spend_guard_policy work 1;false)
+          | present (held::rest) =
+              (W.spend_guard_policy work 1;
+               Portable.pointer_eq (held,frame) orelse present rest)
+        val _ = if present (!frames) then () else
           frames := frame :: !frames
         val focus = Focus {admission=admission,frame=frame,scope=scope,
           described=ref NONE}
@@ -966,7 +973,7 @@ struct
           then ()else raise ERR "policy_simple" "native epoch changed"
         val _=if !Cond_rewr.stack_limit=stack_limit then ()else
           raise ERR "policy_simple" "fixed conditional stack policy changed"
-        val _=List.app(F.validate_lifetime_with_policy_for work)(!frames)
+        val _=guard_app work(F.validate_lifetime_with_policy_for work)(!frames)
         val revision=G.validation_revision graph root
         val rows= !backing
         val hit=case !validated of SOME(old,held)=>
@@ -981,7 +988,7 @@ struct
                work traversal,native_contract)then ()else
            raise ERR "policy_simple" "different actual catalogue contract";
          G.validate_discovery_heads graph root discovery_heads;
-         List.app(fn guard=>guard())rows;
+         guard_app work(fn guard=>guard())rows;
          W.validate_policy work graph root sources(W.semantic_policy work);
          if Term.term_epoch()=symbols andalso Type.type_epoch()=epoch andalso
              !Cond_rewr.stack_limit=stack_limit andalso
@@ -1021,8 +1028,11 @@ struct
          | NONE=>full()end
     fun capture(owner as Owner{work,backing,frames,...})frame admission=
       let val scope= #scope(F.description_with_policy_for work frame)
-          val _=if List.exists(fn held=>Portable.pointer_eq(held,frame))
-              (!frames)then ()else frames:=frame:: !frames
+          fun present []=(W.spend_guard_policy work 1;false)
+            | present(held::rest)=
+                (W.spend_guard_policy work 1;
+                 Portable.pointer_eq(held,frame)orelse present rest)
+          val _=if present(!frames)then ()else frames:=frame:: !frames
           val focus=Focus{admission=admission,frame=frame,scope=scope,
             described=ref NONE}
           val _=ignore(describe owner focus)
@@ -1276,7 +1286,7 @@ struct
         val held=ref([]:(G.scope*G.node*G.profiled_metric)list)
         fun guard()=
           (NC.validate_for work native_contract;
-           List.app(fn(scope,node,capture)=>
+           guard_app work(fn(scope,node,capture)=>
              let val d=G.profiled_metric_data graph scope capture
              in if #node d=node then ()else raise ERR "policy_native"
                "different actual native operand"end)(!held))

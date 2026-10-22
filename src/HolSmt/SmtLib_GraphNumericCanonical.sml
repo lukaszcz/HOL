@@ -16,6 +16,11 @@ struct
           Int.toString (#charged audit) ^ " retired=" ^
           Bool.toString (#retired audit) ^ describe () ^ "\n");
           TextIO.flushOut TextIO.stdErr end) handle _ => ())
+  fun guard_app work action rows =
+    let fun visit [] = W.spend_guard_policy work 1
+          | visit (row::rest) =
+              (W.spend_guard_policy work 1;action row;visit rest)
+    in visit rows end
   datatype phase = Fresh | Prepared | Executed | Retired
   datatype owner = Owner of
     {work : W.portfolio,graph : G.graph,scope : G.scope,sources : S.sources,
@@ -51,7 +56,7 @@ struct
              Type/Term and Work guards are never cached. *)
           val _ = if !validated_retirement = observed then () else
             (C.validate_for work original;
-             List.app (fn child => ignore
+             guard_app work (fn child => ignore
                (G.closure_child_node graph scope child)) (!retained);
              cheap owner;
              if G.scope_retirement_epoch graph scope = observed then () else
@@ -1386,7 +1391,7 @@ struct
              Type/Term and Work guards are never cached. *)
           val _ = if !validated_retirement = observed then () else
             (C.validate_with_policy_for work original;
-             List.app (fn child => ignore
+             guard_app work (fn child => ignore
                (G.closure_child_node graph scope child)) (!retained);
              cheap policy_owner;
              if G.scope_retirement_epoch graph scope = observed then () else

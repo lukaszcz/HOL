@@ -32,6 +32,7 @@ struct
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "description_for" "different original Work";
        let
+         val _=W.spend_guard_policy work 1
          val PolicyReceipt
            {graph,root,scope,sources,limits,epoch,symbols,mode,...}=saved
          val _=case mode of PolicyUnpriced {guard,...} =>
@@ -64,6 +65,7 @@ struct
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "validate_lifetime_for" "different original Work";
        let
+         val _=W.spend_guard_policy work 1
          val PolicyReceipt
            {graph,root,scope,sources,limits,epoch,symbols,mode,...}=saved
          fun ordinary () =
@@ -100,6 +102,7 @@ struct
     protected expected (fn () =>
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "description_for" "different original Work";
+       W.spend_guard_policy work 1;
        W.validate work graph root sources limits;G.validate_scope graph scope;
        if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
          then () else raise ERR "description_for" "retirement epoch changed";
@@ -110,6 +113,7 @@ struct
       protected expected (fn () =>
         (if Portable.pointer_eq (expected,work) then () else
            raise ERR "description_for" "different original Work";
+         W.spend_guard_policy work 1;
          (case kind of PricedRoot path =>
              W.validate_priced_scope_frame work
                {graph=graph,root=root,scope=scope,sources=sources,
@@ -132,6 +136,7 @@ struct
     protected expected (fn () =>
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "validate_lifetime_for" "different original Work";
+       W.spend_guard_policy work 1;
        W.validate work graph root sources limits;
        G.validate_scope graph scope;
        if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then ()
@@ -147,6 +152,7 @@ struct
         let
           val _ = if Portable.pointer_eq (expected,work) then () else
             raise ERR "validate_lifetime_for" "different original Work"
+          val _ = W.spend_guard_policy work 1
           fun guard () = case kind of PricedRoot path =>
                 W.validate_priced_scope_frame work
                   {graph=graph,root=root,scope=scope,sources=sources,

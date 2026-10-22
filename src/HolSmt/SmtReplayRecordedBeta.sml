@@ -20,12 +20,14 @@ struct
     | Insert
     | Apply of G.node * bool * recipe * recipe
     | Lambda of G.node * bool * G.binder_closure * recipe
+  type guard_cache = (IntInf.int * G.scope list * G.closure_child list *
+    (G.scope * G.closure_child) list * (G.node * Term.term) list) option ref
   type common =
     {request : request,root_scope : G.scope,limits : W.limits,
      admission : F.focus option,source_limit : int,
      handles : G.closure_child list ref,frames : G.scope list ref,
      minted : (G.scope * G.closure_child) list ref,
-     originals : (G.node * Term.term) list ref}
+     originals : (G.node * Term.term) list ref,validated : guard_cache}
   datatype plan = Plan of
     {common : common,source : G.node,operand : G.node,recipe : recipe,
      annotations : Type.hol_type list,output_size : size,
@@ -34,8 +36,37 @@ struct
   datatype conversion = Conversion of
     {common : common,source : G.node,target : G.node,theorem : Thm.thm}
 
+  (* Genuine graph closure geometry is immutable; only G retirement can
+     invalidate an already checked handle. Retain the successfully checked
+     list suffix, not a caller guard or a lifetime grant. New links are
+     still checked before use, even without a graph mutation. Every probe
+     (including a hit) debits the SAME Work, in Idle as well as Busy. *)
+  fun guard_app work held action rows =
+    let fun visit rows =
+          (W.spend_guard_policy work 1;
+           if Portable.pointer_eq (rows,held) then () else
+             case rows of []=>() | row::rest=>(action row;visit rest))
+    in visit rows end
+  fun retained work graph scope validated frames handles minted originals =
+    let
+      val _=W.spend_guard_policy work 1
+      val revision=G.scope_retirement_epoch graph scope
+      val (fs,hs,ms,os)=case !validated of SOME (old,f,h,m,o')=>
+          if old=revision then (f,h,m,o') else ([],[],[],[])
+        | NONE=>([],[],[],[])
+      val _=guard_app work fs (G.validate_scope graph) (!frames)
+      val _=guard_app work hs (fn h=>ignore
+        (G.closure_child_node graph scope h)) (!handles)
+      val _=guard_app work ms (fn (frame,h)=>ignore
+        (G.closure_child_node graph frame h)) (!minted)
+      val _=guard_app work os (fn (node,original)=>
+        if Portable.pointer_eq (G.representative graph node,original) then ()
+        else raise ERR "retained original term changed") (!originals)
+    in validated:=SOME (revision,!frames,!handles,!minted,!originals) end
+
   fun active ({request={graph,scope,sources,work,redex,...},root_scope,
-               limits,admission,source_limit,handles,frames,minted,originals}
+               limits,admission,source_limit,handles,frames,minted,originals,
+               validated}
       : common) =
     (W.validate work graph root_scope sources limits;
      G.validate_scope graph scope;
@@ -45,13 +76,7 @@ struct
        in if #source_limit d = source_limit andalso #node d =
            G.closure_child_node graph scope redex then () else
           raise ERR "different admitted beta source profile" end);
-     List.app (G.validate_scope graph) (!frames);
-     List.app (fn h=>ignore (G.closure_child_node graph scope h)) (!handles);
-     List.app (fn (frame,h)=>
-       ignore (G.closure_child_node graph frame h)) (!minted);
-     List.app (fn (node,original)=>
-       if Portable.pointer_eq (G.representative graph node,original) then ()
-       else raise ERR "retained original term changed") (!originals))
+     retained work graph scope validated frames handles minted originals)
     handle primary=>(W.close work;raise primary)
 
   fun invoke common operation =
@@ -166,7 +191,8 @@ struct
       val common : common=
         {request = request,root_scope = root_scope,limits = limits,
          admission = admission,source_limit = source_limit,
-         handles = ref [],frames = ref [],minted = ref [],originals = ref []}
+         handles = ref [],frames = ref [],minted = ref [],originals = ref [],
+         validated = ref NONE}
       fun attempt () =
         let
           val _=active common
@@ -499,7 +525,7 @@ struct
      admission:F.policy_focus option,source_limit:int,source_policy:RP.limit,
      handles:G.closure_child list ref,frames:G.scope list ref,
      minted:(G.scope * G.closure_child) list ref,
-     originals:(G.node * Term.term) list ref}
+     originals:(G.node * Term.term) list ref,validated:guard_cache}
   datatype policy_plan = PolicyPlan of
     {common:policy_common,source:G.node,operand:G.node,recipe:recipe,
      annotations:Type.hol_type list,output_size:size,
@@ -509,7 +535,7 @@ struct
 
   fun pb_active ({request={graph,scope,sources,work,redex,...},root_scope,
                limits,policy_limits,native_budget,admission,source_limit,
-               source_policy,handles,frames,minted,originals}
+               source_policy,handles,frames,minted,originals,validated}
       : policy_common) =
     (W.validate_policy work graph root_scope sources policy_limits;
      ignore (native_budget_for work native_budget);
@@ -522,13 +548,7 @@ struct
              (#category d) = source_limit andalso #node d =
            G.closure_child_node graph scope redex then () else
           raise ERR "different admitted beta source profile" end);
-     List.app (G.validate_scope graph) (!frames);
-     List.app (fn h=>ignore (G.closure_child_node graph scope h)) (!handles);
-     List.app (fn (frame,h)=>
-       ignore (G.closure_child_node graph frame h)) (!minted);
-     List.app (fn (node,original)=>
-       if Portable.pointer_eq (G.representative graph node,original) then ()
-       else raise ERR "retained original term changed") (!originals))
+     retained work graph scope validated frames handles minted originals)
     handle primary=>(W.close work;raise primary)
 
   fun pb_invoke common operation =
@@ -656,7 +676,8 @@ struct
          policy_limits=policy_limits,native_budget=native_budget,
          admission=admission,source_limit=source_limit,
          source_policy=source_policy,
-         handles = ref [],frames = ref [],minted = ref [],originals = ref []}
+         handles = ref [],frames = ref [],minted = ref [],originals = ref [],
+         validated = ref NONE}
       fun attempt () =
         let
           val _=pb_active common
