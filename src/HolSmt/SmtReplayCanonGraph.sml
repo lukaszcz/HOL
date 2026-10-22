@@ -674,10 +674,22 @@ struct
     (pay (4+8*IntInf.fromInt (Redblackmap.numItems steps));
      Redblackmap.app (fn (_,GraphStep {conversion,...}) =>
        Option.app (P.validate_conversion_for expected) conversion) steps)
+  (* A wrapper's immutable Work header has priority over guard payment,
+     even for exhausted live legacy Work. This is not a lifetime check. *)
+  fun conversion_header expected saved =
+    let val owner=case saved of
+            PolicyGraphConversion {work,...}=>SOME work
+          | PolicySequenceGraphConversion {work,...}=>SOME work
+          | _=>NONE
+    in case owner of NONE=>() | SOME work=>
+      if Portable.pointer_eq(expected,work) then () else
+        raise ERR "policy_graph" "different original Work" end
   fun legacy_validate_conversion_using pay expected conversion =
     let
       fun visit saved =
-        (pay 8;
+        ((conversion_header expected saved
+          handle primary=>(W.close expected;raise primary));
+         pay 8;
          case saved of
             GraphConversion {steps,...} => validate_step_map pay expected steps
           | SequenceGraphConversion {first,second,...} =>
@@ -706,14 +718,6 @@ struct
       ((let
           val completed=ref([]:graph_conversion list)
           val enabled=ref false
-          fun header saved=
-            let val owner=case saved of
-                    PolicyGraphConversion{work,...}=>SOME work
-                  | PolicySequenceGraphConversion{work,...}=>SOME work
-                  | _=>NONE
-            in case owner of NONE=>()|SOME work=>
-              if Portable.pointer_eq(expected,work)then ()else
-                raise ERR "policy_graph" "different original Work"end
           fun charge()=W.spend_ordinary_guard_policy expected 1
           fun member _ []=(charge();false)
             | member saved(old::rest)=
@@ -721,7 +725,7 @@ struct
                   member saved rest)
           fun remember saved=(charge();completed:=saved:: !completed)
           fun visit saved=
-            (header saved;
+            (conversion_header expected saved;
              if !enabled then
                if member saved(!completed)then ()else
                  (check saved;remember saved)

@@ -28079,6 +28079,10 @@ local
   structure C = SmtReplayCanonGraph
   structure GP = SmtLib_GraphPreprocess
   structure CG = SmtCheckedGraph
+  structure P = SmtReplayProof
+  structure Scope = SmtReplayOwnedScopeReceipt
+  structure NC = SmtReplayNativeContract
+  structure Core = SmtReplayOwnedLargeProofCore
 in
 (* Legacy recipes need no realized witness to incur replay guard work. *)
 fun replay_processed_validation_cost_success () =
@@ -28224,6 +28228,56 @@ in
       in require "paid validation cached away live Scope backing"
         (Option.isSome denied andalso #retired (W.audit_policy (#w e))
          andalso Count.thm_count ()=native) end);
+  test "Foreign wrapper header precedes exhausted legacy guard payment"
+    (fn () =>
+      let
+        val home=setup 1000000 val hw= #w home
+        val frame=Scope.root_with_policy hw
+        val law=Thm.REFL boolSyntax.T
+        val imported=G.import_with_policy (#g home) (#r home)
+          (RP.AtMost 10000) (Thm.concl law)
+        val opened=G.record_opened_view_with_policy (#g home) (#r home)
+          (RP.AtMost 10000) (#node imported)
+        val fact=P.record_closed_from_import_with_policy
+          (#g home) (#r home)
+          {node= #node opened,theorem=law,template_limit=RP.AtMost 10000,
+           check_type=fn _=>()}
+        val cut=P.closed_fact_cut_with_policy_for hw {frame=frame,fact=fact}
+        val leaf=W.with_step hw (fn()=>
+          C.graph_closed_fact_cut_with_policy hw
+            {cut=cut,observe=fn()=>W.spend_policy hw 1})
+        val sequence=W.with_step hw (fn()=>
+          C.graph_cut_sequence_with_policy hw
+            {first=leaf,second=leaf,observe=fn()=>W.spend_policy hw 1})
+        fun check conversion entry =
+          let
+            val g=G.new () val r=G.root_scope g
+            val s=S.new g r 10000 {goal=boolSyntax.T,assumptions=[]}
+            val w=W.begin g r s
+              {limits={input_limit=10000,output_limit=10000,
+                 template_limit=10000},work_limit=1000000}
+            val f=Scope.root w
+            val nc=NC.capture w
+              {semantic_limits={input_limit=10000,output_limit=10000,
+                 template_limit=10000},import_limit=10000,
+               type_work_limit=1000000}
+            val _=leave w 0
+            val prior=charged w val native=Count.thm_count ()
+            val callbacks=ref 0
+            val denied=refused (fn()=>case entry of
+                0=>C.validate_conversion_for w conversion
+              | 1=>C.validate_conversion_with_policy w conversion
+              | _=>ignore (Core.prepare_in_scope_with_policy w
+                  {frame=f,conversion=conversion,ordinal=0,
+                   native_contract=nc,profiles=[],
+                   check_type=fn _=>callbacks:= !callbacks+1}))
+          in require "payment masked foreign Work or changed cleanup/effects"
+            (denied=SOME "different original Work" andalso
+             charged w=prior andalso #retired (W.audit_policy w) andalso
+             not (#retired (W.audit_policy hw)) andalso !callbacks=0 andalso
+             Count.thm_count ()=native) end
+      in List.app (fn plan=>List.app (check plan) [0,1,2]) [leaf,sequence];
+         W.close hw end);
   test "Guard payment grants no action and preserves Primary/reentry"
     (fn () =>
       let exception Primary
