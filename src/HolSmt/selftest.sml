@@ -21601,6 +21601,9 @@ end
 
 (* Actual original-With_Work emitted integer controls. *)
 local
+  structure G = SmtReplayGraph
+  structure S = SmtReplaySource
+  structure W = SmtReplayInvocationWork
   structure Factory = SmtLib_CheckedCarrierCallsite
   val _ = SmtLib_CheckedCarrierCallsite.cvc_with_emissions
   val _ = CVC.CVC_SMT_Prover
@@ -21629,6 +21632,42 @@ local
 in
   val _ = run_postlude 134 "postlude-0209-line-21033" (fn () =>
     let
+  (* A nonmatching curried application used to rescan its whole spine at
+     every prefix, outside Work. Count actual graph accesses separately
+     from Work so uncharged quadratic scans cannot pass this regression. *)
+  fun spine_miss width =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val sources = S.new graph scope 512
+        {goal = boolSyntax.T,assumptions = []}
+      val work = W.begin graph scope sources
+        {limits = {input_limit = 100,output_limit = 100,
+                   template_limit = 512},work_limit = 10000000}
+      val ty = List.foldl (fn (_,rest) => Type.bool --> rest)
+        Type.bool (List.tabulate (width,fn i => i))
+      val head = G.variable graph scope G.RigidSource
+        (Term.mk_var ("numeric_spine_miss",ty))
+      val argument = G.constant graph scope boolSyntax.T
+      val node = List.foldl (fn (_,f) => G.application graph scope
+        (f,argument)) head (List.tabulate (width,fn i => i))
+      val convert = SmtLib_GraphIntegerDivision.conversion work
+        {check_type = fn _ => raise Fail "nonmatch admitted a native law"}
+      val (result,counts) = G.with_node_statistics graph scope (fn () =>
+        W.with_step work (fn () => convert node))
+      val charged = #charged (W.audit work)
+      val accesses = #node_accesses counts
+      val _ = W.close work
+      val _ = G.close_scope graph scope
+      val _ = print ("TASK10_MATCH " ^ Int.toString width ^ " " ^
+        IntInf.toString accesses ^ " " ^ Int.toString charged ^ "\n")
+    in not (Option.isSome result) andalso
+       accesses <= IntInf.fromInt (30 * (width + 2)) andalso
+       charged >= 4 * width andalso charged <= 12 * (width + 2) end
+
+  val _ = testutils.tprint "Owned numeric nonmatching spines stay linear"
+  val _ = ensure "numeric matcher rescanned prefixes or hid matching work"
+    (spine_miss 64 andalso spine_miss 256)
+
   val _ = testutils.tprint "Owned emitted ediv-one preserves original Goal"
   val _ = configured (fn () => proved
     ([],``integer$ediv (emission_unit_x:int) 1 = emission_unit_x``))

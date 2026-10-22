@@ -72,17 +72,30 @@ struct
          | SOME size => if size > 8 then false else
              (W.spend work size;
               Term.aconv (G.representative graph node) zero))
+      (* Both selected heads are exactly binary. Inspect at most three
+         views, charging before each access; a longer/partial spine is a
+         miss, not a reason to scan every prefix of an unrelated term. *)
+      fun view node = (step ();G.view graph node)
+      fun binary constant node = case view node of
+          G.Application (partial,right) => (case view partial of
+            G.Application (head,left) => (case view head of
+              G.Constant _ =>
+                (step ();
+                 if Term.same_const (G.representative graph head) constant
+                 then SOME (left,right) else NONE)
+            | _ => NONE)
+          | _ => NONE)
+        | _ => NONE
       fun propose node =
         let
           val _ = step ()
-          val divisor = case SmtReplayRules.spine graph node of
-              SOME (head,[left,right]) =>
-                if not (Term.same_const head boolSyntax.equality) orelse
-                    not (is_zero right) then NONE
-                else (case SmtReplayRules.spine graph left of
-                    SOME (head,[a,b]) =>
-                      if Term.same_const head ediv andalso is_zero a
-                          andalso not (is_zero b) then SOME b else NONE
+          val divisor = case binary boolSyntax.equality node of
+              SOME (left,right) =>
+                if not (is_zero right) then NONE
+                else (case binary ediv left of
+                    SOME (a,b) =>
+                      if is_zero a andalso not (is_zero b) then SOME b
+                      else NONE
                   | _ => NONE)
             | _ => NONE
         in case divisor of NONE => NONE
