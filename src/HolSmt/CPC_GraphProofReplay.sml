@@ -655,13 +655,18 @@ struct
                 (selected,law,closed)
               else
                 let
-                  val target = R.implication graph scope selected_nodes
-                    (#node current)
-                  (* The original closed law bounds every prospective
-                     operand/result of the smaller DISCH/ALPHA/EQ_MP law.
-                     Quote it once per operand/result, not once per cap. *)
+                  (* The original bounded law also bounds each operand of
+                     the TWO new graph Apps per selected antecedent. mk_comb
+                     recomputes operand Types on both kernels: prepay those
+                     four syntax/Type walks BEFORE graph construction, apart
+                     from the graph's own table/recent-Type/scope fees. *)
                   fun inference () = List.app (fn _ =>
                     quote (Thm.concl closed)) [(),(),(),()]
+                  val _ = List.app (fn _ => inference ()) selected_nodes
+                  val target = G.implication_with_graph_debit graph scope
+                    (W.spend_policy work) selected_nodes (#node current)
+                  (* Separately pay DISCH/ALPHA/EQ_MP operands and results,
+                     once per inference, not once per cap. *)
                   val _ = List.app (fn _ => inference ()) selected_nodes
                   val _ = inference () val _ = inference ()
                   val proof = List.foldr (fn (entry,proof) =>

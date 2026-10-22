@@ -72753,8 +72753,44 @@ local
          Portable.pointer_eq (term,G.representative (#graph state) node))
            original) (Thm.hyp theorem)
        andalso not (#retired (W.audit (#work state)))) end
+  (* Exercise the formerly unpaid constructor boundary independently of
+     native inference quotations. Populate BOTH intern tables/recent Types
+     and a scope chain; the debit must reflect their actual geometry. *)
+  fun construction width depth budget inspect =
+    let val graph = G.new () val root = G.root_scope graph
+        val sources = S.new graph root 512
+          {assumptions=[],goal=boolSyntax.F}
+        val _ = List.app (fn index => ignore (G.variable graph root
+          G.RigidSource (Term.mk_var ("metered_" ^ Int.toString index,
+            Type.mk_vartype ("'metered_" ^ Int.toString index)))))
+          (List.tabulate (width,fn i => i))
+        fun descend 0 scope = scope
+          | descend n scope = descend (n-1) (G.new_scope graph scope [])
+        val scope = descend depth root
+        val target = G.constant graph scope boolSyntax.T
+        val work = W.begin graph root sources
+          {limits={input_limit=512,output_limit=512,template_limit=512},
+           work_limit=budget}
+        val revision = G.validation_revision graph root
+        val prior = Count.thm_count ()
+        val (result,stats) = G.with_node_statistics graph scope (fn () =>
+          Exn.capture (fn () => W.with_step work (fn () =>
+            G.implication_with_graph_debit graph scope
+              (W.spend_policy work)
+              [] target)) ())
+        val outcome = Exn.capture (fn () => inspect
+          {graph=graph,root=root,target=target,work=work,result=result,
+           stats=stats,revision=revision,prior=prior}) ()
+        val _ = W.close work val _ = G.close_scope graph root
+    in Exn.release outcome end
+  fun construction_cost width depth = construction width depth 10000000
+    (fn {target,work,result,...} =>
+      let val actual = Exn.release result
+      in require "paid Boolean grammar changed its endpoint"
+           (actual=target andalso not (#retired (W.audit work)));
+         #charged (W.audit work) end)
 in
-  val _ = run_postlude 402 "bounded-cpc-actual-dependencies-4" (fn () =>
+  val _ = run_postlude 402 "bounded-cpc-actual-dependencies-7" (fn () =>
     let
       val _ = test "Fitting original proof drops the unused deferred premise"
         (fn () => fixture false false (positive false))
@@ -72793,6 +72829,55 @@ in
                   (term,G.representative (#graph state) node)) original)
                 actual andalso
               not (#retired (W.audit (#work state)))) end))
+      val _ = test "Selected-law construction pays table and scope growth"
+        (fn () =>
+          let val small = construction_cost 0 0
+              val populated = construction_cost 128 0
+              val nested = construction_cost 128 16
+              val _ = construction 128 0 10000000
+                (fn {graph,root,target,work,...} =>
+                  let val prior = #charged (W.audit work)
+                      val _ = List.app (fn _ => ignore
+                        (G.new_scope graph root []))
+                        (List.tabulate (10000,fn i => i))
+                      val _ = W.with_step work (fn () =>
+                        G.implication_with_graph_debit graph root
+                          (W.spend_policy work) [] target)
+                      val warm = #charged (W.audit work)-prior
+                  in require "warm quotation rescanned unrelated state"
+                    (warm<populated andalso warm<1000000) end)
+          in require "construction ignored recent Types/tables/scope paths"
+            (small>0 andalso populated>small andalso nested>populated) end)
+      val _ = test "Selected-law graph fee exhausts Work before interning"
+        (fn () =>
+          let val fee = construction_cost 128 16
+          (* Exclude the final empty-spine debit as well as one fee unit. *)
+          in construction 128 16 (fee-3)
+            (fn {graph,root,work,result,stats,revision,prior,...} =>
+              let val exhausted = case result of Exn.Res _ => false
+                    | Exn.Exn (Feedback.HOL_ERR detail) =>
+                        Feedback.message_of detail =
+                          "original cumulative work allowance exhausted"
+                    | _ => false
+              in require "unpaid constructor changed graph/native state"
+                (exhausted andalso #retired (W.audit work) andalso
+                 #node_creations stats=0 andalso #intern_hits stats=0 andalso
+                 #intern_misses stats=0 andalso
+                 G.validation_revision graph root=revision andalso
+                 Count.thm_count ()=prior) end) end)
+      val _ = test "Paid implication preserves ordered repeated antecedents"
+        (fn () => construction 128 16 10000000
+          (fn {graph,root,target,work,...} =>
+            let val scope = G.new_scope graph root []
+                val actual = W.with_step work (fn () =>
+                  G.implication_with_graph_debit graph scope
+                    (W.spend_policy work)
+                    [target,target] target)
+                val expected = boolSyntax.mk_imp (boolSyntax.T,
+                  boolSyntax.mk_imp (boolSyntax.T,boolSyntax.T))
+            in require "paid construction changed the implication spine"
+              (Term.aconv (G.representative graph actual) expected andalso
+               not (#retired (W.audit work))) end))
     in () end)
 end
 

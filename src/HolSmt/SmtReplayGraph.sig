@@ -227,6 +227,13 @@ sig
      namespace and use this fresh representative for the owned node. *)
   val fresh_flexible_variable : graph -> scope -> Term.term -> node
   val constant : graph -> scope -> Term.term -> node
+  (* Fixed Boolean grammar only. Debit preparation and prospective legacy
+     table/type/scope work BEFORE each constructor. Caller separately prepays
+     Term.mk_comb operand/type walks. Paid graphs retain their internal meter.
+     These bookkeeping fees grant no proof/native admission authority. *)
+  val implication_with_graph_debit : graph -> scope ->
+    (IntInf.int -> unit) ->
+    node list -> node -> node
   (* Resolve environments without claiming an alpha source bridge. *)
   val resolve_variable : graph -> scope -> Term.term -> node
   (* Lexical aliases retain their owned kind; a declaration is the checked

@@ -924,6 +924,77 @@ struct
        inclusive = sum (#inclusive left) (#inclusive right), source = ref NONE}
     end
 
+  (* A deliberately fixed Boolean grammar: general constructors may contain
+     arbitrarily large Types/strings and cannot use this quotation. Each
+     constructor below interns at most seven fixed Boolean Type incidences
+     (arity <= 2), and adds at most one node. Caller separately prepays native
+     Term.mk_comb operand/type walks; these graph fees do not inspect operand
+     syntax. The debit is bookkeeping, never proof or native admission. *)
+  fun implication_with_graph_debit (g:graph) scope debit premises target =
+    let
+      (* Red-black height <= 2 ceil(log2(n+1)); include empty leaves
+         and prospective growth. Quote arithmetic preparation too. *)
+      fun height count =
+        let fun bits n = (debit 4;
+              if n = 0 then 1 else 2 + bits (n div 2))
+        in bits (IntInf.fromInt count + 8) end
+      fun prepay annotations =
+        (debit 32;
+         case #indices g of PaidIndices _ => () (* already internally paid *)
+         | LegacyIndices state =>
+           let
+             val nodes = height (!(#next g))
+             val keys = height (Redblackmap.numItems (!(#keys state)))
+             val types = height (Redblackmap.numItems (!(#types state)))
+             val scopes = height (!(#next_scope g))
+             (* Count the actual caller ancestry, not unrelated siblings.
+                Pay each planning lookup before reading the parent. *)
+             fun ancestry current =
+               (debit (128 * (scopes + 1));
+                case #parent (scope_frame g current) of NONE => 1
+                  | SOME parent => 1 + ancestry parent)
+             val path = ancestry scope
+             fun children ty =
+               (debit 16;ty :: (if Type.is_vartype ty then [] else
+                 List.concat (List.map children (#2 (Type.dest_type ty)))))
+             val needed = List.concat (List.map children annotations)
+             (* Every future recent lookup/rebuild is within this prefix,
+                plus <= seven newly cached fixed Types. Once the Boolean
+                Types are warm, unrelated old Types are NOT rescanned. *)
+             fun remove held [] = (debit 2;[])
+               | remove held (ty::rest) =
+                   (debit 4;if Portable.pointer_eq (held,ty) then
+                      remove held rest else ty :: remove held rest)
+             fun recent [] _ = (debit 2;0:IntInf.int)
+               | recent _ [] = (debit 2;0)
+               | recent ((ty,_)::rest) pending =
+                   (debit 4;1 + recent rest (remove ty pending))
+             val cached = recent (!(#recent state)) needed
+             (* Covers lookups, persistent insert/rebalance, node/observer
+                bookkeeping, fixed wrappers, and each recent scan/rebuild.
+                Scope visibility walks at most path frames. Fixed Type keys
+                compare at most two child IDs. This is a prospective upper
+                bound, not a flat fee or credit for later native work. *)
+           in debit (128 * (32 + nodes + keys + path * (scopes + 1) +
+                7 * (types + cached + 7))) end)
+      fun apply (left,right) =
+        let
+          (* The private left operands are ONLY the fixed implication head
+             or its partial App. Pay its entry lookup before reading Type. *)
+          val _ = debit (128 * (1 + height (!(#next g))))
+          val (domain,range) = Type.dom_rng (type_of g left)
+          val _ = prepay [domain,range]
+        in application g scope (left,right) end
+      val _ = prepay [Term.type_of boolSyntax.implication]
+      val operator = constant g scope boolSyntax.implication
+      fun build [] = (debit 2;target)
+        | build (premise::rest) =
+            let val _ = debit 4
+                val result = build rest
+                val partial = apply (operator,premise)
+            in apply (partial,result) end
+    in build premises end
+
   (* Hashes are bounded routing hints, never equality claims. Abstractions
      are opaque here; no dest_abs/body/free-variable query occurs. *)
   val physical_hint = SmtReplayImport.pointer_bucket 4 4093
