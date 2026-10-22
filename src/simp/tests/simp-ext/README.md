@@ -7,7 +7,8 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
   -C src/simp/tests/simp-ext -j1 check
 ```
 
-`check` builds **and executes** `selftest.exe` and `tracked.exe`. Building
+`check` builds **and executes** `selftest.exe`, `tracked.exe` and
+`exclusions.exe`. Building
 `.uo` files alone is not validation. The production `simp-ext` target runs it
 at `HOLSELFTESTLEVEL=1`. Expected Poly/ML type-error diagnostics
 from `negative/*.ML` are normal successful test output.
@@ -99,5 +100,33 @@ The inventory getter `rewrite_sources` now rejects directives. First call
 `prepare_rewrite_arguments` explicitly and inspect its returned set/rules.
 See [TASK14 migration](../compatibility/migration/TASK14.md) for contracts and
 [handoff](../compatibility/TASK_14_HANDOFF.md) for final evidence. This is
-bounded tracked-compiler acceptance, not exhaustive TASK_19/21 filtering and
-bundle validation, TASK_26 test migration or performance acceptance.
+bounded tracked-compiler acceptance, not exhaustive TASK_21 view/bundle
+validation, TASK_26 test migration or performance acceptance.
+
+## Exclusion and replay gate (TASK_19)
+
+`exclusions.sml` adds 159 checks on explicitly tracked objects. Both default
+and configured projections are extracted/used in both orders. Complete
+conclusions and hypothesis sets, not just endpoints, are compared.
+
+| New block | Preserved original coverage / additional intersection |
+| --- | --- |
+| `A deleted conjunct` | native source/view deletion and partial-quota replay; literal/resolved deletion plus preserving removal/filtering of mixed native/prepared sources; surviving identity/order and actual sharing |
+| `Failed extended resolution` | native namespace resolution and unmatched literal history; pending duplicate failures must leave old inventory/control state intact |
+| `Strict and resolved histories` | native strict-history theory rewind; preserving reconstruction fails/succeeds under the same contract without refreshing live/exhausted controls |
+| `Prohibition is distinct` | native named-fragment removal/strategy replay; force-add, duplicates, no-op identity, exact maker/opaque-collector ordering, limits and retained prohibition |
+| `Namespace separation` | native strategy namespace/split suppression; ordinary loopers colliding with split/case displays survive suppression, later additions and preserving replay |
+
+No original assertion is moved or relaxed. `src/selftest.sml` still runs its
+642 source-tied native checks, including parser/warning/ambiguity contracts,
+strategy targets, local/ambient split suppression, mixed views and failures.
+The unchanged coverage ledger verifies those assertions and the 929-check
+legacy exclusion suite. Full dependent-view invalidation remains TASK_21;
+persistent split ownership/lifecycle remains TASK_23.
+
+Only extension-owned `looper_tac` changes: split/case suppression applies to
+split loopers, not unrelated ordinary names. Resolution, private history order,
+strict reparsing versus resolved replay, and ordinary-reset versus explicit
+preserving-control replay stay unchanged. There is no legacy-history identity
+inference, new ordinary import, or ordinary representation change. See the
+[TASK19 handoff](../compatibility/TASK_19_HANDOFF.md) for source-tied evidence.

@@ -104,7 +104,8 @@ sig
      strict parser and rule/dproc priority, then strategy fallback.
      Missing/ambiguous targets fail when processed, not at construction.
      History keeps resolved rules/displays; split/case suppression also
-     applies to later additions. Does not enable persistent registration. *)
+     applies to later split additions, never to ordinary user loopers with
+     colliding display names. Does not enable persistent registration. *)
   (* Simplifier-owned ExcludeX marker; generic marker tactics do not
      interpret extended exclusions. *)
   val ExclX       : string -> thm

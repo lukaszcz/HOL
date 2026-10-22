@@ -6,7 +6,8 @@ EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   cond-rewr-ext.log ../tests/cond-rewr-ext/selftest.exe \
   ../tests/cond-rewr-ext/.hol/ \
   simp-ext.log ../tests/simp-ext/selftest.exe \
-  ../tests/simp-ext/tracked.exe ../tests/simp-ext/.hol/ \
+  ../tests/simp-ext/tracked.exe ../tests/simp-ext/exclusions.exe \
+  ../tests/simp-ext/.hol/ \
   congruence-ext.log ../tests/congruence-ext/selftest.exe \
   ../tests/congruence-ext/ordinary.exe \
   ../tests/congruence-ext/.hol/ \

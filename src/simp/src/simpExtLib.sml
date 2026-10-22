@@ -2484,9 +2484,11 @@ fun final_solver_tac traversal xdata mode ss
 fun looper_tac ss =
   let
     val s = strategy_of ss
-    fun enabled entry =
-      not
-        (Binaryset.member (#excl_loopers s,looper_display entry))
+    (* Suppression displays belong to the split/case namespaces, not to
+       ordinary user loopers that happen to have the same literal name. *)
+    fun enabled (LooperEntry {kind=OrdinaryLooper,...}) = true
+      | enabled entry =
+          not (Binaryset.member (#excl_loopers s,looper_display entry))
     fun apply (LooperEntry {apply,...}) g =
       apply ss g
       handle Conv.UNCHANGED => NO_TAC g
