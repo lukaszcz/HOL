@@ -11,7 +11,7 @@ import gzip
 import json
 from pathlib import Path
 
-from performance_schema import require, validate
+from performance_schema import require, suite_options, validate
 
 
 def audit(manifest, receipt):
@@ -37,7 +37,8 @@ def audit(manifest, receipt):
     require(events[:2] == [["begin", selection, "performance", "none"],
                            ["cwd", str(private)]], "wrong archived header")
     observations, data = validate(events, options["samples"],
-                                  options["batch_seconds"])
+                                  options["batch_seconds"],
+                                  **suite_options(options))
     count = sum(e[0] == "check" for e in observations)
     require(result["observations"] == observations and
             result["expected_test_count"] == count and
@@ -66,8 +67,14 @@ def audit(manifest, receipt):
                     not physical.is_relative_to(repo / "src/simp") and
                     physical.stem not in source_names,
                     "wrong archived simplifier path")
-    require({"Traverse.sml", "simpLib.sml", "Performance.sml"} <= seen,
-            "missing selected implementation")
+    required = {"Traverse.sml", "Performance.sml"}
+    if options.get("suite") == "traversal":
+        fixture = "src/simp/tests/performance/TraversalPerformance.sml"
+        require(selected["fixture_products"]["Performance.sml"] ==
+                manifest["inputs"][fixture], "wrong traversal fixture binding")
+    else:
+        required.add("simpLib.sml")
+    require(required <= seen, "missing selected implementation")
 
 
 def main():

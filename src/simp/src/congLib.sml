@@ -163,7 +163,7 @@ val cong_reducer =
         in
           CONVNET (insertThms net thms)
         end
-      fun apply {solver,conv,context,stack,relation,...} tm =
+      fun apply {solver,conv,context,stack,relation} tm =
         let
             val net = ((raise context) handle CONVNET net => net)
             val thm = cong_rewrite net relation tm
@@ -176,33 +176,29 @@ val cong_reducer =
   end;
 
 
-fun eq_reducer_wrapper (REDUCER {name,initial,addcontext,apply}) =
-  let
-    fun wrapped (args as {relation=(_,refl),...}) tm =
-      let
-        val eqthm = apply args tm
-        val relthm = refl tm
-      in
-        CONV_RULE (RAND_CONV (REWR_CONV eqthm)) relthm
-      end
+fun reducer_addRwts (REDUCER {name,addcontext,apply,initial}) rwts =
+  REDUCER {name=name,addcontext=addcontext, apply=apply, initial=addcontext (initial,rwts)}
+
+
+fun eq_reducer_wrapper (eq_reducer as REDUCER data)= let
+  val name = #name data
+  val initial = #initial data
+  val addcontext = #addcontext data
+
+  fun apply {solver,conv,context,stack,relation as (_, refl)} tm = let
+    val eqthm = #apply data
+                       {solver=solver,conv=conv,
+                        context=context,stack=stack,
+                        relation=relation}
+                       tm
+    val congThm = refl tm
+    val congThm = CONV_RULE (RAND_CONV (REWR_CONV eqthm)) congThm
   in
-    REDUCER
-      {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
+    congThm
   end
-  | eq_reducer_wrapper reducer =
-  let
-    val {name,initial,addcontext,apply} = reducer_config_data reducer
-    fun wrapped (args as {relation=(_,refl),...}) tm =
-      let
-        val eqthm = apply args tm
-        val relthm = refl tm
-      in
-        CONV_RULE (RAND_CONV (REWR_CONV eqthm)) relthm
-      end
-  in
-    CONFIG_REDUCER
-      {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
-  end;
+in
+  REDUCER {name=name,addcontext=addcontext, apply=apply, initial=initial}
+end;
 
 
 datatype congsetfrag = CSFRAG of
@@ -230,10 +226,10 @@ val empty_congset = CS {cong_reducer=cong_reducer,
     (CSFRAG {rewrs, relations=relationsFrag, dprocs=dprocsFrag, congs},
      CS {cong_reducer, relations, dprocs, travrules, limit})
   = let
-      val cong_reducer = addctxt rewrs cong_reducer;
+      val cong_reducer = reducer_addRwts cong_reducer rewrs;
 
       val refl_rewrites = map mk_refl_rewrite relationsFrag;
-      val cong_reducer = addctxt refl_rewrites cong_reducer;
+      val cong_reducer = reducer_addRwts cong_reducer refl_rewrites;
 
       val newRelations = relations@relationsFrag;
       val newCongs = mk_congprocs newRelations congs;
@@ -284,25 +280,14 @@ fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
       {relations=(#relations csdata),
       congprocs=preorder_eq_congs,
       weakenprocs=[]};
-    val (traversedata,traverseconfig) =
-      case legacy_traversedata_for_ss ss of
-          SOME data => (data,Traverse.default_config)
-        | NONE => xtraversedata_for_ss ss;
+    val traversedata = traversedata_for_ss ss;
     val data = {rewriters= (#cong_reducer csdata)::
           (map eq_reducer_wrapper (#rewriters traversedata)),
-          dprocs= #dprocs csdata @
-                  map eq_reducer_wrapper (#dprocs traversedata),
-          relation=relation, limit= #limit csdata,
-          travrules=merge_travrules
-            ([eq_congsTravrule,#travrules traversedata] @
-             #travrules csdata)}
+          dprocs= (#dprocs csdata)@(map eq_reducer_wrapper (#dprocs traversedata)),
+          relation= relation, limit = #limit csdata,
+          travrules= merge_travrules ([eq_congsTravrule,#travrules traversedata]@(#travrules csdata))}
   in
-    (* Match SIMP_QCONV: only conversion-consumed settings opt into
-       per-application context refresh. *)
-    case traverseconfig of
-        {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
-          TRAVERSE data
-      | _ => XTRAVERSE (data,traverseconfig)
+    TRAVERSE data
   end;
 
 

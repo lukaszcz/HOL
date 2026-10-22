@@ -10,6 +10,16 @@ LABELS = (
 CONSUMED = dict.fromkeys(LABELS, 1)
 CONSUMED.update(rewrites_1000=1000, merge_frags_1000=1000, compile_1000=2,
                 delete_missing_1000=2, empty_add_1000=3)
+# Direct ordinary reducers: no simpLib/net/Cond_rewr representation costs.
+TRAVERSAL_LABELS = (
+    "construct_empty", "construct_context", "reuse_hit", "reuse_miss",
+    "complete_context", "deep_factory_64",
+)
+TRAVERSAL_CONSUMED = dict.fromkeys(TRAVERSAL_LABELS, 1)
+# One retained/result output plus collector, or one relation selection and
+# 65 per-context factory creations on the 64-deep unary spine.
+TRAVERSAL_CONSUMED.update(construct_context=2, complete_context=2,
+                          deep_factory_64=1 + 1 + 65)
 FIELDS = ("wall", "nongc_usr", "nongc_sys", "gc_usr", "gc_sys",
           "cpu_usr", "cpu_sys", "check_gc_user", "consumed")
 STORAGE = ("rules", "base", "fragment", "simpset", "anchor", "union",
@@ -47,7 +57,19 @@ def timing(value, prefix=0):
     return data[:prefix], ts
 
 
-def validate(events, samples, seconds):
+def suite_options(options):
+    suite = options.get("suite", "simplifier")
+    require(suite in ("simplifier", "traversal"), "unknown performance suite")
+    if suite == "traversal":
+        return dict(labels=TRAVERSAL_LABELS, consumed=TRAVERSAL_CONSUMED,
+                    storage=False)
+    return {}
+
+
+def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
+             storage=True):
+    require(labels and len(set(labels)) == len(labels) and
+            all(label in consumed for label in labels), "invalid workload schema")
     es = [e for e in events if e[0] in ("observation", "check", "exception")]
     index = 0
 
@@ -67,8 +89,8 @@ def validate(events, samples, seconds):
     total_consumed = accounting["consumed"]
     take("check", "timer accounting", "pass")
     take("check", "workload inputs", "pass")
-    storage = []
-    for n in (0, 10, 100, 1000):
+    storage_rows = []
+    for n in ((0, 10, 100, 1000) if storage else ()):
         data = numbers(take("observation", "storage"), len(STORAGE))
         require(all(v.is_integer() for v in data), "fractional graph words")
         row = dict(zip(STORAGE, map(int, data)))
@@ -76,17 +98,17 @@ def validate(events, samples, seconds):
                 row["union"] - row["anchor"] == row["compiled_increment"] and
                 row["fragment_union"] - row["fragment_anchor"] ==
                 row["fragment_increment"], "invalid storage subtraction")
-        storage.append(row)
+        storage_rows.append(row)
         take("check", "retained graphs", "pass")
     workloads = {}
-    for label in LABELS:
+    for label in labels:
         calibrations = []
         n = 1
         while True:
             value = take("observation", "calibration." + label)
             (actual,), ts = timing(value, 1)
             require(actual == n, "non-doubling calibration")
-            require(ts["consumed"] == CONSUMED[label] * n,
+            require(ts["consumed"] == consumed[label] * n,
                     "wrong calibration result consumption")
             total_consumed += ts["consumed"]
             calibrations.append(dict(iterations=n, **ts))
@@ -99,7 +121,7 @@ def validate(events, samples, seconds):
             value = take("observation", "batch." + label)
             (sample, actual), ts = timing(value, 2)
             require(sample == i and actual == n, "wrong batch index/count")
-            require(ts["consumed"] == CONSUMED[label] * n,
+            require(ts["consumed"] == consumed[label] * n,
                     "wrong batch result consumption")
             total_consumed += ts["consumed"]
             require(ts["wall"] >= seconds / 2, "batch too short; recalibrate")
@@ -110,5 +132,5 @@ def validate(events, samples, seconds):
     require(sink == total_consumed and sink.is_integer(),
             "missing/inconsistent sink consumption")
     require(index == len(es), "extra performance observation/exception")
-    return es, dict(timer_accounting=accounting, storage=storage,
+    return es, dict(timer_accounting=accounting, storage=storage_rows,
                     workloads=workloads, sink=int(sink))

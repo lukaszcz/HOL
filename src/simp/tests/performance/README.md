@@ -190,3 +190,76 @@ TASK_03 source-tied results, commands, exits, uncertainties and reproduction
 receipt are in [`TASK_03_HANDOFF.md`](TASK_03_HANDOFF.md) and
 [`evidence/task03/`](evidence/task03/). Immutable input integrity remains checked
 by `../compatibility/verify_evidence.py`.
+
+## Focused TASK_11 ordinary traversal diagnostic
+
+`--traversal-performance` selects `TraversalPerformance.sml`, installed as
+`Performance.sml` in each private source tree. It requires positive
+`--performance-pairs`. The default fixture/schema remain unchanged. Manifest
+`performance.suite = "traversal"` selects the six required labels and no storage
+rows in validation, summary and offline source audit. Unknown suites fail.
+The usual fresh-process ordering, timer control, exact consumption, exits,
+source hashes and private path audits still apply; this fixture requires
+`Traverse`, not `simpLib`, to be elaborated in its performance process.
+
+All traversal data and input terms are prebuilt outside timing. The reducer
+uses a single assumption equation, a private exception context and direct
+term comparison. Its collector replaces that equation with the supplied
+context equation. There are no simpLib representations/projections, rewrite
+nets, Cond_rewr, extension APIs, trace listeners or production instrumentation.
+
+| Label | Timed boundary | Consumed per iteration |
+| --- | --- | --- |
+| `construct_empty` | Retain raw conversion, empty supplied context | 1 retained output |
+| `construct_context` | Retain raw conversion, one supplied equation | 1 output + 1 collector |
+| `reuse_hit` | Saved contextual raw traversal, successful atom rewrite | 1 verified theorem |
+| `reuse_miss` | Saved contextual traversal, distinct unchanged atom | 1 verified reflexive theorem |
+| `complete_context` | Raw construction with context plus atom application | 1 theorem + 1 collector |
+| `deep_factory_64` | Saved empty-context traversal of a unary spine | 1 theorem + 1 relation selection + 65 factories |
+
+The miss probe uses a prebuilt `QCONV (TRY_CONV ...)` wrapper to turn raw
+no-change failure into a reflexive theorem. Every timed application verifies
+exact conclusion and hypothesis set against a kernel-built expected proof.
+Construction slots escape and their last closure is applied/verified after
+**every** calibration and batch, outside timing. The deep factory uses the
+provided depther and `MK_COMB` to construct a genuine proof at every level;
+it visits arguments, not function heads. Callback counter increments are
+timed, and their batch deltas are folded into the sink after timer reads.
+Out-of-timing setup/exercises cannot inflate measured callback consumption.
+Schema checks require the exact per-iteration totals above and the complete
+final sink. These diagnostics include symmetric checking/counter overhead;
+they are not raw API nanosecond estimates. No allocation/graph-size claim is
+made by this focused suite.
+
+Run serially from the repository root, with no other build/benchmark active.
+`CANDIDATE` must name a **committed** source snapshot: the runner extracts git
+objects, not staged/working production files. Use fresh output paths.
+
+```sh
+python3 -B -m unittest discover -s src/simp/tests/performance -p 'test*.py'
+python3 -B -m unittest discover -s src/simp/tests/compatibility -p test_runner.py
+BASELINE=cccaa27d7099cbadc886983020cbe745db7793f3
+CANDIDATE=your-committed-candidate-ref
+python3 -B src/simp/tests/compatibility/run_paired.py \
+  --baseline "$BASELINE" --candidate "$BASELINE" \
+  --candidate-signature pass --candidate-behavior baseline \
+  --traversal-performance --performance-pairs 10 --samples 5 \
+  --batch-seconds 0.25 --timeout 1800 --output /tmp/task11-traverse-control
+python3 -B src/simp/tests/compatibility/run_paired.py \
+  --baseline "$BASELINE" --candidate "$CANDIDATE" \
+  --candidate-signature pass --candidate-behavior baseline \
+  --traversal-performance --performance-pairs 10 --samples 5 \
+  --batch-seconds 0.25 --timeout 1800 --output /tmp/task11-traverse-candidate
+for name in control candidate; do
+  python3 -B src/simp/tests/performance/summarize.py \
+    /tmp/task11-traverse-$name --output /tmp/task11-traverse-$name-summary.json
+done
+python3 -B src/simp/tests/performance/audit_evidence.py \
+  /tmp/task11-traverse-control /tmp/task11-traverse-candidate
+```
+
+This isolates ordinary traversal from the existing `raw_reuse_1000` mixture
+(including current net/Cond_rewr costs). It does not measure those costs,
+project/compile work, extension performance, or overall simplifier acceptance.
+Source identity and real paired receipts, not an assumed performance oracle,
+are needed to distinguish unchanged traversal from costs elsewhere.

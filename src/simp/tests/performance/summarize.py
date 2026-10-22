@@ -8,7 +8,7 @@ from pathlib import Path
 import random
 from statistics import median
 
-from performance_schema import LABELS, validate, require
+from performance_schema import LABELS, suite_options, validate, require
 
 
 def fingerprint(path):
@@ -29,6 +29,7 @@ def summarize(folder):
     manifest = json.loads((folder / "manifest.json").read_text())
     require(manifest["success"], "failed experiment")
     options = manifest["performance"]
+    schema = suite_options(options)
     pairs = {}
     files = {"manifest.json": fingerprint(folder / "manifest.json")}
     order = []
@@ -41,7 +42,7 @@ def summarize(folder):
         require(run["accepted"] and receipt["exit"] == 0 and
                 not receipt["timed_out"], "failed performance process")
         _, data = validate(receipt["result"]["events"], options["samples"],
-                           options["batch_seconds"])
+                           options["batch_seconds"], **schema)
         require(data == receipt["measurements"], "altered derived measurements")
         pair, selection = receipt["pair"], receipt["selection"]
         require(selection not in pairs.setdefault(pair, {}), "duplicate process")
@@ -52,7 +53,7 @@ def summarize(folder):
                  ("baseline", "candidate"))]
     require(order == expected, "missing/reordered fresh-process pair")
     workloads = {}
-    for label in LABELS:
+    for label in schema.get("labels", LABELS):
         out = {}
         for metric in ("cpu", "wall", "gc"):
             observations = []

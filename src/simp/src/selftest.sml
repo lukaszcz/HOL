@@ -6196,6 +6196,10 @@ local
 
   val ordinary_eligibility = let
     open OrdinarySimp OrdinaryBool
+    (* The surviving strategy API is explicitly extension-typed. It does
+       not make the installed ordinary procedures extension reducers. *)
+    val rejecting_solver : TraverseExt.ssolver =
+      {name="ordinary projection solver",solve=fn _ => NO_CONV}
     val additions = ref 0
     val probe = OrdinaryTraverse.REDUCER
       {name=NONE,initial=ProjectionContext,
@@ -6219,7 +6223,6 @@ local
     val OrdinaryTraverse.REDUCER _ =
       hd (#rewriters (traversedata_for_ss empty_ss))
     fun ordinary (OrdinaryTraverse.REDUCER _) = true
-      | ordinary _ = false
     fun accepted_shape (SOME (data : OrdinaryTraverse.traverse_data)) =
           not (null (#rewriters data)) andalso
           not (null (#dprocs data)) andalso
@@ -6241,6 +6244,29 @@ local
       aconv (#relation public) boolSyntax.equality andalso
       #limit public = #limit expected
     end
+    (* Only the configured route lifts ordinary dprocs. Compare their
+       ordinary payloads, not unlike-type lists or a reverse adapter.
+       Both getters must remain inert, including for ineligible settings. *)
+    fun configured_projection ss = let
+      val public = traversedata_for_ss ss
+      val (extended,config) = xtraversedata_for_ss ss
+      fun lifted (ordinary,T.LIFTED payload) =
+            Portable.pointer_eq (ordinary,payload)
+        | lifted _ = false
+      val settings = traverseconfig_for_ss ss
+    in
+      configured_rewriter extended andalso
+      ListPair.allEq lifted (#dprocs public,#dprocs extended) andalso
+      Portable.pointer_eq (#travrules public,#travrules extended) andalso
+      aconv (#relation public) (#relation extended) andalso
+      #limit public = #limit extended andalso
+      #cond_depth config = #cond_depth settings andalso
+      Option.isSome (#subgoaler config) =
+        Option.isSome (#subgoaler settings) andalso
+      Option.isSome (#term_ord config) =
+        Option.isSome (#term_ord settings) andalso
+      Portable.pointer_eq (#solvers config,#solvers settings)
+    end
   in
     before_extraction = after_rejected andalso
     after_rejected = after_accepted andalso
@@ -6248,6 +6274,8 @@ local
     List.all (not o Option.isSome) rejected andalso
     List.all accepted_shape accepted andalso
     List.all public_projection (empty_ss :: bool_ss :: base :: excluded)
+    andalso List.all configured_projection
+      (empty_ss :: bool_ss :: accepted_inputs @ excluded)
     andalso before_extraction = !additions
   end
   (* Context/config procedures cannot inhabit the restored ordinary type.

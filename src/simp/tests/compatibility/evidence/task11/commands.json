@@ -1,0 +1,286 @@
+[
+  {
+    "argv": [
+      "bin/Holmake",
+      "--holstate=$PWD/bin/hol.state0",
+      "-C",
+      "src/simp/src",
+      "-j1",
+      "HOLSELFTESTLEVEL=1",
+      "all"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "holmake.log.gz"
+  },
+  {
+    "argv": [
+      "bin/build",
+      "-t",
+      "--seq=tools/sequences/upto-parallel"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 124,
+    "evidence": "routine-interrupted.log.gz"
+  },
+  {
+    "argv": [
+      "bin/build",
+      "-t",
+      "--seq=tools/sequences/upto-parallel"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "routine-rebuild.log.gz"
+  },
+  {
+    "argv": [
+      "bin/build",
+      "-t",
+      "--seq=tools/sequences/upto-parallel"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "routine.log.gz"
+  },
+  {
+    "argv": [
+      "python3",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--public-contracts",
+      "--prior-contracts",
+      "--negative-controls",
+      "--candidate",
+      "ffc7bff0f1232b0970092bb5b6bc828e11302732",
+      "--candidate-signature",
+      "pass",
+      "--output",
+      "/tmp/task11-paired-final"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "paired/manifest.json"
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_prior_native.py",
+      "--output",
+      "/tmp/task11-native-final"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "native/manifest.json"
+  },
+  {
+    "argv": [
+      "python3",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--candidate",
+      "cccaa27d7099cbadc886983020cbe745db7793f3",
+      "--candidate-signature",
+      "pass",
+      "--candidate-behavior",
+      "baseline",
+      "--performance-pairs",
+      "10",
+      "--output",
+      "/tmp/task11-perf-control"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "broad-control/manifest.json"
+  },
+  {
+    "argv": [
+      "python3",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--candidate",
+      "ffc7bff0f1232b0970092bb5b6bc828e11302732",
+      "--candidate-signature",
+      "pass",
+      "--performance-pairs",
+      "10",
+      "--output",
+      "/tmp/task11-perf"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "broad-candidate/manifest.json"
+  },
+  {
+    "argv": [
+      "python3",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--candidate",
+      "cccaa27d7099cbadc886983020cbe745db7793f3",
+      "--candidate-signature",
+      "pass",
+      "--candidate-behavior",
+      "baseline",
+      "--traversal-performance",
+      "--performance-pairs",
+      "10",
+      "--batch-seconds",
+      "0.25",
+      "--timeout",
+      "1800",
+      "--output",
+      "/tmp/task11-traverse-control"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "traversal-control/manifest.json"
+  },
+  {
+    "argv": [
+      "python3",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--candidate",
+      "ffc7bff0f1232b0970092bb5b6bc828e11302732",
+      "--candidate-signature",
+      "pass",
+      "--traversal-performance",
+      "--performance-pairs",
+      "10",
+      "--batch-seconds",
+      "0.25",
+      "--timeout",
+      "1800",
+      "--output",
+      "/tmp/task11-traverse-candidate"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "traversal-candidate/manifest.json"
+  },
+  {
+    "argv": [
+      "bin/Holmake",
+      "--holstate=$PWD/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/tests/simp-ext",
+      "-j1",
+      "check"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "focused.log.gz"
+  },
+  {
+    "argv": [
+      "bin/Holmake",
+      "--holstate=$PWD/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/tests/traverse-ext",
+      "-j1",
+      "check"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "traverse-ext.log.gz"
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "src/simp/tests/compatibility",
+      "-p",
+      "test_*.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "unit.log.gz"
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "src/simp/tests/performance",
+      "-p",
+      "test*.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "performance-unit.log.gz"
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/coverage_ledger.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "coverage.log.gz"
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/verify_evidence.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "immutable.log.gz"
+  },
+  {
+    "argv": [
+      "tools/h4pedant/h4pedant",
+      "src/simp/src",
+      "src/simp/tests/compatibility",
+      "src/simp/tests/performance",
+      "src/simp/tests/traverse-ext"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "pedant.log.gz"
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/audit_task11.py",
+      "src/simp/tests/compatibility/evidence/task11"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "audit.json"
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/performance/audit_evidence.py",
+      "src/simp/tests/compatibility/evidence/task11/broad-control",
+      "src/simp/tests/compatibility/evidence/task11/broad-candidate",
+      "src/simp/tests/compatibility/evidence/task11/traversal-control",
+      "src/simp/tests/compatibility/evidence/task11/traversal-candidate"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "evidence": "provenance.log.gz"
+  }
+]

@@ -187,8 +187,8 @@ and ssfrag = SSFRAG_CON of {
     threaded_congs : thm list,
     relsimps       : relsimpdata list,
     loopers        : looper_entry list,
-    unsafe_solvers : Traverse.ssolver list,
-    safe_solvers   : Traverse.ssolver list
+    unsafe_solvers : TraverseExt.ssolver list,
+    safe_solvers   : TraverseExt.ssolver list
 }
 and history_item =
     ADDFRAG of ssfrag * int *
@@ -202,12 +202,12 @@ and strategy_event =
     ADD_LOOPER_EVENT of looper_entry
   | DEL_LOOPER_EVENT of looper_kind * string
   | SET_LOOPER_EVENT of looper_entry
-  | ADD_UNSAFE_SOLVER_EVENT of Traverse.ssolver
-  | ADD_SAFE_SOLVER_EVENT of Traverse.ssolver
-  | SET_UNSAFE_SOLVERS_EVENT of Traverse.ssolver list
-  | SET_SAFE_SOLVERS_EVENT of Traverse.ssolver list
+  | ADD_UNSAFE_SOLVER_EVENT of TraverseExt.ssolver
+  | ADD_SAFE_SOLVER_EVENT of TraverseExt.ssolver
+  | SET_UNSAFE_SOLVERS_EVENT of TraverseExt.ssolver list
+  | SET_SAFE_SOLVERS_EVENT of TraverseExt.ssolver list
   | REMOVE_SOLVER_EVENT of string
-  | SET_SUBGOALER_EVENT of Traverse.subgoaler option
+  | SET_SUBGOALER_EVENT of TraverseExt.subgoaler option
   | SET_COND_DEPTH_EVENT of int option
   | SET_TERM_ORD_EVENT of (term * term -> order) option
   (* Add one resolved split/case display to the persistent suppression
@@ -223,7 +223,7 @@ and simpset = SS of {
     initial_net    : net,
     rewrite_sources : (thname option * thm) list,
     native_sources : rewrite_source list,
-    dprocs         : reducer list,
+    dprocs         : Traverse.reducer list,
     travrules      : travrules,
     limit          : int option,
     excluded       : string Binaryset.set,
@@ -233,9 +233,9 @@ and simpset = SS of {
    that leave them alone do not have to mention them one by one. *)
 withtype strategy_data =
   {loopers        : looper_entry list,
-   unsafe_solvers : Traverse.ssolver list,
-   safe_solvers   : Traverse.ssolver list,
-   subgoaler      : Traverse.subgoaler option,
+   unsafe_solvers : TraverseExt.ssolver list,
+   safe_solvers   : TraverseExt.ssolver list,
+   subgoaler      : TraverseExt.subgoaler option,
    cond_depth     : int option,
    term_ord       : (term * term -> order) option,
    excl_loopers   : string Binaryset.set}
@@ -587,7 +587,7 @@ end
 
 fun simpset_has_dproc name (SS s) =
   List.exists
-    (fn reducer => #name (Traverse.reducer_data reducer) = SOME name)
+    (fn reducer => #name (Traverse.dest_reducer reducer) = SOME name)
     (#dprocs s)
 
 (* The historical rewrite exclusion operation also removes decision
@@ -613,7 +613,7 @@ fun simpset_has_rule_target {pending : rule_exclusion list}
   end
 
 fun dphas_name_from nms reducer =
-  case #name (Traverse.reducer_data reducer) of
+  case #name (Traverse.dest_reducer reducer) of
       SOME name => Lib.mem name nms
     | NONE => false
 fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
@@ -858,8 +858,8 @@ fun update_looper (looper,[]) = [looper]
       then looper::rest
       else entry::update_looper(looper,rest)
 
-fun add_solver (solver : Traverse.ssolver,
-                solvers : Traverse.ssolver list) =
+fun add_solver (solver : TraverseExt.ssolver,
+                solvers : TraverseExt.ssolver list) =
   if List.exists (fn {name,...} => name = #name solver) solvers then solvers
   else solvers @ [solver]
 
@@ -2059,32 +2059,34 @@ fun rewrite_context_changes (SS old,SS current) =
      fun apply_entry
            ({ci = {name,...},configured={conval,...},...} : net_conv_info) =
        case traversal of
-           ChildFirst policy =>
+           TraverseExt.ChildFirst policy =>
              if name = "ETA_CONV (eta reduction)" andalso
                 is_comb tm andalso is_abs (rand tm) andalso
-                Traverse.keep_abstraction policy tm then
+                TraverseExt.keep_abstraction policy tm then
                raise UNCHANGED
              else conval ctxt tm
-         | ParentFirst => conval ctxt tm
+         | TraverseExt.ParentFirst => conval ctxt tm
    in
      tryfind apply_entry (lookup tm net)
    end
-   in CONFIG_REDUCER
+   in TraverseExt.CONFIG_REDUCER
         {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
          initial=initial}
    end;
 
  fun configured_traversedata_for_ss_prepared traversal
        (ss as (SS ssdata)) (prepared : prepared_rewrites)
-       : Traverse.traverse_data =
+       : TraverseExt.traverse_data =
    let
+     (* TASK_16 removes this mixed projection. Stored dprocs stay ordinary;
+        lifting is explicit, one-way, and only on the extended route. *)
      val dprocs =
        if null prepared then #dprocs ssdata
        else
          map (Traverse.addctxt (source_thms prepared)) (#dprocs ssdata)
    in
       {rewriters=[configured_rewriter_for_ss_prepared traversal ss prepared],
-       dprocs=dprocs,
+       dprocs=map TraverseExt.lift dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
        limit = #limit ssdata}
@@ -2099,7 +2101,7 @@ fun rewrite_context_changes (SS old,SS current) =
     travrules= #travrules data, limit= #limit data};
 
  (* Settings used only by the explicit configured projection. *)
- fun traverseconfig_for_ss (SS ssdata) : Traverse.traverse_config =
+ fun traverseconfig_for_ss (SS ssdata) : TraverseExt.traverse_config =
    let
      val strategy = #strategy ssdata
    in
@@ -2110,30 +2112,25 @@ fun rewrite_context_changes (SS old,SS current) =
    end;
 
  fun xtraversedata_for_ss_prepared traversal ss prepared
-       : Traverse.xtraverse_data =
+       : TraverseExt.xtraverse_data =
    (configured_traversedata_for_ss_prepared traversal ss prepared,
     traverseconfig_for_ss ss);
 
  fun traversedata_for_ss ss = default_traversedata_for_ss ss;
- fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ParentFirst ss [];
+ fun xtraversedata_for_ss ss =
+   xtraversedata_for_ss_prepared TraverseExt.ParentFirst ss [];
 
  (* Eligibility is pure and precedes preparation or collector calls.
-    Unlike public extraction, this optional accessor selects native dispatch. *)
+    All stored dprocs are ordinary; only conversion settings select the
+    temporary extended route. TASK_16 removes this mixed dispatch. *)
  fun legacy_traversedata_for_ss (ss as SS data) =
-   let
-     fun ordinary (REDUCER _) = true | ordinary _ = false
-   in
-     case #strategy data of
-         {subgoaler=NONE,unsafe_solvers=[],cond_depth=NONE,term_ord=NONE,
-          ...} =>
-           if List.all ordinary (#dprocs data) then
-             SOME (default_traversedata_for_ss ss)
-           else NONE
-       | _ => NONE
-   end;
+   case #strategy data of
+       {subgoaler=NONE,unsafe_solvers=[],cond_depth=NONE,term_ord=NONE,
+        ...} => SOME (default_traversedata_for_ss ss)
+     | _ => NONE;
 
  fun SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context =
-   Traverse.TRAVERSE_WITH_CONTEXT traversal xdata
+   TraverseExt.TRAVERSE_WITH_CONTEXT traversal xdata
      {reducer_context=reducer_context,solver_context=solver_context};
 
  (* Only settings consumed by conversions opt into the extended engine.
@@ -2141,14 +2138,7 @@ fun rewrite_context_changes (SS old,SS current) =
  fun SIMP_QCONV ss =
    case legacy_traversedata_for_ss ss of
        SOME data => Traverse.TRAVERSE data
-     | NONE =>
-         let val (data,config) = xtraversedata_for_ss ss
-         in
-           case config of
-               {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
-                 Traverse.TRAVERSE data
-             | _ => Traverse.XTRAVERSE (data,config)
-         end;
+     | NONE => TraverseExt.XTRAVERSE (xtraversedata_for_ss ss);
 
 val Cong   = markerLib.Cong
 val Split  = simpMarkerLib.Split
@@ -2338,12 +2328,13 @@ fun SIMP_CONV_CHILD_FIRST policy ss l tm =
   in
     TRY_CONV
       (SIMP_QCONV_WITH_XDATA
-         (ChildFirst policy)
-         (xtraversedata_for_ss_prepared (ChildFirst policy) ss' []) l' []) tm
+         (TraverseExt.ChildFirst policy)
+         (xtraversedata_for_ss_prepared
+            (TraverseExt.ChildFirst policy) ss' []) l' []) tm
   end;
 
 fun prepare_child_first_with_observer observer
-      (policy : Traverse.child_first_policy) (ss as SS data) =
+      (policy : TraverseExt.child_first_policy) (ss as SS data) =
   let
     val callback_failure = ref (NONE : exn option)
     fun protected callback argument =
@@ -2355,7 +2346,8 @@ fun prepare_child_first_with_observer observer
       {charge=protected (#charge policy),
        keep_abstraction= #keep_abstraction policy}
     val observer = Option.map protected observer
-    val xdata = xtraversedata_for_ss_prepared (ChildFirst policy) ss []
+    val xdata =
+      xtraversedata_for_ss_prepared (TraverseExt.ChildFirst policy) ss []
     val bounds = Ho_Net.fold'
       (fn ({configured={bound,...},...} : net_conv_info) => fn found =>
         case bound of NONE => found | SOME allowance => allowance :: found)
@@ -2385,9 +2377,10 @@ fun prepare_child_first_with_observer observer
     val traversal =
       case observer of
           NONE => (fn premises =>
-            SIMP_QCONV_WITH_XDATA (ChildFirst policy) xdata premises [])
+            SIMP_QCONV_WITH_XDATA
+              (TraverseExt.ChildFirst policy) xdata premises [])
         | SOME visit => (fn premises =>
-            Traverse.CHILD_FIRST_WITH_OBSERVER visit policy xdata
+            TraverseExt.CHILD_FIRST_WITH_OBSERVER visit policy xdata
               {reducer_context=premises, solver_context=[]})
     fun child premises = QCONV (TRY_CONV (traversal premises))
     fun observed conversion tm =
@@ -2412,14 +2405,14 @@ fun prepare_child_first_with_observer observer
     fun arguments_reducible tm =
       if is_comb tm then
         (is_abs (rand tm) andalso
-         not (Traverse.keep_abstraction policy tm)) orelse
+         not (TraverseExt.keep_abstraction policy tm)) orelse
         reducible (rand tm) orelse arguments_reducible (rator tm)
       else if is_abs tm then reducible (#2 (dest_abs tm))
       else false
   in
     {normalize = fn premises => scoped (observed (child premises)),
      arguments = fn premises => scoped (observed
-       (Traverse.NORMALIZE_ARGUMENTS policy (child premises))),
+       (TraverseExt.NORMALIZE_ARGUMENTS policy (child premises))),
      may_reduce_arguments = fn tm => opaque orelse arguments_reducible tm}
   end;
 
@@ -2481,7 +2474,7 @@ fun final_solver_tac traversal xdata mode ss
     val s = strategy_of ss
     val solvers =
       if #safe mode then #safe_solvers s else #unsafe_solvers s
-    fun solve_with prover_ctxt ({solve,...} : Traverse.ssolver) (asl,w) =
+    fun solve_with prover_ctxt ({solve,...} : TraverseExt.ssolver) (asl,w) =
       let
         val th = solve prover_ctxt w
         val _ = aconv (concl th) w orelse
@@ -2563,11 +2556,14 @@ fun gen_simp_tac_with_xdata traversal
     end
 
 fun GEN_SIMP_TAC mode =
-  gen_simp_tac_with_xdata ParentFirst xtraversedata_for_ss [] mode
+  gen_simp_tac_with_xdata
+    TraverseExt.ParentFirst xtraversedata_for_ss [] mode
 
 fun GEN_SIMP_TAC_CHILD_FIRST policy mode =
-  gen_simp_tac_with_xdata (ChildFirst policy)
-    (fn ss => xtraversedata_for_ss_prepared (ChildFirst policy) ss []) [] mode
+  gen_simp_tac_with_xdata (TraverseExt.ChildFirst policy)
+    (fn ss =>
+      xtraversedata_for_ss_prepared (TraverseExt.ChildFirst policy) ss [])
+    [] mode
 
 (* Old tactic entry points retain develop's marker processing and pass
    schedule unless the invocation opts into a traversal strategy. *)
@@ -2922,7 +2918,7 @@ fun gen_global_simp_tac_with_bound traversal bound mode
                    val (invocation_ss,reducer_context) =
                      process_asm_tags ss context
                    val root_rewrite =
-                     Traverse.ROOT_REWRITE_WITH_CONTEXT
+                     TraverseExt.ROOT_REWRITE_WITH_CONTEXT
                        (traversal_state invocation_ss)
                  in
                    SOME (root_rewrite
@@ -3045,13 +3041,13 @@ fun gen_global_simp_tac_with traversal =
   gen_global_simp_tac_with_bound traversal NONE
 
 fun GEN_GLOBAL_SIMP_TAC mode =
-  gen_global_simp_tac_with ParentFirst mode
+  gen_global_simp_tac_with TraverseExt.ParentFirst mode
 
 fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST policy mode =
-  gen_global_simp_tac_with (ChildFirst policy) mode
+  gen_global_simp_tac_with (TraverseExt.ChildFirst policy) mode
 
 fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy mode cfg ss bundle =
-  gen_global_simp_tac_with_bound (ChildFirst policy) (SOME bundle)
+  gen_global_simp_tac_with_bound (TraverseExt.ChildFirst policy) (SOME bundle)
     mode cfg ss
 
 fun global_simp_tac cfg ss0 thl gl =
@@ -3121,7 +3117,7 @@ fun type_ssfrag ty =
 val CONSISTENT   = Portable.CONSISTENT
 val INCONSISTENT = Portable.INCONSISTENT;
 
-val reducer_data = Traverse.reducer_data
+val reducer_data = Traverse.dest_reducer
 
 fun merge_names list =
   itlist (fn (SOME x) =>

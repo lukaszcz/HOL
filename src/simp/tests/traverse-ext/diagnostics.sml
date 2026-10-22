@@ -25,8 +25,9 @@ val new_data : TraverseExt.traverse_data =
 val builders =
   [("ordinary-default",Traverse.TRAVERSE old_data,false),
    ("extended-default",TraverseExt.TRAVERSE new_data,false),
-   ("mixed-refresh",Traverse.XTRAVERSE
-      (old_data,Traverse.default_config),true),
+   (* TASK_11 removes the old mixed-refresh route: restored Traverse has
+      no configured engine. The remaining routes keep all result/count
+      assertions below; configured refresh belongs only to TraverseExt. *)
    ("extended-refresh",TraverseExt.XTRAVERSE
       (new_data,TraverseExt.default_config),true)]
 fun require ok = if ok then () else raise Fail "diagnostic result/count"

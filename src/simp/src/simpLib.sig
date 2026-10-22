@@ -118,8 +118,9 @@ sig
   val conv_ss        : convdata -> ssfrag
   val relsimp_ss     : relsimpdata -> ssfrag
   val looper_ss      : string * (simpset -> tactic) -> ssfrag
-  val solver_ss      : Traverse.ssolver -> ssfrag
-  val safe_solver_ss : Traverse.ssolver -> ssfrag
+  (* Temporary mixed strategy API; removed from simpLib in TASK_16. *)
+  val solver_ss      : TraverseExt.ssolver -> ssfrag
+  val safe_solver_ss : TraverseExt.ssolver -> ssfrag
   val std_conv_ss    : stdconvdata -> ssfrag
   val merge_ss       : ssfrag list -> ssfrag
   val name_ss        : string -> ssfrag -> ssfrag
@@ -235,15 +236,15 @@ sig
   val add_split : thm -> simpset -> simpset
   val del_split : string -> simpset -> simpset
   val split_ss : ssfrag
-  val add_unsafe_solver : Traverse.ssolver -> simpset -> simpset
-  val add_safe_solver : Traverse.ssolver -> simpset -> simpset
-  val set_unsafe_solvers : Traverse.ssolver list -> simpset -> simpset
-  val set_safe_solvers : Traverse.ssolver list -> simpset -> simpset
+  val add_unsafe_solver : TraverseExt.ssolver -> simpset -> simpset
+  val add_safe_solver : TraverseExt.ssolver -> simpset -> simpset
+  val set_unsafe_solvers : TraverseExt.ssolver list -> simpset -> simpset
+  val set_safe_solvers : TraverseExt.ssolver list -> simpset -> simpset
   val remove_solver : string -> simpset -> simpset
-  val set_subgoaler : Traverse.subgoaler -> simpset -> simpset
+  val set_subgoaler : TraverseExt.subgoaler -> simpset -> simpset
   val set_cond_depth : int -> simpset -> simpset
   val set_term_ord : (term * term -> order) -> simpset -> simpset
-  val mk_tactic_solver : string * tactic -> Traverse.ssolver
+  val mk_tactic_solver : string * tactic -> TraverseExt.ssolver
   val clear_rules : simpset -> simpset
 
   val add_weakener : weakener_data -> simpset -> simpset
@@ -257,23 +258,25 @@ sig
      TRAVERSE initializes private contexts at conversion construction. *)
   val traversedata_for_ss: simpset -> Traverse.traverse_data
 
-  (* Additive cooperation API for original-ABI consumers such as congLib.
-     NONE means conversion settings or nonordinary decision procedures
-     require the configured projection. Eligibility runs no callbacks;
-     SOME is the same default projection as traversedata_for_ss, sharing
-     the existing index, matchers and actual bound controls. *)
+  (* Temporary dispatch eligibility for mixed strategy settings (TASK_16).
+     NONE means conversion settings require the configured projection.
+     All ordinary decision procedures remain baseline Traverse reducers.
+     Eligibility runs no callbacks; SOME shares the default projection's
+     existing index, matchers and actual bound controls. *)
   val legacy_traversedata_for_ss:
     simpset -> Traverse.traverse_data option
 
   (* Explicit configured extraction: xtraversedata_for_ss pairs a native
      CONFIG_REDUCER with the simpset's traversal-strategy settings for the
-     extended Traverse entry points. XTRAVERSE refreshes private contexts
+     TraverseExt entry points. XTRAVERSE refreshes private contexts
      per application, even with default settings. Extraction itself runs
      no collectors and shares installed bounded controls with the legacy
      projection. For configured reducer data alone, use
      #1 (xtraversedata_for_ss ss), not traversedata_for_ss ss. *)
-  val traverseconfig_for_ss: simpset -> Traverse.traverse_config
-  val xtraversedata_for_ss: simpset -> Traverse.xtraverse_data
+  (* TASK_16 removes this temporary extended projection. Its dprocs are
+     explicitly lifted; no extended reducer enters the legacy projection. *)
+  val traverseconfig_for_ss: simpset -> TraverseExt.traverse_config
+  val xtraversedata_for_ss: simpset -> TraverseExt.xtraverse_data
 
 
    (* ---------------------------------------------------------------------
@@ -296,10 +299,10 @@ sig
       binders and applications selected by keep_abstraction. The standard
       ETA fragment also respects this selection after descent. Congruence
       rules control descent; charge runs before contraction, descent and
-      reducer work. Traverse.charge_only retains the contraction policy.
+      reducer work. TraverseExt.charge_only retains the contraction policy.
       The ordinary SIMP_CONV strategy is unchanged. *)
    val SIMP_CONV_CHILD_FIRST :
-     Traverse.child_first_policy -> simpset -> thm list -> conv
+     TraverseExt.child_first_policy -> simpset -> thm list -> conv
 
    (* Prepare one ambient child-first traversal for rewrite-view
       derivation. Arguments preserves the root. Each conversion uses
@@ -309,7 +312,7 @@ sig
       The indexed
       pre-test is conservative for opaque reducers and congruences;
       conditional premises require attempting normalization regardless. *)
-   val prepare_child_first : Traverse.child_first_policy -> simpset ->
+   val prepare_child_first : TraverseExt.child_first_policy -> simpset ->
      {normalize : thm list -> conv,
       arguments : thm list -> conv,
       may_reduce_arguments : term -> bool}
@@ -317,7 +320,7 @@ sig
       child/condition offered to traversal. Failed conditional attempts
       and unchanged terms remain dependencies. *)
    val prepare_child_first_observed :
-     (term -> unit) -> Traverse.child_first_policy -> simpset ->
+     (term -> unit) -> TraverseExt.child_first_policy -> simpset ->
      {normalize : thm list -> conv,
       arguments : thm list -> conv,
       may_reduce_arguments : term -> bool}
@@ -349,7 +352,8 @@ sig
    type simp_mode = {safe : bool}
    val GEN_SIMP_TAC  : simp_mode -> simpset -> thm list -> tactic
    val GEN_SIMP_TAC_CHILD_FIRST :
-     Traverse.child_first_policy -> simp_mode -> simpset -> thm list -> tactic
+     TraverseExt.child_first_policy -> simp_mode -> simpset ->
+     thm list -> tactic
    val SIMP_TAC      : simpset -> thm list -> tactic
    val simp_tac      : simpset -> thm list -> tactic
    val ASM_SIMP_TAC  : simpset -> thm list -> tactic
@@ -381,13 +385,13 @@ sig
       traversal for each simplification pass. Root-rebuild flags retain
       their explicit wrapper behavior. *)
    val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST :
-     Traverse.child_first_policy -> simp_mode -> xsimptac_config ->
+     TraverseExt.child_first_policy -> simp_mode -> xsimptac_config ->
      simpset -> thm list -> tactic
    (* The bundle is already installed in the given invocation simpset.
       Retain its untagged solver context and own rewrite controls across
       local marker replay; never reinstall or recompile it as arguments. *)
    val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND :
-     Traverse.child_first_policy -> simp_mode -> xsimptac_config ->
+     TraverseExt.child_first_policy -> simp_mode -> xsimptac_config ->
      simpset -> rewrite_bundle -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
      (* do allasms until quiescence, then simp in the goal as well *)

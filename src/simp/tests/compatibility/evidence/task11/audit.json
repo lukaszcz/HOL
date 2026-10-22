@@ -1,0 +1,79 @@
+{
+  "restored": {
+    "src/simp/src/Traverse.sig": {
+      "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+      "bytes": 5286
+    },
+    "src/simp/src/Traverse.sml": {
+      "sha256": "06138c3ad708bd5993718ff0e7d6d7e9a37d4d5ed9c4e72955e6795aeb201d31",
+      "bytes": 11575
+    },
+    "src/simp/src/congLib.sig": {
+      "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+      "bytes": 5909
+    },
+    "src/simp/src/congLib.sml": {
+      "sha256": "93ac1108d48c01830f076071b60e221bc2af8eac5e2a19dcf439079be7290582",
+      "bytes": 10354
+    }
+  },
+  "original_clients": "pass",
+  "paired_contracts": "exact frozen observations",
+  "native_checks": 642,
+  "experiments": {
+    "broad-control": {
+      "receipts": 20,
+      "workloads": [
+        "rewrites_1000",
+        "merge_frags_1000",
+        "compile_1000",
+        "delete_missing_1000",
+        "project_1000",
+        "construct_traverse_1000",
+        "empty_add_1000",
+        "simp_installed_1000",
+        "raw_reuse_1000",
+        "projection_apply_1000",
+        "compile_apply_1000"
+      ]
+    },
+    "broad-candidate": {
+      "receipts": 20,
+      "workloads": [
+        "rewrites_1000",
+        "merge_frags_1000",
+        "compile_1000",
+        "delete_missing_1000",
+        "project_1000",
+        "construct_traverse_1000",
+        "empty_add_1000",
+        "simp_installed_1000",
+        "raw_reuse_1000",
+        "projection_apply_1000",
+        "compile_apply_1000"
+      ]
+    },
+    "traversal-control": {
+      "receipts": 20,
+      "workloads": [
+        "construct_empty",
+        "construct_context",
+        "reuse_hit",
+        "reuse_miss",
+        "complete_context",
+        "deep_factory_64"
+      ]
+    },
+    "traversal-candidate": {
+      "receipts": 20,
+      "workloads": [
+        "construct_empty",
+        "construct_context",
+        "reuse_hit",
+        "reuse_miss",
+        "complete_context",
+        "deep_factory_64"
+      ]
+    }
+  }
+}
