@@ -200,8 +200,9 @@ See the [migration audit](../compatibility/migration/TASK21.md) and
 
 ## Child-first derivation and solver lifetimes (TASK_22)
 
-`derivation.sml` adds **846 checks**. The pre-existing draft was completed,
-not substituted for native assertions. `lifetimes.sml` adds **60 checks**.
+`derivation.sml` adds **1,116 checks**, including 270 review-regression
+checks for pretest recovery and direct late-ETA aborts. The pre-existing
+assertions are retained. `lifetimes.sml` adds **60 checks**.
 Both launchers run under the normal `check`/selftest-level-1 targets.
 
 | New coverage | Original provenance / added intersection |
@@ -211,6 +212,8 @@ Both launchers run under the normal `check`/selftest-level-1 targets.
 | Failed candidates | Unchanged child and failed condition observations, unchanged charges and proofs; rejected conditional candidate leaves a shared sibling allowance inside the private scope |
 | Opaque clients | Lifted reducer, unsafe solver and congruence collector errors after consumption; ordinary HOL_ERR rejection remains rejection, foreign exceptions/interrupts abort, and exhausted caller controls survive |
 | Preparation/reuse | Inert prepare/save/pretest, per-application versus per-child context collection, exact maker/collector counts, no installed-rule recompilation or allowance refresh |
+| Pretest abort lifetime | Nonopaque plain/observed pretests recover immediately and after normalization, for HOL_ERR/foreign/Interrupt; no charge, observation or quota reset; caught nested pretest failures preserve partially spent outer quotas |
+| Direct native ETA abort | Descent-created ETA candidates propagate exact HOL_ERR/foreign/Interrupt, no repeated callback after abort; saved direct conversions recover without refilling spent caller allowances |
 | Root entries | Native root contracts plus exact priority/fallback and collector counts, no root fixpoint or descent, retained solver-only context separation |
 | Solver closures | Native generic context/stack contracts plus same-data nested use, retained recurse closures, old-context generation identity after later application/failure, exact opaque callback traces |
 | Eta/congruence | Native head/eta policy plus saved live predicate and selected descent/unchanged congruence blocking; direct, observed and argument-only policy aborts retain identity and recover on reuse |

@@ -1,0 +1,11 @@
+Holmake: Scanning $(HOLDIR)/src/simp/src
+Holmake: Scanned 2 directories
+HOLMOSMLC -o selftest.exe selftest.uo
+./selftest.exe
+pretest propagates original policy error ...                                 OK
+pretest recovers after callback stops throwing ...                           FAILED
+successful normalization leaves reusable pretest ...                         FAILED
+[870178]:   review_eta_input via create eta argument simplifies to: λu. review_h u
+direct child-first visits late ETA policy ...                                OK
+direct child-first propagates late ETA HOL_ERR ...                           FAILED
+REVIEW_FAILURES=3

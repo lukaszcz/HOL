@@ -302,6 +302,8 @@ sig
       ETA fragment also respects this selection after descent. Congruence
       rules control descent; charge runs before contraction, descent and
       reducer work. TraverseExt.charge_only retains the contraction policy.
+      Policy exceptions, including late native ETA checks, propagate with
+      their original identity. Saved conversions recover after an abort.
       The ordinary SIMP_CONV strategy is unchanged. *)
    val SIMP_CONV_CHILD_FIRST :
      TraverseExt.child_first_policy -> simpset -> thm list -> conv
@@ -315,9 +317,10 @@ sig
       Observer and policy exceptions retain their original identity.
       Derivation cannot spend an invocation's allowance or depend on earlier
       consumption. Preparation/saving conversions does not collect premises
-      or recompile installed rules. The indexed pre-test is conservative for
-      opaque reducers and congruences;
-      conditional premises require attempting normalization regardless. *)
+      or recompile installed rules. Each indexed pre-test also has private
+      callback-abort state, without charging, observing or resetting quotas.
+      It is conservative for opaque reducers and congruences; conditional
+      premises require attempting normalization regardless. *)
    val prepare_child_first : TraverseExt.child_first_policy -> simpset ->
      {normalize : thm list -> conv,
       arguments : thm list -> conv,

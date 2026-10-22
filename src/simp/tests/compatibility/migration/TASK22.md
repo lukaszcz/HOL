@@ -22,9 +22,13 @@ projection extraction replays history or recompiles installed rules.
 Policy predicates are abort callbacks, not rewrite candidates. A failing
 `keep_abstraction` now receives the same protection as charge/observation:
 HOL_ERR cannot disappear into eta fallback or TRY_CONV. Private preparation
-retains failure state across wrappers, including its argument-only adapter;
-the traversal and standalone argument normalizer keep application-local
-failure state. Arbitrary reducer/solver HOL_ERR remains ordinary candidate
+retains failure state across wrappers, including its argument-only adapter.
+The direct conversion shares one guard between traversal and native ETA, so
+late descent-created candidates cannot swallow policy HOL_ERR. The indexed
+pretest scopes callback state separately, without resetting counters, charging
+or observing; caught nested pretest errors cannot poison an outer derivation.
+All scopes restore enclosing failure state on every exit. The traversal and
+standalone argument normalizer also keep application-local failure state. Arbitrary reducer/solver HOL_ERR remains ordinary candidate
 rejection; foreign payloads and Interrupt retain their original propagation.
 
 Ordinary `Traverse`, `simpLib`, rewrite/congruence primitives, controls,

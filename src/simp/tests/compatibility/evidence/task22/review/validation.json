@@ -1,0 +1,26 @@
+{
+  "reviewed_head": "a6c21c9d745cc88b55e67200c9bc1dc4286f42fa",
+  "result": "incomplete",
+  "command": "bin/Holmake --holstate=\"$HOLDIR/bin/hol.state0\" --no-project --no-cache -j1 check",
+  "execution": "Temporary directory containing these Holmakefile/selftest.sml inputs; same-checkout bwrap path alias as TASK_22_HANDOFF.md; built and executed selftest.exe.",
+  "exit": 1,
+  "semantic_failures": 3,
+  "findings": [
+    {
+      "source": "src/simp/src/simpExtLib.sml:2395-2403,2459-2469",
+      "issue": "Non-opaque may_reduce_arguments invokes protected policy outside scoped. A callback error sets persistent callback_failure, poisoning subsequent pretests even after callback recovery and successful normalize."
+    },
+    {
+      "source": "src/simp/src/simpExtLib.sml:2127-2140,2383-2389",
+      "issue": "SIMP_CONV_CHILD_FIRST passes unprotected policy to configured native ETA entry. tryfind swallows late HOL_ERR; TraverseExt protects a different wrapper, so direct conversion returns instead of propagating original exception."
+    }
+  ],
+  "sha256": {
+    "src/simp/src/simpExtLib.sml": "7bad8b6579b6e5fbfe68b1e2653958f8c0a79189d561cb84c42e0f95dcacf750",
+    "src/simp/src/TraverseExt.sml": "16e40075874091e970a3504bea3bb9ee4222aebd0f2d4e11916fed890b0be98d",
+    "src/simp/tests/compatibility/evidence/task22/review/selftest.sml": "251601cd1c9352ddf7baeb21575a53d745d17a1e3f155c1db17bbb4c96a4b950",
+    "src/simp/tests/compatibility/evidence/task22/review/Holmakefile": "d10ee83a846d4fd3f6c13b312a66cdc4a024f799f1d99bfccfd978fbd2ae3ad9",
+    "src/simp/tests/compatibility/evidence/task22/review/result.log": "92e2532c34f95bba79b4c5f255c9494369481fc433f9f817eaeccca51fd63774"
+  },
+  "cleanup": "Temporary build products removed after verification. No production edits."
+}

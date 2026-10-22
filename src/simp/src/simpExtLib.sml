@@ -2380,13 +2380,46 @@ fun SIMP_CONV ss l tm =
   in TRY_CONV (SIMP_QCONV ss' l') tm
   end;
 
-fun SIMP_CONV_CHILD_FIRST policy ss l tm =
-  let val (ss', l') = process_tags ss l
+(* Policy HOL_ERR is an abort, not a failed rewrite/eta candidate. The
+   traversal and native ETA entry must share this guard. Scope it per call,
+   restoring an enclosing failure even when a callback reenters a saved
+   preparation. Pretests need the same lifetime, but no quota changes. *)
+fun protect_child_first_callback failure callback argument =
+  case !failure of
+      SOME e => raise e
+    | NONE => callback argument
+        handle e => (failure := SOME e; raise e)
+
+fun with_child_first_callbacks failure operation argument =
+  let
+    val previous = !failure
+    fun run argument =
+      let
+        val _ = failure := NONE
+        val result = operation argument
+      in case !failure of NONE => result | SOME e => raise e end
+      handle e =>
+        (case !failure of NONE => raise e | SOME original => raise original)
   in
-    TRY_CONV
-      (SIMP_QCONV_WITH_XDATA
-         (ChildFirst policy)
-         (xtraversedata_for_ss_prepared (ChildFirst policy) ss' []) l' []) tm
+    Portable.finally (fn () => failure := previous) run argument
+  end
+
+fun SIMP_CONV_CHILD_FIRST
+      (policy : TraverseExt.child_first_policy) ss l tm =
+  let
+    val (ss', l') = process_tags ss l
+    val failure = ref (NONE : exn option)
+    val policy =
+      {charge=protect_child_first_callback failure (#charge policy),
+       keep_abstraction=
+         protect_child_first_callback failure (#keep_abstraction policy)}
+  in
+    with_child_first_callbacks failure
+      (TRY_CONV
+        (SIMP_QCONV_WITH_XDATA
+           (ChildFirst policy)
+           (xtraversedata_for_ss_prepared (ChildFirst policy) ss' []) l' []))
+      tm
   end;
 
 fun prepare_child_first_with_observer observer
@@ -2394,10 +2427,7 @@ fun prepare_child_first_with_observer observer
   let
     val callback_failure = ref (NONE : exn option)
     fun protected callback argument =
-      case !callback_failure of
-          SOME e => raise e
-        | NONE => callback argument
-            handle e => (callback_failure := SOME e; raise e)
+      protect_child_first_callback callback_failure callback argument
     val policy =
       {charge=protected (#charge policy),
        keep_abstraction=protected (#keep_abstraction policy)}
@@ -2410,22 +2440,10 @@ fun prepare_child_first_with_observer observer
     fun scoped conversion tm =
       let
         val saved = map (fn (r, _) => (r, !r)) bounds
-        val previous_failure = !callback_failure
-        fun restore () =
-          (List.app (fn (r, n) => r := n) saved;
-           callback_failure := previous_failure)
+        fun restore () = List.app (fn (r, n) => r := n) saved
         fun run argument =
-          let
-            val _ = callback_failure := NONE
-            val _ = List.app (fn (r, declared) => r := declared) bounds
-            val theorem = conversion argument
-          in
-            case !callback_failure of
-                NONE => theorem | SOME e => raise e
-          end
-          handle e =>
-            (case !callback_failure of
-                 NONE => raise e | SOME original => raise original)
+          (List.app (fn (r, declared) => r := declared) bounds;
+           with_child_first_callbacks callback_failure conversion argument)
       in
         Portable.finally restore run tm
       end
@@ -2467,7 +2485,8 @@ fun prepare_child_first_with_observer observer
     {normalize = fn premises => scoped (observed (child premises)),
      arguments = fn premises => scoped (observed
        (TraverseExt.NORMALIZE_ARGUMENTS policy (child premises))),
-     may_reduce_arguments = fn tm => opaque orelse arguments_reducible tm}
+     may_reduce_arguments = with_child_first_callbacks callback_failure
+       (fn tm => opaque orelse arguments_reducible tm)}
   end;
 
 fun prepare_child_first policy =

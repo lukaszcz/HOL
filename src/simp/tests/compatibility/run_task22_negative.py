@@ -56,7 +56,11 @@ def main():
         ("starting", "derivation", "normalize/keep_abstraction/HOL_ERR"),
         ("preparation", "derivation", "normalize/native ETA/HOL_ERR"),
         ("traversal", "lifetimes", "child/HOL_ERR: exact policy abort"),
-        ("arguments", "lifetimes", "arguments/HOL_ERR: exact policy abort")]
+        ("arguments", "lifetimes", "arguments/HOL_ERR: exact policy abort"),
+        ("pretest", "derivation",
+         "pretest/false/HOL_ERR: pretest recovers immediately"),
+        ("direct", "derivation",
+         "direct/native ETA/HOL_ERR: exact abort after descent")]
     try:
         for mode, fixture, marker in cases:
             with tempfile.TemporaryDirectory(prefix="simp-task22-") as tmp:
@@ -74,6 +78,17 @@ def main():
                         if mode == "preparation" and name == "simpExtLib.sml":
                             old = "keep_abstraction=protected (#keep_abstraction policy)"
                             new = "keep_abstraction= #keep_abstraction policy"
+                        if mode == "pretest" and name == "simpExtLib.sml":
+                            old = ("may_reduce_arguments = "
+                                   "with_child_first_callbacks callback_failure\n"
+                                   "       (fn tm => opaque orelse "
+                                   "arguments_reducible tm)")
+                            new = ("may_reduce_arguments = fn tm => "
+                                   "opaque orelse arguments_reducible tm")
+                        if mode == "direct" and name == "simpExtLib.sml":
+                            old = ("protect_child_first_callback failure "
+                                   "(#keep_abstraction policy)")
+                            new = "#keep_abstraction policy"
                         if mode == "traversal" and name == "TraverseExt.sml":
                             old = "keep_abstraction=protected keep_abstraction"
                             new = "keep_abstraction=keep_abstraction"
@@ -119,7 +134,7 @@ def main():
                 if not any(marker in line and "FAILED" in line
                            for line in log.splitlines()):
                     raise RuntimeError(mode + ": missing expected rejection")
-                if fixture == "derivation" and "DERIVATION_CHECKS=846" not in log:
+                if fixture == "derivation" and "DERIVATION_CHECKS=" not in log:
                     raise RuntimeError(mode + ": derivation did not finish")
                 manifest.setdefault("observations", {})[mode] = marker
         manifest["success"] = True

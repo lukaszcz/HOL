@@ -258,6 +258,118 @@ val _ = List.app (fn (entry,select) =>
   in result (label ^ ": caller still exhausted")
        caller input (REFL input) end) errors) entries
 
+(* Direct child-first conversion shares its policy guard with native ETA,
+   including a candidate CREATED by descent. Unlike derivation this spends
+   actual caller quotas: an abort must not secretly refill them. *)
+val _ = List.app (fn spent =>
+  List.app (fn (error_name,error,predicate) => let
+    val (ss,caller,counter,_,_) = fixture "native" spent
+    val eta_rule = ASSUME
+      ``(derivation_direct_eta:bool -> bool) = (\u:bool. derivation_h u)``
+    val late = ``derivation_hold (derivation_direct_eta:bool -> bool):bool``
+    val eta = S.SSFRAG
+      {name=NONE,rewrs=[],ac=[],congs=[],dprocs=[],filter=NONE,
+       convs=[{name="ETA_CONV (eta reduction)",trace=0,
+               key=SOME ([],hold),conv=K (K (RAND_CONV ETA_CONV))},
+              {name="create eta argument",trace=0,
+               key=SOME ([],lhs (concl eta_rule)),
+               conv=K (K (REWR_CONV eta_rule))}]}
+    val ss = S.++ (ss,eta)
+    val enabled = ref true
+    val calls = ref 0
+    fun keep tm =
+      if aconv tm hold then
+        (calls := !calls + 1; if !enabled then raise error else false)
+      else false
+    val saved = S.SIMP_CONV_CHILD_FIRST
+      {charge=fn () => (),keep_abstraction=keep} ss []
+    val label = "direct/native ETA/" ^ error_name
+    val _ = check (label ^ ": saving is inert") (!calls = 0)
+    val _ = throws (label ^ ": exact abort after descent") predicate
+      (fn () => saved (pairterm input late))
+    val _ = check (label ^ ": one policy call, caller use stays spent")
+      (!calls = 1 andalso !counter = 1-spent)
+    val _ = enabled := false
+    val expected = TRANS (AP_TERM (rator late) eta_rule)
+                         (RAND_CONV ETA_CONV hold)
+    val _ = result (label ^ ": saved direct conversion recovers")
+      saved late expected
+    val _ = check (label ^ ": recovery does not refill caller")
+      (!counter = 1-spent)
+  in remaining label (spent+1) caller rule end) errors) [0,1]
+
+(* A nonopaque indexed pretest calls keep_abstraction without traversal.
+   Its abort state must be private too, but it must NEVER reset quotas,
+   charge work or observe terms. Exercise both recovery orders. *)
+val _ = List.app (fn observed => List.app (fn spent =>
+  List.app (fn (error_name,error,predicate) => let
+    val (ss,caller,counter,_,_) = fixture "native" spent
+    val calls = ref 0
+    val charges = ref 0
+    val visits = ref 0
+    val enabled = ref true
+    fun keep _ =
+      (calls := !calls + 1;
+       check "pretest sees actual caller allowance" (!counter = 2-spent);
+       if !enabled then raise error else false)
+    val policy = {charge=fn () => charges := !charges + 1,
+                  keep_abstraction=keep}
+    val prepared =
+      if observed then S.prepare_child_first_observed
+        (fn _ => visits := !visits + 1) policy ss
+      else S.prepare_child_first policy ss
+    val pretest = #may_reduce_arguments prepared
+    val label = "pretest/" ^ Bool.toString observed ^ "/" ^ error_name
+    val _ = check (label ^ ": preparing is inert")
+      (!calls = 0 andalso !charges = 0 andalso !visits = 0)
+    val _ = throws (label ^ ": exact policy abort") predicate
+      (fn () => pretest hold)
+    val _ = enabled := false
+    val _ = check (label ^ ": pretest recovers immediately")
+      (case Exn.capture pretest hold of Exn.Res b => b | _ => false)
+    val _ = check (label ^ ": callback retries, no traversal or quota work")
+      (!calls = 2 andalso !charges = 0 andalso !visits = 0 andalso
+       !counter = 2-spent)
+    val _ = enabled := true
+    val _ = throws (label ^ ": reused pretest can abort again") predicate
+      (fn () => pretest hold)
+    val _ = enabled := false
+    val _ = result (label ^ ": normalization after pretest abort")
+      (#normalize prepared []) ``T`` (REFL ``T``)
+    val _ = check (label ^ ": no latent failure after normalization")
+      (case Exn.capture pretest hold of Exn.Res b => b | _ => false)
+    val _ = check (label ^ ": all four pretests called policy") (!calls = 4)
+  in remaining label spent caller rule end) errors) [1,2]) [false,true]
+
+(* A pretest nested inside a derivation callback gets its own abort scope,
+   but keeps the partially consumed enclosing quota, not declared quotas.
+   Catching its exception must not poison the successful outer derivation. *)
+val _ = List.app (fn (entry,select) =>
+  List.app (fn (error_name,error,predicate) => let
+    val (ss,caller,counter,_,_) = fixture "native" 2
+    val pretest = ref (fn (_ : term) => false)
+    val nested = ref false
+    fun visit tm =
+      if aconv tm output andalso not (!nested) then
+        (nested := true;
+         throws ("nested pretest/" ^ error_name ^ ": original error")
+           predicate (fn () => (!pretest) hold);
+         check "nested pretest preserves partially spent outer quota"
+           (!counter = 1))
+      else ()
+    fun keep tm = if aconv tm hold then raise error else false
+    val prepared = S.prepare_child_first_observed visit
+      {charge=fn () => (),keep_abstraction=keep} ss
+    val _ = pretest := #may_reduce_arguments prepared
+    val saved = select prepared []
+    val _ = result (entry ^ ": outer recovers from caught pretest error")
+      saved pair_input pair_expected
+    val _ = check "nested pretest ran inside derivation" (!nested)
+    val _ = check "outer caller stays exhausted after nested pretest"
+      (!counter = 0)
+  in result "nested pretest did not refill caller" caller input (REFL input)
+  end) errors) entries
+
 (* Observing failed conditions and unchanged inputs adds dependencies, not
    work charges or rewrite consumption. Compare full proofs, not RHS only. *)
 val _ = List.app (fn (entry,select) => let
