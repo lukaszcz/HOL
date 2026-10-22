@@ -27904,6 +27904,8 @@ local
   open HolKernel boolTheory testutils SmtReplayGraph SmtReplaySource
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
+  structure A = SmtReplaySourceBinderAlignment
+  structure P = SmtReplayProof
 in
 fun replay_source_checked_success () =
 let
@@ -28066,6 +28068,176 @@ let
 
 
 in () end
+
+(* Exercise the selected nodewise alpha bridge in a complete compact proof.
+   The shared application spine is deliberately larger than a local binder;
+   only its bounded abstraction leaves receive direct ALPHA admission. *)
+fun replay_source_binder_alignment_success () =
+let
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun rejected action = (action ();false) handle Feedback.HOL_ERR _ => true
+  fun shared 0 term = term
+    | shared n term = let val child = shared (n-1) term in
+        boolSyntax.mk_conj (child,child) end
+  fun ensure message yes = if yes then () else die message
+  fun clean theorem =
+    let val (tags,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.all (fn tag => tag = "DISK_THM") tags andalso
+      null (Tag.axioms_of (Thm.tag theorem)) end
+  val cap = 10000
+  fun admission input output types : SmtReplayBinder.admission =
+    {metric = G.BinderInclusiveNodes,input_limit = input,
+     output_limit = output,check_type = types,
+     refuse = fn why => raise Fail why}
+  fun discover graph scope source parsed contract types =
+    A.discover graph scope {source = source,parsed = parsed,
+      admit_binder = contract,check_type = types}
+  fun bounded types _ = SOME
+    {source_variables = [],allow_bound = false,
+     admission = admission 32 64 types}
+  fun complete make =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val predicate = Term.mk_var
+        ("alignment_predicate",``:(bool -> bool) -> bool``)
+      fun formula name = shared 40 (Term.mk_comb
+        (predicate,Term.mk_abs (Term.mk_var (name,Type.bool),
+                               Term.mk_var (name,Type.bool))))
+      val goal = formula "alignment_x"
+      val assumption = formula "alignment_y"
+      val sources = make graph scope
+        {goal = goal,assumptions = [assumption,assumption]}
+      val original = #node (S.goal_source sources)
+      val source = hd (S.assumption_nodes sources)
+      val opened = G.record_opened_view graph scope cap original
+      val _ = ensure "fixture did not retain independent alpha binders"
+        (source <> original andalso not (ptr assumption goal) andalso
+         G.unfolded_nodes graph G.BinderInclusiveNodes cap (#node opened) =
+           SOME (cap+1))
+      val left = discover graph scope source (#node opened)
+        (bounded (fn _ => ())) (fn _ => ())
+      val right = discover graph scope original (#node opened)
+        (bounded (fn _ => ())) (fn _ => ())
+      val witnesses = A.branch_witnesses left @ A.branch_witnesses right
+      val _ = ensure "alpha comparison did not isolate local binder laws"
+        (length witnesses = 2 andalso List.all (fn (_,law) =>
+          null (Thm.hyp law) andalso clean law andalso
+          Option.isSome (SmtReplayImport.bounded_binder_size 64
+            (Thm.concl law))) witnesses)
+      val false_node = G.constant graph scope boolSyntax.F
+      val block = P.freeze graph {scope = scope,
+        sources = List.map #node (S.reconciliation_sources sources) @
+          List.map #1 witnesses,
+        roots = false_node :: A.roots left @ A.roots right,
+        template_limit = cap}
+      val equality = P.compose block
+        (fn [a,b] => Thm.TRANS a (Thm.SYM b)
+          | _ => raise Fail "alignment equality operands")
+        [A.assemble left block,A.assemble right block]
+      val positive = P.compose block
+        (fn [equality,fact] => Thm.EQ_MP equality fact
+          | _ => raise Fail "alignment assumption operands")
+        [equality,P.source block 1]
+      val edge = SmtReplayRules.boolean_rule graph block false_node
+        [(original,positive),(S.denied_goal_node sources,P.source block 0)]
+      fun supply (_,node) = Option.map #2
+        (List.find (fn (held,_) => held = node) witnesses)
+      val contradiction = P.realize_with_sources block false_node edge supply
+      val _ = S.check_contradiction sources contradiction
+      val theorem = S.close_contradiction sources contradiction
+      val _ = S.check_goal sources theorem
+      val canonical = G.representative graph source
+      val _ = ensure "alpha finalization changed Goal, Hyp or tags"
+        (ptr (Thm.concl theorem) goal andalso clean theorem andalso
+         length (Thm.hyp theorem) = 1 andalso
+         ptr (hd (Thm.hyp theorem)) canonical andalso
+         not (ptr canonical assumption) andalso
+         S.assumption_nodes sources = [source,source])
+      val _ = G.close_scope graph scope
+    in () end
+  val _ = tprint "Nodewise alpha sources close canonical denial and exact Goal"
+  val _ = complete (fn g => fn s => S.new g s cap)
+  val _ = complete (fn g => fn s => S.new_with_policy g s
+    SmtReplayResourcePolicy.Uncapped)
+  val _ = OK ()
+
+  val graph = G.new () val scope = G.root_scope graph
+  fun imported term = #node (G.import graph scope cap term)
+  fun admitted term = #node (G.admit_binder graph scope 32 term)
+  val identity = imported ``\x:bool. x``
+  val renamed = admitted ``\y:bool. y``
+  fun attempt source parsed contract = ignore
+    (discover graph scope source parsed contract (fn _ => ()))
+  val _ = tprint "Alpha alignment rejects leaf, type and declaration mismatch"
+  val _ = ensure "alignment used graph IDs as a rewrite proof"
+    (List.all rejected
+      [fn () => attempt (imported ``alignment_p:bool``)
+          (imported ``alignment_q:bool``) (bounded (fn _ => ())),
+       fn () => attempt (imported ``alignment_p:bool``)
+          (imported ``alignment_p:num``) (bounded (fn _ => ())),
+       fn () => attempt (G.constant graph scope boolSyntax.T)
+          (G.constant graph scope boolSyntax.F) (bounded (fn _ => ())),
+       fn () => attempt identity (admitted ``\y:bool. T``)
+          (bounded (fn _ => ()))])
+  val _ = OK ()
+
+  val _ = tprint "Independent opaque binders require explicit local admission"
+  val _ = ensure "unadmitted binder acquired alpha authority"
+    (rejected (fn () => attempt identity renamed (fn _ => NONE)) andalso
+     rejected (fn () => attempt identity (imported ``\z:bool. z``)
+       (bounded (fn _ => ()))))
+  val _ = OK ()
+
+  val _ = tprint "Whole binder equation is bounded before local Type effects"
+  val calls = ref 0
+  fun limited input output _ = SOME
+    {source_variables = [],allow_bound = false,
+     admission = {metric = G.BinderInclusiveNodes,input_limit = input,
+       output_limit = output,check_type = fn _ => calls := !calls+1,
+       refuse = fn _ => ()}}
+  val _ = ensure "local admission ran Type callbacks before size refusal"
+    (rejected (fn () => attempt identity renamed (limited 2 64)) andalso
+     rejected (fn () => attempt identity renamed (limited 32 8)) andalso
+     !calls = 0)
+  val _ = attempt identity renamed (limited 32 64)
+  val _ = ensure "successful binder alignment skipped local Type policy"
+    (!calls > 0)
+  exception Primary
+  val primary = (attempt identity renamed (bounded (fn _ => raise Primary));
+    false) handle Primary => true
+  val _ = ensure "local Type callback lost its original exception" primary
+  val _ = OK ()
+
+  val _ = tprint "Binder alpha preserves typed free-variable ownership"
+  val free = imported ``\x:bool. (alignment_free:bool)``
+  val rich = admitted ``\y:bool. (alignment_free:bool)``
+  val variable = imported ``alignment_free:bool``
+  fun owned variables _ = SOME
+    {source_variables = variables,allow_bound = false,
+     admission = admission 32 64 (fn _ => ())}
+  val _ = ensure "binder omitted or guessed its canonical free-variable IDs"
+    (rejected (fn () => attempt free rich (owned [])) andalso
+     rejected (fn () => attempt free rich (owned [variable,variable])) andalso
+     rejected (fn () => attempt free rich (owned
+       [G.variable graph scope G.SolverFlexible
+         (Term.mk_var ("alignment_free",Type.bool))])))
+  val alignment = discover graph scope free rich (owned [variable])
+    (fn _ => ())
+  val _ = ensure "valid rigid free variable was newly refused"
+    (length (A.branch_witnesses alignment) = 1)
+  val _ = OK ()
+
+  val _ = tprint "Compact alignment requires its closed branch witness"
+  val alignment = discover graph scope identity renamed
+    (bounded (fn _ => ())) (fn _ => ())
+  val block = P.freeze graph {scope = scope,sources = [],
+    roots = A.roots alignment,template_limit = cap}
+  val _ = ensure "absent branch law was treated as a proved rewrite"
+    (rejected (fn () => ignore (A.assemble alignment block)))
+  val _ = G.close_scope graph scope
+  val _ = ensure "popped alignment retained proof authority"
+    (rejected (fn () => ignore (A.roots alignment)))
+in OK () end
 
 fun replay_source_alpha_membership_success () =
 let
@@ -29264,6 +29436,8 @@ fun run_replay_graph_unittests () =
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
      ("replay_source_checked_success", replay_source_checked_success),
+     ("replay_source_binder_alignment_success",
+       replay_source_binder_alignment_success),
      ("replay_source_alpha_membership_success",
        replay_source_alpha_membership_success),
      ("replay_graph_unify_success", replay_graph_unify_success),
@@ -30098,6 +30272,8 @@ let
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),
     ("replay_source_checked_success", replay_source_checked_success),
+    ("replay_source_binder_alignment_success",
+      replay_source_binder_alignment_success),
     ("replay_source_alpha_membership_success",
       replay_source_alpha_membership_success),
     ("replay_graph_unify_success", replay_graph_unify_success),
