@@ -103,8 +103,11 @@ struct
     | OwnedAliasTransitivity of
         {premises : K.graph_conversion list,target : K.graph_conversion}
     | Resolution of C.literal list | Alignment
-    | ClosedLaw of G.node * Thm.thm
-    | ObligationLaw of {obligation : G.node,law : G.node,theorem : Thm.thm}
+    | ClosedLaw of G.node * Thm.thm *
+        (G.node * Thm.thm * step list) option
+    | ObligationLaw of
+        {obligation : G.node,law : G.node,theorem : Thm.thm,
+         selected : (G.node * Thm.thm * step list) option}
     | NativeObligation of CPC_GraphNativeReservation.origin
     | Scope of {hypothesis : G.node, body : step}
   fun fact (Step {fact,...}) = fact
@@ -496,9 +499,6 @@ struct
             raise ERR "bounded_rule" "local reconstruction retained hypotheses"
           val closed = Thm.EQ_MP
             (Thm.ALPHA (Thm.concl closed) (G.representative graph law)) closed
-          val route = case obligation of NONE => ClosedLaw (law,closed)
-            | SOME obligation => ObligationLaw
-                {obligation = obligation,law = law,theorem = closed}
           val _ = notify (CheckedLocalLaw
             {serial = !counter,law = closed})
           fun origin () =
@@ -598,6 +598,92 @@ struct
               (origin () handle OriginGap gap => notify
                 (ProducerOriginUnavailable {serial = !counter,gap = gap}))
             else ()
+          (* Keep the recorded occurrence inventory and all worker/observer
+             callbacks above unchanged. Only the checked bounded theorem's
+             Hyp selects the law we will actually replay. A repeated premise
+             is discharged once, not expanded into a long vacuous MP spine.
+             This is local proof evidence, never caller dependency metadata;
+             original Source pruning still uses compact Hyp in P's receipt. *)
+          fun selection work =
+            let
+              fun spend amount = W.spend work amount
+              (* Pay the syntax AND type incidences of each new comparison
+                 or inference before invoking it. All operands are bounded
+                 above already; no new size limit or unfolded graph walk. *)
+              fun types ty =
+                (spend 3;if Type.is_vartype ty then
+                   spend (String.size (Type.dest_vartype ty))
+                 else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
+                      in spend (String.size Thy+String.size Tyop);
+                         List.app types Args end)
+              fun quote term =
+                (spend 3;types (Term.type_of term);
+                 if Term.is_comb term then
+                   let val (f,x)=Term.dest_comb term in quote f;quote x end
+                 else if Term.is_abs term then
+                   let val (v,b)=Term.dest_abs term in quote v;quote b end
+                 else if Term.is_var term then
+                   spend (String.size (#1 (Term.dest_var term)))
+                 else let val {Thy,Name,...}=Term.dest_thy_const term
+                      in spend (String.size Thy+String.size Name)end)
+              val hypotheses = Thm.hyp theorem
+              fun same left right =
+                (spend 1;Portable.pointer_eq (left,right) orelse
+                 (quote left;quote right;Term.aconv left right))
+              fun used term = List.exists (same term) hypotheses
+              fun choose [] _ answer =
+                    List.foldl (fn (entry,rest) =>
+                      (spend 2;entry::rest)) [] answer
+                | choose (entry::rest) seen answer =
+                    (spend 3;
+                     if List.exists (fn held =>
+                         (spend 1;node entry=held)) seen orelse
+                         not (used (G.representative graph (node entry))) then
+                       choose rest seen answer
+                     else choose rest (node entry::seen) (entry::answer))
+              val selected = choose premises [] []
+              val selected_nodes = List.map (fn entry =>
+                (spend 2;node entry)) selected
+              val selected_nodes = case obligation of NONE => selected_nodes
+                | SOME target => List.foldr (fn (entry,rest) =>
+                    (spend 2;entry::rest)) [target] selected_nodes
+              fun unchanged ([],[]) = (spend 1;true)
+                | unchanged (a::more,b::rest) =
+                    (spend 1;a=b andalso unchanged (more,rest))
+                | unchanged _ = (spend 1;false)
+            in if unchanged (selected_nodes,nodes) then
+                (selected,law,closed)
+              else
+                let
+                  val target = R.implication graph scope selected_nodes
+                    (#node current)
+                  (* The original closed law bounds every prospective
+                     operand/result of the smaller DISCH/ALPHA/EQ_MP law.
+                     Quote it once per operand/result, not once per cap. *)
+                  fun inference () = List.app (fn _ =>
+                    quote (Thm.concl closed)) [(),(),(),()]
+                  val _ = List.app (fn _ => inference ()) selected_nodes
+                  val _ = inference () val _ = inference ()
+                  val proof = List.foldr (fn (entry,proof) =>
+                    Thm.DISCH (G.representative graph entry) proof)
+                    theorem selected_nodes
+                  val _ = if null (Thm.hyp proof) then () else
+                    raise ERR "bounded_rule" "selected law retained hypotheses"
+                  val proof = Thm.EQ_MP
+                    (Thm.ALPHA (Thm.concl proof)
+                      (G.representative graph target)) proof
+                in (selected,target,proof) end
+            end
+          val selected = case owned_work of NONE => NONE
+            | SOME work => action (fn () =>
+                let val (premises,target,proof) = selection work
+                in if target=law then NONE else SOME (target,proof,premises)
+                end)
+          val route = case obligation of NONE =>
+                ClosedLaw (law,closed,selected)
+            | SOME obligation => ObligationLaw
+                {obligation=obligation,law=law,theorem=closed,
+                 selected=selected}
         in (current,route) end
       fun pivot_arguments arguments =
         CPC_SharedReplayPlan.pivot_arguments List.length ListPair.mapEq
@@ -1886,7 +1972,7 @@ struct
                              SOME clause => C.to_target (clause_of step) clause
                            | NONE => raise ERR "assemble"
                                "recorded clause alignment failed")
-                    | ClosedLaw (law,_) => apply_law
+                    | ClosedLaw (law,_,_) => apply_law
                         {law = (law,source law),target = target,
                          premises = premises ()}
                     | ObligationLaw {obligation,law,...} => apply_law
@@ -1910,6 +1996,22 @@ struct
         let
           val _ = validate_owned work
           val frame = SmtReplayOwnedScopeReceipt.root work
+          (* Ordinary fitting assembly keeps its original law/programme.
+             Only bounded chunks use the retained actual-Hyp law. Both
+             versions were checked before either can be lifted. *)
+          val recorded_recipe = recipe
+          fun recipe step = case recorded_recipe step of
+              ClosedLaw (_,_,SOME (law,proof,_)) =>
+                ClosedLaw (law,proof,NONE)
+            | ObligationLaw {obligation,selected=SOME (law,proof,_),...} =>
+                ObligationLaw {obligation=obligation,law=law,theorem=proof,
+                  selected=NONE}
+            | original => original
+          val recorded_premises = premise_list
+          fun premise_list step = case recorded_recipe step of
+              ClosedLaw (_,_,SOME (_,_,premises)) => premises
+            | ObligationLaw {selected=SOME (_,_,premises),...} => premises
+            | _ => recorded_premises step
           val cap = IntInf.fromInt template_limit
           fun meta operation = W.with_step work operation
           fun tick amount = W.spend work amount
@@ -2201,7 +2303,7 @@ struct
                        if nonempty then shell current else ())
                     val _ = List.app (fn step =>
                       (valid step;case recipe step of
-                         ClosedLaw (current,_) => law current
+                         ClosedLaw (current,_,_) => law current
                            (not (null (premise_list step)))
                        | ObligationLaw {law=current,...} => law current true
                        | _ => ())) steps
@@ -2241,8 +2343,8 @@ struct
                     val arguments = meta (fn () =>
                       (valid step;list_map node (premise_list step)))
                   in case recipe step of
-                      ClosedLaw (law,theorem) => closed law theorem arguments
-                    | ObligationLaw {law,theorem,obligation} =>
+                      ClosedLaw (law,theorem,_) => closed law theorem arguments
+                    | ObligationLaw {law,theorem,obligation,...} =>
                         let val proof = obligation_source obligation
                             val _ = meta (fn () =>
                               (tick 2;obligations :=
@@ -2328,6 +2430,9 @@ struct
                   val derived = if !needs_preprocessing then
                       GP.assembler_with_work work validation native
                     else (fn _ => NONE)
+                  fun selected_step (step as Step {serial,fact,...}) =
+                    (tick 1;Step {serial=serial,fact=fact,
+                      premises=premise_list step,recipe=recipe step})
                   fun law_source target = case List.find
                       (fn (saved,_) => (tick 1;saved=target))
                         obligation_edges of
@@ -2336,8 +2441,9 @@ struct
                         (!law_facts,G.node_id target) of
                         SOME fact => P.closed native fact
                       | NONE => source native target
-                  fun assemble step =
-                    (valid step;case Redblackmap.peek (!memo,serial step) of
+                  fun assemble recorded =
+                    let val step=selected_step recorded
+                    in (valid step;case Redblackmap.peek (!memo,serial step) of
                       SOME edge => (observe_assembly graph true;edge)
                     | NONE =>
                       let
@@ -2385,7 +2491,7 @@ struct
                         val _ = tick 2
                         val _ = memo := Redblackmap.insert
                           (!memo,serial step,edge)
-                      in edge end)
+                      in edge end) end
                   val _ = work_phase "bounded.assemble.before"
                   val edge = meta (fn () => assemble selected)
                   val _ = work_phase "bounded.assemble.after"
@@ -2439,11 +2545,11 @@ struct
               in prove selected end
           and single selected =
             case recipe selected of
-              ClosedLaw (law,theorem) =>
+              ClosedLaw (law,theorem,_) =>
                 sequential selected law theorem
                   (map_external (fn step => (node step,prove step))
                     (premise_list selected))
-            | ObligationLaw {law,theorem,obligation} =>
+            | ObligationLaw {law,theorem,obligation,...} =>
                 sequential selected law theorem
                   (append (map_external (fn step => (node step,prove step))
                     (premise_list selected))
@@ -3216,12 +3322,12 @@ struct
                          (node step)
                    in deferred := (step,law) :: !deferred;
                       block_roots := law :: !block_roots end
-               | ClosedLaw (law,theorem) =>
+               | ClosedLaw (law,theorem,_) =>
                    (witnesses := Redblackmap.insert
                      (!witnesses,G.node_id law,theorem);
                     block_roots := law :: !block_roots;
                     List.app inventory (premise_list step))
-               | ObligationLaw {obligation,law,theorem} =>
+               | ObligationLaw {obligation,law,theorem,...} =>
                    (obligations := obligation :: !obligations;
                     witnesses := Redblackmap.insert
                       (!witnesses,G.node_id law,theorem);
@@ -3268,7 +3374,7 @@ struct
                | _ => List.app inventory (premise_list step))
           val _ = inventory root
           fun law step = case recipe step of
-              ClosedLaw (law,_) => [law]
+              ClosedLaw (law,_,_) => [law]
             | ObligationLaw {law,...} => [law] | _ => []
           val law_nodes = ref []
           val seen_laws = ref (Redblackset.empty Int.compare)

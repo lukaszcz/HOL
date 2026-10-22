@@ -3394,8 +3394,7 @@ struct
             | BP.PBFalse=>2|BP.PBNegation _=>4|_=>6)
           fun shape_work(BP.HeldSyntax term)=
                 let val p=profile term val bytes=spelling term
-                in if Thm.kernelid="stdknl" then
-                    1+2*(weight p+bytes)else 1 end
+                in 1+2*(weight p+bytes)end
             | shape_work(BP.ApplicationSyntax(a,b))=
                 (spend 1;4+shape_work a+shape_work b)
             | shape_work(BP.EqualitySyntax(a,b))=
@@ -3587,6 +3586,22 @@ struct
         fun retained term []=false
           | retained term(candidate::rest)=
               Portable.pointer_eq(term,candidate)orelse retained term rest
+        (* Forecast and native AP_THM can allocate distinct equal Apps on
+           either kernel. These are admitted binder-free compact operands,
+           with syntax/spelling/Type comparisons prepaid by shape_work.
+           Equality here checks the result shape, never Hyp ownership or
+           proof authority. Hyp still needs an actual retained input alias. *)
+        fun matches(BP.HeldSyntax held)actual=
+              Portable.pointer_eq(held,actual)orelse
+              Term.compare(held,actual)=EQUAL
+          | matches(BP.ApplicationSyntax(a,b))actual=
+              Term.is_comb actual andalso
+              let val(f,x)=Term.dest_comb actual
+              in matches a f andalso matches b x end
+          | matches(BP.EqualitySyntax(a,b))actual=
+              boolSyntax.is_eq actual andalso
+              let val(x,y)=boolSyntax.dest_eq actual
+              in matches a x andalso matches b y end
         fun execute(index,ProjectionStep{instruction,shape,candidates,...})=
           let val _=guard ()
               val proof=case instruction of
@@ -3604,7 +3619,7 @@ struct
                     (observe_proof graph #fixed;
                      BP.boolean_using invalid identity opcode
                        (List.map get indices))
-              val _=if BP.matches shape(Thm.concl proof) andalso
+              val _=if matches shape(Thm.concl proof) andalso
                   clean proof andalso
                   List.all(fn term=>retained term candidates)(Thm.hyp proof)
                 then ()else raise ERR "execute_boolean_projection"

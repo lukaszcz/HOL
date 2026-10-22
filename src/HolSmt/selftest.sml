@@ -72619,6 +72619,7 @@ local
          work_limit=10000000}
       val local_calls = ref 0 val forced = ref 0
       val forced_live = ref false
+      val callbacks = ref ([]:string list)
       val outcome = Exn.capture (fn () =>
         let
           val input = SmtLib_GraphPreprocess.discover_from_sources
@@ -72664,6 +72665,7 @@ local
           fun worker (request,inputs) =
             let val request:CPC_Proof.step = request
                 val _ = local_calls := !local_calls+1
+                val _ = callbacks := #id request :: !callbacks
                 val from_h = Thm.SPEC variable (Thm.ASSUME universal)
                 val theorem = case #id request of
                     "@need" => if negative then
@@ -72685,6 +72687,7 @@ local
             in (theorem,valOf (#conclusion request)) end
           fun force (request,_) =
             let val _ = forced := !forced+1
+                val _ = callbacks := "force" :: !callbacks
                 val _ = forced_live := not (#retired (W.audit work))
                 val theorem = Thm.CONJUNCT1
                   (Thm.ASSUME (G.representative graph source))
@@ -72695,6 +72698,26 @@ local
               {graph=graph,scope=scope,sources=sources,preprocessing=input,
                proof=proof,ordinary_limit=512,template_limit=512,
                worker=worker,force_worker=SOME force}) ()
+          val _ = case result of Exn.Exn _ => () | Exn.Res checked =>
+            let
+              val theorem = S.close_contradiction sources (#theorem checked)
+              val _ = S.check_goal sources theorem
+              val _ = Library.check_oracle_tags "selftest" "actual-dependency"
+                theorem
+              val expected = ["@need"] @ (if wide then ["@wide"] else []) @
+                ["@finish"] @ (if unmatched orelse negative then
+                  ["force"] else [])
+              val charged = #charged (W.audit work)
+              val _ = print ("CPC_DEP402 callbacks=" ^
+                String.concatWith "," (List.rev (!callbacks)) ^ " work=" ^
+                Int.toString charged ^ " exact_goal=true\n")
+            in require "dependency selection changed order, goal, Hyp or tags"
+              (List.rev (!callbacks)=expected andalso charged>0 andalso
+               charged<=10000000 andalso
+               Portable.pointer_eq (Thm.concl theorem,variable) andalso
+               length (Thm.hyp theorem)=1 andalso
+               Term.aconv (hd (Thm.hyp theorem)) premise andalso
+               null (Tag.axioms_of (Thm.tag theorem))) end
         in inspect {graph=graph,scope=scope,sources=sources,work=work,
           result=result,forced= !forced,forced_live= !forced_live,
           local_calls= !local_calls} end) ()
