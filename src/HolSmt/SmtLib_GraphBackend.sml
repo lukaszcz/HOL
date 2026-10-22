@@ -1071,6 +1071,18 @@ struct
       work=PV.lifetime_guard_work lifetime+12,data=data} end
   fun value_binding_guard_work (ValueBindingGuard {work,...}) = work
   fun value_binding_guard_data (ValueBindingGuard {data,...}) = data
+  (* Metadata-only port. In particular, do not enter the lifetime program
+     (or claim its leaf/path checks) on this shallow path. *)
+  fun validate_value_binding_header graph caller
+      (ValueBindingGuard {graph=held,parent_scope,parent_active,
+                         child_active,epoch,symbols,...}) =
+    (if Portable.pointer_eq (graph,held) andalso caller=parent_scope then ()
+     else raise ERR "value_binding_guard" "different graph or parent";
+     if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then ()
+     else raise ERR "value_binding_guard"
+       "origin declaration lifetime changed";
+     if !parent_active andalso !child_active then () else
+       raise ERR "value_binding_guard" "actual Value lexical frame closed")
   fun validate_value_binding_guard graph caller
       (ValueBindingGuard {graph=held,parent_scope,parent_active,
                          child_active,epoch,symbols,lifetime,...}) =

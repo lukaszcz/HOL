@@ -37,6 +37,23 @@ sig
     (SmtLib_GraphValueTranslation.session -> 'proof parsed) -> 'proof packet
   val contents_with_policy_for : SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphPreprocess.graph_query -> 'proof packet -> 'proof contents
+  (* Caller owns SAME action, both to prepare and to invoke the result.
+     Only genuine opaque packets qualify: their context has the privately
+     constructed Mapping metadata guard, never a supplied callback.
+     Preparation and graph-revision OR scope-retirement witness misses
+     call the original validate. Its shared revision cache alone decides
+     when parsed binding namespace callbacks run; no full walk is forced.
+     BOTH witnesses must stay stable across validation before caching.
+     Every call checks exact owner, packet/context/Work/declaration lifetime
+     and pays its fixed work. Warm hits skip only repeated fixed Mapping
+     guards and lifetime/assertion scans backed by BOTH witnesses, never
+     caller callbacks that the original validate would have invoked.
+     This is a syntax lifetime guard, not proof or future Work credit.
+     Across caller callbacks invoke this guard again; it grants no lease.
+     The generic contents getter retains its existing validation path. *)
+  val prepare_scoped_guard_with_policy_for :
+    SmtReplayInvocationWork.portfolio ->
+    SmtLib_GraphPreprocess.graph_query -> 'proof packet -> unit -> unit
   (* Caller owns SAME action. SOME is the exact ordered syntax vector
      interpreted from emitted Mapping assertions in this packet context.
      NONE preserves old metadata. This is DATA, never proof or Source. *)
@@ -54,14 +71,30 @@ sig
   type binding_frame
   (* Outside an action. This additional port seals the actual packet
      origin, authentic Scope receipt and private factory binder inventory.
-     A caller's scoped-session variable list is never adopted. *)
+     A caller's scoped-session variable list is never adopted. Supplied
+     parents retain the complete original getter and packet validation,
+     including every parent callback through the frame receipt. *)
   val prepare_binding_frame_with_policy :
     SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphPreprocess.graph_query -> 'proof packet ->
     SmtReplayOwnedScopeReceipt.receipt ->
     SmtLib_GraphFrontend.value_scoped_session -> binding_frame
-  (* Caller owns SAME action. The captured actual packet and factory
-     backing are revalidated before returning any binder syntax DATA. *)
+  (* Outside an action. Owns construction of the private root receipt;
+     only this port permits paired-witness caching of frame geometry.
+     No supplied parent receipt or arbitrary callback is adopted. *)
+  val prepare_root_binding_frame_with_policy :
+    SmtReplayInvocationWork.portfolio ->
+    SmtLib_GraphPreprocess.graph_query -> 'proof packet ->
+    SmtLib_GraphFrontend.value_scoped_session -> binding_frame
+  (* Caller owns SAME action. Generic frames execute the original full
+     getter, preserving callback order/count and the first exception.
+     Only privately root-owned frames use the paired-witness packet guard
+     and geometry cache. Every such invocation checks packet, root,
+     factory/context and private lexical active flags. Full frame geometry
+     and leaf/path checks run initially and on either revision OR retirement
+     witness change. BOTH witnesses must stay stable across validation,
+     with post-callback active checks, before caching/returning DATA.
+     Generic receipt and binding getters are unchanged. *)
   val binding_frame_data_for : SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphPreprocess.graph_query -> binding_frame ->
     {context:SmtLib_GraphParserValue.context,

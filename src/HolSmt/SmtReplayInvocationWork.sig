@@ -116,6 +116,12 @@ sig
     value_binding_guard
   val validate_value_backend_binding_guard : portfolio ->
     value_binding_guard -> unit
+  (* Caller owns SAME action. Metadata ONLY; pays fixed work and checks
+     backend private lexical flags/epochs. No factory/context callback,
+     leaf/path validation or cached binding DATA is supplied. The caller
+     must separately validate its context and captured geometry. *)
+  val validate_value_backend_binding_header_for : portfolio ->
+    value_binding_guard -> unit
   val value_backend_binding_data_for : portfolio -> value_binding_guard ->
     {scope:SmtReplayGraph.scope,
      variables:SmtLib_GraphParserValue.value list,

@@ -23098,7 +23098,7 @@ struct
      frame:Scope.receipt,graph:G.graph,scope:G.scope,
      sources:SmtReplaySource.sources,source:G.node,target:G.node,
      law:G.node,arguments:Term.term list,expected:Term.term list,
-     metrics:(G.node * G.profiled_metric) list,
+     metrics:(G.node * SmtReplayLocalSpecialize.metric) list,
      ports:(G.node * Term.term) list,epoch:int,symbols:int,
      check_type:Type.hol_type -> unit,types:Type.hol_type list,
      used:bool ref}
@@ -23122,12 +23122,13 @@ struct
         val ceiling=IntInf.fromInt(#type_work_limit native)
         val epoch=Type.type_epoch() val symbols=Term.term_epoch()
         fun fail text=raise ERR "policy_local_specialize" text
-        val metrics=ref([]:(G.node * G.profiled_metric)list)
+        val metrics=ref([]:(G.node * SmtReplayLocalSpecialize.metric)list)
         fun valid()=
           let val(now,_)=pp_owner work block
               val data=Scope.description_with_policy_for work frame
               val _=List.app(fn(node,capture)=>
-                let val held=G.profiled_metric_data graph scope capture
+                let val held=SmtReplayLocalSpecialize.metric_data
+                      graph scope capture
                 in if #node held=node then ()else fail "metric changed"end)
                   (!metrics)
           in if Portable.pointer_eq(#contract now,contract)andalso
@@ -23216,9 +23217,9 @@ struct
            Public Type getters retain before_ALL_Type=false. *)
         fun geometry node cap policy=
           let val _=valid()
-              val capture=G.prepare_scoped_profiled_metric graph scope
+              val capture=SmtReplayLocalSpecialize.prepare_metric graph scope
                 {node=node,profiles=profiles}
-              val data=G.profiled_metric_data graph scope capture
+              val data=SmtReplayLocalSpecialize.metric_data graph scope capture
               val _=if #node data=node andalso #raw data<=cap andalso
                   #inc data<=cap andalso RP.allows policy(#raw data)andalso
                   RP.allows policy(#inc data)then ()else
@@ -23487,14 +23488,16 @@ struct
           sources,source,target,law,arguments,expected=steps,ports,
           metrics,
           epoch,symbols,check_type,types,used,...}=saved
+        val _=W.spend_policy work 3
+        val metric_guard=SmtReplayLocalSpecialize.metric_cache_guard
+          {metrics=metrics,work=work,graph=graph,scope=scope,
+           error=ERR "policy_local_specialize"}
         fun stable()=
           let val _=SmtReplayNativeContract.validate_for work contract
+              (* A supplied receipt can run callbacks. Keep NC and Scope
+                 on EVERY call, before the callback-free metric cache. *)
               val data=Scope.description_with_policy_for work frame
-              val _=List.app(fn(node,capture)=>
-                let val held=G.profiled_metric_data graph scope capture
-                in if #node held=node then ()else
-                  raise ERR "policy_local_specialize" "metric changed"end)
-                  metrics
+              val _=metric_guard()
           in if Portable.pointer_eq(#sources data,sources)andalso
               Portable.pointer_eq(#graph data,graph)andalso #scope data=scope
               andalso Type.type_epoch()=epoch andalso

@@ -81456,14 +81456,121 @@ in
                   val inner=W.with_step(#work e)(fn()=>
                     #scope(VP.binding_frame_data_for(#work e)(#query e)
                       (#binding ports)))
+                  val revision=G.validation_revision(#graph e)(#scope e)
+                  val retirement=G.scope_retirement_epoch
+                    (#graph e)(#scope e)
                   val _=W.with_step(#work e)(fn()=>
                     PV.close_scope(#context data)inner)
+                  val _=require "child retirement did not advance witnesses"
+                    (G.validation_revision(#graph e)(#scope e)>revision
+                     andalso G.scope_retirement_epoch
+                       (#graph e)(#scope e)>retirement)
                   val prior=Count.thm_count()
                   val stopped=refused(fn()=>ignore(law_data e receipt))
                   val _=G.validate_scope(#graph e)(#scope e)
               in require "closed child outlived retained construction scope"
                 (stopped andalso Count.thm_count()=prior andalso
                  #retired(W.audit_policy(#work e)))end)))
+      val _=test "Warm root frame rejects private close with stable witnesses"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          let
+            val child=ref(NONE:F.value_scoped_session option)
+            fun parse(factory:SmtLib_GraphValueTranslation.session)=
+              let val saved=(#open_binders(#session factory))[]
+                  val F.ScopedSession{close,...}=saved
+                  val _=child:=SOME saved
+              in {proof=(),terms=[],bindings=[saved],close=close}end
+            val held=VP.create(#work e)(#query e)
+              {options=options e,metadata= #metadata e,
+               description=Z.policy_description
+                 (Z3_Proof.resolve_version "4.15.3"),
+               requested_version="4.15.3",
+               tokens=fn()=>raise Fail "unused empty binding input"}parse
+            fun run()=
+              let val saved=valOf(!child)
+                  val frame=VP.prepare_root_binding_frame_with_policy
+                    (#work e)(#query e)held saved
+                  fun read()=W.with_step(#work e)(fn()=>
+                    VP.binding_frame_data_for(#work e)(#query e)frame)
+                  val _=read()val _=read()
+                  val revision=G.validation_revision(#graph e)(#scope e)
+                  val retirement=G.scope_retirement_epoch
+                    (#graph e)(#scope e)
+                  val F.ScopedSession{close,...}=saved
+                  (* Empty binders own no graph scopes: only the private
+                     lexical active flag changes on this genuine close. *)
+                  val _=W.with_step(#work e)close
+                  val _=require "empty binding close changed graph witnesses"
+                    (G.validation_revision(#graph e)(#scope e)=revision
+                     andalso G.scope_retirement_epoch
+                       (#graph e)(#scope e)=retirement)
+                  val prior=Count.thm_count()
+                  val stopped=(ignore(read());false)
+                    handle Feedback.HOL_ERR detail=>
+                      Feedback.message_of detail=
+                        "actual Value lexical frame closed"
+                  val _=G.validate_scope(#graph e)(#scope e)
+              in require "paired witness hit hid private lexical retirement"
+                (stopped andalso Count.thm_count()=prior andalso
+                 #retired(W.audit_policy(#work e)))end
+            val outcome=Exn.capture run()
+            val cleanup=Exn.capture VP.close held
+          in case outcome of Exn.Exn primary=>raise primary
+            | Exn.Res result=>(Exn.release cleanup;result)end))
+      val _=test "Warm child callback retirement preserves exact Primary"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          inspecting e(raw_child boolean_child "(= a a)" "true")
+            (fn held=>fn data=>
+              let exception Primary of unit ref
+                  val token=ref()val calls=ref 0
+                  val plan=lower_ready(general e held data(#contract e)
+                    (fn _=>(calls:= !calls+1;VP.close held;
+                      raise Primary token)))
+                  val prior=Count.thm_count()
+                  val exact=(ignore(Binder.execute(#work e)plan);false)
+                    handle Primary actual=>Portable.pointer_eq(actual,token)
+                  val _=G.validate_scope(#graph e)(#scope e)
+              in require "retiring callback lost Primary or ran child rules"
+                (exact andalso !calls=1 andalso Count.thm_count()=prior
+                 andalso #retired(W.audit_policy(#work e)))end)))
+      val _=test "Generic binding reads retain metadata callbacks on warm hits"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          let
+            val calls=ref 0 val armed=ref false
+            exception Primary of unit ref
+            val token=ref()
+            val owner=SmtReplayOwnedParserValue.create(#work e)
+              {graph= #graph e,scope= #scope e,
+               validate_metadata=fn()=>
+                 (calls:= !calls+1;if !armed then raise Primary token
+                  else ignore(M.types(MD.mapping(#metadata e)))),
+               import_limit=cap,literal_limit=cap,binder_limit=RP.AtMost 1}
+            fun run()=
+              let val factory=SmtReplayOwnedParserValue.factory_for
+                    (#work e)owner
+                  val opened=W.with_step(#work e)(fn()=>
+                    SmtLib_GraphBackend.open_binders(#backend factory)
+                      (SmtLib_GraphBackend.root(#backend factory))
+                      [("generic_child","generic_child",Type.bool)])
+                  val binding=W.with_step(#work e)(fn()=>
+                    SmtReplayOwnedParserValue.prepare_binding_for
+                      (#work e)owner(#scope e)(valOf(#origin opened)))
+                  fun read()=W.with_step(#work e)(fn()=>
+                    W.value_backend_binding_data_for(#work e)binding)
+                  val _=read()val callback_count= !calls val _=read()
+                  val _=require "generic warm read skipped metadata callback"
+                    (!calls>callback_count)
+                  val prior=Count.thm_count()
+                  val _=calls:=0 val _=armed:=true
+                  val exact=(ignore(read());false)
+                    handle Primary actual=>Portable.pointer_eq(actual,token)
+              in require "generic warm getter hid or repeated metadata Primary"
+                (exact andalso !calls=1 andalso Count.thm_count()=prior
+                 andalso #retired(W.audit_policy(#work e)))end
+            val outcome=Exn.capture run()
+            val cleanup=Exn.capture SmtReplayOwnedParserValue.close owner
+          in case outcome of Exn.Exn primary=>raise primary
+            | Exn.Res result=>(Exn.release cleanup;result)end))
       val _=test "Foreign expected Work precedes stale general law backing"
         (fn()=>fixture [] boolSyntax.T(fn original=>
           inspecting original(raw_child trans_child "a" "b")

@@ -112,9 +112,10 @@ struct
           val contents=VP.contents_with_policy_for work query packet
           val context= #context contents
           val proof= #proof contents
+          val packet_guard=VP.prepare_scoped_guard_with_policy_for
+            work query packet
           fun guard ()=
-            (ignore (VP.contents_with_policy_for work query packet);
-             NC.validate_for work native_contract)
+            (packet_guard ();NC.validate_for work native_contract)
           fun pay amount=(guard ();W.spend_policy work amount)
           fun tick ()=pay 1
           fun compare_int (a,b)=(tick ();Int.compare (a,b))

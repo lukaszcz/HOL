@@ -176,6 +176,60 @@ struct
   fun contents_with_policy_for expected query
       (packet as Packet {contents,...}) =
     (validate expected query packet;contents)
+  (* This port is deliberately packet-only: create/new cannot adopt a
+     supplied PV context. GraphValueTranslation constructs it through
+     MappingBackend.create, whose private metadata guard is W.validate_policy
+     plus M.types. PV.validate here therefore invokes no caller callback.
+     The original shared revision cache alone decides when validation runs
+     parsed binding namespaces; this port must never force those callbacks. *)
+  fun prepare_scoped_guard_with_policy_for expected input
+      (packet as Packet {work,query,contents,closed,...}) =
+    ((let
+      val _ = if Portable.pointer_eq (expected,work) andalso
+          Portable.pointer_eq (input,query) then () else
+        raise ERR "scoped_guard" "different original Work or exact query"
+      val _ = if !closed then
+        raise ERR "scoped_guard" "Value packet is closed" else ()
+      (* Owner/closed checks, three contents fields, two witness reads,
+         pair/ref and ten captured fields+closure, on the SAME action. *)
+      val _ = W.spend_policy expected 22
+      val graph = #graph contents val root = #scope contents
+      val context = #context contents
+      val current = (G.validation_revision graph root,
+        G.scope_retirement_epoch graph root)
+      fun settle current =
+        let
+          val _ = validate expected input packet
+          val _ = W.spend_policy expected 5
+          val after = (G.validation_revision graph root,
+            G.scope_retirement_epoch graph root)
+          (* A namespace may retire an unrelated child without changing
+             revision. Revalidate assertion lifetimes before caching the
+             new pair; validate's shared revision now skips namespaces.
+             Publication failures still come from validate unchanged. *)
+        in if after=current then after else settle after end
+      val checked = ref (settle current)
+      fun guard () =
+        ((let
+          val _ = if Portable.pointer_eq (expected,work) andalso
+              Portable.pointer_eq (input,query) then () else
+            raise ERR "scoped_guard" "different original Work or exact query"
+          val _ = if !closed then
+            raise ERR "scoped_guard" "Value packet is closed" else ()
+          (* Owner/closed fields, context check, witness reads/pair and
+             cache comparison are actual fixed per-call work, not credit. *)
+          val _ = W.spend_policy expected 16
+          val _ = PV.validate context
+          val current = (G.validation_revision graph root,
+            G.scope_retirement_epoch graph root)
+          (* Warm hits omit only repeated fixed Mapping guards and
+             lifetime/assertion scans backed by BOTH witnesses. Namespace
+             callbacks remain governed by validate's shared revision. *)
+          val _ = if !checked=current then () else
+            checked:=settle current
+        in () end) handle primary => (W.close expected;raise primary))
+    in guard end) handle primary => (W.close expected;raise primary))
+
   fun assertions_with_policy_for expected query
       (packet as Packet {assertions,...}) =
     (validate expected query packet;assertions)
@@ -198,13 +252,17 @@ struct
       expected parent owner origin end)
      handle primary => (W.close expected;raise primary))
   structure BinderScope=SmtReplayOwnedScopeReceipt
+  type binding_geometry =
+    {scope:G.scope,variables:PV.value list,
+     descriptors:(string * string * Type.hol_type) list,binders:bool}
   datatype binding_frame = BindingFrame of
     {work:W.portfolio,query:GP.graph_query,guard:unit -> unit,
-     context:PV.context,parent:BinderScope.receipt,
-     frame:BinderScope.receipt,
-     binding:W.value_binding_guard}
+     context:PV.context,graph:G.graph,root:G.scope,
+     parent:BinderScope.receipt,frame:BinderScope.receipt,
+     binding:W.value_binding_guard,root_owned:bool,
+     checked:((IntInf.int * IntInf.int) * binding_geometry) option ref}
 
-  fun prepare_binding_frame_with_policy expected query
+  fun prepare_binding_frame root_owned expected query
       (packet as Packet {owner,...}) parent saved =
     ((let
       (* The existing authentic member-origin port owns its actions. *)
@@ -217,15 +275,32 @@ struct
           val origin=F.scoped_session_binding_origin saved
           val binding=SmtReplayOwnedParserValue.prepare_binding_for
             expected owner (#scope parent_data) origin
-          val _=W.spend_policy expected 9
-          fun guard ()=validate expected query packet
+          val guard=if root_owned then
+              prepare_scoped_guard_with_policy_for expected query packet
+            else fn () => validate expected query packet
+          val _=W.spend_policy expected 16
         in BindingFrame {work=expected,query=query,guard=guard,
-          context= #context contents,parent=parent,frame=frame,
-          binding=binding} end)
+          context= #context contents,graph= #graph contents,
+          root= #scope contents,parent=parent,frame=frame,
+          binding=binding,root_owned=root_owned,checked=ref NONE} end)
     in result end) handle primary=>(W.close expected;raise primary))
 
+  fun prepare_binding_frame_with_policy expected query packet parent saved =
+    prepare_binding_frame false expected query packet parent saved
+
+  fun prepare_root_binding_frame_with_policy expected query packet saved =
+    ((let
+      val parent=BinderScope.root_with_policy expected
+    in prepare_binding_frame true expected query packet parent saved end)
+     handle primary=>(W.close expected;raise primary))
+
   fun binding_frame_data_for expected input
-      (BindingFrame {work,query,guard,context,parent,frame,binding}) =
+      (BindingFrame {work,query,guard,context,graph,root,parent,frame,
+                     binding,root_owned,checked}) =
+    if not root_owned then
+    (* Keep the complete original getter and packet validate closure.
+       In particular, frame's guard invokes the supplied parent AGAIN:
+       neither callback count nor first failure may depend on witnesses. *)
     ((let
       val _=if Portable.pointer_eq(expected,work) andalso
           Portable.pointer_eq(input,query) then () else
@@ -244,6 +319,60 @@ struct
       val _=guard ()
     in {context=context,graph= #graph data,root= #root data,
       scope= #scope data,parent=parent,frame=frame,
+      variables= #variables actual,descriptors= #descriptors actual,
+      binders= #binders actual} end)
+     handle primary=>(W.close expected;raise primary))
+    else
+    ((let
+      val _=if Portable.pointer_eq(expected,work) andalso
+          Portable.pointer_eq(input,query) then () else
+        raise ERR "binding_frame" "different original Work or exact query"
+      val _=guard ()
+      (* Only the privately minted root reaches this optimized route.
+         No supplied parent receipt or arbitrary callback is adopted. *)
+      val parent_data=BinderScope.description_with_policy_for
+        expected parent
+      val _=W.validate_value_backend_binding_header_for expected binding
+      (* Owner comparisons, captured fields, paired witness/cache read,
+         branch and returned record are fixed work on EVERY invocation. *)
+      val _=W.spend_policy expected 40
+      val _=if Portable.pointer_eq(graph,#graph parent_data) andalso
+          root= #root parent_data then () else
+        raise ERR "binding_frame" "different authentic binder parent"
+      val current=(G.validation_revision graph root,
+        G.scope_retirement_epoch graph root)
+      fun full () =
+        let
+          (* Both the root and this Mapping-owned factory receipt were
+             minted here. Warm hits cannot skip a supplied callback.
+             Misses keep the original full receipt and leaf/path checks. *)
+          val data=BinderScope.description_with_policy_for expected frame
+          val actual=W.value_backend_binding_data_for expected binding
+          val _=W.spend_policy expected 10
+          val _=if #scope data= #scope actual andalso
+              Portable.pointer_eq(#graph data,graph) andalso
+              #root data=root then () else
+            raise ERR "binding_frame" "different authentic binder geometry"
+        in actual end
+      val actual=case !checked of
+          SOME (stamp,data)=>if stamp=current then data else full ()
+        | NONE=>full ()
+      (* A parent/namespace callback may close only a private lexical
+         frame (no revision bump). Recheck that flag AND factory/context
+         lifetime after all callbacks, even on a paired-witness hit. *)
+      val _=guard ()
+      val _=W.validate_value_backend_binding_header_for expected binding
+      val _=W.spend_policy expected 7
+      val after=(G.validation_revision graph root,
+        G.scope_retirement_epoch graph root)
+      (* The final packet guard may settle a namespace retirement. These
+         root-owned receipt checks have only fixed internal callbacks, so
+         refresh geometry under that pair rather than rejecting it. The
+         private lexical flag was checked after the last user callback. *)
+      val actual=if after=current then actual else full ()
+      val _=checked:=SOME (after,actual)
+    in {context=context,graph=graph,root=root,
+      scope= #scope actual,parent=parent,frame=frame,
       variables= #variables actual,descriptors= #descriptors actual,
       binders= #binders actual} end)
      handle primary=>(W.close expected;raise primary))

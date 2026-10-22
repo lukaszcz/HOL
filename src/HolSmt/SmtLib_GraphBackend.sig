@@ -178,4 +178,10 @@ sig
      descriptors:(string * string * Type.hol_type) list,binders:bool}
   val validate_value_binding_guard : SmtReplayGraph.graph ->
     SmtReplayGraph.scope -> value_binding_guard -> unit
+  (* Metadata ONLY: private lexical active flags, owner and epochs.
+     No context callback, graph path or Value leaf is validated here.
+     Never substitutes for the full validator without separate guards and
+     a stable (validation revision, scope retirement epoch) witness. *)
+  val validate_value_binding_header : SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> value_binding_guard -> unit
 end

@@ -1,6 +1,25 @@
 (* The existing local SPEC programme; admission belongs to its caller. *)
 signature SmtReplayLocalSpecialize =
 sig
+  (* Only this unobserved constructor can issue a cacheable metric. There
+     is deliberately no import from a general G.profiled_metric, whose
+     retained observer might run callbacks. No native admission is granted. *)
+  type metric
+  val prepare_metric : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
+    {node:SmtReplayGraph.node,
+     profiles:SmtReplayGraph.policy_opaque_profile list} -> metric
+  val metric_data : SmtReplayGraph.graph -> SmtReplayGraph.scope -> metric ->
+    {node:SmtReplayGraph.node,raw:IntInf.int,inc:IntInf.int,
+     types:Type.hol_type list}
+  (* Caller must validate its NC and actual supplied Scope receipt on EVERY
+     invocation, BEFORE this guard. Only callback-free captured metrics may
+     be skipped at an unchanged revision AND scope-retirement epoch. The
+     returned closure owns its cache; no global cache or authority is made. *)
+  val metric_cache_guard :
+    {metrics:(SmtReplayGraph.node * metric) list,
+     work:SmtReplayInvocationWork.portfolio,graph:SmtReplayGraph.graph,
+     scope:SmtReplayGraph.scope,error:string -> exn} -> unit -> unit
+
   type profile={raw:IntInf.int,inc:IntInf.int,ann:IntInf.int,ty:IntInf.int}
   type profile_operations=
     {tick:unit -> unit,type_weight:Type.hol_type -> IntInf.int,

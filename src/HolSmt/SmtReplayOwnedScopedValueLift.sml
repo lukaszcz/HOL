@@ -71,12 +71,10 @@ struct
                 val _=W.spend_policy expected 2
                 val type_error=ERR "type"
                 val native_error=ERR "native"
-                fun guard()=
-                  (ignore(C.data_for expected captured);
-                   NC.validate_for expected native_contract;
-                   ignore(VP.binding_frame_data_for expected query
-                     (#binding held));
-                   ignore(Scope.description_with_policy_for expected frame))
+                (* The captured context owns this exact contract and
+                   root binding. Its getter checks all three lifetimes;
+                   no callback lies between it and this return. *)
+                fun guard()=ignore(C.data_for expected captured)
                 fun pay amount=(guard();W.spend_policy expected amount)
                 fun tick()=pay 1
                 fun weight ty=N.type_weight_using pay type_error ceiling ty

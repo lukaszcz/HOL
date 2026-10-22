@@ -80,22 +80,39 @@ struct
         val contents=VP.contents_with_policy_for expected query packet
         val context= #context contents
         val epoch=Type.type_epoch()val symbols=Term.term_epoch()
+        val packet_guard=VP.prepare_scoped_guard_with_policy_for
+          expected query packet
+        val _=W.spend_policy expected 3
+        val checked=ref NONE
         fun guard()=
-          (ignore(VP.contents_with_policy_for expected query packet);
-           NC.validate_for expected native_contract;
-           let val held=Scope.description_with_policy_for expected frame
-           in if Portable.pointer_eq(#graph held,graph)andalso
-               #scope held=scope andalso
-               Portable.pointer_eq(#sources held,original)andalso
-               Type.type_epoch()=epoch andalso Term.term_epoch()=symbols
-             then ()else raise ERR "guard" "original owner changed"end;
-           PV.validate_for context graph scope;
-           PV.usable context scope source;PV.usable context scope target;
-           List.app(fn value=>
-             (PV.spend context 1;PV.usable context scope value))arguments;
-           case image of NONE=>()|SOME held=>
-             validate_target_image expected query context native_contract
-               target held)
+          let
+            val _=packet_guard()
+            val _=W.spend_policy expected 9
+            val stamp=(G.validation_revision graph scope,
+              G.scope_retirement_epoch graph scope)
+            (* All owners below were privately captured from this packet
+               and its root receipt. Their Mapping validators have no
+               caller callback. Do not rewalk the same operand portfolio
+               at every scalar observation; both witnesses invalidate it. *)
+            val _=if !checked=SOME stamp then ()else
+              (NC.validate_for expected native_contract;
+               let val held=Scope.description_with_policy_for expected frame
+               in if Portable.pointer_eq(#graph held,graph)andalso
+                   #scope held=scope andalso
+                   Portable.pointer_eq(#sources held,original)andalso
+                   Type.type_epoch()=epoch andalso Term.term_epoch()=symbols
+                 then ()else raise ERR "guard" "original owner changed"end;
+               PV.validate_for context graph scope;
+               PV.usable context scope source;PV.usable context scope target;
+               List.app(fn value=>
+                 (PV.spend context 1;PV.usable context scope value))arguments;
+               case image of NONE=>()|SOME held=>
+                 validate_target_image expected query context native_contract
+                   target held)
+            val _=W.spend_policy expected 6
+            val after=(G.validation_revision graph scope,
+              G.scope_retirement_epoch graph scope)
+          in checked:=if after=stamp then SOME stamp else NONE end
         fun pay amount=(guard();W.spend_policy expected amount)
         fun tick()=pay 1
         fun map action []=(guard();[])
@@ -172,10 +189,24 @@ struct
         val limits= #semantic_limits native
         val policy=W.semantic_policy expected
         val captures=ref([]:G.profiled_metric list)
+        val _=W.spend_policy expected 3
+        val checked_metrics=ref NONE
         fun valid()=
-          (guard();List.app(fn capture=>
-            (tick();ignore(G.profiled_metric_data graph scope capture)))
-              (!captures))
+          let val _=guard()
+              val _=W.spend_policy expected 9
+              val stamp=(G.validation_revision graph scope,
+                G.scope_retirement_epoch graph scope)
+              (* These metrics retain only our own observer and G's
+                 callback-free closure/profile guards. No caller Type or
+                 metadata callback is cached. New captures invalidate too. *)
+              val _=if !checked_metrics=SOME stamp then ()else
+                List.app(fn capture=>
+                  (tick();ignore(G.profiled_metric_data graph scope capture)))
+                    (!captures)
+              val _=W.spend_policy expected 6
+              val after=(G.validation_revision graph scope,
+                G.scope_retirement_epoch graph scope)
+          in checked_metrics:=if after=stamp then SOME stamp else NONE end
         fun profile_for requester node=
           let fun seek []=raise MissingProfile(requester,node)
                 | seek(profile::rest)=
@@ -233,7 +264,8 @@ struct
               val _=if #raw measured= #raw p andalso
                   #inc measured= #inc p then ()else
                 raise ERR "prepare" "actual retained geometry changed"
-              val _=pay 2 val _=captures:=captured:: !captures
+              val _=pay 3 val _=captures:=captured:: !captures
+              val _=checked_metrics:=NONE
           in p end
         fun preflight source_node target_node arg_node=
           let
@@ -538,8 +570,10 @@ struct
               (restrict(#template_limit policy)
                 (IntInf.fromInt(Int.min(#output_limit limits,
                   #template_limit limits))))
+            val packet_guard=VP.prepare_scoped_guard_with_policy_for
+              expected query packet
             fun guard()=
-              (ignore(VP.contents_with_policy_for expected query packet);
+              (packet_guard();
                NC.validate_for expected native_contract;
                let val held=Scope.description_with_policy_for expected frame
                in if Portable.pointer_eq(#graph held,graph)andalso
@@ -720,15 +754,13 @@ struct
             val _=case PV.corresponds_to_graph_with_policy context graph
                 scope{value=target,node=node}of PV.Corresponding=>()
               | _=>fail "constructed target changed actual free identities"
-            val _=pay 6
-            val lifetime=PV.prepare_lifetime_guard context
-              {remaining_work=fn()=>W.remaining_policy expected,
-               scopes=[scope],values=[target]}
-            val lifetime_work=PV.lifetime_guard_work lifetime
+            val _=pay 4
             val child=G.closure_root graph scope node
+            (* guard's PV.usable already checks the complete target's
+               parser/backing lifetime under revision AND retirement.
+               The image adds only this independently constructed root. *)
             fun held_guard()=
-              (guard();W.spend_policy expected lifetime_work;
-               PV.validate_lifetime_guard lifetime;
+              (guard();W.spend_policy expected 1;
                ignore(G.closure_child_node graph scope child))
             val _=held_guard()val _=pay 12
           in SOME(TargetImage{work=expected,query=query,context=context,
@@ -760,6 +792,14 @@ struct
           val _=guard()val _=W.spend_policy expected 3
       in ClosedLaw{work=expected,guard=guard,ports=ports,
         graph=graph,scope=scope,fact=fact}end)))
+  fun validate_lifetime_for expected
+      (ClosedLaw{work,guard,graph,scope,fact,...})=protected expected(fn()=>
+    (if Portable.pointer_eq(expected,work)then ()else
+       raise ERR "validate_lifetime_for" "different original Work";
+     (* This is the retained valid closure, including captured profiles. *)
+     guard();W.spend_policy expected 2;
+     ignore(G.closure_root graph scope(P.closed_node fact));
+     guard()))
   fun data_for expected(saved as ClosedLaw{work,...})=protected expected
     (fn()=>
       (if Portable.pointer_eq(expected,work)then ()else

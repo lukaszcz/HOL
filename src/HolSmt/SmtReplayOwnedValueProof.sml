@@ -440,10 +440,28 @@ struct
                         (#native_contract data,native_contract) then () else
                     raise ERR "binder_law" "different original Value owner"
               in binder_guard rest end
+        val packet_guard=VP.prepare_scoped_guard_with_policy_for
+          expected query packet
+        val _=W.spend_policy expected 8
+        val laws_checked=ref false
+        fun live_closed []=()
+          | live_closed(receipt::rest)=
+              (W.spend_policy expected 1;
+               Specialize.validate_lifetime_for expected receipt;
+               live_closed rest)
+        fun live_binders []=()
+          | live_binders(receipt::rest)=
+              (W.spend_policy expected 1;
+               Binder.validate_lifetime_for expected receipt;
+               live_binders rest)
         fun guard () =
-          (ignore (VP.contents_with_policy_for expected query packet);
+          (packet_guard ();
            NC.validate_for expected native_contract;
-           closed_guard closed_laws;binder_guard binder_laws;
+           W.spend_policy expected 2;
+           if !laws_checked then
+             (live_closed closed_laws;live_binders binder_laws)
+           else (closed_guard closed_laws;binder_guard binder_laws;
+             laws_checked:=true);
            case !lifetime of NONE=>() | SOME held=>
              PV.validate_paid_lifetime_guard held)
         fun step ()=(guard ();W.spend_policy expected 1)

@@ -43,6 +43,11 @@ sig
      BinderEquality kernel worker. All native bodies, output/ALPHA ports,
      Types and surviving hypotheses are admitted before either worker. *)
   val execute : SmtReplayInvocationWork.portfolio -> plan -> closed_law
+  (* Caller owns SAME action. After full data_for authentication, retain
+     this law and recheck its live backing, aliases and law closure only;
+     no repeated proof correctness, owner linkage or native admission. *)
+  val validate_lifetime_for : SmtReplayInvocationWork.portfolio ->
+    closed_law -> unit
   (* Caller owns SAME action. Receipt retains the actual packet origin,
      child lifetime and original parent Scope. No Source occurrence is
      created and a copied record cannot authorize a named closed slot. *)

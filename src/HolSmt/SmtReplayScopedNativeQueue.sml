@@ -14,9 +14,9 @@ struct
       Seed of int * Term.term
     | Circuit of circuit * Term.term
     | Recorded of (unit -> Thm.thm) * Term.term * Term.term list
-    | Fixed of Term.term N.primitive * int list * N.shape * Term.term list
+    | Fixed of Term.term N.primitive * int list * Term.term * Term.term list
     | Boolean of Term.term N.boolean_rule * int list *
-        N.boolean_shape * Term.term list
+        Term.term * Term.term list
   datatype queue=Queue of
     {owner:unit ref,admission:N.admission,fixed:N.fixed_admission,
      epoch:int,symbols:int,phase:phase ref,
@@ -236,7 +236,7 @@ struct
         val term=materialize queue(#shape prepared)
         val hyp=union queue(#hypotheses prepared)
         val _=pay queue 5
-    in publish queue(Fixed(recipe,ids,#shape prepared,
+    in publish queue(Fixed(recipe,ids,term,
       #hypotheses prepared))term hyp end
   fun boolean queue opcode proofs=
     let val _=building queue
@@ -264,7 +264,7 @@ struct
         val term=materialize queue shape
         val hyp=union queue(#hypotheses prepared)
         val _=pay queue 5
-    in publish queue(Boolean(opcode,ids,#shape prepared,
+    in publish queue(Boolean(opcode,ids,term,
       #hypotheses prepared))term hyp end
   (* These forecast constructors are private to the static instance
      below. The shared Boolean worker has already admitted its complete
@@ -548,8 +548,47 @@ struct
          error= #error operations}plan)
     in publish queue(Recorded(run,#conclusion result,#hypotheses result))
       (#conclusion result)(#hypotheses result)end
-  fun seal(queue as Queue{phase,...})=
-    (building queue;pay queue 1;phase:=Sealed)
+  fun seal(queue as Queue{phase,commands,...})=
+    let
+      val _=building queue
+      val _=pay queue 2 (* quote and visit closures *)
+      (* Compare the already materialized, binder-free forecast exactly.
+         N's held-shape fallback is stdknl-only; native experimental terms
+         need not share its pointers. Quote both sides' bounded geometry
+         here, never by profiling a result during native execution. *)
+      fun quote target=
+        let val p=profile queue target val bytes=spelling queue target
+            val _=pay queue 2 (* type_names and annotations closures *)
+            (* Annotation weight includes Type variables' spelling, but
+               Type.compare also reads theory/operator names. *)
+            fun type_names ty=
+              (pay queue 1;if Type.is_vartype ty then 0 else
+                let val _=pay queue 5
+                    val {Thy,Tyop,Args}=Type.dest_thy_type ty
+                    fun children []=0
+                      | children(ty::rest)=
+                          (pay queue 1;type_names ty+children rest)
+                in IntInf.fromInt(String.size Thy)+
+                  IntInf.fromInt(String.size Tyop)+children Args end)
+            fun annotations term=
+              (pay queue 1;if Term.is_comb term then
+                let val _=pay queue 3 val(f,x)=Term.dest_comb term
+                in annotations f+annotations x end
+              else (pay queue 1;type_names(Term.type_of term)))
+            val names=annotations target
+        in pay queue(1+2*(weight p+bytes+names))end
+      fun visit []=guard queue
+        | visit((_,command)::rest)=
+            (pay queue 1;
+             (case command of Seed _=>()
+                | Circuit(_,target)=>quote target
+                | Recorded(_,target,_)=>quote target
+                | Fixed(_,_,target,_)=>quote target
+                | Boolean(_,_,target,_)=>quote target);
+             visit rest)
+      val _=visit(!commands)
+      val _=pay queue 1
+    in phase:=Sealed end
   fun type_ports(queue as Queue{types,...})=(guard queue;!types)
   fun check_types(queue as Queue{phase,types,...}) check_type=
     let val _=guard queue val _=pay queue 3
@@ -576,8 +615,9 @@ struct
         fun read id=(pay queue 1;case Redblackmap.peek(!results,id)of
             SOME proof=>proof
           | NONE=>raise ERR "execute" "forward native proof reference")
-        fun checked shape hypotheses proof=
-          if shape(Thm.concl proof)andalso clean proof andalso
+        fun checked target hypotheses proof=
+          if Term.compare(target,Thm.concl proof)=EQUAL andalso
+              clean proof andalso
               List.all(fn term=>List.exists(fn held=>
                 Portable.pointer_eq(term,held))hypotheses)(Thm.hyp proof)
             then proof else raise ERR "execute" "native forecast changed"
@@ -600,19 +640,18 @@ struct
                             | ProveCNF pair=>SmtCircuitSat.prove_cnf pair
                           val _=guard queue
                       in if clean actual andalso null(Thm.hyp actual)
-                          andalso same_term queue
-                            (Thm.concl actual,target)then actual else
+                          andalso Term.compare(target,Thm.concl actual)
+                            =EQUAL then actual else
                         raise ERR "execute" "circuit forecast changed"end
                   | Recorded(run,target,hyp)=>
                       let val actual=run()val _=guard queue
-                      in checked(fn term=>same_term queue(term,target))
-                        hyp actual end
-                  | Fixed(recipe,ids,shape,hyp)=>
-                      checked(N.matches shape)hyp
+                      in checked target hyp actual end
+                  | Fixed(recipe,ids,target,hyp)=>
+                      checked target hyp
                         (N.primitive_using fixed_arity_error same_name
                           recipe(copy queue read ids))
-                  | Boolean(opcode,ids,shape,hyp)=>
-                      checked(N.boolean_matches shape)hyp
+                  | Boolean(opcode,ids,target,hyp)=>
+                      checked target hyp
                         (N.boolean_using boolean_arity_error same_name
                           opcode(copy queue read ids))
                 val _=guard queue val _=pay queue 2

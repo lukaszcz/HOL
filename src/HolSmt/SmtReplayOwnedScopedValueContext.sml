@@ -45,7 +45,6 @@ struct
     ((let
       val original=GP.query_nodes_with_policy_for expected query
       val _=NC.validate_for expected native_contract
-      val parent=Scope.root_with_policy expected
       val initial=metadata expected (fn()=>
         let
           val contents=VP.contents_with_policy_for expected query packet
@@ -103,12 +102,13 @@ struct
              used by the outside-action authentic frame constructor. *)
           val _=pay 6
         in {target=target,saved=saved,body=body,blocks=blocks} end)
-      val binding=VP.prepare_binding_frame_with_policy expected query
-        packet parent (#saved initial)
+      val binding=VP.prepare_root_binding_frame_with_policy expected query
+        packet (#saved initial)
     in metadata expected (fn()=>
       let
         val contents=VP.contents_with_policy_for expected query packet
         val actual=VP.binding_frame_data_for expected query binding
+        val parent= #parent actual
         (* Six header projections and two immutable declaration stamps. *)
         val _=W.spend_policy expected 8
         val values= #context contents
@@ -119,8 +119,10 @@ struct
            containers and fifteen observer fields/records/lambdas. Every
            later container/copy event pays separately. *)
         val _=W.spend_policy expected 39
+        val packet_guard=VP.prepare_scoped_guard_with_policy_for
+          expected query packet
         fun guard ()=
-          (ignore(VP.contents_with_policy_for expected query packet);
+          (packet_guard ();
            NC.validate_for expected native_contract;
            let val held=VP.binding_frame_data_for expected query binding
                val owner=Scope.description_with_policy_for expected parent
@@ -309,7 +311,6 @@ struct
       val _=guard ()
       (* Existing immutable data is returned without copying fields/list. *)
       val _=W.spend_policy expected 1
-      val _=guard ()
     in data end)
     handle primary=>(W.close expected;raise primary))
 end

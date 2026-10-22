@@ -61,10 +61,16 @@ sig
      programme, including full actual input/result/Type quotation before
      ASSUME/SPEC/DISCH. The private authorizing G block is then retired. *)
   val execute : SmtReplayInvocationWork.portfolio -> plan -> closed_law
+  (* Caller owns SAME action. After full data_for authentication, retain
+     this law and recheck its live backing/profiles and law closure only;
+     no repeated proof correctness, owner linkage or native admission. *)
+  val validate_lifetime_for : SmtReplayInvocationWork.portfolio ->
+    closed_law -> unit
   (* Caller owns SAME action. Work precedes packet/Scope/fact backing.
      This opaque result is a CLOSED witness, not an Original/Current slot.
-     A receiver must retain the result and invoke this getter on every use;
-     a copied data record grants no cursor interpretation or Source right. *)
+     A receiver retains the result and authenticates it with this getter;
+     every later use needs this getter or validate_lifetime_for above.
+     A copied data record grants no cursor interpretation or Source right. *)
   val data_for : SmtReplayInvocationWork.portfolio -> closed_law ->
     {query:SmtLib_GraphPreprocess.graph_query,
      context:SmtLib_GraphParserValue.context,

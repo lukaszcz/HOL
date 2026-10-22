@@ -1141,6 +1141,16 @@ struct
       B.validate_value_binding_guard graph caller program;
       validate_policy expected graph root sources limits)
      handle primary => (close expected;raise primary))
+  (* Shallow SAME-action check only. The caller must separately validate
+     the factory/context and all captured leaf/path geometry. No metadata
+     callback or lifetime-programme credit belongs to this port. *)
+  fun validate_value_backend_binding_header_for expected
+      (ValueBindingGuard {work,graph,caller,program,...}) =
+    ((if Portable.pointer_eq (expected,work) then () else
+        raise ERR "value_binding_guard" "different original Work";
+      spend_policy expected 24;
+      B.validate_value_binding_header graph caller program)
+     handle primary => (close expected;raise primary))
   fun prepare_value_backend_binding_guard expected factory caller origin =
     ((let
       val actual_factory = value_factory_data_for expected factory

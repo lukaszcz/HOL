@@ -36,18 +36,13 @@ struct
         val cap=IntInf.fromInt(Int.min(#template_limit semantic,
           Int.min(#input_limit semantic,#output_limit semantic)))
         val ceiling=IntInf.fromInt (#type_work_limit native)
-        (* Private visitors, dictionaries/refs, two stamps and closures.
+        (* Private visitors, dictionaries/refs and closures.
            Repeated visitors/records below have their own actual quotes. *)
-        val _=W.spend_policy expected 45
+        val _=W.spend_policy expected 43
         val _=W.spend_policy expected 1
         val native_error=ERR "native"
-        val epoch=Type.type_epoch () val symbols=Term.term_epoch ()
-        fun guard ()=
-          (ignore(C.data_for expected captured);
-           W.spend_policy expected 6;
-           if Type.type_epoch ()=epoch andalso
-               Term.term_epoch ()=symbols then ()else
-             raise ERR "guard" "declaration lifetime changed")
+        (* The captured context checks these same declaration stamps. *)
+        fun guard ()=ignore(C.data_for expected captured)
         fun pay amount=(guard ();W.spend_policy expected amount)
         fun tick ()=pay 1
         fun pair_compare((a,b),(c,d))=

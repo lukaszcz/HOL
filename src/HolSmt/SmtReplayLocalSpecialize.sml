@@ -1,6 +1,37 @@
 (* One shared execution of the already admitted local specialization law. *)
 structure SmtReplayLocalSpecialize :> SmtReplayLocalSpecialize =
 struct
+  structure G=SmtReplayGraph
+  structure W=SmtReplayInvocationWork
+  (* Opaque at the signature: no observed capture can enter this cache.
+     G's policy profiles and closure guards are themselves callback-free. *)
+  type metric=G.profiled_metric
+  fun prepare_metric graph scope request=
+    G.prepare_scoped_profiled_metric graph scope request
+  fun metric_data graph scope (capture:metric)=
+    G.profiled_metric_data graph scope capture
+  fun metric_cache_guard {metrics,work,graph,scope,error} =
+    let
+      (* New helper record and its five fields only. The consumer retains
+         its original setup3; the existing per-call fees remain below. *)
+      val _=W.spend_policy work 6
+      val checked_metrics=ref NONE
+      fun guard()=
+        let
+          val _=W.spend_policy work 9
+          val stamp=(G.validation_revision graph scope,
+            G.scope_retirement_epoch graph scope)
+          val _=if !checked_metrics=SOME stamp then ()else
+            List.app(fn(node,capture)=>
+              let val held=metric_data graph scope capture
+              in if #node held=node then ()else
+                raise error "metric changed"end)metrics
+          val _=W.spend_policy work 6
+          val after=(G.validation_revision graph scope,
+            G.scope_retirement_epoch graph scope)
+        in checked_metrics:=if after=stamp then SOME stamp else NONE end
+    in guard end
+
   type profile={raw:IntInf.int,inc:IntInf.int,ann:IntInf.int,ty:IntInf.int}
   type profile_operations=
     {tick:unit -> unit,type_weight:Type.hol_type -> IntInf.int,

@@ -25,7 +25,8 @@ struct
   datatype plan=Plan of {work:W.portfolio,guard:unit -> unit,ports:ports,
     produce:unit -> P.closed_fact,used:bool ref}
   datatype closed_law=ClosedLaw of {work:W.portfolio,guard:unit -> unit,
-    ports:ports,graph:G.graph,scope:G.scope,fact:P.closed_fact}
+    ports:ports,graph:G.graph,scope:G.scope,fact:P.closed_fact,
+    checked_aliases:(IntInf.int * IntInf.int)option ref}
   datatype preparation=Prepared of plan | Needs of requirement list
   exception Pending of requirement
   datatype 'a metadata = Complete of 'a | Missing of requirement
@@ -50,7 +51,6 @@ struct
     let
       val original=GP.query_nodes_with_policy_for expected query
       val _=NC.validate_for expected native_contract
-      val frame=Scope.root_with_policy expected
       (* These are authentic packet syntax observations only. No native
          worker or copied proof payload is admitted by the lookup. *)
       val parsed=metadata expected (fn()=>
@@ -119,22 +119,25 @@ struct
             | _=>pending expected(fn()=>ChildProgramme body)
           val _=pay 5
         in {target=target,saved=saved,child=child,body=body} end)
-      val binding=VP.prepare_binding_frame_with_policy expected query
-        packet frame (#saved parsed)
+      val binding=VP.prepare_root_binding_frame_with_policy expected query
+        packet (#saved parsed)
     in metadata expected (fn()=>
       let
         val contents=VP.contents_with_policy_for expected query packet
         val context= #context contents
         val graph= #graph original val root= #scope original
         val actual=VP.binding_frame_data_for expected query binding
+        val frame= #parent actual
         val inner= #scope actual
         val target= #target parsed val child= #child parsed
         val epoch=Type.type_epoch () val symbols=Term.term_epoch ()
         (* Seventeen local guarded observation/forecast helper closures.
            They are new producer setup, separate from native quotation. *)
         val _=W.spend_policy expected 17
+        val packet_guard=VP.prepare_scoped_guard_with_policy_for
+          expected query packet
         fun guard ()=
-          (ignore(VP.contents_with_policy_for expected query packet);
+          (packet_guard ();
            NC.validate_for expected native_contract;
            let val held=VP.binding_frame_data_for expected query binding
                val parent=Scope.description_with_policy_for expected frame
@@ -498,11 +501,38 @@ struct
                else(W.spend_policy expected 1;used:=true)
              val fact=produce ()
              val data=Scope.description_with_policy_for expected(#frame ports)
-             val _=guard () val _=W.spend_policy expected 7
+             val _=guard () val _=W.spend_policy expected 9
          in ClosedLaw{work=expected,guard=guard,ports=ports,
-           graph= #graph data,scope= #scope data,fact=fact} end)))
+           graph= #graph data,scope= #scope data,fact=fact,
+           checked_aliases=ref NONE} end)))
 
-  fun data_for expected (ClosedLaw{work,guard,ports,graph,scope,fact}) =
+  fun validate_lifetime_for expected
+      (ClosedLaw{work,guard,ports,graph,scope,checked_aliases,...}) =
+    protected expected(fn()=>
+      let val _=if Portable.pointer_eq(expected,work)then ()else
+            raise ERR "validate_lifetime_for" "different original Work"
+          val _=guard ()
+          val _=W.spend_policy expected 9
+          val stamp=(G.validation_revision graph scope,
+            G.scope_retirement_epoch graph scope)
+          (* The aliases belong to this packet's private Mapping context.
+             Its guard still checks closure/private lexical flags on every
+             call. The immutable alias portfolio needs no repeated walk
+             until graph publication or retirement changes its backing. *)
+          fun aliases []=()
+            | aliases((cursor,node)::rest)=
+                (W.spend_policy expected 2;
+                 ignore(PV.proof_key(#context ports)cursor);
+                 ignore(G.closure_root graph scope node);aliases rest)
+          val _=if !checked_aliases=SOME stamp then ()else
+            aliases(#aliases ports)
+          val _=W.spend_policy expected 6
+          val after=(G.validation_revision graph scope,
+            G.scope_retirement_epoch graph scope)
+          val _=checked_aliases:=if after=stamp then SOME stamp else NONE
+      in ignore(G.closure_root graph scope(#law_node ports))end)
+
+  fun data_for expected (ClosedLaw{work,guard,ports,graph,scope,fact,...}) =
     protected expected(fn()=>
       let val _=if Portable.pointer_eq(expected,work)then ()else
             raise ERR "data_for" "different original Work"
