@@ -402,7 +402,11 @@ struct
               Portable.pointer_eq (#sources data,#sources owner) andalso
               #source data = node focus then data else
             raise ERR "adopt_compact" "different result source/owner/frame" end
-        fun backing () = ignore (checked_description ())
+        (* The SAME backing is reachable through both the target focus
+           and conversion. Share only within the existing callback-free
+           validation walk, never across independent getters/callbacks. *)
+        val backing = validation_guard (fn () =>
+          ignore (checked_description ()))
         val data = checked_description ()
         val theorem = SmtReplayOwnedLargeProofCore.theorem_for
           (#work owner) receipt
@@ -413,7 +417,7 @@ struct
   fun adopt_realized_lambda focus receipt =
     W.with_step (work_of focus) (fn () =>
     let val owner = owner_of focus
-        fun backing () =
+        val backing = validation_guard (fn () =>
           let val data = SmtReplayOwnedRealizedLambda.conversion_description_for
                 (#work owner) receipt
           in if Portable.pointer_eq (#graph data,#graph owner) andalso
@@ -421,7 +425,7 @@ struct
               Portable.pointer_eq (#sources data,#sources owner) andalso
               #source data = node focus then () else
             raise ERR "adopt_realized_lambda" "different source/owner/frame"
-          end
+          end)
         val _ = backing ()
         val data = SmtReplayOwnedRealizedLambda.conversion_description_for
           (#work owner) receipt
@@ -433,8 +437,16 @@ struct
 
   (* Full repeated syntax/type footprints; memo shares discovery, never
      occurrence sums. Private closure/map/name costs remain unclosed. *)
-  fun inventory focus roots =
-    let val graph = #graph (owner_of focus)
+  fun inventory (focus as Focus {traversal,...}) roots =
+    let val _ = active focus
+        val work = work_of focus
+        (* This complete inventory has no user callbacks. Fence it once,
+           not around every paid type/node/memo operation. The returned
+           guard still checks every retained path at policy boundaries. *)
+        fun invoke _ action = action ()
+        fun spend _ amount = W.spend work amount
+        fun scope _ = traversal
+        val graph = #graph (owner_of focus)
         val limits = #limits (owner_of focus)
         val maximum = Int.max (#input_limit limits,
           Int.max (#output_limit limits,#template_limit limits))
@@ -535,7 +547,7 @@ struct
           (active focus;List.app (fn (caller,child) =>
             ignore (G.closure_child_node graph caller child)) (!held);
            List.app (fn profile => ignore (G.opaque_profile_data graph
-             (scope focus) profile)) (!opaque))
+             traversal profile)) (!opaque))
     in (values,!types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths

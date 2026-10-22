@@ -33,7 +33,11 @@ struct
      tables : P.realization_tables_plan,
      types : shape list,check_type : Type.hol_type -> unit,
      summary : summary,used : bool ref}
-  datatype result = Result of {plan : plan,receipt : P.realization}
+  (* The completed receipt owns its realized backing. Do not retain or
+     rescan the now-spent preparation tables/types on public getters. *)
+  datatype result = Result of
+    {owner : owner,graph_conversion : C.graph_conversion,
+     roots : G.node list,held : held list,receipt : P.realization}
   datatype tree = Empty | Leaf of size * size | Split of tree * tree
   fun protected work action = action ()
     handle primary => (W.close work;raise primary)
@@ -48,29 +52,44 @@ struct
      if Type.type_epoch () = #epoch owner andalso
          Term.term_epoch () = #symbols owner then () else
        raise ERR "active" "type or term retirement epoch changed")
-  fun validate work (Plan {owner,graph_conversion,roots,facts,conversions,
-                           held,tables,...}) =
+  fun validate_retained work (owner : owner) graph_conversion roots held
+      check_payload =
     protected work (fn () =>
       (if Portable.pointer_eq (work,#work owner) then () else
          raise ERR "validate" "different original Work";
        (* Pay each recursive recipe/map check, including Idle getters.
           The placeholder-table guard quote covers only its own tables. *)
        C.validate_conversion_with_policy work graph_conversion;
-       active owner;P.validate_realization_tables work tables;
+       active owner;
+       check_payload ();
+       (* Each owner-list walk pays again; neither a finite preparation
+          quote nor an earlier getter supplies future validation credit. *)
        List.app (fn node =>
-         if G.scope_visible (#graph owner) (#scope owner)
-             (G.node_scope (#graph owner) node) then () else
-           raise ERR "validate" "retained recipe root escapes owner") roots;
-       (* The owned tables/frontier just validated these SAME private
-          fact/conversion lists in this frame and original template cap.
-          No callback intervenes; do not walk their receipt DAGs again. *)
-       List.app (fn Held child =>
-           ignore (G.closure_child_node (#graph owner) (#scope owner) child)
-         | OpaqueProjection {node,depth,receipt} =>
-             if #node (G.opaque_type_projection_data (#graph owner)
-                 (#scope owner) receipt depth) = node then () else
-               raise ERR "validate" "opaque projection owner differs")
+         (W.spend_guard_policy work 1;
+          if G.scope_visible (#graph owner) (#scope owner)
+              (G.node_scope (#graph owner) node) then () else
+            raise ERR "validate" "retained recipe root escapes owner")) roots;
+       (* The payload guard checked the authentic tables/frontier or the
+          completed realization. No callback intervenes; retain and check
+          Core's own projection witnesses without rewalking proof leaves. *)
+       List.app (fn retained =>
+         (W.spend_guard_policy work 1;
+          case retained of Held child =>
+            ignore (G.closure_child_node (#graph owner) (#scope owner) child)
+          | OpaqueProjection {node,depth,receipt} =>
+              if #node (G.opaque_type_projection_data (#graph owner)
+                  (#scope owner) receipt depth) = node then () else
+                raise ERR "validate" "opaque projection owner differs"))
          held;active owner))
+  fun validate work (Plan {owner,graph_conversion,roots,held,tables,...}) =
+    validate_retained work owner graph_conversion roots held (fn () =>
+      (W.spend_guard_policy work
+         (P.realization_tables_guard_work work tables);
+       P.validate_realization_tables work tables))
+  fun validate_result work
+      (Result {owner,graph_conversion,roots,held,receipt}) =
+    validate_retained work owner graph_conversion roots held
+      (fn () => P.validate_realization_for work receipt)
   fun report (Plan {summary,...}) = summary
 
   fun prepare_in_scope work {frame,conversion,ordinal,check_type} =
@@ -188,10 +207,13 @@ struct
          canonical abstraction a variable lookup uses at most the retained
          binder depth. This is a source-derived upper envelope, not a cached
          result-type scalar standing in for an arbitrary opaque path. *)
+      fun retain_child child = (charge ();held := Held child :: !held)
+      (* A closure child retains and recursively checks its exact parents.
+         Retain the terminal path, not a second validator for every prefix
+         of that SAME path. No alternative incoming path is discarded. *)
       fun projection depth child =
         let val _ = charge ()
             val node = G.closure_child_node graph scope child
-            val _ = charge () val _ = held := Held child :: !held
             val own = case G.view graph node of
                 G.Variable _ => plus 1 depth
               | _ => 1
@@ -211,18 +233,33 @@ struct
                   val body = G.binder_closure_body graph scope closure
                   val _ = charge ()
               in plus own (plus 1 (projection (plus depth 1) body)) end
-          | G.OpaqueRetained => opaque_projection depth node
-          | _ => own
+          | G.OpaqueRetained =>
+              (retain_child child;opaque_projection depth node)
+          | _ => (retain_child child;own)
         end
+      (* Only roots MINTED HERE have this single graph/scope/node key.
+         Reuse their exact child objects, not validation success. Incoming
+         projection paths and opaque backing receipts remain independent. *)
+      val _ = charge ()
+      val root_children = ref ([] : (G.node * G.closure_child) list)
+      fun root_child node = case lookup node (!root_children) of
+          SOME child => (child,false)
+        | NONE =>
+            let val _ = charge ()
+                val child = G.closure_root graph scope node
+                val _ = charge ()
+                val _ = root_children := (node,child) :: !root_children
+            in (child,true) end
       fun residue node =
         let val _ = charge ()
-            val child = G.closure_root graph scope node
+            val (child,new_root) = root_child node
             val _ = ignore (G.closure_child_node graph scope child)
-            val _ = charge () val _ = held := Held child :: !held
             (* An incoming opaque receipt is never dropped by a memo hit.
                It may have a different actual backing/ready path. *)
             val admitted = case G.view graph node of
-                G.OpaqueRetained => SOME (opaque_projection 0 node)
+                G.OpaqueRetained =>
+                  (if new_root then retain_child child else ();
+                   SOME (opaque_projection 0 node))
               | _ => NONE
             val work = case lookup node (!projection_memo) of
                 SOME amount => amount
@@ -577,22 +614,8 @@ struct
       val _ = phase "retained.guards.after" (fn () => "")
       val tables = P.prepare_owned_realization_tables work frontier
       val _ = phase "tables.after" (fn () => "")
-      (* Exact validate program: final prepare guard, five execute guards
-         and one returning policy fence per retained shape. Rendering has
-         no callbacks; entry/preceding return supplies its opening fence.
-         Mint and freeze own their separate same-plan guard reservations. *)
-      fun future_guards [] = (W.spend work 1;6 : IntInf.int)
-        | future_guards (_::rest) =
-            (W.spend work 1;plus 1 (future_guards rest))
-      val guard_amount = times (future_guards (!policies))
-        (P.realization_tables_guard_work work tables)
-      val _ = phase "guards.debit.before" (fn () =>
-        " amount=" ^ IntInf.toString guard_amount)
-      val _ = if guard_amount <= IntInf.fromInt
-          (W.work_limit work - #charged (W.audit work)) then
-            W.spend work (IntInf.toInt guard_amount)
-        else raise ERR "prepare" "original placeholder guard Work exhausted"
-      val _ = phase "guards.debit.after" (fn () => "")
+      (* validate pays its guard on every invocation, including later Idle
+         getters. Mint/freeze retain their own same-plan reservations. *)
 
       fun triple (s : size) = (#raw s,#inc s,#ann s)
       val summary = {leaves = leaf_count,steps = step_count,
@@ -618,10 +641,10 @@ struct
        check_type = check_type} end
 
   fun execute work (plan as Plan {owner,graph_conversion,roots,facts,
-      conversions,tables,types,check_type,used,...}) = protected work (fn () =>
+      conversions,held,tables,types,check_type,used,...}) =
+    protected work (fn () =>
     (validate work plan;W.with_step work (fn () =>
-      let val _ = validate work plan
-          val _ = if !used then raise ERR "execute" "plan already executed"
+      let val _ = if !used then raise ERR "execute" "plan already executed"
             else used := true
           (* Rendering is callback-free and cannot retire declarations or
              frames. Guard the entire render, not every immutable Arrow;
@@ -636,11 +659,13 @@ struct
                 val _ = check_type ty val _ = validate work plan
             in () end
           val _ = List.app policy types
+          (* Opening/last policy-return fence covers this synchronous
+             callback-free segment. Freeze/assemble/realize also guard
+             their own authentic inputs; do not repeat the SAME owner
+             inventories between them without an intervening callback. *)
           val block = P.freeze_owned_realization_tables_plan work tables
-          val _ = validate work plan
           val edge = C.graph_assemble_for work (#graph owner) block
             graph_conversion
-          val _ = validate work plan
           val receipt = P.realize_owned_receipt work block
             (C.graph_equality graph_conversion) edge
           val theorem = P.realization_theorem_for work receipt
@@ -652,14 +677,15 @@ struct
               Portable.pointer_eq (Thm.concl theorem,G.representative
                 (#graph owner) (C.graph_equality graph_conversion)) then ()
             else raise ERR "execute" "realized closed endpoint changed"
-      in Result {plan = plan,receipt = receipt} end)))
-  fun theorem_for work (Result {plan,receipt}) =
-    (validate work plan;P.realization_theorem_for work receipt)
-  fun realization_for work (Result {plan,receipt}) =
-    (validate work plan;P.validate_realization_for work receipt;receipt)
+      in Result {owner = owner,graph_conversion = graph_conversion,
+        roots = roots,held = held,receipt = receipt} end)))
+  fun theorem_for work (result as Result {receipt,...}) =
+    (validate_result work result;P.realization_theorem_for work receipt)
+  fun realization_for work (result as Result {receipt,...}) =
+    (validate_result work result;receipt)
   fun conversion_description_for work
-      (Result {plan = plan as Plan {owner,graph_conversion,...},...}) =
-    let val _ = validate work plan
+      (result as Result {owner,graph_conversion,...}) =
+    let val _ = validate_result work result
     in {graph = #graph owner,root = #root owner,scope = #scope owner,
         sources = #sources owner,
         source = C.graph_source graph_conversion,

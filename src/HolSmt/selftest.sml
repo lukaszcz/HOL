@@ -21174,6 +21174,8 @@ local
   structure D = SmtReplayOwnedTransport
   structure Stock = SmtLib_GraphNumericStock
   structure Aux = SmtLib_GraphSelectedAuxiliary
+  structure GP = SmtLib_GraphSourcePortfolio
+  structure RP = SmtReplayResourcePolicy
   structure N = SmtLib_FixedNumericSimple
   val _ = SmtLib_FixedNumericSimple.normalize_aux
   val cap = 100000
@@ -21316,6 +21318,121 @@ in
        andalso #retired (W.audit work) andalso
        #charged (W.audit work)=allowance andalso
        !calls=prior_calls andalso no_native) end
+
+  (* Owner-level cost regressions: no realized/policy Canon witness can
+     incidentally pay these retained lists or original Apply dependencies. *)
+  val _ = testutils.tprint
+    "Core Idle getters pay growing retained root and held lists"
+  val _ = let
+      fun negations 0 tm = tm
+        | negations n tm = negations (n-1) (boolSyntax.mk_neg tm)
+      fun sample depth =
+        let val graph = G.new () val root = G.root_scope graph
+            val sources = S.new graph root cap
+              {goal=negations depth ``core_guard_p:bool``,assumptions=[]}
+            val work = W.begin graph root sources
+              {limits={input_limit=cap,output_limit=cap,template_limit=cap},
+               work_limit=20000000}
+            val node = #node (S.goal_source sources)
+            val conversion = W.with_step work (fn () =>
+              C.graph_conversion_with_schemas graph root
+                {revisit=false,propose=fn _ => NONE,
+                 observe=fn () => W.spend work 1} node)
+            val roots = length (C.graph_roots_for work conversion)
+            val callbacks = ref 0
+            val prepared = Core.prepare work
+              {conversion=conversion,ordinal=0,
+               check_type=fn _ => callbacks := !callbacks+1}
+            val result = Core.execute work prepared
+            val prior_calls = !callbacks
+            val _ = Count.counting_thms true
+            val native = Count.thm_count ()
+            fun debit get =
+              let val prior = #charged (W.audit work) val _ = get ()
+              in #charged (W.audit work)-prior end
+            val costs = List.map (fn get => (debit get,debit get))
+              [fn () => ignore (Core.theorem_for work result),
+               fn () => ignore (Core.realization_for work result),
+               fn () => ignore (Core.conversion_description_for work result)]
+            val no_native = native=Count.thm_count ()
+            val _ = Count.counting_thms false
+            val _ = if !callbacks=prior_calls andalso no_native andalso
+                List.all (fn (a,b) => a=b andalso a>=roots) costs then ()
+              else raise Fail "Core getters omitted owner rows or had effects"
+            val _ = G.close_scope graph root
+            val expired = refuses (fn () =>
+              Core.conversion_description_for work result)
+            val _ = if expired andalso #retired (W.audit work) then () else
+              raise Fail "paid Core getter hid expired retained frame"
+        in (roots,List.map #1 costs) end
+      val (small,low) = sample 9 val (large,high) = sample 33
+    in ensure "Core getter payment did not cover retained-list growth"
+      (large>small andalso ListPair.allEq
+        (fn (a,b) => b-a>=large-small) (low,high)) end
+
+  val _ = let
+      fun debit work get =
+        let val prior = #charged (W.audit_policy work) val _ = get ()
+        in #charged (W.audit_policy work)-prior end
+      fun leave work amount = case W.remaining_policy work of
+          RP.AtMost n => W.with_step work
+            (fn () => W.spend_policy work (n-amount))
+        | _ => raise Fail "guard test lost finite original Work"
+      fun sample policy depth =
+        let val graph = G.new () val root = G.root_scope graph
+            val sources = S.new graph root cap
+              {goal=``portfolio_guard_p:bool``,
+               assumptions=[``portfolio_guard_p:bool``,
+                 ``portfolio_guard_p ==> portfolio_guard_p``]}
+            val limits =
+              {input_limit=cap,output_limit=cap,template_limit=cap}
+            val work = if policy then W.begin_with_policy graph root sources
+              {limits=RP.semantic_from_ints limits,
+               work_limit=RP.AtMost 20000000}
+              else W.begin graph root sources
+                {limits=limits,work_limit=20000000}
+            val original = GP.original graph root sources 0
+            val law = GP.original graph root sources 1
+            val denied = GP.original graph root sources 2
+            val goal = hd (S.assumption_nodes sources)
+            fun chain 0 fact rest = List.rev (fact::rest)
+              | chain n fact rest = chain (n-1) (GP.apply graph root
+                  {law=law,premises=[fact],target=goal}) (fact::rest)
+            (* Visiting prefixes in order grows the completed memo before
+               probing the shared law; duplicate hits also remain paid. *)
+            val facts = chain depth original []
+            val input = {assumptions=facts @ facts,goal=goal,denied=denied}
+            val saved = if policy then
+                GP.validate_portfolio_with_policy work input
+              else GP.validate_portfolio_with_work work input
+            fun guard () = GP.validate_with_work work saved
+            val _ = Count.counting_thms true
+            val native = Count.thm_count ()
+            val a = debit work guard val b = debit work guard
+            val c = debit work (fn () => W.with_step work guard)
+            val _ = if a=b andalso a=c andalso
+                a>=IntInf.fromInt (depth*4) then () else
+              raise Fail "dependency visits/memo probes were unpaid or cached"
+            val _ = leave work a
+            val _ = guard ()
+            val exact = W.remaining_policy work=RP.AtMost 0 andalso
+              not (#retired (W.audit_policy work))
+            val message = (guard ();NONE) handle Feedback.HOL_ERR detail =>
+              SOME (Feedback.message_of detail)
+            val no_native = native=Count.thm_count ()
+            val _ = Count.counting_thms false
+            val _ = if exact andalso
+                message=SOME "original cumulative work allowance exhausted"
+                andalso #retired (W.audit_policy work) andalso no_native
+              then () else raise Fail "dependency guard renewed Work/effects"
+        in a end
+    in List.app (fn policy =>
+      (testutils.tprint (if policy then
+         "Policy dependency guards repay rows/probes at exact original Work"
+       else "Legacy dependency guards repay rows/probes at exact Work");
+       let val small = sample policy 8 val large = sample policy 32
+       in ensure "dependency guard debit omitted chain growth"
+         (large>small) end)) [false,true] end
 
   val _ = testutils.tprint
     "Fixed SIMPLE never reissues consumed plan work"

@@ -151,16 +151,25 @@ struct
         val _ = W.validate work graph scope sources limits
     in {graph = graph,scope = scope,sources = sources,
         template = #template_limit limits} end
-  (* Cached private row/object inspection precedes every legacy getter.
-     The memo is local to ONE synchronous callback-free guard operation. *)
+  (* Private row/object inspection precedes every legacy getter. Every row
+     visit, memo comparison and insertion pays original Work. The balanced
+     local index avoids quadratic shared-dependency membership scans.
+     This memo is local to ONE synchronous callback-free guard operation;
+     neither template incidence nor earlier validation supplies credit. *)
   fun guard_facts work (expected : expectation) inputs =
-    let val completed = ref ([] : fact list)
-        fun visit (fact as Fact {graph,scope,row,...}) =
+    let fun charge () = W.spend_guard_policy work 1
+        fun compare keys = (charge ();Int.compare keys)
+        val completed = ref (Redblackmap.mkDict compare : (int,fact)
+          Redblackmap.dict)
+        fun visit (fact as Fact {identity,graph,scope,row,...}) =
           (if Portable.pointer_eq (graph,#graph expected) andalso
               scope = #scope expected then () else
              raise ERR "guard_facts" "different original graph or scope";
-           if List.exists (fn old => Portable.pointer_eq (fact,old))
-               (!completed) then () else
+           charge ();
+           case Redblackmap.peek (!completed,identity) of SOME held =>
+             if Portable.pointer_eq (fact,held) then () else
+               raise ERR "guard_facts" "private fact identity collision"
+           | NONE =>
            (case row of
                 Original (sources,_) =>
                   if Portable.pointer_eq (sources,#sources expected) then ()
@@ -177,7 +186,8 @@ struct
               | BinderTransport (conversion,source) =>
                   (P.validate_conversion_for work conversion;visit source)
               | Apply {law,premises} => (visit law;List.app visit premises);
-            completed := fact :: !completed))
+            charge ();
+            completed := Redblackmap.insert (!completed,identity,fact)))
     in List.app visit inputs end
   fun transport_with_work work conversion fact =
     ((let val expected = expected_work work
@@ -375,12 +385,18 @@ struct
      graph or proof backing while the expected Work is being validated. *)
   fun guard_policy_facts work graph scope sources inputs =
     let
-      val completed = ref ([]:fact list)
-      fun visit (fact as Fact {graph=held,scope=frame,row,...}) =
+      fun charge () = W.spend_guard_policy work 1
+      fun compare keys = (charge ();Int.compare keys)
+      val completed = ref (Redblackmap.mkDict compare : (int,fact)
+        Redblackmap.dict)
+      fun visit (fact as Fact {identity,graph=held,scope=frame,row,...}) =
         (if Portable.pointer_eq (graph,held) andalso scope=frame then () else
            raise ERR "guard_policy_facts" "different original graph or scope";
-         if List.exists (fn old=>Portable.pointer_eq (fact,old))
-             (!completed) then () else
+         charge ();
+         case Redblackmap.peek (!completed,identity) of SOME held =>
+           if Portable.pointer_eq (fact,held) then () else
+             raise ERR "guard_policy_facts" "private fact identity collision"
+         | NONE =>
          (case row of
               Original (saved,_) =>
                 if Portable.pointer_eq (sources,saved) then () else
@@ -399,7 +415,8 @@ struct
             | BinderTransport (conversion,source) =>
                 (P.validate_conversion_for work conversion;visit source)
             | Apply {law,premises} => (visit law;List.app visit premises);
-          completed := fact :: !completed))
+          charge ();
+          completed := Redblackmap.insert (!completed,identity,fact)))
     in List.app visit inputs end
 
   fun validate_policy_portfolio work {assumptions,goal,denied} =

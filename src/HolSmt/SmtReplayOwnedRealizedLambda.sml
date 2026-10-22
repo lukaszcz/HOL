@@ -57,11 +57,13 @@ struct
     (if Portable.pointer_eq (expected,#work owner) then () else
        raise ERR "validate" "different original Work";
      active owner;
-     List.app (fn Child (caller,child) => ignore
-         (G.closure_child_node (#graph owner) caller child)
-       | Profile (caller,profile) => ignore
-           (G.opaque_profile_data (#graph owner) caller profile)) held;
-     active owner))
+     (* No callback intervenes in this paid retained-witness walk. *)
+     List.app (fn retained =>
+       (W.spend_guard_policy expected 1;
+        case retained of Child (caller,child) => ignore
+          (G.closure_child_node (#graph owner) caller child)
+        | Profile (caller,profile) => ignore
+            (G.opaque_profile_data (#graph owner) caller profile))) held))
   fun prepare_admitted work {frame,admission,body,ordinal,check_type} =
     protected work (fn () => W.with_step work (fn () =>
     let
@@ -89,7 +91,10 @@ struct
       val ceiling = IntInf.fromInt (W.work_limit work)
       fun plus a b = IntInf.min (ceiling+1,a+b)
       fun times a b = IntInf.min (ceiling+1,a*b)
-      fun tick () = (active owner;W.spend work 1)
+      (* Entry and final fences enclose this callback-free inventory.
+         Rewalking the entire Core backing at every type/node/probe would
+         multiply its cost by the actual operand inventory. *)
+      fun tick () = W.spend work 1
       val held = ref ([] : held list)
       val types = ref ([] : Type.hol_type list)
       val memo = ref ([] : (G.node * size) list)
@@ -223,8 +228,10 @@ struct
        let val _ = if !state = Ready then state := Running else
              raise ERR "execute" "lambda plan already used"
            fun guard () = validate work plan
-           fun run action = (guard ();let val result = action ()
-             in guard ();result end)
+           (* All run operations below are callback-free. Entry/the last
+              policy return and the final fence enclose their real work;
+              every genuine backing witness is still checked at fences. *)
+           fun run action = action ()
            val graph = #graph owner
            fun equality_types node =
              let val operand = run (fn () => G.type_of graph node)
@@ -235,7 +242,7 @@ struct
            val generated = Type.bool ::
              (equality_types (#source owner) @ equality_types (#left owner))
            val _ = List.app (fn ty =>
-             (guard ();policy ty;guard ())) (generated @ types)
+             (policy ty;guard ())) (generated @ types)
            val lambda = run (fn () => G.binder_closure_data graph
              (#scope owner) (#closure owner))
            val first = run (fn () => G.recorded_abstraction graph

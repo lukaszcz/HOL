@@ -40,7 +40,8 @@ struct
     frame:F.receipt,admission:A.focus,source_limit:int,category:A.category}
   datatype focus = Focus of
     {admission:A.focus,frame:F.receipt,scope:G.scope,
-     described:(IntInf.int * IntInf.int * description) option ref}
+     described:(IntInf.int * IntInf.int * description) option ref,
+     backing_guard:unit -> unit}
   datatype plan = Plan of {owner:owner,source:focus,used:bool ref}
   datatype result = Result of {owner:owner,source:focus,proof:Core.result}
   type outcome = {target:focus,recipe:C.graph_conversion,proof:Core.result}
@@ -89,7 +90,7 @@ struct
   fun expected (Owner {graph,sources,work,...}) scope =
     {graph=graph,scope=scope,sources=sources,work=work}
   fun describe (owner as Owner {work,graph,root,fence,...})
-      (Focus {admission,frame,scope,described}) : description =
+      (Focus {admission,frame,scope,described,...}) : description =
     let val _ = active owner val _ = G.validate_scope graph scope
         val revision=G.validation_revision graph root val generation= !fence
         fun full () =
@@ -120,12 +121,24 @@ struct
                Portable.pointer_eq (held,frame) orelse present rest)
         val _ = if present (!frames) then () else
           frames := frame :: !frames
+        fun guard () = A.validate_for (expected owner scope) admission
         val focus = Focus {admission=admission,frame=frame,scope=scope,
-          described=ref NONE}
+          described=ref NONE,backing_guard=guard}
         val _ = ignore (describe owner focus)
-        val _ = backing := (fn () =>
-          A.validate_for (expected owner scope) admission) :: !backing
+        val _ = backing := guard :: !backing
     in focus end
+  (* A.generated_compact retains and validates its exact parent focus.
+     Once that child is registered, its parent's separate owner-list entry
+     is redundant, not a new dependency. Prune only that private closure;
+     no node equality or cached validation result authorizes this step. *)
+  fun covered_parent (Owner {work,backing,...})
+      (Focus {backing_guard,...}) =
+    let fun retain [] = (W.spend_guard_policy work 1;[])
+          | retain (guard::rest) =
+              (W.spend_guard_policy work 1;
+               if Portable.pointer_eq (guard,backing_guard) then retain rest
+               else guard :: retain rest)
+    in backing := retain (!backing) end
   fun action (owner as Owner {work,...}) focus operation =
     W.with_step work (fn () =>
       let fun observe () =
@@ -146,17 +159,19 @@ struct
     let val d = describe owner focus
     in action owner focus (fn observe => C.graph_identity graph (#scope d)
       {observe=observe} (#node d)) end
-  fun seal (owner as Owner {work,graph,backing,...}) focus recipe =
+  fun seal (owner as Owner {work,graph,...}) focus recipe =
     let val d = describe owner focus
         val plan = Core.prepare_in_scope work
           {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
            check_type=policy owner focus}
         val proof = Core.execute work plan
-        val _ = backing := (fn () => ignore
-          (Core.conversion_description_for work proof)) :: !backing
+        (* capture retains the generated admission, whose guard owns this
+           EXACT Core receipt and its parent. Do not retain a second guard
+           for the same proof beside that authentic dependency chain. *)
         val target = capture owner (#frame d)
           (A.generated_compact (expected owner (#scope d))
             (#admission d) proof)
+        val _ = covered_parent owner focus
         val closed = action owner focus (fn observe =>
           C.graph_realized_leaf work
             {realization=Core.realization_for work proof,observe=observe})
@@ -398,6 +413,7 @@ struct
               val target = capture owner (#frame d)
                 (A.generated_compact (expected owner (#scope d))
                   (#admission d) (#proof old))
+              val _ = covered_parent owner focus
           in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
     in case cached of SOME NONE => NONE | SOME (SOME old) => SOME (reuse old)
       | NONE =>

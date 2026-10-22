@@ -60,7 +60,8 @@ struct
   datatype focus = Focus of
     {dynamic : D.focus,admission : Q.focus,frame : G.scope,
      receipt : Scope.receipt,auxiliary : Aux.receipt option,
-     described : (IntInf.int * IntInf.int * description) option ref}
+     described : (IntInf.int * IntInf.int * description) option ref,
+     backing_guard : unit -> unit}
   datatype result = Result of
     {marker : unit ref,source : focus,target : focus,
      recipe : C.graph_conversion,raw : C.graph_conversion,
@@ -111,7 +112,7 @@ struct
     {graph = graph,scope = frame,sources = sources,work = work}
   fun auxiliary (Focus {auxiliary,...}) = auxiliary
   fun describe (owner as Owner {graph,scope=root,fence,...})
-      (Focus {dynamic,admission,frame,receipt,auxiliary,described}) =
+      (Focus {dynamic,admission,frame,receipt,auxiliary,described,...}) =
     let val _ = validate owner val _ = G.validate_scope graph frame
         val revision=G.validation_revision graph root val generation= !fence
   fun full () =
@@ -166,21 +167,34 @@ struct
          if old=revision andalso held=generation then answer else full ()
        | NONE => full () end
   fun capture owner auxiliary frame receipt dynamic admission =
-    let val focus = Focus
-          {dynamic = dynamic,admission = admission,frame = frame,
-          receipt = receipt,auxiliary = auxiliary,described = ref NONE}
-        val _ = ignore (describe owner focus)
-        val Owner {work,backing,frames,...} = owner
-        val _ = if guard_member work receipt (!frames) then () else
-          frames := receipt :: !frames
-        val expectation = expected owner frame
-        val _ = backing := (fn () =>
+    let val expectation = expected owner frame
+        fun guard () =
           (case auxiliary of NONE => () | SOME law =>
              let val Owner {scope,...} = owner
              in Aux.validate_for (expected owner scope) law end;
            Q.validate_for expectation admission;
-           ignore (D.description_for expectation dynamic))) :: !backing
+           ignore (D.description_for expectation dynamic))
+        val focus = Focus
+          {dynamic = dynamic,admission = admission,frame = frame,
+          receipt = receipt,auxiliary = auxiliary,described = ref NONE,
+          backing_guard = guard}
+        val _ = ignore (describe owner focus)
+        val Owner {work,backing,frames,...} = owner
+        val _ = if guard_member work receipt (!frames) then () else
+          frames := receipt :: !frames
+        val _ = backing := guard :: !backing
     in focus end
+  (* A generated Q focus and checked D target both retain their exact
+     parent. Keep the dependency, not its redundant separate owner entry.
+     This private closure comparison never establishes an endpoint. *)
+  fun covered_parent (Owner {work,backing,...})
+      (Focus {backing_guard,...}) =
+    let fun retain [] = (W.spend_guard_policy work 1;[])
+          | retain (guard::rest) =
+              (W.spend_guard_policy work 1;
+               if Portable.pointer_eq (guard,backing_guard) then retain rest
+               else guard :: retain rest)
+    in backing := retain (!backing) end
   fun control (owner as Owner {work,...}) = W.with_step work (fn () =>
     (validate owner;W.spend work 1;validate owner))
   fun ordinal (owner as Owner {work,next,...}) = W.with_step work (fn () =>
@@ -219,14 +233,13 @@ struct
           {frame = #receipt data,conversion = recipe,
           ordinal = ordinal owner,check_type = policy owner focus}
         val receipt = Core.execute work plan
-        val Owner {backing,...} = owner
-        val _ = backing := (fn () => ignore
-          (Core.conversion_description_for work receipt)) :: !backing
+        (* Both generated admissions below retain this SAME Core receipt. *)
         val dynamic = D.adopt_compact (#dynamic data) receipt
         val admission = Q.generated_compact (expected owner (#frame data))
           (#admission data) receipt
         val target = capture owner (auxiliary focus) (#frame data) (#receipt data)
           (D.target_focus dynamic) admission
+        val _ = covered_parent owner focus
     in {source = focus,target = target,recipe = recipe,
       original_recipe = recipe,bounded = SOME dynamic,
       body_result = SOME receipt}
@@ -309,6 +322,7 @@ struct
         val admission = Q.generated expectation (#admission data) fact
         val target = capture owner (auxiliary focus) (#frame data) (#receipt data)
           (D.target_focus converted) admission
+        val _ = covered_parent owner focus
         val recipe = in_action owner focus (fn observe =>
           C.graph_conversion_with_closed graph (#frame data)
             {template_limit = #template_limit limits,revisit = false,
@@ -365,7 +379,9 @@ struct
     in W.with_step work (fn () =>
       let val memo = ref ([] : (G.node * G.node * bool) list)
           val held = ref ([] : G.closure_child list)
-          fun tick () = (validate owner;W.spend work 1)
+          (* No callback in this comparison; describe fences both sides
+             and the held closure paths are checked again below. *)
+          fun tick () = W.spend work 1
           fun lookup _ _ [] = NONE
             | lookup x y ((a,b,result)::rest) =
                 (tick ();if x = a andalso y = b then SOME result
@@ -531,13 +547,16 @@ struct
           fun plus a b = if a > cap orelse b > cap-a then
               raise ERR "raw_prefix" "bounded Alpha leaf exceeds template"
             else a+b
+          (* Actual profile/type inventories are callback-free. Their
+             alpha_leaf entry/return fences retain the full owner guard;
+             pay inventory units without multiplying backing scans. *)
           fun type_size ty =
-            (tick ();if Type.is_vartype ty then 1 else
+            (W.spend work 1;if Type.is_vartype ty then 1 else
               List.foldl (fn (ty,n) => plus n (type_size ty)) 1
                 (#2 (Type.dest_type ty)))
           val types = ref ([] : Type.hol_type list)
           fun profile child =
-            let val _ = tick ()
+            let val _ = W.spend work 1
                 val node = G.closure_child_node graph scope child
                 val ty = G.type_of graph node val ann = type_size ty
                 val _ = types := ty :: !types
@@ -570,9 +589,11 @@ struct
             let val source_view = #source data
                 val target_child = G.closure_root graph scope rich
                 val _ = types := []
+                val _ = guard ()
                 val a = profile (#annotation data)
                 val b = profile target_child
                 val ty = type_size (G.type_of graph rich)
+                val _ = guard ()
                 (* Keep the original full raw/rich Alpha operand envelope,
                    even when the local semantic result is much smaller. *)
                 val quotes = [equation a a ty,equation b b ty,
