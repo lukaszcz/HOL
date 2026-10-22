@@ -27975,6 +27975,112 @@ let
 
 
 in () end
+
+fun replay_source_alpha_membership_success () =
+let
+  fun ensure message yes = if yes then () else die message
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun reject action = (action ();false) handle Feedback.HOL_ERR error =>
+    String.isSubstring "hypothesis is not a retained permitted source"
+      (Feedback.message_of error)
+  fun clean theorem =
+    let val (tags,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.all (fn tag => tag = "DISK_THM") tags andalso
+      null (Tag.axioms_of (Thm.tag theorem)) end
+  fun check make =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val predicate = Term.mk_var
+        ("source_alpha_predicate",``:(bool -> bool) -> bool``)
+      val first = Term.mk_comb (predicate,``\x:bool. x``)
+      val second = Term.mk_comb (predicate,``\y:bool. y``)
+      val originals = [first,second,first]
+      val sources = make graph scope
+        {goal = first,assumptions = originals}
+      val occurrences = S.reconciliation_sources sources
+      val nodes = S.assumption_nodes sources
+      val _ = tprint "Alpha Source portfolio retains ordered duplicates"
+      val _ = ensure "alpha occurrence order or originals changed"
+        (ListPair.allEq Portable.pointer_eq
+           (#1 (S.original_goal sources),originals) andalso
+         ListPair.allEq Portable.pointer_eq
+           (List.map #original (List.tl occurrences),originals) andalso
+         nodes = List.map #node (List.tl occurrences) andalso
+         length nodes = 3 andalso hd nodes = List.nth (nodes,2))
+      val _ = List.app (fn (source : G.source) =>
+        let val (left,right) = Term.dest_eq (Thm.concl (#bridge source)) in
+          ensure "source bridge is not exact, alpha, closed and clean"
+            (ptr left (#original source) andalso
+             ptr right (G.representative graph (#node source)) andalso
+             Term.aconv left right andalso null (Thm.hyp (#bridge source))
+             andalso clean (#bridge source))
+        end) (S.goal_source sources :: occurrences)
+      val _ = OK ()
+      val _ = tprint "Each retained alpha hypothesis closes the exact Goal"
+      val _ = List.app (fn node =>
+        let val retained = G.representative graph node
+            val theorem = Thm.EQ_MP (Thm.ALPHA retained first)
+              (Thm.ASSUME retained)
+            val _ = S.check_goal sources theorem
+        in ensure "alpha source lost exact Goal or canonical Hyp"
+          (ptr (Thm.concl theorem) first andalso
+           ptr (hd (Thm.hyp theorem)) retained andalso clean theorem) end)
+        nodes
+      val _ = OK ()
+      val _ = tprint "Equal alpha theorem from a foreign Source is rejected"
+      val foreign = G.new ()
+      val other = make foreign (G.root_scope foreign)
+        {goal = first,assumptions = originals}
+      val raw = Thm.ASSUME (S.canonical_goal other)
+      val theorem = Thm.EQ_MP (Thm.SYM (S.goal_bridge other)) raw
+      val _ = ensure "foreign Source fixture has the wrong endpoint or Hyp"
+        (ptr (Thm.concl theorem) first andalso clean theorem andalso
+         length (Thm.hyp theorem) = 1 andalso
+         Term.aconv (hd (Thm.hyp theorem)) (S.canonical_goal sources) andalso
+         not (ptr (hd (Thm.hyp theorem)) (S.canonical_goal sources)))
+      val _ = ensure "foreign canonical hypothesis acquired source membership"
+        (reject (fn () => S.check_goal sources theorem))
+      val _ = G.close_scope foreign (G.root_scope foreign)
+      val _ = G.close_scope graph scope
+    in OK () end
+  val _ = check (fn g => fn s => S.new g s 4096)
+  val _ = check (fn g => fn s => S.new_with_policy g s
+    (SmtReplayResourcePolicy.AtMost 4096))
+
+  val _ = tprint "A checked semantic bridge never grants Source membership"
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val sources = S.new graph scope 4096
+    {goal = boolSyntax.T,assumptions = [boolSyntax.T]}
+  val source = hd (S.assumption_nodes sources)
+  val admitted = #node (G.import graph scope 4096
+    (boolSyntax.mk_conj (boolSyntax.T,boolSyntax.T)))
+  val retained = G.representative graph admitted
+  val law = Thm.SYM (Drule.EQT_INTRO
+    (Thm.CONJ boolTheory.TRUTH boolTheory.TRUTH))
+  val (_,right) = Term.dest_eq (Thm.concl law)
+  val bridge = Thm.TRANS law (Thm.ALPHA right retained)
+  val admission : SmtReplayBinder.admission =
+    {metric = G.RawNodes,input_limit = 100,output_limit = 100,
+     check_type = fn _ => (),refuse = fn why => die why}
+  (* This certificate permits bounded explicit normalization, NOT alpha
+     correspondence or membership in the original Source portfolio. *)
+  val certificate = SmtReplaySourceHypAdmission.new graph scope
+    {source = source,admitted = admitted,bridge = bridge,
+     source_variables = [],allow_bound = false,admission = admission}
+  val _ = SmtReplaySourceHypAdmission.check certificate
+    {source = source,scope = scope,variables = [],admission = admission}
+  val theorem = Thm.CONJUNCT1 (Thm.ASSUME retained)
+  val _ = ensure "semantic-equivalence fixture was alpha or not exact"
+    (not (Term.aconv boolSyntax.T retained) andalso
+     ptr (Thm.concl theorem) (#2 (S.original_goal sources)) andalso
+     length (Thm.hyp theorem) = 1 andalso
+     ptr (hd (Thm.hyp theorem)) retained andalso clean theorem)
+  val _ = ensure "semantic equivalence replaced original hypothesis custody"
+    (reject (fn () => S.check_goal sources theorem))
+  val _ = G.close_scope graph scope
+in OK () end
 end
 
 local
@@ -28937,6 +29043,8 @@ fun run_replay_graph_unittests () =
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
      ("replay_source_checked_success", replay_source_checked_success),
+     ("replay_source_alpha_membership_success",
+       replay_source_alpha_membership_success),
      ("replay_graph_unify_success", replay_graph_unify_success),
      ("replay_graph_backend_success", replay_graph_backend_success),
      ("replay_graph_clauses_success", replay_graph_clauses_success),
@@ -29765,6 +29873,8 @@ let
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),
     ("replay_source_checked_success", replay_source_checked_success),
+    ("replay_source_alpha_membership_success",
+      replay_source_alpha_membership_success),
     ("replay_graph_unify_success", replay_graph_unify_success),
     ("replay_graph_backend_success", replay_graph_backend_success),
     ("replay_graph_clauses_success", replay_graph_clauses_success),
