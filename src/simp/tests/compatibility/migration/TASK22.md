@@ -36,6 +36,10 @@ The private configured extractor threads the same abort check into nested
 native searches. `TraverseExt.CHILD_FIRST_WITH_ABORT` is an additive driver
 hook: its check is inert on success and rethrows a remembered failure before
 callbacks, including solver continuations, factories and reducer descent.
+Returned congruence/weakener conversions are guarded at invocation too:
+all factories may already exist when selected child descent aborts. A policy
+HOL_ERR cannot trigger fallback callbacks through FIRSTCQC_CONV. This changes
+no ordinary congruence rejection, UNCHANGED or successful callback schedule.
 This is needed when a native policy call occurs outside the traversal's own
 predicate wrapper. Existing traversal entry points use an inert external
 check and retain their own local protection; no existing client must migrate.

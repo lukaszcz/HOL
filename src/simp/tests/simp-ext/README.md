@@ -202,7 +202,8 @@ See the [migration audit](../compatibility/migration/TASK21.md) and
 
 `derivation.sml` adds **1,392 checks**, including 270 prior review-regression
 checks and 276 checks for post-abort dispatch and nested continuations.
-The pre-existing assertions are retained. `lifetimes.sml` adds **63 checks**.
+The pre-existing assertions are retained. `lifetimes.sml` adds **315 checks**,
+including 252 selected-child congruence invocation/rejection assertions.
 Both launchers run under the normal `check`/selftest-level-1 targets.
 
 | New coverage | Original provenance / added intersection |
@@ -219,6 +220,7 @@ Both launchers run under the normal `check`/selftest-level-1 targets.
 | Root entries | Native root contracts plus exact priority/fallback and collector counts, no root fixpoint or descent, retained solver-only context separation |
 | Solver closures | Native generic context/stack contracts plus same-data nested use, retained recurse closures, old-context generation identity after later application/failure, exact opaque callback traces |
 | Eta/congruence | Native head/eta policy plus saved live predicate and selected descent/unchanged congruence blocking; direct, observed and argument-only policy aborts retain identity and recover on reuse |
+| Selected child abort | Generic, observed and abort-hook child-first entries; repeated HOL_ERR/foreign/Interrupt from selected descent cannot invoke failing or successful fallback congruences or other callbacks; exact factory schedule and saved proof recovery; ordinary HOL_ERR rejection, UNCHANGED, foreign/Interrupt and success keep their callback order |
 
 Existing `../traverse-ext/selftest.sml` keeps live default depth, explicit
 integer depth, custom order, root-condition full traversal, context ordering,

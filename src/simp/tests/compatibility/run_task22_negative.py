@@ -68,7 +68,9 @@ def main():
         ("solver", "derivation",
          "direct/nested condition/HOL_ERR: no enclosing callback after abort"),
         ("argument-child", "lifetimes",
-         "arguments/HOL_ERR: no child callback after abort")]
+         "arguments/HOL_ERR: no child callback after abort"),
+        ("congruence-invocation", "lifetimes",
+         "generic/selected child/HOL_ERR/failure: no congruence")]
     try:
         for mode, fixture, marker in cases:
             with tempfile.TemporaryDirectory(prefix="simp-task22-") as tmp:
@@ -125,6 +127,10 @@ def main():
                             new = ("    fun guarded_child tm = child tm\n"
                                    "    fun arguments tm =\n"
                                    "      (();\n")
+                        if (mode == "congruence-invocation" and
+                                name == "TraverseExt.sml"):
+                            old = "fn tm => (check_abort (); conversion tm)"
+                            new = "fn tm => conversion tm"
                         if mode == "arguments" and name == "TraverseExt.sml":
                             old = "keep_abstraction=protected (#keep_abstraction policy)"
                             new = "keep_abstraction= #keep_abstraction policy"

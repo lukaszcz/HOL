@@ -503,8 +503,15 @@ fun TRAVERSE_IN_CONTEXT check_external_abort
           {solver=(fn tm => ctxt_solver stack tm), (* do not eta-convert! *)
            depther=depther,
            freevars=freevars}
-      fun apply_congproc congproc =
-        (check_abort (); congproc congproc_args)
+      fun apply_congproc congproc = let
+        val _ = check_abort ()
+        val conversion = congproc congproc_args
+      in
+        (* Factories are collected before descent. A selected conversion
+           can then abort in a child; FIRSTCQC_CONV treats HOL_ERR as
+           rejection, so guard each invocation before any fallback runs. *)
+        fn tm => (check_abort (); conversion tm)
+      end
       (* Preserve eager per-context factory construction only for the
          ordinary legacy entry point. Extended paths retain lazy attempts. *)
       val (descend,weaken) =

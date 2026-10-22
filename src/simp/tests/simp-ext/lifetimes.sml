@@ -378,6 +378,137 @@ in
      ("arguments",fn p => E.NORMALIZE_ARGUMENTS p)]
 end
 
+(* A selected congruence can encounter a policy abort inside depther after
+   ALL congruence factories have been built. Guard the returned conversions,
+   not just their factories: HOL_ERR rejection must never call a fallback
+   after that abort. Ordinary rejection and UNCHANGED keep their schedules. *)
+val _ = let
+  exception Foreign of unit ref
+  val token = ref ()
+  val payload = Feedback.mk_hol_error
+    "lifetime" "selected_child" locn.Loc_Unknown "selected child abort"
+  val errors =
+    [("HOL_ERR",HOL_ERR payload,
+      fn HOL_ERR e => Portable.pointer_eq (e,payload) | _ => false),
+     ("foreign",Foreign token,
+      fn Foreign r => Portable.pointer_eq (r,token) | _ => false),
+     ("Interrupt",Portable.Interrupt,
+      fn Portable.Interrupt => true | _ => false)]
+  val hold = ``(lifetime_hold:(bool -> bool) -> bool)
+                  (\u:bool. lifetime_h u)``
+  val outer = ``lifetime_outer:bool -> bool``
+  val input = mk_comb (outer,hold)
+  val expected = AP_TERM outer (RAND_CONV ETA_CONV hold)
+  val context = {reducer_context=[],solver_context=[]}
+  fun build route policy observer xd =
+    case route of
+        "generic" => E.TRAVERSE_WITH_CONTEXT (E.ChildFirst policy) xd context
+      | "observed" =>
+          E.CHILD_FIRST_WITH_OBSERVER observer policy xd context
+      | _ => E.CHILD_FIRST_WITH_ABORT (fn () => ()) NONE policy xd context
+  fun run route successful (error_name,error,exact) = let
+    val enabled = ref true
+    val aborted = ref false
+    val policy_calls = ref 0
+    val post_calls = ref ([] : string list)
+    val factories = ref ([] : string list)
+    val fallbacks = ref ([] : string list)
+    fun callback name =
+      if !aborted then post_calls := !post_calls @ [name] else ()
+    fun keep tm =
+      (callback "policy";
+       if !enabled andalso aconv tm hold then
+         (policy_calls := !policy_calls + 1; aborted := true; raise error)
+       else false)
+    val policy = {charge=fn () => callback "charge",keep_abstraction=keep}
+    fun observe _ = callback "observer"
+    fun factory name =
+      (callback (name ^ " factory"); factories := !factories @ [name])
+    val select : Opening.congproc = fn _ => fn {depther,...} =>
+      (factory "select"; fn tm =>
+        (callback "select";
+         if is_comb tm andalso aconv (rator tm) outer then
+           AP_TERM outer (QCONV (depther ([],equality)) (rand tm))
+         else NO_CONV tm))
+    fun fallback name success : Opening.congproc = fn _ => fn _ =>
+      (factory name; fn tm =>
+        (callback name;
+         if aconv tm input then
+           (fallbacks := !fallbacks @ [name];
+            if success then expected else NO_CONV tm)
+         else NO_CONV tm))
+    val xd = (data [] [] [select,fallback "reject" false,
+                          fallback "last" successful],E.default_config)
+    val saved = build route policy observe xd
+    val label = route ^ "/selected child/" ^ error_name ^
+                (if successful then "/success" else "/failure")
+    val _ = check (label ^ ": construction is inert")
+      (null (!factories) andalso !policy_calls = 0)
+    fun abort () = let
+      val actual = Exn.capture saved input
+      val _ = check (label ^ ": exact policy abort")
+        (case actual of Exn.Exn e => exact e | _ => false)
+      val _ = check (label ^ ": selected child abort witnessed once")
+        (!policy_calls = 1)
+      val _ = check (label ^ ": no congruence or callback after abort")
+        (null (!post_calls) andalso null (!fallbacks))
+    in check (label ^ ": factories retain eager list schedule per descent")
+         (!factories = ["select","reject","last"]) end
+    val _ = abort ()
+    val _ = aborted := false
+    val _ = policy_calls := 0
+    val _ = factories := []
+    val _ = abort ()
+    val _ = enabled := false
+    val _ = aborted := false
+    val _ = result (label ^ ": saved conversion recovers with proof")
+      saved input expected
+  in check (label ^ ": successful selected descent never tries fallback")
+       (null (!post_calls) andalso null (!fallbacks)) end
+  (* No policy abort: a rejected selected conversion MUST invoke fallback.
+     UNCHANGED stops fallback, whereas foreign errors/Interrupt propagate. *)
+  fun ordinary route (name,error,exact) = let
+    val calls = ref ([] : string list)
+    val mode = ref "error"
+    val select : Opening.congproc = fn _ => fn _ => fn tm =>
+      if aconv tm input then
+        (calls := !calls @ ["select"];
+         if !mode = "error" then raise error
+         else if !mode = "unchanged" then raise UNCHANGED else expected)
+      else NO_CONV tm
+    fun fallback name success : Opening.congproc = fn _ => fn _ => fn tm =>
+      if aconv tm input then
+        (calls := !calls @ [name]; if success then expected else NO_CONV tm)
+      else NO_CONV tm
+    val saved = build route
+      {charge=fn () => (),keep_abstraction=fn _ => false} (fn _ => ())
+      (data [] [] [select,fallback "reject" false,fallback "prove" true],
+       E.default_config)
+    val actual = Exn.capture saved input
+    val holerror = case error of HOL_ERR _ => true | _ => false
+    val label = route ^ "/ordinary congruence/" ^ name
+    val _ = check (label ^ ": exact rejection or exception")
+      (case actual of Exn.Res th => holerror andalso same th expected
+                    | Exn.Exn e => not holerror andalso exact e)
+    val _ = check (label ^ ": exact fallback callback order")
+      (!calls = if holerror then ["select","reject","prove"]
+                else ["select"])
+    val _ = calls := []
+    val _ = mode := "unchanged"
+    val _ = result (label ^ ": unchanged blocks fallback")
+      saved input (REFL input)
+    val _ = check (label ^ ": unchanged callback count") (!calls = ["select"])
+    val _ = calls := []
+    val _ = mode := "success"
+    val _ = result (label ^ ": saved congruence succeeds again")
+      saved input expected
+  in check (label ^ ": successful callback count") (!calls = ["select"]) end
+in
+  List.app (fn route =>
+    (List.app (fn success => List.app (run route success) errors) [false,true];
+     List.app (ordinary route) errors)) ["generic","observed","abort-hook"]
+end
+
 val _ = print ("TraverseExt lifetime checks: " ^ Int.toString (!checks) ^
                "\n")
 val _ = OS.Process.exit OS.Process.success

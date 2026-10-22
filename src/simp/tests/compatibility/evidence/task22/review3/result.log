@@ -1,0 +1,50 @@
+Holmake: Scanning $(HOLDIR)/src/simp/src
+Holmake: Scanned 2 directories
+HOLMOSMLC -o selftest.exe selftest.uo
+./selftest.exe
+generic/HOL_ERR: original policy error propagates ...                        OK
+generic/HOL_ERR: selected child policy abort witnessed ...                   OK
+generic/HOL_ERR: POST_ABORT_CONGRUENCES=1
+generic/HOL_ERR: no congruence callback after policy abort ...               FAILED
+generic/HOL_ERR: saved conversion recovers with correct proof ...            OK
+generic/foreign: original policy error propagates ...                        OK
+generic/foreign: selected child policy abort witnessed ...                   OK
+generic/foreign: POST_ABORT_CONGRUENCES=0
+generic/foreign: no congruence callback after policy abort ...               OK
+generic/foreign: saved conversion recovers with correct proof ...            OK
+generic/Interrupt: original policy error propagates ...                      OK
+generic/Interrupt: selected child policy abort witnessed ...                 OK
+generic/Interrupt: POST_ABORT_CONGRUENCES=0
+generic/Interrupt: no congruence callback after policy abort ...             OK
+generic/Interrupt: saved conversion recovers with correct proof ...          OK
+observed/HOL_ERR: original policy error propagates ...                       OK
+observed/HOL_ERR: selected child policy abort witnessed ...                  OK
+observed/HOL_ERR: POST_ABORT_CONGRUENCES=1
+observed/HOL_ERR: no congruence callback after policy abort ...              FAILED
+observed/HOL_ERR: saved conversion recovers with correct proof ...           OK
+observed/foreign: original policy error propagates ...                       OK
+observed/foreign: selected child policy abort witnessed ...                  OK
+observed/foreign: POST_ABORT_CONGRUENCES=0
+observed/foreign: no congruence callback after policy abort ...              OK
+observed/foreign: saved conversion recovers with correct proof ...           OK
+observed/Interrupt: original policy error propagates ...                     OK
+observed/Interrupt: selected child policy abort witnessed ...                OK
+observed/Interrupt: POST_ABORT_CONGRUENCES=0
+observed/Interrupt: no congruence callback after policy abort ...            OK
+observed/Interrupt: saved conversion recovers with correct proof ...         OK
+abort-hook/HOL_ERR: original policy error propagates ...                     OK
+abort-hook/HOL_ERR: selected child policy abort witnessed ...                OK
+abort-hook/HOL_ERR: POST_ABORT_CONGRUENCES=1
+abort-hook/HOL_ERR: no congruence callback after policy abort ...            FAILED
+abort-hook/HOL_ERR: saved conversion recovers with correct proof ...         OK
+abort-hook/foreign: original policy error propagates ...                     OK
+abort-hook/foreign: selected child policy abort witnessed ...                OK
+abort-hook/foreign: POST_ABORT_CONGRUENCES=0
+abort-hook/foreign: no congruence callback after policy abort ...            OK
+abort-hook/foreign: saved conversion recovers with correct proof ...         OK
+abort-hook/Interrupt: original policy error propagates ...                   OK
+abort-hook/Interrupt: selected child policy abort witnessed ...              OK
+abort-hook/Interrupt: POST_ABORT_CONGRUENCES=0
+abort-hook/Interrupt: no congruence callback after policy abort ...          OK
+abort-hook/Interrupt: saved conversion recovers with correct proof ...       OK
+REVIEW3_FAILURES=3
