@@ -311,19 +311,19 @@ struct
     protect work (fn () =>
       (validate_for expected parent;W.with_step work (fn () =>
         let
-          fun evidence () =
+          fun checked_description () =
             let val data =
                   SmtReplayOwnedLargeProofCore.conversion_description_for
                     work receipt
             in if Portable.pointer_eq (#graph data,#graph owner) andalso
                 #scope data = traversal andalso
                 Portable.pointer_eq (#sources data,#sources owner) andalso
-                #source data = node then () else
+                #source data = node then data else
               raise ERR "generated_compact" "different compact result owner"
             end
-          val _ = evidence ()
-          val data = SmtReplayOwnedLargeProofCore.conversion_description_for
-            work receipt
+          fun evidence () = ignore (checked_description ())
+          (* Reuse only locally; the retained evidence still rechecks. *)
+          val data = checked_description ()
           val _ = spend parent 1
           val incoming = G.closure_root (#graph owner) traversal (#target data)
           val result = Focus {owner = owner,traversal = traversal,

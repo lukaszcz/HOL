@@ -604,9 +604,13 @@ struct
                 val _ = guard ()
             in C.graph_leaf graph scope {conversion = converted,
               template_limit = cap,observe = tick} end
-          fun lookup node [] = NONE
+          (* These private searches are callback-free. Their caller has
+             just guarded the portfolio; pay each probe without rescanning
+             that entire portfolio for every immutable association link. *)
+          fun lookup node [] = (W.spend work 1;NONE)
             | lookup node ((old,recipe)::rest) =
-                (tick ();if old = node then SOME recipe else lookup node rest)
+                (W.spend work 1;
+                 if old = node then SOME recipe else lookup node rest)
           val memo = ref ([] : (G.node * C.graph_conversion) list)
           fun visit receipt current =
             let val _ = tick ()
@@ -649,17 +653,20 @@ struct
              caller theorem/node or merely matching semantic endpoints. *)
           val {root,steps} = C.graph_recipe_steps graph scope
             {observe = tick} semantic
-          fun row id [] = raise ERR "raw_rebase" "missing private recipe ID"
+          fun row id [] =
+                (W.spend work 1;
+                 raise ERR "raw_rebase" "missing private recipe ID")
             | row id ((item : C.recipe_step)::rest) =
-                (tick ();if #id item = id then item else row id rest)
-          fun leaf held [] = NONE
+                (W.spend work 1;
+                 if #id item = id then item else row id rest)
+          fun leaf held [] = (W.spend work 1;NONE)
             | leaf held ((fact,converted)::rest) =
-                (tick ();if Portable.pointer_eq (held,fact) then
+                (W.spend work 1;if Portable.pointer_eq (held,fact) then
                   SOME converted else leaf held rest)
           val planned = ref ([] : (int * G.node * raw_plan option) list)
-          fun cached_plan id raw [] = NONE
+          fun cached_plan id raw [] = (W.spend work 1;NONE)
             | cached_plan id raw ((old,node,answer)::rest) =
-                (tick ();if old = id andalso node = raw then SOME answer
+                (W.spend work 1;if old = id andalso node = raw then SOME answer
                  else cached_plan id raw rest)
           fun plan id alpha current =
             let val _ = tick ()
@@ -714,9 +721,10 @@ struct
                 in answer end
             end
           val assembled = ref ([] : (raw_plan * C.graph_conversion) list)
-          fun cached_assembly item [] = NONE
+          fun cached_assembly item [] = (W.spend work 1;NONE)
             | cached_assembly item ((old,recipe)::rest) =
-                (tick ();if Portable.pointer_eq (item,old) then SOME recipe
+                (W.spend work 1;
+                 if Portable.pointer_eq (item,old) then SOME recipe
                  else cached_assembly item rest)
           fun assemble item =
             let val _ = guard ()
@@ -753,7 +761,7 @@ struct
           in in_action owner focus (fn observe =>
             C.graph_realized_sequence work
               {first = first,second = second,observe = observe}) end
-      val _ = C.validate_conversion_for work result
+      val _ = C.validate_conversion_with_policy work result
       val _ = if C.graph_source result = raw andalso
           C.graph_result result = C.graph_result semantic then () else
         raise ERR "raw_rebase" "different exact raw/final endpoints"
@@ -942,7 +950,7 @@ struct
                       #node origin=raw_source then () else
                     raise ERR "source_target_for" "missing changed prefix"
               | SOME prefix =>
-                  (C.validate_conversion_for work prefix;
+                  (C.validate_conversion_with_policy work prefix;
                    if C.graph_source prefix=raw_source andalso
                        C.graph_result prefix= #node current then () else
                      raise ERR "source_target_for" "different actual target")
@@ -1112,13 +1120,18 @@ struct
               {view=view,native_contract=contract,profiles=profiles}
             val admission=Q.initial_goal_with_policy work {view=view}
         in run owner (Focus {dynamic=dynamic,admission=admission}) end)
-    fun result_for expected_work (owner as Owner {work,marker,...})
-        (result as Result {marker=held,...})=
+    (* Immutable result headers precede every paid owner guard, including
+       callers that wrap this scheduler with an additional law owner. *)
+    fun result_header_for expected_work (Owner {work,marker,...})
+        (Result {marker=held,...})=
       protected expected_work (fn()=>
         (if Portable.pointer_eq (expected_work,work) then () else
            raise ERR "policy_scheduler" "different original Work";
          if marker=held then () else
-           raise ERR "policy_scheduler" "different actual scheduler result";
+           raise ERR "policy_scheduler" "different actual scheduler result"))
+    fun result_for expected_work owner result=
+      protected expected_work (fn()=>
+        (result_header_for expected_work owner result;
          validate_for expected_work owner;
          let val Result {owner=saved,original,target,conversion,...}=result
              val _=active saved
@@ -1890,12 +1903,14 @@ struct
             {view=view,native_contract=contract,profiles=profiles}
           val admission=Q.initial_goal_with_policy work{view=view}
       in run held (Focus{dynamic=dynamic,admission=admission,frame=frame})end)
+    fun result_owner_for work (owner as Owner{scheduler,...}) result=
+      (PS.result_header_for work scheduler result;for_work work owner)
     fun source_for work owner result=
-      PS.source_for work (for_work work owner) result
+      PS.source_for work (result_owner_for work owner result) result
     fun denial_for work owner result view=
-      PS.denial_for work (for_work work owner) result view
+      PS.denial_for work (result_owner_for work owner result) result view
     fun target_for work owner result=
-      PS.target_for work (for_work work owner) result
+      PS.target_for work (result_owner_for work owner result) result
   end
   type policy_carrier_owner=CarrierScopedScheduler.owner
   val begin_carrier_with_policy=CarrierScopedScheduler.begin
@@ -2032,7 +2047,7 @@ struct
         ({target,recipe,converted}:outcome)=
       let val original=RS.describe owner source
           val current=RS.describe owner target
-          val _=C.validate_conversion_for work recipe
+          val _=C.validate_conversion_with_policy work recipe
           val _=Option.app(fn value=>ignore
             (D.conversion_description_with_policy_for
               (RS.expected owner source)value))converted
@@ -2079,7 +2094,7 @@ struct
         {work,contract,profiles,backing,...})source recipe=
       let val RS.Focus{frame,...}=source
           val initial_data=RS.describe owner source
-          val _=C.validate_conversion_for work recipe
+          val _=C.validate_conversion_with_policy work recipe
           val _=if C.graph_source recipe= #node initial_data then ()else
             raise ERR "policy_source_carrier" "different Core source"
           val result=Core.execute_with_policy work
@@ -2428,7 +2443,7 @@ struct
                   val _=guard()
               in answer end)
             fun keep converted=
-              (C.validate_conversion_for work converted;
+              (C.validate_conversion_with_policy work converted;
                recipes:=converted:: !recipes;converted)
             fun tick()=action(fn observe=>observe())
             (* Close only this actual immediate application on compact names.
@@ -2472,7 +2487,7 @@ struct
                           raise ERR "source_alpha_prefix"
                             "nonidentity prefix lacks actual recipe"
                     | SOME converted=>
-                        (C.validate_conversion_for work converted;
+                        (C.validate_conversion_with_policy work converted;
                          if C.graph_source converted=source andalso
                              C.graph_result converted=target then ()else
                            raise ERR "source_alpha_prefix"

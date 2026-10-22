@@ -394,20 +394,19 @@ struct
 
   fun adopt_compact focus receipt = W.with_step (work_of focus) (fn () =>
     let val owner = owner_of focus
-        fun backing () =
+        fun checked_description () =
           let val data = SmtReplayOwnedLargeProofCore.conversion_description_for
                 (#work owner) receipt
           in if Portable.pointer_eq (#graph data,#graph owner) andalso
               #scope data = scope focus andalso
               Portable.pointer_eq (#sources data,#sources owner) andalso
-              #source data = node focus then () else
+              #source data = node focus then data else
             raise ERR "adopt_compact" "different result source/owner/frame" end
-        val _ = backing ()
-        val data = SmtReplayOwnedLargeProofCore.conversion_description_for
-          (#work owner) receipt
+        fun backing () = ignore (checked_description ())
+        val data = checked_description ()
         val theorem = SmtReplayOwnedLargeProofCore.theorem_for
           (#work owner) receipt
-        val _ = backing ()
+        (* No callback intervenes; reuse this locally checked description. *)
         val result = at_node focus (scope focus) (#target data) [backing]
     in checked (focus,result,theorem,backing) end)
 

@@ -7,7 +7,7 @@ struct
   structure P = SmtReplayProof
   structure R = SmtReplayRules
   structure W = SmtReplayInvocationWork
-  val _ = SmtReplayCanonGraph.validate_conversion_for
+  val _ = SmtReplayCanonGraph.validate_conversion_with_policy
   val _ = SmtReplayProof.validate_conversion_for
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphSourcePortfolio"
   (* Private identifiers index exact opaque objects, never proof authority.
@@ -132,14 +132,16 @@ struct
           {operands = operands,check_type = check_type}
     in closed graph scope {theorem = theorem,holes = holes,
       operands = operands,template_limit = template_limit} end
-  fun transport graph scope conversion fact =
+  fun transport_using inventory graph scope conversion fact =
     let val _ = owned graph scope fact
-        val _ = List.app (visible graph scope) (C.graph_roots conversion)
+        val _ = List.app (visible graph scope) (inventory conversion)
         val _ = if C.graph_source conversion = endpoint fact then () else
           raise ERR "transport" "conversion changed dependency endpoint"
     in Fact {identity = next_identity (),graph = graph,scope = scope,
              node = C.graph_result conversion,
              row = Transport (conversion,fact)} end
+  fun transport graph scope conversion fact =
+    transport_using C.graph_roots graph scope conversion fact
   type expectation =
     {graph : G.graph,scope : G.scope,sources : S.sources,template : int}
   fun expected_work work : expectation =
@@ -166,10 +168,12 @@ struct
               | PolicyOriginal (sources,_,_) =>
                   if Portable.pointer_eq (sources,#sources expected) then ()
                   else raise ERR "guard_facts" "different original Sources"
-              | Closed conversion => C.validate_conversion_for work conversion
+              | Closed conversion =>
+                  C.validate_conversion_with_policy work conversion
               | RecordedClosed _ => ()
               | Transport (conversion,source) =>
-                  (C.validate_conversion_for work conversion;visit source)
+                  (C.validate_conversion_with_policy work conversion;
+                   visit source)
               | BinderTransport (conversion,source) =>
                   (P.validate_conversion_for work conversion;visit source)
               | Apply {law,premises} => (visit law;List.app visit premises);
@@ -177,9 +181,10 @@ struct
     in List.app visit inputs end
   fun transport_with_work work conversion fact =
     ((let val expected = expected_work work
-          val _ = C.validate_conversion_for work conversion
+          val _ = C.validate_conversion_with_policy work conversion
           val _ = guard_facts work expected [fact]
-      in transport (#graph expected) (#scope expected) conversion fact end)
+      in transport_using (C.graph_roots_for work)
+        (#graph expected) (#scope expected) conversion fact end)
      handle primary => (W.close work;raise primary))
   fun binder_transport graph scope conversion fact =
     let val _ = owned graph scope fact
@@ -200,8 +205,18 @@ struct
     in Fact {identity = next_identity (),graph = graph,scope = scope,
              node = target,
              row = Apply {law = law,premises = premises}} end
-  fun validate graph scope sources {assumptions,goal,denied,template_limit} =
+  (* Only authenticated entrypoints supply Work. Template incidence checks
+     do not pay Canon walks: each owned inventory call debits actual work,
+     including repeated legacy projections in Idle, with no saved credit. *)
+  fun validate_using work graph scope sources
+      {assumptions,goal,denied,template_limit} =
     let
+      val graph_roots = case work of NONE => C.graph_roots
+        | SOME owner => C.graph_roots_for owner
+      val graph_closed_facts = case work of NONE => C.graph_closed_facts
+        | SOME owner => C.graph_closed_facts_for owner
+      val graph_conversions = case work of NONE => C.graph_conversions
+        | SOME owner => C.graph_conversions_for owner
       val _ = G.validate_scope graph scope
       val _ = visible graph scope goal
       val originals = nodes sources
@@ -225,11 +240,11 @@ struct
         (List.app (fn plan =>
           (charge 1;P.validate_closed_fact graph scope template_limit plan;
            closed_facts := plan :: !closed_facts))
-          (C.graph_closed_facts conversion);
+          (graph_closed_facts conversion);
          List.app (fn plan =>
           (charge 3;P.validate_conversion graph scope template_limit plan;
            conversions := plan :: !conversions))
-          (C.graph_conversions conversion))
+          (graph_conversions conversion))
       val _ = if exact_denial graph scope goal denied then () else
         raise ERR "validate" "query denial is not exact negated query goal"
       fun walk [] roots = roots
@@ -261,12 +276,12 @@ struct
                       val _ = closed_facts := plan :: !closed_facts
                   in walk rest roots end
               | Closed conversion =>
-                  let val more = C.graph_roots conversion
+                  let val more = graph_roots conversion
                       val _ = graph_leaves conversion
                       val _ = List.app (fn _ => charge 1) more
                   in walk rest (more @ roots) end
               | Transport (conversion,source) =>
-                  let val more = C.graph_roots conversion
+                  let val more = graph_roots conversion
                       val _ = graph_leaves conversion
                       val _ = charge 1 (* source dependency edge *)
                       val _ = List.app (fn _ => charge 1) more
@@ -295,6 +310,8 @@ struct
       template_limit = template_limit,
       closed_facts = List.rev (!closed_facts),
       conversions = List.rev (!conversions)} end
+  fun validate graph scope sources input =
+    validate_using NONE graph scope sources input
   fun active (Validation {graph,scope,sources,...}) =
     (G.validate_scope graph scope;ignore (nodes sources))
     | active (PolicyValidation
@@ -371,12 +388,14 @@ struct
             | PolicyOriginal (saved,_,_) =>
                 if Portable.pointer_eq (sources,saved) then () else
                   raise ERR "guard_policy_facts" "different original Sources"
-            | Closed conversion => C.validate_conversion_for work conversion
+            | Closed conversion =>
+                C.validate_conversion_with_policy work conversion
             | RecordedClosed plan =>
                 P.validate_closed_fact_with_policy graph scope
                   (#template_limit (W.semantic_policy work)) plan
             | Transport (conversion,source) =>
-                (C.validate_conversion_for work conversion;visit source)
+                (C.validate_conversion_with_policy work conversion;
+                 visit source)
             | BinderTransport (conversion,source) =>
                 (P.validate_conversion_for work conversion;visit source)
             | Apply {law,premises} => (visit law;List.app visit premises);
@@ -410,18 +429,18 @@ struct
       val closed_facts = ref ([]:P.closed_fact list)
       val conversions = ref ([]:P.closed_conversion list)
       fun graph_leaves conversion =
-        let val _ = C.validate_conversion_for work conversion
-            val roots = C.graph_roots conversion
+        let val _ = C.validate_conversion_with_policy work conversion
+            val roots = C.graph_roots_for work conversion
             val _ = List.app (fn plan=>
            (charge 1;
             P.validate_closed_fact_with_policy graph scope template plan;
             closed_facts := plan :: !closed_facts))
-           (C.graph_closed_facts conversion)
+           (C.graph_closed_facts_for work conversion)
             val _ = List.app (fn plan=>
            (charge 3;
             P.validate_conversion_with_policy graph scope template plan;
             conversions := plan :: !conversions))
-           (C.graph_conversions conversion)
+           (C.graph_conversions_for work conversion)
         in roots end
       val _ = if exact_denial graph scope goal denied then () else
         raise ERR "validate_with_policy"
@@ -528,7 +547,8 @@ struct
   fun validate_portfolio_with_work work {assumptions,goal,denied} =
     ((let val expected = expected_work work
           val _ = guard_facts work expected (denied :: assumptions)
-      in validate (#graph expected) (#scope expected) (#sources expected)
+      in validate_using (SOME work)
+        (#graph expected) (#scope expected) (#sources expected)
         {assumptions = assumptions,goal = goal,denied = denied,
          template_limit = #template expected} end)
      handle primary => (W.close work;raise primary))
@@ -1037,7 +1057,10 @@ struct
                    "Source-bearing dependency in closed programme"
              val _ = case row of
                  Closed recipe =>
-                   (C.validate_conversion_for expected recipe;
+                   (C.validate_conversion_with_policy expected recipe;
+                    (* Keep the constructor/schema root closure as well as
+                       the ordinary paid inventory; template reservations
+                       cannot stand in for either recursive walk. *)
                     List.app node
                       (C.graph_roots_with_policy expected graph scope recipe);
                     if C.graph_source recipe=current andalso
@@ -1047,8 +1070,10 @@ struct
                              boolSyntax.T
                          | _ => false) then () else
                       raise ERR "closed_program" "closed schema endpoint";
-                    List.app recorded (C.graph_closed_facts recipe);
-                    List.app conversion (C.graph_conversions recipe))
+                    List.app recorded
+                      (C.graph_closed_facts_for expected recipe);
+                    List.app conversion
+                      (C.graph_conversions_for expected recipe))
                | RecordedClosed plan =>
                    (recorded plan;
                     if P.closed_node plan=current then () else

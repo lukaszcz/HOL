@@ -23,21 +23,25 @@ functor SmtReplayCanonAssemblyFn
   datatype graph_conversion = GraphConversion of
     {source : SmtReplayGraph.node,  result : SmtReplayGraph.node,  equality :
        SmtReplayGraph.node,
-     steps : (int,graph_step) Redblackmap.dict}
+     steps : (int,graph_step) Redblackmap.dict,
+     guard_slots : SmtReplayProof.closed_conversion list option ref}
     | SequenceGraphConversion of
       {source : SmtReplayGraph.node, result : SmtReplayGraph.node, equality :
        SmtReplayGraph.node,
-       first : graph_conversion,second : graph_conversion}
+       first : graph_conversion,second : graph_conversion,
+       guard_leaves : graph_conversion list option ref}
     | DirectRealizedSequence of
       {source : SmtReplayGraph.node, result : SmtReplayGraph.node, equality :
        SmtReplayGraph.node,
        first : graph_conversion,second : graph_conversion,
        first_slot : SmtReplayProof.closed_conversion, second_slot :
-       SmtReplayProof.closed_conversion}
+       SmtReplayProof.closed_conversion,
+       guard_leaves : graph_conversion list option ref}
     | ApplicationGraphConversion of
       {source : SmtReplayGraph.node, result : SmtReplayGraph.node, equality :
        SmtReplayGraph.node,
-       left : graph_conversion,right : graph_conversion}
+       left : graph_conversion,right : graph_conversion,
+       guard_leaves : graph_conversion list option ref}
     | RealizedGraphConversion of
       {legacy : graph_conversion,realization : SmtReplayProof.realization}
     | PolicyGraphConversion of

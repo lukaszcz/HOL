@@ -218,17 +218,18 @@ struct
                         (* The raw carrier prefix is an ordinary recipe;
                            only the numeric suffix has a realized receipt.
                            Preserve both grammars for the checked assembler. *)
-                        val _=C.validate_conversion_for work prefix
-                        val _=C.validate_conversion_for work local_recipe
+                        val _=C.validate_conversion_with_policy work prefix
+                        val _=C.validate_conversion_with_policy
+                          work local_recipe
                         val composed=C.graph_sequence graph root
                           {first=prefix,second=local_recipe,
                            observe=fn () => (active owner;W.spend work 1)}
-                        val _=C.validate_conversion_for work composed
+                        val _=C.validate_conversion_with_policy work composed
                       in composed end))
                 end
             val _=meta owner (fn () => case recipe of NONE => ()
               | SOME converted =>
-                  (C.validate_conversion_for work converted;
+                  (C.validate_conversion_with_policy work converted;
                    if C.graph_source converted= #node source then () else
                      raise ERR "process" "original raw endpoint changed"))
             val _=memo := {node= #node source,view=view,recipe=recipe}:: !memo

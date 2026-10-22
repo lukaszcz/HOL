@@ -15252,12 +15252,13 @@ val _ = SmtLib_CheckedCarrierCallsite.prepare_compact_stage
 val _ = SmtLib_CompactCarrierScheduler.begin
 val _ = SmtReplayOwnedLargeProofCore.prepare_in_scope
 val _ = SmtReplayOwnedRealizedLambda.prepare_admitted
-(* Five genuine Core/Scope APIs, all UNCOMPILED. *)
+(* Genuine Core/Scope APIs, all UNCOMPILED. *)
 local
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
   structure C = SmtReplayCanonGraph
+  structure P = SmtReplayProof
   structure Scope = SmtReplayOwnedScopeReceipt
   structure Core = SmtReplayOwnedLargeProofCore
   val _ = SmtReplayOwnedLargeProofCore.prepare_in_scope
@@ -15282,6 +15283,25 @@ local
           {frame = frame,conversion = conversion,ordinal = ordinal,
            check_type = fn _ => ()}
     in (plan,Core.execute (#work e) plan) end
+  fun child (e : fixture) =
+    let val scope = G.new_scope (#graph e) (#root e) []
+        val node = G.fresh_bound_variable (#graph e) scope
+          (Term.mk_var ("core_bound",Type.bool))
+        val abstraction = G.recorded_abstraction (#graph e) (#root e) 100000
+          {binder = node,body = node,body_frame = scope}
+        val frame = Scope.body (#work e) (Scope.root (#work e))
+          (G.closure_root (#graph e) (#root e) abstraction)
+    in {scope = scope,node = node,frame = frame,
+        retire = fn () => G.close_scope (#graph e) scope} end
+  fun receipt (e : fixture) frame scope node ordinal =
+    let val (_,result) = execute e frame
+          (make e (identity e scope node)) ordinal
+        val realization = Core.realization_for (#work e) result
+        val leaf = make e (fn observe => C.graph_realized_leaf (#work e)
+          {realization = realization,observe = observe})
+        val slot = case C.graph_conversions leaf of [slot] => slot
+          | _ => raise Fail "Core receipt lost its single conversion"
+    in {result = result,leaf = leaf,slot = slot} end
   fun clean proof = null (Thm.hyp proof) andalso
     null (Tag.axioms_of (Thm.tag proof)) andalso
     List.all (fn tag => tag = "DISK_THM")
@@ -15337,25 +15357,168 @@ in
 
   val _ = testutils.tprint "Core body scope is genuine and stays guarded"
   val _ = let val e = setup ``core_p : bool``
-      val body_frame = G.new_scope (#graph e) (#root e) []
-      val binder = G.fresh_bound_variable (#graph e) body_frame
-        (Term.mk_var ("core_bound",Type.bool))
-      val abstraction = G.recorded_abstraction (#graph e) (#root e) 100000
-        {binder = binder,body = binder,body_frame = body_frame}
-      val parent = Scope.root (#work e)
-      val frame = Scope.body (#work e) parent
-        (G.closure_root (#graph e) (#root e) abstraction)
+      val held = child e val body_frame = #scope held
+      val binder = #node held val frame = #frame held
       val conversion = make e (identity e body_frame binder)
       val (plan,result) = execute e frame conversion 353
       val data = Core.conversion_description_for (#work e) result
       val proof = Core.theorem_for (#work e) result
-      val _ = G.close_scope (#graph e) body_frame
+      val _ = (#retire held) ()
       val stale = refuses (fn () => Core.theorem_for (#work e) result)
       val _ = G.validate_scope (#graph e) (#root e)
     in ensure "body receipt inferred node Scope or revived its retired frame"
       (#root data = #root e andalso #scope data = body_frame andalso
        #source data = binder andalso #target data = binder andalso
        clean proof andalso stale andalso #retired (W.audit (#work e))) end
+
+  val _ = List.app (fn kind =>
+    (testutils.tprint
+       ("Canon warm nonempty " ^ kind ^ " guards child receipt");
+     let val e = setup ``core_p : bool`` val held = child e
+         val work = #work e val graph = #graph e val scope = #scope held
+         val node = #node held
+         val saved = receipt e (#frame held) scope node 355
+         val conversion = make e (fn observe =>
+           let val leaf = C.graph_leaf graph scope
+                 {conversion = #slot saved,template_limit = 100000,
+                  observe = observe}
+               fun sequence first second = C.graph_sequence graph scope
+                 {first = first,second = second,observe = observe}
+           in case kind of
+               "map" => leaf
+             | "sequence" => sequence leaf leaf
+             | "realized" => sequence (#leaf saved) (#leaf saved)
+             | "direct" => C.graph_realized_sequence work
+                 {first = #leaf saved,second = #leaf saved,observe = observe}
+             | "application" =>
+                 let val operator = G.constant graph (#root e)
+                       (Term.rator (boolSyntax.mk_neg boolSyntax.T))
+                     val source = G.application graph scope (operator,node)
+                 in C.graph_application graph scope
+                   {source = source,left = identity e scope operator observe,
+                    right = leaf,observe = observe} end
+             | _ => raise Fail "unknown Canon fixture"
+           end)
+         val _ = C.validate_conversion_with_policy work conversion
+         val prior = #charged (W.audit work)
+         val _ = C.validate_conversion_with_policy work conversion
+         val paid = #charged (W.audit work)-prior
+         val _ = (#retire held) ()
+         val stopped = refuses (fn () =>
+           C.validate_conversion_with_policy work conversion)
+         val _ = G.validate_scope graph (#root e)
+     in ensure "warm projection forgot live receipt backing or Idle payment"
+       (paid > 0 andalso stopped andalso #retired (W.audit work))
+     end)) ["map","sequence","realized","direct","application"]
+
+  (* Both owners must reject the SAME mixed legacy recipe, at different
+     witnesses. Try both cold orders: a failed first witness must not
+     publish an empty projection, nor a later failure a successful prefix. *)
+  val _ = List.app (fn kind => List.app (fn foreign_first =>
+    (testutils.tprint
+       ("Canon failed " ^ kind ^ " projection stays unpublished");
+     let val e = setup ``core_f core_p : bool``
+         val graph = #graph e val root = #root e val work = #work e
+         (* A Source permits one Work claim. Fresh Sources on this SAME
+            graph/root preserve shared endpoints for raw legacy recipes. *)
+         val (assumptions,goal) = S.original_goal (#sources e)
+         val other_sources = S.new graph root 100000
+           {assumptions = assumptions,goal = goal}
+         val other = W.begin graph root other_sources
+           {limits = W.semantic_limits work,work_limit = W.work_limit work}
+         val foreign : fixture = {graph = graph,root = root,
+           sources = other_sources,work = other,node = #node e}
+         val (operator,operand) = case G.view graph (#node e) of
+             G.Application pair => pair | _ => raise Fail "mixed application"
+         val (an,bn) = if kind = "sequence" then (#node e,#node e)
+           else if kind = "map" andalso
+               G.node_id operand < G.node_id operator then (operand,operator)
+           else (operator,operand)
+         val a = receipt e (Scope.root work) root an 358
+         val b = receipt foreign (Scope.root other) root bn 359
+         val conversion = make e (fn observe =>
+           let fun leaf slot = C.graph_leaf graph root
+                 {conversion = slot,template_limit = 100000,
+                  observe = observe}
+               val left = leaf (#slot a) val right = leaf (#slot b)
+           in if kind = "sequence" then C.graph_sequence graph root
+               {first = left,second = right,observe = observe}
+             else (if kind = "map" then C.graph_application_fused
+                   else C.graph_application) graph root
+               {source = #node e,
+                left = if an = operator then left else right,
+                right = if an = operator then right else left,
+                observe = observe}
+           end)
+         val (first,second) = if foreign_first then (other,work)
+           else (work,other)
+         fun mismatch expected =
+           (C.validate_conversion_with_policy expected conversion;false)
+           handle Feedback.HOL_ERR error =>
+             Feedback.top_function_of error = "validate_realization_for"
+             andalso Feedback.message_of error = "different original Work"
+         val prior = #charged (W.audit second)
+         val rejected = mismatch first
+         val isolated = #retired (W.audit first) andalso
+           not (#retired (W.audit second)) andalso
+           #charged (W.audit second) = prior
+         val rejected_again = mismatch second
+         val _ = G.validate_scope graph root
+     in ensure "failed projection hid a witness or activated its foreign owner"
+       (rejected andalso isolated andalso rejected_again andalso
+        #retired (W.audit second))
+     end)) [false,true]) ["map","sequence","application"]
+
+  val _ = testutils.tprint
+    "Canon paid inventories preserve exact witness order"
+  val _ = let val e = setup ``core_p : bool`` val work = #work e
+      val graph = #graph e val root = #root e val node = #node e
+      val frame = Scope.root work
+      val a = receipt e frame root node 356
+      val b = receipt e frame root node 357
+      fun closed leaf result = P.record_closed graph root
+        {node = C.graph_equality leaf,
+         theorem = Core.theorem_for work result,
+         template_limit = 100000,check_type = fn _ => ()}
+      val fact_a = closed (#leaf a) (#result a)
+      val fact_b = closed (#leaf b) (#result b)
+      val conversion = make e (fn observe =>
+        let fun phase slot fact =
+              let val leaf = C.graph_leaf graph root
+                    {conversion = slot,template_limit = 100000,
+                     observe = observe}
+                  val closed = C.graph_conversion_with_closed graph root
+                    {template_limit = 100000,revisit = false,
+                     propose = fn current =>
+                       if current = node then SOME fact else NONE,
+                     observe = observe} node
+              in C.graph_sequence graph root
+                {first = leaf,second = closed,observe = observe} end
+        in C.graph_sequence graph root
+          {first = phase (#slot a) fact_a,second = phase (#slot b) fact_b,
+           observe = observe} end)
+      fun same (left,right) = ListPair.allEq Portable.pointer_eq (left,right)
+      fun check get expected equal =
+        let fun once () =
+              let val prior = #charged (W.audit work) val actual = get ()
+              in equal (actual,expected) andalso
+                #charged (W.audit work) > prior end
+        in once () andalso once () end
+      val slots = C.graph_conversions conversion
+      val facts = C.graph_closed_facts conversion
+      val roots = C.graph_roots conversion
+      val exact = same (slots,[#slot a,#slot b]) andalso
+        same (facts,[fact_a,fact_b]) andalso
+        List.take (roots,3) = [C.graph_equality conversion,node,node]
+      val slots_paid = check
+        (fn () => C.graph_conversions_for work conversion) slots same
+      val facts_paid = check
+        (fn () => C.graph_closed_facts_for work conversion) facts same
+      val roots_paid = check
+        (fn () => C.graph_roots_for work conversion) roots (op =)
+    in ensure "paid inventory changed order or reused Idle credit"
+      (exact andalso slots_paid andalso facts_paid andalso roots_paid
+       andalso not (#retired (W.audit work))) end
 
   val _ = testutils.tprint "Core descriptor rejects expected foreign Work first"
   val _ = let val e = setup ``core_p : bool`` val frame = Scope.root (#work e)
@@ -15561,6 +15724,58 @@ in
         #charged (W.audit (#work a))=held_charge andalso
         #node_accesses stats=0 andalso !calls=prior_calls)
      end)) [false,true]
+
+  val _=List.app (fn getter=>
+    (testutils.tprint ("Public carrier " ^ getter ^
+       " header precedes exhausted legacy Work");
+     let val term=``(\x:bool. x) p``
+         val held=setup discovery discovery [term] term
+         val expected=setup discovery discovery [term] term
+         val calls=ref 0
+         fun owner (e:env)=T.begin_carrier_with_policy (#work e)
+           {native_contract=SmtReplayNativeContract.capture (#work e)
+              {semantic_limits=W.semantic_limits (#work e),
+               import_limit=discovery,type_work_limit=4000000},profiles=[],
+            check_type=fn _=>calls:= !calls+1,
+            scope_opened=fn _=>calls:= !calls+1}
+         val held_owner=owner held val expected_owner=owner expected
+         val result=case T.run_carrier_assumption_with_policy held_owner
+             {occurrence=1,view=hd (#views held)} of SOME result=>result
+           | NONE=>raise Fail "public carrier beta fixture unchanged"
+         val _=T.validate_carrier_with_policy_for
+           (#work expected) expected_owner
+         val _=W.with_step (#work expected) (fn()=>W.spend (#work expected)
+           (100000000- #charged (W.audit (#work expected))))
+         val held_charge= #charged (W.audit (#work held))
+         val prior_calls= !calls
+         fun get ()=case getter of
+             "source"=>ignore (T.carrier_source_conversion_with_policy_for
+               (#work expected) expected_owner result)
+           | "denial"=>ignore (T.carrier_denial_conversion_with_policy_for
+               (#work expected) expected_owner result (#denial expected))
+           | "target"=>ignore (T.carrier_target_with_policy_for
+               (#work expected) expected_owner result)
+           | _=>raise Fail "unknown public carrier getter"
+         val _=Count.counting_thms true
+         val count=Count.thm_count ()
+         val outcome=Exn.capture (fn()=>
+           G.with_node_statistics (#graph held) (#scope held) (fn()=>
+             G.with_node_statistics (#graph expected) (#scope expected)
+               (fn()=>(get ();NONE) handle Feedback.HOL_ERR error=>
+                 SOME (Feedback.message_of error)))) ()
+         val no_native=Count.thm_count ()=count
+         val _=Count.counting_thms false
+         val ((message,expected_stats),held_stats)=Exn.release outcome
+     in ensure "public carrier header lost priority or touched held owner"
+       (message=SOME "different actual scheduler result" andalso
+        #retired (W.audit (#work expected)) andalso
+        #charged (W.audit (#work expected))=100000000 andalso
+        not (#retired (W.audit (#work held))) andalso
+        #charged (W.audit (#work held))=held_charge andalso
+        #node_accesses expected_stats=0 andalso
+        #node_accesses held_stats=0 andalso
+        !calls=prior_calls andalso no_native)
+     end)) ["source","denial","target"]
 
     in () end)
 end
@@ -20955,6 +21170,7 @@ local
   structure K = SmtLib_GraphNumericCanonical
   structure T = SmtLib_CompactCarrierScheduler
   structure Core = SmtReplayOwnedLargeProofCore
+  structure C = SmtReplayCanonGraph
   structure D = SmtReplayOwnedTransport
   structure Stock = SmtLib_GraphNumericStock
   structure Aux = SmtLib_GraphSelectedAuxiliary
@@ -21036,6 +21252,70 @@ in
   val _ = ensure "duplicated children changed proof or Source slots"
     (compared (grow 3 ``(n+m:num) <= q``)
       [``p:bool``,``p:bool``])
+
+  val _ = testutils.tprint
+    "Legacy Core repeated getters repay projected Canon guards"
+  val _ = let val e = setup (grow 2 ``(n+m:num) <= q``) []
+      val work = #work e val graph = #graph e val root = #root e
+      val source = #node (S.goal_source (#sources e))
+      (* Three legacy map occurrences, all with NONE conversion slots.
+         No realized/policy witness can accidentally pay this traversal. *)
+      val (leaf,conversion) = W.with_step work (fn () =>
+        let fun observe () = W.spend work 1
+            val leaf = C.graph_identity graph root {observe=observe} source
+            val pair = C.graph_sequence graph root
+              {first=leaf,second=leaf,observe=observe}
+        in (leaf,C.graph_sequence graph root
+          {first=pair,second=leaf,observe=observe}) end)
+      val cold_before = #charged (W.audit work)
+      val _ = C.validate_conversion_with_policy work conversion
+      val cold_cost = #charged (W.audit work)-cold_before
+      val calls = ref 0
+      val prepared = Core.prepare_in_scope work
+        {frame= #frame e,conversion=conversion,ordinal=490,
+         check_type=fn _ => calls := !calls+1}
+      val result = Core.execute work prepared
+      fun debit action =
+        let val prior = #charged (W.audit work)
+            val _ = action ()
+        in #charged (W.audit work)-prior end
+      (* Measure the authentic warm structural projection, not table
+         quotes or an outer row fee. It contains no live witness here;
+         repeated getters must still pay its dispatch in Idle. *)
+      val leaf_cost = debit (fn () =>
+        C.validate_conversion_with_policy work leaf)
+      val recursive_cost = debit (fn () =>
+        C.validate_conversion_with_policy work conversion)
+      val prior_calls = !calls
+      val allowance = W.work_limit work
+      val getters =
+        [fn () => ignore (Core.theorem_for work result),
+         fn () => ignore (Core.realization_for work result),
+         fn () => ignore (Core.conversion_description_for work result)]
+      val _ = Count.counting_thms true
+      val count = Count.thm_count ()
+      val outcome = Exn.capture (fn () =>
+        let val payments = List.map (fn get =>
+              (debit get,debit get)) getters
+            val _ = W.with_step work (fn () => W.spend work
+              (W.work_limit work- #charged (W.audit work)))
+            val message = (ignore
+              (Core.conversion_description_for work result);NONE)
+              handle Feedback.HOL_ERR error =>
+                SOME (Feedback.message_of error)
+        in (payments,message) end) ()
+      val no_native = Count.thm_count ()=count
+      val _ = Count.counting_thms false
+      val (payments,message) = Exn.release outcome
+    in ensure "legacy Core skipped paid projected guards or renewed Work"
+      (leaf_cost > 1 andalso recursive_cost > 0 andalso
+       recursive_cost < leaf_cost andalso cold_cost > leaf_cost andalso
+       List.all (fn (cold,warm) =>
+         cold >= recursive_cost andalso warm >= recursive_cost) payments
+       andalso message=SOME "original cumulative work allowance exhausted"
+       andalso #retired (W.audit work) andalso
+       #charged (W.audit work)=allowance andalso
+       !calls=prior_calls andalso no_native) end
 
   val _ = testutils.tprint
     "Fixed SIMPLE never reissues consumed plan work"

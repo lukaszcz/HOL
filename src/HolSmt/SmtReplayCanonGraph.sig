@@ -126,6 +126,20 @@ sig
   val graph_equality : graph_conversion -> SmtReplayGraph.node
   val graph_roots : graph_conversion -> SmtReplayGraph.node list
 
+  (* Selected owner inventories: pass the SAME original Work even for
+     legacy recipes with no policy leaves. Pay actual recursive visits,
+     memo probes, complete map walks (including NONE rows) and list copies.
+     Callback-free, legal in Idle/Busy; no action/native permission.
+     Preserve inventory order and lifetime checks. Policy Work headers
+     precede payment; failure closes only expected Work. Ordinary getters
+     above remain dormant on legacy data. No cache/credit escapes a call. *)
+  val graph_closed_facts_for : SmtReplayInvocationWork.portfolio ->
+    graph_conversion -> SmtReplayProof.closed_fact list
+  val graph_conversions_for : SmtReplayInvocationWork.portfolio ->
+    graph_conversion -> SmtReplayProof.closed_conversion list
+  val graph_roots_for : SmtReplayInvocationWork.portfolio ->
+    graph_conversion -> SmtReplayGraph.node list
+
   (* Freeze all graph_roots before assembly. The result proves the compact
      named equality node, ready for the block's one closed realization. *)
   val graph_assemble : SmtReplayGraph.graph -> SmtReplayProof.block ->
@@ -138,6 +152,8 @@ sig
     SmtReplayGraph.scope ->
     {conversion : Term.term -> Thm.thm, template_limit : int,
      prefix_depth : int} -> SmtReplayGraph.node -> graph_schema option
+  (* Owned assembly also pays its recursive recipe/map validation on the
+     same expected Work, independently of recipe extraction/assembly. *)
   val graph_assemble_for : SmtReplayInvocationWork.portfolio ->
     SmtReplayGraph.graph -> SmtReplayProof.block ->
     graph_conversion -> SmtReplayProof.edge

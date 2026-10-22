@@ -80,17 +80,21 @@ struct
      conversion : P.closed_conversion option,continuation : G.node option}
   datatype graph_conversion = GraphConversion of
     {source : G.node, result : G.node, equality : G.node,
-     steps : (int,graph_step) Redblackmap.dict}
+     steps : (int,graph_step) Redblackmap.dict,
+     guard_slots : P.closed_conversion list option ref}
     | SequenceGraphConversion of
       {source : G.node,result : G.node,equality : G.node,
-       first : graph_conversion,second : graph_conversion}
+       first : graph_conversion,second : graph_conversion,
+       guard_leaves : graph_conversion list option ref}
     | DirectRealizedSequence of
       {source : G.node,result : G.node,equality : G.node,
        first : graph_conversion,second : graph_conversion,
-       first_slot : P.closed_conversion,second_slot : P.closed_conversion}
+       first_slot : P.closed_conversion,second_slot : P.closed_conversion,
+       guard_leaves : graph_conversion list option ref}
     | ApplicationGraphConversion of
       {source : G.node,result : G.node,equality : G.node,
-       left : graph_conversion,right : graph_conversion}
+       left : graph_conversion,right : graph_conversion,
+       guard_leaves : graph_conversion list option ref}
     | RealizedGraphConversion of
       {legacy : graph_conversion,realization : P.realization}
     | PolicyGraphConversion of
@@ -429,7 +433,8 @@ struct
       val _ = observe ()
       val equality = G.application graph scope (partial,result)
     in GraphConversion
-      {source = source,result = result,equality = equality,steps = !steps} end
+      {source = source,result = result,equality = equality,steps = !steps,
+       guard_slots = ref NONE} end
 
   fun graph_conversion graph scope revisit propose source =
     graph_conversion_internal graph scope revisit propose (fn _ => NONE)
@@ -466,7 +471,7 @@ struct
      children : (G.node * G.node) option,closed : P.closed_fact option,
      conversion : P.closed_conversion option,continuation : G.node option}
   fun graph_application_steps graph scope
-      (GraphConversion {source,result,equality,steps}) =
+      (GraphConversion {source,result,equality,steps,...}) =
     let
       val _ = G.validate_scope graph scope
       fun node current =
@@ -514,15 +519,23 @@ struct
   fun policy_graph_guard expected root =
     ((let
         val completed=ref ([]:graph_conversion list)
+        fun tick ()=W.spend_guard_policy expected 1
+        fun member _ []=(tick ();false)
+          | member saved (old::rest)=
+              (tick ();Portable.pointer_eq(saved,old) orelse
+                member saved rest)
         fun visit saved=
           let val work=case saved of PolicyGraphConversion {work,...}=>work
                 | PolicySequenceGraphConversion {work,...}=>work
                 | _=>raise ERR "policy_graph" "not a policy wrapper"
               val _=if Portable.pointer_eq(expected,work) then () else
                 raise ERR "policy_graph" "different original Work"
-          in if List.exists(fn old=>Portable.pointer_eq(saved,old))
-              (!completed) then () else
-            (check saved;completed:=saved:: !completed) end
+              (* Immutable ownership wins even on exhausted Work. The
+                 private recursion and memo probes are real guard work,
+                 including when entered by a held-wrapper getter in Idle. *)
+              val _=W.spend_guard_policy expected 8
+          in if member saved (!completed) then () else
+            (check saved;tick ();completed:=saved:: !completed) end
         and check (PolicyGraphConversion
             {work,frame,legacy,slot,realization,canonical_cut}) =
           let
@@ -626,7 +639,7 @@ struct
     | graph_equality (saved as PolicySequenceGraphConversion
         {equality,...}) =
         (policy_graph_active saved;equality)
-  fun legacy_graph_roots (GraphConversion {source,result,equality,steps}) =
+  fun legacy_graph_roots (GraphConversion {source,result,equality,steps,...}) =
     equality :: source :: result :: Redblackmap.foldl
       (fn (_,GraphStep {current,schema,closed,conversion,...},roots) =>
         current :: (case closed of NONE => []
@@ -638,42 +651,92 @@ struct
               graph_schema_result schema :: roots)) [] steps
 
 
+  (* Inventory traversal also copies lists and probes physical memos.
+     Pay before every link/terminal dispatch, not merely emitted witnesses.
+     Map size is retained O(1) metadata; this quote covers the complete
+     tree walk, empty branches and bounded per-row projection/list copies. *)
+  fun inventory_step_map pay steps =
+    pay (4+16*IntInf.fromInt (Redblackmap.numItems steps))
+  fun inventory_legacy pay project
+      (current as GraphConversion {steps,...}) =
+    (inventory_step_map pay steps;project current)
+  fun inventory_append (pay : IntInf.int -> unit) [] right =
+        (pay 1;right)
+    | inventory_append pay (item::rest) right =
+        (pay 1;item::inventory_append pay rest right)
+  fun inventory_map (pay : IntInf.int -> unit) project [] = (pay 1;[])
+    | inventory_map pay project (item::rest) =
+        (pay 1;project item::inventory_map pay project rest)
+  fun inventory_concat pay [] = (pay 1;[])
+    | inventory_concat pay (items::rest) =
+        (pay 1;inventory_append pay items (inventory_concat pay rest))
+
   (* Identity memoization concerns proof recipes, not semantic Work credit.
-     Every new call builds its own cache; legacy projection order is intact. *)
-  fun recipe_nodes conversion =
+     Every new call builds its own cache; legacy projection order is intact.
+     A direct sequence's children are absent only from the root inventory. *)
+  fun recipe_nodes_using pay header roots conversion =
     let val seen = ref ([] : graph_conversion list)
-        fun visit current = if List.exists
-              (fn old => Portable.pointer_eq (current,old)) (!seen) then []
-            else (seen := current :: !seen;
-              current :: (case current of GraphConversion _ => []
-                | RealizedGraphConversion _ => []
-                | saved as PolicyGraphConversion _ =>
-                    (policy_graph_active saved;[])
-                | saved as PolicySequenceGraphConversion
-                    {first,second,...} =>
-                    (policy_graph_active saved;
-                     visit first @ visit second)
-                | SequenceGraphConversion {first,second,...} =>
-                    visit first @ visit second
-                | DirectRealizedSequence {first,second,...} =>
-                    visit first @ visit second
-                | ApplicationGraphConversion {left,right,...} =>
-                    visit left @ visit right))
+        fun member _ []=(pay 1;false)
+          | member current (old::rest)=
+              (pay 1;Portable.pointer_eq(current,old) orelse
+                member current rest)
+        fun visit current =
+          (header current;pay 8;
+           if member current (!seen) then []
+           else (pay 1;seen := current :: !seen;
+             current :: (case current of GraphConversion _ => []
+               | RealizedGraphConversion _ => []
+               | saved as PolicyGraphConversion _ =>
+                   (policy_graph_active saved;[])
+               | saved as PolicySequenceGraphConversion
+                   {first,second,...} =>
+                   (policy_graph_active saved;children first second)
+               | SequenceGraphConversion {first,second,...} =>
+                   children first second
+               | DirectRealizedSequence {first,second,...} =>
+                   if roots then [] else children first second
+               | ApplicationGraphConversion {left,right,...} =>
+                   children left right)))
+        and children first second =
+          inventory_append pay (visit first) (visit second)
     in visit conversion end
-  fun graph_conversions conversion = List.concat (List.map
-    (fn current as GraphConversion _ => legacy_graph_conversions current
-      | RealizedGraphConversion {legacy,...} => legacy_graph_conversions legacy
-      | saved as PolicyGraphConversion {slot,...} =>
-          (policy_graph_active saved;[slot])
-      | _ => []) (recipe_nodes conversion))
-  (* numItems is the retained O(1) map size, not a counting traversal.
-     Prepay the map walk (including empty branches), row projection and
-     option dispatch even when EVERY conversion slot is NONE. Leaf witness
-     guards still execute in the original ascending-map order. *)
-  fun validate_step_map pay expected steps =
-    (pay (4+8*IntInf.fromInt (Redblackmap.numItems steps));
-     Redblackmap.app (fn (_,GraphStep {conversion,...}) =>
-       Option.app (P.validate_conversion_for expected) conversion) steps)
+  fun graph_conversions_using pay header conversion =
+    inventory_concat pay (inventory_map pay
+      (fn current as GraphConversion _ =>
+            inventory_legacy pay legacy_graph_conversions current
+        | RealizedGraphConversion {legacy,...} =>
+            inventory_legacy pay legacy_graph_conversions legacy
+        | saved as PolicyGraphConversion {slot,...} =>
+            (policy_graph_active saved;[slot])
+        | _ => []) (recipe_nodes_using pay header false conversion))
+  fun graph_conversions conversion =
+    graph_conversions_using (fn _ => ()) (fn _ => ()) conversion
+  (* Cache only the immutable slot projection, never witness validity or
+     Work credit. A fresh map starts cold, including an all-NONE map.
+     numItems is O(1); the cold quote pays the original complete map walk.
+     Publish only after every guard and paid list construction/reversal
+     succeeds, retaining the original ascending-map validation order. *)
+  fun validate_step_map pay expected steps guard_slots =
+    case !guard_slots of
+      SOME slots =>
+        let fun validate [] = pay 1
+              | validate (slot::rest) =
+                  (pay 1;P.validate_conversion_for expected slot;
+                   validate rest)
+        in validate slots end
+    | NONE =>
+        let
+          val _ = pay (4+8*IntInf.fromInt (Redblackmap.numItems steps))
+          val slots = ref []
+          val _ = Redblackmap.app (fn (_,GraphStep {conversion,...}) =>
+            case conversion of NONE => () | SOME slot =>
+              (P.validate_conversion_for expected slot;
+               pay 1;slots := slot :: !slots)) steps
+          fun reverse [] result = (pay 1;result)
+            | reverse (slot::rest) result =
+                (pay 1;reverse rest (slot::result))
+          val ordered = reverse (!slots) []
+        in guard_slots := SOME ordered end
   (* A wrapper's immutable Work header has priority over guard payment,
      even for exhausted live legacy Work. This is not a lifetime check. *)
   fun conversion_header expected saved =
@@ -686,12 +749,42 @@ struct
         raise ERR "policy_graph" "different original Work" end
   fun legacy_validate_conversion_using pay expected conversion =
     let
+      (* Only an ordinary root owns this structural projection. A cold
+         root keeps the original traversal and first-error order, even if
+         children already have projections. Retain actual guard owners,
+         never guard success: their receipts and private guards stay live. *)
+      val projection=case conversion of
+          SequenceGraphConversion {guard_leaves,...}=>SOME guard_leaves
+        | DirectRealizedSequence {guard_leaves,...}=>SOME guard_leaves
+        | ApplicationGraphConversion {guard_leaves,...}=>SOME guard_leaves
+        | _=>NONE
+      val compiling=case projection of
+          SOME cache=>not(Option.isSome(!cache)) | NONE=>false
+      val leaves=ref ([]:graph_conversion list)
+      fun retain saved=if compiling then
+          (pay 1;leaves:=saved:: !leaves) else ()
+      fun reverse [] result=(pay 1;result)
+        | reverse (saved::rest) result=
+            (pay 1;reverse rest (saved::result))
+      (* This validation is callback-free. Shared legacy recipes need only
+         one successful check per call, just like policy wrappers; do not
+         expand their immutable DAG into an occurrence tree. No guard
+         success or lifetime waiver escapes. Every memo probe is paid. *)
+      val completed=ref ([]:graph_conversion list)
+      fun member _ []=(pay 1;false)
+        | member saved (old::rest)=
+            (pay 1;Portable.pointer_eq(saved,old) orelse member saved rest)
       fun visit saved =
         ((conversion_header expected saved
           handle primary=>(W.close expected;raise primary));
-         pay 8;
+         if member saved (!completed) then () else
+           (check saved;pay 1;completed:=saved:: !completed))
+      and check saved =
+        (pay 8;
          case saved of
-            GraphConversion {steps,...} => validate_step_map pay expected steps
+            GraphConversion {steps,guard_slots,...} =>
+              (validate_step_map pay expected steps guard_slots;
+               case !guard_slots of SOME (_::_)=>retain saved | _=>())
           | SequenceGraphConversion {first,second,...} =>
               (visit first;visit second)
           | DirectRealizedSequence {first,second,...} =>
@@ -699,15 +792,28 @@ struct
           | ApplicationGraphConversion {left,right,...} =>
               (visit left;visit right)
           | RealizedGraphConversion {realization,...} =>
-              P.validate_realization_for expected realization
+              (P.validate_realization_for expected realization;retain saved)
           | saved as PolicyGraphConversion _ =>
-              policy_graph_guard expected saved
+              (policy_graph_guard expected saved;retain saved)
           | saved as PolicySequenceGraphConversion _ =>
-              policy_graph_guard expected saved)
-    in visit conversion end
+              (policy_graph_guard expected saved;retain saved))
+      (* A hit visits every retained leaf with the same header, paid
+         dispatch and call-local memo, but never walks the root tree. *)
+      fun validate_leaves []=pay 1
+        | validate_leaves (saved::rest)=
+            (pay 1;visit saved;validate_leaves rest)
+    in case projection of NONE=>visit conversion
+      | SOME cache=>(case !cache of
+          SOME ordered=>validate_leaves ordered
+        | NONE=>
+            let val _=visit conversion
+                val ordered=reverse (!leaves) []
+            in cache:=SOME ordered end)
+    end
   val _=SmtReplayInvocationWork.ordinary_policy_guard_mode
   val _=SmtReplayInvocationWork.spend_ordinary_guard_policy
-  (* No cache escapes this callback-free validation call. Until an actual
+  (* No validation memo escapes this callback-free call; only immutable
+     structural projections persist. In policy mode, until an actual
      policy-wrapper guard succeeds, retain the old no-memo itinerary: an
      ordinary composite has no immutable Work header. The independent pay
      hook meters traversal only at authenticated replay-owner boundaries. *)
@@ -734,8 +840,8 @@ struct
           and check saved =
             (pay 8;
              case saved of
-                GraphConversion {steps,...} =>
-                  validate_step_map pay expected steps
+                GraphConversion {steps,guard_slots,...} =>
+                  validate_step_map pay expected steps guard_slots
               | SequenceGraphConversion {first,second,...} =>
                   (visit first;visit second)
               | DirectRealizedSequence {first,second,...} =>
@@ -753,7 +859,9 @@ struct
 
   (* Dormant metadata validation retains its old activation/exception order.
      Authenticated replay owners use the paid entry even for legacy recipes
-     without a policy wrapper. No cache or credit escapes either call. *)
+     without a policy wrapper. Either entry may warm structural projections,
+     but later paid calls still pay each link/terminal and recheck witnesses.
+     No validation success or Work credit escapes either call. *)
   fun validate_conversion_for expected conversion =
     validate_conversion_using (fn _ => ()) expected conversion
   fun validate_conversion_with_policy expected conversion =
@@ -761,33 +869,20 @@ struct
        expected conversion
      handle primary => (W.close expected;raise primary))
 
-  fun graph_closed_facts conversion = List.concat (List.map
-    (fn current as GraphConversion _ => legacy_graph_closed_facts current
-      | _ => []) (recipe_nodes conversion))
+  fun graph_closed_facts_using pay header conversion =
+    inventory_concat pay (inventory_map pay
+      (fn current as GraphConversion {steps,...} =>
+          (inventory_step_map pay steps;legacy_graph_closed_facts current)
+        | _ => []) (recipe_nodes_using pay header false conversion))
+  fun graph_closed_facts conversion =
+    graph_closed_facts_using (fn _ => ()) (fn _ => ()) conversion
   (* Direct children consume their exact typed conversion slots. Their
      equality-name wrappers are not executed and are not constructor roots.
      The containing sequence's own named equality remains an ordinary root. *)
-  fun root_recipe_nodes conversion =
-    let val seen = ref ([] : graph_conversion list)
-        fun visit current = if List.exists
-              (fn old => Portable.pointer_eq (current,old)) (!seen) then []
-            else (seen := current :: !seen;
-              current :: (case current of GraphConversion _ => []
-                | RealizedGraphConversion _ => []
-                | saved as PolicyGraphConversion _ =>
-                    (policy_graph_active saved;[])
-                | saved as PolicySequenceGraphConversion
-                    {first,second,...} =>
-                    (policy_graph_active saved;
-                     visit first @ visit second)
-                | DirectRealizedSequence _ => []
-                | SequenceGraphConversion {first,second,...} =>
-                    visit first @ visit second
-                | ApplicationGraphConversion {left,right,...} =>
-                    visit left @ visit right))
-    in visit conversion end
-  fun graph_roots conversion = List.concat (List.map
-    (fn current as GraphConversion _ => legacy_graph_roots current
+  fun graph_roots_using pay header conversion =
+    inventory_concat pay (inventory_map pay
+    (fn current as GraphConversion {steps,...} =>
+          (inventory_step_map pay steps;legacy_graph_roots current)
       | RealizedGraphConversion {legacy,...} => [graph_equality legacy]
       | saved as PolicyGraphConversion {legacy,realization,canonical_cut,...}=>
           (policy_graph_active saved;case canonical_cut of
@@ -799,7 +894,22 @@ struct
       | saved as PolicySequenceGraphConversion {equality,...} =>
           (policy_graph_active saved;[equality])
       | current => [graph_equality current,graph_source current,
-                    graph_result current]) (root_recipe_nodes conversion))
+                    graph_result current])
+      (recipe_nodes_using pay header true conversion))
+  fun graph_roots conversion =
+    graph_roots_using (fn _ => ()) (fn _ => ()) conversion
+
+  (* An ordinary legacy recipe has no held Work. Selected replay owners
+     must pass their original expected portfolio; never infer a counter
+     from an optional policy leaf or use a fresh per-inventory allowance.
+     These callback-free DATA walks are legal in Idle as well as Busy. *)
+  fun inventory_for inventory expected conversion =
+    (inventory (W.spend_guard_policy expected)
+       (conversion_header expected) conversion
+     handle primary => (W.close expected;raise primary))
+  val graph_conversions_for = inventory_for graph_conversions_using
+  val graph_closed_facts_for = inventory_for graph_closed_facts_using
+  val graph_roots_for = inventory_for graph_roots_using
 
   fun legacy_assemble graph block
       (conversion as GraphConversion {source,equality,steps,...}) =
@@ -948,7 +1058,8 @@ struct
       val _ = step ()
       val result = GraphConversion
         {source=(step ();source),result=(step ();target),
-         equality=(step ();equality),steps=(step ();steps)}
+         equality=(step ();equality),steps=(step ();steps),
+         guard_slots=(step ();ref NONE)}
       val _ = guard ()
     in result end
 
@@ -966,10 +1077,10 @@ struct
           conversion = SOME conversion,continuation = NONE}
     in GraphConversion {source = source,result = target,equality = equality,
       steps = Redblackmap.insert
-        (Redblackmap.mkDict Int.compare,G.node_id source,step)} end
+        (Redblackmap.mkDict Int.compare,G.node_id source,step),
+      guard_slots = ref NONE} end
   fun graph_realized_leaf expected {realization,observe} =
-    let val _ = P.validate_realization_for expected realization
-        val data = P.realization_data_for expected realization
+    let val data = P.realization_data_for expected realization
         val _ = observe ()
         val converted = P.conversion_from_realization expected realization
         val legacy = graph_leaf (#graph data) (#scope data)
@@ -989,7 +1100,8 @@ struct
           (graph_result left,graph_result right)
         val equality = equality_node graph scope observe source target
     in ApplicationGraphConversion {source = source,result = target,
-      equality = equality,left = left,right = right} end
+      equality = equality,left = left,right = right,
+      guard_leaves = ref NONE} end
   (* Fuse ONLY private coherent legacy step tables. Equality naming belongs
      to the resulting root; each exact typed leaf retains its original owner
      witness. Conflicting source-node occurrences keep the composed grammar. *)
@@ -1041,7 +1153,7 @@ struct
               val _ = observe ()
           in GraphConversion {source = source,result = target,
             equality = equality,steps = Redblackmap.insert
-              (steps,G.node_id source,step)} end
+              (steps,G.node_id source,step),guard_slots = ref NONE} end
     end
 
   fun graph_sequence graph scope {first,second,observe} =
@@ -1051,7 +1163,8 @@ struct
         val source = graph_source first val target = graph_result second
         val equality = equality_node graph scope observe source target
     in SequenceGraphConversion {source = source,result = target,
-      equality = equality,first = first,second = second} end
+      equality = equality,first = first,second = second,
+      guard_leaves = ref NONE} end
 
   (* Both leaves must be genuine SAME-Work realized wrappers. No external
      theorem, endpoint pair or phase scalar supplies either executable slot. *)
@@ -1059,7 +1172,8 @@ struct
     let
       fun slot (RealizedGraphConversion {legacy,realization}) =
             (P.validate_realization_for expected realization;
-             case legacy_graph_conversions legacy of [converted] => converted
+             case inventory_legacy (W.spend_guard_policy expected)
+                 legacy_graph_conversions legacy of [converted] => converted
                | _ => raise ERR "graph_realized_sequence"
                    "different private realized leaf grammar")
         | slot _ = raise ERR "graph_realized_sequence"
@@ -1076,8 +1190,8 @@ struct
       val _ = if Portable.pointer_eq (#graph data,#graph other) andalso
           #scope data = #scope other then () else
         raise ERR "graph_realized_sequence" "different actual realized frame"
-      val _ = validate_conversion_for expected first
-      val _ = validate_conversion_for expected second
+      val _ = validate_conversion_with_policy expected first
+      val _ = validate_conversion_with_policy expected second
       val graph = #graph data and scope = #scope data
       val source = graph_source first and target = graph_result second
       val _ = if graph_result first = graph_source second then () else
@@ -1085,11 +1199,11 @@ struct
       val _ = List.app (visible graph scope)
         [source,graph_result first,target]
       val equality = equality_node graph scope observe source target
-      val _ = validate_conversion_for expected first
-      val _ = validate_conversion_for expected second
+      val _ = validate_conversion_with_policy expected first
+      val _ = validate_conversion_with_policy expected second
     in DirectRealizedSequence {source = source,result = target,
       equality = equality,first = first,second = second,
-      first_slot = a,second_slot = b} end
+      first_slot = a,second_slot = b,guard_leaves = ref NONE} end
 
   datatype recipe_kind = LegacyStep | ApplicationRecipe | SequenceRecipe
   type recipe_step =
@@ -1168,7 +1282,8 @@ struct
                raise ERR "graph_recipe_steps"
                  "policy sequence requires policy assembler")
           | collect_fresh (DirectRealizedSequence
-              {source,result,equality,first,second,first_slot,second_slot}) =
+              {source,result,equality,first,second,first_slot,second_slot,
+               ...}) =
               let
                 fun direct converted slot =
                   (observe ();case cached converted (!direct_objects) of
@@ -1191,7 +1306,7 @@ struct
                 prefix = SOME a,equality = SOME equality,closed = NONE,
                 conversion = NONE,continuation = SOME b} end
           | collect_fresh (SequenceGraphConversion
-              {source,result,equality,first,second}) =
+              {source,result,equality,first,second,...}) =
               let val a = collect first val b = collect second
               in save {id = fresh (),kind = SequenceRecipe,source = source,
                 current = graph_result first,result = result,children = NONE,
@@ -1199,7 +1314,7 @@ struct
                   NONE,conversion = NONE,
                 continuation = SOME b} end
           | collect_fresh (ApplicationGraphConversion
-              {source,result,equality,left,right}) =
+              {source,result,equality,left,right,...}) =
               let val a = collect left val b = collect right
               in save {id = fresh (),kind = ApplicationRecipe,source =
                 source,current = result,
@@ -1280,7 +1395,7 @@ struct
             {first,second,...}) =
               named_equality converted (trans (opened first) (opened second))
           | assemble_fresh (converted as ApplicationGraphConversion
-              {source,result,equality,left,right}) =
+              {source,result,equality,left,right,...}) =
               let val combined = P.compose block
                     (fn [a,b] => SmtReplayRuleObservation.MK_COMB (a,b)
                       | _ => raise Fail "recipe application premises")
@@ -1357,7 +1472,7 @@ struct
       val _ = if Portable.pointer_eq (graph,#graph owner) then () else
         (SmtReplayInvocationWork.close expected;
          raise ERR "graph_assemble_for" "different original graph")
-      val _ = validate_conversion_for expected conversion
+      val _ = validate_conversion_with_policy expected conversion
       val scope = P.scope block
       val {root,steps} = graph_recipe_steps graph scope
         {observe = fn () => SmtReplayInvocationWork.spend expected 1}
@@ -1443,7 +1558,7 @@ struct
       val owner = P.primitive_owner_for expected block
       val _ = if Portable.pointer_eq (graph,#graph owner) then () else
         raise ERR "graph_assemble_with_schemas_for" "different original graph"
-      val _ = validate_conversion_for expected conversion
+      val _ = validate_conversion_with_policy expected conversion
       val scope = #scope owner
       val (source,equality,steps) = case conversion of
           GraphConversion {source,equality,steps,...} =>
@@ -1708,7 +1823,8 @@ struct
           conversion=SOME conversion,continuation=NONE}
         val legacy=GraphConversion {source=source,result=target,
           equality=equality,steps=Redblackmap.insert
-            (Redblackmap.mkDict Int.compare,G.node_id source,step)}
+            (Redblackmap.mkDict Int.compare,G.node_id source,step),
+          guard_slots=ref NONE}
         val saved=PolicyGraphConversion {work=expected,frame=frame,
           legacy=legacy,slot=conversion,realization=realization,
           canonical_cut=NONE}
@@ -1773,7 +1889,8 @@ struct
           continuation=NONE}
         val legacy=GraphConversion{source=source,result=target,
           equality=equality,steps=Redblackmap.insert
-            (Redblackmap.mkDict Int.compare,G.node_id source,step)}
+            (Redblackmap.mkDict Int.compare,G.node_id source,step),
+          guard_slots=ref NONE}
         val result=PolicyGraphConversion{work=expected,frame=frame,
           legacy=legacy,slot=slot,realization=NONE,canonical_cut=SOME cut}
         val _=policy_graph_guard expected result
@@ -1860,16 +1977,18 @@ struct
                val _=constructor(graph_equality object)
                val _=case object of
                    GraphConversion{steps,...}=>
-                     Redblackmap.app(fn(_,GraphStep
-                       {source,current,children,schema=law,closed,...})=>
-                       (tick();
-                        (case children of SOME _=>
-                           if source=current then ()else
-                             (demand source;demand current)
-                         | NONE=>());
-                        Option.app schema law;
-                        Option.app(fn fact=>
-                          constructor(P.closed_node fact))closed))steps
+                     (inventory_step_map (W.spend_guard_policy expected)
+                        steps;
+                      Redblackmap.app(fn(_,GraphStep
+                        {source,current,children,schema=law,closed,...})=>
+                        (tick();
+                         (case children of SOME _=>
+                            if source=current then ()else
+                              (demand source;demand current)
+                          | NONE=>());
+                         Option.app schema law;
+                         Option.app(fn fact=>
+                           constructor(P.closed_node fact))closed))steps)
                  | RealizedGraphConversion{legacy,...}=>visit legacy
                  | saved as PolicyGraphConversion _=>
                      policy_graph_guard expected saved
@@ -1884,7 +2003,7 @@ struct
                      {source,result,left,right,...}=>
                      (demand source;demand result;visit left;visit right)
              in tick();recipe_done:=object:: !recipe_done end)
-        val ordinary=graph_roots converted
+        val ordinary=graph_roots_for expected converted
         val _=List.app demand ordinary
         val _=visit converted
         fun reverse [] result=(tick();result)

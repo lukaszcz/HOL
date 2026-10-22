@@ -53,17 +53,17 @@ struct
     protected work (fn () =>
       (if Portable.pointer_eq (work,#work owner) then () else
          raise ERR "validate" "different original Work";
-       C.validate_conversion_for work graph_conversion;
+       (* Pay each recursive recipe/map check, including Idle getters.
+          The placeholder-table guard quote covers only its own tables. *)
+       C.validate_conversion_with_policy work graph_conversion;
        active owner;P.validate_realization_tables work tables;
        List.app (fn node =>
          if G.scope_visible (#graph owner) (#scope owner)
              (G.node_scope (#graph owner) node) then () else
            raise ERR "validate" "retained recipe root escapes owner") roots;
-       List.app (P.validate_closed_fact (#graph owner) (#scope owner)
-         (#template_limit (#limits owner))) facts;
-       List.app (P.validate_conversion_for work) conversions;
-       List.app (P.validate_conversion (#graph owner) (#scope owner)
-         (#template_limit (#limits owner))) conversions;
+       (* The owned tables/frontier just validated these SAME private
+          fact/conversion lists in this frame and original template cap.
+          No callback intervenes; do not walk their receipt DAGs again. *)
        List.app (fn Held child =>
            ignore (G.closure_child_node (#graph owner) (#scope owner) child)
          | OpaqueProjection {node,depth,receipt} =>
@@ -101,7 +101,7 @@ struct
       val _ = phase "prepare.entry" (fn () =>
         " ordinal=" ^ Int.toString ordinal)
       val converted = conversion
-      val _ = C.validate_conversion_for work converted
+      val _ = C.validate_conversion_with_policy work converted
       val ceiling = IntInf.fromInt (W.work_limit work)
       val cap = IntInf.fromInt (#template_limit limits)
       fun plus a b = IntInf.min (ceiling+1,a+b)
@@ -261,16 +261,16 @@ struct
          inc = plus 3 (plus (#inc a) (#inc b)),
          ann = plus 9 (plus (#ann a) (#ann b)),ty = 1,shape = Boolean}
       val _ = charge ()
-      val _ = C.validate_conversion_for work converted
+      val _ = C.validate_conversion_with_policy work converted
       val {root = recipe_root,steps} = C.graph_recipe_steps graph scope
         {observe = charge} converted
       fun count [] n = n | count (_::rest) n = (charge ();count rest (n+1))
       val step_count = count steps 0
       val _ = charge ()
-      val facts = C.graph_closed_facts converted
-      val conversions = C.graph_conversions converted
+      val facts = C.graph_closed_facts_for work converted
+      val conversions = C.graph_conversions_for work converted
       val _ = charge ()
-      val roots = C.graph_roots converted
+      val roots = C.graph_roots_for work converted
       (* Name/open operations execute this exact constructor rator spine.
          A realized endpoint cut must not hide a definition demanded there.
          Direct realized child rows have equality NONE and add no wrapper. *)
@@ -568,29 +568,22 @@ struct
         " amount=" ^ IntInf.toString realization_amount)
       val _ = reserve W.FinalFreeze realization_amount
       val _ = phase "realization.reserve.after" (fn () => "")
-      val _ = List.app (P.validate_closed_fact graph scope
-        (#template_limit limits)) facts
-      val _ = List.app (P.validate_conversion_for work) conversions
-      val _ = List.app (P.validate_conversion graph scope
-        (#template_limit limits)) conversions
+      (* prepare_owned_realization_tables below first guards this exact
+         frontier, including all fact/conversion leaves. No callback or
+         placeholder construction precedes that check. *)
       (* Both exact deferred table batches/listings are prepared and
          debited NOW, before every caller policy and placeholder payload.
          The original Work/Scope/Source are held; execute cannot re-plan. *)
       val _ = phase "retained.guards.after" (fn () => "")
       val tables = P.prepare_owned_realization_tables work frontier
       val _ = phase "tables.after" (fn () => "")
-      (* Exact validate program: final prepare guard, five execute guards,
-         two policy
-         guards per retained shape, and two guards at each rendered arrow.
+      (* Exact validate program: final prepare guard, five execute guards
+         and one returning policy fence per retained shape. Rendering has
+         no callbacks; entry/preceding return supplies its opening fence.
          Mint and freeze own their separate same-plan guard reservations. *)
-      fun arrows (Actual _) = (W.spend work 1;0 : IntInf.int)
-        | arrows Boolean = (W.spend work 1;0)
-        | arrows (Arrow (left,right)) =
-            (W.spend work 1;plus 1 (plus (arrows left) (arrows right)))
       fun future_guards [] = (W.spend work 1;6 : IntInf.int)
-        | future_guards (shape::rest) =
-            (W.spend work 1;plus 2
-              (plus (times 2 (arrows shape)) (future_guards rest)))
+        | future_guards (_::rest) =
+            (W.spend work 1;plus 1 (future_guards rest))
       val guard_amount = times (future_guards (!policies))
         (P.realization_tables_guard_work work tables)
       val _ = phase "guards.debit.before" (fn () =>
@@ -630,15 +623,16 @@ struct
       let val _ = validate work plan
           val _ = if !used then raise ERR "execute" "plan already executed"
             else used := true
+          (* Rendering is callback-free and cannot retire declarations or
+             frames. Guard the entire render, not every immutable Arrow;
+             keep both fences around the actual caller policy below. *)
           fun render (Actual ty) = ty | render Boolean = Type.bool
             | render (Arrow (a,b)) =
-                let val x = render a and y = render b
-                    val _ = validate work plan
-                    val ty = Type.mk_type ("fun",[x,y])
-                    val _ = validate work plan
-                in ty end
+                Type.mk_type ("fun",[render a,render b])
           fun policy shape =
-            let val ty = render shape val _ = validate work plan
+            let val ty = render shape
+                (* Entry, or the preceding callback's returning fence,
+                   guards this callback-free render and next invocation. *)
                 val _ = check_type ty val _ = validate work plan
             in () end
           val _ = List.app policy types
@@ -727,8 +721,8 @@ struct
           raise ERR "policy_core" "negative caller ordinal"
         val graph= #graph owner val scope= #scope owner
         val roots=C.graph_roots_with_policy work graph scope conversion
-        val facts=C.graph_closed_facts conversion
-        val conversions=C.graph_conversions conversion
+        val facts=C.graph_closed_facts_for work conversion
+        val conversions=C.graph_conversions_for work conversion
         fun visible node=
           (guard();W.spend_policy work 1;
            if G.scope_visible graph scope (G.node_scope graph node) then ()

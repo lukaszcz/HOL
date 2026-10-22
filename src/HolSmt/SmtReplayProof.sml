@@ -1907,6 +1907,10 @@ struct
         name_guard = name_guard,
         definition_plan = definition_plan,definition_rows = definition_rows,
         used = ref false}
+      (* Sole RealizationTablesPlan constructor: frontier and plan hold the
+         exact same immutable fact/conversion lists and frame, with the same
+         original template cap. With no supplied callbacks between guards,
+         frontier validation therefore covers the plan's leaf checks. *)
       in RealizationTablesPlan
         {work = work,frontier = frontier,plan = plan} end)
      handle primary => (W.close work;raise primary))
@@ -1918,7 +1922,7 @@ struct
       G.placeholder_plan_guard_cost naming
     else (W.close expected;raise ERR "owned_tables_guard_work"
       "different original Work")
-  fun validate_owned_tables expected
+  fun validate_owned_tables_using check_leaves expected
       (OwnedTablesPlan {work,graph,scope,frame,template,held,
                         naming,closed_facts,conversions,...}) =
     ((if Portable.pointer_eq (expected,work) then () else
@@ -1931,13 +1935,17 @@ struct
           val _ = G.validate_placeholder_plan graph scope naming
           val _ = List.app (fn child =>
             ignore (G.closure_child_node graph scope child)) held
-          val _ = List.app (validate_closed_fact graph scope template)
-            closed_facts
-          val _ = List.app (fn conversion =>
+          val _ = if check_leaves then
+            List.app (validate_closed_fact graph scope template) closed_facts
+            else ()
+          val _ = if check_leaves then List.app (fn conversion =>
             (validate_conversion_for work conversion;
              validate_conversion graph scope template conversion)) conversions
+            else ()
       in ignore (Scope.description_for work frame) end)
      handle primary => (W.close expected;raise primary))
+  fun validate_owned_tables expected plan =
+    validate_owned_tables_using true expected plan
   fun freeze_owned_tables_plan work
       (plan as OwnedTablesPlan {graph,scope,frame,template,
         roots,closed_facts,conversions,used,...}) =
@@ -1959,7 +1967,8 @@ struct
       (RealizationTablesPlan {work,frontier,plan}) =
     ((if Portable.pointer_eq (expected,work) then () else
         raise ERR "validate_realization_tables" "different original Work";
-      frontier_guard expected frontier;validate_owned_tables expected plan)
+      frontier_guard expected frontier;
+      validate_owned_tables_using false expected plan)
      handle primary => (W.close expected;raise primary))
   fun realization_tables_guard_work expected
       (RealizationTablesPlan {work,plan,...}) =
