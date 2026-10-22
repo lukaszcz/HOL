@@ -8983,6 +8983,21 @@ in
       ``\x:bool. (\y:bool. y) x``)
   val _=(testutils.tprint "Recorded beta free and bound spelling preserved";
     run ``(\x:bool. \y:bool. x /\ y) y`` ``\z:bool. y /\ z``)
+  val _=(testutils.tprint "Recorded beta cloned body reimports exact binder";
+    let val (request,_) = setup
+          ``(\x:bool. \y:bool. x /\ y) y``
+          cap 2000000 (fn _=>()) (fn _=>())
+        val {target,...} = B.endpoints (B.execute (B.prepare request))
+        val graph = #graph request val scope = #scope request
+        val data = G.binder_closure_data graph scope
+          (G.binder_closure graph scope target)
+        val imported = G.import graph (#body_frame data) cap
+          (G.representative graph (#body data))
+    in ensure "beta-cloned canonical variable lost lexical graph identity"
+      (#node imported= #body data andalso
+       G.resolve_variable graph (#body_frame data)
+         (G.representative graph (#binder data))= #binder data)
+    end)
   val _=(testutils.tprint "Recorded beta shared nested target reused";
     let val x=Term.mk_var ("x",Type.bool)
         val y=Term.mk_var ("y",Type.bool)
@@ -22074,6 +22089,35 @@ in
        List.all (fn term => Portable.pointer_eq (term,hypothesis))
          (Thm.hyp theorem) andalso Portable.pointer_eq
        (Thm.concl theorem,#2 (S.original_goal (#sources e)))) end
+
+  (* Task18: the older nested cases stopped at the processed endpoint.
+     Complete the same original-source replay/realization/closing path. *)
+  val _ = List.app (fn (label,term) =>
+    let
+      val _ = testutils.tprint label
+      val e = setup cap [term,term] term
+      val validation = Stage.build (stage e (fn _ => ()))
+      val (prefix,theorem) = finalize e validation
+      val hypotheses = Thm.hyp theorem
+      val original = G.representative (#graph e)
+        (hd (S.assumption_nodes (#sources e)))
+      val (tags,_) = Tag.dest_tag (Thm.tag theorem)
+    in ensure "chained/nested public close changed original Goal/Hyp/tags"
+      (exact_prefix e validation andalso length prefix=3 andalso
+       Term.aconv (#2 (GP.processed_goal validation)) (expected term) andalso
+       not (Term.aconv term (expected term)) andalso
+       Portable.pointer_eq (Thm.concl theorem,term) andalso
+       length hypotheses=1 andalso
+       Portable.pointer_eq (hd hypotheses,original) andalso
+       null (Tag.axioms_of (Thm.tag theorem)) andalso
+       List.all (fn tag => tag="DISK_THM") tags)
+    end)
+    [("Full NUM carrier beta SIMPLE closes the original public Goal",
+      ``(\x:num. (&(x+m):int) = k) n``),
+     ("Full NUM nested INT BOOL closes the original public Goal",
+      ``!i:int. !b:bool. (n DIV m:num) = q``),
+     ("Full NUM multiple natural binders close generated guards",
+      ``!n:num. !m:num. n+m <= q``)]
 
   val _ = testutils.tprint "Full NUM retains carrier then beta then SIMPLE"
   val _ = ensure "beta/NUM phase ordering changed"
@@ -43866,6 +43910,26 @@ in
        andalso Term.aconv right boolSyntax.T andalso
        null (Thm.hyp (#theorem data)) andalso !calls>0 andalso
        W.work_policy (#work expected)=RP.Uncapped) end)
+
+  val _ = test "Policy beta cloned body reimports exact binder"
+    (fn()=>let
+      val fixture as {expected,...}=setup
+        ``(\x:bool. (\y:bool. x /\ y) T) y`` ordinary
+      val converted=B.execute_with_policy (B.prepare_admitted_with_policy
+        (request fixture (fn _=>())))
+      val {target,...}=B.endpoints_with_policy converted
+      val graph= #graph expected val scope= #scope expected
+      val lambda=case G.view graph target of G.Application (f,_)=>f
+        | _=>raise Fail "policy beta fixture lost its remaining redex"
+      val data=G.binder_closure_data graph scope
+        (G.binder_closure graph scope lambda)
+      val imported=G.import_with_policy graph (#body_frame data)
+        (RP.AtMost 100) (G.representative graph (#body data))
+    in require "policy beta-cloned variable lost lexical graph identity"
+      (#node imported= #body data andalso
+       G.resolve_variable graph (#body_frame data)
+         (G.representative graph (#binder data))= #binder data)
+    end)
 
   val _ = test "Uncapped metadata preserves native input result and eq gates"
     (fn()=>let

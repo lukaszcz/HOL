@@ -392,8 +392,14 @@ struct
                           val binder=invoke common (fn()=>
                             G.fresh_bound_variable graph frame
                               (#binder_term data))
-                          val body_frame=opened frame
-                            [(#binder_term data,binder)]
+                          (* Subsequent checked rules re-import the NEW
+                             body syntax. Bind its canonical spelling, not
+                             the old binder alias (which may now be free in
+                             an inserted operand). Graph-ID substitution
+                             below still maps the original bound node. *)
+                          val canonical=invoke common
+                            (fn()=>G.representative graph binder)
+                          val body_frame=opened frame [(canonical,binder)]
                           val _=charge common 1
                           val token=plus (W.work_limit work) (!next_env,1)
                           val _=next_env:=token
@@ -897,8 +903,11 @@ struct
                           val binder=pb_invoke common (fn()=>
                             G.fresh_bound_variable graph frame
                               (#binder_term data))
-                          val body_frame=opened frame
-                            [(#binder_term data,binder)]
+                          (* Match the finite builder's canonical lexical
+                             binding; never rebind the old source spelling. *)
+                          val canonical=pb_invoke common
+                            (fn()=>G.representative graph binder)
+                          val body_frame=opened frame [(canonical,binder)]
                           val _=pb_charge common 1
                           val native=native_budget_for work
                             (#native_budget common)
