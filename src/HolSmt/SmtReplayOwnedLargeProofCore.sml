@@ -707,7 +707,7 @@ struct
       (fn()=>
         (if Portable.pointer_eq(work,#work owner) then () else
            raise ERR "policy_core" "different original Work";
-         active owner;C.validate_conversion_for work conversion;
+         active owner;C.validate_conversion_with_policy work conversion;
          P.validate_realization_tables_with_policy work tables;
          active owner))
     fun prepare_in_scope work
@@ -721,7 +721,7 @@ struct
           contract=native_contract,limits= #limits incoming,
           epoch=Type.type_epoch(),symbols=Term.term_epoch()}:owner
         fun guard()=(active owner;
-          C.validate_conversion_for work conversion;active owner)
+          C.validate_conversion_with_policy work conversion;active owner)
         val _=guard()
         val _=if ordinal>=0 then () else
           raise ERR "policy_core" "negative caller ordinal"

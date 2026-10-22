@@ -804,6 +804,23 @@ struct
         fail p "ordinary_guard"
           "guard debit requires ordinary policy Work"
 
+  (* Callback-free guard bookkeeping, not action/native authority. All
+     representations debit their SAME actual counter in Idle or Busy. *)
+  fun guard_payment (p as Portfolio {limit,used,...}) amount =
+        (active p;
+         if amount>=0 andalso amount<=IntInf.fromInt (limit- !used) then
+           used := !used+IntInf.toInt amount
+         else fail p "value_binding_guard"
+           "original cumulative work allowance exhausted")
+    | guard_payment (p as GuardedPortfolio _) amount =
+        (active p;scope_debit p amount)
+    | guard_payment (p as PolicyPortfolio _) amount =
+        (policy_active p;policy_debit p amount)
+    | guard_payment (p as OriginalPortfolio {work,...}) amount =
+        (original_active p;A.charge_guard work amount)
+  fun spend_guard_policy p amount =
+    (guard_payment p amount handle primary => (close p;raise primary))
+
   (* Exact closed PREFIX forwarding. A owns its action and retained owner;
      no A Work, counter, proof, semantic Source or executor is exposed. *)
   type original_context = A.ordered_original_context
@@ -1114,20 +1131,7 @@ struct
     {work:portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      limits:RP.semantic_policy,epoch:int,symbols:int,caller:G.scope,
      factory:value_factory,program:B.value_binding_guard}
-  (* Only the closed Value guard below can reach this Idle/Busy payer.
-     All four representations spend their original actual counter. *)
-  fun value_guard_payment (p as Portfolio {limit,used,...}) amount =
-        (active p;
-         if amount>=0 andalso amount<=IntInf.fromInt (limit- !used) then
-           used := !used+IntInf.toInt amount
-         else fail p "value_binding_guard"
-           "original cumulative work allowance exhausted")
-    | value_guard_payment (p as GuardedPortfolio _) amount =
-        (active p;scope_debit p amount)
-    | value_guard_payment (p as PolicyPortfolio _) amount =
-        (policy_active p;policy_debit p amount)
-    | value_guard_payment (p as OriginalPortfolio {work,...}) amount =
-        (original_active p;A.charge_guard work amount)
+  val value_guard_payment = guard_payment
   fun validate_value_backend_binding_guard expected
       (ValueBindingGuard {work,graph,root,sources,limits,epoch,symbols,
                           caller,factory,program}) =

@@ -666,32 +666,42 @@ struct
       | saved as PolicyGraphConversion {slot,...} =>
           (policy_graph_active saved;[slot])
       | _ => []) (recipe_nodes conversion))
-  fun legacy_validate_conversion_for expected conversion =
+  (* numItems is the retained O(1) map size, not a counting traversal.
+     Prepay the map walk (including empty branches), row projection and
+     option dispatch even when EVERY conversion slot is NONE. Leaf witness
+     guards still execute in the original ascending-map order. *)
+  fun validate_step_map pay expected steps =
+    (pay (4+8*IntInf.fromInt (Redblackmap.numItems steps));
+     Redblackmap.app (fn (_,GraphStep {conversion,...}) =>
+       Option.app (P.validate_conversion_for expected) conversion) steps)
+  fun legacy_validate_conversion_using pay expected conversion =
     let
-      fun visit (GraphConversion {steps,...}) =
-            Redblackmap.app (fn (_,GraphStep {conversion,...}) =>
-              Option.app (P.validate_conversion_for expected) conversion) steps
-        | visit (SequenceGraphConversion {first,second,...}) =
-            (visit first;visit second)
-        | visit (DirectRealizedSequence {first,second,...}) =
-            (visit first;visit second)
-        | visit (ApplicationGraphConversion {left,right,...}) =
-            (visit left;visit right)
-        | visit (RealizedGraphConversion {realization,...}) =
-            P.validate_realization_for expected realization
-        | visit (saved as PolicyGraphConversion _) =
-            policy_graph_guard expected saved
-        | visit (saved as PolicySequenceGraphConversion _) =
-            policy_graph_guard expected saved
+      fun visit saved =
+        (pay 8;
+         case saved of
+            GraphConversion {steps,...} => validate_step_map pay expected steps
+          | SequenceGraphConversion {first,second,...} =>
+              (visit first;visit second)
+          | DirectRealizedSequence {first,second,...} =>
+              (visit first;visit second)
+          | ApplicationGraphConversion {left,right,...} =>
+              (visit left;visit right)
+          | RealizedGraphConversion {realization,...} =>
+              P.validate_realization_for expected realization
+          | saved as PolicyGraphConversion _ =>
+              policy_graph_guard expected saved
+          | saved as PolicySequenceGraphConversion _ =>
+              policy_graph_guard expected saved)
     in visit conversion end
   val _=SmtReplayInvocationWork.ordinary_policy_guard_mode
   val _=SmtReplayInvocationWork.spend_ordinary_guard_policy
   (* No cache escapes this callback-free validation call. Until an actual
-     policy-wrapper guard succeeds, follow the old visitor without a new
-     debit/lookup: an ordinary composite has no immutable Work header. *)
-  fun validate_conversion_for expected conversion =
+     policy-wrapper guard succeeds, retain the old no-memo itinerary: an
+     ordinary composite has no immutable Work header. The independent pay
+     hook meters traversal only at authenticated replay-owner boundaries. *)
+  fun validate_conversion_using pay expected conversion =
     if not(W.ordinary_policy_guard_mode expected)then
-      legacy_validate_conversion_for expected conversion
+      legacy_validate_conversion_using pay expected conversion
     else
       ((let
           val completed=ref([]:graph_conversion list)
@@ -717,24 +727,35 @@ struct
                  (check saved;remember saved)
              else
                (check saved;if !enabled then remember saved else ()))
-          and check(GraphConversion{steps,...})=
-                Redblackmap.app(fn(_,GraphStep{conversion,...})=>
-                  Option.app(P.validate_conversion_for expected)
-                    conversion)steps
-            | check(SequenceGraphConversion{first,second,...})=
-                (visit first;visit second)
-            | check(DirectRealizedSequence{first,second,...})=
-                (visit first;visit second)
-            | check(ApplicationGraphConversion{left,right,...})=
-                (visit left;visit right)
-            | check(RealizedGraphConversion{realization,...})=
-                P.validate_realization_for expected realization
-            | check(saved as PolicyGraphConversion _)=
-                (policy_graph_guard expected saved;enabled:=true)
-            | check(saved as PolicySequenceGraphConversion _)=
-                (policy_graph_guard expected saved;enabled:=true)
+          and check saved =
+            (pay 8;
+             case saved of
+                GraphConversion {steps,...} =>
+                  validate_step_map pay expected steps
+              | SequenceGraphConversion {first,second,...} =>
+                  (visit first;visit second)
+              | DirectRealizedSequence {first,second,...} =>
+                  (visit first;visit second)
+              | ApplicationGraphConversion {left,right,...} =>
+                  (visit left;visit right)
+              | RealizedGraphConversion {realization,...} =>
+                  P.validate_realization_for expected realization
+              | saved as PolicyGraphConversion _ =>
+                  (policy_graph_guard expected saved;enabled:=true)
+              | saved as PolicySequenceGraphConversion _ =>
+                  (policy_graph_guard expected saved;enabled:=true))
         in visit conversion end)
        handle primary=>(W.close expected;raise primary))
+
+  (* Dormant metadata validation retains its old activation/exception order.
+     Authenticated replay owners use the paid entry even for legacy recipes
+     without a policy wrapper. No cache or credit escapes either call. *)
+  fun validate_conversion_for expected conversion =
+    validate_conversion_using (fn _ => ()) expected conversion
+  fun validate_conversion_with_policy expected conversion =
+    (validate_conversion_using (W.spend_guard_policy expected)
+       expected conversion
+     handle primary => (W.close expected;raise primary))
 
   fun graph_closed_facts conversion = List.concat (List.map
     (fn current as GraphConversion _ => legacy_graph_closed_facts current
@@ -1612,7 +1633,7 @@ struct
        datatype graph_schema = datatype graph_schema
        datatype graph_step = datatype graph_step
        datatype graph_conversion = datatype graph_conversion
-       val validate_conversion_for=validate_conversion_for
+       val validate_conversion_for=validate_conversion_with_policy
        val policy_graph_guard=policy_graph_guard
        val graph_equality=graph_equality
        val visible=visible
@@ -1642,7 +1663,7 @@ struct
        datatype graph_schema = datatype graph_schema
        datatype graph_step = datatype graph_step
        datatype graph_conversion = datatype graph_conversion
-       val validate_conversion_for=validate_conversion_for
+       val validate_conversion_for=validate_conversion_with_policy
        val policy_graph_guard=policy_graph_guard
        val graph_equality=graph_equality
        val visible=visible
@@ -1783,7 +1804,7 @@ struct
         fun usable node=
           (tick();visible graph scope node)
         val _=active()
-        val _=validate_conversion_for expected converted
+        val _=validate_conversion_with_policy expected converted
         val roots=ref([]:G.node list)
         fun member node []=(tick();false)
           | member node(old::rest)=
@@ -1866,7 +1887,7 @@ struct
           | reverse(node::rest)result=
               (tick();reverse rest(node::result))
         val result=reverse(!roots)[]
-        val _=validate_conversion_for expected converted
+        val _=validate_conversion_with_policy expected converted
         val _=active()
       in result end)
      handle primary=>(W.close expected;raise primary))

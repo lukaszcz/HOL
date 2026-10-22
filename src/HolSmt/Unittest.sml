@@ -28080,6 +28080,170 @@ local
   structure GP = SmtLib_GraphPreprocess
   structure CG = SmtCheckedGraph
 in
+(* Legacy recipes need no realized witness to incur replay guard work. *)
+fun replay_processed_validation_cost_success () =
+let
+  fun require text yes = if yes then () else raise Fail text
+  fun test label action =
+    let val _=testutils.tprint label
+        val _=Count.counting_thms true
+        val result=Exn.capture action ()
+        val _=Count.counting_thms false
+    in Exn.release result;testutils.OK () end
+  fun charged w = #charged (W.audit_policy w)
+  fun refused action = (action ();NONE)
+    handle Feedback.HOL_ERR detail => SOME (Feedback.message_of detail)
+  val limits : RP.semantic_policy =
+    {input_limit=RP.AtMost 10000,output_limit=RP.AtMost 10000,
+     template_limit=RP.AtMost 10000}
+  fun setup allowance =
+    let val g=G.new () val r=G.root_scope g
+        val s=S.new_with_policy g r (RP.AtMost 10000)
+          {goal=boolSyntax.T,assumptions=[]}
+        val w=W.begin_with_policy g r s
+          {limits=limits,work_limit=RP.AtMost allowance}
+    in {g=g,r=r,s=s,w=w} end
+  fun recipe g r depth =
+    let fun term 0 = boolSyntax.T
+          | term n = boolSyntax.mk_conj
+              (Term.mk_var ("guard_row_" ^ Int.toString n,Type.bool),
+               term (n-1))
+        val node= #node (G.import g r 10000 (term depth))
+        val rows=ref 0
+        val plan=C.graph_conversion g r false
+          (fn _ => (rows:= !rows+1;NONE)) node
+    in (plan,12+8*IntInf.fromInt (!rows)) end
+  fun leave w amount =
+    case W.remaining_policy w of
+        RP.AtMost n => W.with_step w
+          (fn () => W.spend_policy w (n-amount))
+      | _ => raise Fail "finite guard fixture lost its allowance"
+  fun verify w plan fee =
+    let val prior=charged w val native=Count.thm_count ()
+        val _=C.validate_conversion_with_policy w plan
+        val middle=charged w
+        val _=W.with_step w
+          (fn () => C.validate_conversion_with_policy w plan)
+    in require "legacy map walk was unpaid, cached or admitted native work"
+      (middle=prior+fee andalso charged w=middle+fee andalso
+       not (#retired (W.audit_policy w)) andalso
+       Count.thm_count ()=native) end
+in
+  test "Legacy NONE-slot maps pay each Idle/Busy scan at both sizes"
+    (fn () => List.app (fn size =>
+      let val e=setup 1000000
+          val (plan,fee)=recipe (#g e) (#r e) size
+      in verify (#w e) plan fee;W.close (#w e) end) [1,128]);
+  test "Checked schema and shared sequence pay every legacy occurrence"
+    (fn () =>
+      let val e=setup 1000000 val g= #g e val r= #r e val w= #w e
+          val hole=Term.mk_var ("guard_schema_hole",Type.bool)
+          val law=Thm.CONJUNCT1 (Thm.CONJUNCT2
+            (Thm.SPEC hole boolTheory.AND_CLAUSES))
+          val operand= #node (G.import g r 10000 boolSyntax.T)
+          val schema=C.checked_graph_schema g r
+            {theorem=law,holes=[hole],operands=[operand],template_limit=100}
+          val plan=C.graph_schema_leaf g r {schema=schema,observe=fn()=>()}
+          val identity=C.graph_identity g r {observe=fn()=>()} operand
+          val sequence=C.graph_sequence g r
+            {first=plan,second=identity,observe=fn()=>()}
+          val shared=C.graph_sequence g r
+            {first=sequence,second=identity,observe=fn()=>()}
+      in verify w plan 20;verify w shared 76;W.close w end);
+  test "Processed GP owner guards pay duplicate assumptions on every call"
+    (fn () =>
+      let val g=G.new () val r=G.root_scope g
+          val p=Term.mk_var ("guard_processed_p",Type.bool)
+          val original=boolSyntax.mk_conj (p,boolSyntax.T)
+          val s=S.new g r 10000
+            {goal=original,assumptions=[original,original]}
+          val w=W.begin_with_policy g r s
+            {limits=limits,work_limit=RP.AtMost 1000000}
+          val hole=Term.mk_var ("guard_processed_hole",Type.bool)
+          val law=Thm.CONJUNCT1 (Thm.CONJUNCT2
+            (Thm.SPEC hole boolTheory.AND_CLAUSES))
+          val operand= #node (G.import g r 10000 p)
+          val schema=C.checked_graph_schema g r
+            {theorem=law,holes=[hole],operands=[operand],template_limit=100}
+          val validation=GP.discover_from_sources g r s
+            {import_limit=10000,revisit=false,check_type=fn _=>(),
+             conversion=fn node =>
+               if node=C.graph_schema_source schema then SOME schema
+               else NONE}
+          val prior=charged w val native=Count.thm_count ()
+          val _=GP.validate_with_policy w validation
+          val middle=charged w
+          val _=W.with_step w (fn()=>GP.validate_with_policy w validation)
+      in require "GP owner guard omitted legacy rows/duplicate occurrences"
+        (middle=prior+161 andalso charged w=middle+161 andalso
+         Count.thm_count ()=native);W.close w end);
+  test "Legacy map admission is prospective at exact and short allowance"
+    (fn () =>
+      let val exact=setup 1000000 val short=setup 1000000
+          val (a,fee)=recipe (#g exact) (#r exact) 1
+          val (b,other)=recipe (#g short) (#r short) 1
+          val _=require "fixture cost mismatch" (fee=other)
+          val _=leave (#w exact) fee val _=leave (#w short) (fee-1)
+          val prior=charged (#w short) val native=Count.thm_count ()
+          val denied=refused
+            (fn()=>C.validate_conversion_with_policy (#w short) b)
+          val _=C.validate_conversion_with_policy (#w exact) a
+      in require "map scanned without full prepayment or failure retired late"
+        (denied=SOME "original cumulative work allowance exhausted" andalso
+         charged (#w short)=prior+8 andalso
+         #retired (W.audit_policy (#w short)) andalso
+         W.remaining_policy (#w exact)=RP.AtMost 0 andalso
+         not (#retired (W.audit_policy (#w exact))) andalso
+         Count.thm_count ()=native);W.close (#w exact) end);
+  test "Legacy and priced Work guards debit the same live allowance"
+    (fn () => List.app (fn priced =>
+      let val g=G.new () val r=G.root_scope g
+          val s=S.new g r 10000 {goal=boolSyntax.T,assumptions=[]}
+          val policy={limits={input_limit=10000,output_limit=10000,
+                template_limit=10000},work_limit=1000000}
+          val w=if priced then W.begin_with_scope_guard g r s policy
+                else W.begin g r s policy
+          val (plan,fee)=recipe g r 1
+          val prior=charged w val native=Count.thm_count ()
+          val _=C.validate_conversion_with_policy w plan
+          val middle=charged w
+          val _=W.with_step w
+            (fn()=>C.validate_conversion_with_policy w plan)
+      in require "legacy/priced guard lost its original counter or phase"
+        (middle>=prior+fee andalso charged w>=middle+fee andalso
+         not (#retired (W.audit_policy w)) andalso
+         Count.thm_count ()=native);W.close w end) [false,true]);
+  test "Paid legacy validation does not waive later Scope expiry"
+    (fn () =>
+      let val e=setup 1000000 val (plan,fee)=recipe (#g e) (#r e) 1
+          val _=verify (#w e) plan fee
+          val _=G.close_scope (#g e) (#r e)
+          val native=Count.thm_count ()
+          val denied=refused
+            (fn()=>C.validate_conversion_with_policy (#w e) plan)
+      in require "paid validation cached away live Scope backing"
+        (Option.isSome denied andalso #retired (W.audit_policy (#w e))
+         andalso Count.thm_count ()=native) end);
+  test "Guard payment grants no action and preserves Primary/reentry"
+    (fn () =>
+      let exception Primary
+          val a=setup 1000000 val b=setup 1000000 val c=setup 1000000
+          val prior=charged (#w a) val native=Count.thm_count ()
+          val _=W.spend_guard_policy (#w a) 3
+          val paid=charged (#w a)=prior+3
+          val idle=refused (fn()=>W.spend_policy (#w a) 1)
+          val nested=refused (fn()=>W.with_step (#w b) (fn()=>
+            (W.spend_guard_policy (#w b) 1;W.with_step (#w b) (fn()=>()))))
+          val primary=(W.with_step (#w c) (fn()=>
+            (W.spend_guard_policy (#w c) 1;raise Primary));false)
+            handle Primary=>true
+      in require "bookkeeping created action, swallowed Primary or reentered"
+        (paid andalso idle=SOME "no owned work action" andalso
+         Option.isSome nested andalso primary andalso
+         List.all (fn w=> #retired (W.audit_policy w))
+           [#w a,#w b,#w c] andalso Count.thm_count ()=native) end)
+end
+
 fun replay_processed_goal_transport_success () =
 let
   fun require text yes = if yes then () else raise Fail text
@@ -29578,6 +29742,8 @@ fun run_replay_graph_unittests () =
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
      ("replay_source_checked_success", replay_source_checked_success),
+     ("replay_processed_validation_cost_success",
+       replay_processed_validation_cost_success),
      ("replay_processed_goal_transport_success",
        replay_processed_goal_transport_success),
      ("replay_source_binder_alignment_success",
@@ -30416,6 +30582,8 @@ let
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),
     ("replay_source_checked_success", replay_source_checked_success),
+    ("replay_processed_validation_cost_success",
+      replay_processed_validation_cost_success),
     ("replay_processed_goal_transport_success",
       replay_processed_goal_transport_success),
     ("replay_source_binder_alignment_success",

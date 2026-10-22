@@ -95,6 +95,10 @@ sig
      Neither operation admits a native action or permits nested with_step. *)
   val ordinary_policy_guard_mode : portfolio -> bool
   val spend_ordinary_guard_policy : portfolio -> IntInf.int -> unit
+  (* Same-counter bookkeeping in Idle or Busy, for all Work modes. No
+     action, native permission or entitlement is created. Owner guards
+     precede this payer; charges must precede the metered traversal. *)
+  val spend_guard_policy : portfolio -> IntInf.int -> unit
   (* Authenticated Value-origin guard. Preparation uses the SAME active
      action; validation is read-only bookkeeping in Idle or Busy and pays
      this Work's actual compiled program, never a supplied amount. *)

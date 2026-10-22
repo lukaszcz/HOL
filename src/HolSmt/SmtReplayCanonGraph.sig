@@ -9,8 +9,14 @@ sig
   val with_schema_statistics : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     (unit -> 'a) -> 'a * schema_statistics
   type graph_conversion
-  (* Expected Work before any opaque realized leaf activation. *)
+  (* Expected Work before any opaque realized leaf activation. Dormant
+     metadata retains its old no-activation semantics for legacy recipes. *)
   val validate_conversion_for : SmtReplayInvocationWork.portfolio ->
+    graph_conversion -> unit
+  (* Replay owner guards: prepay every recipe/map scan on the SAME Work,
+     including NONE witness rows. Legal bookkeeping in Idle or Busy;
+     does not open an action or grant native permission. *)
+  val validate_conversion_with_policy : SmtReplayInvocationWork.portfolio ->
     graph_conversion -> unit
   (* Endpoints/cap come ONLY from the SAME actual P realization receipt. *)
   val graph_realized_leaf : SmtReplayInvocationWork.portfolio ->

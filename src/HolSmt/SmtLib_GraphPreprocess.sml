@@ -23,6 +23,16 @@ struct
   fun portfolio_validation (Portfolio value) =
         (active (Portfolio value);SOME value)
     | portfolio_validation (v as Validation _) = (active v;NONE)
+  (* Owner authentication precedes this Idle/Busy guard programme. Charge
+     occurrence-list traversal as well as every underlying recipe/map scan;
+     duplicate assumptions are paid and checked on every invocation. *)
+  fun validate_conversions work assumptions goal =
+    let
+      fun visit [] = W.spend_guard_policy work 1
+        | visit (conversion::rest) =
+            (W.spend_guard_policy work 2;
+             C.validate_conversion_with_policy work conversion;visit rest)
+    in visit assumptions;C.validate_conversion_with_policy work goal end
   fun validate_with_work work (Portfolio value) =
         V.validate_with_work work value
     | validate_with_work work (validation as Validation
@@ -35,8 +45,7 @@ struct
             val _ = if Portable.pointer_eq (graph,owner) andalso scope = root
                 andalso Portable.pointer_eq (sources,expected) then () else
               raise ERR "validate_with_work" "different original invocation"
-            val _ = List.app (C.validate_conversion_for work) assumptions
-            val _ = C.validate_conversion_for work goal
+            val _ = validate_conversions work assumptions goal
         in active validation end)
        handle primary => (W.close work;raise primary))
   fun from_portfolio_with_work work value =
@@ -237,8 +246,7 @@ struct
             val _ = if Portable.pointer_eq (graph,owner) andalso scope=root
                 andalso Portable.pointer_eq (sources,expected) then () else
               raise ERR "validate_with_policy" "different original invocation"
-            val _ = List.app (C.validate_conversion_for work) assumptions
-            val _ = C.validate_conversion_for work goal
+            val _ = validate_conversions work assumptions goal
         in active validation end)
        handle primary => (W.close work;raise primary))
   fun template_policy (Portfolio value) = SOME (V.template_policy value)
