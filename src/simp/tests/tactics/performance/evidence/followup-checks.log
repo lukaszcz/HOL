@@ -1,0 +1,62 @@
+..............
+----------------------------------------------------------------------
+Ran 14 tests in 1.915s
+
+OK
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.002s
+
+OK
+PASS: 60 timing processes; protocols, stages and inference
+PASS: common schedule derived from all initial samples
+PASS: codegen-current 69 selected native bodies
+PASS: codegen-control 69 selected native bodies
+PASS: unique source blobs and original compressed receipt hashes
+full_complete.0
+  cpu current 0.997925 {'ratio_interval': [0.9841320047204256, 1.0119119062644273], 'decision': 'unresolved'} {'ratio_interval': [0.9678014059806471, 1.0289868218401743], 'decision': 'unresolved'} control 0.996708 contrast {'ratio_interval': [0.9857921482036437, 1.0168925485199896], 'decision': 'unresolved'} {'ratio_interval': [0.9710604284507101, 1.0323195761330333], 'decision': 'unresolved'}
+  nongc_cpu current 1.000589 {'ratio_interval': [0.9947368204293127, 1.0064748607186107], 'decision': 'unresolved'} {'ratio_interval': [0.9877468721779519, 1.0135973405673258], 'decision': 'unresolved'} control 0.998619 contrast {'ratio_interval': [0.9926825135008693, 1.0113498550650186], 'decision': 'unresolved'} {'ratio_interval': [0.9839481316337622, 1.0203274785305096], 'decision': 'unresolved'}
+  gc_cpu current 0.944502 {'ratio_interval': [0.800605865351939, 1.1142611116621794], 'decision': 'unresolved'} {'ratio_interval': [0.6563229061465358, 1.359215064986836], 'decision': 'unresolved'} control 0.953532 contrast {'ratio_interval': [0.8302828468956551, 1.1817058135650598], 'decision': 'unresolved'} {'ratio_interval': [0.6942289797145175, 1.413294598395208], 'decision': 'unresolved'}
+rev_complete.0
+  cpu current 0.994763 {'ratio_interval': [0.9763216176554154, 1.0135528227162567], 'decision': 'unresolved'} {'ratio_interval': [0.9546027270638531, 1.0366129316403654], 'decision': 'unresolved'} control 1.005649 contrast {'ratio_interval': [0.964151897728243, 1.0148488761902377], 'decision': 'unresolved'} {'ratio_interval': [0.9415096178490174, 1.0392548852784014], 'decision': 'unresolved'}
+  nongc_cpu current 0.998529 {'ratio_interval': [0.988609305902259, 1.0085479879995367], 'decision': 'unresolved'} {'ratio_interval': [0.9768140303380182, 1.020726459099198], 'decision': 'unresolved'} control 1.002807 contrast {'ratio_interval': [0.9827493652054977, 1.0088889643029373], 'decision': 'unresolved'} {'ratio_interval': [0.9708776942800241, 1.0212254283654147], 'decision': 'unresolved'}
+  gc_cpu current 0.947445 {'ratio_interval': [0.8216701787887167, 1.092472754558598], 'decision': 'unresolved'} {'ratio_interval': [0.6923593412297614, 1.2965121290420731], 'decision': 'unresolved'} control 1.059886 contrast {'ratio_interval': [0.7133139559226463, 1.120235847893256], 'decision': 'unresolved'} {'ratio_interval': [0.5758819618972164, 1.387575783055553], 'decision': 'unresolved'}
+no_strip_full_complete.0
+  cpu current 1.007597 {'ratio_interval': [0.9863274315813219, 1.0293258974893773], 'decision': 'unresolved'} {'ratio_interval': [0.9613495999854582, 1.0560698925200505], 'decision': 'unresolved'} control 0.997746 contrast {'ratio_interval': [0.9846068457060515, 1.0357893995820957], 'decision': 'unresolved'} {'ratio_interval': [0.9614571092541259, 1.0607288913069273], 'decision': 'unresolved'}
+  nongc_cpu current 1.004247 {'ratio_interval': [0.9951426977132463, 1.013434078006261], 'decision': 'unresolved'} {'ratio_interval': [0.9843067049945238, 1.024590726878466], 'decision': 'unresolved'} control 0.998707 contrast {'ratio_interval': [0.9939157427280025, 1.0173152169446529], 'decision': 'unresolved'} {'ratio_interval': [0.9832563001288007, 1.028343890911853], 'decision': 'unresolved'}
+  gc_cpu current 1.068936 {'ratio_interval': [0.87519277542291, 1.3055691193147394], 'decision': 'unresolved'} {'ratio_interval': [0.6881642691596144, 1.660395217024103], 'decision': 'unresolved'} control 0.989121 contrast {'ratio_interval': [0.851404190752036, 1.371731479364513], 'decision': 'unresolved'} {'ratio_interval': [0.6807894015614274, 1.715505452110152], 'decision': 'unresolved'}
+simp_complete.8
+  cpu current 0.978158 {'ratio_interval': [0.9602169383492273, 0.9964333909732608], 'decision': 'nonpositive'} {'ratio_interval': [0.9390831888906611, 1.0188577873271711], 'decision': 'unresolved'} control 1.003708 contrast {'ratio_interval': [0.95132428376725, 0.9983302708837738], 'decision': 'nonpositive'} {'ratio_interval': [0.9303159875468737, 1.0208744583826885], 'decision': 'unresolved'}
+  nongc_cpu current 0.981233 {'ratio_interval': [0.9690522602274294, 0.9935678451352999], 'decision': 'nonpositive'} {'ratio_interval': [0.9546076005174383, 1.0086020323908689], 'decision': 'unresolved'} control 1.0043 contrast {'ratio_interval': [0.9604922893256022, 0.9938564104494286], 'decision': 'nonpositive'} {'ratio_interval': [0.9454048510743142, 1.009717072901354], 'decision': 'unresolved'}
+  gc_cpu current 0.949749 {'ratio_interval': [0.8454906213785154, 1.0668635660013155], 'decision': 'unresolved'} {'ratio_interval': [0.7351838913035689, 1.2269353967279617], 'decision': 'unresolved'} control 0.988858 contrast {'ratio_interval': [0.8246884515631362, 1.1185622922031666], 'decision': 'unresolved'} {'ratio_interval': [0.7161514967153285, 1.2880869606010519], 'decision': 'unresolved'}
+rev_reuse.8
+  cpu current 0.997444 {'ratio_interval': [0.9770320962166859, 1.0182816102980545], 'decision': 'unresolved'} {'ratio_interval': [0.9530448505207851, 1.0439108040977896], 'decision': 'unresolved'} control 0.979778 contrast {'ratio_interval': [0.9912371645885335, 1.0455475660726015], 'decision': 'unresolved'} {'ratio_interval': [0.9670486398637415, 1.0716995630977528], 'decision': 'unresolved'}
+  nongc_cpu current 0.998005 {'ratio_interval': [0.9875489574896377, 1.0085725877861778], 'decision': 'unresolved'} {'ratio_interval': [0.9751227888024813, 1.021425013401688], 'decision': 'unresolved'} control 0.990872 contrast {'ratio_interval': [0.9931671851255894, 1.0214302313713903], 'decision': 'unresolved'} {'ratio_interval': [0.9803456307345046, 1.0347891150728603], 'decision': 'unresolved'}
+  gc_cpu current 0.998383 {'ratio_interval': [0.8556256581248335, 1.1649577818252286], 'decision': 'unresolved'} {'ratio_interval': [0.7107524047778057, 1.4024120946498455], 'decision': 'unresolved'} control 0.823093 contrast {'ratio_interval': [0.9829412684815028, 1.496816188463031], 'decision': 'unresolved'} {'ratio_interval': [0.8088357794365475, 1.8190125120286185], 'decision': 'unresolved'}
+no_strip_full_reuse.8
+  cpu current 1.000727 {'ratio_interval': [0.9835115236341128, 1.0182434825144269], 'decision': 'unresolved'} {'ratio_interval': [0.963206299582987, 1.0397089381079019], 'decision': 'unresolved'} control 0.997994 contrast {'ratio_interval': [0.9786570149577277, 1.0274121682087813], 'decision': 'unresolved'} {'ratio_interval': [0.9567956143120628, 1.0508870553230922], 'decision': 'unresolved'}
+  nongc_cpu current 1.000098 {'ratio_interval': [0.9920559425974422, 1.008206060587577], 'decision': 'unresolved'} {'ratio_interval': [0.982472603668145, 1.0180404115436326], 'decision': 'unresolved'} control 0.997189 contrast {'ratio_interval': [0.9910227271765863, 1.0149551015837557], 'decision': 'unresolved'} {'ratio_interval': [0.9800161005894936, 1.0263541304355035], 'decision': 'unresolved'}
+  gc_cpu current 1.008437 {'ratio_interval': [0.8545058370132124, 1.1900979463084995], 'decision': 'unresolved'} {'ratio_interval': [0.7002188760753008, 1.4523253749427463], 'decision': 'unresolved'} control 1.000339 contrast {'ratio_interval': [0.8091736289956887, 1.2559187250401427], 'decision': 'unresolved'} {'ratio_interval': [0.6601464345590488, 1.539440735059319], 'decision': 'unresolved'}
+no_strip_full_complete.8
+  cpu current 0.990877 {'ratio_interval': [0.9711272315004696, 1.011027715718615], 'decision': 'unresolved'} {'ratio_interval': [0.9479042105211046, 1.0357972204768493], 'decision': 'unresolved'} control 0.99174 contrast {'ratio_interval': [0.974355409886201, 1.0245342715754142], 'decision': 'unresolved'} {'ratio_interval': [0.9518928435052157, 1.04871101504174], 'decision': 'unresolved'}
+  nongc_cpu current 0.994611 {'ratio_interval': [0.9850547663175317, 1.004259666599932], 'decision': 'unresolved'} {'ratio_interval': [0.9736875757430229, 1.0159837671234728], 'decision': 'unresolved'} control 0.997025 contrast {'ratio_interval': [0.9856263415126129, 1.009676861359852], 'decision': 'unresolved'} {'ratio_interval': [0.9746532312564997, 1.0210442843236733], 'decision': 'unresolved'}
+  gc_cpu current 0.935765 {'ratio_interval': [0.7912826675056298, 1.1066280277315546], 'decision': 'unresolved'} {'ratio_interval': [0.6467955404167522, 1.3538367582987727], 'decision': 'unresolved'} control 0.925435 contrast {'ratio_interval': [0.8113614058537633, 1.2601653271231879], 'decision': 'unresolved'} {'ratio_interval': [0.6617387018732673, 1.5450955317083013], 'decision': 'unresolved'}
+no_strip_rev_reuse.8
+  cpu current 0.990142 {'ratio_interval': [0.9653744321875615, 1.0155444775302902], 'decision': 'unresolved'} {'ratio_interval': [0.9364170957857183, 1.0469487130992743], 'decision': 'unresolved'} control 0.98778 contrast {'ratio_interval': [0.9716816842469698, 1.0340704486844645], 'decision': 'unresolved'} {'ratio_interval': [0.9439337461907746, 1.064468051134456], 'decision': 'unresolved'}
+  nongc_cpu current 0.995412 {'ratio_interval': [0.9841185583819574, 1.0068359192536802], 'decision': 'unresolved'} {'ratio_interval': [0.9707101912871935, 1.0207432890646904], 'decision': 'unresolved'} control 0.99356 contrast {'ratio_interval': [0.9882960567794385, 1.0156198753164447], 'decision': 'unresolved'} {'ratio_interval': [0.9757463670556142, 1.0286824033902429], 'decision': 'unresolved'}
+  gc_cpu current 0.906046 {'ratio_interval': [0.7360361966813773, 1.1153252493580579], 'decision': 'unresolved'} {'ratio_interval': [0.5733188744505924, 1.4318728916554433], 'decision': 'unresolved'} control 0.90793 contrast {'ratio_interval': [0.7575821020742738, 1.3145159054262157], 'decision': 'unresolved'} {'ratio_interval': [0.5869646136862523, 1.6966162859268534], 'decision': 'unresolved'}
+PASS: 40 timing + 8 diagnostic processes; protocols, counts, proof gates, 66-row-family inference and independent contrasts
+/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/tactics/performance/evidence/FOLLOWUP_ROWS.md
+LOCAL_COSTS.md: OK
+RESULTS.md: OK
+ROWS.md: OK
+archive-index.json.gz: OK
+cleanup.log: OK
+final-checks.log: OK
+final-source.json: OK
+preparation-source.json: OK
+receipts.tar.xz: OK
+recheck.py: OK
+report.py: OK
+sources.tar.xz: OK
+PASS: performance source whitespace, no tabs/trailing spaces

@@ -1,0 +1,6 @@
+# No implicit build/measurement; explicit runner authorization is required.
+.PHONY: all offline
+all: offline
+
+offline:
+	python3 -B -m unittest discover -s . -p 'test_*.py'

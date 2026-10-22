@@ -1,6 +1,7 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
+  ordinary-tactics.log \
   traversal-contracts.log exclusion-contracts.log traverse-ext.log \
   cond-rewr-ext.log ../tests/cond-rewr-ext/selftest.exe \
   ../tests/cond-rewr-ext/.hol/ \
@@ -103,6 +104,12 @@ literal-exclusions: simpLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C ../tests/exclusions check,literal-exclusions.log)
 
+# Ordinary tactic composition, staged callbacks and real proof reconstruction.
+.PHONY: ordinary-tactics
+ordinary-tactics: simpLib.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C ../tests/tactics check,ordinary-tactics.log)
+
 # Separate extension tests do not become imports of ordinary selftest.
 .PHONY: traverse-ext
 traverse-ext: TraverseExt.uo
@@ -127,7 +134,7 @@ cond-rewr-ext: Cond_rewrExt.uo
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   simp-ext cond-rewr-ext congruence-ext fragment-contracts compiled-core \
-  literal-exclusions \
+  literal-exclusions ordinary-tactics \
   fresh-load-regressions split-registration split-persistence
 
 simp-selftest.log: selftest.exe

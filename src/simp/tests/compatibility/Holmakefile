@@ -39,10 +39,11 @@ public-baseline-control: python-tests
 	  --candidate-signature pass --candidate-behavior baseline \
 	  --output $(PAIRED_OUTPUT)
 
-# Diagnostic expected reds; repair acceptance must use baseline behavior.
+# TASK18 repaired staging: exact develop outcomes, not expected-red mode.
 staging-contracts: python-tests
 	python3 -B run_paired.py --staging-contracts --negative-controls \
-	  --candidate HEAD --output $(PAIRED_OUTPUT)
+	  --candidate HEAD --candidate-signature pass \
+	  --candidate-behavior baseline --output $(PAIRED_OUTPUT)
 
 staging-baseline-control: python-tests
 	python3 -B run_paired.py --staging-contracts --staging-only \

@@ -1,0 +1,15 @@
+............
+----------------------------------------------------------------------
+Ran 12 tests in 1.878s
+
+OK
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.002s
+
+OK
+PASS: 60 timing processes; protocols, stages and inference
+PASS: common schedule derived from all initial samples
+PASS: codegen-current 69 selected native bodies
+PASS: codegen-control 69 selected native bodies
+PASS: unique source blobs and original compressed receipt hashes
