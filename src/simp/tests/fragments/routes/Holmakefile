@@ -1,0 +1,10 @@
+# Only the paired Python driver builds/executes private SML fixtures.
+# selftest.sml requires its Paired bootstrap; do not build selftest.exe here.
+.PHONY: check python-tests
+
+check:
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	  python3 -B run_routes.py --output "$$tmp/evidence"
+
+python-tests:
+	python3 -B -m unittest discover -s . -p 'test_routes.py' -v

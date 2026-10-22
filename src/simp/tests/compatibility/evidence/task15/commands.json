@@ -1,0 +1,140 @@
+[
+  {
+    "command": "bin/build -t --seq=tools/sequences/upto-parallel",
+    "exit": 0,
+    "observation": "Final routine build complete",
+    "evidence": "routine-latest.log.gz"
+  },
+  {
+    "command": "bin/Holmake --holstate=\"$PWD/bin/hol.state0\" --no-project --no-cache -C src/simp/src -j1 HOLSELFTESTLEVEL=1 all",
+    "exit": 0,
+    "observation": "Executed ordinary and extension suites plus normal fragment-contracts integration",
+    "evidence": "holmake-final.log.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/compatibility/run_prior_native.py --output /tmp/task15-native-final",
+    "exit": 0,
+    "observation": "642 native checks and prior markers/replay/registration/loading/persistence scenarios",
+    "evidence": "native/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/compatibility/run_paired.py --candidate 658ebe540693977332e8c08cfc88cd434a0d9d04 --candidate-signature pass --public-contracts --prior-contracts --negative-controls --output /tmp/task15-paired",
+    "exit": 0,
+    "observation": "42 receipts, public source clients and frozen prior contracts with intended fail-closed controls",
+    "evidence": "paired/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/routes/run_routes.py --output /tmp/task15-routes-final",
+    "exit": 0,
+    "observation": "41 checks per side; 69 exactly matching observations",
+    "evidence": "routes/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B -m unittest discover -s src/simp/tests/compatibility",
+    "exit": 0,
+    "observation": "113 tests pass",
+    "evidence": "python-final.log.gz"
+  },
+  {
+    "command": "python3 -B -m unittest discover -s src/simp/tests/performance",
+    "exit": 0,
+    "observation": "30 tests pass",
+    "evidence": "performance-python.log.gz"
+  },
+  {
+    "command": "python3 -B -m unittest discover -s src/simp/tests/fragments",
+    "exit": 0,
+    "observation": "36 tests pass",
+    "evidence": "fragments-python.log.gz"
+  },
+  {
+    "command": "python3 -B -m unittest discover -s src/simp/tests/fragments/routes",
+    "exit": 0,
+    "observation": "7 tests pass",
+    "evidence": "fragments-routes-python.log.gz"
+  },
+  {
+    "command": "python3 -B -m unittest discover -s src/simp/tests/fragments/assembly",
+    "exit": 0,
+    "observation": "15 tests pass",
+    "evidence": "fragments-assembly-python.log.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/compatibility/audit_task15.py",
+    "exit": 0,
+    "observation": "Source/integrity audit, not additional HOL execution",
+    "evidence": "audit.log.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/compatibility/coverage_ledger.py",
+    "exit": 0,
+    "observation": "Source/integrity audit, not additional HOL execution",
+    "evidence": "coverage.log.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/compatibility/verify_evidence.py",
+    "exit": 0,
+    "observation": "Source/integrity audit, not additional HOL execution",
+    "evidence": "immutable.log.gz"
+  },
+  {
+    "command": "tools/h4pedant/h4pedant src/simp/src src/simp/tests/fragments src/simp/tests/compatibility",
+    "exit": 0,
+    "observation": "Formatting gate",
+    "evidence": "pedant-final.log.gz"
+  },
+  {
+    "command": "git diff --check",
+    "exit": 0,
+    "observation": "Whitespace gate",
+    "evidence": "diff-check.log.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/run_fragments.py --require-baseline-graphs --performance-pairs 10 --samples 3 --seconds .03 --fixed-iterations src/simp/tests/fragments/evidence/task15/fixed-iterations.json --output /tmp/task15-fixed",
+    "exit": 0,
+    "observation": "All observations/proofs consumed; graph gate exact; timing acceptance separate",
+    "evidence": "../../../fragments/evidence/task15/default/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/run_fragments.py --require-baseline-graphs --performance-pairs 10 --samples 3 --seconds .03 --fixed-iterations src/simp/tests/fragments/evidence/task15/fixed-iterations.json --candidate cccaa27d7099cbadc886983020cbe745db7793f3 --output /tmp/task15-fixed-control",
+    "exit": 0,
+    "observation": "All observations/proofs consumed; graph gate exact; timing acceptance separate",
+    "evidence": "../../../fragments/evidence/task15/default-control/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/run_fragments.py --require-baseline-graphs --performance-pairs 10 --samples 3 --seconds .03 --fixed-iterations src/simp/tests/fragments/evidence/task15/fixed-iterations.json --matched-environment --heap-mb 256 --output /tmp/task15-context-final",
+    "exit": 0,
+    "observation": "All observations/proofs consumed; graph gate exact; timing acceptance separate",
+    "evidence": "../../../fragments/evidence/task15/matched/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/run_fragments.py --require-baseline-graphs --performance-pairs 10 --samples 3 --seconds .03 --fixed-iterations src/simp/tests/fragments/evidence/task15/fixed-iterations.json --candidate cccaa27d7099cbadc886983020cbe745db7793f3 --matched-environment --heap-mb 256 --output /tmp/task15-context-control",
+    "exit": 0,
+    "observation": "All observations/proofs consumed; graph gate exact; timing acceptance separate",
+    "evidence": "../../../fragments/evidence/task15/matched-control/manifest.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/summarize.py --candidate /tmp/task15-fixed --control /tmp/task15-fixed-control --output /tmp/task15-fixed-summary.json",
+    "exit": 1,
+    "observation": "Default red / matched inconclusive retained; neither is a whole-module performance pass",
+    "evidence": "../../../fragments/evidence/task15/default-summary.json.gz"
+  },
+  {
+    "command": "python3 -B src/simp/tests/fragments/summarize.py --candidate /tmp/task15-context-final --control /tmp/task15-context-control --output /tmp/task15-context-summary.json",
+    "exit": 0,
+    "observation": "Default red / matched inconclusive retained; neither is a whole-module performance pass",
+    "evidence": "../../../fragments/evidence/task15/matched-summary.json.gz"
+  },
+  {
+    "command": "/usr/bin/python3 src/simp/tests/fragments/assembly/run_assembly.py --optimized-tree --output /tmp/task15-optimized-tree-final",
+    "exit": 1,
+    "observation": "Collection validated; strict native equality intentionally rejects real merge caller difference, resolved by retained named callee/tree evidence",
+    "evidence": "../../../fragments/assembly/evidence/optimized-tree-current/manifest.json.gz"
+  },
+  {
+    "command": "/usr/bin/python3 src/simp/tests/fragments/assembly/run_assembly.py --optimized-tree --candidate cccaa27d7099cbadc886983020cbe745db7793f3 --output /tmp/task15-optimized-tree-control",
+    "exit": 0,
+    "observation": "Unchanged-source optimized-tree/native control passes",
+    "evidence": "../../../fragments/assembly/evidence/optimized-tree-control/manifest.json.gz"
+  }
+]

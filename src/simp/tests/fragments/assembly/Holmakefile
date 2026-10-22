@@ -1,0 +1,9 @@
+# Driver builds and executes private fixtures only, never selftest.exe here.
+.PHONY: check python-tests
+
+check:
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	  python3 -B run_assembly.py --output "$$tmp/evidence"
+
+python-tests:
+	python3 -B -m unittest discover -s . -p 'test_assembly.py' -v

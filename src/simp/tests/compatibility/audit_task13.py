@@ -30,6 +30,11 @@ TASK14_REVIEWED = {
         "bytes": 277199,
         "sha256": "ed0d9aecf994bcf8a66ac2b81fb078bce16edb27e1894df7409692f7e00fd103"},
 }
+# Exact TASK_15 ordinary delta; also checked by its baseline fragment audit.
+TASK15_REVIEWED = {
+    "bytes": 120021,
+    "sha256": "2f2e5d43689ce9061de4d1971afccf6f811d09cf7bfd3a2316261efe16d550fc",
+}
 OPENING_HEADER = """\
 (* Explicit threaded congruence construction. The ordinary implementation in
    Opening is pinned develop. Shared relation helpers, Trace and HOL exception
@@ -231,8 +236,9 @@ def structural(sources=None):
     require(between(sources[path], start, stop) ==
             between(expected, start, stop),
             "TASK_14 changed threaded merge/factory schedule")
-    # M3 is the one explicit temporary cooperation edge, owned by TASK_16.
-    # Retargeting it must not change any ordinary mixed compiler work.
+    # TASK_15 closes M3's ordinary threaded-fragment edge. Its exact bounded
+    # fragment audit replaces the old temporary whole-file expectation;
+    # the original TASK_13 extraction and historical evidence stay frozen.
     path = SRC + "simpLib.sml"
     expected = replace_once(
         git_source(START, path),
@@ -240,7 +246,16 @@ def structural(sources=None):
         "else TravrulesExt.mk_threaded_travrules relations\n"
         "                                            "
         "threaded_congs::reltravs))")
-    require(sources[path] == expected,
+    reviewed_task15 = False
+    if sources[path] != expected:
+        import audit_task15
+        try:
+            _, sig, extension, extension_sig = audit_task15.sources()
+            audit_task15.audit(sources[path], sig, extension, extension_sig)
+            reviewed_task15 = seal(sources[path]) == TASK15_REVIEWED
+        except AssertionError:
+            pass
+    require(sources[path] == expected or reviewed_task15,
             "simpLib temporary M3 route/work changed")
     return {p: seal(sources[p]) for p in sorted(required)}
 

@@ -197,10 +197,16 @@ class StructuralControls(unittest.TestCase):
                 self.reject(audit.SRC + "simpExtLib.sml", old, new,
                             "simpExtLib work/shared identities")
 
-    def test_ordinary_mixed_compiler_changes_only_m3_route(self):
+    def test_ordinary_m3_closed_by_reviewed_fragment_restoration(self):
+        ordinary = self.sources[audit.SRC + "simpLib.sml"]
+        self.assertNotIn("TravrulesExt", ordinary)
+        self.assertNotIn("threaded_congs", ordinary)
+        # The retired M3 branches remain covered above on simpExtLib.
+        # Reject their reintroduction and changes outside TASK_15's adapter.
         for old, new in (
-                ("TravrulesExt.mk_threaded_travrules", "mk_travrules"),
-                ("threaded_congs::reltravs", "congs::reltravs"),
+                ("mk_travrules relations congs::reltravs",
+                 "TravrulesExt.mk_threaded_travrules relations congs::reltravs"),
+                ("congs::reltravs", "threaded_congs::reltravs"),
                 ("Cond_rewrExt.COND_REWR_CONVS", "Cond_rewr.COND_REWR_CONV")):
             with self.subTest(old=old):
                 self.reject(audit.SRC + "simpLib.sml", old, new,

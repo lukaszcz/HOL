@@ -1,5 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
+  fragment-contracts.log \
   traversal-contracts.log exclusion-contracts.log traverse-ext.log \
   cond-rewr-ext.log ../tests/cond-rewr-ext/selftest.exe \
   ../tests/cond-rewr-ext/.hol/ \
@@ -84,6 +85,12 @@ split-persistence: selftest.exe splitPersistLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C $(SPLIT_PERSISTENCE) check,split-persistence.log)
 
+# Fragment construction is compared with pinned develop in private processes.
+.PHONY: fragment-contracts
+fragment-contracts: simpLib.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C ../tests/fragments check,fragment-contracts.log)
+
 # Separate extension tests do not become imports of ordinary selftest.
 .PHONY: traverse-ext
 traverse-ext: TraverseExt.uo
@@ -107,7 +114,7 @@ cond-rewr-ext: Cond_rewrExt.uo
 
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
-  simp-ext cond-rewr-ext congruence-ext \
+  simp-ext cond-rewr-ext congruence-ext fragment-contracts \
   fresh-load-regressions split-registration split-persistence
 
 simp-selftest.log: selftest.exe

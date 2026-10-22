@@ -112,15 +112,10 @@ sig
 
   val rewrites       : thm list -> ssfrag
   val rewrites_with_names : (thname * thm) list -> ssfrag
-  val threaded_cong_ss : thm list -> ssfrag
   val dproc_ss       : Traverse.reducer -> ssfrag
   val ac_ss          : (thm * thm) list -> ssfrag
   val conv_ss        : convdata -> ssfrag
   val relsimp_ss     : relsimpdata -> ssfrag
-  val looper_ss      : string * (simpset -> tactic) -> ssfrag
-  (* Temporary mixed strategy API; removed from simpLib in TASK_16. *)
-  val solver_ss      : TraverseExt.ssolver -> ssfrag
-  val safe_solver_ss : TraverseExt.ssolver -> ssfrag
   val std_conv_ss    : stdconvdata -> ssfrag
   val merge_ss       : ssfrag list -> ssfrag
   val name_ss        : string -> ssfrag -> ssfrag
@@ -167,22 +162,6 @@ sig
   val same_rewrite_source : rewrite_source * rewrite_source -> bool
   (* Stable origin order; compatibility also requires same_rewrite_source. *)
   val rewrite_source_compare : rewrite_source * rewrite_source -> order
-  val rewrite_views : (rewrite_source * thm) list -> ssfrag
-  type rewrite_bundle
-  (* Compile supplied rules without installing or priming ambient reducers.
-     Install once per simpset; nested consumers of the same binding and its
-     associated views share the compiled rules' actual controls. History
-     replay retains these compiled shapes without calling the rewrite maker
-     again. Ordinary replay resets declared quotas, preserving sharing
-     between conjuncts; opt-in control preservation keeps remaining uses. *)
-  val prepare_rewrite_bundle : simpset -> thm list -> rewrite_bundle
-  (* Combine existing compiled bundles without refreshing quotas or origins.
-     Duplicate bindings are rejected; installation retains each event. *)
-  val combine_rewrite_bundles : rewrite_bundle list -> rewrite_bundle
-  val rewrite_bundle_rules : rewrite_bundle ->
-    (thm * rewrite_source list) list
-  val install_rewrite_bundle : rewrite_bundle ->
-    (rewrite_source * thm) list -> simpset -> simpset
   (* Suspend exact active compiled occurrences and their attached views.
      Other conjuncts keep their names and remaining rewrite allowances;
      history replay retains suspension and opaque contexts lose the
@@ -235,7 +214,6 @@ sig
   val set_looper : string * (simpset -> tactic) -> simpset -> simpset
   val add_split : thm -> simpset -> simpset
   val del_split : string -> simpset -> simpset
-  val split_ss : ssfrag
   val add_unsafe_solver : TraverseExt.ssolver -> simpset -> simpset
   val add_safe_solver : TraverseExt.ssolver -> simpset -> simpset
   val set_unsafe_solvers : TraverseExt.ssolver list -> simpset -> simpset
@@ -387,12 +365,6 @@ sig
    val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST :
      TraverseExt.child_first_policy -> simp_mode -> xsimptac_config ->
      simpset -> thm list -> tactic
-   (* The bundle is already installed in the given invocation simpset.
-      Retain its untagged solver context and own rewrite controls across
-      local marker replay; never reinstall or recompile it as arguments. *)
-   val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND :
-     TraverseExt.child_first_policy -> simp_mode -> xsimptac_config ->
-     simpset -> rewrite_bundle -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
      (* do allasms until quiescence, then simp in the goal as well *)
 

@@ -1,0 +1,10 @@
+{
+  "initial_routine": "200s tool timeout interrupted an early run; subsequent complete final runs exit0",
+  "native_scratch": "First native runner correctly rejected selftest-generated scratchTheory.sml/dat product drift. Removed only those task-generated exports; fresh native-final passes.",
+  "routes_oracle": "Baseline collector UNCHANGED rolls back rewriting: exact REFL required. Added separate collector-free proof checks retaining all r2 hypotheses; no hypothesis-set assertion weakened.",
+  "adaptive_timing": "Exploratory independently calibrated batches chose different allocator regimes. Retained diagnostic rows in fragments/evidence/task15/exploration.json; final experiments use the sealed common fixed schedule.",
+  "matched_API_attempt": "Cond_rewrExt cannot elaborate against pinned Cond_rewr.is_var_perm API. No baseline source/signature transformed. Explicit compatible preload list omits it and is documented as registry/context matching only.",
+  "pilot_drift": "Matched pilot observations completed but runner correctly rejected changed Python-test input; not an acceptance run. Final matched/control10 runs have stable in-run inputs.",
+  "test_count_fix": "After measurements only the synthetic supplement-install counts in test_fragments.py were corrected from14/15 to12/13 for the reviewed six-module list. Runtime driver and SML fixtures did not change. All36 tests then pass; original measurement input seals remain unaltered.",
+  "assembly": "Strict assembly equality intentionally rejects merge184->185. Optimized-tree/ICode demonstrates removed baseline wrapper and identical underlying fold; see assembly/RESULTS.md. This is not waived by changing the comparator."
+}
