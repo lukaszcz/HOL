@@ -7,9 +7,8 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
   -C src/simp/tests/simp-ext -j1 check
 ```
 
-`check` builds **and executes** `selftest.exe`. Building `.uo` files alone
-is not validation. This target does not modify the production Holmakefile or
-ordinary `../../src/selftest.sml`. The production `simp-ext` target runs it
+`check` builds **and executes** `selftest.exe` and `tracked.exe`. Building
+`.uo` files alone is not validation. The production `simp-ext` target runs it
 at `HOLSELFTESTLEVEL=1`. Expected Poly/ML type-error diagnostics
 from `negative/*.ML` are normal successful test output.
 
@@ -85,5 +84,20 @@ existing original contracts as follows:
 | `Two typed Context slots` | main selftest R4 late FRAG lookup and Context restoration |
 | `One tracking slot` | TASK_08 singleton tracking/control ownership contract |
 
-This focused suite is a relocation smoke/contract gate, not full TASK_14 quota
-revalidation, TASK_26 normal-suite migration, or a performance acceptance claim.
+## Tracked compiler gate (TASK_14)
+
+`tracked.sml` adds focused installation, identity and actual-control tests:
+projection extraction before use, after partial use and after exhaustion in
+both directions; duplicate slots/events, AC components and shared conjuncts;
+persistent filtering and preserving replay; cached matcher rebinding versus
+explicit reset; compilation/collector order and failure staging; inert getters
+and explicit directive preparation; incompatible changed-maker statements;
+private alias allowances and exceptional/nested restoration. Proof checks
+compare complete expected conclusions and hypothesis sets.
+
+The inventory getter `rewrite_sources` now rejects directives. First call
+`prepare_rewrite_arguments` explicitly and inspect its returned set/rules.
+See [TASK14 migration](../compatibility/migration/TASK14.md) for contracts and
+[handoff](../compatibility/TASK_14_HANDOFF.md) for final evidence. This is
+bounded tracked-compiler acceptance, not exhaustive TASK_19/21 filtering and
+bundle validation, TASK_26 test migration or performance acceptance.

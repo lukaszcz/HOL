@@ -1,0 +1,29 @@
+{
+  "scope": "Exploratory failures, not final acceptance results",
+  "routine_first": {
+    "exit": 1,
+    "reason": "h4pedant rejected an 81-column comment in new tracked.sml",
+    "resolution": "Wrapped/shortened the comment; complete routine-final.log.gz exits 0"
+  },
+  "python_compat_first": {
+    "exit": 1,
+    "reason": "TASK_13 whole-file pin rejected intentional explicit native directive preparation",
+    "resolution": "Accept only exact reviewed TASK_14 seals and identical threaded merge/factory slice; all 96 tests, including existing mutations, pass"
+  },
+  "native_first": {
+    "exit": 1,
+    "all_14_processes_exited": 0,
+    "reason": "Mutable generated scratchTheory.sml/.dat from earlier task tests were included in pre-execution product seals and changed during native execution",
+    "changed_products": {
+      "src/simp/src/.hol/objs/scratchTheory.sml": {
+        "before_sha256": "6ea2c94915e410a62e92ac187877afd7a62c16f837318c0f9214ecc50ff6108c",
+        "after_sha256": "c33573ad6ee6ce7ed6f40567103d7a2e16df6a2ae917360af5969cc359f6931c"
+      },
+      "src/simp/src/.hol/objs/scratchTheory.dat": {
+        "before_sha256": "42a6718fc206fb6954f45013af4c242f727f49d7e0ca97535708dbfc7b3a4d39",
+        "after_sha256": "c9a3cf44291edffc0648dc188e1396dcc03998bf60de4c3c471989b1f1cf1561"
+      }
+    },
+    "resolution": "Remove those task-generated exports, rerun unchanged runner; native-final manifest success=true. Redundant failed process receipts removed after final run. No library-product check weakened."
+  }
+}

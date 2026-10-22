@@ -28,4 +28,8 @@ sig
   type prepared
   val prepare : string * thm -> BoundedRewrites.control -> prepared
   val runners : prepared -> runners
+  (* Explicit replay binding, not preparation: retain the same matcher and
+     bind the supplied actual control without tracing or resetting it.
+     Changing bounded/unbounded status raises HOL_ERR. *)
+  val rebind : prepared -> BoundedRewrites.control -> prepared
 end

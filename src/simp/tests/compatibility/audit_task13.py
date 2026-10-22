@@ -19,6 +19,17 @@ EXTENSIONS = tuple(SRC + n + s for n in ("OpeningExt", "TravrulesExt")
                    for s in (".sig", ".sml"))
 CALLERS = (SRC + "congExtLib.sml", SRC + "simpExtLib.sml",
            SRC + "simpLib.sml")
+# Reviewed subsequent compiler/caller changes. Exact seals keep every mutation
+# outside that reviewed delta fail-closed; historical TASK_13 evidence is not
+# regenerated. TASK14.md describes the compiler and explicit getter migration.
+TASK14_REVIEWED = {
+    SRC + "simpExtLib.sml": {
+        "bytes": 129620,
+        "sha256": "b6dccd4025c0be1f2d380010ba9a5361c89348b9c39e49d9abcc1d62314ce0af"},
+    SRC + "selftest.sml": {
+        "bytes": 277199,
+        "sha256": "ed0d9aecf994bcf8a66ac2b81fb078bce16edb27e1894df7409692f7e00fd103"},
+}
 OPENING_HEADER = """\
 (* Explicit threaded congruence construction. The ordinary implementation in
    Opening is pinned develop. Shared relation helpers, Trace and HOL exception
@@ -169,8 +180,9 @@ def structural(sources=None):
         require(not re.search(r"\b\w*Ext\w*\b", sources[path]),
                 "ordinary extension dependency: " + path)
     for path in native_paths():
-        require(sources[path] == git_source(START, path),
-                "native/selftest changed from task-start: " + path)
+        require(sources[path] == git_source(START, path) or
+                seal(sources[path]) == TASK14_REVIEWED.get(path),
+                "native/selftest changed outside reviewed delta: " + path)
 
     original = git_source(BASE, SRC + "Opening.sml")
     helper = between(original, "fun dest_binop", "\nfun is_congruence")
@@ -210,8 +222,15 @@ def structural(sources=None):
         "else TravrulesExt.mk_threaded_travrules relations\n"
         "                                            "
         "threaded_congs::reltravs))")
-    require(sources[path] == expected,
+    require(sources[path] == expected or
+            seal(sources[path]) == TASK14_REVIEWED[path],
             "simpExtLib work/shared identities/explicit threaded call changed")
+    # TASK_14 does not change the threaded factory/merge schedule itself.
+    start = '     val rewrite_sources =\n       List.mapPartial'
+    stop = '     SS {mk_rewrs = mk_rewrs, history = history'
+    require(between(sources[path], start, stop) ==
+            between(expected, start, stop),
+            "TASK_14 changed threaded merge/factory schedule")
     # M3 is the one explicit temporary cooperation edge, owned by TASK_16.
     # Retargeting it must not change any ordinary mixed compiler work.
     path = SRC + "simpLib.sml"

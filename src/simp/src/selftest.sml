@@ -3890,8 +3890,8 @@ val _ = let
     end)) [ghost ^ ".suffix.1",ghost ^ "$suffix.1"]
 in () end
 
-(* ---------------------------------------------------------------------- *)
-
+fun sources_after ss =
+  uncurry rewrite_sources o prepare_rewrite_arguments ss;
 fun child_policy charge keep : Traverse.child_first_policy =
   {charge=charge, keep_abstraction=keep};
 
@@ -3947,7 +3947,7 @@ fun abstraction_policy_fixture body =
         val (sources, _) = rewrite_sources installed []
         val (extended, _) = rewrite_sources (installed ++ rewrites [rule]) []
         val (copied, _) = rewrite_sources (set_cond_depth 3 installed) []
-        val (excluded, _) = rewrite_sources installed [Excl "policy_source"]
+        val (excluded, _) = sources_after installed [Excl "policy_source"]
         val (filtered, _) =
           rewrite_sources (filter_rewrites (fn _ => false) installed) []
         val (cleared, _) = rewrite_sources (clear_rules installed) []

@@ -60,6 +60,9 @@ sig
 
   type controlled_thm = BoundedRewrites.controlled_thm
 
+  (* Choose tracked construction before installing source-sensitive rules.
+     These are distinct from simpLib objects. There is no promotion/import of
+     arbitrary ordinary simpsets, nor reconstruction hidden in projections. *)
   type ssfrag
   type simpset
   type rewrite_source
@@ -148,10 +151,13 @@ sig
 
   val empty_ss        : simpset
   val ssfrags_of      : simpset -> ssfrag list
-  (* Actual compiled rewrite sources after the supplied controls, and
-     untagged supplied rewrites. Conversions are excluded. Strategy and
-     decision-procedure copies share the source list; new rules prepend
-     their sources. Filtering, exclusions and clearing remove sources. *)
+  (* Inspect installed compiled sources and untag supplied rewrites only.
+     No makers, collectors, compilation, origins or controls are created.
+     Directives raise HOL_ERR: first use prepare_rewrite_arguments explicitly
+     and inspect its returned set/rules. Conversions and the inaccessible
+     internals of explicitly lifted opaque reducers are not inventories.
+     Strategy and decision-procedure copies share the source list; additions
+     prepend sources. Filtering, exclusions and clearing remove sources. *)
   val rewrite_sources : simpset -> thm list ->
       (thname option * thm) list * thm list
   (* Handles identify native rule occurrences across history replay;
@@ -159,8 +165,10 @@ sig
      exact compiled name and rewrite allowance, and disappear if that
      source is removed or its compiled statement changes. *)
   val rewrite_source_handles : simpset -> rewrite_source list
-  (* Apply ordinary argument directives before binding supplied rewrites.
-     Compatible surviving native occurrences retain their remaining uses. *)
+  (* Explicit construction: apply argument directives before binding supplied
+     rewrites. May install fragments, run makers/collectors and replay history.
+     Compatible surviving native occurrences retain their actual controls,
+     including spent quotas. Never imports/replays an ordinary simpset. *)
   val prepare_rewrite_arguments : simpset -> thm list -> simpset * thm list
   val source_rewrite : rewrite_source -> thname option * thm
   val same_rewrite_source : rewrite_source * rewrite_source -> bool

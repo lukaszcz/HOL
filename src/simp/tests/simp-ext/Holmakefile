@@ -1,11 +1,15 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 INCLUDES = ../../src
-EXTRA_CLEANS = selftest.exe
+EXTRA_CLEANS = selftest.exe tracked.exe
 
 selftest.uo: APIExamples.uo
 selftest.exe: selftest.uo APIExamples.uo
 	$(HOLMOSMLC) -o $@ $<
 
+tracked.exe: tracked.uo
+	$(HOLMOSMLC) -o $@ $<
+
 .PHONY: check
-check: selftest.exe
+check: selftest.exe tracked.exe
 	./selftest.exe
+	./tracked.exe

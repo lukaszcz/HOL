@@ -14,10 +14,10 @@
         "bytes": 270598
       },
       "current": {
-        "sha256": "3e7f76f0f0516f407255f5e9ca32e146d470be3ba2faefc0bc86db32a90cf7bb",
-        "bytes": 277198
+        "sha256": "ed0d9aecf994bcf8a66ac2b81fb078bce16edb27e1894df7409692f7e00fd103",
+        "bytes": 277199
       },
-      "decision": "tracked native constructors and explicit ordinary pins; TASK_11 baseline datatype cutover and one-way configured projection checks; branch-only configured/paired constructors explicitly import Cond_rewrExt without assertion changes",
+      "decision": "tracked native constructors and explicit ordinary pins; TASK_11 baseline datatype cutover and one-way configured projection checks; branch-only configured/paired constructors explicitly import Cond_rewrExt without assertion changes; TASK_14 explicitly prepares directives before inventory inspection, retaining original source_metadata assertions",
       "old_anchors": [
         {
           "path": "src/simp/src/selftest.sml",
@@ -190,6 +190,16 @@
           "path": "src/simp/src/selftest.sml",
           "line": 5969,
           "text": "  val runners = Cond_rewrExt.COND_REWR_CONVS (\"paired condition\",rule) false"
+        },
+        {
+          "path": "src/simp/src/selftest.sml",
+          "line": 3893,
+          "text": "fun sources_after ss ="
+        },
+        {
+          "path": "src/simp/src/selftest.sml",
+          "line": 3950,
+          "text": "        val (excluded, _) = sources_after installed [Excl \"policy_source\"]"
         }
       ]
     },

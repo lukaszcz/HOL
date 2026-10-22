@@ -8,7 +8,7 @@
 (*                 and not-so-loosely on the Isabelle simplifier.            *)
 (*===========================================================================*)
 
-(* Mechanical tracked-engine relocation. Transitional primitive imports:
+(* Extension-owned tracked compiler and traversal projections.
    Threaded construction uses TravrulesExt; structural types stay shared.
    Trace, tracking, bounds, marker and split identities stay shared.
    Diagnostic origin labels deliberately remain simpLib. *)
@@ -85,6 +85,7 @@ type tagged_convdata =
   {thypart : string option, cd : contextual_convdata,
    legacy : (term list -> term -> thm) -> term list -> conv,
    source : (thname option * thm) option,
+   prepared : Cond_rewrExt.prepared option,
    bound : (int ref * int) option}
 
 fun lift_convdata {name,key,trace,conv} : contextual_convdata =
@@ -117,7 +118,7 @@ in
     val {legacy,configured} = Cond_rewrExt.runners prepared
   in
     SOME {thypart = thypart, source = SOME (nmopt, th), legacy = legacy,
-          bound = bound,
+          prepared = SOME prepared, bound = bound,
           cd = {name = nm, key = key,
                 trace = 100, (* COND_REWR_CONV provides the tracing. *)
                 conv = configured}}
@@ -129,6 +130,20 @@ in
                                " dropped (conversion to rewrite failed)"));
           NONE)
 end
+
+(* Replay rebinds an installed matcher, never recompiles its theorem.
+   The declared allowance belongs to the source, not the current ref value. *)
+fun rebind_convdata
+      ({thypart,cd={name,key,trace,...},source,prepared,...} : tagged_convdata)
+      (counter,declared) : tagged_convdata =
+  let
+    val prepared = Cond_rewrExt.rebind (valOf prepared) (BOUNDED counter)
+    val {legacy,configured} = Cond_rewrExt.runners prepared
+  in
+    {thypart=thypart,source=source,prepared=SOME prepared,legacy=legacy,
+     cd={name=name,key=key,trace=trace,conv=configured},
+     bound=SOME (counter,declared)}
+  end
 
 (*---------------------------------------------------------------------------*)
 (* Composable simpset fragments                                              *)
@@ -276,7 +291,8 @@ val empty_ssfrag = SSFRAG_CON empty_frag_data
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
   let
     val convs = map (fn c => {thypart=NONE,cd=lift_convdata c,
-                             legacy= #conv c,source=NONE,bound=NONE}) convs
+                             legacy= #conv c,source=NONE,
+                             prepared=NONE,bound=NONE}) convs
     val rewrs = map source_slot rewrs
     val ac = map source_slot ac
     val congs = map normCong congs
@@ -356,7 +372,8 @@ fun ac_ss aclist =
 fun conv_ss conv =
   SSFRAG_CON
     {name=NONE, convs=[{thypart=NONE,cd=lift_convdata conv,
-                       legacy= #conv conv,source=NONE,bound=NONE}],
+                       legacy= #conv conv,source=NONE,
+                       prepared=NONE,bound=NONE}],
      rewrs=[], ac=[], views=[], filter=NONE, dprocs=[], congs=[],
      threaded_congs=[], relsimps=[], loopers=[],
      unsafe_solvers=[], safe_solvers=[]}
@@ -695,7 +712,7 @@ fun remove_simps nms ss = ss -* nms
  val any = mk_var("x",Type.alpha);
 
  fun net_add_conv
-       {thypart,source,bound,legacy,
+       {thypart,source,prepared,bound,legacy,
         cd = data as {name,key,trace,conv}:contextual_convdata} =
    let val runners = USER_CONVS data legacy
    in
@@ -1547,9 +1564,9 @@ fun mk_tactic_solver (name,tac) =
            in
              case mk_rewr_convdata (nm,(view,control)) of
                  NONE => NONE
-               | SOME {thypart,cd,legacy,source,...} =>
+               | SOME {thypart,cd,legacy,source,prepared,...} =>
                    SOME {thypart=thypart,cd=cd,legacy=legacy,
-                         source=source,bound=bound}
+                         source=source,prepared=prepared,bound=bound}
            end
    val newconvdata = convs @ map #1 native @ List.mapPartial compile_view views
    val net = net_add_convs initial_net newconvdata
@@ -1682,15 +1699,13 @@ fun freshen_prepared_native native =
         | NONE =>
             let val current = ref declared
             in counters := (counter,current) :: !counters; current end
-    fun reset (pair as (_,RewriteSource {origin,rewrite,bound})) =
+    fun reset (pair as (data,RewriteSource {origin,rewrite,bound})) =
       case bound of
           NONE => pair
         | SOME (counter,declared) =>
             let
               val current = fresh counter declared
-              val (name,theorem) = rewrite
-              val data = valOf
-                (mk_rewr_convdata (name,(theorem,BOUNDED current)))
+              val data = rebind_convdata data (current,declared)
             in (data,RewriteSource
                  {origin=origin,rewrite=rewrite,bound=SOME (current,declared)})
             end
@@ -1727,7 +1742,7 @@ fun setexcluded e (SS s) =
       travrules = #travrules s, limit = #limit s,
       excluded = e, strategy = #strategy s}
 
-fun rebind_source_controls current (pair as (_,source)) =
+fun rebind_source_controls current (pair as (data,source)) =
   case Binarymap.peek (current,source) of
       NONE => pair
     | SOME (previous as RewriteSource {bound,...}) =>
@@ -1735,21 +1750,17 @@ fun rebind_source_controls current (pair as (_,source)) =
         else
           case bound of
               NONE => pair
-            | SOME (counter,_) =>
+            | SOME (counter,declared) =>
                 let
                   val RewriteSource {origin,rewrite,...} = source
-                  val (name,theorem) = rewrite
                 in
-                  case mk_rewr_convdata
-                         (name,(theorem,BOUNDED counter)) of
-                      NONE => raise ERR ("rebind_source_controls",
-                        "retained source is no longer a rewrite")
-                    | SOME {thypart,cd,legacy,source=statement,...} =>
-                        ({thypart=thypart,cd=cd,legacy=legacy,
-                          source=statement,
-                          bound=bound},
-                         RewriteSource
-                           {origin=origin,rewrite=rewrite,bound=bound})
+                  if case #bound data of
+                       SOME (r,_) => Portable.pointer_eq (r,counter)
+                     | NONE => false
+                  then pair
+                  else (rebind_convdata data (counter,declared),
+                        RewriteSource
+                          {origin=origin,rewrite=rewrite,bound=bound})
                 end
 
 fun suspend_rewrite_sources [] ss = ss
@@ -2186,7 +2197,7 @@ fun tactic_only name =
    rule-level calls inside a tactic (SIMP_RULE within FULL_SIMP_TAC) still
    see them, so they are dropped.  Bounded rewrites are honoured by the
    rewriter and pass through. *)
-fun process_tags0 {report} ss thl =
+fun process_tags0 {report,preserve} ss thl =
     let
       fun sort (th, acc as (congs, splits, acs, excls, exclfrags, frags,
                             rest)) =
@@ -2243,7 +2254,8 @@ fun process_tags0 {report} ss thl =
       else
         let
           val base =
-            remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
+            remove_ssfrags_with_controls preserve exclfrags ss
+            handle Conv.UNCHANGED => ss
           val cong_ac =
             SSFRAG_CON
               {name=SOME "Cong and/or AC", convs=[], rewrs=[],
@@ -2268,38 +2280,31 @@ fun process_tags0 {report} ss thl =
 (* [process_tags] handles a rule list the user wrote; [process_asm_tags]
    handles theorems taken from the goal's assumptions, where a marker is
    an accident of the terms being reasoned about. *)
-fun process_tags ss thl = process_tags0 {report=true} ss thl
-fun process_asm_tags ss thl = process_tags0 {report=false} ss thl
+fun process_tags ss thl =
+  process_tags0 {report=true,preserve=false} ss thl
+fun process_asm_tags ss thl =
+  process_tags0 {report=false,preserve=false} ss thl
 
-fun prepare_rewrite_arguments (ss as SS original) thl =
-  let
-    val (prepared as SS data,rewrites) = process_tags ss thl
-    val retained =
-      if Portable.pointer_eq (ss,prepared) then prepared
-      else
-        let
-          val controls = List.foldl
-            (fn (source as RewriteSource {bound,...},found) =>
-              case bound of NONE => found
-                | SOME _ => Binarymap.insert (found,source,source))
-            (Binarymap.mkDict rewrite_source_compare)
-            (#native_sources original)
-        in
-          if Binarymap.numItems controls = 0 then prepared
-          else build_from_history_with
-            (SOME (rebind_source_controls controls)) (#history data)
-            |> fupdlimit (fn _ => #limit data)
-            |> setexcluded (#excluded data)
-        end
-  in (retained,rewrites) end
+(* Bind survivors while processing removal, not by replaying the resulting
+   history a second time. Direct exclusions already retain actual controls. *)
+fun prepare_rewrite_arguments ss thl =
+  process_tags0 {report=true,preserve=true} ss thl
 
-(* Compiled sources reflect filters and exclusions; additions share tails. *)
-fun rewrite_sources ss thl =
+(* Inspection only. Marker processing is explicit construction, performed by
+   prepare_rewrite_arguments before calling this getter. Decode a supplied
+   bound without allocating a throwaway control. *)
+fun rewrite_sources (SS data) thl =
   let
-    val (SS data, supplied) = process_asm_tags ss thl
-  in
-    (#rewrite_sources data, map (#1 o dest_tagged_rewrite) supplied)
-  end
+    fun supplied th =
+      let
+        val plain = #1 (BoundedRewrites.DEST_BOUNDED th)
+                    handle HOL_ERR _ => th
+        val _ = case simpMarkerLib.dest_directive plain of
+                    NONE => ()
+                  | SOME _ => raise ERR ("rewrite_sources",
+                      "prepare directives with prepare_rewrite_arguments")
+      in plain end
+  in (#rewrite_sources data, map supplied thl) end
 
 fun SIMP_CONV ss l tm =
   let val (ss', l') = process_tags ss l
@@ -3072,7 +3077,8 @@ fun tyi_to_ssdata tyinfo =
       val (_, rewrs) = foldl reduce (1,[]) rws0
       val name = SOME ("Datatype " ^ tyname)
       val convs = map (fn c => {thypart=SOME thy,cd=lift_convdata c,
-                               legacy= #conv c,source=NONE,bound=NONE}) convs
+                               legacy= #conv c,source=NONE,
+                               prepared=NONE,bound=NONE}) convs
       val rewrs = map source_slot rewrs
     in
       SSFRAG_CON
@@ -3107,7 +3113,7 @@ fun merge_names list =
 
 fun dest_convdata tcd  =
     let
-      val {thypart,source,bound,legacy,
+      val {thypart,source,prepared,bound,legacy,
            cd={name,key,...} : contextual_convdata} = tcd
     in
       (thypart,name,Option.map #2 key)
