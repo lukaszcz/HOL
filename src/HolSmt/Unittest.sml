@@ -28069,6 +28069,148 @@ let
 
 in () end
 
+(* The original (p /\ T) -> p family through the owned public finalizer.
+   This joins the existing schema/GP controls to actual policy Hyp quotes. *)
+local
+  structure G = SmtReplayGraph
+  structure S = SmtReplaySource
+  structure W = SmtReplayInvocationWork
+  structure RP = SmtReplayResourcePolicy
+  structure C = SmtReplayCanonGraph
+  structure GP = SmtLib_GraphPreprocess
+  structure CG = SmtCheckedGraph
+in
+fun replay_processed_goal_transport_success () =
+let
+  fun require text yes = if yes then () else raise Fail text
+  fun test label action =
+    (testutils.tprint label;action ();testutils.OK ())
+  fun ptr left right = Portable.pointer_eq (left,right)
+  val cap = 10000
+  val construction : RP.graph_policy =
+    {import_limit=RP.AtMost 10000,literal_limit=RP.AtMost 200000,
+     binder_limit=RP.AtMost 200000,
+     recipe_limits={template_limit=RP.AtMost 200000,
+       index_limit=RP.AtMost 1024,operand_limit=RP.AtMost 1024,
+       token_limit=RP.AtMost 4096}}
+  val request : CG.policy_request =
+    {construction_limits=construction,
+     semantic_limits={input_limit=RP.AtMost 10000,
+       output_limit=RP.AtMost 10000,template_limit=RP.AtMost 10000},
+     work_limit=RP.AtMost 100000000,
+     native_limits={semantic_limits={input_limit=10000,
+       output_limit=10000,template_limit=10000},
+       import_limit=10000,type_work_limit=10000000}}
+  fun run wrong =
+    let
+      val p = Term.mk_var ("processed_transport_p",Type.bool)
+      val original = boolSyntax.mk_conj (p,boolSyntax.T)
+      val goal = ([original,original],original)
+      val hole = Term.mk_var ("processed_transport_hole",Type.bool)
+      (* Fixed nine-node closed law, before operand graph construction. *)
+      val law = Thm.CONJUNCT1 (Thm.CONJUNCT2
+        (Thm.SPEC hole boolTheory.AND_CLAUSES))
+      val saved = ref (NONE : S.sources option)
+      val discovered = ref (NONE : C.schema_statistics option)
+      val prior = Time.now ()
+      fun discover work _ sources =
+        let
+          val g = S.owning_graph sources val r = S.owning_scope sources
+          fun propose node = case G.view g node of
+              G.Application (inner,right) =>
+                (case G.view g inner of
+                   G.Application (head,left) =>
+                     if head=G.constant g r boolSyntax.conjunction andalso
+                         right=G.constant g r boolSyntax.T then
+                       SOME (C.checked_graph_schema g r
+                         {theorem=law,holes=[hole],operands=[left],
+                          template_limit=cap})
+                     else NONE
+                 | _ => NONE)
+            | _ => NONE
+          val (validation,stats) = C.with_schema_statistics g r (fn () =>
+            GP.discover_from_sources g r sources
+              {import_limit=cap,revisit=false,check_type=fn _=>(),
+               conversion=propose})
+          val _ = GP.validate_with_policy work validation
+          val (assumptions,processed) = GP.processed_goal validation
+          val _ = require "semantic preprocessing was only alpha alignment"
+            (not (Term.aconv original processed) andalso
+             Term.aconv processed p andalso length assumptions=2 andalso
+             List.all (fn term=>Term.aconv term p) assumptions)
+          val _ = saved := SOME sources
+          val _ = discovered := SOME stats
+        in validation end
+      val {work,invocation} = CG.prepare_original_with_policy request
+        discover goal
+      val prepared = Time.now ()
+      val sources = valOf (!saved)
+      val hypotheses = List.map (G.representative (S.owning_graph sources))
+        (S.assumption_nodes sources)
+      val version = "4.15.3"
+      val (translation,_) = SmtLib.goal_to_SmtLib_translation_for_solver
+        {policy=fn _=>NONE,dialect=SmtLib.Standard27,
+         apply_operator=SmtLib.ApplyAt,get_proof=true,
+         target=SOME {solver="Z3",version=SOME version}}
+        (CG.processed_goal_with_policy work invocation)
+      val name = valOf (Redblackmap.peek (#tmdict translation,(p,0)))
+      val _ = CG.admit_translation_with_policy work invocation translation
+      val translated = Time.now ()
+      val charged = #charged (W.audit_policy work)
+      val assertion = if wrong then "true" else name
+      val text = "((proof (unit-resolution (asserted " ^ assertion ^
+        ") (asserted (not " ^ name ^ ")) false)))"
+      val input = TextIO.openString text
+      val result = Exn.capture (fn () =>
+        CG.z3_original_with_policy work invocation translation version
+          {profiles=[],check_type=fn _=>(),ordinal=80} input) ()
+      val _ = TextIO.closeIn input
+      val finished = Time.now ()
+      val audit = W.audit_policy work
+      val _ = require "public transport left its Work active"
+        (#retired audit)
+      val _ = if wrong then
+          (case result of
+             Exn.Exn (CG.ReplayFailure (Feedback.HOL_ERR detail)) =>
+               require "wrong transport did not reach its Source fence"
+                 (Feedback.message_of detail =
+                   "assertion outside processed Source prefix")
+           | _ => raise Fail "wrong processed assertion acquired authority")
+        else
+          let val theorem = Exn.release result
+              val stats = valOf (!discovered)
+              val _ = CG.audit_original_with_policy work invocation goal
+                theorem
+              val (tags,_) = Tag.dest_tag (Thm.tag theorem)
+          in require "semantic transport changed original Goal/Hyp/tags"
+            (ptr (Thm.concl theorem) original andalso
+             length hypotheses=2 andalso ptr (hd hypotheses)
+               (List.nth (hypotheses,1)) andalso
+             length (Thm.hyp theorem)=1 andalso
+             ptr (hd (Thm.hyp theorem)) (hd hypotheses) andalso
+             not (Term.aconv (hd (Thm.hyp theorem)) p) andalso
+             null (Tag.axioms_of (Thm.tag theorem)) andalso
+             List.all (fn tag=>tag="DISK_THM") tags andalso
+             #created_schemas stats=3 andalso #schema_raw_nodes stats=27
+             andalso #charged audit>charged)
+          end
+      val _ = print ("TASK17_COST Z3" ^
+        (if wrong then " negative" else " positive") ^
+        " acquisition_discovery_s=" ^ Time.toString (prepared-prior) ^
+        " translation_admission_s=" ^ Time.toString (translated-prepared) ^
+        " parse_assembly_realization_close_s=" ^
+          Time.toString (finished-translated) ^
+        " Work_before_replay=" ^ IntInf.toString charged ^
+        " Work_final=" ^ IntInf.toString (#charged audit) ^ "\n")
+    in () end
+in
+  test "Processed conjunction Z3 keeps exact original Goal and Hyp"
+    (fn () => run false);
+  test "Processed conjunction Z3 rejects wrong semantic transport"
+    (fn () => run true)
+end
+end
+
 (* Exercise the selected nodewise alpha bridge in a complete compact proof.
    The shared application spine is deliberately larger than a local binder;
    only its bounded abstraction leaves receive direct ALPHA admission. *)
@@ -29436,6 +29578,8 @@ fun run_replay_graph_unittests () =
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
      ("replay_source_checked_success", replay_source_checked_success),
+     ("replay_processed_goal_transport_success",
+       replay_processed_goal_transport_success),
      ("replay_source_binder_alignment_success",
        replay_source_binder_alignment_success),
      ("replay_source_alpha_membership_success",
@@ -30272,6 +30416,8 @@ let
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),
     ("replay_source_checked_success", replay_source_checked_success),
+    ("replay_processed_goal_transport_success",
+      replay_processed_goal_transport_success),
     ("replay_source_binder_alignment_success",
       replay_source_binder_alignment_success),
     ("replay_source_alpha_membership_success",
