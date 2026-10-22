@@ -1,0 +1,642 @@
+{
+  "source_id": "TASK21-source-views-bundles-v1",
+  "start_head": "05ab17ac34b8ffcca423acd8c3f399fe9afc3e58",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "initial_state": "Main working tree clean; pre-existing nested .agent-files changes preserved.",
+  "scope": "Bounded TASK21 source/view/bundle acceptance, not whole-plan performance or independent clean builds.",
+  "sources": {
+    "src/simp/src/simpExtLib.sml": {
+      "sha256": "6776e19a0c721be9dd7361ea2d8e9e8999794711571da86e3a27aead07f9694d",
+      "bytes": 133916
+    },
+    "src/simp/src/simpExtLib.sig": {
+      "sha256": "782e8e7bd464f33ff11afbd46915cbb36248ef2795cc9a90af8c9a8fa59f1bed",
+      "bytes": 22267
+    },
+    "src/simp/src/simpLib.sml": {
+      "sha256": "ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd",
+      "bytes": 44419
+    },
+    "src/simp/src/simpLib.sig": {
+      "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666",
+      "bytes": 10369
+    },
+    "src/simp/src/selftest.sml": {
+      "sha256": "fea5caee9ba8a9c0d0375ed88711874101382934528c2cc2916716cc90772c52",
+      "bytes": 274909
+    },
+    "src/simp/src/pureSimpsExt.sml": {
+      "sha256": "8fce1d70905ec894dd6da85933033db4386bbe819c3e5d10ccaeceec2a170837",
+      "bytes": 359
+    },
+    "src/simp/src/Holmakefile": {
+      "sha256": "03db3c31fa91cabc35b7c07875996a6ddfa6289695ba40e7fc2d3ba7ab325df3",
+      "bytes": 6635
+    },
+    "src/simp/tests/simp-ext/Holmakefile": {
+      "sha256": "06268fa06b24915dcad06109f0c1d6d93f502fbc897bbd0a6593e0eef4ca8b67",
+      "bytes": 701
+    },
+    "src/simp/tests/simp-ext/sources.sml": {
+      "sha256": "9e57f102c6dd1b961d93a61cfff686e71e8d4468c3d98495f2d1a25482ad1da3",
+      "bytes": 26557
+    },
+    "src/simp/tests/simp-ext/negative/ordinary-source-handles.ML": {
+      "sha256": "8a9b22d326a111e179b39828caaadf73b94f9e10de1c84a0ad2689597cda8e68",
+      "bytes": 189
+    },
+    "src/simp/tests/simp-ext/negative/ordinary-source-inventory.ML": {
+      "sha256": "c5e787612d25fe601e7385d8e5776477a9b6dccb2082aa68273b844e3c40867d",
+      "bytes": 129
+    },
+    "src/simp/tests/simp-ext/negative/ordinary-bundle-preparation.ML": {
+      "sha256": "11adb459c955b56189ff4e0b9930f60f65c591bba35e9a5c17b09dc2820c2171",
+      "bytes": 132
+    }
+  },
+  "runtime": {
+    "tools": {
+      "bin/hol": {
+        "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+        "bytes": 43099640
+      },
+      "bin/hol.state0": {
+        "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+        "bytes": 20469336
+      },
+      "bin/Holmake": {
+        "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+        "bytes": 3409600
+      }
+    },
+    "poly": {
+      "sha256": "1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311",
+      "bytes": 17381496
+    },
+    "poly_version": {
+      "command": [
+        "/usr/local/bin/poly",
+        "--version"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "timed_out": false,
+      "stdout": "Poly/ML 5.9.2 Release\n",
+      "stdout_sha256": "7ecc5458e3d0e51d9e743be2abc48bd27bf62c3f7a562551082232e4b38bf512",
+      "stdout_bytes": 22
+    }
+  },
+  "commands": [
+    {
+      "label": "focused",
+      "command": [
+        "bin/Holmake",
+        "--holstate=$PWD/bin/hol.state0",
+        "--no-project",
+        "--no-cache",
+        "-C",
+        "src/simp/tests/simp-ext",
+        "-j1",
+        "check"
+      ],
+      "exit": 0,
+      "evidence": "focused.log.gz"
+    },
+    {
+      "label": "routine",
+      "command": [
+        "bin/build",
+        "-t",
+        "--seq=tools/sequences/upto-parallel"
+      ],
+      "exit": 0,
+      "evidence": "routine.log.gz"
+    },
+    {
+      "label": "coverage",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/coverage_ledger.py"
+      ],
+      "exit": 0,
+      "evidence": "coverage.log.gz"
+    },
+    {
+      "label": "immutable",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/verify_evidence.py"
+      ],
+      "exit": 0,
+      "evidence": "immutable.log.gz"
+    },
+    {
+      "label": "tracked-audit",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/audit_task14.py"
+      ],
+      "exit": 0,
+      "evidence": "tracked-audit.log.gz"
+    },
+    {
+      "label": "mutations",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "src/simp/tests/compatibility",
+        "-p",
+        "test_task14.py"
+      ],
+      "exit": 0,
+      "evidence": "mutations.log.gz"
+    },
+    {
+      "label": "pedant-tests",
+      "command": [
+        "tools/h4pedant/h4pedant",
+        "src/simp/tests/simp-ext"
+      ],
+      "exit": 0,
+      "evidence": "pedant-tests.log.gz"
+    },
+    {
+      "label": "pedant-src",
+      "command": [
+        "tools/h4pedant/h4pedant",
+        "--nolinelen",
+        "src/simp/src"
+      ],
+      "exit": 0,
+      "evidence": "pedant-src.log.gz"
+    },
+    {
+      "label": "diff",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "evidence": "diff.log.gz"
+    },
+    {
+      "label": "native",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_prior_native.py",
+        "--output",
+        "/tmp/task21/native"
+      ],
+      "exit": 0,
+      "evidence": "native/manifest.json.gz"
+    },
+    {
+      "label": "paired",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_paired.py",
+        "--candidate",
+        "HEAD",
+        "--candidate-signature",
+        "pass",
+        "--candidate-behavior",
+        "baseline",
+        "--prior-contracts",
+        "--public-contracts",
+        "--staging-contracts",
+        "--negative-controls",
+        "--output",
+        "/tmp/task21/paired"
+      ],
+      "exit": 0,
+      "evidence": "paired/manifest.json.gz"
+    }
+  ],
+  "negative_controls": [
+    {
+      "label": "baseline-red",
+      "mutation": {
+        "source": "git show 05ab17ac3:src/simp/src/simpExtLib.sml"
+      },
+      "build_command": [
+        "bin/Holmake",
+        "--holstate=$PWD/bin/hol.state0",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-C",
+        "/tmp/task21/red",
+        "-j1",
+        "sources.exe"
+      ],
+      "build_exit": 0,
+      "command": [
+        "./sources.exe"
+      ],
+      "cwd": "/tmp/task21/red",
+      "exit": 1,
+      "expected_failure": "context change observes incompatible view dependency",
+      "source_sha256": "15040aae7d9667fe2966759bb518036360af49e300bf465fd49a26b165b37161",
+      "evidence": "baseline-red.log.gz"
+    },
+    {
+      "label": "order-negative",
+      "mutation": {
+        "old": "if Binaryset.member (installed,#event origin) andalso",
+        "new": "if true andalso"
+      },
+      "build_command": [
+        "bin/Holmake",
+        "--holstate=$PWD/bin/hol.state0",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-C",
+        "/tmp/task21/red",
+        "-j1",
+        "sources.exe"
+      ],
+      "build_exit": 0,
+      "command": [
+        "./sources.exe"
+      ],
+      "cwd": "/tmp/task21/red",
+      "exit": 1,
+      "expected_failure": "lost view is observed despite returning compatible source",
+      "source_sha256": "5870b79c189ae6e10c8b007278830f5cda44a0018591b03225345b966db54cff",
+      "evidence": "order-negative.log.gz"
+    },
+    {
+      "label": "statement-negative",
+      "mutation": {
+        "old": "      aconv (concl v) (concl w) andalso HOLset.equal (hypset v,hypset w)",
+        "new": "      true"
+      },
+      "build_command": [
+        "bin/Holmake",
+        "--holstate=$PWD/bin/hol.state0",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-C",
+        "/tmp/task21/red",
+        "-j1",
+        "sources.exe"
+      ],
+      "build_exit": 0,
+      "command": [
+        "./sources.exe"
+      ],
+      "cwd": "/tmp/task21/red",
+      "exit": 1,
+      "expected_failure": "same event/source/index cannot hide changed view statement",
+      "source_sha256": "8129a048e278cc66972062d4a6a7eae68b2775536593b85da1833ffd5b7afb32",
+      "evidence": "statement-negative.log.gz"
+    }
+  ],
+  "negative_fixture_sha256": "9e57f102c6dd1b961d93a61cfff686e71e8d4468c3d98495f2d1a25482ad1da3",
+  "negative_dependency_load_paths": {
+    "simpExtLib.uo": "$(HOLDIR)/sigobj/BoundedRewrites\n$(HOLDIR)/sigobj/Context\n$(HOLDIR)/sigobj/Conv\n$(HOLDIR)/sigobj/DB\n$(HOLDIR)/sigobj/DB_dtype\n$(HOLDIR)/sigobj/Drule\n$(HOLDIR)/sigobj/Feedback\n$(HOLDIR)/sigobj/HOLset\n$(HOLDIR)/sigobj/Ho_Net\n$(HOLDIR)/sigobj/HolKernel\n$(HOLDIR)/sigobj/Hol_pp\n$(HOLDIR)/sigobj/KernelSig\n$(HOLDIR)/sigobj/Lib\n$(HOLDIR)/sigobj/Net\n$(HOLDIR)/sigobj/Overlay\n$(HOLDIR)/sigobj/Parse\n$(HOLDIR)/sigobj/Portable\n$(HOLDIR)/sigobj/Symtab\n$(HOLDIR)/sigobj/Term\n$(HOLDIR)/sigobj/Type\n$(HOLDIR)/sigobj/TypeBase\n$(HOLDIR)/sigobj/TypeBasePure\n$(HOLDIR)/sigobj/boolLib\n$(HOLDIR)/sigobj/boolSyntax\n$(HOLDIR)/sigobj/boolTheory\n$(HOLDIR)/sigobj/liteLib\n$(HOLDIR)/sigobj/markerLib\n$(HOLDIR)/sigobj/markerTheory\n$(HOLDIR)/sigobj/smpp\n$(HOLDIR)/src/simp/src/Cond_rewr\n$(HOLDIR)/src/simp/src/Cond_rewrExt\n$(HOLDIR)/src/simp/src/Opening\n$(HOLDIR)/src/simp/src/Trace\n$(HOLDIR)/src/simp/src/Traverse\n$(HOLDIR)/src/simp/src/TraverseExt\n$(HOLDIR)/src/simp/src/Travrules\n$(HOLDIR)/src/simp/src/TravrulesExt\n$(HOLDIR)/src/simp/src/simpMarkerLib\n$(HOLDIR)/src/simp/src/splitLib\n/tmp/task21/red/simpExtLib\n/tmp/task21/red/simpExtLib\n/tmp/task21/red/simpExtLib.sml\n",
+    "pureSimpsExt.uo": "$(HOLDIR)/sigobj/Overlay\n$(HOLDIR)/src/simp/src/Cond_rewr\n/tmp/task21/red/pureSimpsExt\n/tmp/task21/red/pureSimpsExt\n/tmp/task21/red/simpExtLib\n/tmp/task21/red/pureSimpsExt.sml\n",
+    "sources.uo": "$(HOLDIR)/sigobj/BoundedRewrites\n$(HOLDIR)/sigobj/Drule\n$(HOLDIR)/sigobj/Exn\n$(HOLDIR)/sigobj/Feedback\n$(HOLDIR)/sigobj/HOLset\n$(HOLDIR)/sigobj/HolKernel\n$(HOLDIR)/sigobj/Listener\n$(HOLDIR)/sigobj/Overlay\n$(HOLDIR)/sigobj/Parse\n$(HOLDIR)/sigobj/Portable\n$(HOLDIR)/sigobj/boolLib\n$(HOLDIR)/sigobj/boolSyntax\n$(HOLDIR)/sigobj/testutils\n$(HOLDIR)/src/simp/src/Cond_rewr\n$(HOLDIR)/src/simp/src/Trace\n$(HOLDIR)/src/simp/src/Traverse\n$(HOLDIR)/src/simp/src/simpLib\n/tmp/task21/red/pureSimpsExt\n/tmp/task21/red/sources\n/tmp/task21/red/sources.sml\n"
+  },
+  "negative_procedure": "Copy current sources.sml/negative clients, pureSimpsExt.{sig,sml}, simpExtLib.sig into /tmp/task21/red. INCLUDES is the absolute src/simp/src path; HOLHEAP is bin/hol.state0. Use local simpExtLib.sml at starting HEAD for baseline-red, or final source with the recorded single mutation for each negative. Start with an empty .hol before initial dependency scanning; copying pureSimpsExt locally prevents transitive loading of the production simpExtLib. Execute each launcher, checking the named semantic failure. All private copied build products removed.",
+  "results": {
+    "source_view_bundle_checks": 407,
+    "native_receipts": 14,
+    "paired_receipts": 44,
+    "frozen_cases": 2153,
+    "legacy_sources_identical_to_develop": true,
+    "all_bounded_task21_criteria": "pass",
+    "blockers": []
+  },
+  "paired_scope": "HEAD 05ab17ac3 ordinary inputs equal final sources; paired receipts test unchanged ordinary implementations, not the working-tree extension fix. Native receipts seal and execute final extension sources and all new assertions.",
+  "artifacts": {
+    "baseline-red-build.log.gz": {
+      "sha256": "6207e69cb83ab8c29a6a0c66e1497f43b959948d3eee9045d5bcac994fbdd964",
+      "bytes": 114
+    },
+    "baseline-red.log.gz": {
+      "sha256": "90cd2dfb831f6d227d9d0a1a8facfdd2cf1b9c4b2414d7692c120b66980c2f61",
+      "bytes": 1060
+    },
+    "coverage.log.gz": {
+      "sha256": "af2bedf2e2ab110d8376ebac66dc336b5f2189dd64e6cdfef6bc10b0c9384f89",
+      "bytes": 44
+    },
+    "diff.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "focused.log.gz": {
+      "sha256": "7555eb3a45553f66af9d41a5b7d875448a7b373e2380dadfd268f8b72a7b0576",
+      "bytes": 10687
+    },
+    "immutable.log.gz": {
+      "sha256": "4e7e1a90dac03feed4284b878152011247632fcb65bed3d300ac88cb91630d04",
+      "bytes": 203
+    },
+    "mutations.log.gz": {
+      "sha256": "e7b840649a28d48979ec830804f39962976598aea4e2687e03ce595204626fb8",
+      "bytes": 53
+    },
+    "native/build-focused.json.gz": {
+      "sha256": "7e3f6a5d09ca79b1c897a4269d2f86abe78e0b6e9dda61409e0070b8cb5a47d1",
+      "bytes": 32883
+    },
+    "native/exclusion.json.gz": {
+      "sha256": "1d08419dbb42da6c46718bb3d0e601b0db3f6e0e73a9d39c05ea478178eb34ba",
+      "bytes": 16191
+    },
+    "native/fresh-attribute-after.json.gz": {
+      "sha256": "13f795e4a48aa8f86294d7c95ad38a515271aaa98efd81d7dcbb517adb4bfdeb",
+      "bytes": 1064
+    },
+    "native/fresh-attribute-first.json.gz": {
+      "sha256": "6d133c1bec56d313bd57eff59d8f1c7a5c5c490588c9d18c58c02ecc2f5a3fa6",
+      "bytes": 1181
+    },
+    "native/fresh-control.json.gz": {
+      "sha256": "c2466444dea9baaf59f8e52ae9dce6971e6243c38d3f4ae77f1bf07df14ec99a",
+      "bytes": 898
+    },
+    "native/fresh-set-after.json.gz": {
+      "sha256": "44a51818a45b6b6cf691cb861d958f784f986afbed4c0124e4d7bec4e365c3a2",
+      "bytes": 1121
+    },
+    "native/fresh-set-first.json.gz": {
+      "sha256": "4c72c39c4124407b4470b0ef31622ccbbf0342974ec6a64e16936f19a0482f43",
+      "bytes": 1236
+    },
+    "native/fresh-syntax-first.json.gz": {
+      "sha256": "48a69bdcaa7ce30c1624a95299bd2aa3e1aaf155b7967c0139541a0df57fd253",
+      "bytes": 1015
+    },
+    "native/manifest.json.gz": {
+      "sha256": "fa06907c4b23720a39b6d62b8acfa80bb245c81fab36af0615c93702bd6ad91e",
+      "bytes": 15581
+    },
+    "native/markers.json.gz": {
+      "sha256": "8da899f89e27033b1a0e5cd19b196a29812dedbbe2bd7678199ca095029913c0",
+      "bytes": 1437
+    },
+    "native/native.json.gz": {
+      "sha256": "f45db601a8020a58579d27912fea55197bd20cfc44fa58709f1c4e0f63ad2874",
+      "bytes": 17550
+    },
+    "native/persistence.json.gz": {
+      "sha256": "ac56100db9055c38d0dc7ea12077c49176b954cd70f7d31fc9855139e26f7316",
+      "bytes": 2602
+    },
+    "native/replay-order.json.gz": {
+      "sha256": "e8ed4de8ad2b41739774f1e8b2a9ae556c0b0c62c46d2b4ba9973f40864927dd",
+      "bytes": 731
+    },
+    "native/split-registration.json.gz": {
+      "sha256": "dcc1048ef581ba56de601bdb5508bdfe6ad549db7cf2c1775973afc2774788d7",
+      "bytes": 2398
+    },
+    "native/traversal.json.gz": {
+      "sha256": "2ab80a950806a0101180a4418d5e3804e1eae2ac0c0e33e22616146fd2ec82ca",
+      "bytes": 3485
+    },
+    "order-negative-build.log.gz": {
+      "sha256": "6207e69cb83ab8c29a6a0c66e1497f43b959948d3eee9045d5bcac994fbdd964",
+      "bytes": 114
+    },
+    "order-negative.log.gz": {
+      "sha256": "6a4874dada1fc7222c474905d9d3d52433346b36bcf32b6da5c771a5ff5d74dc",
+      "bytes": 1814
+    },
+    "paired/baseline-PriorExclusion-none.json.gz": {
+      "sha256": "33f91b00f2a46582f409922579e47ed1c8951046d3a2d11d20dcf76007d522e5",
+      "bytes": 68977
+    },
+    "paired/baseline-PriorLimits-none.json.gz": {
+      "sha256": "807d2331cf9927c2e57dd06bbff2801aa75c9d3861419ced53f99ae9f3906f45",
+      "bytes": 52050
+    },
+    "paired/baseline-PriorOriginal-none.json.gz": {
+      "sha256": "3b082b807dd395d0c2f36a8a7eea96ef1a85bfb43feae500476fbb1fe5b303a6",
+      "bytes": 55314
+    },
+    "paired/baseline-PriorTraversal-none.json.gz": {
+      "sha256": "3c151662d7e8fe3e0a1f46a62054ea5f6fb5283200aaf6e12d1dc76686e473a9",
+      "bytes": 56751
+    },
+    "paired/baseline-PublicCond_rewr-none.json.gz": {
+      "sha256": "a670bdccb942ae8aa7157ad3edc2c580ad3f7a523972cc16ae82aeeaa5ecc016",
+      "bytes": 43556
+    },
+    "paired/baseline-PublicCongLib-none.json.gz": {
+      "sha256": "bc960dff042fb5deae1d353a3aba2a1d51133ea9eeb5487974fce43358f7d958",
+      "bytes": 52099
+    },
+    "paired/baseline-PublicOpening-none.json.gz": {
+      "sha256": "acd8ce00264c24971928e5815330aac90e997ca7af36c790b534f9726e26e16e",
+      "bytes": 43237
+    },
+    "paired/baseline-PublicSimpLib-none.json.gz": {
+      "sha256": "459bd876d8012169d54269964f8822cc5f88c20ae944e9b4d3fd65d898bbfbfb",
+      "bytes": 45061
+    },
+    "paired/baseline-PublicThmAttribute-none.json.gz": {
+      "sha256": "8abf40ddcff4d9d3c62b5c2f09f497bccee7492311efc19c73113bab37ff597d",
+      "bytes": 33067
+    },
+    "paired/baseline-PublicTraverseAscription-none.json.gz": {
+      "sha256": "55fd640afc1f6b65c4214eb11bd44018759576e101a58531d599d43bc11057a6",
+      "bytes": 43634
+    },
+    "paired/baseline-PublicTraverseClient-none.json.gz": {
+      "sha256": "d5ba7dc4edc82f2bc065d9f0335cd2ad51c3b43a4cfea7085109aaa72c4158f8",
+      "bytes": 46021
+    },
+    "paired/baseline-PublicTraverseFunctor-none.json.gz": {
+      "sha256": "750894b97c5cc530ece71db524b9c885bf1717b332e40762b71b9989ed0ed550",
+      "bytes": 43639
+    },
+    "paired/baseline-PublicTravrules-none.json.gz": {
+      "sha256": "86bac182b9c415d07c5cb259f8f4d9b47c28f3c1e7157b5a5edd38b5dbf781b8",
+      "bytes": 43499
+    },
+    "paired/baseline-Staging-none.json.gz": {
+      "sha256": "cd4a717a7097ae7092f4b744680beda74263d689a60c49d307484895c0c68e7e",
+      "bytes": 54292
+    },
+    "paired/baseline-attribute-build.json.gz": {
+      "sha256": "8c81ac3064999a7d2e1d8ebb007e1ab592403b9d1d06f77488317e662adfb8a4",
+      "bytes": 332
+    },
+    "paired/baseline-build.json.gz": {
+      "sha256": "13e406bef51cfe1b48185410bd409451254b81921be9c1772a8c90570dc53501",
+      "bytes": 527
+    },
+    "paired/baseline-selftest-deferred.json.gz": {
+      "sha256": "b8713538955f43610e8690e6d61b7839d36d334f579477c92d430f47cab11ef2",
+      "bytes": 5273
+    },
+    "paired/baseline-selftest-failed.json.gz": {
+      "sha256": "4cd02bbd69f017429fe22c41d053ccac3ed8668b8383d7f66557f19584e0810f",
+      "bytes": 6276
+    },
+    "paired/baseline-selftest-missing.json.gz": {
+      "sha256": "f13e831cfbe84974049c7d36a7e4e05a969de0b79e0265165b0ba1c42886d504",
+      "bytes": 6276
+    },
+    "paired/baseline-selftest-none.json.gz": {
+      "sha256": "5163bd813833c8766fd0e6a94dc52a18ea6a39ab370a1472a13821aaa43cd1aa",
+      "bytes": 51676
+    },
+    "paired/baseline-selftest-truncated.json.gz": {
+      "sha256": "de370b7dc64105f80c50605412387bece7585fd059b6beb3e24b36e3df1fdbb3",
+      "bytes": 6279
+    },
+    "paired/baseline-selftest-unexecuted.json.gz": {
+      "sha256": "6e06cc33e7a5ca712f2e9ade932205fa8ded67b555cf72152d2f1193cbe9505c",
+      "bytes": 374
+    },
+    "paired/baseline-selftest-wrong-path.json.gz": {
+      "sha256": "3df5b95ea57fdcbb194d9236536bc7c7be4cb1779b7e2a19e95f4664f35aa29f",
+      "bytes": 6341
+    },
+    "paired/baseline-signature-none.json.gz": {
+      "sha256": "e720d0adc59deaf88d43aef53cc1ba714f10b20ecc14faae999a6e4d66440295",
+      "bytes": 43395
+    },
+    "paired/candidate-PriorExclusion-none.json.gz": {
+      "sha256": "95a4e980a29ebea87874f6eabd793b9adc0f8493904e4d55c3d98dfc5e3b7c8f",
+      "bytes": 69136
+    },
+    "paired/candidate-PriorLimits-none.json.gz": {
+      "sha256": "27f53ad6ddcc6aa1327d92c2a0aed2f9853a8397223d4c1cd73f687e2a13c20c",
+      "bytes": 52314
+    },
+    "paired/candidate-PriorOriginal-none.json.gz": {
+      "sha256": "09838df873c030a1e5d30fe9a265a97a66f1a23bfa7eb16b147162e087c8d2a8",
+      "bytes": 55587
+    },
+    "paired/candidate-PriorTraversal-none.json.gz": {
+      "sha256": "e5ef5421e8f4e47b5bec08befc0df1a3cc2a1b579397502e04f7fe0f43628544",
+      "bytes": 57014
+    },
+    "paired/candidate-PublicCond_rewr-none.json.gz": {
+      "sha256": "165280a4dea33edbcc14d7e3972fc434e9ab1c5318cfb8b204f12f0f09d21d1d",
+      "bytes": 43812
+    },
+    "paired/candidate-PublicCongLib-none.json.gz": {
+      "sha256": "08ddda694e758b459dfcd7cb605c6f54dcf8ac5afe033be9981e151e84d265bd",
+      "bytes": 52365
+    },
+    "paired/candidate-PublicOpening-none.json.gz": {
+      "sha256": "20199e310088807e817037fb5b558423f2e213efefb330493bb6f0706c926836",
+      "bytes": 43245
+    },
+    "paired/candidate-PublicSimpLib-none.json.gz": {
+      "sha256": "e1896419e4c1e19a437712f4f5419fd0c4af629776039ae68de22fe939152c32",
+      "bytes": 45313
+    },
+    "paired/candidate-PublicThmAttribute-none.json.gz": {
+      "sha256": "c3693b28fd42ed2bcae0de84e543ad43c96fd50eda1306b7bcd03ca46005d3e7",
+      "bytes": 33067
+    },
+    "paired/candidate-PublicTraverseAscription-none.json.gz": {
+      "sha256": "3b9b77e06cf604f88d844bd39c98a311676591619aaf56702b594efa3e75b5ac",
+      "bytes": 43633
+    },
+    "paired/candidate-PublicTraverseClient-none.json.gz": {
+      "sha256": "5538e5cd7cb087b93f0419bd612b5d956470dc606d214fb3e984c591d030e2b9",
+      "bytes": 46286
+    },
+    "paired/candidate-PublicTraverseFunctor-none.json.gz": {
+      "sha256": "66eb4a8d5a0b83b8972453d511bd9b8645c19ac88fc093f1c70b3f33fcb20f9d",
+      "bytes": 43638
+    },
+    "paired/candidate-PublicTravrules-none.json.gz": {
+      "sha256": "e7c93095d63d9702b0507c455ab1d266725123a80a5347f172fec5e81b7fe1a8",
+      "bytes": 43495
+    },
+    "paired/candidate-Staging-none.json.gz": {
+      "sha256": "be5c48d4b24c96bd4cc5d783d0c438f8099d934aed78b9e0e71121a8e2fc68ca",
+      "bytes": 54540
+    },
+    "paired/candidate-attribute-build.json.gz": {
+      "sha256": "d723ef93bb1e100d2dc8f5e379f1d6e7c7cb1aabf9e8e0a76918e822bece4f7a",
+      "bytes": 333
+    },
+    "paired/candidate-build.json.gz": {
+      "sha256": "f3e5536da0827be8277feb91eee894e126d55110e076f9f8a15d13bc6ca9e323",
+      "bytes": 530
+    },
+    "paired/candidate-selftest-deferred.json.gz": {
+      "sha256": "ed6c60b7d0b0789475ee8eaa7c85cf16f952d0482b64e1241287b2be099ffbc5",
+      "bytes": 5277
+    },
+    "paired/candidate-selftest-failed.json.gz": {
+      "sha256": "d23a2ee0cc2c9d3da6b107a9b5e6ebd7a6aa93efd956c7aeba3959cdd2e41eaf",
+      "bytes": 6308
+    },
+    "paired/candidate-selftest-missing.json.gz": {
+      "sha256": "d25b6b6220044e72c74321d4e068d066fc7767c803afcc1b52997cc3e7dae74e",
+      "bytes": 6309
+    },
+    "paired/candidate-selftest-none.json.gz": {
+      "sha256": "90dc3df12b21c3eeaf7abac7c31b6f749de4d7a8f3316c2cc570bebea7187f12",
+      "bytes": 51934
+    },
+    "paired/candidate-selftest-truncated.json.gz": {
+      "sha256": "d90fc8af9f3a1f5e42e512c8862951cb6c849090f7cc1485face4554f9dfc6b8",
+      "bytes": 6309
+    },
+    "paired/candidate-selftest-unexecuted.json.gz": {
+      "sha256": "cce569567834b78522622713a5e169aa255ddbd80685a3b52b0b35a89a179f11",
+      "bytes": 375
+    },
+    "paired/candidate-selftest-wrong-path.json.gz": {
+      "sha256": "c27472e77d12713ca6ad98ac3b13112592f40e900318d056f2339c2b8ca687df",
+      "bytes": 6308
+    },
+    "paired/candidate-signature-none.json.gz": {
+      "sha256": "194a82993fed9d63fe7c0b1d1ae385676d5dd8139477b1b6b954d0db85478bc7",
+      "bytes": 43393
+    },
+    "paired/manifest.json.gz": {
+      "sha256": "4f0f99c2302b813b6317e4c8fa1b772fc78b9cccbbf7fec1a26f26eea51d824b",
+      "bytes": 297058
+    },
+    "pedant-src.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "pedant-tests.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "routine.log.gz": {
+      "sha256": "d3475516642906fff3b8a12c91660b77cda723c483f41bfcce479688edcc7871",
+      "bytes": 2888
+    },
+    "statement-negative-build.log.gz": {
+      "sha256": "6207e69cb83ab8c29a6a0c66e1497f43b959948d3eee9045d5bcac994fbdd964",
+      "bytes": 114
+    },
+    "statement-negative.log.gz": {
+      "sha256": "5147f0797e2e3ded221c22574ff9f4e05b2137de727e3de9667dfe6012b309ac",
+      "bytes": 1947
+    },
+    "tracked-audit.log.gz": {
+      "sha256": "ea36c34b4af2fa752d18f5a076487e1f9ab8cdf55e6ca3e6b9704547d92f83c3",
+      "bytes": 66
+    }
+  }
+}

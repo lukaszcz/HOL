@@ -8,7 +8,7 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
 ```
 
 `check` builds **and executes** `selftest.exe`, `tracked.exe`,
-`exclusions.exe`, `strategies.exe` and `tactics.exe`. Building
+`exclusions.exe`, `strategies.exe`, `tactics.exe` and `sources.exe`. Building
 `.uo` files alone is not validation. The production `simp-ext` target runs it
 at `HOLSELFTESTLEVEL=1`. Expected Poly/ML type-error diagnostics
 from `negative/*.ML` are normal successful test output.
@@ -121,7 +121,7 @@ No original assertion is moved or relaxed. `src/selftest.sml` still runs its
 642 source-tied native checks, including parser/warning/ambiguity contracts,
 strategy targets, local/ambient split suppression, mixed views and failures.
 The unchanged coverage ledger verifies those assertions and the 929-check
-legacy exclusion suite. Full dependent-view invalidation remains TASK_21;
+legacy exclusion suite. TASK21 below closes dependent-view invalidation;
 persistent split ownership/lifecycle remains TASK_23.
 
 Only extension-owned `looper_tac` changes: split/case suppression applies to
@@ -163,3 +163,36 @@ addition returns its exact input before entering compilation.
 clients. Branch-only help examples now use `simpExtLib`/`TraverseExt` and tracked
 recipes; ordinary callers require no migration. See the
 [TASK20 handoff](../compatibility/TASK_20_HANDOFF.md) for validation/evidence.
+
+## Sources, views and prepared bundles (TASK_21)
+
+`sources.sml` adds **407 checks**, including three executed static boundary
+rejections. Conversion checks compare complete conclusions and hypothesis
+sets of kernel-derived expected proofs, not just rewritten endpoints.
+Existing 642 native assertions and all previous focused suites remain intact.
+
+| New block | Original provenance / added intersection |
+| --- | --- |
+| Inventory order | Native views/AC/duplicate fixtures; exact fragment/conjunct/component order and native versus installed-view visibility |
+| Invalidation matrix | Native view/suspension/filter/removal fixtures; both projections and native/prepared installation after partial use or exhaustion; dependent views disappear while siblings keep actual sharing through replay |
+| Statement compatibility | Native stale/support views and TASK14 changed-maker case; changed conclusion/hypotheses/declared bound invalidate installed aliases and old handles, whereas a different proof of the same statement shares exhaustion |
+| Nested composition | Native prepared/composed fixtures; partially spent conjuncts plus exhausted and live independent bindings, complete grouping/install order, duplicate rejection before callbacks, preserving versus reset replay |
+| Rejected/foreign views | Cached rejected matcher shapes never recompile; foreign handles cannot invent identities or borrow another binding's control |
+| Source reinstallation | A compatible bundle reinstalled after its surviving old view event does not retroactively install that alias; explicit new attachment shares original controls and invalidation works in both directions |
+| Alternative installations | The same prepared event/source/index may carry different aliases in separate sets; changed conclusions/hypotheses demand rebuild while equal compiled statements with different proofs/generalization do not; all still share actual controls |
+| Opaque context | Native suspension context fixture; exact surviving conjunct facts and exception payload identity through replay in both projection orders |
+| Context/key changes | Native strategy invalidation fixture; keyed replacement reports both keys, keyless/opaque changes rebuild, lost view dependencies rebuild even with surviving history events, compatible replay/consumption does not |
+| Type boundary | Real Poly/ML rejection of ordinary sets passed to source handles, source inventories and bundle preparation; no fallback promotion |
+
+Trace listeners count successful and rejected compilation attempts. Getter and
+composition checks additionally make makers/collectors throw if invoked.
+Prepared originals and both attached views replay without compilation;
+ordinary-reset replay refreshes only declared groups, not old saved controls.
+
+The added invalidation assertion fails on the pre-TASK21 implementation.
+`rewrite_context_changes` now compares active compatible view dependencies
+and compiled statements in installation order, not only history-event identity
+or final membership. All work remains extension-owned; no legacy
+allocation, cache, representation, registration or callback path changes.
+See the [migration audit](../compatibility/migration/TASK21.md) and
+[TASK21 handoff](../compatibility/TASK_21_HANDOFF.md).

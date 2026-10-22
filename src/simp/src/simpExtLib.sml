@@ -1984,6 +1984,48 @@ fun rewrite_context_changes (SS old,SS current) =
       in scan history [] [] [] [] end
     val (old_convs,old_structure,old_makers) = snapshot (#history old)
     val (new_convs,new_structure,new_makers) = snapshot (#history current)
+    (* A view event can survive while its compiled dependency disappears.
+       Inspect installed compatibility, not just the event/cache identity.
+       Cached rejected shapes and inactive stale handles contribute no view;
+       neither inspection nor quota consumption prepares a matcher. *)
+    fun active_views history native_sources =
+      let
+        val sources = List.foldl
+          (fn (source,found) => Binarymap.insert (found,source,source))
+          (Binarymap.mkDict rewrite_source_compare) native_sources
+        fun active installed
+              (source as RewriteSource {origin,...},_,
+               SOME (SOME (data:tagged_convdata))) =
+              if Binaryset.member (installed,#event origin) andalso
+                 (case Binarymap.peek (sources,source) of
+                      SOME current => same_rewrite_source (source,current)
+                    | NONE => false)
+              then Option.map #2 (#source data) else NONE
+          | active _ _ = NONE
+        (* A removed bundle may be reinstalled AFTER its old view event.
+           Its compatible handles return, but that event installed no view.
+           Visit events in installation order; a source must already exist
+           when the view is encountered (including its own bundle event). *)
+        fun scan [] _ = []
+          | scan (ADDFRAG (SSFRAG_CON {views,...},event,_,_)::rest)
+                 installed =
+              let
+                val installed = Binaryset.add (installed,event)
+                val views = List.mapPartial I (numbered
+                  (fn (i,entry as (source,_,_)) =>
+                    Option.map (fn th => ((event,i),source,th))
+                      (active installed entry)) views)
+              in views @ scan rest installed end
+          | scan (_::rest) installed = scan rest installed
+      in scan (List.rev history) (Binaryset.empty Int.compare) end
+    (* The same bundle event may be installed into separate sets with
+       different attached views. Compare compiled statements, not proofs. *)
+    fun same_view ((a,s,v),(b,t,w)) =
+      a = b andalso same_rewrite_source (s,t) andalso
+      aconv (concl v) (concl w) andalso HOLset.equal (hypset v,hypset w)
+    val views_changed = not (ListPair.allEq same_view
+      (active_views (#history old) (#native_sources old),
+       active_views (#history current) (#native_sources current)))
     fun same_prepared (NONE,NONE) = true
       | same_prepared (SOME a,SOME b) = Portable.pointer_eq (a,b)
       | same_prepared _ = false
@@ -2008,6 +2050,7 @@ fun rewrite_context_changes (SS old,SS current) =
         (#unsafe_solvers old_strategy,#unsafe_solvers new_strategy))
     val rebuild =
       #limit old <> #limit current orelse strategy_changed orelse
+      views_changed orelse
       not (Portable.pointer_eq (#dprocs old,#dprocs current)) orelse
       not (ListPair.allEq same_structure (old_structure,new_structure)) orelse
       not (ListPair.allEq Portable.pointer_eq (old_makers,new_makers)) orelse

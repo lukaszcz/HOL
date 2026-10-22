@@ -197,6 +197,10 @@ sig
      suspended conjuncts. Missing/incompatible handles change nothing. *)
   val suspend_rewrite_sources : rewrite_source list -> simpset -> simpset
   (* Changed conversion keys and opaque traversal/context changes.
+     Invalidation of an installed view's source requires rebuilding even
+     when the view's history event survives. Compatible replay and quota
+     consumption alone do not invalidate views. Native rewrite changes are
+     inspected separately through source handles, not returned as keys.
      Existing decision procedures may depend on every added context rule. *)
   val rewrite_context_changes : simpset * simpset ->
     {keys : (term list * term) list, rebuild : bool,

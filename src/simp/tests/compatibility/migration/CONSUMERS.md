@@ -76,8 +76,13 @@ owned by the indicated tasks and relocation under **26**. Late extraction at
 zero compilation traces and maker count one after exhaustion, collector-free
 extraction through 6297, exact dproc identity, default public projection omitting
 configuration, and configured fallback collector stages `[0,1,2]`.
-`rewrite_source_compare` has no direct nonimplementation repository caller;
-external clasimp does call it, so it is not dead API.
+At the inventory revision, `rewrite_source_compare` had no direct
+nonimplementation repository caller; external clasimp did call it. Current
+tracked/exclusion/source fixtures also call it directly. TASK10/14 already
+moved the native source factories to explicit tracked module aliases before
+installation. [TASK21](TASK21.md) audits that cutover and closes the in-scope
+source/view/bundle coverage; the table above retains its historical anchors
+rather than describing a still-pending retrospective import.
 
 ## Focused suites and exported theory dependencies
 
