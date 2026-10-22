@@ -1,0 +1,290 @@
+{
+  "source_id": "TASK20-configured-tactics-v2",
+  "start_head": "5106410584c8624679a62b1c13351ed89a9a1d92",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "scope": "TASK20 repair acceptance; native working-tree extension execution and isolated unchanged legacy comparisons, not independent clean build or performance acceptance",
+  "source_sha256": {
+    "src/simp/src/simpExtLib.sml": "15040aae7d9667fe2966759bb518036360af49e300bf465fd49a26b165b37161",
+    "src/simp/src/simpMarkerLib.sml": "ace0a6aea81988ba6738e38fece1dfe6bed5cee5bbf80c0fa1935d3f11d80297",
+    "src/simp/src/simpMarkerLib.sig": "eb75462a8024d860e7689de487c6319034dc30b983b8f3ef754cba637af24e0a",
+    "src/simp/src/simpLib.sml": "ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd",
+    "src/simp/src/simpLib.sig": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666",
+    "src/simp/src/selftest.sml": "fea5caee9ba8a9c0d0375ed88711874101382934528c2cc2916716cc90772c52",
+    "src/marker/markerLib.sml": "1e29a10f16d9deea6ec8938241a370c71b7e9bcd8ced3484522e074c5acf6dc0",
+    "src/marker/markerLib.sig": "3bacfdda805a1c3455e6010004c28f1373dbc18d2556b2748b79cba427e7d6ec",
+    "src/simp/tests/simp-ext/tactics.sml": "55df8dd963da716d68bf9832098b4704d2553a9d57caf3a2be663320f03672cb",
+    "src/simp/tests/simp-ext/strategies.sml": "9c9ca0d2e759e4f21a3c20b16d47a3b6da7efd5f0cb65ebd69c96026ee9ef4f0",
+    "src/simp/tests/simp-ext/APIExamples.sml": "22ebce45133576f16dd8e29bb54b76d66115decfadef7a41fda60a233eb90f38",
+    "src/simp/tests/compatibility/evidence/task20/review/selftest.sml": "be7616e7632971131396b0c3aa3d656eed38c5e3fae84e673509d7084d6010f6"
+  },
+  "runtime": {
+    "tools": {
+      "bin/hol": {
+        "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+        "bytes": 43099640
+      },
+      "bin/hol.state0": {
+        "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+        "bytes": 20469336
+      },
+      "bin/Holmake": {
+        "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+        "bytes": 3409600
+      }
+    },
+    "poly": {
+      "sha256": "1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311",
+      "bytes": 17381496
+    },
+    "poly_version": {
+      "command": [
+        "/usr/local/bin/poly",
+        "--version"
+      ],
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit": 0,
+      "timed_out": false,
+      "stdout": "Poly/ML 5.9.2 Release\n",
+      "stdout_sha256": "7ecc5458e3d0e51d9e743be2abc48bd27bf62c3f7a562551082232e4b38bf512",
+      "stdout_bytes": 22
+    }
+  },
+  "commands": [
+    {
+      "label": "routine",
+      "command": [
+        "bin/build",
+        "-t",
+        "--seq=tools/sequences/upto-parallel"
+      ],
+      "exit": 0,
+      "evidence": "routine.log.gz"
+    },
+    {
+      "label": "native",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_prior_native.py",
+        "--output",
+        "/tmp/task20-repair/native"
+      ],
+      "exit": 0,
+      "evidence": "native/manifest.json.gz"
+    },
+    {
+      "label": "paired",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/run_paired.py",
+        "--candidate",
+        "HEAD",
+        "--candidate-signature",
+        "pass",
+        "--candidate-behavior",
+        "baseline",
+        "--prior-contracts",
+        "--public-contracts",
+        "--staging-contracts",
+        "--negative-controls",
+        "--output",
+        "/tmp/task20-repair/paired"
+      ],
+      "exit": 0,
+      "evidence": "paired/manifest.json.gz"
+    },
+    {
+      "label": "ordinary-behavior",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/tactics/run_behavior.py",
+        "--output",
+        "/tmp/task20-repair/behavior"
+      ],
+      "exit": 0,
+      "evidence": "behavior/manifest.json.gz"
+    },
+    {
+      "label": "coverage",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/coverage_ledger.py"
+      ],
+      "exit": 0,
+      "evidence": "coverage.log.gz"
+    },
+    {
+      "label": "immutable",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/verify_evidence.py"
+      ],
+      "exit": 0,
+      "evidence": "immutable.log.gz"
+    },
+    {
+      "label": "tracked-audit",
+      "command": [
+        "python3",
+        "-B",
+        "src/simp/tests/compatibility/audit_task14.py"
+      ],
+      "exit": 0,
+      "evidence": "tracked-audit.log.gz"
+    },
+    {
+      "label": "pedant-tests",
+      "command": [
+        "tools/h4pedant/h4pedant",
+        "src/simp/tests/simp-ext"
+      ],
+      "exit": 0,
+      "evidence": "pedant-tests.log.gz"
+    },
+    {
+      "label": "pedant-src",
+      "command": [
+        "tools/h4pedant/h4pedant",
+        "--nolinelen",
+        "src/simp/src"
+      ],
+      "exit": 0,
+      "evidence": "pedant-src.log.gz"
+    },
+    {
+      "label": "diff",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "evidence": "diff.log.gz"
+    }
+  ],
+  "review": {
+    "fixture": "../review/selftest.sml",
+    "build_exit": 0,
+    "run_exit": 0,
+    "failures": 0,
+    "evidence": [
+      "review-build.log.gz",
+      "review.log.gz"
+    ],
+    "command": "Fresh temporary Holmake-built copy, exact procedure in ../review/README.md; removed after execution"
+  },
+  "negative_regressions": {
+    "original_review": "../review/output.log (two failures at starting HEAD)",
+    "maintained_suite": "red-tactics.log.gz (first Abbr/FRAG assertion fails before repair; exit 1, build exit 0)"
+  },
+  "observations": {
+    "extension_tactics": {
+      "checks": 88,
+      "executed_validations": 18
+    },
+    "extension_strategies": {
+      "checks": 186,
+      "executed_validations": 63
+    },
+    "extension_tracked": 174,
+    "extension_exclusions": 159,
+    "extension_focused": 88,
+    "native_checks": 642,
+    "native_receipts": 14,
+    "paired_receipts": 44,
+    "ordinary_behavior_checks_per_side": 307,
+    "ordinary_behavior_validations_per_side": 116,
+    "original_coverage_cases": 2153,
+    "immutable_inputs": 37,
+    "nested_rule_review_bound_before": 1,
+    "nested_rule_review_bound_after": 1,
+    "exception_first": "markerLib.UNABBREV_TAC"
+  },
+  "success": true,
+  "receipt_sha256": {
+    "behavior/baseline-build.json.gz": "14db8a7f869a67a06b8d373a4d8043dae6fbe6d80316dcc817f94cb6e5fbff40",
+    "behavior/baseline-routes.json.gz": "bf0e6538ce142e0baad01daca97a20e439a1e10fdb9f93a6511dd4933eda1e7c",
+    "behavior/candidate-build.json.gz": "04b450e5c2a0afb30a1afb8f720351e0a0e5c5651eded0ab26820f5024cf24b2",
+    "behavior/candidate-routes.json.gz": "05ffe3fcfe271f599bc366ba9ff00be930e2b622df09f73e367b3395d9af9b18",
+    "behavior/manifest.json.gz": "6a7c591f84cf3782f9f16c2efc63c3c34522b4530b075cfb41c61985f012d803",
+    "coverage.log.gz": "af2bedf2e2ab110d8376ebac66dc336b5f2189dd64e6cdfef6bc10b0c9384f89",
+    "diff.log.gz": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+    "immutable.log.gz": "4e7e1a90dac03feed4284b878152011247632fcb65bed3d300ac88cb91630d04",
+    "native/build-focused.json.gz": "94009ee683c0ec0a355083714e150fd147a30bf26997b926673ccdf689b41b7a",
+    "native/exclusion.json.gz": "c3e5425bd3d2c38936080c0f6cab83b37b6a0a1154854584b856e00893d06306",
+    "native/fresh-attribute-after.json.gz": "13f795e4a48aa8f86294d7c95ad38a515271aaa98efd81d7dcbb517adb4bfdeb",
+    "native/fresh-attribute-first.json.gz": "6d133c1bec56d313bd57eff59d8f1c7a5c5c490588c9d18c58c02ecc2f5a3fa6",
+    "native/fresh-control.json.gz": "c2466444dea9baaf59f8e52ae9dce6971e6243c38d3f4ae77f1bf07df14ec99a",
+    "native/fresh-set-after.json.gz": "44a51818a45b6b6cf691cb861d958f784f986afbed4c0124e4d7bec4e365c3a2",
+    "native/fresh-set-first.json.gz": "4c72c39c4124407b4470b0ef31622ccbbf0342974ec6a64e16936f19a0482f43",
+    "native/fresh-syntax-first.json.gz": "48a69bdcaa7ce30c1624a95299bd2aa3e1aaf155b7967c0139541a0df57fd253",
+    "native/manifest.json.gz": "f2ebb65075b7a1bf7b2d3cf7a677870e01a7ef552df751258164712e390a65c9",
+    "native/markers.json.gz": "8da899f89e27033b1a0e5cd19b196a29812dedbbe2bd7678199ca095029913c0",
+    "native/native.json.gz": "1db2836be6b62628dc910896d46c47905672dfcb7c8c9ed50571e12dd8dd47c9",
+    "native/persistence.json.gz": "1464526b65312f87ecf5a2c5ffaa4ee3ce7c17f6f2a450729c27dd2bb58df66b",
+    "native/replay-order.json.gz": "e8ed4de8ad2b41739774f1e8b2a9ae556c0b0c62c46d2b4ba9973f40864927dd",
+    "native/split-registration.json.gz": "dcc1048ef581ba56de601bdb5508bdfe6ad549db7cf2c1775973afc2774788d7",
+    "native/traversal.json.gz": "2ab80a950806a0101180a4418d5e3804e1eae2ac0c0e33e22616146fd2ec82ca",
+    "paired/baseline-PriorExclusion-none.json.gz": "0bcd92cf18b6f287a396e2b280d4edb212cbf2e44943e63eda802a3bf91dcb05",
+    "paired/baseline-PriorLimits-none.json.gz": "c5afcfdf77a12b28533b26ecb1714f29b3296eda29c83085f475102dee146c59",
+    "paired/baseline-PriorOriginal-none.json.gz": "2045a4b60053e0551f83a604dca77fdbd6622f1183d90ee2bef0f60c93260f39",
+    "paired/baseline-PriorTraversal-none.json.gz": "57d2cbcd659906006276c553148025bf20aae6210a04631ca9006f0ed33192b1",
+    "paired/baseline-PublicCond_rewr-none.json.gz": "4688d9be111533a445b6f429b910ad9237404afbea3c45ad055b64ab530f3fab",
+    "paired/baseline-PublicCongLib-none.json.gz": "49108bc5dc0ff9e02482b36f7b923d0a4e56809625f68833d9ad0d99228e2530",
+    "paired/baseline-PublicOpening-none.json.gz": "499c17d0d7b3cc09bdb4e80608bdf0bce20191df30bd2f232549aee2051033d5",
+    "paired/baseline-PublicSimpLib-none.json.gz": "82c4aff39613a93076c6708ff4865b2a14428f489e9146c16d4dac740cb329b5",
+    "paired/baseline-PublicThmAttribute-none.json.gz": "6ec646736abd2d0debfa5b466ee19aacf1e22f4f7b66e3ae18d93fb6ae87fd20",
+    "paired/baseline-PublicTraverseAscription-none.json.gz": "70fbb0478d445e2c4542ec81755d5193d6ddf551f11151db0e50d7156b2b2d71",
+    "paired/baseline-PublicTraverseClient-none.json.gz": "9c72a48a80ee1ff331d78d8f021fcf68ecc8a68323415769c65fb1acd2c8c8e9",
+    "paired/baseline-PublicTraverseFunctor-none.json.gz": "170aa5666917ee87eb00190f4a5e5ad265682288fad1d892dfbb09bbeccf87e9",
+    "paired/baseline-PublicTravrules-none.json.gz": "244c247a9a260a12c1e57dadb6d5828e33b7bb6b9de9f80071e1bcea722bfdd3",
+    "paired/baseline-Staging-none.json.gz": "93262489097f1f4eed26a564c76238fbe6f2c45b7c64e815b4182c8ef51990a8",
+    "paired/baseline-attribute-build.json.gz": "9d5d9196bb168af7cc1104ab8a9b49fb14d718d5f3aa2f7a6468c425151fa6f5",
+    "paired/baseline-build.json.gz": "291304f1487bfefd40154231cbe5c5f6eb86b087f244a146fc21d2983959738b",
+    "paired/baseline-selftest-deferred.json.gz": "bf2b32fc2f72be6a418ef3c8b0354db452f4da24192d54be7ca5f21b8ba27661",
+    "paired/baseline-selftest-failed.json.gz": "882d7f1372852513ba48c6cffd550996d1b3d59a276343efd8b1fc4bedda73e5",
+    "paired/baseline-selftest-missing.json.gz": "a18ea8fb60421eb2928460afd8f21a698b00f84564d03da964ff6f61e065060c",
+    "paired/baseline-selftest-none.json.gz": "fab0cbd94c4bc7216b0e7c88acfe622b393a4fab0dd0c78cc6e6cf8091783573",
+    "paired/baseline-selftest-truncated.json.gz": "d17ea253981e1e5c18910fab0e6bfa161d49d8a8e0d6eab353a5e4b56f1205be",
+    "paired/baseline-selftest-unexecuted.json.gz": "6ea152cbedfdc25c685b28933d7c12dceeac80f66c9ed7f12df0cfa30f4ddcc5",
+    "paired/baseline-selftest-wrong-path.json.gz": "64f45e319c11a69f8f12bd6de07f4d6aa45953c213107814e6d89e7c3292475f",
+    "paired/baseline-signature-none.json.gz": "25a2ea6e03889b33b4ca8b7bec46fa93704389244880f961280e81a9ea33428b",
+    "paired/candidate-PriorExclusion-none.json.gz": "ee8664dbfdf22806581b3fa850258139e9abd2818841eeb34bb5bf7c0ea41484",
+    "paired/candidate-PriorLimits-none.json.gz": "20d4cdbfcdce845e86932a4bf6a39cb25e292593b990d24cf508d5d3798024bd",
+    "paired/candidate-PriorOriginal-none.json.gz": "f8e08d58166f234684b0e3e181ea4fbfdd8bb0da32452ac39912819fe6790e67",
+    "paired/candidate-PriorTraversal-none.json.gz": "dde1ab1e48817422ff0dbc7e375261d85415067ff1539ce18b091ca4c434d7cd",
+    "paired/candidate-PublicCond_rewr-none.json.gz": "a5166e063e96cdb53fa4c8331b041d951d81545e1c6dc627890eca5e7216825c",
+    "paired/candidate-PublicCongLib-none.json.gz": "dd924cc54687b8803a03c5ed7325bdf9d04d40244d1231caf542201a026e9f69",
+    "paired/candidate-PublicOpening-none.json.gz": "592f5f613fbdcaa39702f6c1725b63a144952d7b033a4eccbeeef4f6715ab7b3",
+    "paired/candidate-PublicSimpLib-none.json.gz": "b568ea30a46be9130035ea332a841fdfe2276358403929c4e8e884933552fe12",
+    "paired/candidate-PublicThmAttribute-none.json.gz": "d04b904685f63e1344995cf506ba009e4b85efabf1dbe05d7f9166be23706892",
+    "paired/candidate-PublicTraverseAscription-none.json.gz": "b9813b905a2becc24228694fcc25d271b308d24c50af198f474ee440138248b6",
+    "paired/candidate-PublicTraverseClient-none.json.gz": "d5dbefd0f245870beec0e58d9d7b158fb1e419db318df0f10ea44431c2467a93",
+    "paired/candidate-PublicTraverseFunctor-none.json.gz": "673ea93650564eb63932ecc89ec52381e74f6a9e11f03f5793e4ceee9ffb05a0",
+    "paired/candidate-PublicTravrules-none.json.gz": "f31da394ac91fafb3005e3b9f99ac64a8c64a1332b8665185c3260af42da22ce",
+    "paired/candidate-Staging-none.json.gz": "15bf2fa29924d551e163bb6c0ca4284d1bb9d2b030137617b4b415965cddebe1",
+    "paired/candidate-attribute-build.json.gz": "860c9c969ec8e7f849b02459fda5649d74b5736ce4a03a07de2debd31aae7dbc",
+    "paired/candidate-build.json.gz": "516d014dd7e5a599ca42ec259ff56a9ef47e8f421845e3200f7876a4ef528900",
+    "paired/candidate-selftest-deferred.json.gz": "7044b0401235044ec0313656f38a6ef3ec49e42927ff50ab4152f938a8d43f00",
+    "paired/candidate-selftest-failed.json.gz": "5deed91bd4c599f2a01564856f0e189a881df23faf8e3f74b07d0b06a9f55610",
+    "paired/candidate-selftest-missing.json.gz": "dcef57bc813f68441e15eb7f9db7279e2bfa0b7353fbb07c612dc10524dd9ccf",
+    "paired/candidate-selftest-none.json.gz": "4f9b3bb96140c984813b9143b0a4a8b8b9275d52d0eb817e198ca0f240fedede",
+    "paired/candidate-selftest-truncated.json.gz": "62dc8aeed29eeb053398ba8ef3be5a5ea407bf93dd7aceb83d407c9e96d00d58",
+    "paired/candidate-selftest-unexecuted.json.gz": "95576391daae8364c48976cc55e8c736c286bb0bc3b48129afd65d1fb6b1e961",
+    "paired/candidate-selftest-wrong-path.json.gz": "3768186a5a1a38e469279f68a65f47673d80d9a6b385ade1e54415e4470061cc",
+    "paired/candidate-signature-none.json.gz": "8d7e0e0ab0e7b9441949128e685c8aefef5a98145362b9411e7ceaafbe898832",
+    "paired/manifest.json.gz": "9bcd9f79d31ca58755b07d982c5e64a1b5ff667982978d3b30d1a06550069a61",
+    "pedant-src.log.gz": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+    "pedant-tests.log.gz": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+    "red-build.log.gz": "6b77612bd3add2840bbb484372dcc8336ba1742d7e86b6dbd2e0b882e44fc5dd",
+    "red-tactics.log.gz": "decb3ebec277d01c5ad10b1b810a62be3ac69ca9643c4d04e2100964aa8f2324",
+    "review-build.log.gz": "f998116736181dc9c52172ad4c2927c3e845352b0e478462164e5b3676278ddd",
+    "review.log.gz": "083f7c6bca102bd122a363df97b0451f933627efa0f69d5abb6a27d931b5a515",
+    "routine.log.gz": "b800a087fc39d4d7b9137df09d2e2291199db4a4184e5d3c263df7e0c7c1acb1",
+    "tracked-audit.log.gz": "ea36c34b4af2fa752d18f5a076487e1f9ab8cdf55e6ca3e6b9704547d92f83c3"
+  }
+}

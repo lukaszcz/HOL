@@ -177,7 +177,11 @@ fun process_taclist_then_bind {arg} thltac (gl as (asl,g)) =
       val asms = map plain asms
       fun recur next = filter_then [] aslPs next
     in
-      Tactical.THEN (pre, require_tacf (recur (thltac asms recur))) gl
+      (* Construct the bound continuation after [pre] succeeds, not while
+         composing THEN. In particular a failing Abbr must precede FRAG
+         lookup and any rule-compilation callbacks in [thltac]. *)
+      Tactical.THEN
+        (pre, require_tacf (fn goal => recur (thltac asms recur) goal)) gl
     end
 
 end

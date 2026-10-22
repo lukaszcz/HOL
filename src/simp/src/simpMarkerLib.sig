@@ -16,8 +16,9 @@ sig
      the saved assumption policy and pass the stripped arguments. *)
   val process_taclist_then_recur : {arg : thm list} ->
     (((thm list -> tactic) -> tactic) -> thm list -> tactic) -> tactic
-  (* Bind supplied facts once, then select assumptions afresh per pass.
-     Wrapper-qualified tactic options are decoded before classification. *)
+  (* Bind supplied facts once after pretactics succeed, then select
+     assumptions afresh per pass. Resolve labels before pretactics and
+     decode wrapper-qualified tactic options before classification. *)
   val process_taclist_then_bind : {arg : thm list} ->
     (thm list -> ((thm list -> tactic) -> tactic) -> thm list -> tactic) ->
     tactic

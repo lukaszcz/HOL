@@ -89,6 +89,74 @@ val _ = List.app (fn build => List.app (fn control =>
   [markerLib.NoAsms,Once (markerLib.IgnAsm [QUOTE "invocation_unused"])])
   [S.GEN_SIMP_TAC unsafe,S.GEN_SIMP_TAC_CHILD_FIRST policy unsafe]
 
+(* Pretactics precede directive resolution/binding, including failures.
+   Keep label lookup at its earlier option-decoding stage. *)
+val _ = let
+  val missing = "invocation_missing_frag"
+  val args = [markerSyntax.Abbr [QUOTE "invocation_missing_abbr"],
+              markerLib.FRAG missing]
+  val g = ([],em ``invocation_staging_p:bool``)
+  val configured = S.add_looper ("force configured path",fn _ => NO_TAC)
+    S.empty_ss
+  fun error tac = case Exn.capture (fn () => runtac tac g) () of
+      Exn.Exn (HOL_ERR e) => SOME e
+    | _ => NONE
+  val _ = List.app (fn build => let
+    val saved = build configured args
+    fun run () = check "Abbr failure precedes FRAG on every saved invocation"
+      (case error saved of
+           SOME e => String.isSubstring "No assumption of the form"
+                       (Feedback.message_of e)
+         | NONE => false)
+    val _ = run ()
+    val _ = run ()
+    val _ = check "FRAG still resolves when pretactics succeed"
+      (case error (build configured [markerLib.FRAG missing]) of
+           SOME e => Feedback.top_function_of e = "process_tags" andalso
+                     String.isSubstring missing (Feedback.message_of e)
+         | NONE => false)
+  in check "label lookup still precedes Abbr and FRAG"
+    (case error (build configured
+       (markerSyntax.L "invocation_missing_label" :: args)) of
+         SOME e => String.isSubstring "No assumption with label"
+                     (Feedback.message_of e)
+       | NONE => false)
+  end) [S.GEN_SIMP_TAC unsafe,S.GEN_SIMP_TAC_CHILD_FIRST policy unsafe,
+         S.ASM_SIMP_TAC]
+  val bound = ref 0
+  exception PrematureBinding
+  fun bind _ _ = (bound := !bound + 1; raise PrematureBinding)
+  val _ = check "failed pretactic never invokes the binding callback"
+    (case error (simpMarkerLib.process_taclist_then_bind {arg=args} bind) of
+         SOME e => String.isSubstring "No assumption of the form"
+                     (Feedback.message_of e) andalso !bound = 0
+       | NONE => false)
+  val _ = check "successful pretactic invokes binding exactly once"
+    (case Exn.capture (fn () => runtac
+       (simpMarkerLib.process_taclist_then_bind {arg=[]} bind) g) () of
+         Exn.Exn PrematureBinding => !bound = 1
+       | _ => false)
+in () end
+
+(* Multiple bound hypotheses on a real rule are not content directives.
+   Preserve the selected allowance and every other hypothesis verbatim. *)
+val _ = List.app (fn nested => let
+  val (_,before) = BoundedRewrites.DEST_BOUNDED nested
+  val (_,prepared) = S.prepare_rewrite_arguments S.empty_ss [nested]
+  val _ = check "nested genuine rewrite survives preparation verbatim"
+    (length prepared = 1 andalso same (hd prepared) nested)
+  val (plain,after) = BoundedRewrites.DEST_BOUNDED (hd prepared)
+  val _ = check "nested genuine rewrite retains the initially selected bound"
+    (before = after)
+  val installed = S.++ (S.empty_ss,S.rewrites prepared)
+  val cv = S.SIMP_CONV installed []
+  val _ = List.app (fn _ => result "nested allowance spends selected control"
+    cv fT plain) (List.tabulate (before,I))
+in result "nested allowance stays exhausted on saved conversion"
+  cv fT (REFL fT) end)
+  [Once (Ntimes rule 2),Ntimes (Once rule) 2,
+   Ntimes (Ntimes rule 3) 2,Once (Ntimes rule 0)]
+
 (* A bounded supplied fact is an untagged fact for final solvers, even if
    a maker drops it from the rewrite net. *)
 val _ = let
@@ -117,7 +185,7 @@ val _ = let
       (S.looper_ss ("nested conjunction",fn _ => CONJ_TAC)))
     val target = em ``invocation_p:bool``
     val g = ([],mk_conj (target,target))
-    val args = [S.Req0 (Once (S.SF frag))]
+    val args = [S.Req0 (Once (Ntimes (S.SF frag) 2))]
     val _ = tactic "nested requirements/bound around SF execute looper"
       (S.GEN_SIMP_TAC unsafe S.empty_ss args) g
       [([],target),([],target)]
@@ -155,7 +223,7 @@ in Portable.finally (fn () => Context.restore saved) run () end
 
 val _ = let
   val split = splitLib.type_split_of ``:bool``
-  val directive = Once (S.Split split)
+  val directive = Once (Ntimes (S.Split split) 2)
   val input = ``(if invocation_b then invocation_p else invocation_q) \/ T``
   val output = ``(invocation_b ==> invocation_p \/ T) /\
                 (~invocation_b ==> invocation_q \/ T)``

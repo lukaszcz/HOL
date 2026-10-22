@@ -1,0 +1,7 @@
+OBS exception=simpLib.process_tags: No frag called review_missing_frag
+Abbr pretactic precedes missing FRAG ...                                     FAILED!
+OBS selected bound before=1 after=2
+preparing nested genuine rewrite preserves selected bound ...                FAILED!
+OBS explicit NoAsms residuals=1 alias residuals=1
+extension alias preserves wrapped NoAsms policy ...                          [32m[1mOK[0m
+TASK20_REVIEW_FAILURES=2

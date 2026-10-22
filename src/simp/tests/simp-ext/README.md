@@ -134,7 +134,7 @@ inference, new ordinary import, or ordinary representation change. See the
 ## Configured tactics and strategies (TASK_20)
 
 `strategies.sml` adds **186 checks / 63 executed validations**;
-`tactics.sml` adds **58 checks / 18 executed validations**. All proofs are
+`tactics.sml` adds **88 checks / 18 executed validations**. All proofs are
 kernel-derived; residual goals are actually proved, returned validations
 called, and complete hypotheses and ordered goals compared.
 
@@ -145,8 +145,8 @@ called, and complete hypotheses and ordered goals compared.
 | Loopers | Native replacement/round-limit tests; zero/one/multiple/unlimited rounds, UNCHANGED/failure/exception behavior, changed subgoal restart and saved reuse |
 | Counted globals | Native mutual-assumption/fixpoint/root/implication groups; ordered branching and real reconstruction, counted unchanged rotations, conclusion fixpoint reentry and one invocation-wide looper budget |
 | Child-first passes | Native child-first overlap; explicit traversal order and configured global reconstruction (private derivation restoration remains TASK_22) |
-| Supplied invocation binding | Once rules across looper siblings, both traversal policies and saved reuse; final solvers receive untagged facts even when a maker drops their rewrites |
-| Nested directives | Requirement/bound-qualified SF and Split execute; ReqD failures retain provenance; wrapped assumption policy, label and abbreviation options, including non-global ReqD failure retention |
+| Supplied invocation binding | Once rules across looper siblings, both traversal policies and saved reuse; final solvers receive untagged facts even when a maker drops their rewrites; Abbr failure precedes FRAG/binding on repeated explicit and configured-alias invocations, while label lookup remains earlier |
+| Nested directives | Requirement/multiply-bound-qualified SF and Split execute; genuine multiply-bounded rewrites retain the original theorem, selected bound, full hypotheses and live exhaustion; ReqD failures retain provenance; wrapped assumption policy, label and abbreviation options, including non-global ReqD failure retention |
 | Bound local replay | Native `bound_global_fixture`; independent spent ambient quota plus partially spent/exhausted installed bundle and attached view, exact maker/collector schedule, zero bundle/view recompilation traces, same adjusted object observed by loopers and old saved conversions |
 | Generic isolation | Generic classifier/tactic forwards extension markers inertly, no new split set/attribute registrations |
 

@@ -2220,6 +2220,14 @@ fun tactic_only name =
    rewriter and pass through. *)
 fun process_tags0 {report,preserve} ss thl =
     let
+      (* A further bound is not itself a content directive. Look through
+         all bounds to classify, but retain the original real rewrite so
+         DEST_BOUNDED selects the same allowance as before preparation. *)
+      fun bounds_on_directive th =
+        case dest_directive th of
+            SOME (Legacy (DBounded (plain,_))) => bounds_on_directive plain
+          | NONE => false
+          | _ => true
       fun sort (th, acc as (congs, splits, acs, excls, exclfrags, frags,
                             rest)) =
           case dest_directive th of
@@ -2246,7 +2254,7 @@ fun process_tags0 {report,preserve} ss thl =
             | SOME (Legacy (DBounded (plain,_))) =>
                 (* Bounds on directives do not turn them into rewrite
                    facts. Genuine rewrite bounds retain their controls. *)
-                if is_directive plain then sort (plain,acc)
+                if bounds_on_directive plain then sort (plain,acc)
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
             | SOME (Legacy (DReq0 _)) =>
                 if report then tactic_only "Req0"

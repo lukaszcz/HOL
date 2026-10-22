@@ -1,146 +1,153 @@
 # TASK20 — explicit configured tactics, strategies and markers
 
-Landing identifier: **TASK20-configured-tactics-v1** (containing commit).
-Starting HEAD: `14bab19f7`.
+Final landing identifier: **TASK20-configured-tactics-v2** (containing commit).
+Repair starting HEAD: `510641058` (the initial TASK20 implementation).
+Predecessor: `14bab19f7` (TASK19).
 Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 Linux/aarch64, Poly/ML 5.9.2, shared `hol.state0`; isolated paired processes
-use one GC thread. Initial main checkout was clean. Unrelated nested
-`.agent-files` changes are preserved.
+use one GC thread. Initial production tree was clean; the supplied untracked
+`evidence/task20/review/` and unrelated nested `.agent-files` changes were
+preserved.
 
-## Completion and implementation
+## Status and review correction
 
-**All bounded TASK20 acceptance criteria are satisfied. No blocker remains.**
+**All bounded TASK20 acceptance criteria now pass, including both reproduced
+review failures. No TASK20 blocker remains.** The former completion statement
+at `510641058` was premature: its tests missed the Abbr/FRAG exception-order
+intersection and multiply-bounded genuine rewrites. The old top-level
+`evidence/task20/validation.json` and logs describe that implementation, not
+final acceptance. The supplied red reproducer is retained unchanged under
+[`evidence/task20/review/`](evidence/task20/review/).
+
+Final acceptance is tied to the actual repaired sources in
+[`evidence/task20/repair/validation.json`](evidence/task20/repair/validation.json).
 This is extension tactic/strategy acceptance, not whole-plan performance,
-exhaustive TASK21 view migration or TASK22 private derivation restoration.
+TASK21 view migration or TASK22 private derivation restoration.
 
-The extension-owned APIs already existed, but their intersections were not
-complete. The implementation fixes these defects without ordinary fallback:
+## Implementation and API decisions
 
-- Non-global `GEN_SIMP_TAC` and its child-first counterpart now bind supplied
-  rules once per goal invocation. Looper siblings, recursive passes and solver
+The initial implementation established these explicit extension-only paths:
+
+- Non-global `GEN_SIMP_TAC` and its child-first counterpart bind supplied rules
+  once per goal invocation. Looper siblings, recursive passes and solver
   recursion share those installed controls. Saved tactic reuse starts fresh
-  supplied allowances; already installed rules keep their live allowances.
-  Final solvers receive untagged facts, even when a maker rejects their rewrites.
-- New additive `simpMarkerLib.process_taclist_then_bind` separates supplied
-  facts from the changing assumption policy. Pretactics and requirements run
-  once; only assumption selection recurs. Label lookup still precedes requirement
-  construction. Requirements on tactic options themselves are retained, not
-  discarded by classification. The existing recursive marker API is unchanged.
-- Bound-qualified SF, Split, ExclX and other directives execute as directives,
-  not marker-headed rewrite rules. Actual bounded rewrites retain their bounds;
-  AC/Cong payloads are not recursively interpreted as directives. Nested
-  requirement failures retain their provenance. Abbr/label/NoAsms/IgnAsm options
-  work beneath wrappers. NoAsms/IgnAsm apply to bound and unbound global passes.
-- Invocation-local removal directly preserves **all** compatible installed
-  controls. The former reset-then-repair replay restored only bundle controls,
-  ran ambient makers/collectors twice and gave loopers the unrepaired object.
-  That second replay is removed. Traversal, solvers and loopers now receive the
-  same adjusted object, including spent ambient and bundle controls.
-- Installed view matchers, including rejected shapes, are cached immutably in
-  extension history. Replay first checks source compatibility and then reuses
-  the matcher, rebinding actual counters only when necessary. Already installed
-  bundles and attached views emit no recompilation traces during local replay.
-  Ordinary-reset replay still resets declared allowances and preserves sharing.
-- One global invocation owns one looper budget across conclusion fixpoint
-  reentry and sibling branches. Applying the saved tactic again resets that
-  invocation budget. Traversal limits remain independently enforced as before.
-- Excluded additions return the exact input at the public `++` boundary before
-  compilation. The unchanged TASK19 physical-identity assertion exposed that
-  relying on the deeper constructor-pattern return was not robust after these
-  compiler/layout changes; the explicit outer guard preserves the contract.
+  supplied allowances; installed rules keep their live allowances. Final
+  solvers receive untagged facts even when a maker rejects their rewrites.
+- `simpMarkerLib.process_taclist_then_bind` separates supplied facts from
+  changing assumption selection. Pretactics and requirements run once; only
+  the assumption policy recurs. Requirements on tactic options are retained.
+- Bound-qualified SF, Split, ExclX and other content directives execute as
+  directives, not marker-headed rewrites. AC/Cong payloads are not recursively
+  interpreted as directives. Wrapped NoAsms/IgnAsm apply to bound and unbound
+  global passes; Abbr/label options and requirement failures retain provenance.
+- Invocation-local removal preserves all compatible installed controls in one
+  replay, including ambient quotas and prepared bundles. Traversal, solvers
+  and loopers receive the same adjusted object. Cached installed view matchers
+  (including rejected shapes) avoid recompilation during replay; source
+  compatibility is checked before reusing matchers/rebinding counters.
+  Ordinary-reset replay still resets declared allowances.
+- A global invocation shares one looper budget across conclusion/fixpoint
+  reentry and siblings. Reapplying a saved tactic resets that invocation
+  budget. Excluded additions return the exact input before compilation.
 
-Safe mode still selects **final** safe solvers only; conditional rewriting
-continues to use unsafe solvers. Configured/live depth, custom order, root
-rewriting/rebuilding, implication-premise handling, assumptions, counted passes,
-proof reconstruction and subgoal order remain covered and passing.
+The repair closes the two review failures:
+
+1. `process_taclist_then_bind` now defers its binding callback until the Abbr
+   pretactics succeed, rather than evaluating it while constructing `THEN`.
+   Missing Abbr therefore raises `markerLib.UNABBREV_TAC` before FRAG lookup
+   or rule compilation. Label lookup retains its earlier option-decoding
+   stage. Requirement wrapping remains around the complete continuation.
+   Binding still happens once, not again at every recursive assumption scan.
+2. `process_tags0` looks through all bound wrappers solely to decide whether
+   their payload is a content directive. A genuine rewrite is returned
+   verbatim, including all bound hypotheses, so later `DEST_BOUNDED` chooses
+   the original allowance. `Once (Ntimes rule 2)` retains bound **1**, not 2.
+   Nested content directives still execute, and requirements remain checks
+   rather than disappearing during this classification.
+
+Safe mode continues to select final safe solvers only; conditional rewriting
+uses unsafe solvers. Configured/live depth, custom order, root rebuilding,
+implication-premise handling, assumptions, counted passes, proof reconstruction
+and subgoal order remain covered.
 
 No ordinary `simpLib`, generic `markerLib`, postkernel service, split registry,
-public shared-control identity, or external consumer changed. `simpLib.sml/.sig`
-and `markerLib.sml/.sig` remain byte-identical to develop. In particular ordinary
-simpLib SHA256s remain `ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd`
-and `d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666`.
+shared public-control identity or external consumer changed. Ordinary
+`simpLib.sml/.sig` and `markerLib.sml/.sig` remain byte-identical to develop;
+final hashes are recorded in the repair manifest. There is no fallback into
+ordinary simpsets or hidden promotion.
 
-## Tests and source-tied evidence
+## Maintained tests
 
-[`evidence/task20/validation.json`](evidence/task20/validation.json) seals the
-actual final compiled sources, fixtures, Python drivers and tool/heap hashes,
-commands, exit statuses and retained receipt paths. All final commands exit 0:
-
-| Command | Result / evidence |
-| --- | --- |
-| `bin/build -t --seq=tools/sequences/upto-parallel` | Final complete routine sanity build; `routine.log.gz` |
-| `python3 src/simp/tests/compatibility/run_prior_native.py --output /tmp/task20-final/native` | 14 receipts, source/product seals; explicit integrated `Holmake --no-project --no-cache --holstate=... -j1 -C src/simp/src HOLSELFTESTLEVEL=1 all`, actual native/traversal/exclusion/marker/registration/replay/fresh-load/persistence launchers; `native/` |
-| `python3 src/simp/tests/compatibility/run_paired.py --candidate HEAD --candidate-signature pass --candidate-behavior baseline --prior-contracts --public-contracts --staging-contracts --negative-controls --output /tmp/task20-final/paired` | 44 receipts: both original reproducers, public clients, frozen 73/47/929/limit suites, unchanged strict staging matrix and fail-closed controls; `paired/` |
-| `python3 src/simp/tests/tactics/run_behavior.py --output /tmp/task20-final/behavior` | 307 supplemental ordinary checks / 116 executed validations per side; `behavior/` |
-| `coverage_ledger.py`; `verify_evidence.py`; `audit_task14.py` | 2,153 original source-tied cases, 37 immutable inputs, inert getters/shared-control/cached-matcher structural gate |
-| `tools/h4pedant/h4pedant src/simp/tests/simp-ext`; `tools/h4pedant/h4pedant --nolinelen src/simp/src`; `git diff --check` | Pass |
-
-The new maintained suites execute through `tests/simp-ext/check`, integrated at
-selftest level 1, not just `.uo` generation:
+`tests/simp-ext/check` executes these suites at selftest level 1, outside
+ordinary selftest imports:
 
 - `strategies.sml`: **186 checks / 63 executed kernel-proof validations**.
-  Safe/unsafe final and condition selection, contextual recursion, replacement/
-  removal/order, live/default depth, explicit depth, term order, looper limits,
-  exact arbitrary exceptions, invalid solver conclusions/hypotheses, counted
-  global passes, root rebuilding, implication premises and child-first order.
-- `tactics.sml`: **58 checks / 18 executed kernel-proof validations**.
-  Invocation-wide Once across ordered looper siblings in both traversal modes,
-  saved reuse, global looper budget reentry, plain solver facts, nested options/
-  SF/Split/requirements, generic marker inertness and unchanged registrations.
-  Local replay intersects an exhausted ambient rule, partially spent/exhausted
-  bundle and attached view. Old saved conversions and a looper observe actual
-  shared exhaustion. Exact maker/collector schedules are 1/3 and 2/6 for the
-  two cases; bundle/view recompilation trace count is zero.
+  Safe/unsafe final and condition selection; recursion; replacement/removal/
+  order; live and explicit depth; term order; looper limits and exceptions;
+  invalid solver conclusions/hypotheses; counted globals, root rebuilding,
+  implication premises and child-first order.
+- `tactics.sml`: now **88 checks / 18 executed kernel-proof validations**
+  (formerly 58). Original assertions are retained. New checks cover repeated
+  saved parent/child/configured-alias Abbr-before-FRAG failures, later FRAG
+  failure without a failing pretactic, earlier label lookup, zero callback
+  executions after a failed pretactic, and exactly one after success.
+  Four multiply-bounded real-rule forms retain their complete theorems and
+  selected allowances; installed conversions consume exactly that quota and
+  stay exhausted. SF and Split tests now exercise multiple bound wrappers.
+  Existing invocation-wide Once, generic marker inertness/registration,
+  plain solver facts and local bundle/view/ambient-sharing assertions pass.
+  Local replay maker/collector schedules remain 1/3 and 2/6, with zero
+  bundle/view recompilation traces.
 
-Tests compare ordered goals and complete theorem hypotheses, and actually call
-returned validations with kernel-derived residual proofs. The original native
-`selftest.sml` is unchanged (**642 checks**); existing separate extension suites
-retain **88 focused + 174 tracked + 159 exclusion checks**. The coverage map is
-in [`../simp-ext/README.md`](../simp-ext/README.md).
+Ordered goals and complete theorem hypotheses are compared; returned tactic
+validations are actually called with kernel-derived residual proofs. The
+unchanged native fixture retains **642 checks**, and existing extension suites
+retain **88 focused + 174 tracked + 159 exclusion checks**. The original
+coverage ledger still verifies **2,153 source-tied cases**. See the additive
+coverage map in [`../simp-ext/README.md`](../simp-ext/README.md).
 
-The paired runner selects committed starting HEAD. Its ordinary sources are
-identical to final sources; this is legacy evidence, **not** a claimed test of
-the extension edit. The final native driver seals and executes actual working-
-tree extension sources and both new suites. Ordinary saved tactic, staging and
-fresh-load fixtures are unchanged and pass. Generic markers forward extension
-markers inertly and acquire no new registrations.
+## Fresh final validation
 
-## Evidence corrections and scope
+All commands below exit **0**. The repair manifest records exact source/input,
+command, runtime/tool/heap hashes, exit statuses, receipt hashes and paths.
 
-The first native driver attempt completed every process successfully but
-correctly failed its product seal: unchanged native selftest re-exports
-`scratchTheory`, whose generated theory hash differed between integrated and
-direct execution. These are outputs, not imported inputs. The driver now
-excludes only `src/simp/src/.hol/objs/scratchTheory.{sml,sig,dat}` from that
-product seal. Every `.uo/.ui`, other theory product, source, tool and exact native
-stream remains sealed. A **fresh entire driver run** passes. The rejected attempt
-is recorded in `native-seal-attempt.json`; it is not relabeled successful.
+| Command | Result / evidence under `evidence/task20/repair/` |
+| --- | --- |
+| Fresh Holmake-built copy of supplied review `selftest.sml`, exact procedure in review README | Build/run 0; all 3 assertions pass; selected bound 1 before/after; `review-build.log.gz`, `review.log.gz` |
+| `bin/build -t --seq=tools/sequences/upto-parallel` | Complete routine sanity build; `routine.log.gz` |
+| `python3 -B src/simp/tests/compatibility/run_prior_native.py --output /tmp/task20-repair/native` | 14 receipts; integrated `Holmake --no-project --no-cache --holstate=... -j1 -C src/simp/src HOLSELFTESTLEVEL=1 all`, all extension suites, actual native/traversal/exclusion/marker/registration/replay/fresh-load launchers, fresh split exports and heap lifecycle; `native/manifest.json.gz` |
+| `python3 -B src/simp/tests/compatibility/run_paired.py --candidate HEAD --candidate-signature pass --candidate-behavior baseline --prior-contracts --public-contracts --staging-contracts --negative-controls --output /tmp/task20-repair/paired` | 44 receipts; reproducers, public clients, frozen 73/47/929/limit suites, strict unchanged staging matrix and fail-closed negative controls; `paired/manifest.json.gz` |
+| `python3 -B src/simp/tests/tactics/run_behavior.py --output /tmp/task20-repair/behavior` | 307 ordinary checks / 116 executed validations per side; `behavior/manifest.json.gz` |
+| `coverage_ledger.py`; `verify_evidence.py`; `audit_task14.py` | 2,153 original cases; 37 immutable inputs; inert getters/shared-control/cached-matcher structural gate |
+| `tools/h4pedant/h4pedant src/simp/tests/simp-ext`; `tools/h4pedant/h4pedant --nolinelen src/simp/src`; `git diff --check` | Pass |
 
-Exploratory fixture corrections preserved real behavior: ALLGOALS evaluates
-later branches first while retaining output order; a Once allowance covers one
-redex, not both occurrences in a tautology; ReqD around a content directive
-still enforces decrease. The additive option decoder initially dropped ReqD
-on options; review caught this and added four explicit non-global regressions.
-Final validation follows all production/fixture corrections.
+The maintained new staging assertion also failed before repair; its build
+exited 0 and execution exited 1 (`red-build.log.gz`, `red-tactics.log.gz`).
+The supplied review output independently reproduces both failures at starting
+HEAD. No failed attempt is counted as final acceptance.
 
-## Files, migration and cleanup
+The paired runner selects starting committed HEAD `510641058`, whose ordinary
+sources are identical to final sources. That is ordinary compatibility evidence,
+not claimed execution of the extension repair. The native driver seals and
+executes the actual working-tree extension sources, including the expanded
+suite. Saved ordinary tactic/staging and fresh-load cleanup fixtures are
+unchanged and passing. No generic registration was added.
 
-Production: `simpExtLib.{sig,sml}`, `simpMarkerLib.{sig,sml}` and source Holmake
-cleanup list. Tests: new `strategies.sml`/`tactics.sml`, suite Holmakefile/README,
-compiled `APIExamples.sml`, and the narrow native-driver output-sealing fix.
-Docs: 24 branch-only strategy/tactic/marker help files move from `simpLib.*`
-to `simpExtLib.*`; immediate links/types/examples use `TraverseExt` and explicit
-tracked recipes. Ordinary Excl's literal net-deletion contract stays intact.
-Migration rows S1/M1/A1 record invocation binding and replay decisions. Ordinary
-callers require no migration. This handoff/evidence and actual progress status
-complete the task.
+## Files, documentation and cleanup
 
-No new out-of-scope repair or blocker remains. TASK21 is next, with its existing
-source/view/bundle scope; TASK22 retains private derivation/interrupt restoration
-and TASK23 retains persistence lifecycle work. None substitutes for unfinished
-TASK20 work.
+The original implementation's extension signatures, docfiles, API examples,
+recipe links and S1/M1/A1 migration rows remain in place. Ordinary clients need
+no migration. The repair changes `simpExtLib.sml`, `simpMarkerLib.{sml,sig}`,
+`tactics.sml`, its coverage README and the marker/tactic migration rows to pin
+the corrected bound and pretactic contracts. This handoff, preserved review
+inputs and compact source-tied repair evidence close the task.
 
-Task-owned scratch outputs, new launchers/object/dependency products and copied
-receipt directories are removed after retaining compact unique evidence. No
-copied build tree, generated executable or heap is committed; unrelated and
-pre-existing products/caches remain untouched.
+No work was deferred from TASK20. TASK21, TASK22 and TASK23 retain their
+pre-existing source/view, private derivation/interrupt and persistence scopes;
+none substitutes for unfinished work here. TASK21 is now unblocked.
+
+Private review/build trees and task-created scratch evidence are removed after
+recording compact unique receipts. Runners remove their copied source trees
+and temporary persistence heaps. No generated executable, copied build tree or
+heap is committed. Pre-existing local build products, unrelated temporary files
+and unrelated nested-repository changes are left alone.
