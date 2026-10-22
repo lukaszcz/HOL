@@ -29126,6 +29126,134 @@ let
 in cross_block ();local_discharge () end
 end
 
+(* Direct GEN boundary: compact discharge alone does not authorize a
+   surviving local Hyp, nor hide Types inside an admitted binder atom. *)
+local
+  structure G = SmtReplayGraph
+  structure P = SmtReplayProof
+in
+fun replay_scoped_binder_closure_success () =
+let
+  val _ = Count.counting_thms true
+  fun close graph root frame variables body block edge check_type finish =
+    SmtReplayBinder.close_forall graph
+      {parent_scope = root,scope = frame,variables = variables,body = body,
+       block = block,edge = edge,resolution = NONE,witnesses = NONE,
+       admission = {metric = G.RawNodes,input_limit = 200,output_limit = 200,
+         check_type = check_type,refuse = fn _ => ()},close = finish}
+  fun fixture local_hyp =
+    let
+      val graph = G.new () val root = G.root_scope graph
+      val frame = G.new_scope graph root []
+      val x = G.fresh_bound_variable graph frame
+        (Term.mk_var ("scoped_gen_x",Type.bool))
+      val y = if local_hyp then G.fresh_bound_variable graph frame
+          (Term.mk_var ("scoped_gen_y",Type.bool))
+        else G.variable graph root G.RigidSource
+          (Term.mk_var ("scoped_gen_y",Type.bool))
+      val old = P.freeze graph
+        {scope = frame,roots = [x],sources = [x,y],template_limit = 200}
+      val {block,target,edge} = P.discharge_sources old
+        {indices = [0],body = x,edge = P.source old 0}
+    in (graph,root,frame,x,y,block,target,edge) end
+  fun rejects message action = (action ();false)
+    handle Feedback.HOL_ERR detail =>
+      Feedback.top_structure_of detail = "SmtReplayBinder" andalso
+      Feedback.message_of detail = message
+  fun clean theorem = null (#1 (Tag.dest_tag (Thm.tag theorem))) andalso
+    null (Tag.axioms_of (Thm.tag theorem))
+  fun positive multiple =
+    let
+      val (graph,root,frame,x,y,block,body,edge) = fixture false
+      val inner = G.new_scope graph frame []
+      val z = G.fresh_bound_variable graph inner
+        (Term.mk_var ("scoped_gen_z",Type.bool))
+      val variables = if multiple then [x,z] else [x]
+      val (current,body,current_edge) = if multiple then
+          let val old = P.freeze graph
+                {scope = inner,roots = [x],sources = [x,y],
+                 template_limit = 200}
+              val {block,target,edge} = P.discharge_sources old
+                {indices = [0],body = x,edge = P.source old 0}
+          in (block,target,edge) end
+        else (block,body,edge)
+      val expected = boolSyntax.list_mk_forall
+        (List.map (G.representative graph) variables,
+         boolSyntax.mk_imp (G.representative graph x,
+           G.representative graph x))
+      val parent_hyp = G.representative graph y
+      val closed = ref false
+      val prior = #GEN (Count.thm_count ())
+      val result = close graph root (if multiple then inner else frame)
+        variables body current current_edge (fn _ => ())
+        (fn () => (closed := true;G.close_scope graph frame))
+      val theorem = #theorem result
+    in assert (!closed andalso Thm.concl theorem ~~ expected andalso
+        #GEN (Count.thm_count ()) = prior + length variables andalso
+        Portable.pointer_eq (Thm.concl theorem,
+          G.representative graph (#node result)) andalso
+        (case Thm.hyp theorem of [hyp] => Portable.pointer_eq
+          (hyp,parent_hyp) | _ => false) andalso clean theorem,
+        "bounded GEN lost its parent Hyp, closure or exact binder order")
+    end
+  val _ = positive false
+  val _ = positive true
+  val (graph,root,frame,x,_,block,body,edge) = fixture true
+  val calls = ref 0 val finished = ref false
+  val prior = Count.thm_count ()
+  val _ = assert (rejects "hypothesis contains an unannotated local variable"
+      (fn () => ignore (close graph root frame [x] body block edge
+        (fn _ => calls := !calls + 1) (fn () => finished := true))) andalso
+      !calls = 0 andalso not (!finished) andalso Count.thm_count () = prior,
+    "unannotated local Hyp escaped GEN or failed after native effects")
+  val bad = G.fresh_bound_variable graph frame
+    (Term.mk_var ("scoped_gen_body",Type.bool))
+  val other = P.freeze graph
+    {scope = frame,roots = [bad],sources = [bad],template_limit = 200}
+  val {block = other,target = bad,edge = bad_edge} =
+    P.discharge_sources other
+      {indices = [0],body = bad,edge = P.source other 0}
+  val prior = Count.thm_count ()
+  val _ = assert (rejects "body contains an unannotated local variable"
+      (fn () => ignore (close graph root frame [x] bad other
+        bad_edge (fn _ => calls := !calls + 1) (fn () => ())))
+      andalso !calls = 0 andalso Count.thm_count () = prior,
+    "local body escape reached realization before metadata rejection")
+  val graph = G.new () val root = G.root_scope graph
+  val frame = G.new_scope graph root []
+  val x = G.fresh_bound_variable graph frame
+    (Term.mk_var ("scoped_gen_type",Type.bool))
+  val z = Term.mk_var ("scoped_hidden_type",Type.bool)
+  val term = Term.mk_abs (z,boolSyntax.mk_eq
+    (numSyntax.zero_tm,numSyntax.zero_tm))
+  val nested = #node (G.admit_binder graph frame 100 term)
+  val operator = G.constant graph frame
+    (Term.rator (Term.rator (boolSyntax.mk_eq (term,term))))
+  val body = G.application graph frame
+    (G.application graph frame (operator,nested),nested)
+  val old = P.freeze graph
+    {scope = frame,roots = [body],sources = [body],template_limit = 200}
+  val {block,target,edge} = P.discharge_sources old
+    {indices = [0],body = body,edge = P.source old 0}
+  exception Primary
+  val prior = Count.thm_count ()
+  val exact = (close graph root frame [x] target block edge
+      (fn ty => if Type.compare (ty,numSyntax.num) = EQUAL then
+          raise Primary else ()) (fn () => finished := true);false)
+    handle Primary => true
+  val _ = assert (exact andalso not (!finished) andalso
+      Count.thm_count () = prior,
+    "admitted binder interior Type bypassed pre-GEN callback/Primary")
+  val result = close graph root frame [x] target block edge (fn _ => ())
+    (fn () => (finished := true;G.close_scope graph frame))
+  val _ = assert (!finished andalso null (Thm.hyp (#theorem result)) andalso
+      clean (#theorem result) andalso Portable.pointer_eq
+        (Thm.concl (#theorem result),G.representative graph (#node result)),
+    "Type interruption consumed the block or refused an admitted body")
+in Count.counting_thms false end
+handle primary => (Count.counting_thms false;raise primary)
+end
+
 fun run_replay_graph_unittests () =
   List.app run_test
     [("replay_graph_checked_success", replay_graph_checked_success),
@@ -29142,7 +29270,9 @@ fun run_replay_graph_unittests () =
      ("replay_graph_backend_success", replay_graph_backend_success),
      ("replay_graph_clauses_success", replay_graph_clauses_success),
      ("replay_graph_resolution_success", replay_graph_resolution_success),
-     ("replay_graph_crossblock_success", replay_graph_crossblock_success)]
+     ("replay_graph_crossblock_success", replay_graph_crossblock_success),
+     ("replay_scoped_binder_closure_success",
+       replay_scoped_binder_closure_success)]
 
 fun word_graph_conversion_success () =
 let
@@ -29975,6 +30105,8 @@ let
     ("replay_graph_clauses_success", replay_graph_clauses_success),
     ("replay_graph_resolution_success", replay_graph_resolution_success),
     ("replay_graph_crossblock_success", replay_graph_crossblock_success),
+    ("replay_scoped_binder_closure_success",
+      replay_scoped_binder_closure_success),
     ("replay_attempt_reuse_success", replay_attempt_reuse_success),
     ("circuit_graph_admission_success", circuit_graph_admission_success),
     ("circuit_graph_checked_success", circuit_graph_checked_success),

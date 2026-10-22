@@ -112,20 +112,33 @@ struct
               (admitted "binder output hypothesis" output_limit node)
           in case G.free_variable_nodes graph node of
               NONE => refusal "unknown binder hypothesis dependency"
-            | SOME free => if List.exists (fn variable =>
-                  Redblackset.member (bound_ids,G.node_id variable)) free then
-                raise ERR "close_forall"
-                  "eigenvariable remains in a hypothesis"
-              else ()
+            | SOME free => List.app (fn variable =>
+                if Redblackset.member (bound_ids,G.node_id variable) then
+                  raise ERR "close_forall"
+                    "eigenvariable remains in a hypothesis"
+                else if G.scope_visible graph parent_scope
+                    (G.node_scope graph variable) then () else
+                  raise ERR "close_forall"
+                    "hypothesis contains an unannotated local variable") free
           end
       val _ = List.app hypothesis hypotheses
+      (* Do not discover a local escape only after realizing the block.
+         All annotated variables will be closed, outermost last. *)
+      val _ = case G.free_variable_nodes graph body of
+          NONE => refusal "unknown binder body dependency"
+        | SOME free => List.app (fn variable =>
+            if Redblackset.member (bound_ids,G.node_id variable) orelse
+                G.scope_visible graph parent_scope
+                  (G.node_scope graph variable) then () else
+              raise ERR "close_forall"
+                "body contains an unannotated local variable") free
       val types = ref (Redblackset.empty Int.compare)
       val _ = List.app (fn node =>
         let val id = G.type_id graph node in
           if Redblackset.member (!types,id) then () else
             (types := Redblackset.add (!types,id);
              check_type (G.type_of graph node))
-        end) (G.block_reachable graph (body :: variables @ hypotheses))
+        end) (G.reachable graph (body :: variables @ hypotheses))
       val _ = check_type Type.bool
       val operators = List.map (fn variable =>
         let
