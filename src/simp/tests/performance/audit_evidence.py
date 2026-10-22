@@ -67,13 +67,30 @@ def audit(manifest, receipt):
                     not physical.is_relative_to(repo / "src/simp") and
                     physical.stem not in source_names,
                     "wrong archived simplifier path")
-    required = {"Traverse.sml", "Performance.sml"}
-    if options.get("suite") == "traversal":
-        fixture = "src/simp/tests/performance/TraversalPerformance.sml"
+    suite = options.get("suite", "simplifier")
+    required = {"Performance.sml"}
+    if suite in ("traversal", "conditional"):
+        name = "Traversal" if suite == "traversal" else "Conditional"
+        fixture = "src/simp/tests/performance/" + name + "Performance.sml"
         require(selected["fixture_products"]["Performance.sml"] ==
-                manifest["inputs"][fixture], "wrong traversal fixture binding")
+                manifest["inputs"][fixture], "wrong " + suite + " fixture binding")
+        required.add("Traverse.sml" if suite == "traversal" else "Cond_rewr.sml")
     else:
-        required.add("simpLib.sml")
+        required.update(("Traverse.sml", "simpLib.sml"))
+    if suite == "conditional":
+        forbidden = {n for n in source_names if
+                     n in ("Traverse", "simpLib") or
+                     n.endswith(("Ext", "ExtLib"))}
+        inventory = {Path(p).stem for p in result["paths"]}
+        inventory.update(Path(i["physical"]).stem
+                         for i in result["paths"].values())
+        for event in events:
+            if event[0] in ("use", "used", "loaded", "heapfile"):
+                inventory.add(Path(event[1]).stem)
+            elif event[0] == "preloaded":
+                inventory.update(event[1].split(","))
+        require(not (inventory & forbidden),
+                "non-direct module in conditional performance inventory")
     require(required <= seen, "missing selected implementation")
 
 
@@ -102,7 +119,9 @@ def main():
                               "baseline" else "baseline")
         changed = copy.deepcopy(receipt)
         for path, info in changed["result"]["paths"].items():
-            if Path(info["physical"]).name == "Traverse.sml":
+            module = ("Cond_rewr.sml" if manifest["performance"].get("suite") ==
+                      "conditional" else "Traverse.sml")
+            if Path(info["physical"]).name == module:
                 info["sha256"] = "0" * 64
         for control in (wrong, changed):
             try:

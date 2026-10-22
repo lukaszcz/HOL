@@ -9,6 +9,10 @@ literal names merely because they contain `rule:`, `solver:`, `looper:`,
 
 Clients of the branch's earlier extension contracts must opt in explicitly:
 
+- Conditional rewrite extensions: move branch-only `COND_REWR_CONVS`,
+  `COND_REWR_CONV_WITH_CONFIG` and `COND_REWR_CONV_WITH_CONTEXT` calls from
+  `Cond_rewr` to `Cond_rewrExt`. Ordinary `Cond_rewr.COND_REWR_CONV`,
+  `Cond_rewr.stack_limit` and `Cond_rewr.ac_term_ord` stay unchanged.
 - Configured native extraction: replace the earlier branch use of
   `traversedata_for_ss` with `xtraversedata_for_ss ss`, normally the complete
   pair for `Traverse.XTRAVERSE`. Use `#1` only for reducer data alone.
@@ -204,14 +208,16 @@ Legacy candidate application selects only the original conversion.
 
 Depth and term order are options in `traverse_config`. On configured paths,
 native rewrites receive the depth option unchanged through `CONFIG_REDUCER`
-and `COND_REWR_CONV_WITH_CONFIG`. With `NONE`, each candidate-depth check
-reads the current `Cond_rewr.stack_limit`; a failing user conversion can
+and `Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG`. With `NONE`, each
+candidate-depth check reads the current `Cond_rewr.stack_limit`; a failing
+user conversion can
 change that default before the next candidate in the same net lookup.
 An explicit `SOME n` uses `n` without reading or updating that global.
 
 Older `CONTEXT_REDUCER` clients still receive an integer: an unset depth is
-resolved when their reducer is applied. `COND_REWR_CONV_WITH_CONTEXT` adapts
-an explicit integer to `SOME n`; it is not the live-default native path.
+resolved when their reducer is applied.
+`Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT` adapts an explicit integer to
+`SOME n`; it is not the live-default native path.
 The direct legacy runner reads the live stack limit at its candidate check
 and uses `Cond_rewr.ac_term_ord`. Configured term order defaults to that same
 function at traversal entry.

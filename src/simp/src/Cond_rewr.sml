@@ -8,43 +8,11 @@ type controlled_thm = BoundedRewrites.controlled_thm
 fun WRAP_ERR x = STRUCT_WRAP "Cond_rewr" x;
 fun ERR x      = STRUCT_ERR "Cond_rewr" x;
 
-(* The user-level default depth for nested side-condition solving: setting
-   it affects every simpset that does not configure the depth itself. *)
 val stack_limit = ref 4;
 
-(* Which rewrites fired, for a human watching a simplification.  This is
-   an interactive convenience, so it is exposed as one bracketing
-   function that hands back the list with the result rather than as a
-   flag to set and a list to read afterwards.
-
-   The accumulator is per-thread and doubles as the switch: an untouched
-   thread, or NONE, means nobody is watching and nothing is recorded.
-   Nothing outside `with_tracking` can see it, so there is no flag for a
-   caller to leave set and no shared list for a second proof to append
-   to.  Nested tracking reports only the inner extent. *)
-local
-  val slot : thm list option ThreadLocal.t = ThreadLocal.new ()
-  fun peek () = case ThreadLocal.get slot of SOME s => s | NONE => NONE
-in
-  fun note_rewrite th =
-      case peek () of
-          NONE => ()
-        | SOME l => ThreadLocal.set (slot, SOME (th :: l))
-  fun with_tracking f x =
-      let
-        val saved = peek ()
-        val () = ThreadLocal.set (slot, SOME [])
-        fun stop () =
-            let val got = peek ()
-            in
-              ThreadLocal.set (slot, saved);
-              case got of NONE => [] | SOME l => List.rev l
-            end
-        val res = f x handle e => (ignore (stop ()); raise e)
-      in
-        (res, stop ())
-      end
-end
+(* Both engines report to the same thread-local tracking extent. *)
+val note_rewrite = SimpTracking.note_rewrite
+val with_tracking = SimpTracking.with_tracking
 
 (* -----------------------------------------------------------------------*
  * A total ordering on terms.  The behaviour of the simplifier depends    *
@@ -170,15 +138,13 @@ fun ac_term_ord(tm1,tm2) =
        vperm(tm1,tm2) andalso
        HOLset.equal(FVL [tm1] empty_tmset, FVL [tm2] empty_tmset)
 
-   (* Prepare once; both runners use the same theorem and matcher.  The
-      caller retains the actual bound reference and supplies its status. *)
-   fun COND_REWR_CONVS (nm,th) bounded =
+   fun COND_REWR_CONV (nm,th) bounded =
       let val eqn = snd (strip_imp (concl th))
           val isperm = is_var_perm (dest_eq eqn)
           val instth = HO_PART_MATCH (lhs o snd o strip_imp) th
                        handle HOL_ERR _ => ERR("COND_REWR_CONV",
                          "bad theorem argument (not a conditional equation)")
-          val legacy =
+      in
       fn solver => fn stack => fn tm =>
        (let val conditional_eqn = instth tm
             val (conditions,eqn) = strip_imp (concl conditional_eqn)
@@ -225,74 +191,9 @@ fun ac_term_ord(tm1,tm2) =
             final_thm
         end
         handle e => WRAP_ERR("COND_REWR_CONV (application)",e))
-          val configured =
-      fn {solver,stack,cond_depth,term_ord} => fn tm =>
-       (let val conditional_eqn = instth tm
-            val (conditions,eqn) = strip_imp (concl conditional_eqn)
-            val _ = if exists (C (op_mem aconv) stack) conditions
-                        then (trace(1, TEXT "looping - cut");
-                              failwith "looping!") else ()
-            val depth = case cond_depth of
-                            NONE => !stack_limit
-                          | SOME n => n
-            val _ = if length stack + length conditions > depth
-                    then (trace(1, TEXT "looping - stack limit reached");
-                          failwith "stack limit") else ()
-            val (l,r) = dest_eq eqn
-            val _ =
-              if Term.aconv l r then
-                (trace(4, IGNORE ("Rewrite loops", conditional_eqn));
-                 failwith "looping rewrite")
-              else ()
-
-            val _ = if isperm andalso term_ord (l, r) <> GREATER andalso
-                       not bounded
-                    then
-                      (trace(4, IGNORE("possibly looping",conditional_eqn));
-                       failwith "permutative rewr: not applied")
-                    else ()
-            val _ = if null conditions then ()
-                    else trace(if isperm then 2 else 1, REWRITING(nm,tm,th))
-            val new_stack = conditions@stack
-            fun solver' condition =
-                 let val _   = trace(2,SIDECOND_ATTEMPT condition)
-                     val res = solver new_stack condition
-                      handle e as HOL_ERR _
-                       =>  (trace(1,SIDECOND_NOT_SOLVED condition); raise e)
-                 in trace(2,SIDECOND_SOLVED res);
-                    res
-                 end
-            val condition_thms = map solver' conditions
-            val disch_eqn = rev_itlist (C MP) condition_thms conditional_eqn
-            val final_thm = if aconv l tm then disch_eqn
-                            else TRANS (ALPHA tm l) disch_eqn
-            val _ = if null conditions then
-              trace(if isperm then 2 else 1, REWRITING(nm,tm,th))
-                    else ()
-            (* note_rewrite is a no-op unless someone is tracking *)
-            val _ = if null stack then note_rewrite th else ()
-        in trace(if isperm then 3 else 2,PRODUCE(tm,nm,final_thm));
-            final_thm
-        end
-        handle e => WRAP_ERR("COND_REWR_CONV (application)",e))
-      in
-        {legacy=legacy, configured=configured}
       end
       handle e  => WRAP_ERR("COND_REWR_CONV (construction) ",e);
 
-   fun COND_REWR_CONV nmth bounded =
-      #legacy (COND_REWR_CONVS nmth bounded);
-
-   fun COND_REWR_CONV_WITH_CONFIG nmth bounded =
-      #configured (COND_REWR_CONVS nmth bounded);
-
-   fun COND_REWR_CONV_WITH_CONTEXT nmth bounded =
-      let val conv = COND_REWR_CONV_WITH_CONFIG nmth bounded
-      in
-        fn {solver,stack,cond_depth,term_ord} =>
-           conv {solver=solver, stack=stack, cond_depth=SOME cond_depth,
-                 term_ord=term_ord}
-      end;
 
 val BOUNDED_t = mk_thy_const {Thy = "bool", Name = "BOUNDED",
                               Ty = bool --> bool}

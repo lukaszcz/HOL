@@ -20,6 +20,14 @@ TRAVERSAL_CONSUMED = dict.fromkeys(TRAVERSAL_LABELS, 1)
 # 65 per-context factory creations on the 64-deep unary spine.
 TRAVERSAL_CONSUMED.update(construct_context=2, complete_context=2,
                           deep_factory_64=1 + 1 + 65)
+# Direct ordinary Cond_rewr construction and application, no extension path.
+CONDITIONAL_LABELS = (
+    "conditional_construct", "unconditional_construct", "conditional_reuse",
+    "conditional_complete", "ac_construct", "ac_reuse",
+)
+CONDITIONAL_CONSUMED = dict.fromkeys(CONDITIONAL_LABELS, 1)
+# A checked proof result plus one side-condition solver callback.
+CONDITIONAL_CONSUMED.update(conditional_reuse=2, conditional_complete=2)
 FIELDS = ("wall", "nongc_usr", "nongc_sys", "gc_usr", "gc_sys",
           "cpu_usr", "cpu_sys", "check_gc_user", "consumed")
 STORAGE = ("rules", "base", "fragment", "simpset", "anchor", "union",
@@ -59,9 +67,13 @@ def timing(value, prefix=0):
 
 def suite_options(options):
     suite = options.get("suite", "simplifier")
-    require(suite in ("simplifier", "traversal"), "unknown performance suite")
+    require(suite in ("simplifier", "traversal", "conditional"),
+            "unknown performance suite")
     if suite == "traversal":
         return dict(labels=TRAVERSAL_LABELS, consumed=TRAVERSAL_CONSUMED,
+                    storage=False)
+    if suite == "conditional":
+        return dict(labels=CONDITIONAL_LABELS, consumed=CONDITIONAL_CONSUMED,
                     storage=False)
     return {}
 

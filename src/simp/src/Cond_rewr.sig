@@ -48,38 +48,6 @@ sig
   val COND_REWR_CONV : string * thm -> bool ->
                        (term list -> term -> thm) -> term list -> conv
 
-  (* Prepare a conditional rewrite once and share its matcher between
-     the original curried runner and an explicitly configured runner.
-     The caller retains the actual bound reference; bounded is its status.
-     The legacy runner reads stack_limit live at each candidate check.
-     Configured NONE does likewise; SOME n is independent of stack_limit. *)
-  val COND_REWR_CONVS : string * thm -> bool ->
-                       {legacy : (term list -> term -> thm) ->
-                                 term list -> conv,
-                        configured :
-                          {solver : term list -> term -> thm,
-                           stack : term list,
-                           cond_depth : int option,
-                           term_ord : term * term -> order} -> conv}
-
-  (* As COND_REWR_CONV, but with an explicit integer side-condition depth
-     and permutative term order.  This adapter passes SOME cond_depth to
-     the configured runner.  Unlike COND_REWR_CONV, it does not read the
-     live stack_limit reference at candidate checks. *)
-  val COND_REWR_CONV_WITH_CONTEXT :
-                       string * thm -> bool ->
-                       {solver : term list -> term -> thm,
-                        stack : term list,
-                        cond_depth : int,
-                        term_ord : term * term -> order} -> conv
-  (* NONE reads stack_limit at each candidate's depth check; SOME n is
-     an explicit invocation-local depth, independent of the reference. *)
-  val COND_REWR_CONV_WITH_CONFIG :
-                       string * thm -> bool ->
-                       {solver : term list -> term -> thm,
-                        stack : term list,
-                        cond_depth : int option,
-                        term_ord : term * term -> order} -> conv
   val QUANTIFY_CONDITIONS : controlled_thm -> controlled_thm list
 
   (* The user-level default for the side-condition depth.  It applies to

@@ -258,7 +258,7 @@ in () end
    both conversions below are in one reducer's FIRST_CONV invocation. *)
 val _ = let
   val rule = ASSUME (mk_imp (p,mk_eq (a,b)))
-  val run = Cond_rewr.COND_REWR_CONV_WITH_CONFIG ("ext depth",rule) false
+  val run = Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG ("ext depth",rule) false
   val seen = ref ([] : int option list)
   val mutates = ref 0
   fun reducer mutate = T.CONFIG_REDUCER
@@ -313,7 +313,7 @@ val _ = let
   val _ = ignore (total (T.XTRAVERSE
     (data no_rules [contextual] [] NONE,cfg (SOME 7) NONE) []) a)
   val _ = check "CONTEXT receives configured integer" (!depth_seen = [7])
-  val native = Cond_rewr.COND_REWR_CONV_WITH_CONFIG
+  val native = Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG
     ("ext permutation",SPEC_ALL boolTheory.EQ_SYM_EQ) false
   val comparisons = ref 0
   val perm = T.CONFIG_REDUCER
@@ -427,7 +427,7 @@ val _ = let
   val root = ``ext_root:bool``
   val output = ``ext_output:bool``
   val conditional = ASSUME (mk_imp (condition,mk_eq (root,output)))
-  val run = Cond_rewr.COND_REWR_CONV_WITH_CONFIG
+  val run = Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG
     ("root side condition",conditional) false
   val conditional_reducer = T.CONFIG_REDUCER
     {name=NONE,initial=Fail "root",addcontext=fn (ctxt,_) => ctxt,
@@ -711,7 +711,7 @@ in () end
    fallback dispatch. Observation itself must not introduce charge calls. *)
 val _ = let
   val rule = ASSUME (mk_imp (p,mk_eq (a,b)))
-  val runner = Cond_rewr.COND_REWR_CONV_WITH_CONFIG
+  val runner = Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG
     ("observed failed condition",rule) false
   val applications = ref 0
   val solves = ref 0

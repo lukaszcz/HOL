@@ -9,7 +9,6 @@
 (*===========================================================================*)
 
 (* Mechanical tracked-engine relocation. Transitional primitive imports:
-   Cond_rewr.COND_REWR_CONVS -> Cond_rewrExt in TASK_12;
    Travrules.mk_threaded_travrules -> TravrulesExt in TASK_13.
    Trace, tracking, bounds, marker and split identities stay shared.
    Diagnostic origin labels deliberately remain simpLib. *)
@@ -101,20 +100,6 @@ type stdconvdata = { name: string,
 (* Make a rewrite rule into a conversion.                                    *)
 (*---------------------------------------------------------------------------*)
 
-(* boolean argument to c is whether or not the rewrite is bounded *)
-fun appconvs (prepare,UNBOUNDED) = prepare false
-  | appconvs (prepare,BOUNDED r) =
-    let
-      val {legacy,configured} = prepare true
-    in
-      {legacy = fn solver => fn stack => fn tm =>
-         if !r = 0 then failwith "exceeded rewrite bound"
-         else legacy solver stack tm before Portable.dec r,
-       configured = fn ctxt => fn tm =>
-         if !r = 0 then failwith "exceeded rewrite bound"
-         else configured ctxt tm before Portable.dec r}
-    end
-
 fun split_name {Thy,Name} = (SOME Thy, Name)
 fun mk_rewr_convdata (nmopt,(thm,tag)) : tagged_convdata option = let
   val th = SPEC_ALL thm
@@ -128,7 +113,8 @@ in
                     UNBOUNDED => NONE | BOUNDED r => SOME (r, !r)
     val key = SOME (free_varsl (hyp th),
                     lhs (#2 (strip_imp (concl th))))
-    val {legacy,configured} = appconvs (COND_REWR_CONVS (nm,th), tag)
+    val prepared = Cond_rewrExt.prepare (nm,th) tag
+    val {legacy,configured} = Cond_rewrExt.runners prepared
   in
     SOME {thypart = thypart, source = SOME (nmopt, th), legacy = legacy,
           bound = bound,

@@ -1,0 +1,6 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+EXTRA_CLEANS = allocation.exe
+
+# Only the loader is linked; all private sources elaborate in the child.
+allocation.exe: Task12AllocationRunner.uo CheckSupport.uo Task12Allocation.uo
+	$(HOLMOSMLC) -o $@ $<

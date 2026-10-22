@@ -263,3 +263,33 @@ This isolates ordinary traversal from the existing `raw_reuse_1000` mixture
 project/compile work, extension performance, or overall simplifier acceptance.
 Source identity and real paired receipts, not an assumed performance oracle,
 are needed to distinguish unchanged traversal from costs elsewhere.
+
+## Focused ordinary conditional-rewrite diagnostic
+
+`--conditional-performance` selects `ConditionalPerformance.sml` and manifest
+`performance.suite = "conditional"`. It requires positive performance pairs
+and is mutually exclusive with `--traversal-performance`. Use the commands
+above with this flag and fresh output paths. The fixture calls only ordinary
+`Cond_rewr.COND_REWR_CONV`: no traversal, simpset/net construction, extension
+API, or production instrumentation. Both online and archived inventories
+require selected `Cond_rewr`, reject `Traverse` and `simpLib`, and exclude
+extension modules identified from the selected source inventory. The fixture,
+validator, audit and protocol tests are bound into the runner's input seals.
+
+| Label | Timed boundary | Consumed per iteration |
+| --- | --- | --- |
+| `conditional_construct` | Retain conditional matcher before solver/stack application | 1 closure |
+| `unconditional_construct` | Retain unconditional matcher at the same boundary | 1 closure |
+| `conditional_reuse` | Apply saved conditional conversion | 1 verified proof + 1 solver callback |
+| `conditional_complete` | Construct and apply conditional matcher | 1 verified proof + 1 solver callback |
+| `ac_construct` | Retain variable-permutation matcher, unbounded | 1 closure |
+| `ac_reuse` | Apply saved permutation matcher in descending AC order | 1 verified proof |
+
+Every construction slot escapes and is applied after each calibration/sample,
+outside timing. The conditional solver checks the instantiated condition and
+stack; proof consumers check the exact conclusion and hypothesis set. The AC
+setup checks that the opposite direction fails. Timer accounting, callback
+deltas, final sink and process/pair auditing follow the traversal conventions.
+`storage=False` deliberately omits the standard simpset storage rows. Retained
+matcher graph/allocation auditing is separate; these batches make no
+allocation or final performance acceptance claim.

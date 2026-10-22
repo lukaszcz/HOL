@@ -1,0 +1,66 @@
+{
+  "structural": "pass",
+  "sources": {
+    "src/simp/src/Cond_rewr.sig": {
+      "sha256": "22f650ea237d74c86fd963edbe5faa6fc6db7ac7dc4a4ec7a8c02fc2a9c26138",
+      "bytes": 2433
+    },
+    "src/simp/src/Cond_rewr.sml": {
+      "sha256": "d4fd3e25f8d9c64bc341b5435a0063c9b1c068dc4c748b0758849fe509a07b70",
+      "bytes": 18852
+    },
+    "src/simp/src/SimpTracking.sig": {
+      "sha256": "cc93f1bd727fb21576d89605dd61bba4a04b7f6e08417a449539a991e3d4fd33",
+      "bytes": 201
+    },
+    "src/simp/src/SimpTracking.sml": {
+      "sha256": "5b49f2568d06e7b692ed72b70cd770460f0c93a9ae21f5e974e37f6429f419e1",
+      "bytes": 1353
+    },
+    "src/simp/src/Cond_rewrExt.sig": {
+      "sha256": "83de20b7a45f07cebe8e9f2faa7256d750ca0645e109f7312358efb88097e872",
+      "bytes": 1535
+    },
+    "src/simp/src/Cond_rewrExt.sml": {
+      "sha256": "2017ea5752f36c3dec9441e9d94b24492e8dc806b1cc681382cd1404ab8e84c5",
+      "bytes": 7585
+    }
+  },
+  "evidence": {
+    "paired": {
+      "original_signature": "pass",
+      "prior_counts": {
+        "PriorOriginal": 73,
+        "PriorTraversal": 47,
+        "PriorExclusion": 929,
+        "PriorLimits": 6
+      }
+    },
+    "native": {
+      "current_native_checks": 642,
+      "runs": 14
+    },
+    "conditional-control": {
+      "receipts": 20,
+      "workloads": [
+        "conditional_construct",
+        "unconditional_construct",
+        "conditional_reuse",
+        "conditional_complete",
+        "ac_construct",
+        "ac_reuse"
+      ]
+    },
+    "conditional-candidate": {
+      "receipts": 20,
+      "workloads": [
+        "conditional_construct",
+        "unconditional_construct",
+        "conditional_reuse",
+        "conditional_complete",
+        "ac_construct",
+        "ac_reuse"
+      ]
+    }
+  }
+}

@@ -882,7 +882,7 @@ in
   val toy_solver =
     {name="excluded middle", solve=excluded_middle_solver}
   val solver_rewr =
-    Cond_rewr.COND_REWR_CONV_WITH_CONTEXT ("solver_rwt",solver_rwt) false
+    Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT ("solver_rwt",solver_rwt) false
   val solver_reducer =
     Traverse.CONTEXT_REDUCER
       {name=SOME "solver test reducer",
@@ -1066,7 +1066,7 @@ in
   val context_rwt =
     ASSUME ``context_p ==> ((context_f : 'a -> 'b) context_x = context_y)``
   val context_rewr =
-    Cond_rewr.COND_REWR_CONV_WITH_CONTEXT ("context_rwt",context_rwt) false
+    Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT ("context_rwt",context_rwt) false
   val context_reducer =
     Traverse.CONTEXT_REDUCER
       {name=SOME "context test reducer",
@@ -1826,7 +1826,7 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
          (SPEC ``surface_solver_x:bool`` boolTheory.EXCLUDED_MIDDLE))
   exception SURFACE_SOLVER_CONTEXT
   val tactic_rewr =
-    Cond_rewr.COND_REWR_CONV_WITH_CONTEXT
+    Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT
       ("surface tactic rewrite",tactic_rwt) false
   val tactic_reducer =
     Traverse.CONTEXT_REDUCER
@@ -5966,7 +5966,7 @@ local
   (* Do not GEN_ALL: guard's free parameter must remain in the hypotheses. *)
   val rule = DISCH p (ADD_ASSUM guard (EQT_INTRO (ASSUME p)))
   val expected = ADD_ASSUM guard (EQT_INTRO (ASSUME target))
-  val runners = Cond_rewr.COND_REWR_CONVS ("paired condition",rule) false
+  val runners = Cond_rewrExt.COND_REWR_CONVS ("paired condition",rule) false
   fun configured depth solver stack = #configured runners
     {solver=solver,stack=stack,cond_depth=depth,
      term_ord=Cond_rewr.ac_term_ord}

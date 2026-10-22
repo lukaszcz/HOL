@@ -32,7 +32,7 @@ struct
       val control = case declared of NONE => UNBOUNDED
         | SOME n => if n < 0 then raise Fail "negative allowance"
                     else BOUNDED (ref n)
-      val runners = Cond_rewr.COND_REWR_CONVS nth (Option.isSome declared)
+      val runners = Cond_rewrExt.COND_REWR_CONVS nth (Option.isSome declared)
     in Entry {control=control,declared=declared,runners=runners} end
   fun run UNBOUNDED conv tm = conv tm
     | run (BOUNDED r) conv tm =

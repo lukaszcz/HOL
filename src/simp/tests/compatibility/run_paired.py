@@ -76,7 +76,7 @@ def parse_events(text):
 def validate(receipt, *, selection, fixture, control, private, repo,
              private_names, flavor, signature, source_hashes,
              expected_observations=None, contract=None,
-             traversal_performance=False):
+             traversal_performance=False, conditional_performance=False):
     """Strict ordered protocol + exit + source/path audit. Never infer success
     from .uo creation, expected exit alone, or a success substring in a log.
     The only allowed error is the explicitly requested old-datatype rejection.
@@ -199,10 +199,23 @@ def validate(receipt, *, selection, fixture, control, private, repo,
               "performance": "Performance.sml"}
     target = contract["target"] + ".sml" if contract else target.get(fixture, "selftest.sml")
     require(str(private / target) in used, "requested fixture never elaborated")
-    require(not traversal_performance or fixture == "performance",
-            "traversal performance requires performance fixture")
-    modules = (("Traverse",) if fixture == "signature" or traversal_performance
+    require(not (traversal_performance and conditional_performance),
+            "mutually exclusive performance suites")
+    require(not (traversal_performance or conditional_performance) or
+            fixture == "performance", "direct suite requires performance fixture")
+    modules = (("Cond_rewr",) if conditional_performance else
+               ("Traverse",) if fixture == "signature" or traversal_performance
                else ("Traverse", "simpLib"))
+    if conditional_performance:
+        # Tie exclusions to selected sources, including future extension
+        # modules. Inspect the full loaded map, not just explicit source uses.
+        forbidden = {n for n in private_names if
+                     n in ("Traverse", "simpLib") or
+                     n.endswith(("Ext", "ExtLib"))}
+        inventory = {Path(raw).stem for raw in used + loaded}
+        inventory.update(Path(info["physical"]).stem for info in paths.values())
+        require(not ((set(preloaded) | inventory) & forbidden),
+                "non-direct module in conditional performance inventory")
     if contract:
         modules = contract["modules"]
         for name in contract["signatures"]:
@@ -278,13 +291,17 @@ def extract(repo, rev, dst, public=False):
     return inventory
 
 
-def install_fixtures(dst, performance=False, traversal_performance=False):
+def install_fixtures(dst, performance=False, traversal_performance=False,
+                     conditional_performance=False):
+    require(not (traversal_performance and conditional_performance),
+            "mutually exclusive performance suites")
     for p in (HERE / "paired").iterdir():
         if p.suffix == ".sml" or p.name == "Holmakefile":
             shutil.copyfile(p, dst / p.name)
     if performance:
-        fixture = ("TraversalPerformance.sml" if traversal_performance
-                   else "Performance.sml")
+        fixture = ("ConditionalPerformance.sml" if conditional_performance else
+                   "TraversalPerformance.sml" if traversal_performance else
+                   "Performance.sml")
         shutil.copyfile(HERE.parent / "performance" / fixture,
                         dst / "Performance.sml")
         with (dst / "Holmakefile").open("a") as out:
@@ -352,16 +369,20 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--timeout", type=int, default=300)
     p.add_argument("--performance-pairs", type=int, default=0)
-    p.add_argument("--traversal-performance", action="store_true",
-                   help="use direct ordinary Traverse workloads (requires pairs)")
+    suites = p.add_mutually_exclusive_group()
+    suites.add_argument("--traversal-performance", action="store_true",
+                        help="direct ordinary Traverse workloads (requires pairs)")
+    suites.add_argument("--conditional-performance", action="store_true",
+                        help="direct ordinary Cond_rewr workloads (requires pairs)")
     p.add_argument("--samples", type=int, default=5)
     p.add_argument("--batch-seconds", type=float, default=0.2)
     args = p.parse_args()
     if (args.performance_pairs < 0 or args.samples < 3 or
             not 0.1 <= args.batch_seconds <= 60):
         p.error("require nonnegative pairs, >=3 samples, 0.1..60 second batches")
-    if args.traversal_performance and not args.performance_pairs:
-        p.error("--traversal-performance requires --performance-pairs > 0")
+    for flag in ("traversal", "conditional"):
+        if getattr(args, flag + "_performance") and not args.performance_pairs:
+            p.error("--" + flag + "-performance requires --performance-pairs > 0")
     if args.staging_only and (not args.staging_contracts or
             args.negative_controls or args.public_contracts or
             args.prior_contracts or args.performance_pairs):
@@ -407,6 +428,9 @@ def main():
         if args.traversal_performance:
             manifest["evidence_id"] = "TASK_11-traversal-performance-v1"
             manifest["performance"]["suite"] = "traversal"
+        if args.conditional_performance:
+            manifest["evidence_id"] = "TASK_12-conditional-performance-v1"
+            manifest["performance"]["suite"] = "conditional"
     try:
         for name in ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
                      "bin/Holmake", "holproject.toml"):
@@ -477,12 +501,18 @@ def main():
                   HERE / "inputs/develop/Traverse.sig",
                   HERE.parent / "performance/review-20261021/abicheck.sml"]
         if performance:
-            inputs += [HERE.parent / "performance" / name for name in
-                       (("TraversalPerformance.sml" if args.traversal_performance
-                         else "Performance.sml"), "performance_schema.py",
-                        "summarize.py", "test_performance.py", "Holmakefile")]
-            if args.traversal_performance:
-                inputs += [HERE.parent / "performance/test_traversal_performance.py"]
+            fixture = ("ConditionalPerformance.sml"
+                       if args.conditional_performance else
+                       "TraversalPerformance.sml" if args.traversal_performance
+                       else "Performance.sml")
+            perfdir = HERE.parent / "performance"
+            inputs += [perfdir / name for name in
+                       (fixture, "performance_schema.py", "summarize.py",
+                        "test_performance.py", "Holmakefile", "audit_evidence.py")]
+            if args.traversal_performance or args.conditional_performance:
+                inputs += [perfdir / "test_traversal_performance.py"]
+            if args.conditional_performance:
+                inputs += [perfdir / "test_conditional_performance.py"]
         if public:
             inputs += [HERE / "public_contracts.py",
                        HERE / "test_public_contracts.py",
@@ -506,8 +536,10 @@ def main():
                 dst.mkdir()
                 rev = git(repo, "rev-parse", ref + "^{commit}").decode().strip()
                 inventory = extract(repo, rev, dst, public=bool(public))
-                install_fixtures(dst, performance=bool(performance),
-                                 traversal_performance=args.traversal_performance)
+                install_fixtures(
+                    dst, performance=bool(performance),
+                    traversal_performance=args.traversal_performance,
+                    conditional_performance=args.conditional_performance)
                 if public:
                     public.install(HERE, dst, refs)
                 if staging:
@@ -699,7 +731,9 @@ def main():
                                 flavor="baseline", signature="pass",
                                 source_hashes=sources,
                                 expected_observations=observations,
-                                traversal_performance=args.traversal_performance)
+                                traversal_performance=args.traversal_performance,
+                                conditional_performance=
+                                args.conditional_performance)
                             receipt["measurements"] = measurements
                             receipt["accepted"] = True
                         except (ValueError, OSError) as e:

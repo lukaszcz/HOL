@@ -1,0 +1,1890 @@
+{
+  "schema_version": 1,
+  "success": true,
+  "scope": "isolated-source retained graph words; not timing, RSS, or cumulative allocation",
+  "stages": [
+    "constructor",
+    "solver_bound",
+    "stack_bound",
+    "proof"
+  ],
+  "selections": {
+    "baseline": {
+      "revision": "cccaa27d7099cbadc886983020cbe745db7793f3",
+      "sources": [
+        {
+          "git_path": "src/simp/src/Cache.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Cache.sig",
+          "git_blob": "fe9d970ac963a44f63e2900e09f46d4ec4850d8e",
+          "sha256": "2a77a34f146badd3a58bac60026e9cbc54e1f79cc022e4bd3e8145fb936cc892",
+          "bytes": 2748
+        },
+        {
+          "git_path": "src/simp/src/Cache.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Cache.sml",
+          "git_blob": "b4c68b797d0495910d2f65e580a4798acfcb2f3f",
+          "sha256": "fab1bb74537cbf94950c2912ecf52825de787cd8c2f95ddad72855a4fffb77fa",
+          "bytes": 23147
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Cond_rewr.sig",
+          "git_blob": "7d79866a5b57a97a2a898d9645b3aa62a6acf43e",
+          "sha256": "40d92a9c084ae43b90276a68c3bae036b295cfd8c71062059ee7342d44e95859",
+          "bytes": 1977
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Cond_rewr.sml",
+          "git_blob": "7df15d67b3c3e427e530639b5d16627346ed41fc",
+          "sha256": "b9b4307779ab9e14f90cbabef048b31d46cff05d45cb3659ba481887a23f895d",
+          "bytes": 19977
+        },
+        {
+          "git_path": "src/simp/src/Opening.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Opening.sig",
+          "git_blob": "e1a0e727dc071eb06884828b98c01cab529e0799",
+          "sha256": "195391d1e406abf82b45a12790be91936bb222dd8b2a87cbc2aa17300837ad6d",
+          "bytes": 3845
+        },
+        {
+          "git_path": "src/simp/src/Opening.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Opening.sml",
+          "git_blob": "a1e21ed229719470eefa85695009fc09fff36bd2",
+          "sha256": "0bca9045e8c824a12d25a253c068b0931b47479468d0b6740644d5e1dfd7d54e",
+          "bytes": 11187
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Satisfy.sig",
+          "git_blob": "26eaf638b891fe053f8b022ba13d721844e43f59",
+          "sha256": "5a235e1a03671fe9da52ded986d6c296234f8f7cd59686ba906b6527dde49054",
+          "bytes": 2078
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Satisfy.sml",
+          "git_blob": "5f6ef5bd585edfadbea87402fa260b69e368ef50",
+          "sha256": "794daf056fe40485da0239d92c37faab82f019b9ea3320a055225dcfc43e7841",
+          "bytes": 5862
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/SatisfySimps.sig",
+          "git_blob": "9b410118c720250bb1ae50f785c5a9e539f7527d",
+          "sha256": "c8a185b80052821facb9d9e76fe0ebd23c035f3f59052b85459cdd3c8a1c66a3",
+          "bytes": 120
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/SatisfySimps.sml",
+          "git_blob": "3ea0e548635f097c56602517d00a97a52f084269",
+          "sha256": "f4a33ecd65a74932db42ac9b28de8cfa1c872b94a9c6ddeb8aa6d7d6dcb8a968",
+          "bytes": 489
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Sequence.sig",
+          "git_blob": "b38b58dc28b41c725cff79a72418dcc269e410bd",
+          "sha256": "c3230ffb1519bccf5853354155dfb829f630ba9b019d4827a328e73585b8adcd",
+          "bytes": 1591
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Sequence.sml",
+          "git_blob": "b58c5005dfacee520e4b3302fa4de8599437aaf3",
+          "sha256": "26ea613a5c1ea4ba58e47ee29dde42cd2b0ec1ccdc450113f5bc4897baa15151",
+          "bytes": 6123
+        },
+        {
+          "git_path": "src/simp/src/Trace.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Trace.sig",
+          "git_blob": "9a07d43a5f9fac5ecf44f6f7e6f1becd9c4c48d0",
+          "sha256": "66764f790df3c5ac671c063bd0ddf8316bd710f6f8e1c71bb2e7520f44baaa90",
+          "bytes": 746
+        },
+        {
+          "git_path": "src/simp/src/Trace.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Trace.sml",
+          "git_blob": "6735cef75f308d1707c3c71373a83ac77f873ac6",
+          "sha256": "b2fad49313ed4dded54eb26f3146a8d69e237c5ac52b6ec08926ec8cde95c321",
+          "bytes": 2881
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Traverse.sig",
+          "git_blob": "620c95336b8446c7633e1fb92c6b94089bb03fea",
+          "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+          "bytes": 5286
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Traverse.sml",
+          "git_blob": "1d0f300cf42123f05a6365ddc2f4f7db210f4032",
+          "sha256": "06138c3ad708bd5993718ff0e7d6d7e9a37d4d5ed9c4e72955e6795aeb201d31",
+          "bytes": 11575
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Travrules.sig",
+          "git_blob": "120557a95f09ce2fea2155200dbbd2935ad0ac91",
+          "sha256": "1bfcce2a17b0289f251d9fad73fa314f371c6e671e7809c35aad3af454c840df",
+          "bytes": 3864
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Travrules.sml",
+          "git_blob": "0e2bd6ec5a3349d5784cf8e24478e5cfbd2b5b97",
+          "sha256": "edd36ae4fcf0bac39a2134549bd0cbd2e38102af1c051d46dea4fa7d0c2fab2f",
+          "bytes": 3754
+        },
+        {
+          "git_path": "src/simp/src/Unify.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Unify.sig",
+          "git_blob": "097e2b8ed58e213c5e38aad6edff50306e43518b",
+          "sha256": "5fc292158f2346b7b9bc0625a87357dab1bf53ca76ff4c09bead79969b2cca0e",
+          "bytes": 750
+        },
+        {
+          "git_path": "src/simp/src/Unify.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Unify.sml",
+          "git_blob": "d15814e01ac9b614a1b0ec6a3cdf97f349ca57f5",
+          "sha256": "5aeef9e9919dd64b1ca43798a2f36ac0f83e1ad9406e299f959a53f948956630",
+          "bytes": 3286
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Unwind.sig",
+          "git_blob": "13b36db8484d81fa625d3d0ae1d2dd8e1fa597ce",
+          "sha256": "3c9848bf5b13ea82b758142b31f57b3c6da375dcf886d109b4330e7468700a0c",
+          "bytes": 2733
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/Unwind.sml",
+          "git_blob": "de74b474731b07f2773d2335810d3353086c0eec",
+          "sha256": "b1e06bcba8d3e630d71980024f7cb22054327e89602d3b9e1d0afb9ac1f8ffd4",
+          "bytes": 19350
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/boolSimps.sig",
+          "git_blob": "0a86c6179a0964a5ea8c83003fa60ffff9d4f86a",
+          "sha256": "8a2eda5d2240ad6a9961cf019bb27532d54b8601ffa85e38c5378c959c5bf4ef",
+          "bytes": 3845
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/boolSimps.sml",
+          "git_blob": "d436206ee6e55a8c2050ce56e09107de737eeebc",
+          "sha256": "e2762de1dd76120dbe1381526e2730144f164d4f5c9e821937a880dc0b04bdd7",
+          "bytes": 15037
+        },
+        {
+          "git_path": "src/simp/src/boolSimpsContextScript.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/boolSimpsContextScript.sml",
+          "git_blob": "29fb0459696b638885e86c54ff78eab2304eccd4",
+          "sha256": "099f899a06531cc7e7c5e57aa4d4accce1753179faec1a12510cffb413f570d0",
+          "bytes": 1192
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/combinSimps.sig",
+          "git_blob": "00ab56a96157bdeafb8dc2984af93c1008c84392",
+          "sha256": "a89092ad9d7c0484ff71c0886883181e0870248b22b20cda9bbedb6da8c2ec3b",
+          "bytes": 68
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/combinSimps.sml",
+          "git_blob": "5074aae15f0ccd84b478e0502c85c0f1593ffd4d",
+          "sha256": "1ea352acf191d5143593b5df093eb39a1431bf031c3b1ea655722a881c1c5a9d",
+          "bytes": 461
+        },
+        {
+          "git_path": "src/simp/src/congLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/congLib.sig",
+          "git_blob": "8deb93c0649f51ab8e96e0a51642466acf0b88f8",
+          "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+          "bytes": 5909
+        },
+        {
+          "git_path": "src/simp/src/congLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/congLib.sml",
+          "git_blob": "e357326f63ee7201d3dac57f4153efe9c2bfba68",
+          "sha256": "93ac1108d48c01830f076071b60e221bc2af8eac5e2a19dcf439079be7290582",
+          "bytes": 10354
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/BloomApprox.sig",
+          "git_blob": "148e8609bfed5259608a13ac3ec224a1926338a4",
+          "sha256": "3ddae79c1edac24dbf3ca28bd2d1a60cb117c865da5fc6d3bb52b5a98ca8f98d",
+          "bytes": 532
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/BloomApprox.sml",
+          "git_blob": "c3f49b438b6e84eff48ff7ea861e868c289b751e",
+          "sha256": "8cbc34d0ebe74442c8366e9ecaa0897c43c5f4db113e17d3a5bed5924654e7f4",
+          "bytes": 1537
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/pureSimps.sig",
+          "git_blob": "47d573b0a43dcd204dba59fb283135775d2e5128",
+          "sha256": "6b54e2e5dea6922d38806949006f70159dc3e0c193f1284e51398b43d2b8377a",
+          "bytes": 95
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/pureSimps.sml",
+          "git_blob": "6218f45c8cbd7cadc089077d618b3c84abf889fb",
+          "sha256": "89b7b98b8e9d9fd616dcd9669524c168cf6714529924aa78d06ebd9777dfcf71",
+          "bytes": 279
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/simpLib.sig",
+          "git_blob": "26558fd43811a84f1b98b625230aae3fef3d97ad",
+          "sha256": "d1979668da105341e6e97e900848a2d382eaac3a50650c89bbdeae8ee3689666",
+          "bytes": 10369
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/baseline/simpLib.sml",
+          "git_blob": "02914a4385d1ab8eedbe84ae31cbb080ebd80f9f",
+          "sha256": "ee324439ac66cd14858d6ea5dc45a867d44fa6762298f1cf7df45b13aed6c3cd",
+          "bytes": 44419
+        }
+      ],
+      "launcher": "#!/bin/sh\nset -e\n/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol --gcthreads=1 run --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0  Task12AllocationRunner\nexit 0\n",
+      "full_log": {
+        "name": "baseline-assembly.log.gz",
+        "sha256": "57650e5cee555f9301d49a9c07b512f371e6587c8367195e564bc4789fc9639c",
+        "bytes": 94912
+      },
+      "graphs": {
+        "unconditional": {
+          "rows": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              23,
+              13,
+              14,
+              3
+            ],
+            [
+              8,
+              184,
+              104,
+              112,
+              24
+            ],
+            [
+              64,
+              1472,
+              832,
+              896,
+              192
+            ],
+            [
+              256,
+              5888,
+              3328,
+              3584,
+              768
+            ],
+            [
+              1024,
+              23552,
+              13312,
+              14336,
+              3072
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ]
+          ]
+        },
+        "conditional": {
+          "rows": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              23,
+              13,
+              14,
+              32
+            ],
+            [
+              8,
+              184,
+              104,
+              112,
+              256
+            ],
+            [
+              64,
+              1472,
+              832,
+              896,
+              2048
+            ],
+            [
+              256,
+              5888,
+              3328,
+              3584,
+              8192
+            ],
+            [
+              1024,
+              23552,
+              13312,
+              14336,
+              32768
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              23.0,
+              13.0,
+              14.0,
+              32.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              32.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              32.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              32.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              32.0
+            ]
+          ]
+        },
+        "ac": {
+          "rows": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              23,
+              13,
+              14,
+              3
+            ],
+            [
+              8,
+              184,
+              104,
+              112,
+              24
+            ],
+            [
+              64,
+              1472,
+              832,
+              896,
+              192
+            ],
+            [
+              256,
+              5888,
+              3328,
+              3584,
+              768
+            ],
+            [
+              1024,
+              23552,
+              13312,
+              14336,
+              3072
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ],
+            [
+              23.0,
+              13.0,
+              14.0,
+              3.0
+            ]
+          ]
+        },
+        "cells": {
+          "rows": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              8,
+              40
+            ],
+            [
+              64,
+              320
+            ],
+            [
+              256,
+              1280
+            ],
+            [
+              1024,
+              5120
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              5.0
+            ],
+            [
+              5.0
+            ],
+            [
+              5.0
+            ],
+            [
+              5.0
+            ],
+            [
+              5.0
+            ]
+          ]
+        }
+      },
+      "assembly": {
+        "Cond_rewr.COND_REWR_CONV(3)(1)(1)(1)solver'(1)": {
+          "listing_words": 156,
+          "encoding_sha256": "f21dd9c8b5a53c6f70e18b43c75bce3d20a19285bc39f4fefb17933c4c314869",
+          "reservation_sites": [
+            {
+              "offset": "000028",
+              "bytes": 24
+            },
+            {
+              "offset": "000058",
+              "bytes": 24
+            },
+            {
+              "offset": "0000E0",
+              "bytes": 24
+            },
+            {
+              "offset": "000110",
+              "bytes": 24
+            },
+            {
+              "offset": "00018C",
+              "bytes": 24
+            },
+            {
+              "offset": "0001C0",
+              "bytes": 24
+            },
+            {
+              "offset": "000218",
+              "bytes": 40
+            }
+          ],
+          "indirect_calls": 13
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)(1)(1)": {
+          "listing_words": 842,
+          "encoding_sha256": "8e209f091c89610d8fd12ead400460e01f4e80301bb7de4eda3a3d07db8392f9",
+          "reservation_sites": [
+            {
+              "offset": "000098",
+              "bytes": 24
+            },
+            {
+              "offset": "0000E8",
+              "bytes": 24
+            },
+            {
+              "offset": "000134",
+              "bytes": 24
+            },
+            {
+              "offset": "000168",
+              "bytes": 24
+            },
+            {
+              "offset": "00019C",
+              "bytes": 40
+            },
+            {
+              "offset": "00031C",
+              "bytes": 32
+            },
+            {
+              "offset": "000360",
+              "bytes": 24
+            },
+            {
+              "offset": "000404",
+              "bytes": 32
+            },
+            {
+              "offset": "000448",
+              "bytes": 24
+            },
+            {
+              "offset": "0004D0",
+              "bytes": 40
+            },
+            {
+              "offset": "000508",
+              "bytes": 24
+            },
+            {
+              "offset": "00068C",
+              "bytes": 32
+            },
+            {
+              "offset": "000770",
+              "bytes": 24
+            },
+            {
+              "offset": "0007A4",
+              "bytes": 24
+            },
+            {
+              "offset": "0007E0",
+              "bytes": 32
+            },
+            {
+              "offset": "000814",
+              "bytes": 32
+            },
+            {
+              "offset": "000840",
+              "bytes": 32
+            },
+            {
+              "offset": "0008DC",
+              "bytes": 40
+            },
+            {
+              "offset": "000914",
+              "bytes": 24
+            },
+            {
+              "offset": "0009F8",
+              "bytes": 16
+            },
+            {
+              "offset": "000A4C",
+              "bytes": 24
+            },
+            {
+              "offset": "000A74",
+              "bytes": 16
+            },
+            {
+              "offset": "000AC8",
+              "bytes": 40
+            },
+            {
+              "offset": "000B04",
+              "bytes": 24
+            },
+            {
+              "offset": "000BA4",
+              "bytes": 40
+            },
+            {
+              "offset": "000BF0",
+              "bytes": 40
+            },
+            {
+              "offset": "000C28",
+              "bytes": 16
+            },
+            {
+              "offset": "000C50",
+              "bytes": 24
+            }
+          ],
+          "indirect_calls": 64
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)(1)": {
+          "listing_words": 42,
+          "encoding_sha256": "59651d1805dc5a731e32caf5d0b0818745d55d459f4e6d018967ee0f006e4d7e",
+          "reservation_sites": [
+            {
+              "offset": "000020",
+              "bytes": 88
+            }
+          ],
+          "indirect_calls": 2
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)": {
+          "listing_words": 40,
+          "encoding_sha256": "0d024d5c13e73bfc5ee24a7592171834943e7797f9ce0ba49a7777a97a06b7ab",
+          "reservation_sites": [
+            {
+              "offset": "000020",
+              "bytes": 80
+            }
+          ],
+          "indirect_calls": 2
+        },
+        "Cond_rewr.COND_REWR_CONV(3)": {
+          "listing_words": 246,
+          "encoding_sha256": "7ba2637e0b9e6e6269b24027ac503c37a1804c2e111ec15ece78fc000c864ca3",
+          "reservation_sites": [
+            {
+              "offset": "000094",
+              "bytes": 24
+            },
+            {
+              "offset": "0000E0",
+              "bytes": 24
+            },
+            {
+              "offset": "000180",
+              "bytes": 72
+            },
+            {
+              "offset": "000278",
+              "bytes": 24
+            },
+            {
+              "offset": "0002C8",
+              "bytes": 24
+            },
+            {
+              "offset": "000314",
+              "bytes": 24
+            },
+            {
+              "offset": "000348",
+              "bytes": 24
+            },
+            {
+              "offset": "00037C",
+              "bytes": 40
+            }
+          ],
+          "indirect_calls": 18
+        },
+        "Cond_rewr.COND_REWR_CONV(1)(1)": {
+          "listing_words": 16,
+          "encoding_sha256": "0b088bdf9298d5e822f05b759c177f171184a22c3394632a65e0c444c63b03da",
+          "reservation_sites": [],
+          "indirect_calls": 1
+        },
+        "Cond_rewr.COND_REWR_CONV(1)": {
+          "listing_words": 28,
+          "encoding_sha256": "39de3d9090faea8a8bf5deaeb304065f89eb364e1c44870007c4380562dac21d",
+          "reservation_sites": [
+            {
+              "offset": "000020",
+              "bytes": 32
+            }
+          ],
+          "indirect_calls": 2
+        }
+      }
+    },
+    "candidate": {
+      "revision": "06927a63d9796d33d6cc98f936c2cab27f3b66a5",
+      "sources": [
+        {
+          "git_path": "src/simp/src/Cache.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Cache.sig",
+          "git_blob": "fe9d970ac963a44f63e2900e09f46d4ec4850d8e",
+          "sha256": "2a77a34f146badd3a58bac60026e9cbc54e1f79cc022e4bd3e8145fb936cc892",
+          "bytes": 2748
+        },
+        {
+          "git_path": "src/simp/src/Cache.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Cache.sml",
+          "git_blob": "b4c68b797d0495910d2f65e580a4798acfcb2f3f",
+          "sha256": "fab1bb74537cbf94950c2912ecf52825de787cd8c2f95ddad72855a4fffb77fa",
+          "bytes": 23147
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Cond_rewr.sig",
+          "git_blob": "ece2594285431754f43b3a293a6c0dd24dd70fbd",
+          "sha256": "22f650ea237d74c86fd963edbe5faa6fc6db7ac7dc4a4ec7a8c02fc2a9c26138",
+          "bytes": 2433
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewr.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Cond_rewr.sml",
+          "git_blob": "a67c08102a6467765eba4febfb89c2e0c032b821",
+          "sha256": "d4fd3e25f8d9c64bc341b5435a0063c9b1c068dc4c748b0758849fe509a07b70",
+          "bytes": 18852
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewrExt.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Cond_rewrExt.sig",
+          "git_blob": "b6edfbbd5d71c63e0ac2aae68907d1b3364652f1",
+          "sha256": "83de20b7a45f07cebe8e9f2faa7256d750ca0645e109f7312358efb88097e872",
+          "bytes": 1535
+        },
+        {
+          "git_path": "src/simp/src/Cond_rewrExt.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Cond_rewrExt.sml",
+          "git_blob": "ad528933a44a758bac6f67c2fe5307647031299f",
+          "sha256": "2017ea5752f36c3dec9441e9d94b24492e8dc806b1cc681382cd1404ab8e84c5",
+          "bytes": 7585
+        },
+        {
+          "git_path": "src/simp/src/Opening.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Opening.sig",
+          "git_blob": "951c5471959c7c9f4301596d485aec12c3d9d0fe",
+          "sha256": "4208a49bd1fe3b13325e421713130c5f9ba6d508dafb6bebcdad83a8811a3891",
+          "bytes": 3923
+        },
+        {
+          "git_path": "src/simp/src/Opening.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Opening.sml",
+          "git_blob": "82bbcd78aff77cefe3bacf3846069b5bce23e687",
+          "sha256": "79f0a21c775bcb5f3dbc8412f9a586f001d2cbe8ea2be701c5ca0d326e758df4",
+          "bytes": 15715
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Satisfy.sig",
+          "git_blob": "26eaf638b891fe053f8b022ba13d721844e43f59",
+          "sha256": "5a235e1a03671fe9da52ded986d6c296234f8f7cd59686ba906b6527dde49054",
+          "bytes": 2078
+        },
+        {
+          "git_path": "src/simp/src/Satisfy.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Satisfy.sml",
+          "git_blob": "5f6ef5bd585edfadbea87402fa260b69e368ef50",
+          "sha256": "794daf056fe40485da0239d92c37faab82f019b9ea3320a055225dcfc43e7841",
+          "bytes": 5862
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/SatisfySimps.sig",
+          "git_blob": "9b410118c720250bb1ae50f785c5a9e539f7527d",
+          "sha256": "c8a185b80052821facb9d9e76fe0ebd23c035f3f59052b85459cdd3c8a1c66a3",
+          "bytes": 120
+        },
+        {
+          "git_path": "src/simp/src/SatisfySimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/SatisfySimps.sml",
+          "git_blob": "3ea0e548635f097c56602517d00a97a52f084269",
+          "sha256": "f4a33ecd65a74932db42ac9b28de8cfa1c872b94a9c6ddeb8aa6d7d6dcb8a968",
+          "bytes": 489
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Sequence.sig",
+          "git_blob": "b38b58dc28b41c725cff79a72418dcc269e410bd",
+          "sha256": "c3230ffb1519bccf5853354155dfb829f630ba9b019d4827a328e73585b8adcd",
+          "bytes": 1591
+        },
+        {
+          "git_path": "src/simp/src/Sequence.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Sequence.sml",
+          "git_blob": "b58c5005dfacee520e4b3302fa4de8599437aaf3",
+          "sha256": "26ea613a5c1ea4ba58e47ee29dde42cd2b0ec1ccdc450113f5bc4897baa15151",
+          "bytes": 6123
+        },
+        {
+          "git_path": "src/simp/src/SimpTracking.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/SimpTracking.sig",
+          "git_blob": "6aacb35d97fb7190e489cb2cb319fe6ea01ce2bb",
+          "sha256": "cc93f1bd727fb21576d89605dd61bba4a04b7f6e08417a449539a991e3d4fd33",
+          "bytes": 201
+        },
+        {
+          "git_path": "src/simp/src/SimpTracking.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/SimpTracking.sml",
+          "git_blob": "534f1637f1130bac873c5ffbb0466d60355cc280",
+          "sha256": "5b49f2568d06e7b692ed72b70cd770460f0c93a9ae21f5e974e37f6429f419e1",
+          "bytes": 1353
+        },
+        {
+          "git_path": "src/simp/src/SplitData.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/SplitData.sig",
+          "git_blob": "d725f21324e088d5a261beb825c0b89812785340",
+          "sha256": "174ab18e90f0d1ab8e9f88c05bfa0a7e036075a392cc6fd330259eca4d3c4220",
+          "bytes": 472
+        },
+        {
+          "git_path": "src/simp/src/SplitData.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/SplitData.sml",
+          "git_blob": "c68df6e03b18723cd86a98122d951266a5a82851",
+          "sha256": "bfc574c5789a3ede0d9860a8a139346d6c5891071f5e6af0ebb3f81e6704ddce",
+          "bytes": 8399
+        },
+        {
+          "git_path": "src/simp/src/Trace.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Trace.sig",
+          "git_blob": "9a07d43a5f9fac5ecf44f6f7e6f1becd9c4c48d0",
+          "sha256": "66764f790df3c5ac671c063bd0ddf8316bd710f6f8e1c71bb2e7520f44baaa90",
+          "bytes": 746
+        },
+        {
+          "git_path": "src/simp/src/Trace.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Trace.sml",
+          "git_blob": "6735cef75f308d1707c3c71373a83ac77f873ac6",
+          "sha256": "b2fad49313ed4dded54eb26f3146a8d69e237c5ac52b6ec08926ec8cde95c321",
+          "bytes": 2881
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Traverse.sig",
+          "git_blob": "620c95336b8446c7633e1fb92c6b94089bb03fea",
+          "sha256": "f7e2373e9c9de0aa227b3f1bc9a9d388c64a37aad84048e78051ddbfe7471200",
+          "bytes": 5286
+        },
+        {
+          "git_path": "src/simp/src/Traverse.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Traverse.sml",
+          "git_blob": "1d0f300cf42123f05a6365ddc2f4f7db210f4032",
+          "sha256": "06138c3ad708bd5993718ff0e7d6d7e9a37d4d5ed9c4e72955e6795aeb201d31",
+          "bytes": 11575
+        },
+        {
+          "git_path": "src/simp/src/TraverseExt.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/TraverseExt.sig",
+          "git_blob": "a3a8eeaeec774511d3b47aa6d8946290d81afd73",
+          "sha256": "c29c835ed43a62a9c3c00675e8617baa9d6fb08b38a1f25e380d9fcd447a7b4c",
+          "bytes": 4171
+        },
+        {
+          "git_path": "src/simp/src/TraverseExt.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/TraverseExt.sml",
+          "git_blob": "4e96f76e27bbdd5b65a38ffa1507d211b517b15c",
+          "sha256": "bc1f8fae57931d1d68540065724b456d07c4c1a0ab147b8734a9ec9050e0e2c5",
+          "bytes": 22958
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Travrules.sig",
+          "git_blob": "610446feb4f7eba934088543529de08c55c6c45f",
+          "sha256": "f2ec7bb21a2015abade5b6a40fb6ddf1b577e4b5ff7ab76004a553a9a46ec31c",
+          "bytes": 3933
+        },
+        {
+          "git_path": "src/simp/src/Travrules.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Travrules.sml",
+          "git_blob": "dc7c8dde0cc0eca38be9554197e7821704216db3",
+          "sha256": "cadf58241d8b67bdd048ef0663b7dee47fc1f6d60b5d48fa595c8528f7acd6c0",
+          "bytes": 4169
+        },
+        {
+          "git_path": "src/simp/src/Unify.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Unify.sig",
+          "git_blob": "097e2b8ed58e213c5e38aad6edff50306e43518b",
+          "sha256": "5fc292158f2346b7b9bc0625a87357dab1bf53ca76ff4c09bead79969b2cca0e",
+          "bytes": 750
+        },
+        {
+          "git_path": "src/simp/src/Unify.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Unify.sml",
+          "git_blob": "d15814e01ac9b614a1b0ec6a3cdf97f349ca57f5",
+          "sha256": "5aeef9e9919dd64b1ca43798a2f36ac0f83e1ad9406e299f959a53f948956630",
+          "bytes": 3286
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Unwind.sig",
+          "git_blob": "13b36db8484d81fa625d3d0ae1d2dd8e1fa597ce",
+          "sha256": "3c9848bf5b13ea82b758142b31f57b3c6da375dcf886d109b4330e7468700a0c",
+          "bytes": 2733
+        },
+        {
+          "git_path": "src/simp/src/Unwind.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/Unwind.sml",
+          "git_blob": "de74b474731b07f2773d2335810d3353086c0eec",
+          "sha256": "b1e06bcba8d3e630d71980024f7cb22054327e89602d3b9e1d0afb9ac1f8ffd4",
+          "bytes": 19350
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/boolSimps.sig",
+          "git_blob": "0a86c6179a0964a5ea8c83003fa60ffff9d4f86a",
+          "sha256": "8a2eda5d2240ad6a9961cf019bb27532d54b8601ffa85e38c5378c959c5bf4ef",
+          "bytes": 3845
+        },
+        {
+          "git_path": "src/simp/src/boolSimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/boolSimps.sml",
+          "git_blob": "d436206ee6e55a8c2050ce56e09107de737eeebc",
+          "sha256": "e2762de1dd76120dbe1381526e2730144f164d4f5c9e821937a880dc0b04bdd7",
+          "bytes": 15037
+        },
+        {
+          "git_path": "src/simp/src/boolSimpsContextScript.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/boolSimpsContextScript.sml",
+          "git_blob": "29fb0459696b638885e86c54ff78eab2304eccd4",
+          "sha256": "099f899a06531cc7e7c5e57aa4d4accce1753179faec1a12510cffb413f570d0",
+          "bytes": 1192
+        },
+        {
+          "git_path": "src/simp/src/boolSimpsExt.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/boolSimpsExt.sig",
+          "git_blob": "0db62951d57cf7bdfdcf9215a65c6dfeabfa1fbf",
+          "sha256": "0b7a5c5b657d43b27f6ad40d124515bf20cd8841b75e4d4bbc0182759517b1ec",
+          "bytes": 3979
+        },
+        {
+          "git_path": "src/simp/src/boolSimpsExt.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/boolSimpsExt.sml",
+          "git_blob": "2a2e46303bc3053eb5431424e1c63d9d01683d69",
+          "sha256": "aa6c046f8f3a98b4baf40945e62033a5e1ef49652e997b5c6bba4791d91b9d8f",
+          "bytes": 15185
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/combinSimps.sig",
+          "git_blob": "00ab56a96157bdeafb8dc2984af93c1008c84392",
+          "sha256": "a89092ad9d7c0484ff71c0886883181e0870248b22b20cda9bbedb6da8c2ec3b",
+          "bytes": 68
+        },
+        {
+          "git_path": "src/simp/src/combinSimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/combinSimps.sml",
+          "git_blob": "5074aae15f0ccd84b478e0502c85c0f1593ffd4d",
+          "sha256": "1ea352acf191d5143593b5df093eb39a1431bf031c3b1ea655722a881c1c5a9d",
+          "bytes": 461
+        },
+        {
+          "git_path": "src/simp/src/congExtLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/congExtLib.sig",
+          "git_blob": "8566066a57cecff809d1311f4c5c440bfe89d3d3",
+          "sha256": "ebffe6ba29b6db0ca905e4cb7c495fd316006d79418995a2c7528f402046fb4c",
+          "bytes": 6003
+        },
+        {
+          "git_path": "src/simp/src/congExtLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/congExtLib.sml",
+          "git_blob": "327deb683bbeec8cb97872d89b9ff6bec15aba4e",
+          "sha256": "ea3abe2fccf72f86100cce6a118ed6a87610aa19e3315696dd3a33a5c248707d",
+          "bytes": 11507
+        },
+        {
+          "git_path": "src/simp/src/congLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/congLib.sig",
+          "git_blob": "8deb93c0649f51ab8e96e0a51642466acf0b88f8",
+          "sha256": "8ac6d20d5c7c3e91fc297da4db1e5cd49a998b22195e237d499e5912907046de",
+          "bytes": 5909
+        },
+        {
+          "git_path": "src/simp/src/congLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/congLib.sml",
+          "git_blob": "e357326f63ee7201d3dac57f4153efe9c2bfba68",
+          "sha256": "93ac1108d48c01830f076071b60e221bc2af8eac5e2a19dcf439079be7290582",
+          "bytes": 10354
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/BloomApprox.sig",
+          "git_blob": "148e8609bfed5259608a13ac3ec224a1926338a4",
+          "sha256": "3ddae79c1edac24dbf3ca28bd2d1a60cb117c865da5fc6d3bb52b5a98ca8f98d",
+          "bytes": 532
+        },
+        {
+          "git_path": "src/simp/src/poly/BloomApprox.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/BloomApprox.sml",
+          "git_blob": "c3f49b438b6e84eff48ff7ea861e868c289b751e",
+          "sha256": "8cbc34d0ebe74442c8366e9ecaa0897c43c5f4db113e17d3a5bed5924654e7f4",
+          "bytes": 1537
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/pureSimps.sig",
+          "git_blob": "47d573b0a43dcd204dba59fb283135775d2e5128",
+          "sha256": "6b54e2e5dea6922d38806949006f70159dc3e0c193f1284e51398b43d2b8377a",
+          "bytes": 95
+        },
+        {
+          "git_path": "src/simp/src/pureSimps.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/pureSimps.sml",
+          "git_blob": "6218f45c8cbd7cadc089077d618b3c84abf889fb",
+          "sha256": "89b7b98b8e9d9fd616dcd9669524c168cf6714529924aa78d06ebd9777dfcf71",
+          "bytes": 279
+        },
+        {
+          "git_path": "src/simp/src/pureSimpsExt.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/pureSimpsExt.sig",
+          "git_blob": "75861c2c8a580613d60f2d123aa89953bb49426f",
+          "sha256": "dac1c771b39fdf651c3b39def12ef0275c8745d5a087b8fac4d6270113a1edb2",
+          "bytes": 180
+        },
+        {
+          "git_path": "src/simp/src/pureSimpsExt.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/pureSimpsExt.sml",
+          "git_blob": "2f149418d9b256dc30fffc95abe24c6b47025277",
+          "sha256": "8fce1d70905ec894dd6da85933033db4386bbe819c3e5d10ccaeceec2a170837",
+          "bytes": 359
+        },
+        {
+          "git_path": "src/simp/src/simpExtLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpExtLib.sig",
+          "git_blob": "54185375a71e2e8c09fd0cf5438027888c56f6b9",
+          "sha256": "1770e6496eb2c81bcc191572b032554e3051b5d59d35b937aad7a12e68bcdcaf",
+          "bytes": 20398
+        },
+        {
+          "git_path": "src/simp/src/simpExtLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpExtLib.sml",
+          "git_blob": "1f824c40eb64c10a19176f6893ee977b81b69d5a",
+          "sha256": "339eb1001bf4f4f6d97b7a5a54c29ff968585642202b8fa55bc067f8d31f86be",
+          "bytes": 129118
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpLib.sig",
+          "git_blob": "6185d2ad285a15b2b59a5e1a261e2c1741be5e56",
+          "sha256": "2e382cb8ff5cdc9e0b766dedaaef052d7b76c1d99996ac5c2bbbb4d955311b0e",
+          "bytes": 21038
+        },
+        {
+          "git_path": "src/simp/src/simpLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpLib.sml",
+          "git_blob": "6bc21180748ff5336e48472b29dc4c39f9641a38",
+          "sha256": "a16f42a19a095ab0906c44bc180769863025fd8a66c8c16ebe5085d23364d9cd",
+          "bytes": 130123
+        },
+        {
+          "git_path": "src/simp/src/simpMarkerLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpMarkerLib.sig",
+          "git_blob": "b1fcb7e33efe651cb4c7053212c1182950d4cc3a",
+          "sha256": "0b7d01e91408d3cd7edceb648f0d7c7fa5988f5bfce567be92194b3f4b9e49dc",
+          "bytes": 742
+        },
+        {
+          "git_path": "src/simp/src/simpMarkerLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpMarkerLib.sml",
+          "git_blob": "0eba8646adcbab99729b01be543e4d26b06c7a83",
+          "sha256": "a0ac2cce6c640b2ae3833e33bc08ae9978e99a4bb05bc5b8924937085743f152",
+          "bytes": 5442
+        },
+        {
+          "git_path": "src/simp/src/simpMarkerScript.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/simpMarkerScript.sml",
+          "git_blob": "eb14813d7078e882ae532ae02ee790cbb1d90eef",
+          "sha256": "3826b44efa5c741c2f0b5e950b8d98794f4e9826fbe4c15dc0b0ad6b803070c3",
+          "bytes": 491
+        },
+        {
+          "git_path": "src/simp/src/splitLib.sig",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/splitLib.sig",
+          "git_blob": "aeab77130ba827738fa48d34d45f984897d4354b",
+          "sha256": "a503ebcf09002d965094f27fa100a6ce07e4ddf47a33a954b575234b1586bcff",
+          "bytes": 3623
+        },
+        {
+          "git_path": "src/simp/src/splitLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/splitLib.sml",
+          "git_blob": "caaf1bd301bb40700cb4fd6bf2ca5664e812255b",
+          "sha256": "18d2c693c60fff2ee4ca56f66c68ccc96bb26564eb3aeb42f3d6dc320d5e1436",
+          "bytes": 21523
+        },
+        {
+          "git_path": "src/simp/src/splitPersistLib.sml",
+          "private_path": "/tmp/claude/task12-allocation-awm0tqjt/candidate/splitPersistLib.sml",
+          "git_blob": "010eb7ed941a04492fb2728ddf1b6906eede0654",
+          "sha256": "9ceafc14560a5130b5c4cb06d5f6ad9e72069f2ced102fd14f66031c52f22d7f",
+          "bytes": 304
+        }
+      ],
+      "launcher": "#!/bin/sh\nset -e\n/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol --gcthreads=1 run --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0  Task12AllocationRunner\nexit 0\n",
+      "full_log": {
+        "name": "candidate-assembly.log.gz",
+        "sha256": "36c6bb7698ad61c396e98a591c48fba1c0a132e290183a04ab6ef053453eb424",
+        "bytes": 96675
+      },
+      "graphs": {
+        "unconditional": {
+          "rows": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              22,
+              12,
+              13,
+              3
+            ],
+            [
+              8,
+              176,
+              96,
+              104,
+              24
+            ],
+            [
+              64,
+              1408,
+              768,
+              832,
+              192
+            ],
+            [
+              256,
+              5632,
+              3072,
+              3328,
+              768
+            ],
+            [
+              1024,
+              22528,
+              12288,
+              13312,
+              3072
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ]
+          ]
+        },
+        "conditional": {
+          "rows": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              22,
+              12,
+              13,
+              32
+            ],
+            [
+              8,
+              176,
+              96,
+              104,
+              256
+            ],
+            [
+              64,
+              1408,
+              768,
+              832,
+              2048
+            ],
+            [
+              256,
+              5632,
+              3072,
+              3328,
+              8192
+            ],
+            [
+              1024,
+              22528,
+              12288,
+              13312,
+              32768
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              22.0,
+              12.0,
+              13.0,
+              32.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              32.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              32.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              32.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              32.0
+            ]
+          ]
+        },
+        "ac": {
+          "rows": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              22,
+              12,
+              13,
+              3
+            ],
+            [
+              8,
+              176,
+              96,
+              104,
+              24
+            ],
+            [
+              64,
+              1408,
+              768,
+              832,
+              192
+            ],
+            [
+              256,
+              5632,
+              3072,
+              3328,
+              768
+            ],
+            [
+              1024,
+              22528,
+              12288,
+              13312,
+              3072
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ],
+            [
+              22.0,
+              12.0,
+              13.0,
+              3.0
+            ]
+          ]
+        },
+        "cells": {
+          "rows": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              8,
+              40
+            ],
+            [
+              64,
+              320
+            ],
+            [
+              256,
+              1280
+            ],
+            [
+              1024,
+              5120
+            ]
+          ],
+          "adjacent_words_per_rule": [
+            [
+              5.0
+            ],
+            [
+              5.0
+            ],
+            [
+              5.0
+            ],
+            [
+              5.0
+            ],
+            [
+              5.0
+            ]
+          ]
+        }
+      },
+      "assembly": {
+        "SimpTracking.note_rewrite(1)": {
+          "listing_words": 170,
+          "encoding_sha256": "a1052155a3a2dfc58fcc068fdf72fd10552ff86c31bf2ff17dc79248e2f4fa91",
+          "reservation_sites": [
+            {
+              "offset": "000080",
+              "bytes": 16
+            },
+            {
+              "offset": "0000E8",
+              "bytes": 24
+            },
+            {
+              "offset": "000118",
+              "bytes": 16
+            },
+            {
+              "offset": "0001A4",
+              "bytes": 40
+            },
+            {
+              "offset": "0001F4",
+              "bytes": 40
+            },
+            {
+              "offset": "000234",
+              "bytes": 16
+            },
+            {
+              "offset": "000264",
+              "bytes": 24
+            }
+          ],
+          "indirect_calls": 10
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)(1)(1)solver'(1)": {
+          "listing_words": 156,
+          "encoding_sha256": "a38f115393463731920bd2dfcef62af2ef9c7d60c573a5bd37634ea3539c16f2",
+          "reservation_sites": [
+            {
+              "offset": "000028",
+              "bytes": 24
+            },
+            {
+              "offset": "000058",
+              "bytes": 24
+            },
+            {
+              "offset": "0000E0",
+              "bytes": 24
+            },
+            {
+              "offset": "000110",
+              "bytes": 24
+            },
+            {
+              "offset": "00018C",
+              "bytes": 24
+            },
+            {
+              "offset": "0001C0",
+              "bytes": 24
+            },
+            {
+              "offset": "000218",
+              "bytes": 40
+            }
+          ],
+          "indirect_calls": 13
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)(1)(1)": {
+          "listing_words": 846,
+          "encoding_sha256": "c9c9db3da2b8683cf17edf412411c7814d7aedef867b15a06fd105916a5f8896",
+          "reservation_sites": [
+            {
+              "offset": "000098",
+              "bytes": 24
+            },
+            {
+              "offset": "0000E8",
+              "bytes": 24
+            },
+            {
+              "offset": "000134",
+              "bytes": 24
+            },
+            {
+              "offset": "000168",
+              "bytes": 24
+            },
+            {
+              "offset": "00019C",
+              "bytes": 40
+            },
+            {
+              "offset": "00031C",
+              "bytes": 32
+            },
+            {
+              "offset": "000360",
+              "bytes": 24
+            },
+            {
+              "offset": "000404",
+              "bytes": 32
+            },
+            {
+              "offset": "000448",
+              "bytes": 24
+            },
+            {
+              "offset": "0004D0",
+              "bytes": 40
+            },
+            {
+              "offset": "000508",
+              "bytes": 24
+            },
+            {
+              "offset": "00068C",
+              "bytes": 32
+            },
+            {
+              "offset": "000770",
+              "bytes": 24
+            },
+            {
+              "offset": "0007A4",
+              "bytes": 24
+            },
+            {
+              "offset": "0007E0",
+              "bytes": 32
+            },
+            {
+              "offset": "000814",
+              "bytes": 32
+            },
+            {
+              "offset": "000840",
+              "bytes": 32
+            },
+            {
+              "offset": "0008DC",
+              "bytes": 40
+            },
+            {
+              "offset": "000914",
+              "bytes": 24
+            },
+            {
+              "offset": "0009FC",
+              "bytes": 16
+            },
+            {
+              "offset": "000A50",
+              "bytes": 24
+            },
+            {
+              "offset": "000A78",
+              "bytes": 16
+            },
+            {
+              "offset": "000ACC",
+              "bytes": 40
+            },
+            {
+              "offset": "000B08",
+              "bytes": 24
+            },
+            {
+              "offset": "000BA4",
+              "bytes": 40
+            },
+            {
+              "offset": "000BF4",
+              "bytes": 40
+            },
+            {
+              "offset": "000C38",
+              "bytes": 16
+            },
+            {
+              "offset": "000C60",
+              "bytes": 24
+            }
+          ],
+          "indirect_calls": 64
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)(1)": {
+          "listing_words": 40,
+          "encoding_sha256": "f31616e790c9e1309c3f76df5fa2d861be6c70b9d44612079e4b449ad2ace494",
+          "reservation_sites": [
+            {
+              "offset": "000020",
+              "bytes": 80
+            }
+          ],
+          "indirect_calls": 2
+        },
+        "Cond_rewr.COND_REWR_CONV(3)(1)": {
+          "listing_words": 38,
+          "encoding_sha256": "bd9c42dc15728e5b82ecde78c0c350c51d9cf5793a83c5416ad3173392048b64",
+          "reservation_sites": [
+            {
+              "offset": "000020",
+              "bytes": 72
+            }
+          ],
+          "indirect_calls": 2
+        },
+        "Cond_rewr.COND_REWR_CONV(3)": {
+          "listing_words": 244,
+          "encoding_sha256": "4e83a96e824ebc5d671b6899ca114810b3e3d3f036e31c88fbc7a6667c219c8a",
+          "reservation_sites": [
+            {
+              "offset": "000094",
+              "bytes": 24
+            },
+            {
+              "offset": "0000E0",
+              "bytes": 24
+            },
+            {
+              "offset": "000180",
+              "bytes": 64
+            },
+            {
+              "offset": "000270",
+              "bytes": 24
+            },
+            {
+              "offset": "0002C0",
+              "bytes": 24
+            },
+            {
+              "offset": "00030C",
+              "bytes": 24
+            },
+            {
+              "offset": "000340",
+              "bytes": 24
+            },
+            {
+              "offset": "000374",
+              "bytes": 40
+            }
+          ],
+          "indirect_calls": 18
+        },
+        "Cond_rewr.COND_REWR_CONV(1)(1)": {
+          "listing_words": 16,
+          "encoding_sha256": "0b088bdf9298d5e822f05b759c177f171184a22c3394632a65e0c444c63b03da",
+          "reservation_sites": [],
+          "indirect_calls": 1
+        },
+        "Cond_rewr.COND_REWR_CONV(1)": {
+          "listing_words": 28,
+          "encoding_sha256": "f908f04d5821f25237e48e8c07798eaab2b28bc0c93deec4ed11b135cfa5a9fb",
+          "reservation_sites": [
+            {
+              "offset": "000020",
+              "bytes": 32
+            }
+          ],
+          "indirect_calls": 2
+        }
+      }
+    }
+  },
+  "machine": "aarch64",
+  "inputs": {
+    "src/simp/tests/compatibility/task12_allocation.py": {
+      "sha256": "ee765035311c34f39554ea0d08e0aab99514288e13f59373fa9027e42cad660f",
+      "bytes": 13364
+    },
+    "src/simp/tests/compatibility/run_paired.py": {
+      "sha256": "23c56406fcbd218fefce50492858a5c80d9aef59a555366f2af90fb6200844c2",
+      "bytes": 41766
+    },
+    "src/simp/tests/compatibility/audit_task12.py": {
+      "sha256": "9548835da64a25590f1c1559cf90dc3637cfc8bd6c914867d3d856cdcd377db1",
+      "bytes": 13822
+    },
+    "src/simp/tests/compatibility/test_task12_allocation.py": {
+      "sha256": "94246e6feab59ea3ed060d721e6c6da47f4533dcc14fefc0868673e885689be5",
+      "bytes": 4202
+    },
+    "src/simp/tests/compatibility/allocation/ASSEMBLY.md": {
+      "sha256": "2918124bae66873e229950398e076a3189eebb4cbfa1d65edc2060334d4868e6",
+      "bytes": 6785
+    },
+    "src/simp/tests/compatibility/allocation/Holmakefile": {
+      "sha256": "e1307ac0a34b0ea2729776668d4f283aaee3c3edd1384ddef5f06e0318db448d",
+      "bytes": 240
+    },
+    "src/simp/tests/compatibility/allocation/README.md": {
+      "sha256": "92bcc9c939da9bfdc15b4e6acc50e0a58dc89ddeabe04f4890286d6eb2c4568f",
+      "bytes": 6220
+    },
+    "src/simp/tests/compatibility/allocation/Task12Allocation.sml": {
+      "sha256": "894b854d35cc15cdbebac1e62c901bcc615fabdea5f844e1e1c85be46a13fc80",
+      "bytes": 3033
+    },
+    "src/simp/tests/compatibility/allocation/Task12AllocationRunner.sml": {
+      "sha256": "99d4e8745b93cb0adb2334cab700eb0aefa6fcc782605564b84c7dffa241e843",
+      "bytes": 1938
+    },
+    "src/simp/tests/compatibility/paired/CheckSupport.sml": {
+      "sha256": "29ddc7757b9b7836f5e52730f56fec2ee7714aa7d49afdb8e5ba56fd80443ecc",
+      "bytes": 208
+    },
+    "src/simp/tests/compatibility/paired/Deferred.sml": {
+      "sha256": "ed36fcce0415ed72169e5748730ee666740c850ad5bb936bf1eb8145aa789a42",
+      "bytes": 136
+    },
+    "src/simp/tests/compatibility/paired/Paired.sml": {
+      "sha256": "a930932897e0728e72c048124b0fce7f038bed469e062affa8ebc23a7c8e47b7",
+      "bytes": 1043
+    },
+    "src/simp/tests/compatibility/paired/PriorLimits.sml": {
+      "sha256": "a4063fa794aeef77bc0b752a2a28cd0aac870ce1b53348da185579749b14adc4",
+      "bytes": 2191
+    },
+    "src/simp/tests/compatibility/paired/runner.sml": {
+      "sha256": "ba2112e5aa2a5df9b1b20be9a86a73ce14ad1990ff5106d81afa60c4a5284542",
+      "bytes": 1783
+    },
+    "src/simp/tests/compatibility/paired/selftest.sml": {
+      "sha256": "41583212047d466d897c4f9478b00ce20cefa7d0fb8d98b659c8ffc29a085aa5",
+      "bytes": 2125
+    }
+  },
+  "tools": {
+    "bin/hol": {
+      "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+      "bytes": 43099640
+    },
+    "bin/Holmake": {
+      "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+      "bytes": 3409600
+    },
+    "bin/hol.state0": {
+      "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+      "bytes": 20469336
+    }
+  },
+  "source_correspondence": {
+    "src/simp/src/Cond_rewr.sig": {
+      "sha256": "22f650ea237d74c86fd963edbe5faa6fc6db7ac7dc4a4ec7a8c02fc2a9c26138",
+      "bytes": 2433
+    },
+    "src/simp/src/Cond_rewr.sml": {
+      "sha256": "d4fd3e25f8d9c64bc341b5435a0063c9b1c068dc4c748b0758849fe509a07b70",
+      "bytes": 18852
+    },
+    "src/simp/src/SimpTracking.sig": {
+      "sha256": "cc93f1bd727fb21576d89605dd61bba4a04b7f6e08417a449539a991e3d4fd33",
+      "bytes": 201
+    },
+    "src/simp/src/SimpTracking.sml": {
+      "sha256": "5b49f2568d06e7b692ed72b70cd770460f0c93a9ae21f5e974e37f6429f419e1",
+      "bytes": 1353
+    },
+    "src/simp/src/Cond_rewrExt.sig": {
+      "sha256": "83de20b7a45f07cebe8e9f2faa7256d750ca0645e109f7312358efb88097e872",
+      "bytes": 1535
+    },
+    "src/simp/src/Cond_rewrExt.sml": {
+      "sha256": "2017ea5752f36c3dec9441e9d94b24492e8dc806b1cc681382cd1404ab8e84c5",
+      "bytes": 7585
+    }
+  },
+  "poly": {
+    "path": "/usr/local/bin/poly",
+    "sha256": "1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311",
+    "bytes": 17381496
+  },
+  "poly_version": {
+    "command": [
+      "/usr/local/bin/poly",
+      "--version"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "timed_out": false,
+    "stdout": "Poly/ML 5.9.2 Release\n",
+    "stdout_sha256": "7ecc5458e3d0e51d9e743be2abc48bd27bf62c3f7a562551082232e4b38bf512",
+    "stdout_bytes": 22
+  },
+  "comparison": {
+    "candidate_minus_baseline_words_per_rule": {
+      "unconditional": [
+        -1.0,
+        -1.0,
+        -1.0,
+        0.0
+      ],
+      "conditional": [
+        -1.0,
+        -1.0,
+        -1.0,
+        0.0
+      ],
+      "ac": [
+        -1.0,
+        -1.0,
+        -1.0,
+        0.0
+      ]
+    },
+    "no_extra_retained_words_per_rule": true,
+    "no_extra_native_heap_reservation_sites": true,
+    "application_reservation_sizes_identical": true,
+    "byte_identical_machine_code": false
+  }
+}

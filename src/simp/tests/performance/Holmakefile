@@ -5,6 +5,8 @@ endif
 .PHONY: python-tests diagnostic
 python-tests:
 	python3 -B test_performance.py
+	python3 -B test_traversal_performance.py
+	python3 -B test_conditional_performance.py
 	python3 -B ../compatibility/test_runner.py
 
 # One recipe keeps baseline variability before reviewed observations even

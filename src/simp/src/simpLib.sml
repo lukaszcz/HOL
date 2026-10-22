@@ -123,7 +123,9 @@ in
                     UNBOUNDED => NONE | BOUNDED r => SOME (r, !r)
     val key = SOME (free_varsl (hyp th),
                     lhs (#2 (strip_imp (concl th))))
-    val {legacy,configured} = appconvs (COND_REWR_CONVS (nm,th), tag)
+    (* Transitional mixed compiler; removed with its net in TASK_16. *)
+    val {legacy,configured} =
+        appconvs (Cond_rewrExt.COND_REWR_CONVS (nm,th), tag)
   in
     SOME {thypart = thypart, source = SOME (nmopt, th), legacy = legacy,
           bound = bound,

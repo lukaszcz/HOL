@@ -21,9 +21,8 @@ struct
   fun private_refresh inputs config facts =
     T.XTRAVERSE (private_configured_projection inputs config) facts
   val ordinary_direct_constructor = Cond_rewr.COND_REWR_CONV
-  (* Real initial dependencies for TASK_10, before extraction in 12/13.
-     Those owners delete these witnesses when the old exports disappear. *)
-  val initial_paired_constructor = Cond_rewr.COND_REWR_CONVS
+  (* The paired constructor now requires the explicit extension import. *)
+  val initial_paired_constructor = Cond_rewrExt.COND_REWR_CONVS
   val initial_threaded_factory = Travrules.mk_threaded_travrules
   val initial_threaded_opening = Opening.THREADED_CONGPROC
   val extension_paired_constructor = C.COND_REWR_CONVS
