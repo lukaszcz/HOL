@@ -27594,7 +27594,18 @@ let
       [~1, 0, 1, size - 1, size, size + 1])
     [(Term.term_size term, SmtReplayImport.bounded_raw_size),
      (inclusive term, SmtReplayImport.bounded_binder_size)]
+  fun check_policy term = List.app (fn (size, count) =>
+    (assert (count SmtReplayResourcePolicy.Uncapped term =
+        SOME (IntInf.fromInt size), "uncapped import metric changed");
+     List.app (fn limit => assert
+       (count (SmtReplayResourcePolicy.AtMost (IntInf.fromInt limit)) term =
+          (if size <= limit then SOME (IntInf.fromInt size) else NONE),
+        "policy import changed an exact metric boundary"))
+       [~1, 0, 1, size - 1, size, size + 1]))
+    [(Term.term_size term, SmtReplayImport.raw_size_with_policy),
+     (inclusive term, SmtReplayImport.binder_size_with_policy)]
   val _ = List.app check samples
+  val _ = List.app check_policy samples
   val large = large_binder y (shared 80 x)
   val graph = G.new ()
   val source = G.admit_binder graph (G.root_scope graph) 20
@@ -27612,6 +27623,86 @@ in
         (SmtReplayImport.pointer_bucket 16 0 large)),
     "pointer routing opened a binder body or accepted invalid modulus")
 end
+
+(* Type annotations have their own observed work. A tiny raw binder must
+   not confer free type inspection or an opened/FV graph certificate. *)
+fun replay_binder_type_admission_success () =
+let
+  val _ = Count.counting_thms true
+  val initial = #REFL (Count.thm_count ())
+  val _ = Thm.REFL boolSyntax.T
+  val _ = assert (#REFL (Count.thm_count ()) > initial,
+    "binder admission inference counter was not active")
+  fun list_type 0 = Type.bool
+    | list_type depth = listSyntax.mk_list_type (list_type (depth - 1))
+  fun fixture depth =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val x = Term.mk_var ("binder_type_spine", list_type depth)
+      val term = Term.mk_abs (x, x)
+      val source = G.import graph scope 20 term
+      val bound = valOf (SmtReplayImport.bounded_raw_size_with_bound
+        {limit = 2, observe = fn () => ()} term)
+    in (graph, scope, #node source, term, bound) end
+  fun opaque graph node = case
+      (G.view graph node, G.free_variables graph node) of
+        (G.OpaqueRetained, G.Unknown) => true | _ => false
+  fun measure depth =
+    let
+      val (graph, scope, node, term, bound) = fixture depth
+      val calls = ref 0
+      fun observe () = calls := !calls + 1
+      val prior = Count.thm_count ()
+      val denied = rejected (fn () => ignore
+        (G.profile_bounded_native_observed graph scope
+          {node = node, bound = bound, maximum = 2, observe = observe}))
+      val _ = assert (denied andalso !calls = 0 andalso
+          Count.thm_count () = prior andalso opaque graph node andalso
+          G.unfolded_nodes graph G.RawNodes 20 node = NONE,
+        "inclusive native admission ran effects or treated unknown as closed")
+      val profile = G.profile_bounded_native_observed graph scope
+        {node = node, bound = bound, maximum = 3, observe = observe}
+      val paid = !calls
+      val data = G.opaque_profile_data graph scope profile
+      val _ = assert (Count.thm_count () = prior andalso
+          opaque graph node andalso #raw data = 2 andalso #inc data = 3
+          andalso #ty data = IntInf.fromInt (3 + 2 * depth) andalso
+          #ann data = IntInf.fromInt (5 + 4 * depth) andalso !calls = paid
+          andalso G.unfolded_nodes graph G.RawNodes 20 node = SOME 2,
+        "observed type spine changed metrics, graph state or getter work")
+      val bounds = SmtReplayImport.raw_bound_data bound term
+      val _ = assert (#raw_upper bounds = 2 andalso #inc_upper bounds = 3,
+        "count-only admission changed raw/binder-inclusive endpoints")
+    in paid end
+  val shallow = measure 0
+  val deep = measure 16
+  val _ = assert (deep > shallow,
+    "public type annotation spine was not independently charged")
+  val (graph, scope, node, _, bound) = fixture 16
+  exception Primary of unit ref
+  val token = ref ()
+  val calls = ref 0
+  fun limited () = if !calls = shallow then raise Primary token
+    else calls := !calls + 1
+  val prior = Count.thm_count ()
+  val interrupted =
+    (G.profile_bounded_native_observed graph scope
+      {node = node, bound = bound, maximum = 3, observe = limited}; false)
+    handle Primary actual => Portable.pointer_eq (actual, token)
+  val _ = assert (interrupted andalso !calls = shallow andalso
+      Count.thm_count () = prior andalso opaque graph node andalso
+      not (Option.isSome (G.opaque_profile_for graph scope node)),
+    "type-work interruption published a profile or replaced Primary")
+  val profile = G.profile_bounded_native_observed graph scope
+    {node = node, bound = bound, maximum = 3, observe = fn () => ()}
+  val _ = assert
+    (#ann (G.opaque_profile_data graph scope profile) = 69 andalso
+     opaque graph node,
+     "type-work refusal leaked a running latch or admitted a binder")
+in
+  Count.counting_thms false
+end handle primary => (Count.counting_thms false; raise primary)
 
 fun replay_compact_proof_success () =
 let
@@ -29039,6 +29130,8 @@ fun run_replay_graph_unittests () =
   List.app run_test
     [("replay_graph_checked_success", replay_graph_checked_success),
      ("replay_import_metric_success", replay_import_metric_success),
+     ("replay_binder_type_admission_success",
+       replay_binder_type_admission_success),
      ("replay_compact_proof_success", replay_compact_proof_success),
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
@@ -29869,6 +29962,8 @@ let
     ("binder_opening_resource_success", binder_opening_resource_success),
     ("replay_graph_checked_success", replay_graph_checked_success),
     ("replay_import_metric_success", replay_import_metric_success),
+    ("replay_binder_type_admission_success",
+      replay_binder_type_admission_success),
     ("replay_compact_proof_success", replay_compact_proof_success),
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),
