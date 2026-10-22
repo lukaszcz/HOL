@@ -2400,7 +2400,7 @@ fun prepare_child_first_with_observer observer
             handle e => (callback_failure := SOME e; raise e)
     val policy =
       {charge=protected (#charge policy),
-       keep_abstraction= #keep_abstraction policy}
+       keep_abstraction=protected (#keep_abstraction policy)}
     val observer = Option.map protected observer
     val xdata = xtraversedata_for_ss_prepared (ChildFirst policy) ss []
     val bounds = Ho_Net.fold'

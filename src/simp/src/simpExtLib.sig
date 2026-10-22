@@ -309,10 +309,14 @@ sig
    (* Prepare one ambient child-first traversal for rewrite-view
       derivation. Arguments preserves the root. Each conversion uses
       fresh declared bounded allowances privately and restores the
-      caller's counters, including on exceptions. Derivation cannot
-      spend an invocation's allowance or depend on earlier consumption.
-      The indexed
-      pre-test is conservative for opaque reducers and congruences;
+      caller's counters on success, HOL errors, arbitrary exceptions and
+      interrupts. Nested calls restore the enclosing private allowances;
+      source aliases and conjuncts share their actual quota within a call.
+      Observer and policy exceptions retain their original identity.
+      Derivation cannot spend an invocation's allowance or depend on earlier
+      consumption. Preparation/saving conversions does not collect premises
+      or recompile installed rules. The indexed pre-test is conservative for
+      opaque reducers and congruences;
       conditional premises require attempting normalization regardless. *)
    val prepare_child_first : TraverseExt.child_first_policy -> simpset ->
      {normalize : thm list -> conv,

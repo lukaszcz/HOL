@@ -302,8 +302,19 @@ fun eta_argument policy tm =
     else RATOR_CONV (eta_argument policy) tm
   else NO_CONV tm
 
-fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child =
+fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child tm =
   let
+    (* TRY_CONV and eta fallback treat HOL_ERR as conversion failure, not
+       as a policy abort. Keep policy failures across those combinators.
+       This state belongs to one application, including reentrant calls. *)
+    val aborted = ref (NONE : exn option)
+    fun protected callback argument =
+      case !aborted of
+          SOME e => raise e
+        | NONE => callback argument
+            handle e => (aborted := SOME e; raise e)
+    val policy = {charge=protected (#charge policy),
+                  keep_abstraction=protected (#keep_abstraction policy)}
     fun arguments tm =
       if is_comb tm then
         Conv.THENC (RATOR_CONV arguments, RAND_CONV (TRY_CONV child)) tm
@@ -319,7 +330,12 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child =
         if aconv tm next then result
         else TRANS result (normalize next)
       end
-  in normalize end
+  in
+    let val theorem = normalize tm
+    in case !aborted of NONE => theorem | SOME e => raise e end
+    handle e =>
+      (case !aborted of NONE => raise e | SOME original => raise original)
+  end
 
 fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
       (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
@@ -336,6 +352,17 @@ fun TRAVERSE_IN_CONTEXT eager_cong_schedule observer policy root_only
      HOL_ERR, and reducer dispatch can treat those as a failed attempt.
      Retain the original callback exception across the whole traversal. *)
   val aborted = ref (NONE : exn option)
+  fun protected callback argument =
+    case !aborted of
+        SOME e => raise e
+      | NONE => callback argument
+          handle e => (aborted := SOME e; raise e)
+  val policy =
+    case policy of
+        ParentFirst => ParentFirst
+      | ChildFirst {charge,keep_abstraction} =>
+          ChildFirst {charge=charge,
+                      keep_abstraction=protected keep_abstraction}
   (* CONFIG_REDUCER transports NONE unchanged: native candidates read the
      live default themselves.  Older CONTEXT_REDUCER clients need an int. *)
   val term_ord = Option.getOpt (term_ord, Cond_rewr.ac_term_ord)

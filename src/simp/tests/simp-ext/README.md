@@ -8,7 +8,8 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
 ```
 
 `check` builds **and executes** `selftest.exe`, `tracked.exe`,
-`exclusions.exe`, `strategies.exe`, `tactics.exe` and `sources.exe`. Building
+`exclusions.exe`, `strategies.exe`, `tactics.exe`, `sources.exe`,
+`derivation.exe` and `lifetimes.exe`. Building
 `.uo` files alone is not validation. The production `simp-ext` target runs it
 at `HOLSELFTESTLEVEL=1`. Expected Poly/ML type-error diagnostics
 from `negative/*.ML` are normal successful test output.
@@ -144,7 +145,7 @@ called, and complete hypotheses and ordered goals compared.
 | Configured controls | Native live depth, custom order and root rewrite tests; saved conversions/tactics, shared default versus explicit depth |
 | Loopers | Native replacement/round-limit tests; zero/one/multiple/unlimited rounds, UNCHANGED/failure/exception behavior, changed subgoal restart and saved reuse |
 | Counted globals | Native mutual-assumption/fixpoint/root/implication groups; ordered branching and real reconstruction, counted unchanged rotations, conclusion fixpoint reentry and one invocation-wide looper budget |
-| Child-first passes | Native child-first overlap; explicit traversal order and configured global reconstruction (private derivation restoration remains TASK_22) |
+| Child-first passes | Native child-first overlap; explicit traversal order and configured global reconstruction; private derivation restoration is covered by TASK22 below |
 | Supplied invocation binding | Once rules across looper siblings, both traversal policies and saved reuse; final solvers receive untagged facts even when a maker drops their rewrites; Abbr failure precedes FRAG/binding on repeated explicit and configured-alias invocations, while label lookup remains earlier |
 | Nested directives | Requirement/multiply-bound-qualified SF and Split execute; genuine multiply-bounded rewrites retain the original theorem, selected bound, full hypotheses and live exhaustion; ReqD failures retain provenance; wrapped assumption policy, label and abbreviation options, including non-global ReqD failure retention |
 | Bound local replay | Native `bound_global_fixture`; independent spent ambient quota plus partially spent/exhausted installed bundle and attached view, exact maker/collector schedule, zero bundle/view recompilation traces, same adjusted object observed by loopers and old saved conversions |
@@ -196,3 +197,29 @@ or final membership. All work remains extension-owned; no legacy
 allocation, cache, representation, registration or callback path changes.
 See the [migration audit](../compatibility/migration/TASK21.md) and
 [TASK21 handoff](../compatibility/TASK_21_HANDOFF.md).
+
+## Child-first derivation and solver lifetimes (TASK_22)
+
+`derivation.sml` adds **846 checks**. The pre-existing draft was completed,
+not substituted for native assertions. `lifetimes.sml` adds **60 checks**.
+Both launchers run under the normal `check`/selftest-level-1 targets.
+
+| New coverage | Original provenance / added intersection |
+| --- | --- |
+| Private scopes | Native `prepared_normalization_fixture` and observed preparation: native, bundle, aliases and conjunct groups, partial/exhausted counters, exactly declared uses, saved normalize/arguments reuse and root preservation |
+| Failure/restoration | Observer, charge and head-policy callbacks after a bounded rewrite; exact HOL_ERR, foreign payload and Interrupt propagation; same-object nested success and all three failures, restoration of partially spent outer and caller counters |
+| Failed candidates | Unchanged child and failed condition observations, unchanged charges and proofs; rejected conditional candidate leaves a shared sibling allowance inside the private scope |
+| Opaque clients | Lifted reducer, unsafe solver and congruence collector errors after consumption; ordinary HOL_ERR rejection remains rejection, foreign exceptions/interrupts abort, and exhausted caller controls survive |
+| Preparation/reuse | Inert prepare/save/pretest, per-application versus per-child context collection, exact maker/collector counts, no installed-rule recompilation or allowance refresh |
+| Root entries | Native root contracts plus exact priority/fallback and collector counts, no root fixpoint or descent, retained solver-only context separation |
+| Solver closures | Native generic context/stack contracts plus same-data nested use, retained recurse closures, old-context generation identity after later application/failure, exact opaque callback traces |
+| Eta/congruence | Native head/eta policy plus saved live predicate and selected descent/unchanged congruence blocking; direct, observed and argument-only policy aborts retain identity and recover on reuse |
+
+Existing `../traverse-ext/selftest.sml` keeps live default depth, explicit
+integer depth, custom order, root-condition full traversal, context ordering,
+capture avoidance, default/configured factory schedules, limit rollback and
+unchanged observer/reducer/solver/charge counts. `strategies.sml` retains
+safe/unsafe solver validation, counted global passes, looper limits and real
+proof reconstruction. Native tests and frozen legacy traversal streams are
+unchanged. See [TASK22 migration](../compatibility/migration/TASK22.md) and
+[TASK22 handoff](../compatibility/TASK_22_HANDOFF.md).

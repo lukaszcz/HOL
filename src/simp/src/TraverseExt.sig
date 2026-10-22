@@ -61,7 +61,9 @@ sig
   val keep_abstraction : child_first_policy -> term -> bool
   (* Normalize proper arguments/body while preserving the root. Repeat
      selected eta contraction and descent until stable; charge bounds passes.
-     Logical binder predicates are never eta-contracted by this policy. *)
+     Logical binder predicates are never eta-contracted by this policy.
+     Policy callback exceptions (including HOL_ERR) abort with their original
+     identity, rather than becoming rejected conversion candidates. *)
   val NORMALIZE_ARGUMENTS : child_first_policy -> conv -> conv
   (* Solver-only facts extend generic solver and capture-avoidance contexts,
      without being installed in reducer-private contexts. *)
@@ -69,7 +71,9 @@ sig
     {reducer_context : thm list, solver_context : thm list} -> conv
   (* Observe descent/reducer attempts and side conditions, even failed ones.
      charge runs before head preservation, descent and reducer attempts.
-     Callback exceptions propagate with their original identity. *)
+     Observer and policy callback exceptions propagate with their original
+     identity. Saved conversions refresh contexts on every application;
+     recursive solver closures retain the context of their own application. *)
   val CHILD_FIRST_WITH_OBSERVER : (term -> unit) -> child_first_policy ->
     xtraverse_data ->
     {reducer_context : thm list, solver_context : thm list} -> conv
