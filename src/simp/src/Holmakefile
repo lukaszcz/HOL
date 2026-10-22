@@ -15,11 +15,15 @@ EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   ../tests/congruence-ext/.hol/ \
   ../tests/traverse-ext/selftest.exe ../tests/traverse-ext/diagnostics.exe \
   ../tests/traverse-ext/.hol/ split-registration.log \
-  split-persistence.log simp-marker-tests.log replay-order.log \
+  split-persistence.log split-lifecycle.log simp-marker-tests.log \
+  replay-order.log \
   $(FRESH_LOAD)/selftest.exe $(FRESH_LOAD)/.hol/ \
   $(SPLIT_REGISTRATION)/selftest.exe $(SPLIT_REGISTRATION)/.hol/ \
   $(SPLIT_PERSISTENCE)/selftest.exe $(SPLIT_PERSISTENCE)/.hol/ \
   $(SPLIT_PERSISTENCE)/split-lifecycle.state \
+  ../tests/split-lifecycle/selftest.exe ../tests/split-lifecycle/repair.exe \
+  ../tests/split-lifecycle/.hol/ \
+  ../tests/split-lifecycle/split-proof.state \
   ../tests/markers/selftest.exe ../tests/replay-order/selftest.exe
 
 all: $(DEFAULT_TARGETS) selftest.exe
@@ -89,6 +93,12 @@ split-persistence: selftest.exe splitPersistLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C $(SPLIT_PERSISTENCE) check,split-persistence.log)
 
+# Explicit extension/ordinary load order and post-reload proof validation.
+.PHONY: split-lifecycle
+split-lifecycle: simpExtLib.uo congExtLib.uo splitPersistLib.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C ../tests/split-lifecycle check,split-lifecycle.log)
+
 # Fragment construction is compared with pinned develop in private processes.
 .PHONY: fragment-contracts
 fragment-contracts: simpLib.uo
@@ -138,7 +148,7 @@ ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   simp-ext cond-rewr-ext congruence-ext fragment-contracts compiled-core \
   literal-exclusions ordinary-tactics \
-  fresh-load-regressions split-registration split-persistence
+  fresh-load-regressions split-registration split-persistence split-lifecycle
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)

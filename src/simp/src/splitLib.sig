@@ -43,7 +43,8 @@ sig
   (* Explicitly claim the persistent [split] attribute with private rule storage.
      Idempotent only for this library's ownership in the current Context;
      foreign attributes and generic split theorem sets are rejected
-     before mutation.
+     before mutation. A removed dispatcher is restored by identity without
+     replay; a foreign replacement is rejected.
      Call before using [split] or loading theories whose data must replay.
      Exported theories explicitly load splitPersistLib and record it with
      Theory.add_ML_dependency on the earliest split-bearing theory.
@@ -57,7 +58,7 @@ sig
 
   (* Persistently retract [Thy.]Name, resolving an unqualified name in the
      current theory. Requires owned registration; never implicitly opts in.
-     Unlike simpLib.del_split this writes a REMOVE for descendant replay.
+     Unlike simpExtLib.del_split this writes a REMOVE for descendant replay.
      Retracting an absent name is harmless. Does not delete the theorem.
      REMOVE keys stay resolved across replay and Context.restore.
      Pinned contexts reject writes, including initialization above. *)
@@ -69,7 +70,7 @@ sig
   val split_thms : unit -> thm list
   val named_split_thms : unit -> (string * thm) list
 
-  (* Registration helpers used by simpLib. *)
+  (* Registration helpers used by simpExtLib. *)
   val is_asm_split : thm -> bool
   val split_thm_name : thm -> string
 end

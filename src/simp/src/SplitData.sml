@@ -91,6 +91,13 @@ fun check_listener () =
         if Portable.pointer_eq (f,dispatch) then ()
         else raise ERR "initialize" ("Foreign listener: " ^ listener_name)
 
+(* Explicit initialization can repair a removed dispatcher, but must never
+   replace a foreign function under the private listener name. *)
+fun ensure_listener () =
+  case listener () of
+      NONE => (Theory.register_hook (listener_name,dispatch); true)
+    | SOME _ => (check_listener (); false)
+
 (* Same ancestor order as ordinary AncestryData initialization, with each
    node visited once. On later TheoryLoaded events only that node's deltas
    are replayed, including on repeated notifications. *)
@@ -156,17 +163,14 @@ fun initialize {validate} =
         ThmAttribute.register_attribute ("split",attribute);
         Context.Data.write rules_slot Symtab.empty;
         Context.Data.write registration_slot (SOME r);
-        (case listener () of
-             NONE => (Theory.register_hook (listener_name,dispatch);
-                      installed := true)
-           | SOME _ => check_listener ());
+        installed := ensure_listener ();
         List.app (replay r) (ancestors ())
       end
   in
     if Context.is_pinned () then raise apiERR "enable_split_attribute"
       "cannot initialize in a pinned context"
     else case active entry of
-        SOME _ => check_listener ()
+        SOME _ => ignore (ensure_listener ())
       | NONE =>
           (preflight ();
            allocate () handle e =>

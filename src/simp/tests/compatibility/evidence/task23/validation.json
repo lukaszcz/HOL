@@ -1,0 +1,287 @@
+{
+  "source_id": "TASK23-split-lifecycle-v1 (containing commit)",
+  "start_head": "f30a3e9a33b527332cb521cac19e355432e4fabe",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "result": "pass",
+  "scope": "All bounded TASK23 lifecycle/persistence/cleanup acceptance criteria. Not independent clean builds or whole-plan performance.",
+  "initial_state": "Main checkout clean; unrelated pre-existing nested .agent-files changes preserved.",
+  "sources": {
+    "help/Docfiles/splitLib.enable_split_attribute.smd": {
+      "sha256": "782bfe1102c9e9b2dfe93f3af0a5b1ce2e771bdc47f07b885275d9c4498bcbcf",
+      "bytes": 3901
+    },
+    "src/simp/src/Holmakefile": {
+      "sha256": "592a6454a318ed3d775866039ada15f37ed44d0579e88eba35d19b3262d21f78",
+      "bytes": 7185
+    },
+    "src/simp/src/SplitData.sml": {
+      "sha256": "481d8a1efa779a925debb92f1f80d0f7c10e84c0de07088abb81323c5aabb920",
+      "bytes": 8568
+    },
+    "src/simp/src/splitLib.sig": {
+      "sha256": "2b0961e3a19b4fcfe1c7feef685b0b4bb94b71938d62e4409bd1d2c9911aa4ca",
+      "bytes": 3730
+    },
+    "src/simp/tests/compatibility/TASK_23_HANDOFF.md": {
+      "sha256": "a18953a47aff800428448e74ff6e9305cfc53b9b4c697f19d5f35176084c9bac",
+      "bytes": 8486
+    },
+    "src/simp/tests/compatibility/run_task23_lifecycle.py": {
+      "sha256": "85343ef4ebaf11b72fe287f2f33b72486252190f552807caddeac7ccebadcb5a",
+      "bytes": 10186
+    },
+    "src/simp/tests/split-lifecycle/Holmakefile": {
+      "sha256": "7d05681b8e5e2ca3a7095d5d1f86e028598675b69bfbd216b937a327d5a75100",
+      "bytes": 1465
+    },
+    "src/simp/tests/split-lifecycle/README.md": {
+      "sha256": "0a2c14d8a944e1477fdaacab567b2fbed14ce686f2f5f6f61bb07554e7d93ce9",
+      "bytes": 7870
+    },
+    "src/simp/tests/split-lifecycle/extension.ML": {
+      "sha256": "8d3a36cd70f981520e63f94c86a6d53916868bdd0cd4576a261bd08926a46cd7",
+      "bytes": 3446
+    },
+    "src/simp/tests/split-lifecycle/ordinary.ML": {
+      "sha256": "47265dc0da619677be0baa283b3b33c126efae989bd420a89b2d099024382868",
+      "bytes": 420
+    },
+    "src/simp/tests/split-lifecycle/persistent.ML": {
+      "sha256": "7137b400eb29d5cbac52273433420d115e65ec2e7d1136c02d42c2365044b0a0",
+      "bytes": 1964
+    },
+    "src/simp/tests/split-lifecycle/repair.sml": {
+      "sha256": "5fa6d2fb432d2db14dbb1029d1b3330370c8da9696ec21d96edd861d74792d12",
+      "bytes": 2181
+    },
+    "src/simp/tests/split-lifecycle/selftest.sml": {
+      "sha256": "558d289efcad7c139148ac12fa8de5236479cd297fa7a71afed5d0059004dccb",
+      "bytes": 9146
+    }
+  },
+  "platform": "Linux-7.0.0-1011-aws-aarch64-with-glibc2.39",
+  "poly_version": "Poly/ML 5.9.2 Release",
+  "tools": {
+    "bin/Holmake": {
+      "sha256": "4ef5a67565536494b1cbbfd01c8a0a4ff4e25a69104a539528d7c587615e8604",
+      "bytes": 3409600
+    },
+    "bin/hol": {
+      "sha256": "b6b88b2fbac5bbb2e2405e76891b3fc32392763309492b72f215af9c96c55c31",
+      "bytes": 43099640
+    },
+    "bin/hol.state0": {
+      "sha256": "c632d1a7b6b941e2e4dec17d43f4d5665ca30fe18c9c7d6afabde3699555e13c",
+      "bytes": 20469336
+    },
+    "tools/h4pedant/h4pedant": {
+      "sha256": "0e209c750e58068f8afe0de4ab105a7fa3c7aba91f27f578e67e4b468a656312",
+      "bytes": 606400
+    }
+  },
+  "configured_path_alias": {
+    "wrapper": "configured-path.sh",
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "actual_checkout": "/home/lukasz/work/HOL/worktrees/simplifier",
+    "gcthreads": 1
+  },
+  "commands": [
+    {
+      "command": "bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 0,
+      "evidence": "routine.log.gz"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/run_prior_native.py --output /tmp/task23.GRi9EA/native-acceptance",
+      "exit": 0,
+      "evidence": "native/manifest.json.gz"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/run_task23_lifecycle.py --output /tmp/task23.GRi9EA/lifecycle-acceptance",
+      "exit": 0,
+      "evidence": "lifecycle/manifest.json.gz"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/coverage_ledger.py",
+      "exit": 0,
+      "evidence": "coverage.log.gz"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/verify_evidence.py",
+      "exit": 0,
+      "evidence": "immutable.log.gz"
+    },
+    {
+      "command": "tools/h4pedant/h4pedant src/simp/tests/split-lifecycle",
+      "exit": 0,
+      "evidence": "pedant-tests.log.gz"
+    },
+    {
+      "command": "tools/h4pedant/h4pedant --nolinelen src/simp/src",
+      "exit": 0,
+      "evidence": "pedant-src.log.gz"
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0,
+      "evidence": "diff-check.log.gz"
+    }
+  ],
+  "observations": {
+    "fresh_process_cases": 22,
+    "matrix_cases": 20,
+    "post_import_and_reload_proofs": 2,
+    "checks": 1769,
+    "resolved_source_paths": 427,
+    "simplifier_loader_products": 50,
+    "native_receipts": 14,
+    "existing_registration_checks": 116,
+    "existing_replay_checks": 15,
+    "existing_marker_checks": 54,
+    "existing_persistence_checks": 170,
+    "existing_persistence_scenarios": 8,
+    "source_tied_historical_cases": 2153,
+    "immutable_artifacts": 37
+  },
+  "negative_control": {
+    "build_exit": 0,
+    "run_exit": 1,
+    "assertion": "explicit initialization repairs missing dispatcher identity",
+    "mutation": {
+      "old": "SOME _ => ignore (ensure_listener ())",
+      "new": "SOME _ => check_listener ()"
+    },
+    "actual_private_source_inventory": true
+  },
+  "decisions": [
+    "Keep marker ownership, registries, private stream, dispatcher, caches and initialization simplifier-owned; no generic edits.",
+    "Explicit owned initialization restores missing exact dispatcher without Context/rule changes or ancestry replay; never replaces foreign listeners.",
+    "No theory ML dependency change required; fresh generated parent opens simpMarkerTheory splitPersistLib before load_thydata.",
+    "Original lifecycle fixtures/assertions/oracles unchanged; new matrix/proofs/regression added to normal selftest-level all.",
+    "Ordinary simp/cong loading excludes every private split/extension module; extensions alone do not enable persistence."
+  ],
+  "ordinary_sources_identical_to_develop": [
+    "src/simp/src/Traverse.sig",
+    "src/simp/src/Traverse.sml",
+    "src/simp/src/Opening.sig",
+    "src/simp/src/Opening.sml",
+    "src/simp/src/Travrules.sig",
+    "src/simp/src/Travrules.sml",
+    "src/simp/src/simpLib.sig",
+    "src/simp/src/simpLib.sml",
+    "src/simp/src/congLib.sig",
+    "src/simp/src/congLib.sml"
+  ],
+  "cleanup": "Private test/negative/export source directories automatically removed; heap traps and runner checks verified. Task-created normal fixture products and scratch workspace removed after evidence archive; pre-existing products preserved.",
+  "remaining_blockers": [],
+  "evidence": {
+    "audit.log.gz": {
+      "sha256": "1590f49e46946c0f6ab7f06597bf78503bee8b1676ba02eb3eb925c366781626",
+      "bytes": 159
+    },
+    "configured-path.sh": {
+      "sha256": "0ae2f062c6cac1e1f3c7787cae43d5c0bb1544756b17c10394eca87bb0ae81c2",
+      "bytes": 393
+    },
+    "coverage.log.gz": {
+      "sha256": "af2bedf2e2ab110d8376ebac66dc336b5f2189dd64e6cdfef6bc10b0c9384f89",
+      "bytes": 44
+    },
+    "diff-check.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "immutable.log.gz": {
+      "sha256": "4e7e1a90dac03feed4284b878152011247632fcb65bed3d300ac88cb91630d04",
+      "bytes": 203
+    },
+    "lifecycle/fresh.json.gz": {
+      "sha256": "47b7c2727c97eaf009a10df3185c499b56c90d6ad189d06087afc617e378710c",
+      "bytes": 119577
+    },
+    "lifecycle/manifest.json.gz": {
+      "sha256": "03612a819b225a0993681cdc27919694d7202505a939319284a91180d7351457",
+      "bytes": 34078
+    },
+    "lifecycle/negative-build.json.gz": {
+      "sha256": "b6bb3b8911ce79a386b9b3fdfcfb16e08514c44277abadb92e25d82c294f71bf",
+      "bytes": 361
+    },
+    "lifecycle/negative-run.json.gz": {
+      "sha256": "1abd9a9e8f2408b943093ec2d1a3e67fd590a0a32d9648a3d292bed26db290be",
+      "bytes": 2228
+    },
+    "native/build-focused.json.gz": {
+      "sha256": "6d087d678c5b50045ba886e1b1f7b84dc2cd1a8a7087e232a48d0d27d4d2b1f4",
+      "bytes": 159790
+    },
+    "native/exclusion.json.gz": {
+      "sha256": "ef6b0a439780a5bfbd8ec5303cef7fd93633e0c4007a0815b4c8501cbf6ca861",
+      "bytes": 16193
+    },
+    "native/fresh-attribute-after.json.gz": {
+      "sha256": "13f795e4a48aa8f86294d7c95ad38a515271aaa98efd81d7dcbb517adb4bfdeb",
+      "bytes": 1064
+    },
+    "native/fresh-attribute-first.json.gz": {
+      "sha256": "6d133c1bec56d313bd57eff59d8f1c7a5c5c490588c9d18c58c02ecc2f5a3fa6",
+      "bytes": 1181
+    },
+    "native/fresh-control.json.gz": {
+      "sha256": "c2466444dea9baaf59f8e52ae9dce6971e6243c38d3f4ae77f1bf07df14ec99a",
+      "bytes": 898
+    },
+    "native/fresh-set-after.json.gz": {
+      "sha256": "44a51818a45b6b6cf691cb861d958f784f986afbed4c0124e4d7bec4e365c3a2",
+      "bytes": 1121
+    },
+    "native/fresh-set-first.json.gz": {
+      "sha256": "4c72c39c4124407b4470b0ef31622ccbbf0342974ec6a64e16936f19a0482f43",
+      "bytes": 1236
+    },
+    "native/fresh-syntax-first.json.gz": {
+      "sha256": "48a69bdcaa7ce30c1624a95299bd2aa3e1aaf155b7967c0139541a0df57fd253",
+      "bytes": 1015
+    },
+    "native/manifest.json.gz": {
+      "sha256": "67c659e811869424a7bcec9f540ee467bdd20183e5aafdd300171f2fc6e8c1e0",
+      "bytes": 15949
+    },
+    "native/markers.json.gz": {
+      "sha256": "8da899f89e27033b1a0e5cd19b196a29812dedbbe2bd7678199ca095029913c0",
+      "bytes": 1437
+    },
+    "native/native.json.gz": {
+      "sha256": "39eb246df905875ccea3ef0f2265c3e04ed39709528baa4fe79de9c83a7dd42d",
+      "bytes": 17539
+    },
+    "native/persistence.json.gz": {
+      "sha256": "53ecee022adac0e6362254b3e09b4c71a61184362fc307bbb1c149bb43b685ce",
+      "bytes": 2603
+    },
+    "native/replay-order.json.gz": {
+      "sha256": "e8ed4de8ad2b41739774f1e8b2a9ae556c0b0c62c46d2b4ba9973f40864927dd",
+      "bytes": 731
+    },
+    "native/split-registration.json.gz": {
+      "sha256": "dcc1048ef581ba56de601bdb5508bdfe6ad549db7cf2c1775973afc2774788d7",
+      "bytes": 2398
+    },
+    "native/traversal.json.gz": {
+      "sha256": "2ab80a950806a0101180a4418d5e3804e1eae2ac0c0e33e22616146fd2ec82ca",
+      "bytes": 3485
+    },
+    "pedant-src.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "pedant-tests.log.gz": {
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+      "bytes": 20
+    },
+    "routine.log.gz": {
+      "sha256": "147d59e3cf92d07a5b3685df28270bac7d5e6fab1a33c595ae0a1181eb004058",
+      "bytes": 2891
+    }
+  }
+}
