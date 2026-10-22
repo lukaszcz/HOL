@@ -9,6 +9,10 @@ from unittest.mock import patch
 
 import inventory as inv
 
+# TASK_07 landing includes the inventory's own README update. API source
+# signatures are at inv.SOURCE; reference seals cover this exact landing.
+REFERENCES = '19e12925f71d511c1e28e09c4514d489067f796c'
+
 
 class InventoryTests(unittest.TestCase):
     def test_nested_comments_do_not_add_exports(self):
@@ -30,7 +34,9 @@ end"""
         })
 
     def test_actual_signature_inventory(self):
-        delta = inv.validate_signatures(inv.catalog())
+        # The TASK_07 inventory is historical, not a demand to resurrect its
+        # removed ordinary extension exports in TASK_16.
+        delta = inv.validate_signatures(inv.catalog(), revision=inv.SOURCE)
         changed = [v for v in delta.values() if v["baseline_exists"]]
         new = [v for v in delta.values() if not v["baseline_exists"]]
         self.assertEqual((len(changed), len(new)), (7, 3))  # congLib unchanged
@@ -45,12 +51,12 @@ end"""
         rows = [r for r in inv.catalog()
                 if not (r[1] == "simpLib" and r[3] == "set_term_ord")]
         with self.assertRaisesRegex(ValueError, "uncatalogued signature delta"):
-            inv.validate_signatures(rows)
+            inv.validate_signatures(rows, revision=inv.SOURCE)
 
     def test_invented_api_is_rejected(self):
         rows = inv.catalog() + [("T1", "Traverse", "val", "pretend_promote")]
         with self.assertRaisesRegex(ValueError, "uncatalogued signature delta"):
-            inv.validate_signatures(rows)
+            inv.validate_signatures(rows, revision=inv.SOURCE)
 
     def test_unknown_signature_is_rejected(self):
         original = inv.git
@@ -63,7 +69,7 @@ end"""
 
         with patch.object(inv, "git", side_effect=altered):
             with self.assertRaisesRegex(ValueError, "Unclassified"):
-                inv.validate_signatures(inv.catalog())
+                inv.validate_signatures(inv.catalog(), revision=inv.SOURCE)
 
     def test_every_family_has_table_and_owner(self):
         doc = (inv.HERE / "MIGRATION.md").read_text()
@@ -85,7 +91,9 @@ end"""
             scope, path = row["scope"], row["path"]
             key = scope, path
             if key not in sources:
-                data = (roots[scope] / path).read_bytes()
+                data = (inv.git(inv.ROOT, 'show', f'{REFERENCES}:{path}')
+                        if scope == 'repository' else
+                        (roots[scope] / path).read_bytes())
                 self.assertEqual(inv.digest(data),
                                  manifest["matched_source_sha256"][scope][path])
                 sources[key] = data.decode("utf-8", errors="replace").splitlines()

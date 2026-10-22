@@ -1,0 +1,34 @@
+{
+  "attempts": [
+    {
+      "command": "first focused Holmake",
+      "exit": 1,
+      "cause": "fresh syntax fixture still assumed ordinary simpLib imported simpMarker theory",
+      "resolution": "explicitly assert absence then load simpMarkerLib; original foreign/qualified syntax assertions retained"
+    },
+    {
+      "command": "second focused Holmake",
+      "exit": 1,
+      "cause": "ordinary optional/configured getter fixture depended on APIs removed by the core cutover",
+      "resolution": "test total inert baseline projection in ordinary scope; retain all tracked strategy/configured tests"
+    },
+    {
+      "command": "first routine build",
+      "exit": "timeout at 200 seconds",
+      "cause": "tool deadline while downstream theories rebuilding",
+      "resolution": "complete command rerun with longer timeout; final integrated build exits 0"
+    },
+    {
+      "command": "first run_prior_native.py",
+      "exit": 1,
+      "cause": "two test-generated scratchTheory source/data products changed during repeat native execution",
+      "resolution": "remove only task-generated scratch exports before rerun; all final receipts and product seals pass"
+    },
+    {
+      "command": "first new offline analyzer unit discovery",
+      "exit": 1,
+      "cause": "audit_evidence module basename collided with existing performance analyzer",
+      "resolution": "rename new module audit_core_evidence; all nine tests pass"
+    }
+  ]
+}

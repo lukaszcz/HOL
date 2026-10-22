@@ -1,0 +1,2 @@
+# Fixtures are installed only into the private temporary source roots.
+# Invoke run_assembly.py; do not compile against the shared simpLib product.

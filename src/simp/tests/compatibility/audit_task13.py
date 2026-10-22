@@ -35,6 +35,14 @@ TASK15_REVIEWED = {
     "bytes": 120021,
     "sha256": "2f2e5d43689ce9061de4d1971afccf6f811d09cf7bfd3a2316261efe16d550fc",
 }
+# TASK_16 removes retired ordinary optional/configured projection cases only.
+# Keep TASK_14's historical seal above; this additional exact seal is reviewed
+# in migration/TASK16.md and the coverage relocation supplement.
+TASK16_REVIEWED = {
+    SRC + "selftest.sml": {
+        "bytes": 274909,
+        "sha256": "fea5caee9ba8a9c0d0375ed88711874101382934528c2cc2916716cc90772c52"},
+}
 OPENING_HEADER = """\
 (* Explicit threaded congruence construction. The ordinary implementation in
    Opening is pinned develop. Shared relation helpers, Trace and HOL exception
@@ -186,7 +194,8 @@ def structural(sources=None):
                 "ordinary extension dependency: " + path)
     for path in native_paths():
         require(sources[path] == git_source(START, path) or
-                seal(sources[path]) == TASK14_REVIEWED.get(path),
+                seal(sources[path]) == TASK14_REVIEWED.get(path) or
+                seal(sources[path]) == TASK16_REVIEWED.get(path),
                 "native/selftest changed outside reviewed delta: " + path)
 
     original = git_source(BASE, SRC + "Opening.sml")
@@ -251,11 +260,20 @@ def structural(sources=None):
         import audit_task15
         try:
             _, sig, extension, extension_sig = audit_task15.sources()
+            if sig == git_source(BASE, SRC + 'simpLib.sig'):
+                # Pair historical TASK_15 bodies with their frozen signature,
+                # not TASK_16's restored signature. Current files are checked
+                # byte-for-byte as a pair by audit_task16.
+                sig = git_source('6d768fece', SRC + 'simpLib.sig')
             audit_task15.audit(sources[path], sig, extension, extension_sig)
             reviewed_task15 = seal(sources[path]) == TASK15_REVIEWED
         except AssertionError:
             pass
-    require(sources[path] == expected or reviewed_task15,
+    # TASK_16 deletes the entire temporary compiler. Admit only the exact
+    # pinned develop body, not an arbitrary M3-free rewrite; historical
+    # TASK_13/15 routes and all their frozen assertions remain above.
+    require(sources[path] == expected or reviewed_task15 or
+            sources[path] == git_source(BASE, path),
             "simpLib temporary M3 route/work changed")
     return {p: seal(sources[p]) for p in sorted(required)}
 

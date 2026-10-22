@@ -14,10 +14,10 @@
         "bytes": 270598
       },
       "current": {
-        "sha256": "ed0d9aecf994bcf8a66ac2b81fb078bce16edb27e1894df7409692f7e00fd103",
-        "bytes": 277199
+        "sha256": "fea5caee9ba8a9c0d0375ed88711874101382934528c2cc2916716cc90772c52",
+        "bytes": 274909
       },
-      "decision": "tracked native constructors and explicit ordinary pins; TASK_11 baseline datatype cutover and one-way configured projection checks; branch-only configured/paired constructors explicitly import Cond_rewrExt without assertion changes; TASK_14 explicitly prepares directives before inventory inspection, retaining original source_metadata assertions",
+      "decision": "tracked native constructors and explicit ordinary pins; TASK_11 baseline datatype cutover and one-way configured projection checks; branch-only configured/paired constructors explicitly import Cond_rewrExt without assertion changes; TASK_14 explicitly prepares directives before inventory inspection, retaining original source_metadata assertions; TASK_16 replaces retired ordinary optional/configured eligibility with inert total baseline getters, preserving tracked settings checks and all labels/streams",
       "old_anchors": [
         {
           "path": "src/simp/src/selftest.sml",
@@ -148,27 +148,27 @@
         },
         {
           "path": "src/simp/src/selftest.sml",
-          "line": 6201,
-          "text": "    val rejecting_solver : TraverseExt.ssolver ="
+          "line": 6208,
+          "text": "    val inputs = [empty_ss,bool_ss,base,limit 4 base,"
         },
         {
           "path": "src/simp/src/selftest.sml",
-          "line": 6218,
-          "text": "    val rejected = map legacy_traversedata_for_ss excluded"
+          "line": 6222,
+          "text": "      Portable.pointer_eq (#dprocs public,#dprocs repeated) andalso"
         },
         {
           "path": "src/simp/src/selftest.sml",
-          "line": 6250,
-          "text": "    fun configured_projection ss = let"
+          "line": 6231,
+          "text": "    #limit (traversedata_for_ss (limit 4 base)) = SOME 4 andalso"
         },
         {
           "path": "src/simp/src/selftest.sml",
-          "line": 6307,
+          "line": 6260,
           "text": "     after_accepted = !additions andalso ordinary_eligibility andalso"
         },
         {
           "path": "src/simp/src/selftest.sml",
-          "line": 6424,
+          "line": 6377,
           "text": "    (case #rewriters native of"
         },
         {
@@ -200,6 +200,47 @@
           "path": "src/simp/src/selftest.sml",
           "line": 3950,
           "text": "        val (excluded, _) = sources_after installed [Excl \"policy_source\"]"
+        }
+      ]
+    },
+    "src/simp/tests/fresh-load/syntax.ML": {
+      "old_revision": "6d768feceae9033eb1ae8d34fb331b372f126384",
+      "old": {
+        "sha256": "d0aa91ae2abb609d8a689357abebc998c269e685e78ad53080577f885d54cc61",
+        "bytes": 738
+      },
+      "current": {
+        "sha256": "e288f322e70cbc2ff1b0b6fc1e78bb07afb6d6f896cf713695b274999fb31f29",
+        "bytes": 1357
+      },
+      "decision": "TASK_16 checks ordinary imports have no extension modules, then explicitly loads simpMarkerLib before the original foreign-overload and qualified-constant assertions. All original assertions/labels/streams remain unchanged; marker availability is no longer an implicit ordinary import.",
+      "old_anchors": [
+        {
+          "path": "src/simp/tests/fresh-load/syntax.ML",
+          "line": 4,
+          "literal": "ordinary load preserves foreign syntax: "
+        },
+        {
+          "path": "src/simp/tests/fresh-load/syntax.ML",
+          "line": 9,
+          "literal": "qualified marker constant remains available: "
+        }
+      ],
+      "current_anchors": [
+        {
+          "path": "src/simp/tests/fresh-load/syntax.ML",
+          "line": 5,
+          "text": "  if List.exists (fn s => s = name) (Meta.loaded ()) orelse"
+        },
+        {
+          "path": "src/simp/tests/fresh-load/syntax.ML",
+          "line": 12,
+          "text": "val _ = Meta.load"
+        },
+        {
+          "path": "src/simp/tests/fresh-load/syntax.ML",
+          "line": 14,
+          "text": "                   \"simpMarkerLib\"));"
         }
       ]
     },
@@ -294,7 +335,7 @@
     "tracked-lifetime": "Total tracked default projection replaces valOf legacy_traversedata_for_ss with traversedata_for_ss. Preserve construction/reuse collector counts for lifted ordinary, CONTEXT and CONFIG procedures; no extraction reconstruction.",
     "shared-paired": "Paired conditional runner/depth/failure checks explicitly import Cond_rewrExt.COND_REWR_CONVS. Ordinary Cond_rewr.COND_REWR_CONV, stack_limit and ac_term_ord remain unchanged. Preserve every assertion, stream event and original case anchor.",
     "tracked-projections": "Tracked default shape is LIFTED (OrdinaryTraverse.REDUCER _); configured remains CONFIG_REDUCER. Pointer comparisons are between extension projections only. Preserve spent/exhausted controls, makers, theorem hypotheses, views/replay and configuration omission checks; total getters, no rebuilding.",
-    "optional-eligibility": "Ordinary optional eligibility uses genuinely ordinary probe/base: subgoaler/unsafe/depth/order rejection, safe/looper acceptance, zero extraction callbacks and ordinary public/eligible pointer identity. TASK_11 explicitly types surviving mixed strategy callbacks as TraverseExt.ssolver and checks configured projection CONFIG shape, one-way LIFTED ordinary dproc payload identity, shared travrules/limits/relation and retained configuration, still with zero extraction callbacks. No reverse adapter or unlike-type pointer comparison. Context/config procedures cannot inhabit restored ordinary reducer type: former optional rejection inputs instead assert total tracked default shape/exact extension dproc identity and configured companion, with zero callbacks. Explicit type-driven assertion change, not unchanged tracked optional semantics.",
+    "optional-eligibility": "Historical TASK_11 ordinary optional eligibility rejected subgoaler/unsafe/depth/order settings, accepted safe/looper settings, and compared one-way configured projection payloads with zero extraction callbacks. TASK_16 removes those ordinary APIs entirely: replace only that ordinary sub-block with total baseline getter checks over empty/bool/probe, limit/unlimit and empty-fragment inputs. Assert ordinary REDUCER shape, repeated dproc/travrule identity, equality relation, retained SOME 4 limit and zero extraction callbacks. Keep the surrounding tracked total/default and configured companion checks, exact extension dproc identities and subsequent solver/order/depth settings checks unchanged. This is an explicit type-driven assertion adaptation, not retained ordinary optional semantics; labels, counts and streams remain frozen.",
     "typed-context-config": "Former optional NONE for context/config dprocs becomes total tracked LIFTED-native shape and exact dproc identity versus CONFIG companion, plus configured depth SOME 1. Retain proof/hypothesis comparisons, construction/use collector counts and invocation controls; not count-only acceptance."
   },
   "anchors": [
@@ -5598,7 +5639,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6301,
+        "line": 6254,
         "literal": "public projection preserves REDUCER and supplied dprocs"
       }
     },
@@ -5610,7 +5651,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6304,
+        "line": 6257,
         "literal": "native projection eligibility is pure and conservative"
       }
     },
@@ -5622,7 +5663,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6344,
+        "line": 6297,
         "literal": "public projection omits configuration; extended keeps it"
       }
     },
@@ -5634,7 +5675,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6364,
+        "line": 6317,
         "literal": "public omits unsafe solver; extended invokes it"
       }
     },
@@ -5646,7 +5687,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6383,
+        "line": 6336,
         "literal": "public uses default order; extended invokes custom order"
       }
     },
@@ -5658,7 +5699,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6420,
+        "line": 6373,
         "literal": "configured fallback collector construction/use counts"
       }
     },
@@ -5670,7 +5711,7 @@
       },
       "current": {
         "path": "src/simp/src/selftest.sml",
-        "line": 6434,
+        "line": 6387,
         "literal": "rejected contextual procedures retain configured fallback"
       }
     },
@@ -6956,6 +6997,30 @@
         "path": "src/simp/tests/split-persistence/selftest.sml",
         "line": 124,
         "literal": "foreign exporter callbacks still work"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/fresh-load/syntax.ML",
+        "line": 4,
+        "literal": "ordinary load preserves foreign syntax: "
+      },
+      "current": {
+        "path": "src/simp/tests/fresh-load/syntax.ML",
+        "line": 16,
+        "literal": "ordinary load preserves foreign syntax: "
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/fresh-load/syntax.ML",
+        "line": 9,
+        "literal": "qualified marker constant remains available: "
+      },
+      "current": {
+        "path": "src/simp/tests/fresh-load/syntax.ML",
+        "line": 21,
+        "literal": "qualified marker constant remains available: "
       }
     }
   ],

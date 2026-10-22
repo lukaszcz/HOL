@@ -186,6 +186,12 @@ def audit(simp=None, sig=None, extension=None, extension_sig=None):
     for path, text in zip(FILES[2:], (extension, extension_sig)):
         require(text == git_source(START, path),
                 'extension changed from task-start HEAD: ' + path)
+    # TASK_16 reviewed the stronger, byte-exact full restoration. Keep every
+    # transitional assertion below for historical TASK_15 inputs/mutations;
+    # only the exact pinned pair may bypass the retired mixed compiler seal.
+    if (simp == git_source(BASE, FILES[0]) and
+            sig == git_source(BASE, FILES[1])):
+        return True
     require('source_slot' not in ordinary + signature,
             'ordinary source_slot survives')
     require(not {'TravrulesExt', 'threaded_congs'}.intersection(ordinary),

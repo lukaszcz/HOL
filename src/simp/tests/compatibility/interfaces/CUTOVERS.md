@@ -7,6 +7,15 @@ type routes without permissive engine stubs. `graph.json` records temporary
 imports and their mandatory removal owners. Final ordinary code has no extension
 imports. Temporary mixed costs are not a performance/compatibility pass.
 
+**TASK_16 structural closure:** M1–M5 are closed by the byte-exact restoration
+of ordinary `simpLib.{sml,sig}` to pinned develop. M3's fragment edge was already
+removed in 15; 16 removes the remaining compiler/storage/helpers. See
+[the source audit and scope](../migration/TASK16.md). This records source
+closure, not completion of every runtime/performance gate below. **M6 remains
+owned by 26**: interleaved test integration is not an ordinary library import.
+`graph.json` retains historical transition/removal decisions; the TASK_16
+source manifest, not that design graph, audits the actual ordinary closure.
+
 ## Common gate at each landing
 
 1. Build and **execute** the directory's changed selftests and interfaces/check.
@@ -201,22 +210,23 @@ bind the unchanged production sources. Assertions, not line numbers, are invaria
 - Measure fragment/merge/compilation/application plus retained graph slope; no
   extension allocation in legacy records. Later gates use the full acceptance
   protocol; reduction of mixed costs alone is not a pass.
-- Close every M ledger edge here; **27** independently audits closure and normal
-  manifests. No temporary dependency is allowed to survive just because 27 exists.
+- Close M1–M5 library/compiler plumbing here; **27** independently audits
+  closure and normal manifests. No temporary library dependency may survive
+  just because 27 exists. M6's executable test integration remains **26**.
 
 ## Transition ledger (source slices and removal ownership)
 
-| ID | Minimal temporary plumbing | Added/retargeted | Removal owner |
-| --- | --- | --- | --- |
-| X1 | New simpExtLib initially uses existing Cond_rewr paired API; the new Cond_rewrExt is not needed before its extraction | 10 relocation | **12** retarget to Cond_rewrExt |
-| X2 | New simpExtLib initially uses existing Travrules threaded API; Opening/Travrules extension modules arrive in 13 | 10 relocation | **13** retarget to TravrulesExt |
-| M0 | Old mixed Traverse alternatives/entry points/eligibility; configured congLib wrapping at 178–205,271–306 | 09 extraction | **11** |
-| M1 | Ordinary simpLib configured reducer/config/solver types at 185–238,2059–2150,2346–2422,2925; private bridge uses T types/lift only | 11 retype | **16** |
-| M2 | Ordinary paired preparation at simpLib:126 explicitly imports Cond_rewrExt | 12 retarget | **16** |
-| M3 | Ordinary threaded factory at simpLib:1628 explicitly imports TravrulesExt | 13 retarget | **15/16**, no later than 16 |
-| M4 | Ordinary source slots/inventories/companions/history at 22–45,102–252,1681–1925; installation-local slot adapter after fragment restoration | existing; 15 adapter | fragments **15**, compiled state **16** |
-| M5 | Ordinary split/strategy/extended marker helpers at 943–1051,2154–2162,2174–2422 and matching branch-only exports | 10 relocation | fragment fields **15**, remaining imports/code **16** |
-| M6 | Interleaved test dependency aliases/local scopes and temporary duplicate assertions | 10/11 minimum migration | final integration **26**; must remain executable throughout |
+| ID | Minimal temporary plumbing | Added/retargeted | Removal owner | Source status |
+| --- | --- | --- | --- | --- |
+| X1 | New simpExtLib initially uses existing Cond_rewr paired API; the new Cond_rewrExt is not needed before its extraction | 10 relocation | **12** retarget to Cond_rewrExt | closed 12 |
+| X2 | New simpExtLib initially uses existing Travrules threaded API; Opening/Travrules extension modules arrive in 13 | 10 relocation | **13** retarget to TravrulesExt | closed 13 |
+| M0 | Old mixed Traverse alternatives/entry points/eligibility; configured congLib wrapping at 178–205,271–306 | 09 extraction | **11** | closed 11 |
+| M1 | Ordinary simpLib configured reducer/config/solver types at 185–238,2059–2150,2346–2422,2925; private bridge uses T types/lift only | 11 retype | **16** | closed 16; no configured companions or bridge |
+| M2 | Ordinary paired preparation at simpLib:126 explicitly imports Cond_rewrExt | 12 retarget | **16** | closed 16; direct ordinary compiler |
+| M3 | Ordinary threaded factory at simpLib:1628 explicitly imports TravrulesExt | 13 retarget | **15/16**, no later than 16 | closed by 16; threaded fragment edge removed 15 |
+| M4 | Ordinary source slots/inventories/companions/history at 22–45,102–252,1681–1925; installation-local slot adapter after fragment restoration | existing; 15 adapter | fragments **15**, compiled state **16** | closed 16; baseline net/history and no adapter |
+| M5 | Ordinary split/strategy/extended marker helpers at 943–1051,2154–2162,2174–2422 and matching branch-only exports | 10 relocation | fragment fields **15**, remaining imports/code **16** | closed 16; ordinary markerLib only |
+| M6 | Interleaved test dependency aliases/local scopes and temporary duplicate assertions | 10/11 minimum migration | final integration **26**; must remain executable throughout | open; owner remains 26 |
 
 The graph's introduced-node ledger models the pre-extraction availability:
 SimpTracking/Cond_rewrExt arrive in 12, OpeningExt/TravrulesExt in 13. Prior to

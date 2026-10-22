@@ -11,8 +11,8 @@ class StructuralControls(unittest.TestCase):
         cls.sources = audit.read_sources()
         audit.structural(cls.sources)
 
-    def reject(self, path, old, new, diagnostic):
-        source = self.sources[path]
+    def reject(self, path, old, new, diagnostic, source=None):
+        source = self.sources[path] if source is None else source
         self.assertIn(old, source, "mutation must actually change the input")
         self.assertNotEqual(old, new)
         changed = dict(self.sources)
@@ -202,7 +202,9 @@ class StructuralControls(unittest.TestCase):
         self.assertNotIn("TravrulesExt", ordinary)
         self.assertNotIn("threaded_congs", ordinary)
         # The retired M3 branches remain covered above on simpExtLib.
-        # Reject their reintroduction and changes outside TASK_15's adapter.
+        # Keep the original TASK_15 adapter mutations on its pinned body:
+        # TASK_16 no longer has that code, but its historical seal still must
+        # fail closed on all the same changes.
         for old, new in (
                 ("mk_travrules relations congs::reltravs",
                  "TravrulesExt.mk_threaded_travrules relations congs::reltravs"),
@@ -210,7 +212,28 @@ class StructuralControls(unittest.TestCase):
                 ("Cond_rewrExt.COND_REWR_CONVS", "Cond_rewr.COND_REWR_CONV")):
             with self.subTest(old=old):
                 self.reject(audit.SRC + "simpLib.sml", old, new,
-                            "simpLib temporary M3 route/work")
+                            "simpLib temporary M3 route/work",
+                            source=audit.git_source(
+                                '6d768fece', audit.SRC + 'simpLib.sml'))
+
+    def test_historical_task15_still_accepted(self):
+        historical = dict(self.sources)
+        path = audit.SRC + 'simpLib.sml'
+        historical[path] = audit.git_source('6d768fece', path)
+        self.assertEqual(audit.structural(historical)[path],
+                         audit.TASK15_REVIEWED)
+
+    def test_full_restoration_is_byte_exact(self):
+        path = audit.SRC + 'simpLib.sml'
+        self.assertEqual(self.sources[path], audit.git_source(audit.BASE, path))
+        for old, new in (
+                ('mk_travrules relations congs::reltravs',
+                 'TravrulesExt.mk_threaded_travrules relations congs::reltravs'),
+                ('COND_REWR_CONV (nm,th)',
+                 'Cond_rewrExt.COND_REWR_CONVS (nm,th)'),
+                ('\n', '\n(* unreviewed change *)\n')):
+            with self.subTest(old=old):
+                self.reject(path, old, new, 'simpLib temporary M3 route/work')
 
     def test_native_and_selftests_untouched(self):
         self.assertIn(audit.SRC + "selftest.sml", audit.native_paths())
@@ -219,6 +242,29 @@ class StructuralControls(unittest.TestCase):
         for path in audit.native_paths():
             with self.subTest(path=path):
                 self.reject(path, "\n", "\n(* changed *)\n", "native/selftest")
+
+    def test_historical_native_seal_still_accepted(self):
+        path = audit.SRC + 'selftest.sml'
+        historical = dict(self.sources)
+        historical[path] = audit.git_source('6d768fece', path)
+        self.assertEqual(audit.structural(historical)[path],
+                         audit.TASK14_REVIEWED[path])
+        self.assertEqual(audit.seal(self.sources[path]),
+                         audit.TASK16_REVIEWED[path])
+
+    def test_reviewed_native_projection_delta_is_exact(self):
+        path = audit.SRC + 'selftest.sml'
+        # Both the new total ordinary projection and the retained extension
+        # settings assertions remain sealed, not merely their output labels.
+        for old, new in (
+                ('map public_projection inputs', 'map (K true) inputs'),
+                ('#dprocs public,#dprocs repeated',
+                 '#dprocs public,#dprocs public'),
+                ('before_extraction = !additions', 'true'),
+                ('same_thm configured_zero (REFL default_a)', 'true'),
+                ('same_thm extended_solved (UNDISCH default_rule)', 'true')):
+            with self.subTest(old=old):
+                self.reject(path, old, new, 'native/selftest')
 
     def test_missing_sources_fail_closed(self):
         for path in self.sources:

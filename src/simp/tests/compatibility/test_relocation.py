@@ -25,6 +25,30 @@ class RelocationTests(unittest.TestCase):
         self.assertEqual(630, len(self.supplement["native"]["cases"]))
         self.assertEqual(12, len(self.supplement["native"]["additions"]))
 
+    def test_fresh_syntax_explicit_load_relocation(self):
+        path = "src/simp/tests/fresh-load/syntax.ML"
+        record = self.supplement["sources"][path]
+        self.assertEqual(record["old"], self.ledger["sources"][path])
+        rows = [r for r in self.supplement["anchors"]
+                if r["old"]["path"] == path]
+        self.assertEqual([4, 9], [r["old"]["line"] for r in rows])
+        self.assertEqual([16, 21], [r["current"]["line"] for r in rows])
+        self.assertEqual([r["old"]["literal"] for r in rows],
+                         [r["current"]["literal"] for r in rows])
+        changed = self.changed()
+        del changed["sources"][path]
+        self.reject(changed, "unexpected TASK_10 relocation source")
+        changed = self.changed()
+        changed["sources"][path]["current"]["sha256"] = "wrong"
+        self.reject(changed, "destination")
+
+    def test_fresh_syntax_anchor_is_not_a_wildcard(self):
+        changed = self.changed()
+        row = next(r for r in changed["anchors"]
+                   if r["current"]["path"].endswith("/syntax.ML"))
+        row["current"]["line"] -= 1
+        self.reject(changed, "literal anchor")
+
     def test_old_source_hash(self):
         changed = self.changed()
         changed["sources"][relocation.NATIVE]["old"]["sha256"] = "wrong"

@@ -1,0 +1,10 @@
+# Private, fresh-process baseline/candidate selftest launchers.
+.PHONY: check python-tests
+
+python-tests:
+	python3 -B -m unittest discover -s . -p 'test_*.py'
+
+check:
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	  python3 -B run_core.py --require-baseline-graphs \
+	    --output "$$tmp/evidence"

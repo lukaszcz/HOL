@@ -58,7 +58,8 @@ def verify(ledger, supplement=None):
     require(set(sources) == {NATIVE,
             "src/simp/tests/split-registration/selftest.sml",
             "src/simp/tests/split-persistence/selftest.sml",
-            "src/simp/tests/split-persistence/verify.ML"},
+            "src/simp/tests/split-persistence/verify.ML",
+            "src/simp/tests/fresh-load/syntax.ML"},
             "unexpected TASK_10 relocation source")
     old_text, current_text = {}, {}
     for path, record in sources.items():

@@ -1,0 +1,4785 @@
+{
+  "schema": 1,
+  "task_start": "6d768feceae9033eb1ae8d34fb331b372f126384",
+  "roots": [
+    "simpLib",
+    "boolSimps",
+    "congLib",
+    "combinSimps"
+  ],
+  "preloaded_sources": [
+    "src/portableML/DArray.sig",
+    "src/portableML/DArray.sml",
+    "src/portableML/DString.sig",
+    "src/portableML/DString.sml",
+    "src/portableML/UniversalType.sig",
+    "src/portableML/UniversalType.sml",
+    "src/portableML/poly/ConcIsaLib.sml",
+    "src/portableML/poly/Exn.sig",
+    "src/portableML/poly/Exn.sml",
+    "src/portableML/poly/Multithreading.sml",
+    "src/portableML/poly/PrettyImpl.sml",
+    "src/portableML/poly/Synchronized.sml",
+    "src/portableML/poly/Thread_Attributes.sml",
+    "src/portableML/poly/Thread_Data.sml",
+    "src/portableML/poly/Unsynchronized.sml",
+    "src/portableML/poly/concurrent/Sref.sig",
+    "src/portableML/poly/concurrent/Sref.sml",
+    "tools-poly/Holmake/CompilerSpecific.ML",
+    "tools-poly/Holmake/unix-systeml.sml",
+    "tools-poly/configure.sml",
+    "tools-poly/lsp/LSPExtension.sig",
+    "tools-poly/lsp/LSPExtension.sml",
+    "tools-poly/poly/Binarymap.sig",
+    "tools-poly/poly/Binarymap.sml",
+    "tools-poly/poly/Binaryset.sig",
+    "tools-poly/poly/Binaryset.sml",
+    "tools-poly/poly/Listsort.sig",
+    "tools-poly/poly/Listsort.sml",
+    "tools-poly/poly/Mosml.sml",
+    "tools-poly/poly/poly-init.ML",
+    "tools-poly/poly/poly-init2.ML",
+    "tools-poly/poly/quse.sig",
+    "tools-poly/poly/quse.sml",
+    "tools-poly/poly/sref-bootstrap.ML",
+    "tools/Holmake/Systeml.sig",
+    "tools/Holmake/hfs/HFS_NameMunge.sig",
+    "tools/Holmake/hfs/HOLFS_dtype.sml",
+    "tools/Holmake/hfs/HOLFileSys.sig",
+    "tools/Holmake/hfs/HOLFileSys.sml",
+    "tools/Holmake/hfs/holpathdb.sig",
+    "tools/Holmake/hfs/holpathdb.sml",
+    "tools/Holmake/poly/HFS_NameMunge.sml",
+    "tools/Holmake/toml/TOML.sig",
+    "tools/Holmake/toml/TOML.sml",
+    "tools/Holmake/toml/TOMLerror.sml",
+    "tools/Holmake/toml/TOMLvalue.sig",
+    "tools/Holmake/toml/TOMLvalue.sml",
+    "tools/Holmake/toml/TOMLvalue_dtype.sml",
+    "tools/Holmake/toml/parseTOML.sml",
+    "tools/Holmake/toml/parseTOMLFunctor.sml",
+    "tools/Holmake/toml/parseTOMLUtil.sml",
+    "tools/mlyacc/mlyacclib/MLY_base-sig.sml",
+    "tools/mlyacc/mlyacclib/MLY_join.sml",
+    "tools/mlyacc/mlyacclib/MLY_lrtable.sml",
+    "tools/mlyacc/mlyacclib/MLY_parser1.sml",
+    "tools/mlyacc/mlyacclib/MLY_parser2.sml",
+    "tools/mlyacc/mlyacclib/MLY_stream.sml",
+    "tools/parsing/AttributeSyntax.sig",
+    "tools/parsing/AttributeSyntax.sml",
+    "tools/parsing/HOLSource.sig",
+    "tools/parsing/HOLSource.sml",
+    "tools/parsing/HOLSourceAST.sig",
+    "tools/parsing/HOLSourceAST.sml",
+    "tools/parsing/HOLSourceExpand.sig",
+    "tools/parsing/HOLSourceExpand.sml",
+    "tools/parsing/HOLSourceParser.sig",
+    "tools/parsing/HOLSourceParser.sml",
+    "tools/parsing/HOLSourcePrinter.sig",
+    "tools/parsing/HOLSourcePrinter.sml",
+    "tools/parsing/ProofStepPlan.sig",
+    "tools/parsing/ProofStepPlan.sml",
+    "tools/parsing/TacticParse.sig",
+    "tools/parsing/TacticParse.sml",
+    "tools/util/FunctionalRecordUpdate.sml",
+    "tools/util/SimpleBuffer.sig",
+    "tools/util/SimpleBuffer.sml"
+  ],
+  "provenance": "Reviewed Poly/standard-kernel source closure; edges from holdeptool on actual defining sources, conservatively unioned with both .ui and .uo loader manifests. Generated theories, lexer, kernel aliases and platform glue map to tracked defining inputs. No build product is an audit oracle.",
+  "modules": {
+    "AC": {
+      "sources": [
+        "src/refute/AC.sig",
+        "src/refute/AC.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "Ho_Rewrite",
+        "HolKernel",
+        "Overlay",
+        "Term",
+        "Thm",
+        "boolSyntax",
+        "liteLib"
+      ],
+      "basis_or_local_names": [
+        "Listsort"
+      ]
+    },
+    "AList": {
+      "sources": [
+        "src/portableML/AList.sig",
+        "src/portableML/AList.sml"
+      ],
+      "imports": [
+        "Portable"
+      ],
+      "basis_or_local_names": []
+    },
+    "Abbrev": {
+      "sources": [
+        "src/1/Abbrev.sig",
+        "src/1/Abbrev.sml"
+      ],
+      "imports": [
+        "Context",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Term",
+        "Thm",
+        "Type"
+      ],
+      "basis_or_local_names": []
+    },
+    "Absyn": {
+      "sources": [
+        "src/parse/Absyn.sig",
+        "src/parse/Absyn.sml"
+      ],
+      "imports": [
+        "Absyn_dtype",
+        "Feedback",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Pretype",
+        "Term",
+        "locn"
+      ],
+      "basis_or_local_names": []
+    },
+    "Absyn_dtype": {
+      "sources": [
+        "src/parse/Absyn_dtype.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "Pretype",
+        "Term",
+        "locn"
+      ],
+      "basis_or_local_names": []
+    },
+    "AncestryData": {
+      "sources": [
+        "src/parse/AncestryData.sig",
+        "src/parse/AncestryData.sml"
+      ],
+      "imports": [
+        "Context",
+        "Feedback",
+        "HOLset",
+        "ImplicitGraph",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "SymGraph",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryDelta",
+        "ThyDataSexp",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "Option",
+        "String"
+      ]
+    },
+    "Arbnum": {
+      "sources": [
+        "src/portableML/Arbnum.sig",
+        "src/portableML/Arbnum.sml"
+      ],
+      "imports": [
+        "Arbnumcore",
+        "HOLPP"
+      ],
+      "basis_or_local_names": [
+        "StringCvt"
+      ]
+    },
+    "Arbnumcore": {
+      "sources": [
+        "src/portableML/poly/Arbnumcore.sig",
+        "src/portableML/poly/Arbnumcore.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "IEEEReal",
+        "Int",
+        "IntInf",
+        "LargeInt",
+        "Real",
+        "StringCvt",
+        "Substring"
+      ]
+    },
+    "BoolExtractShared": {
+      "sources": [
+        "src/1/BoolExtractShared.sig",
+        "src/1/BoolExtractShared.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "HOLset",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "boolLib",
+        "simpfrag"
+      ],
+      "basis_or_local_names": []
+    },
+    "BoundedRewrites": {
+      "sources": [
+        "src/1/BoundedRewrites.sig",
+        "src/1/BoundedRewrites.sml"
+      ],
+      "imports": [
+        "Drule",
+        "HOLset",
+        "HolKernel",
+        "Overlay",
+        "Thm",
+        "boolSyntax",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "Int"
+      ]
+    },
+    "Canon": {
+      "sources": [
+        "src/refute/Canon.sig",
+        "src/refute/Canon.sml"
+      ],
+      "imports": [
+        "AC",
+        "Abbrev",
+        "Conv",
+        "HOLset",
+        "Ho_Rewrite",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Termtab",
+        "Type",
+        "boolLib",
+        "boolSyntax",
+        "boolTheory",
+        "canonContextTheory",
+        "combinTheory",
+        "liteLib",
+        "tautLib"
+      ],
+      "basis_or_local_names": []
+    },
+    "Coding": {
+      "sources": [
+        "src/prekernel/Coding.sig",
+        "src/prekernel/Coding.sml"
+      ],
+      "imports": [
+        "KernelSig",
+        "optmonad"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Int",
+        "IntData",
+        "List",
+        "PairData",
+        "String",
+        "StringData"
+      ]
+    },
+    "Compute": {
+      "sources": [
+        "src/thm/Compute.sig",
+        "src/thm/Compute.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Feedback",
+        "HOLset",
+        "Lib",
+        "Term",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "Option",
+        "Vector"
+      ]
+    },
+    "ConcIsaLib": {
+      "sources": [
+        "src/portableML/poly/ConcIsaLib.sml"
+      ],
+      "imports": [
+        "Exn"
+      ],
+      "basis_or_local_names": [
+        "Thread"
+      ]
+    },
+    "Cond_rewr": {
+      "sources": [
+        "src/simp/src/Cond_rewr.sig",
+        "src/simp/src/Cond_rewr.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "BoundedRewrites",
+        "HOLset",
+        "HolKernel",
+        "Overlay",
+        "SimpTracking",
+        "Term",
+        "Termtab",
+        "Trace",
+        "Type",
+        "boolLib",
+        "boolSyntax",
+        "liteLib",
+        "markerTheory"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "Context": {
+      "sources": [
+        "src/prekernel/Context.sig",
+        "src/prekernel/Context.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "KernelSig",
+        "Lib",
+        "Lock",
+        "Portable",
+        "RWLock",
+        "Sref",
+        "Symtab",
+        "ThreadLocal",
+        "Type_dtype",
+        "UniversalType"
+      ],
+      "basis_or_local_names": [
+        "Option"
+      ]
+    },
+    "Conv": {
+      "sources": [
+        "src/1/Conv.sig",
+        "src/1/Conv.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Drule",
+        "Feedback",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Psyntax",
+        "Redblackmap",
+        "Term",
+        "Thm",
+        "Type",
+        "boolSyntax",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "List",
+        "String"
+      ]
+    },
+    "CoreReplVARS": {
+      "sources": [
+        "src/portableML/poly/CoreReplVARS.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "PolyML"
+      ]
+    },
+    "Count": {
+      "sources": [
+        "src/prekernel/Count.sig",
+        "src/prekernel/Count.sml"
+      ],
+      "imports": [
+        "Lib",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "DB": {
+      "sources": [
+        "src/postkernel/DB.sig",
+        "src/postkernel/DB.sml"
+      ],
+      "imports": [
+        "Context",
+        "DBSearchParser",
+        "DB_dtype",
+        "HolKernel",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Termtab",
+        "Theory",
+        "TheoryDelta",
+        "Thm",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "List",
+        "String"
+      ]
+    },
+    "DBSearchParser": {
+      "sources": [
+        "src/postkernel/DBSearchParser.sig",
+        "src/postkernel/DBSearchParser.sml"
+      ],
+      "imports": [
+        "HolKernel",
+        "Lib",
+        "Overlay"
+      ],
+      "basis_or_local_names": [
+        "Binaryset",
+        "Char",
+        "POSIX",
+        "String",
+        "regexpMatch"
+      ]
+    },
+    "DB_dtype": {
+      "sources": [
+        "src/postkernel/DB_dtype.sml"
+      ],
+      "imports": [
+        "KernelSig",
+        "Overlay",
+        "RawTheory_dtype",
+        "Term",
+        "Thm",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "Bool",
+        "Int",
+        "String",
+        "holpathdb"
+      ]
+    },
+    "DefnBaseCore": {
+      "sources": [
+        "src/1/DefnBaseCore.sig",
+        "src/1/DefnBaseCore.sml"
+      ],
+      "imports": [
+        "AncestryData",
+        "DB",
+        "Drule",
+        "HOLPP",
+        "HolKernel",
+        "KNametab",
+        "KernelSig",
+        "Overlay",
+        "Table",
+        "Term",
+        "Thm",
+        "ThmSetData",
+        "ThyDataSexp",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": [
+        "Binaryset",
+        "DStab",
+        "List",
+        "ListPair",
+        "Option",
+        "String"
+      ]
+    },
+    "Dep": {
+      "sources": [
+        "src/prekernel/Dep.sig",
+        "src/prekernel/Dep.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Lib",
+        "OldPP",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "Drule": {
+      "sources": [
+        "src/1/Drule.sig",
+        "src/1/Drule.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Feedback",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Rsyntax",
+        "Term",
+        "TermParse",
+        "Termtab",
+        "Thm",
+        "ThmAttribute",
+        "Type",
+        "boolSyntax",
+        "boolTheory",
+        "seq",
+        "thmpos_dtype"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "ListPair",
+        "Option"
+      ]
+    },
+    "Dynarray": {
+      "sources": [
+        "src/portableML/poly/Dynarray.sig",
+        "src/portableML/poly/Dynarray.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "Array"
+      ]
+    },
+    "Exn": {
+      "sources": [
+        "src/portableML/poly/Exn.sig",
+        "src/portableML/poly/Exn.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "IO",
+        "PolyML",
+        "String",
+        "Thread"
+      ]
+    },
+    "FCNet": {
+      "sources": [
+        "src/parse/FCNet.sig",
+        "src/parse/FCNet.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "GrammarSpecials",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Term",
+        "Termtab",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Feedback": {
+      "sources": [
+        "src/prekernel/Feedback.sig",
+        "src/prekernel/Feedback.sml"
+      ],
+      "imports": [
+        "Feedback_dtype",
+        "Globals",
+        "HOLPP",
+        "OldPP",
+        "Portable",
+        "Symtab",
+        "locn"
+      ],
+      "basis_or_local_names": [
+        "General",
+        "Int",
+        "List",
+        "OS",
+        "String",
+        "TextIO"
+      ]
+    },
+    "Feedback_dtype": {
+      "sources": [
+        "src/prekernel/Feedback_dtype.sml"
+      ],
+      "imports": [
+        "locn"
+      ],
+      "basis_or_local_names": []
+    },
+    "FinalContext-sig": {
+      "sources": [
+        "src/prekernel/FinalContext-sig.sml"
+      ],
+      "imports": [
+        "KernelSig",
+        "Type_dtype"
+      ],
+      "basis_or_local_names": []
+    },
+    "FinalNet-sig": {
+      "sources": [
+        "src/prekernel/FinalNet-sig.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "FinalTag-sig": {
+      "sources": [
+        "src/prekernel/FinalTag-sig.sml"
+      ],
+      "imports": [
+        "Dep",
+        "HOLPP",
+        "Nonce",
+        "OldPP",
+        "Portable"
+      ],
+      "basis_or_local_names": []
+    },
+    "FinalTerm-sig": {
+      "sources": [
+        "src/prekernel/FinalTerm-sig.sml"
+      ],
+      "imports": [
+        "HOLset",
+        "KernelSig",
+        "Lib"
+      ],
+      "basis_or_local_names": []
+    },
+    "FinalThm-sig": {
+      "sources": [
+        "src/prekernel/FinalThm-sig.sml"
+      ],
+      "imports": [
+        "HOLset",
+        "Lib",
+        "Nonce",
+        "Portable"
+      ],
+      "basis_or_local_names": []
+    },
+    "FinalType-sig": {
+      "sources": [
+        "src/prekernel/FinalType-sig.sml"
+      ],
+      "imports": [
+        "KernelSig",
+        "Lib"
+      ],
+      "basis_or_local_names": []
+    },
+    "FullUnify": {
+      "sources": [
+        "src/1/FullUnify.sig",
+        "src/1/FullUnify.sml"
+      ],
+      "imports": [
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Termtab",
+        "Type",
+        "boolSyntax",
+        "optmonad"
+      ],
+      "basis_or_local_names": [
+        "Env",
+        "List",
+        "ListPair",
+        "Option"
+      ]
+    },
+    "Globals": {
+      "sources": [
+        "src/prekernel/Globals.sig",
+        "src/prekernel/Globals.sml"
+      ],
+      "imports": [
+        "CoreReplVARS",
+        "Systeml"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "Path",
+        "String",
+        "Timer"
+      ]
+    },
+    "GrammarAncestry": {
+      "sources": [
+        "src/parse/GrammarAncestry.sig",
+        "src/parse/GrammarAncestry.sml"
+      ],
+      "imports": [
+        "HOLsexp",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Theory"
+      ],
+      "basis_or_local_names": [
+        "Option",
+        "String"
+      ]
+    },
+    "GrammarDeltas": {
+      "sources": [
+        "src/parse/GrammarDeltas.sig",
+        "src/parse/GrammarDeltas.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HOLgrammars",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Term",
+        "ThyDataSexp",
+        "Type",
+        "term_grammar",
+        "term_grammar_dtype",
+        "type_grammar",
+        "type_grammar_dtype"
+      ],
+      "basis_or_local_names": [
+        "LoadableThyData",
+        "Option",
+        "PP"
+      ]
+    },
+    "GrammarSpecials": {
+      "sources": [
+        "src/parse/GrammarSpecials.sig",
+        "src/parse/GrammarSpecials.sml"
+      ],
+      "imports": [
+        "Coding",
+        "Feedback",
+        "HolKernel",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Term",
+        "UTF8"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "KernelNameData",
+        "OptionData",
+        "PairData",
+        "String",
+        "StringCvt",
+        "StringData"
+      ]
+    },
+    "Graph": {
+      "sources": [
+        "src/portableML/Graph.sml"
+      ],
+      "imports": [
+        "AList",
+        "HOLPP",
+        "Portable",
+        "Table"
+      ],
+      "basis_or_local_names": [
+        "Key",
+        "Keys",
+        "List",
+        "ListPair"
+      ]
+    },
+    "HOLPP": {
+      "sources": [
+        "src/portableML/HOLPP.sig",
+        "src/portableML/HOLPP.sml"
+      ],
+      "imports": [
+        "PrettyImpl",
+        "Uref",
+        "quotation_dtype"
+      ],
+      "basis_or_local_names": [
+        "FixedInt",
+        "List",
+        "String"
+      ]
+    },
+    "HOLgrammars": {
+      "sources": [
+        "src/parse/HOLgrammars.sml"
+      ],
+      "imports": [
+        "HOLPP"
+      ],
+      "basis_or_local_names": []
+    },
+    "HOLquotation": {
+      "sources": [
+        "src/portableML/HOLquotation.sig",
+        "src/portableML/HOLquotation.sml"
+      ],
+      "imports": [
+        "quotation_dtype"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Substring"
+      ]
+    },
+    "HOLset": {
+      "sources": [
+        "src/portableML/HOLset.sig",
+        "src/portableML/HOLset.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "Redblackset"
+      ],
+      "basis_or_local_names": [
+        "FixedInt"
+      ]
+    },
+    "HOLsexp": {
+      "sources": [
+        "src/portableML/HOLsexp.sig",
+        "src/portableML/HOLsexp.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HOLsexp_dtype",
+        "HOLsexp_parser",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "List",
+        "Option",
+        "String",
+        "StringCvt",
+        "TextIO"
+      ]
+    },
+    "HOLsexp.grm": {
+      "sources": [
+        "src/portableML/HOLsexp.grm"
+      ],
+      "imports": [
+        "HOLsexp.grm-sig",
+        "HOLsexp_dtype",
+        "MLY_base-sig",
+        "MLY_join",
+        "MLY_lrtable",
+        "MLY_parser2"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "Char",
+        "Header",
+        "Int",
+        "List",
+        "LrTable",
+        "MlyValue",
+        "ParserData",
+        "String"
+      ]
+    },
+    "HOLsexp.grm-sig": {
+      "sources": [
+        "src/portableML/HOLsexp.grm"
+      ],
+      "imports": [
+        "MLY_base-sig",
+        "MLY_join",
+        "MLY_lrtable"
+      ],
+      "basis_or_local_names": [
+        "ParserData",
+        "Tokens"
+      ]
+    },
+    "HOLsexp.lex": {
+      "sources": [
+        "src/portableML/HOLsexp.lex"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "Internal",
+        "List",
+        "String",
+        "Tokens",
+        "UserDeclarations",
+        "Vector"
+      ]
+    },
+    "HOLsexp_dtype": {
+      "sources": [
+        "src/portableML/HOLsexp_dtype.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "HOLsexp_parser": {
+      "sources": [
+        "src/portableML/HOLsexp_parser.sig",
+        "src/portableML/HOLsexp_parser.sml"
+      ],
+      "imports": [
+        "Exn",
+        "HOLsexp.grm",
+        "HOLsexp.lex",
+        "HOLsexp_dtype",
+        "MLY_base-sig",
+        "MLY_join",
+        "MLY_lrtable",
+        "MLY_parser2",
+        "MLY_stream",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "HOLsexpLex",
+        "HOLsexpLrVals",
+        "HOLsexpParser",
+        "Int",
+        "LrParser",
+        "StringCvt",
+        "TextIO"
+      ]
+    },
+    "HOLtokens": {
+      "sources": [
+        "src/parse/HOLtokens.sig",
+        "src/parse/HOLtokens.sml"
+      ],
+      "imports": [
+        "Lexis",
+        "Lib",
+        "Overlay"
+      ],
+      "basis_or_local_names": [
+        "String",
+        "Word8Array"
+      ]
+    },
+    "History": {
+      "sources": [
+        "src/proofman/History.sig",
+        "src/proofman/History.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Lib",
+        "Overlay"
+      ],
+      "basis_or_local_names": []
+    },
+    "Ho_Net": {
+      "sources": [
+        "src/1/Ho_Net.sig",
+        "src/1/Ho_Net.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HolKernel",
+        "Overlay",
+        "Portable",
+        "Table",
+        "Term",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "LabelTab",
+        "List",
+        "String"
+      ]
+    },
+    "Ho_Rewrite": {
+      "sources": [
+        "src/1/Ho_Rewrite.sig",
+        "src/1/Ho_Rewrite.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Context",
+        "Conv",
+        "Drule",
+        "HOLset",
+        "Ho_Net",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Tactic",
+        "Tactical",
+        "Type",
+        "boolSyntax",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "String"
+      ]
+    },
+    "HolKernel": {
+      "sources": [
+        "src/postkernel/HolKernel.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Globals",
+        "HOLset",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Term",
+        "Theory",
+        "Thm",
+        "Type",
+        "Uref"
+      ],
+      "basis_or_local_names": [
+        "Definition",
+        "List",
+        "Option"
+      ]
+    },
+    "HolSatLib": {
+      "sources": [
+        "src/HolSat/HolSatLib.sig",
+        "src/HolSat/HolSatLib.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "SatSolvers",
+        "dimacsTools",
+        "minisatProve",
+        "satConfig",
+        "satTools"
+      ],
+      "basis_or_local_names": []
+    },
+    "Hol_pp": {
+      "sources": [
+        "src/parse/Hol_pp.sig",
+        "src/parse/Hol_pp.sml"
+      ],
+      "imports": [
+        "DB",
+        "DB_dtype",
+        "Feedback",
+        "HOLPP",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "PPBackEnd",
+        "Parse",
+        "Portable",
+        "Term",
+        "Thm",
+        "Type",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "CharVector",
+        "Int",
+        "List",
+        "Listsort",
+        "PP",
+        "String",
+        "TextIO"
+      ]
+    },
+    "ImplicitGraph": {
+      "sources": [
+        "src/portableML/ImplicitGraph.sig",
+        "src/portableML/ImplicitGraph.sml"
+      ],
+      "imports": [
+        "HOLset"
+      ],
+      "basis_or_local_names": []
+    },
+    "Inttab": {
+      "sources": [
+        "src/portableML/Inttab.sml"
+      ],
+      "imports": [
+        "HOLPP"
+      ],
+      "basis_or_local_names": [
+        "Int"
+      ]
+    },
+    "KNametab": {
+      "sources": [
+        "src/prekernel/KNametab.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "KernelSig",
+        "Table"
+      ],
+      "basis_or_local_names": []
+    },
+    "KernelSig": {
+      "sources": [
+        "src/prekernel/KernelSig.sig",
+        "src/prekernel/KernelSig.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Globals",
+        "HOLset",
+        "Sref",
+        "Symtab"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "KernelTypes": {
+      "sources": [
+        "src/0/KernelTypes.sml"
+      ],
+      "imports": [
+        "HOLset",
+        "Subst",
+        "Tag",
+        "Type_dtype"
+      ],
+      "basis_or_local_names": []
+    },
+    "LVTermNetFunctor": {
+      "sources": [
+        "src/parse/LVTermNetFunctor.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HolKernel",
+        "Table",
+        "Term"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "KeyTab",
+        "LabelTab",
+        "List",
+        "S",
+        "Set",
+        "String"
+      ]
+    },
+    "Lexis": {
+      "sources": [
+        "src/prekernel/Lexis.sig",
+        "src/prekernel/Lexis.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Lib",
+        "Portable",
+        "UTF8",
+        "UnicodeChars"
+      ],
+      "basis_or_local_names": [
+        "Binaryset",
+        "Char",
+        "Int",
+        "String",
+        "Substring",
+        "Word8",
+        "Word8Array"
+      ]
+    },
+    "Lib": {
+      "sources": [
+        "src/prekernel/Lib.sig",
+        "src/prekernel/Lib.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Globals",
+        "HOLPP",
+        "HOLset",
+        "Portable",
+        "Redblackmap"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Date",
+        "Int",
+        "List",
+        "String",
+        "Time",
+        "Timer"
+      ]
+    },
+    "Listener": {
+      "sources": [
+        "src/prekernel/Listener.sig",
+        "src/prekernel/Listener.sml"
+      ],
+      "imports": [
+        "Exn",
+        "Feedback",
+        "Globals",
+        "Portable",
+        "Unsynchronized"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Literal": {
+      "sources": [
+        "src/parse/Literal.sig",
+        "src/parse/Literal.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Feedback",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "List",
+        "String"
+      ]
+    },
+    "Lock": {
+      "sources": [
+        "src/portableML/poly/concurrent/Lock.sig",
+        "src/portableML/poly/concurrent/Lock.sml"
+      ],
+      "imports": [
+        "Multithreading"
+      ],
+      "basis_or_local_names": [
+        "Mutex"
+      ]
+    },
+    "MD5": {
+      "sources": [
+        "src/portableML/poly/MD5.sig",
+        "src/portableML/poly/MD5.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "PackWord32Little",
+        "String",
+        "W32",
+        "W8V",
+        "Word32",
+        "Word8",
+        "Word8Vector"
+      ]
+    },
+    "MLSYSPortable": {
+      "sources": [
+        "src/portableML/poly/MLSYSPortable.sml"
+      ],
+      "imports": [
+        "MD5",
+        "Synchronized"
+      ],
+      "basis_or_local_names": [
+        "Byte",
+        "List",
+        "OS",
+        "PolyML",
+        "Posix",
+        "SML90",
+        "String",
+        "SysWord",
+        "Time",
+        "Timer"
+      ]
+    },
+    "MLY_base-sig": {
+      "sources": [
+        "tools/mlyacc/mlyacclib/MLY_base-sig.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "Int",
+        "LrTable",
+        "Stream",
+        "Token",
+        "UserDeclarations"
+      ]
+    },
+    "MLY_join": {
+      "sources": [
+        "tools/mlyacc/mlyacclib/MLY_join.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "LrParser",
+        "Token"
+      ]
+    },
+    "MLY_lrtable": {
+      "sources": [
+        "tools/mlyacc/mlyacclib/MLY_lrtable.sml"
+      ],
+      "imports": [
+        "MLY_base-sig",
+        "MLY_join"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "Int",
+        "List"
+      ]
+    },
+    "MLY_parser2": {
+      "sources": [
+        "tools/mlyacc/mlyacclib/MLY_parser2.sml"
+      ],
+      "imports": [
+        "MLY_base-sig",
+        "MLY_lrtable",
+        "MLY_stream"
+      ],
+      "basis_or_local_names": [
+        "Fifo",
+        "Int",
+        "List",
+        "LrTable",
+        "Stream",
+        "TextIO",
+        "Token"
+      ]
+    },
+    "MLY_stream": {
+      "sources": [
+        "tools/mlyacc/mlyacclib/MLY_stream.sml"
+      ],
+      "imports": [
+        "MLY_base-sig"
+      ],
+      "basis_or_local_names": []
+    },
+    "MLstring": {
+      "sources": [
+        "src/parse/MLstring.sig",
+        "src/parse/MLstring.sml"
+      ],
+      "imports": [
+        "Overlay"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Int",
+        "List",
+        "String",
+        "StringCvt"
+      ]
+    },
+    "Manager": {
+      "sources": [
+        "src/proofman/Manager.sig",
+        "src/proofman/Manager.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Context",
+        "Feedback",
+        "History",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Tactical",
+        "goalFrag",
+        "goalStack",
+        "goalTree",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List"
+      ]
+    },
+    "Multithreading": {
+      "sources": [
+        "src/portableML/poly/Multithreading.sml"
+      ],
+      "imports": [
+        "ConcIsaLib",
+        "Exn",
+        "Thread_Attributes",
+        "Thread_Data"
+      ],
+      "basis_or_local_names": [
+        "ConditionVar",
+        "Int",
+        "Mutex",
+        "TextIO",
+        "Thread",
+        "Time",
+        "Timer"
+      ]
+    },
+    "Net": {
+      "sources": [
+        "src/0/Net.sig",
+        "src/0/Net.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "KernelTypes",
+        "Lib",
+        "Term",
+        "Type_dtype"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Nonce": {
+      "sources": [
+        "src/prekernel/Nonce.sig",
+        "src/prekernel/Nonce.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "OldPP": {
+      "sources": [
+        "src/portableML/OldPP.sig",
+        "src/portableML/OldPP.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "UTF8"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "Char",
+        "CharVector",
+        "General",
+        "List",
+        "String",
+        "TextIO",
+        "Vector"
+      ]
+    },
+    "Opening": {
+      "sources": [
+        "src/simp/src/Opening.sig",
+        "src/simp/src/Opening.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Term",
+        "Trace",
+        "boolLib",
+        "boolSyntax",
+        "liteLib"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Overlay": {
+      "sources": [
+        "src/thm/Overlay.sml"
+      ],
+      "imports": [
+        "FinalContext-sig",
+        "FinalNet-sig",
+        "FinalTag-sig",
+        "FinalTerm-sig",
+        "FinalThm-sig",
+        "FinalType-sig",
+        "HOLPP",
+        "Net",
+        "Tag",
+        "Term",
+        "Thm",
+        "Thm-sig",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "OS"
+      ]
+    },
+    "Overload": {
+      "sources": [
+        "src/parse/Overload.sig",
+        "src/parse/Overload.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "GrammarSpecials",
+        "HOLset",
+        "HolKernel",
+        "LVTermNetFunctor",
+        "Lexis",
+        "Lib",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "Type",
+        "stmonad"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "ListPair",
+        "Listsort",
+        "Option",
+        "PMDataSet",
+        "PrintMap",
+        "String"
+      ]
+    },
+    "PPBackEnd": {
+      "sources": [
+        "src/parse/PPBackEnd.sig",
+        "src/parse/PPBackEnd.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Symtab",
+        "Type",
+        "UTF8",
+        "smpp",
+        "term_grammar",
+        "term_pp_types"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "Parse": {
+      "sources": [
+        "src/parse/Parse.sig",
+        "src/parse/Parse.sml"
+      ],
+      "imports": [
+        "Absyn",
+        "AncestryData",
+        "Context",
+        "Feedback",
+        "Globals",
+        "GrammarAncestry",
+        "GrammarDeltas",
+        "GrammarSpecials",
+        "HOLPP",
+        "HOLgrammars",
+        "HolKernel",
+        "KernelSig",
+        "Lib",
+        "Literal",
+        "Overlay",
+        "Overload",
+        "PPBackEnd",
+        "Portable",
+        "Preterm",
+        "Pretype",
+        "ProvideUnicode",
+        "Susp",
+        "Tag",
+        "Term",
+        "TermParse",
+        "Theory",
+        "TheoryDelta",
+        "Thm",
+        "ThyDataSexp",
+        "Type",
+        "UTF8",
+        "base_tokens",
+        "errormonad",
+        "locn",
+        "parse_type",
+        "qbuf",
+        "seq",
+        "smpp",
+        "term_grammar",
+        "term_grammar_dtype",
+        "term_pp",
+        "term_pp_types",
+        "term_pp_utils",
+        "type_grammar",
+        "type_pp"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "FileSys",
+        "IO",
+        "List",
+        "OS",
+        "Option",
+        "PP",
+        "Path",
+        "String",
+        "TextIO"
+      ]
+    },
+    "ParseExtras": {
+      "sources": [
+        "src/1/ParseExtras.sig",
+        "src/1/ParseExtras.sml"
+      ],
+      "imports": [
+        "GrammarSpecials",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Overload",
+        "Parse",
+        "boolSyntax",
+        "smpp",
+        "term_grammar",
+        "term_pp_types"
+      ],
+      "basis_or_local_names": [
+        "PP"
+      ]
+    },
+    "Parse_support": {
+      "sources": [
+        "src/parse/Parse_support.sig",
+        "src/parse/Parse_support.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "GrammarSpecials",
+        "HOLset",
+        "HolKernel",
+        "Lexis",
+        "Lib",
+        "Literal",
+        "Overlay",
+        "Overload",
+        "Parse_supportENV",
+        "Preterm",
+        "Pretype",
+        "Term",
+        "errormonad",
+        "locn",
+        "term_grammar",
+        "typecheck_error"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "Parse_supportENV": {
+      "sources": [
+        "src/parse/Parse_supportENV.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "Preterm",
+        "Pretype",
+        "Type",
+        "locn",
+        "typecheck_error"
+      ],
+      "basis_or_local_names": []
+    },
+    "Pmatch": {
+      "sources": [
+        "src/1/Pmatch.sig",
+        "src/1/Pmatch.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "HolKernel",
+        "Hol_pp",
+        "Lib",
+        "Literal",
+        "Overlay",
+        "Parse",
+        "PmatchHeuristics",
+        "Term",
+        "Termtab",
+        "Thm",
+        "Type",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "Option",
+        "String"
+      ]
+    },
+    "PmatchHeuristics": {
+      "sources": [
+        "src/1/PmatchHeuristics.sig",
+        "src/1/PmatchHeuristics.sml"
+      ],
+      "imports": [
+        "Context",
+        "HolKernel",
+        "Hol_pp",
+        "Lib",
+        "Overlay",
+        "Term",
+        "Thm",
+        "Type",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "Real",
+        "String"
+      ]
+    },
+    "Portable": {
+      "sources": [
+        "src/portableML/Portable.sig",
+        "src/portableML/Portable.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Exn",
+        "HOLPP",
+        "HOLquotation",
+        "MLSYSPortable",
+        "OldPP"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "Char",
+        "CharVector",
+        "CommandLine",
+        "FileSys",
+        "General",
+        "HOLFileSys",
+        "IO",
+        "Int",
+        "List",
+        "ListPair",
+        "OS",
+        "Process",
+        "Real",
+        "String",
+        "Substring",
+        "TextIO",
+        "Time",
+        "Timer",
+        "Vector"
+      ]
+    },
+    "PrecAnalysis": {
+      "sources": [
+        "src/parse/PrecAnalysis.sig",
+        "src/parse/PrecAnalysis.sml"
+      ],
+      "imports": [
+        "HOLgrammars",
+        "Overlay",
+        "term_grammar",
+        "term_grammar_dtype"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Preterm": {
+      "sources": [
+        "src/parse/Preterm.sig",
+        "src/parse/Preterm.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Feedback",
+        "Globals",
+        "GrammarSpecials",
+        "HolKernel",
+        "Lib",
+        "Listener",
+        "Overlay",
+        "Overload",
+        "Preterm_dtype",
+        "Pretype",
+        "Term",
+        "Type",
+        "errormonad",
+        "locn",
+        "optmonad",
+        "seqmonad",
+        "typecheck_error"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "ListPair",
+        "Option",
+        "String"
+      ]
+    },
+    "Preterm_dtype": {
+      "sources": [
+        "src/parse/Preterm_dtype.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "Overload",
+        "Pretype",
+        "Term",
+        "locn"
+      ],
+      "basis_or_local_names": []
+    },
+    "PrettyImpl": {
+      "sources": [
+        "src/portableML/poly/PrettyImpl.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "PolyML"
+      ]
+    },
+    "Pretype": {
+      "sources": [
+        "src/parse/Pretype.sig",
+        "src/parse/Pretype.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HolKernel",
+        "Inttab",
+        "Lexis",
+        "Lib",
+        "Overlay",
+        "Pretype_dtype",
+        "Term",
+        "Type",
+        "errormonad",
+        "locn",
+        "parse_type",
+        "typecheck_error"
+      ],
+      "basis_or_local_names": [
+        "Env",
+        "Int",
+        "List"
+      ]
+    },
+    "Pretype_dtype": {
+      "sources": [
+        "src/parse/Pretype_dtype.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "Prim_rec": {
+      "sources": [
+        "src/1/Prim_rec.sig",
+        "src/1/Prim_rec.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "HOLset",
+        "HolKernel",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Psyntax",
+        "Rewrite",
+        "Rsyntax",
+        "Tactic",
+        "Tactical",
+        "Term",
+        "Termtab",
+        "Thm",
+        "Thm_cont",
+        "Type",
+        "boolSyntax",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "ListPair",
+        "Option",
+        "String"
+      ]
+    },
+    "ProvideUnicode": {
+      "sources": [
+        "src/parse/ProvideUnicode.sig",
+        "src/parse/ProvideUnicode.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "HolKernel",
+        "Overlay",
+        "Overload",
+        "Term",
+        "term_grammar"
+      ],
+      "basis_or_local_names": [
+        "Option"
+      ]
+    },
+    "Psyntax": {
+      "sources": [
+        "src/1/Psyntax.sig",
+        "src/1/Psyntax.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "HolKernel",
+        "Overlay",
+        "Term",
+        "Type",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": []
+    },
+    "RWLock": {
+      "sources": [
+        "src/portableML/poly/concurrent/RWLock.sig",
+        "src/portableML/poly/concurrent/RWLock.sml"
+      ],
+      "imports": [
+        "Exn",
+        "Multithreading"
+      ],
+      "basis_or_local_names": [
+        "ConditionVar",
+        "Mutex"
+      ]
+    },
+    "RawTheoryReader": {
+      "sources": [
+        "src/portableML/rawtheory/RawTheoryReader.sig",
+        "src/portableML/rawtheory/RawTheoryReader.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HOLsexp",
+        "RawTheory_dtype"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "Option",
+        "Vector"
+      ]
+    },
+    "RawTheory_dtype": {
+      "sources": [
+        "src/portableML/rawtheory/RawTheory_dtype.sml"
+      ],
+      "imports": [
+        "HOLsexp"
+      ],
+      "basis_or_local_names": [
+        "String",
+        "Vector"
+      ]
+    },
+    "Redblackmap": {
+      "sources": [
+        "src/portableML/Redblackmap.sig",
+        "src/portableML/Redblackmap.sml"
+      ],
+      "imports": [
+        "Portable"
+      ],
+      "basis_or_local_names": []
+    },
+    "Redblackset": {
+      "sources": [
+        "src/portableML/Redblackset.sig",
+        "src/portableML/Redblackset.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "List",
+        "Math",
+        "Real"
+      ]
+    },
+    "Rewrite": {
+      "sources": [
+        "src/1/Rewrite.sig",
+        "src/1/Rewrite.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "BoundedRewrites",
+        "Context",
+        "Conv",
+        "Drule",
+        "HolKernel",
+        "Lib",
+        "Net",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Tactic",
+        "Tactical",
+        "boolSyntax",
+        "boolTheory",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    },
+    "Rsyntax": {
+      "sources": [
+        "src/1/Rsyntax.sig",
+        "src/1/Rsyntax.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Overlay",
+        "Parse",
+        "Term",
+        "Theory",
+        "Thm",
+        "Type",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": []
+    },
+    "SHA1": {
+      "sources": [
+        "src/portableML/SHA1.sig",
+        "src/portableML/SHA1.sml"
+      ],
+      "imports": [
+        "SHA1_ML"
+      ],
+      "basis_or_local_names": []
+    },
+    "SHA1_ML": {
+      "sources": [
+        "src/portableML/poly/Holmakefile",
+        "src/portableML/poly/SHA1_ML.sig",
+        "src/portableML/poly/w64-SHA1.ML"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "BinIO",
+        "Char",
+        "CharVector",
+        "PackWord32Big",
+        "Word32",
+        "Word32Array",
+        "Word64",
+        "Word8",
+        "Word8Array",
+        "Word8Vector"
+      ]
+    },
+    "SatSolvers": {
+      "sources": [
+        "src/HolSat/SatSolvers.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Systeml"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "Process",
+        "String"
+      ]
+    },
+    "SharingTables": {
+      "sources": [
+        "src/postkernel/SharingTables.sig",
+        "src/postkernel/SharingTables.sml"
+      ],
+      "imports": [
+        "DB_dtype",
+        "Dep",
+        "HOLPP",
+        "HOLset",
+        "HOLsexp",
+        "Inttab",
+        "Overlay",
+        "RawTheoryReader",
+        "RawTheory_dtype",
+        "Symtab",
+        "Table",
+        "Tag",
+        "Term",
+        "Termtab",
+        "Thm",
+        "Type",
+        "Typetab"
+      ],
+      "basis_or_local_names": [
+        "Idtab",
+        "Int",
+        "List",
+        "OS",
+        "Option",
+        "String",
+        "Vector"
+      ]
+    },
+    "SimpTracking": {
+      "sources": [
+        "src/simp/src/SimpTracking.sig",
+        "src/simp/src/SimpTracking.sml"
+      ],
+      "imports": [
+        "HolKernel",
+        "Overlay",
+        "Thm",
+        "ThreadLocal"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Sref": {
+      "sources": [
+        "src/portableML/poly/concurrent/Sref.sig",
+        "src/portableML/poly/concurrent/Sref.sml"
+      ],
+      "imports": [
+        "Multithreading"
+      ],
+      "basis_or_local_names": [
+        "Mutex"
+      ]
+    },
+    "Subst": {
+      "sources": [
+        "src/0/Subst.sig",
+        "src/0/Subst.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "Susp": {
+      "sources": [
+        "src/portableML/poly/Susp.sig",
+        "src/portableML/poly/Susp.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "SymGraph": {
+      "sources": [
+        "src/portableML/SymGraph.sml"
+      ],
+      "imports": [
+        "Graph",
+        "HOLPP",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    },
+    "Symtab": {
+      "sources": [
+        "src/portableML/Symtab.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    },
+    "Synchronized": {
+      "sources": [
+        "src/portableML/poly/Synchronized.sml"
+      ],
+      "imports": [
+        "Exn",
+        "Multithreading",
+        "Thread_Attributes",
+        "Unsynchronized"
+      ],
+      "basis_or_local_names": [
+        "ConditionVar",
+        "Mutex",
+        "Time"
+      ]
+    },
+    "Systeml": {
+      "sources": [
+        "tools-poly/Holmake/unix-systeml.sml",
+        "tools-poly/configure.sml",
+        "tools/Holmake/Systeml.sig"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "CommandLine",
+        "FileSys",
+        "List",
+        "OS",
+        "Path",
+        "PolyML",
+        "Posix",
+        "Process",
+        "String"
+      ]
+    },
+    "Table": {
+      "sources": [
+        "src/portableML/Table.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "Portable",
+        "Unsynchronized"
+      ],
+      "basis_or_local_names": [
+        "Key",
+        "List"
+      ]
+    },
+    "Tactic": {
+      "sources": [
+        "src/1/Tactic.sig",
+        "src/1/Tactic.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "AncestryData",
+        "Context",
+        "Conv",
+        "Drule",
+        "HOLset",
+        "HolKernel",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Tactical",
+        "Term",
+        "Thm_cont",
+        "ThyDataSexp",
+        "Type",
+        "boolSyntax",
+        "boolTheory",
+        "mp_then",
+        "resolve_then",
+        "thmpos_dtype"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Tactical": {
+      "sources": [
+        "src/1/Tactical.sig",
+        "src/1/Tactical.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Absyn",
+        "Context",
+        "Conv",
+        "Drule",
+        "Feedback",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Preterm",
+        "Pretype",
+        "Term",
+        "TermParse",
+        "Theory",
+        "Thm",
+        "ThreadLocal",
+        "boolSyntax",
+        "boolTheory",
+        "errormonad",
+        "locn",
+        "seq"
+      ],
+      "basis_or_local_names": [
+        "CharVector",
+        "Int",
+        "List",
+        "ListPair",
+        "String"
+      ]
+    },
+    "Tag": {
+      "sources": [
+        "src/prekernel/Tag.sig",
+        "src/prekernel/Tag.sml"
+      ],
+      "imports": [
+        "Dep",
+        "Feedback",
+        "Globals",
+        "HOLPP",
+        "Lib",
+        "Nonce",
+        "OldPP",
+        "Portable"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "String",
+        "Substring"
+      ]
+    },
+    "Term": {
+      "sources": [
+        "src/0/Term.sig",
+        "src/0/Term.sml"
+      ],
+      "imports": [
+        "Context",
+        "Feedback",
+        "FinalTerm-sig",
+        "HOLset",
+        "KernelSig",
+        "KernelTypes",
+        "Lexis",
+        "Lib",
+        "Portable",
+        "Redblackmap",
+        "Subst",
+        "Type",
+        "Type_dtype",
+        "Uref"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "Binarymap",
+        "Char",
+        "Int",
+        "List",
+        "String",
+        "Substring",
+        "Vector"
+      ]
+    },
+    "TermParse": {
+      "sources": [
+        "src/parse/TermParse.sig",
+        "src/parse/TermParse.sml"
+      ],
+      "imports": [
+        "Absyn",
+        "Feedback",
+        "Globals",
+        "GrammarSpecials",
+        "HOLPP",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse_support",
+        "Preterm",
+        "Pretype",
+        "Term",
+        "Type",
+        "base_tokens",
+        "errormonad",
+        "locn",
+        "parse_term",
+        "parse_type",
+        "qbuf",
+        "seq",
+        "seqmonad",
+        "term_grammar",
+        "type_grammar"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "List",
+        "PP",
+        "String"
+      ]
+    },
+    "Termtab": {
+      "sources": [
+        "src/postkernel/Termtab.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "Table",
+        "Term"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "TexTokenMap": {
+      "sources": [
+        "src/bool/TexTokenMap.sig",
+        "src/bool/TexTokenMap.sml"
+      ],
+      "imports": [
+        "Coding",
+        "Feedback",
+        "HOLsexp",
+        "HolKernel",
+        "Overlay",
+        "Symtab",
+        "Theory",
+        "TheoryDelta"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "IntData",
+        "List",
+        "LoadableThyData",
+        "Option",
+        "String",
+        "StringData"
+      ]
+    },
+    "Theory": {
+      "sources": [
+        "src/postkernel/Theory.sig",
+        "src/postkernel/Theory.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Context",
+        "DB_dtype",
+        "Feedback",
+        "Globals",
+        "Graph",
+        "HOLPP",
+        "HOLset",
+        "HOLsexp",
+        "Lexis",
+        "Lib",
+        "Listener",
+        "Nonce",
+        "Overlay",
+        "Portable",
+        "SHA1",
+        "Symtab",
+        "Systeml",
+        "Tag",
+        "Term",
+        "TheoryDelta",
+        "TheoryPP",
+        "Thm",
+        "TraceMode",
+        "Tracing",
+        "Type",
+        "UniversalType"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "FileSys",
+        "FunctionalRecordUpdate",
+        "General",
+        "HFS_NameMunge",
+        "HOLFS_dtype",
+        "Int",
+        "List",
+        "LoadableThyData",
+        "OS",
+        "Option",
+        "PP",
+        "String",
+        "StringCvt",
+        "TextIO",
+        "Time",
+        "Timer"
+      ]
+    },
+    "TheoryDelta": {
+      "sources": [
+        "src/postkernel/TheoryDelta.sml"
+      ],
+      "imports": [
+        "DB_dtype",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Thm"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    },
+    "TheoryPP": {
+      "sources": [
+        "src/postkernel/TheoryPP.sig",
+        "src/postkernel/TheoryPP.sml"
+      ],
+      "imports": [
+        "DB_dtype",
+        "Dep",
+        "Feedback",
+        "Globals",
+        "HOLsexp",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "SharingTables",
+        "Symtab",
+        "Tag",
+        "Term",
+        "Thm",
+        "Type",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "General",
+        "Int",
+        "List",
+        "Listsort",
+        "OS",
+        "PP",
+        "String",
+        "Substring",
+        "TextIO",
+        "holpathdb"
+      ]
+    },
+    "TheoryReader": {
+      "sources": [
+        "src/postkernel/TheoryReader.sig",
+        "src/postkernel/TheoryReader.sml"
+      ],
+      "imports": [
+        "DB",
+        "DB_dtype",
+        "HOLsexp",
+        "HolKernel",
+        "Overlay",
+        "RawTheoryReader",
+        "RawTheory_dtype",
+        "SharingTables",
+        "Symtab",
+        "Term",
+        "Theory",
+        "Thm",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "General",
+        "List",
+        "Option",
+        "Vector"
+      ]
+    },
+    "Thm": {
+      "sources": [
+        "src/thm/Holmakefile",
+        "src/thm/std-thm.ML"
+      ],
+      "imports": [
+        "Compute",
+        "Context",
+        "Count",
+        "Dep",
+        "Feedback",
+        "HOLset",
+        "KernelSig",
+        "Lib",
+        "Tag",
+        "Term",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "List",
+        "Listsort",
+        "String"
+      ]
+    },
+    "Thm-sig": {
+      "sources": [
+        "src/thm/Holmakefile",
+        "src/thm/std-thmsig.ML"
+      ],
+      "imports": [
+        "FinalThm-sig",
+        "Tag",
+        "Term"
+      ],
+      "basis_or_local_names": []
+    },
+    "ThmAttribute": {
+      "sources": [
+        "src/1/ThmAttribute.sig",
+        "src/1/ThmAttribute.sml"
+      ],
+      "imports": [
+        "Context",
+        "Feedback",
+        "Globals",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Symtab",
+        "Theory",
+        "Thm"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "List",
+        "Map",
+        "String",
+        "Substring"
+      ]
+    },
+    "ThmSetData": {
+      "sources": [
+        "src/1/ThmSetData.sig",
+        "src/1/ThmSetData.sml"
+      ],
+      "imports": [
+        "AncestryData",
+        "Context",
+        "DB",
+        "Globals",
+        "HolKernel",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryDelta",
+        "Thm",
+        "ThmAttribute",
+        "ThyDataSexp",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "LoadableThyData",
+        "Option",
+        "PP",
+        "String"
+      ]
+    },
+    "Thm_cont": {
+      "sources": [
+        "src/1/Thm_cont.sig",
+        "src/1/Thm_cont.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "Feedback",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Tactical",
+        "Term",
+        "Thm",
+        "boolSyntax",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "List",
+        "Vector"
+      ]
+    },
+    "ThreadLocal": {
+      "sources": [
+        "src/portableML/poly/concurrent/ThreadLocal.sig",
+        "src/portableML/poly/concurrent/ThreadLocal.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "Thread",
+        "Universal"
+      ]
+    },
+    "Thread_Attributes": {
+      "sources": [
+        "src/portableML/poly/Thread_Attributes.sml"
+      ],
+      "imports": [
+        "Exn"
+      ],
+      "basis_or_local_names": [
+        "RunCall",
+        "Thread",
+        "Word"
+      ]
+    },
+    "Thread_Data": {
+      "sources": [
+        "src/portableML/poly/Thread_Data.sml"
+      ],
+      "imports": [
+        "Exn",
+        "Thread_Attributes"
+      ],
+      "basis_or_local_names": [
+        "Thread",
+        "Universal"
+      ]
+    },
+    "ThyDataSexp": {
+      "sources": [
+        "src/postkernel/ThyDataSexp.sig",
+        "src/postkernel/ThyDataSexp.sml"
+      ],
+      "imports": [
+        "Dep",
+        "Feedback",
+        "HOLsexp",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Tag",
+        "Term",
+        "Theory",
+        "TheoryDelta",
+        "Thm",
+        "Type"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "LTD",
+        "List",
+        "Option",
+        "PP",
+        "String"
+      ]
+    },
+    "Trace": {
+      "sources": [
+        "src/simp/src/Trace.sig",
+        "src/simp/src/Trace.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Arbnum",
+        "Feedback",
+        "Globals",
+        "Lib",
+        "Listener",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Rsyntax",
+        "Term",
+        "Thm",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": [
+        "Time",
+        "Timer"
+      ]
+    },
+    "TraceMode": {
+      "sources": [
+        "src/prekernel/TraceMode.sig",
+        "src/prekernel/TraceMode.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "OS"
+      ]
+    },
+    "Tracing": {
+      "sources": [
+        "src/tracing/Tracing.sig",
+        "src/tracing/no/Tracing.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "RawTheory_dtype",
+        "Thm",
+        "Type"
+      ],
+      "basis_or_local_names": []
+    },
+    "Traverse": {
+      "sources": [
+        "src/simp/src/Traverse.sig",
+        "src/simp/src/Traverse.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "HolKernel",
+        "Opening",
+        "Overlay",
+        "Psyntax",
+        "Thm",
+        "Trace",
+        "Travrules",
+        "Uref",
+        "boolSyntax",
+        "liteLib"
+      ],
+      "basis_or_local_names": []
+    },
+    "Travrules": {
+      "sources": [
+        "src/simp/src/Travrules.sig",
+        "src/simp/src/Travrules.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Drule",
+        "HolKernel",
+        "Opening",
+        "Overlay",
+        "Psyntax",
+        "Term",
+        "Trace",
+        "boolSyntax",
+        "liteLib"
+      ],
+      "basis_or_local_names": [
+        "Listsort"
+      ]
+    },
+    "Type": {
+      "sources": [
+        "src/0/Type.sig",
+        "src/0/Type.sml"
+      ],
+      "imports": [
+        "Context",
+        "Feedback",
+        "FinalType-sig",
+        "KernelSig",
+        "KernelTypes",
+        "Lexis",
+        "Lib",
+        "Portable",
+        "Type_dtype"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "TypeBase": {
+      "sources": [
+        "src/1/TypeBase.sig",
+        "src/1/TypeBase.sml"
+      ],
+      "imports": [
+        "AncestryData",
+        "Context",
+        "Conv",
+        "Drule",
+        "GrammarSpecials",
+        "HolKernel",
+        "KNametab",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Pmatch",
+        "Prim_rec",
+        "Symtab",
+        "Term",
+        "Thm",
+        "ThyDataSexp",
+        "Type",
+        "TypeBasePure",
+        "boolSyntax",
+        "boolTheory",
+        "simpfrag",
+        "term_pp",
+        "type_grammar"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "String"
+      ]
+    },
+    "TypeBasePure": {
+      "sources": [
+        "src/1/TypeBasePure.sig",
+        "src/1/TypeBasePure.sml"
+      ],
+      "imports": [
+        "Conv",
+        "Drule",
+        "HolKernel",
+        "Lexis",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Pmatch",
+        "Portable",
+        "Prim_rec",
+        "Term",
+        "Thm",
+        "ThyDataSexp",
+        "Type",
+        "TypeNet",
+        "Typetab",
+        "boolSyntax",
+        "simpfrag",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "FunctionalRecordUpdate",
+        "List",
+        "Listsort",
+        "Option",
+        "String"
+      ]
+    },
+    "TypeNet": {
+      "sources": [
+        "src/parse/TypeNet.sig",
+        "src/parse/TypeNet.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "HolKernel",
+        "Overlay",
+        "Table",
+        "Type",
+        "Typetab"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "LabelTab",
+        "List",
+        "String"
+      ]
+    },
+    "Type_dtype": {
+      "sources": [
+        "src/prekernel/Type_dtype.sml"
+      ],
+      "imports": [
+        "KernelSig"
+      ],
+      "basis_or_local_names": []
+    },
+    "Typetab": {
+      "sources": [
+        "src/postkernel/Typetab.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "Table",
+        "Type"
+      ],
+      "basis_or_local_names": []
+    },
+    "UTF8": {
+      "sources": [
+        "src/portableML/UTF8.sig",
+        "src/portableML/UTF8.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "List",
+        "Option",
+        "String",
+        "Substring",
+        "Word",
+        "Word8"
+      ]
+    },
+    "UTF8Set": {
+      "sources": [
+        "src/portableML/UTF8Set.sig",
+        "src/portableML/UTF8Set.sml"
+      ],
+      "imports": [
+        "Inttab",
+        "UTF8"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "UnicodeChars": {
+      "sources": [
+        "src/portableML/UnicodeChars.sig",
+        "src/portableML/UnicodeChars.sml"
+      ],
+      "imports": [
+        "Inttab",
+        "Symtab",
+        "UTF8"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "List"
+      ]
+    },
+    "UniversalType": {
+      "sources": [
+        "src/portableML/UniversalType.sig",
+        "src/portableML/UniversalType.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "Unsynchronized": {
+      "sources": [
+        "src/portableML/poly/Unsynchronized.sml"
+      ],
+      "imports": [
+        "Exn",
+        "Thread_Attributes"
+      ],
+      "basis_or_local_names": []
+    },
+    "Unwind": {
+      "sources": [
+        "src/simp/src/Unwind.sig",
+        "src/simp/src/Unwind.sml"
+      ],
+      "imports": [
+        "AC",
+        "Abbrev",
+        "Conv",
+        "Ho_Rewrite",
+        "HolKernel",
+        "Overlay",
+        "Term",
+        "Trace",
+        "boolLib",
+        "boolTheory",
+        "liteLib",
+        "refuteLib"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "Uref": {
+      "sources": [
+        "src/portableML/Uref.sig",
+        "src/portableML/Uref.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "base_lexer": {
+      "sources": [
+        "src/parse/Holmakefile",
+        "src/parse/base_lexer"
+      ],
+      "imports": [
+        "MLstring",
+        "Overlay",
+        "base_tokens",
+        "locn"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "Internal",
+        "List",
+        "String",
+        "Substring",
+        "UserDeclarations",
+        "Vector"
+      ]
+    },
+    "base_tokens": {
+      "sources": [
+        "src/parse/base_tokens.sig",
+        "src/parse/base_tokens.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Lib",
+        "Overlay",
+        "base_tokens_dtype",
+        "locn"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "String",
+        "StringCvt",
+        "Substring"
+      ]
+    },
+    "base_tokens_dtype": {
+      "sources": [
+        "src/parse/base_tokens_dtype.sml"
+      ],
+      "imports": [
+        "Arbnum"
+      ],
+      "basis_or_local_names": []
+    },
+    "boolLib": {
+      "sources": [
+        "src/1/boolLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "BoundedRewrites",
+        "Context",
+        "Conv",
+        "DB",
+        "DB_dtype",
+        "DefnBaseCore",
+        "Drule",
+        "Feedback",
+        "Globals",
+        "HOLset",
+        "Ho_Rewrite",
+        "HolKernel",
+        "Hol_pp",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "ParseExtras",
+        "Portable",
+        "Prim_rec",
+        "Psyntax",
+        "Rewrite",
+        "Rsyntax",
+        "Symtab",
+        "Tactic",
+        "Tactical",
+        "Term",
+        "TexTokenMap",
+        "Theory",
+        "Thm",
+        "ThmAttribute",
+        "Thm_cont",
+        "Type",
+        "TypeBase",
+        "boolSyntax",
+        "boolTheory",
+        "term_tactic"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "FunctionalRecordUpdate",
+        "General",
+        "Int",
+        "List",
+        "OS",
+        "String",
+        "Substring",
+        "TextIO"
+      ]
+    },
+    "boolSimps": {
+      "sources": [
+        "src/simp/src/boolSimps.sig",
+        "src/simp/src/boolSimps.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "BoolExtractShared",
+        "DB",
+        "Ho_Rewrite",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Rsyntax",
+        "Term",
+        "Type",
+        "Unwind",
+        "boolLib",
+        "boolSimpsContextTheory",
+        "boolSyntax",
+        "boolTheory",
+        "liteLib",
+        "markerLib",
+        "markerTheory",
+        "pureSimps",
+        "simpLib",
+        "tautLib"
+      ],
+      "basis_or_local_names": []
+    },
+    "boolSimpsContextTheory": {
+      "sources": [
+        "src/simp/src/boolSimpsContextScript.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryReader",
+        "Thm",
+        "Type",
+        "combinTheory"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "OS",
+        "TDB",
+        "TextIO"
+      ]
+    },
+    "boolSyntax": {
+      "sources": [
+        "src/1/boolSyntax.sig",
+        "src/1/boolSyntax.sml"
+      ],
+      "imports": [
+        "DB",
+        "Feedback",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Term",
+        "Theory",
+        "Thm",
+        "ThmAttribute",
+        "Type",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "Definition",
+        "List",
+        "ListPair",
+        "String"
+      ]
+    },
+    "boolTheory": {
+      "sources": [
+        "src/bool/boolScript.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryReader",
+        "Thm",
+        "Type",
+        "boolpp"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "OS",
+        "TDB",
+        "TextIO"
+      ]
+    },
+    "boolpp": {
+      "sources": [
+        "src/bool/boolpp.sig",
+        "src/bool/boolpp.sml"
+      ],
+      "imports": [
+        "Absyn",
+        "Feedback",
+        "GrammarSpecials",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Overload",
+        "Parse",
+        "locn",
+        "smpp",
+        "term_grammar",
+        "term_pp_types",
+        "term_pp_utils"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "ListPair",
+        "PP"
+      ]
+    },
+    "canonContextTheory": {
+      "sources": [
+        "src/refute/canonContextScript.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryReader",
+        "Thm",
+        "Type",
+        "combinTheory",
+        "satTheory"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "OS",
+        "TDB",
+        "TextIO"
+      ]
+    },
+    "clauses": {
+      "sources": [
+        "src/compute/src/clauses.sig",
+        "src/compute/src/clauses.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "HOLPP",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Table",
+        "Term",
+        "Thm",
+        "ThmSetData",
+        "TypeBase",
+        "TypeBasePure",
+        "boolSyntax",
+        "boolTheory",
+        "compute_rules"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "SSPairTab",
+        "String"
+      ]
+    },
+    "combinSimps": {
+      "sources": [
+        "src/simp/src/combinSimps.sig",
+        "src/simp/src/combinSimps.sml"
+      ],
+      "imports": [
+        "DB",
+        "Overlay",
+        "boolLib",
+        "combinTheory",
+        "simpLib"
+      ],
+      "basis_or_local_names": []
+    },
+    "combinTheory": {
+      "sources": [
+        "src/combin/combinScript.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryReader",
+        "Thm",
+        "Type",
+        "combinpp",
+        "markerTheory"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "OS",
+        "TDB",
+        "TextIO"
+      ]
+    },
+    "combinpp": {
+      "sources": [
+        "src/combin/combinpp.sig",
+        "src/combin/combinpp.sml"
+      ],
+      "imports": [
+        "Absyn",
+        "Feedback",
+        "GrammarSpecials",
+        "HolKernel",
+        "Overlay",
+        "Overload",
+        "Parse",
+        "Symtab",
+        "Term",
+        "ThyDataSexp",
+        "UTF8",
+        "boolLib",
+        "locn",
+        "smpp",
+        "term_grammar",
+        "term_pp_types",
+        "term_pp_utils"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "Option",
+        "PP",
+        "String"
+      ]
+    },
+    "computeLib": {
+      "sources": [
+        "src/compute/src/computeLib.sig",
+        "src/compute/src/computeLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "AncestryData",
+        "Context",
+        "Conv",
+        "Drule",
+        "Feedback",
+        "HOLPP",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Tactic",
+        "Thm",
+        "ThmSetData",
+        "ThyDataSexp",
+        "TypeBase",
+        "TypeBasePure",
+        "boolSyntax",
+        "boolTheory",
+        "clauses",
+        "compute_rules",
+        "equations",
+        "simpfrag"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "LoadableThyData",
+        "Option"
+      ]
+    },
+    "compute_rules": {
+      "sources": [
+        "src/compute/src/compute_rules.sig",
+        "src/compute/src/compute_rules.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "HolKernel",
+        "Overlay",
+        "Term",
+        "Thm",
+        "boolSyntax",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "congLib": {
+      "sources": [
+        "src/simp/src/congLib.sig",
+        "src/simp/src/congLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Cond_rewr",
+        "Ho_Net",
+        "HolKernel",
+        "Opening",
+        "Overlay",
+        "Parse",
+        "Trace",
+        "Traverse",
+        "Travrules",
+        "boolLib",
+        "boolSyntax",
+        "computeLib",
+        "liteLib",
+        "markerLib",
+        "simpLib"
+      ],
+      "basis_or_local_names": []
+    },
+    "def_cnf": {
+      "sources": [
+        "src/HolSat/def_cnf.sig",
+        "src/HolSat/def_cnf.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "Feedback",
+        "Globals",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Psyntax",
+        "Term",
+        "Thm",
+        "Type",
+        "Uref",
+        "boolLib",
+        "boolSyntax",
+        "satCommonTools",
+        "satTheory"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "List",
+        "RBM"
+      ]
+    },
+    "dimacsTools": {
+      "sources": [
+        "src/HolSat/dimacsTools.sml"
+      ],
+      "imports": [
+        "Conv",
+        "Drule",
+        "Feedback",
+        "Globals",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Term",
+        "Thm",
+        "Type",
+        "boolLib",
+        "satCommonTools"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "FileSys",
+        "Int",
+        "List",
+        "Path",
+        "SVM",
+        "StringCvt",
+        "TextIO"
+      ]
+    },
+    "dpll": {
+      "sources": [
+        "src/HolSat/dpll.sml"
+      ],
+      "imports": [
+        "HOLset",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Termtab",
+        "boolLib",
+        "boolSyntax",
+        "def_cnf",
+        "satCommonTools",
+        "satTools"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "List",
+        "RBM"
+      ]
+    },
+    "equations": {
+      "sources": [
+        "src/compute/src/equations.sml"
+      ],
+      "imports": [
+        "Conv",
+        "Drule",
+        "Feedback",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "boolSyntax",
+        "clauses",
+        "compute_rules"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "List"
+      ]
+    },
+    "errormonad": {
+      "sources": [
+        "src/portableML/monads/errormonad.sig",
+        "src/portableML/monads/errormonad.sml"
+      ],
+      "imports": [
+        "Portable",
+        "optmonad"
+      ],
+      "basis_or_local_names": []
+    },
+    "goalFrag": {
+      "sources": [
+        "src/proofman/goalFrag.sig",
+        "src/proofman/goalFrag.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Context",
+        "Feedback",
+        "Lib",
+        "Overlay",
+        "PPBackEnd",
+        "Parse",
+        "Portable",
+        "Tactical",
+        "goalStack",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "Option",
+        "String"
+      ]
+    },
+    "goalStack": {
+      "sources": [
+        "src/proofman/goalStack.sig",
+        "src/proofman/goalStack.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Context",
+        "Globals",
+        "HOLPP",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "PPBackEnd",
+        "Parse",
+        "Portable",
+        "Symtab",
+        "Tactical",
+        "Term",
+        "smpp",
+        "term_pp_types"
+      ],
+      "basis_or_local_names": [
+        "CharVector",
+        "Int",
+        "List",
+        "Listsort",
+        "String",
+        "StringCvt"
+      ]
+    },
+    "goalTree": {
+      "sources": [
+        "src/proofman/goalTree.sig",
+        "src/proofman/goalTree.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Context",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Tactical",
+        "goalStack",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "String"
+      ]
+    },
+    "liteLib": {
+      "sources": [
+        "src/lite/liteLib.sig",
+        "src/lite/liteLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "Feedback",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Term",
+        "Thm",
+        "Type",
+        "boolLib",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": []
+    },
+    "locn": {
+      "sources": [
+        "src/portableML/locn.sig",
+        "src/portableML/locn.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": [
+        "Int"
+      ]
+    },
+    "markerLib": {
+      "sources": [
+        "src/marker/markerLib.sig",
+        "src/marker/markerLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "AncestryData",
+        "BoundedRewrites",
+        "Context",
+        "DB",
+        "Feedback",
+        "HOLPP",
+        "HOLquotation",
+        "HOLset",
+        "Ho_Rewrite",
+        "HolKernel",
+        "KNametab",
+        "KernelSig",
+        "Lib",
+        "Manager",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Table",
+        "Tactical",
+        "Term",
+        "Theory",
+        "TheoryDelta",
+        "Thm",
+        "ThmAttribute",
+        "ThyDataSexp",
+        "UnicodeChars",
+        "boolLib",
+        "boolSyntax",
+        "markerSyntax",
+        "markerTheory",
+        "proofManagerLib",
+        "smpp",
+        "term_pp_types",
+        "term_pp_utils"
+      ],
+      "basis_or_local_names": [
+        "Int",
+        "List",
+        "ListPair",
+        "Listsort",
+        "Option",
+        "PP",
+        "ResTab",
+        "String"
+      ]
+    },
+    "markerSyntax": {
+      "sources": [
+        "src/marker/markerSyntax.sig",
+        "src/marker/markerSyntax.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "DB",
+        "Feedback",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Term",
+        "Type",
+        "boolLib",
+        "markerTheory"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    },
+    "markerTheory": {
+      "sources": [
+        "src/marker/markerScript.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryReader",
+        "Thm",
+        "Type",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "OS",
+        "TDB",
+        "TextIO"
+      ]
+    },
+    "minisatParse": {
+      "sources": [
+        "src/HolSat/minisatParse.sml"
+      ],
+      "imports": [
+        "Dynarray",
+        "Globals",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "SatSolvers",
+        "boolSyntax",
+        "boolTheory",
+        "minisatResolve",
+        "satCommonTools"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "BinIO",
+        "Int",
+        "Word",
+        "Word8"
+      ]
+    },
+    "minisatProve": {
+      "sources": [
+        "src/HolSat/minisatProve.sig",
+        "src/HolSat/minisatProve.sml"
+      ],
+      "imports": [
+        "Conv",
+        "Drule",
+        "Feedback",
+        "Globals",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "SatSolvers",
+        "Systeml",
+        "Term",
+        "Thm",
+        "Type",
+        "boolLib",
+        "def_cnf",
+        "dimacsTools",
+        "dpll",
+        "minisatParse",
+        "satCommonTools",
+        "satConfig",
+        "satTools"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "FileSys",
+        "OS"
+      ]
+    },
+    "minisatResolve": {
+      "sources": [
+        "src/HolSat/minisatResolve.sml"
+      ],
+      "imports": [
+        "Conv",
+        "Drule",
+        "Dynarray",
+        "Globals",
+        "HOLset",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Rewrite",
+        "boolSyntax",
+        "boolTheory",
+        "dimacsTools",
+        "satCommonTools",
+        "satTheory"
+      ],
+      "basis_or_local_names": [
+        "Array",
+        "List",
+        "RBM"
+      ]
+    },
+    "mp_then": {
+      "sources": [
+        "src/1/mp_then.sig",
+        "src/1/mp_then.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Conv",
+        "Drule",
+        "HOLset",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "TermParse",
+        "boolSyntax",
+        "boolTheory",
+        "seq",
+        "thmpos_dtype"
+      ],
+      "basis_or_local_names": []
+    },
+    "optmonad": {
+      "sources": [
+        "src/portableML/monads/optmonad.sig",
+        "src/portableML/monads/optmonad.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "parse_term": {
+      "sources": [
+        "src/parse/parse_term.sig",
+        "src/parse/parse_term.sml"
+      ],
+      "imports": [
+        "Absyn",
+        "Arbnum",
+        "Feedback",
+        "Globals",
+        "GrammarSpecials",
+        "HOLPP",
+        "HOLgrammars",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Literal",
+        "Overlay",
+        "Overload",
+        "PrecAnalysis",
+        "Pretype",
+        "Symtab",
+        "Table",
+        "Term",
+        "Uref",
+        "errormonad",
+        "locn",
+        "parse_term_dtype",
+        "qbuf",
+        "term_grammar",
+        "term_tokens"
+      ],
+      "basis_or_local_names": [
+        "CharVector",
+        "List",
+        "Listsort",
+        "Option",
+        "RElist_Tab",
+        "STBSTab",
+        "String"
+      ]
+    },
+    "parse_term_dtype": {
+      "sources": [
+        "src/parse/parse_term_dtype.sml"
+      ],
+      "imports": [
+        "Lib"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    },
+    "parse_type": {
+      "sources": [
+        "src/parse/parse_type.sig",
+        "src/parse/parse_type.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Feedback",
+        "HOLgrammars",
+        "KNametab",
+        "Lib",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Type",
+        "UTF8",
+        "locn",
+        "qbuf",
+        "type_grammar",
+        "type_tokens"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Int",
+        "List",
+        "String"
+      ]
+    },
+    "proofManagerLib": {
+      "sources": [
+        "src/proofman/proofManagerLib.sig",
+        "src/proofman/proofManagerLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Context",
+        "Feedback",
+        "HolKernel",
+        "Lib",
+        "Manager",
+        "Overlay",
+        "Parse",
+        "Tactical",
+        "boolLib",
+        "goalFrag",
+        "goalStack"
+      ],
+      "basis_or_local_names": []
+    },
+    "pureSimps": {
+      "sources": [
+        "src/simp/src/pureSimps.sig",
+        "src/simp/src/pureSimps.sml"
+      ],
+      "imports": [
+        "Cond_rewr",
+        "Overlay",
+        "simpLib"
+      ],
+      "basis_or_local_names": []
+    },
+    "qbuf": {
+      "sources": [
+        "src/parse/qbuf.sig",
+        "src/parse/qbuf.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Uref",
+        "base_lexer",
+        "base_tokens",
+        "locn"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "String",
+        "Substring"
+      ]
+    },
+    "quotation_dtype": {
+      "sources": [
+        "src/portableML/quotation_dtype.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "refuteLib": {
+      "sources": [
+        "src/refute/refuteLib.sig",
+        "src/refute/refuteLib.sml"
+      ],
+      "imports": [
+        "AC",
+        "Abbrev",
+        "Canon",
+        "Overlay"
+      ],
+      "basis_or_local_names": []
+    },
+    "resolve_then": {
+      "sources": [
+        "src/1/resolve_then.sig",
+        "src/1/resolve_then.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Drule",
+        "Exn",
+        "FullUnify",
+        "HOLset",
+        "HolKernel",
+        "Lexis",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Term",
+        "TermParse",
+        "boolSyntax",
+        "optmonad",
+        "seq",
+        "thmpos_dtype"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "String"
+      ]
+    },
+    "satCommonTools": {
+      "sources": [
+        "src/HolSat/satCommonTools.sml"
+      ],
+      "imports": [
+        "Drule",
+        "Globals",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Term",
+        "boolSyntax",
+        "satTheory"
+      ],
+      "basis_or_local_names": [
+        "RBM",
+        "TextIO"
+      ]
+    },
+    "satConfig": {
+      "sources": [
+        "src/HolSat/satConfig.sig",
+        "src/HolSat/satConfig.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Globals",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "SatSolvers",
+        "Term",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": []
+    },
+    "satTheory": {
+      "sources": [
+        "src/HolSat/satScript.sml"
+      ],
+      "imports": [
+        "Globals",
+        "Overlay",
+        "Symtab",
+        "Term",
+        "Theory",
+        "TheoryReader",
+        "Thm",
+        "Type",
+        "boolTheory"
+      ],
+      "basis_or_local_names": [
+        "HOLFileSys",
+        "OS",
+        "TDB",
+        "TextIO"
+      ]
+    },
+    "satTools": {
+      "sources": [
+        "src/HolSat/satTools.sml"
+      ],
+      "imports": [
+        "Conv",
+        "Drule",
+        "Feedback",
+        "Globals",
+        "Lib",
+        "Overlay",
+        "Parse",
+        "Psyntax",
+        "SatSolvers",
+        "Systeml",
+        "Term",
+        "Thm",
+        "Type",
+        "boolLib",
+        "computeLib",
+        "dimacsTools",
+        "satCommonTools",
+        "satTheory"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "Int",
+        "List",
+        "Process",
+        "String",
+        "Substring",
+        "TextIO"
+      ]
+    },
+    "seq": {
+      "sources": [
+        "src/portableML/seq.sig",
+        "src/portableML/seq.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "seqmonad": {
+      "sources": [
+        "src/portableML/monads/seqmonad.sig",
+        "src/portableML/monads/seqmonad.sml"
+      ],
+      "imports": [
+        "errormonad",
+        "optmonad",
+        "seq"
+      ],
+      "basis_or_local_names": [
+        "Option"
+      ]
+    },
+    "simpLib": {
+      "sources": [
+        "src/simp/src/simpLib.sig",
+        "src/simp/src/simpLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "BoundedRewrites",
+        "Cond_rewr",
+        "Context",
+        "Conv",
+        "DB",
+        "DB_dtype",
+        "Drule",
+        "Feedback",
+        "HOLset",
+        "Ho_Net",
+        "HolKernel",
+        "Hol_pp",
+        "KernelSig",
+        "Lib",
+        "Net",
+        "Opening",
+        "Overlay",
+        "Parse",
+        "Portable",
+        "Symtab",
+        "Term",
+        "Trace",
+        "Traverse",
+        "Travrules",
+        "Type",
+        "TypeBase",
+        "TypeBasePure",
+        "boolLib",
+        "boolSyntax",
+        "liteLib",
+        "markerLib",
+        "markerTheory",
+        "smpp"
+      ],
+      "basis_or_local_names": [
+        "Binaryset",
+        "Char",
+        "CharVector",
+        "Int",
+        "List",
+        "Listsort",
+        "Option",
+        "Set",
+        "String"
+      ]
+    },
+    "simpfrag": {
+      "sources": [
+        "src/1/simpfrag.sig",
+        "src/1/simpfrag.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Overlay",
+        "Symtab"
+      ],
+      "basis_or_local_names": []
+    },
+    "smpp": {
+      "sources": [
+        "src/portableML/smpp.sig",
+        "src/portableML/smpp.sml"
+      ],
+      "imports": [
+        "HOLPP",
+        "UTF8"
+      ],
+      "basis_or_local_names": [
+        "FixedInt",
+        "List",
+        "Option"
+      ]
+    },
+    "stmonad": {
+      "sources": [
+        "src/portableML/monads/stmonad.sig",
+        "src/portableML/monads/stmonad.sml"
+      ],
+      "imports": [],
+      "basis_or_local_names": []
+    },
+    "tautLib": {
+      "sources": [
+        "src/taut/tautLib.sig",
+        "src/taut/tautLib.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "HOLset",
+        "HolKernel",
+        "HolSatLib",
+        "Overlay",
+        "Parse",
+        "Rsyntax",
+        "Termtab",
+        "boolLib",
+        "boolSyntax"
+      ],
+      "basis_or_local_names": [
+        "List",
+        "Option"
+      ]
+    },
+    "term_grammar": {
+      "sources": [
+        "src/parse/term_grammar.sig",
+        "src/parse/term_grammar.sml"
+      ],
+      "imports": [
+        "Absyn",
+        "FCNet",
+        "Feedback",
+        "GrammarSpecials",
+        "HOLPP",
+        "HOLgrammars",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Overload",
+        "Parse_supportENV",
+        "Portable",
+        "Symtab",
+        "Table",
+        "Term",
+        "ThyDataSexp",
+        "UTF8",
+        "UnicodeChars",
+        "UniversalType",
+        "parse_term_dtype",
+        "smpp",
+        "stmonad",
+        "term_grammar_dtype",
+        "term_pp_types",
+        "type_grammar"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "FunctionalRecordUpdate",
+        "Int",
+        "List",
+        "Listsort",
+        "Option",
+        "PP",
+        "SI_Tab",
+        "String",
+        "StringCvt",
+        "userSyntaxFns"
+      ]
+    },
+    "term_grammar_dtype": {
+      "sources": [
+        "src/parse/term_grammar_dtype.sml"
+      ],
+      "imports": [
+        "HOLgrammars",
+        "Overlay",
+        "Term",
+        "ThyDataSexp"
+      ],
+      "basis_or_local_names": []
+    },
+    "term_pp": {
+      "sources": [
+        "src/parse/term_pp.sig",
+        "src/parse/term_pp.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "FCNet",
+        "Feedback",
+        "Globals",
+        "GrammarSpecials",
+        "HOLPP",
+        "HOLgrammars",
+        "HOLset",
+        "HOLtokens",
+        "HolKernel",
+        "Lexis",
+        "Lib",
+        "Literal",
+        "Overlay",
+        "Overload",
+        "PPBackEnd",
+        "Portable",
+        "PrecAnalysis",
+        "Pretype",
+        "Symtab",
+        "Term",
+        "Type",
+        "UTF8",
+        "UnicodeChars",
+        "base_tokens",
+        "errormonad",
+        "parse_type",
+        "smpp",
+        "term_grammar",
+        "term_pp_types",
+        "term_pp_utils",
+        "term_tokens",
+        "type_grammar",
+        "type_pp"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "List",
+        "Option",
+        "PP",
+        "String",
+        "StringCvt",
+        "Substring"
+      ]
+    },
+    "term_pp_types": {
+      "sources": [
+        "src/parse/term_pp_types.sml"
+      ],
+      "imports": [
+        "HOLset",
+        "Overlay",
+        "Term",
+        "Type",
+        "smpp",
+        "type_grammar"
+      ],
+      "basis_or_local_names": [
+        "PP"
+      ]
+    },
+    "term_pp_utils": {
+      "sources": [
+        "src/parse/term_pp_utils.sig",
+        "src/parse/term_pp_utils.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "HOLset",
+        "HolKernel",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Term",
+        "smpp",
+        "term_grammar",
+        "term_pp_types",
+        "term_pp_utils_dtype"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "term_pp_utils_dtype": {
+      "sources": [
+        "src/parse/term_pp_utils_dtype.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "Term"
+      ],
+      "basis_or_local_names": []
+    },
+    "term_tactic": {
+      "sources": [
+        "src/1/term_tactic.sig",
+        "src/1/term_tactic.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "HolKernel",
+        "Overlay",
+        "Parse",
+        "Tactic",
+        "Tactical",
+        "Term"
+      ],
+      "basis_or_local_names": [
+        "List"
+      ]
+    },
+    "term_tokens": {
+      "sources": [
+        "src/parse/term_tokens.sig",
+        "src/parse/term_tokens.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Exn",
+        "Feedback",
+        "HOLset",
+        "Lexis",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "UTF8",
+        "UTF8Set",
+        "UnicodeChars",
+        "Uref",
+        "base_tokens",
+        "locn",
+        "qbuf"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "CharVector",
+        "Int",
+        "List",
+        "String",
+        "StringCvt"
+      ]
+    },
+    "thmpos_dtype": {
+      "sources": [
+        "src/1/thmpos_dtype.sml"
+      ],
+      "imports": [
+        "Abbrev",
+        "Overlay",
+        "Term"
+      ],
+      "basis_or_local_names": []
+    },
+    "type_grammar": {
+      "sources": [
+        "src/parse/type_grammar.sig",
+        "src/parse/type_grammar.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "Globals",
+        "HOLPP",
+        "HOLgrammars",
+        "HOLset",
+        "HolKernel",
+        "KNametab",
+        "KernelSig",
+        "Lib",
+        "Overlay",
+        "Portable",
+        "Symtab",
+        "Theory",
+        "Type",
+        "TypeNet",
+        "Typetab",
+        "UTF8",
+        "type_grammar_dtype"
+      ],
+      "basis_or_local_names": [
+        "FunctionalRecordUpdate",
+        "Int",
+        "List",
+        "Listsort",
+        "PP",
+        "String",
+        "StringCvt"
+      ]
+    },
+    "type_grammar_dtype": {
+      "sources": [
+        "src/parse/type_grammar_dtype.sml"
+      ],
+      "imports": [
+        "HOLgrammars",
+        "KernelSig",
+        "Overlay",
+        "Type"
+      ],
+      "basis_or_local_names": []
+    },
+    "type_pp": {
+      "sources": [
+        "src/parse/type_pp.sig",
+        "src/parse/type_pp.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Feedback",
+        "Globals",
+        "HOLPP",
+        "HOLgrammars",
+        "KNametab",
+        "KernelSig",
+        "Overlay",
+        "PPBackEnd",
+        "Portable",
+        "Symtab",
+        "Systeml",
+        "Type",
+        "UTF8",
+        "UnicodeChars",
+        "smpp",
+        "term_pp_types",
+        "type_grammar"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "List",
+        "String"
+      ]
+    },
+    "type_tokens": {
+      "sources": [
+        "src/parse/type_tokens.sig",
+        "src/parse/type_tokens.sml"
+      ],
+      "imports": [
+        "Arbnum",
+        "Feedback",
+        "Overlay",
+        "UTF8",
+        "UnicodeChars",
+        "base_tokens",
+        "locn",
+        "qbuf",
+        "type_tokens_dtype"
+      ],
+      "basis_or_local_names": [
+        "Char",
+        "List",
+        "String"
+      ]
+    },
+    "type_tokens_dtype": {
+      "sources": [
+        "src/parse/type_tokens_dtype.sml"
+      ],
+      "imports": [
+        "Overlay",
+        "base_tokens"
+      ],
+      "basis_or_local_names": []
+    },
+    "typecheck_error": {
+      "sources": [
+        "src/parse/typecheck_error.sml"
+      ],
+      "imports": [
+        "Feedback",
+        "GrammarSpecials",
+        "Overlay",
+        "Term",
+        "Type",
+        "locn"
+      ],
+      "basis_or_local_names": [
+        "String"
+      ]
+    }
+  }
+}

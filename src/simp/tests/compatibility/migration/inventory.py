@@ -175,10 +175,13 @@ def catalog():
     return sorted(rows)
 
 
-def validate_signatures(rows):
+def validate_signatures(rows, revision=None):
+    # The default still inventories the live checkout. Historical unit controls
+    # explicitly select TASK_07's source snapshot, never a regenerated catalog.
     differences = {}
     for module, path in sorted(SIGS.items()):
-        current = (ROOT / path).read_bytes()
+        current = (git(ROOT, 'show', f'{revision}:{path}') if revision else
+                   (ROOT / path).read_bytes())
         old = subprocess.run(["git", "-C", str(ROOT), "show",
                               f"{BASE}:{path}"], capture_output=True)
         before = declarations(old.stdout.decode()) if old.returncode == 0 else set()
@@ -198,7 +201,8 @@ def validate_signatures(rows):
         }
     # Whole-tree guard: any other changed/new production signature must be
     # explicitly classified, not silently excluded from API coverage.
-    changed = git(ROOT, "diff", "--name-only", BASE, "--", "*.sig")
+    revisions = (BASE, revision) if revision else (BASE,)
+    changed = git(ROOT, "diff", "--name-only", *revisions, "--", "*.sig")
     unclassified = set(changed.decode().splitlines()) - set(SIGS.values())
     unclassified = {p for p in unclassified
                     if not p.startswith("src/simp/tests/compatibility/inputs/")}

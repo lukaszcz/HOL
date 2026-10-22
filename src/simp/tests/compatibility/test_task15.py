@@ -11,7 +11,10 @@ from audit_task15 import BASE, FILES, START, audit, git_source, sources, tokens
 class FragmentAudit(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.inputs = sources()
+        # Exercise the original mixed installation adapter, not a restored
+        # body in which its mutation anchors no longer exist. No frozen
+        # expectations are relaxed: this is the immutable TASK_15 landing.
+        cls.inputs = tuple(git_source('6d768fece', p) for p in FILES)
 
     def reject(self, old, new, index=0, region=None, message=None):
         inputs = list(self.inputs)
@@ -31,6 +34,9 @@ class FragmentAudit(unittest.TestCase):
             audit(*inputs)
 
     def test_current(self):
+        self.assertTrue(audit(*sources()))
+
+    def test_historical_task15(self):
         self.assertTrue(audit(*self.inputs))
 
     def test_start_head_is_not_restored(self):

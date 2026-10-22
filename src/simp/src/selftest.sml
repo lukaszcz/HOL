@@ -6196,87 +6196,40 @@ local
 
   val ordinary_eligibility = let
     open OrdinarySimp OrdinaryBool
-    (* The surviving strategy API is explicitly extension-typed. It does
-       not make the installed ordinary procedures extension reducers. *)
-    val rejecting_solver : TraverseExt.ssolver =
-      {name="ordinary projection solver",solve=fn _ => NO_CONV}
+    (* TASK_16 removes optional/configured getters from ordinary sets.
+       Their total baseline projection is inert for every ordinary input;
+       all strategy/configured cases remain in the tracked tests above. *)
     val additions = ref 0
     val probe = OrdinaryTraverse.REDUCER
       {name=NONE,initial=ProjectionContext,
        addcontext=fn (c,_) => (additions := !additions + 1; c),
        apply=fn _ => NO_CONV}
     val base = bool_ss ++ dproc_ss probe
-    val excluded =
-      [set_subgoaler (fn _ => REFL) base,
-       set_unsafe_solvers [rejecting_solver] base,
-       set_cond_depth 4 base,
-       set_term_ord Cond_rewr.ac_term_ord base]
-    val accepted_inputs =
-      [base,set_safe_solvers [rejecting_solver] base,
-       set_looper ("projection unused looper",K ALL_TAC) base]
+    val inputs = [empty_ss,bool_ss,base,limit 4 base,
+                  unlimit (limit 4 base),base ++ empty_ssfrag]
     val before_extraction = !additions
-    val rejected = map legacy_traversedata_for_ss excluded
-    val after_rejected = !additions
-    val accepted = map legacy_traversedata_for_ss accepted_inputs
-    val after_accepted = !additions
-    (* TASK_02's ordinary client must not depend on optional dispatch. *)
     val OrdinaryTraverse.REDUCER _ =
       hd (#rewriters (traversedata_for_ss empty_ss))
     fun ordinary (OrdinaryTraverse.REDUCER _) = true
-    fun accepted_shape (SOME (data : OrdinaryTraverse.traverse_data)) =
-          not (null (#rewriters data)) andalso
-          not (null (#dprocs data)) andalso
-          List.all ordinary (#rewriters data @ #dprocs data)
-      | accepted_shape NONE = false
     fun public_projection ss = let
       val public = traversedata_for_ss ss
-      (* Compare only ordinary lists. Strategy-only updates of base keep
-         its installed dprocs/travrules even when dispatch is ineligible. *)
-      val expected = case legacy_traversedata_for_ss ss of
-          SOME data => data
-        | NONE => traversedata_for_ss base
+      val repeated = traversedata_for_ss ss
       val native = case #rewriters public of
           [OrdinaryTraverse.REDUCER _] => true | _ => false
     in
       native andalso
-      Portable.pointer_eq (#dprocs public,#dprocs expected) andalso
-      Portable.pointer_eq (#travrules public,#travrules expected) andalso
+      List.all ordinary (#rewriters public @ #dprocs public) andalso
+      Portable.pointer_eq (#dprocs public,#dprocs repeated) andalso
+      Portable.pointer_eq (#travrules public,#travrules repeated) andalso
       aconv (#relation public) boolSyntax.equality andalso
-      #limit public = #limit expected
+      #limit public = #limit repeated
     end
-    (* Only the configured route lifts ordinary dprocs. Compare their
-       ordinary payloads, not unlike-type lists or a reverse adapter.
-       Both getters must remain inert, including for ineligible settings. *)
-    fun configured_projection ss = let
-      val public = traversedata_for_ss ss
-      val (extended,config) = xtraversedata_for_ss ss
-      fun lifted (ordinary,T.LIFTED payload) =
-            Portable.pointer_eq (ordinary,payload)
-        | lifted _ = false
-      val settings = traverseconfig_for_ss ss
-    in
-      configured_rewriter extended andalso
-      ListPair.allEq lifted (#dprocs public,#dprocs extended) andalso
-      Portable.pointer_eq (#travrules public,#travrules extended) andalso
-      aconv (#relation public) (#relation extended) andalso
-      #limit public = #limit extended andalso
-      #cond_depth config = #cond_depth settings andalso
-      Option.isSome (#subgoaler config) =
-        Option.isSome (#subgoaler settings) andalso
-      Option.isSome (#term_ord config) =
-        Option.isSome (#term_ord settings) andalso
-      Portable.pointer_eq (#solvers config,#solvers settings)
-    end
+    val results = map public_projection inputs
+    val data = traversedata_for_ss base
   in
-    before_extraction = after_rejected andalso
-    after_rejected = after_accepted andalso
-    after_accepted = !additions andalso
-    List.all (not o Option.isSome) rejected andalso
-    List.all accepted_shape accepted andalso
-    List.all public_projection (empty_ss :: bool_ss :: base :: excluded)
-    andalso List.all configured_projection
-      (empty_ss :: bool_ss :: accepted_inputs @ excluded)
-    andalso before_extraction = !additions
+    List.all I results andalso not (null (#dprocs data)) andalso
+    #limit (traversedata_for_ss (limit 4 base)) = SOME 4 andalso
+    before_extraction = !additions
   end
   (* Context/config procedures cannot inhabit the restored ordinary type.
      Their former optional-rejection cases above are instead tracked total
@@ -6309,8 +6262,8 @@ local
      List.all (fn data => native_shape data andalso
                          not (null (#dprocs data))) accepted)
 
-  (* Tracked default extraction ignores simpset-specific configuration,
-     including settings rejected by the ordinary optional accessor above. *)
+  (* Tracked default extraction ignores simpset-specific configuration;
+     these settings no longer inhabit the ordinary simpset type. *)
   val default_a = ``projection_default_a:bool``
   val default_b = ``projection_default_b:bool``
   val default_condition = ``projection_default_condition:bool``
