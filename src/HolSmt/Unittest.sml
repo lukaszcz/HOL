@@ -21064,6 +21064,20 @@ let
     | poly_product depth =
         let val child = poly_product (depth - 1)
         in Type.mk_type ("prod", [child, child]) end
+  (* An unequal suffix must not send native TRANS through an exponential
+     equal prefix. Type IDs only reject; they do not establish equality. *)
+  fun late_type suffix = Type.mk_type ("prod",
+    [poly_product 79, Type.mk_vartype suffix])
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => assert (
+      ((ignore (SmtSkeletonProve.bounded_nodewise_equality 16
+          (variable (late_type "'task21_left"))
+          (variable (late_type "'task21_right"))); false)
+       handle Feedback.HOL_ERR error =>
+         Feedback.top_structure_of error = "Thm" andalso
+         Feedback.top_function_of error = "TRANS" andalso
+         Feedback.message_of error = ""),
+      "late Type mismatch entered native equality")) ()
   val poly_leaf = variable (poly_product 80)
   val _ = equal "polymorphic pointer depth80" poly_leaf poly_leaf
   val poly_type = poly_product 21

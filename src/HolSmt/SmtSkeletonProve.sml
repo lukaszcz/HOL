@@ -357,6 +357,20 @@ struct
        nodes = nodes, edges = edges, physical = physical}
     end
 
+  (* Canonical Type IDs may reject a mismatched pair, but cannot prove a
+     matching pair equal. In particular, reject a late mismatch before TRANS
+     unfolds a shared equal prefix. Successful transport still needs the
+     stock kernel and retains both supplied endpoint occurrences. *)
+  fun checked_leaf_transport intern_type left right =
+    let
+      val AdmissionTypeNode {id = left_id, ...} =
+        intern_type (Term.type_of left)
+      val AdmissionTypeNode {id = right_id, ...} =
+        intern_type (Term.type_of right)
+      val _ = if left_id = right_id then () else
+        raise Feedback.mk_HOL_ERR "Thm" "TRANS" ""
+    in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
+
   (* Build left = right one physical node at a time.  Both endpoint anchors
      compare only a newly built outer node whose children already have the
      requested endpoint pointers.  Structural cache collisions use separate
@@ -439,14 +453,7 @@ struct
               in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
             else if (Term.is_var left andalso Term.is_var right) orelse
                     (Term.is_const left andalso Term.is_const right) then
-              let
-                (* Admit native equality-constant classification, not the
-                   unfolded size of a possibly polymorphic annotation.
-                   TRANS still checks leaf identity in the stock kernel;
-                   pair counts do not claim to bound that comparison. *)
-                val _ = admit_type left
-                val _ = admit_type right
-              in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
+              checked_leaf_transport (#intern type_admission) left right
             else
               (* Different constructors cannot be alpha-equal. Preserve
                  TRANS's mismatch error without constructing unadmitted
@@ -706,10 +713,8 @@ struct
       fun checked_leaf_equality operation occurrence representative =
         let
           val timer = Timer.startRealTimer ()
-          val _ = admit_type (Term.type_of occurrence)
-          val _ = admit_type (Term.type_of representative)
-          val theorem =
-            Thm.TRANS (Thm.REFL occurrence) (Thm.REFL representative)
+          val theorem = checked_leaf_transport intern_type
+            occurrence representative
           val _ = transport_nodes := !transport_nodes + 1
           val _ = transport_time := Time.+
             (!transport_time, Timer.checkRealTimer timer)
