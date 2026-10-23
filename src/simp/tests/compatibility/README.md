@@ -1,5 +1,13 @@
 # Pinned simplifier review inputs
 
+TASK26's current [test ownership map](migration/TASK26.md) and
+[handoff](TASK_26_HANDOFF.md) cover physical separation and normal-level entry
+points. The 73-check ordinary selftest is byte-identical to pinned develop;
+the whole 642-check mixed regression executes separately with its complete
+observations. Both historical ledgers remain immutable. Public clients, quota
+checks, focused extension suites and fresh-load/persistence suites all have
+normal executable entries. The historical descriptions below retain provenance.
+
 TASK_07's searchable API/consumer inventory, tracked-construction decisions,
 shared-identity ledger and exact read-only external consumer provenance are in
 [`migration/MIGRATION.md`](migration/MIGRATION.md). Its signature-delta and

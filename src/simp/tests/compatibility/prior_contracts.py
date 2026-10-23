@@ -60,6 +60,7 @@ def inputs(here, repo):
             here / "inputs/develop/selftest.sml",
             *sorted((here.parent / "contracts").glob("*.sml")),
             repo / "src/simp/src/selftest.sml",
+            repo / "src/simp/tests/native-extension/selftest.sml",
             *sorted((here.parent / "performance/review-20261021").glob(
                 "*legacy.log")),
             *[here.parent / "performance/review-20261021" / n for n in

@@ -5,6 +5,17 @@ Pinned develop is `cccaa27d7099cbadc886983020cbe745db7793f3`.
 Fresh current-source observations use `cab2d3b7e8b57f90de4b7943e0c3ded001f2cc2f`;
 production simplifier sources are unchanged from reviewed `cf1f863b4`.
 
+## Current ownership (TASK26)
+
+[The complete current map](migration/TASK26.md) composes a byte-exact physical
+move after TASK10's immutable typed mapping. The reviewed 630 native cases and
+12 registry repeats now execute in `tests/native-extension/selftest.sml`;
+`src/selftest.sml` is the complete unchanged 73-check develop input. Every old
+ID/anchor/assertion survives. Public clients and the six quota checks have an
+ordinary-only native normal entry. The post-list level-1 `check-full` requires
+all 642 native checks and 11 aggregate vectors; a 637-check bootstrap is not
+complete coverage. Historical locations/counts below describe their freeze.
+
 ## Durable relocation ledger
 
 [`coverage-ledger.json.gz`](coverage-ledger.json.gz) is JSON compressed for

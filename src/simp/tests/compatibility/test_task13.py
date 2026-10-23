@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """TASK_13 fail-closed in-memory mutation controls; no HOL execution."""
 import unittest
+from unittest.mock import patch
+
+import audit_task15
 
 import audit_task13 as audit
 
@@ -8,8 +11,19 @@ import audit_task13 as audit
 class StructuralControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sources = audit.read_sources()
-        audit.structural(cls.sources)
+        # The whole-source seal is historical, not a wildcard allowing later
+        # reviewed extension repairs or the physical TASK26 test move.
+        cls.sources = {p: audit.git_source('ba366bcae', p)
+                       for p in audit.read_sources()}
+        cls.task15 = tuple(audit_task15.git_source('6d768fece', p)
+                           for p in audit_task15.FILES)
+        with patch('audit_task15.sources', return_value=cls.task15):
+            audit.structural(cls.sources)
+
+    def setUp(self):
+        historical = patch('audit_task15.sources', return_value=self.task15)
+        historical.start()
+        self.addCleanup(historical.stop)
 
     def reject(self, path, old, new, diagnostic, source=None):
         source = self.sources[path] if source is None else source
@@ -20,7 +34,7 @@ class StructuralControls(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, diagnostic):
             audit.structural(changed)
 
-    def test_current_sources(self):
+    def test_sealed_task16_sources(self):
         seals = audit.structural(self.sources)
         self.assertEqual(set(seals), set(self.sources))
         for path, text in self.sources.items():

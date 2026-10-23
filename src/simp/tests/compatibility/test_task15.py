@@ -33,8 +33,12 @@ class FragmentAudit(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, message or '.'):
             audit(*inputs)
 
-    def test_current(self):
-        self.assertTrue(audit(*sources()))
+    def test_current_ordinary_with_sealed_task15_extension(self):
+        # Later extension repairs are not TASK15's whole-file oracle. Keep
+        # every historical extension mutation below, and audit the live
+        # ordinary fragment routes with that exact historical extension.
+        ordinary, signature, _, _ = sources()
+        self.assertTrue(audit(ordinary, signature, *self.inputs[2:]))
 
     def test_historical_task15(self):
         self.assertTrue(audit(*self.inputs))

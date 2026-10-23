@@ -1,5 +1,12 @@
 # Repository consumer ledger
 
+TASK26's [current executable ownership map](TASK26.md) closes test separation.
+Historical native references below now map line-for-line to
+`src/simp/tests/native-extension/selftest.sml`, without changing their typed
+ordinary controls or assertion bodies. The ordinary `src/selftest.sml` is the
+complete pinned develop input; normal ordinary public/quota/import-scope
+launchers are independent of extensions.
+
 Paths/lines refer to inventory source `50cfa5d70`; `manifest.json` seals exact
 bytes. API groups refer to [MIGRATION.md](MIGRATION.md). Every actual extension
 caller below has implementation and final migration owners. All doc/example

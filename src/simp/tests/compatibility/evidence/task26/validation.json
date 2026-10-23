@@ -1,0 +1,127 @@
+{
+  "task": "TASK_26",
+  "landing": "TASK26-test-ownership-v1",
+  "start_head": "4c26cbcdc21d10531a4b38c6c539f821acad42a3",
+  "start_root_status": "clean",
+  "platform": "Linux-7.0.0-1011-aws-aarch64-with-glibc2.39",
+  "machine": "aarch64",
+  "scope": "current native products and routine build; no independent clean-build or performance claim",
+  "wrapper": "root-wrapper.sh",
+  "commands": [
+    {
+      "command": "python3 -B src/simp/tests/legacy-contracts/run.py --negative-controls --output /tmp/task26-evidence/final-legacy",
+      "exit": 0,
+      "evidence": "legacy/manifest.json",
+      "observations": "nine public clients/18 checks, six quotas, one import scope; extension-load and wrong-count processes exit 1 at intended guards"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/run_prior_native.py --output /tmp/task26-evidence/final-native",
+      "exit": 0,
+      "evidence": "native/manifest.json",
+      "observations": "all 15 commands exit 0, complete frozen streams and supplementary focused launchers"
+    },
+    {
+      "command": "bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 0,
+      "evidence": "routine.log.gz",
+      "observations": "new post-list check-full executes all 642 native checks, seven warnings and 11 vectors"
+    },
+    {
+      "command": "python3 -B -m unittest discover -s src/simp/tests/compatibility -p 'test_*.py'",
+      "exit": 0,
+      "evidence": "python-tests.log.gz",
+      "observations": "151 tests; also executed by normal legacy-contracts target"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/coverage_ledger.py",
+      "exit": 0,
+      "evidence": "coverage.log.gz",
+      "observations": "2153 stable IDs; exact physical/typed overlays"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/verify_evidence.py",
+      "exit": 0,
+      "evidence": "immutable.log.gz"
+    },
+    {
+      "command": "sha256sum -c src/simp/tests/compatibility/SHA256SUMS",
+      "exit": 0,
+      "evidence": "sha256.log.gz"
+    },
+    {
+      "command": "tools/h4pedant/h4pedant --nolinelen --unicodeok src/simp/tests/native-extension",
+      "exit": 0,
+      "evidence": "pedant-native.log.gz"
+    },
+    {
+      "command": "tools/h4pedant/h4pedant --nolinelen --unicodeok src/simp/tests/legacy-contracts",
+      "exit": 0,
+      "evidence": "pedant-legacy.log.gz"
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "native_invariants": {
+    "reviewed_checks": 630,
+    "registry_additions": 12,
+    "warnings": 7,
+    "aggregate_vectors": 11,
+    "aggregate_boolean_fields": 128,
+    "ordinary_original_checks": 73
+  },
+  "normal_focused": {
+    "traverse-ext": {
+      "checks": 131,
+      "completions": [
+        "TraverseExt focused checks: 131"
+      ]
+    },
+    "cond-rewr-ext": {
+      "checks": 103,
+      "completions": [
+        "Cond_rewrExt focused checks: 103"
+      ]
+    },
+    "congruence-ext": {
+      "checks": 61,
+      "completions": [
+        "Ordinary congruence focused checks: 4",
+        "Congruence extension focused checks: 57"
+      ]
+    },
+    "simp-ext": {
+      "checks": 2809,
+      "completions": [
+        "simpExtLib focused checks: 88",
+        "TRACKED_COMPILER_CHECKS=174",
+        "TASK19_EXTENSION_EXCLUSIONS_OK checks=159",
+        "simpExtLib strategy checks: 186; executed validations: 63",
+        "TASK20_EXTENSION_TACTICS_OK checks=88 validations=18",
+        "SOURCE_VIEW_BUNDLE_CHECKS=407",
+        "DERIVATION_CHECKS=1392",
+        "TraverseExt lifetime checks: 315"
+      ]
+    },
+    "standard-recipes": {
+      "checks": 118,
+      "completions": [
+        "STANDARD_RECIPE_CHECKS=118"
+      ]
+    },
+    "split-lifecycle": {
+      "checks": 1762,
+      "completions": [
+        "OBS repair=pass"
+      ]
+    }
+  },
+  "development": [
+    "First shell attempt executed a non-executable archived wrapper directly (126); all actual acceptance commands use sh root-wrapper.sh.",
+    "Native legacy driver prototype exposed local-vs-native public dependencies, missing stderr dictionary key, and fileDirMap pair shape. Repaired before final passing launches.",
+    "An initial prior run hit a transient host disk-full condition (120), leaving incomplete evidence. No unrelated files deleted; the complete final rerun succeeds.",
+    "Broad discovery exposed old task whole-source audit tests applied to later reviewed extension changes/physical relocation. Bound historical mutation controls to exact old snapshots and retain live ordinary checks; all 151 pass."
+  ],
+  "blockers": []
+}

@@ -7,8 +7,7 @@ endif
         staging-contracts staging-baseline-control prior-contracts \
         prior-baseline-control prior-native
 python-tests:
-	python3 -B -m unittest test_runner test_public_contracts test_staging \
-	  test_prior
+	python3 -B -m unittest discover -s . -p 'test_*.py'
 
 check: python-tests
 	python3 -B run_paired.py --negative-controls --output $(PAIRED_OUTPUT)
@@ -27,11 +26,11 @@ prior-baseline-control: python-tests
 prior-native:
 	python3 -B run_prior_native.py --output $(PAIRED_OUTPUT)
 
-# Diagnostic gates: expected reds are recorded, NOT source-compatibility passes.
+# Current repaired API gate. Historical red receipts remain immutable.
 public-contracts: python-tests
 	python3 -B run_paired.py --public-contracts --negative-controls \
-	  --candidate HEAD --candidate-signature reject \
-	  --candidate-behavior reviewed --output $(PAIRED_OUTPUT)
+	  --candidate HEAD --candidate-signature pass \
+	  --candidate-behavior baseline --output $(PAIRED_OUTPUT)
 
 public-baseline-control: python-tests
 	python3 -B run_paired.py --public-contracts --negative-controls \

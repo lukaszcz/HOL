@@ -10,7 +10,10 @@ import audit_task16 as audit
 class StructuralAudit(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sources = audit.read_sources()
+        # Preserve the original whole-closure mutation tests on their sealed
+        # landing, not on later intentionally changed extension sources.
+        cls.sources = {p: audit.git_source('ba366bcae', p)
+                       for p in audit.read_sources()}
         cls.manifest = audit.read_manifest()
         audit.audit(cls.sources)
 
@@ -27,7 +30,7 @@ class StructuralAudit(unittest.TestCase):
     def reject_ordinary(self, old, new, index=0):
         self.reject(audit.ORDINARY[index], old, new, 'pinned develop')
 
-    def test_current_whole_source_correspondence(self):
+    def test_sealed_task16_whole_source_correspondence(self):
         result = audit.audit(self.sources)
         self.assertEqual(result['structural'], 'pass')
         self.assertEqual(result['transitive_modules'], 231)
@@ -38,6 +41,11 @@ class StructuralAudit(unittest.TestCase):
         for path in audit.EXTENSIONS:
             self.assertEqual(self.sources[path],
                              audit.git_source(audit.START, path))
+
+    def test_live_ordinary_sources_stay_pinned(self):
+        for path in audit.ORDINARY:
+            self.assertEqual((audit.ROOT / path).read_bytes(),
+                             audit.git_source(audit.BASE, path))
 
     def test_starting_mixed_source_and_signature_are_not_restored(self):
         for path in audit.ORDINARY:

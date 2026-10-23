@@ -9,8 +9,10 @@ import shutil
 import tempfile
 
 import prior_contracts as prior
+import normal_integration
 import coverage_ledger as coverage
 import task10_relocation as relocation
+import task26_relocation as physical
 from run_paired import (HERE, execute, fingerprint, git, require)
 
 
@@ -18,13 +20,16 @@ def source_inputs(repo):
     paths = []
     for folder in (repo / "src/simp/src", HERE.parent):
         for p in folder.rglob("*"):
-            if (p.is_file() and p.suffix in (".sml", ".sig", ".ML") and
-                    ".hol" not in p.parts and "evidence" not in p.parts):
+            if (p.is_file() and (p.suffix in (".sml", ".sig", ".ML", ".py")
+                    or p.name == "Holmakefile") and ".hol" not in p.parts
+                    and "evidence" not in p.parts):
                 paths.append(p)
     return sorted(set(paths + [Path(__file__), HERE / "prior_contracts.py",
                                HERE / "coverage_ledger.py",
                                HERE / "task10_relocation.py",
                                relocation.SUPPLEMENT,
+                               HERE / "task26_relocation.py",
+                               HERE / "migration/task26-relocation.json",
                                HERE / "coverage-ledger.json.gz"]))
 
 
@@ -77,6 +82,7 @@ def main():
     try:
         coverage.verify(ledger, supplement)
         manifest["relocation"] = fingerprint(relocation.SUPPLEMENT)
+        manifest["physical_relocation"] = fingerprint(physical.SUPPLEMENT)
         manifest["coverage"] = {
             "frozen_native_checks": ledger["suites"]["native"]["checks"],
             "current_native_checks": supplement["native"]["checks"],
@@ -86,14 +92,22 @@ def main():
                    "--holstate=" + str(repo / "bin/hol.state0"), "-j1"]
         run("build-focused", holmake + ["-C", str(repo / "src/simp/src"),
             "HOLSELFTESTLEVEL=1", "all"], repo, suite=False)
+        manifest["normal_suites"] = {}
+        for name in normal_integration.SUITES:
+            text = (repo / "src/simp/src" / (name + ".log")).read_text()
+            manifest["normal_suites"][name] = normal_integration.validate(
+                name, text)
+            (output / (name + ".log.gz")).write_bytes(gzip.compress(
+                text.encode(), mtime=0))
         manifest["products"] = {
             str(p.relative_to(repo)): fingerprint(p)
             for directory in (repo / "src/simp/src", *[
                 HERE.parent / n for n in ("contracts", "fresh-load", "markers",
-                "replay-order", "split-registration")])
+                "replay-order", "split-registration", "native-extension")])
             for p in (directory / ".hol/objs").glob("*")
             if p.is_file() and not (
-                directory == repo / "src/simp/src" and
+                directory in (repo / "src/simp/src",
+                              HERE.parent / "native-extension") and
                 p.name in ("scratchTheory.sml", "scratchTheory.sig",
                            "scratchTheory.dat"))}
         # The unchanged native selftest exports scratchTheory on every
@@ -102,7 +116,8 @@ def main():
         # imported/compiled input. All .uo/.ui and other theory products
         # remain sealed, as do the sources and the exact native stream.
         # Existing launchers are executed, not counted from cached log targets.
-        cases = {"native": "src/simp/src/selftest.exe",
+        cases = {"original": "src/simp/src/selftest.exe",
+                 "native": "src/simp/tests/native-extension/selftest.exe",
                  "traversal": "src/simp/tests/contracts/traversal-contracts.exe",
                  "exclusion": "src/simp/tests/contracts/exclusion-contracts.exe",
                  **{n: "src/simp/tests/" + n + "/selftest.exe" for n in
@@ -110,10 +125,13 @@ def main():
         for label, path in cases.items():
             target = repo / path
             receipt = run(label, [str(target)], target.parent)
+            if label == "native":
+                physical.validate_vectors(receipt["stdout"])
             manifest.setdefault("launchers", {})[path] = {
                 "text": target.read_text(), **fingerprint(target)}
-            if label in ("native", "traversal", "exclusion"):
-                fixture = {"native": "PriorNative", "traversal": "PriorTraversal",
+            if label in ("original", "native", "traversal", "exclusion"):
+                fixture = {"original": "PriorOriginal",
+                           "native": "PriorNative", "traversal": "PriorTraversal",
                            "exclusion": "PriorExclusion"}[label]
                 require(ledger["suites"][label]["stream"] ==
                         prior.historical(HERE, fixture),

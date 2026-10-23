@@ -154,7 +154,10 @@ def verify(ledger, supplement=None):
     supplement = relocation.load() if supplement is None else supplement
     moved = relocation.verify(ledger, supplement)
     relocated_paths = supplement["sources"]
-    source_literals = {p: literals([p]) for p in ledger["sources"]}
+    destinations = set(ledger["sources"]) | {
+        r["current_path"] for r in relocated_paths.values()
+        if "current_path" in r}
+    source_literals = {p: literals([p]) for p in destinations}
     for path, info in ledger["sources"].items():
         if path not in relocated_paths:
             require(fingerprint(REPO / path) == info,

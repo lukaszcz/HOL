@@ -1,5 +1,11 @@
 # TASK_10 typed native-test relocation supplement
 
+**TASK26 physical completion:** [TASK26.md](TASK26.md). This document and its
+JSON retain the historical typed mapping. A separately sealed overlay now
+maps the entire current native file byte-for-byte into `tests/native-extension`;
+all cases, anchors and controls below survive. `src/selftest.sml` is again the
+complete pinned develop input, not a mixed import scope.
+
 [task10-relocation.json](task10-relocation.json) is an **additive overlay** on
 TASK_06's frozen `../coverage-ledger.json.gz`, not a replacement freeze.
 TASK_07's `manifest.json`, `apis.tsv`, `references.tsv`, historical inputs and

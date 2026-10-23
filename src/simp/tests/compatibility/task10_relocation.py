@@ -19,7 +19,8 @@ def key(anchor):
 
 
 def load():
-    return json.loads(SUPPLEMENT.read_text())
+    import task26_relocation
+    return task26_relocation.apply(json.loads(SUPPLEMENT.read_text()))
 
 
 def historical_source(path, record):
@@ -65,16 +66,21 @@ def verify(ledger, supplement=None):
     for path, record in sources.items():
         require(record["old"] == ledger["sources"][path],
                 "stale source relocation origin: " + path)
-        require(fingerprint(REPO / path) == record["current"],
+        destination = record.get("current_path", path)
+        require(destination == (
+            "src/simp/tests/native-extension/selftest.sml"
+            if path == NATIVE else path), "wrong physical destination")
+        require(fingerprint(REPO / destination) == record["current"],
                 "stale source relocation destination: " + path)
         old_text[path] = historical_source(path, record)
-        current_text[path] = (REPO / path).read_text()
+        current_text[path] = (REPO / destination).read_text()
         require(record["decision"], "missing source relocation decision")
         for side, text in (("old", old_text[path]),
                            ("current", current_text[path])):
             require(record[side + "_anchors"], "missing import/body anchors")
             for anchor in record[side + "_anchors"]:
-                require(anchor["path"] == path, "wrong source anchor path")
+                require(anchor["path"] == (path if side == "old" else
+                        destination), "wrong source anchor path")
                 check_anchor(anchor, text)
 
     expected = {key(a) for suite in ledger["suites"].values()
@@ -84,10 +90,12 @@ def verify(ledger, supplement=None):
     for row in relocation["anchors"]:
         before, after = row["old"], row["current"]
         require(key(before) not in moved, "duplicate relocation anchor")
-        require(before["path"] == after["path"] in sources,
+        path = before["path"]
+        require(path in sources and after["path"] ==
+                sources[path].get("current_path", path),
                 "unexpected anchor destination")
-        check_anchor(before, old_text[before["path"]])
-        check_anchor(after, current_text[after["path"]])
+        check_anchor(before, old_text[path])
+        check_anchor(after, current_text[path])
         moved[key(before)] = after
     require(set(moved) == expected, "missing/extra relocated case anchor")
 
@@ -142,7 +150,8 @@ def verify(ledger, supplement=None):
                 "changed extension registry assertion label")
         require(row["sources"], "unanchored added native check")
         for anchor in row["sources"]:
-            require(anchor["path"] == NATIVE, "wrong added-check source")
+            require(anchor["path"] == sources[NATIVE].get(
+                "current_path", NATIVE), "wrong added-check source")
             check_anchor(anchor, current_text[NATIVE])
     return moved
 

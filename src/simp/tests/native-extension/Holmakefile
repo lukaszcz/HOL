@@ -1,0 +1,25 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+INCLUDES = ../../src
+EXTRA_CLEANS = selftest.exe native-extension.log
+
+all: selftest.exe
+.PHONY: all
+
+selftest.exe: selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+# This mixed historical regression owns extension imports. Never link it into
+# the ordinary selftest; its embedded ordinary controls run here too.
+.PHONY: check
+check: selftest.exe
+	./selftest.exe
+
+# Scheduled after list/src by base-hol. Missing later-theory cases are fatal,
+# never accepted as a smaller passing suite on a fresh checkout.
+.PHONY: check-full
+check-full: selftest.exe
+	$(tee python3 -B check.py,native-extension.log)
+
+ifdef HOLSELFTESTLEVEL
+all: check-full
+endif

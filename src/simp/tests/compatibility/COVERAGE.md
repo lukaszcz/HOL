@@ -1,5 +1,13 @@
 # Maintained coverage inventory at the starting revision
 
+**Current TASK26 ownership:** [migration/TASK26.md](migration/TASK26.md).
+The complete pinned develop selftest is now the ordinary selftest. The whole
+642-check mixed integration suite moved byte-for-byte to `native-extension`;
+its complete level-1 run is scheduled after list exports. All original ledger
+IDs and incremental mappings survive, with separate ordinary public/quota
+launchers and full focused/fresh-process entry points. The table below remains
+the historical starting inventory, not today's dependency scope.
+
 For TASK_06's **fresh, executable, case-by-case** coverage freeze, use
 [`PRIOR_CONTRACTS.md`](PRIOR_CONTRACTS.md) and
 [`coverage-ledger.json.gz`](coverage-ledger.json.gz), verified by
@@ -13,8 +21,8 @@ original freeze and map its 630 native occurrences to 642 current checks
 (12 extension-registry repeats). Old/current hashes and anchors authorize only
 explicit typed relocations, including ordinary pins and the documented optional
 eligibility predicate change. All other suite streams remain exact; no frozen
-input or historical snapshot is regenerated. Final physical separation remains
-TASK_26.
+input or historical snapshot is regenerated. TASK26's separately sealed physical
+overlay now completes the move; this typed mapping remains immutable.
 
 Inventory revision: `cf1f863b4e5a9712ce1b179f18274eb3451f3954`.
 This is a source/coverage inventory, not a fresh test receipt. Exact file
@@ -23,7 +31,7 @@ Existing generated executables/logs are caller-owned and are not evidence of
 fresh execution. No old `src/simp/compatibility` archive was restored or used
 as the inventory source.
 
-## Current tests and integration
+## Starting-revision tests and integration
 
 | Location | Coverage and normal entry point |
 | --- | --- |
