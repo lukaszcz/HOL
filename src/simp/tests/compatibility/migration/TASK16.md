@@ -1,5 +1,11 @@
 # TASK_16: ordinary compiler/storage source closure
 
+**Final status:** [TASK27.md](TASK27.md) publishes final module ownership
+and every consumer/identity/transition disposition. **M6 closed in TASK26**;
+its open status below describes the TASK16 snapshot only. Native integration
+now lives in tests/native-extension, with full ordinary selftest restoration
+and independent ordinary launchers. Historical seals/receipts remain unchanged.
+
 ## Exact restoration boundary
 
 `simpLib.sml` and `simpLib.sig` are byte-identical to pinned develop

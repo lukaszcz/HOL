@@ -1,17 +1,21 @@
+>>__ load "boolSimpsExt";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `threaded_cong_ss`
 
 ``` hol4
-simpLib.threaded_cong_ss : thm list -> ssfrag
+simpExtLib.threaded_cong_ss : thm list -> simpExtLib.ssfrag
 ```
 
 ------------------------------------------------------------------------
 
-Creates a fragment containing threaded congruence rules.
+Creates an extension fragment containing threaded congruence rules.
+The fragment must be installed in a `simpExtLib.simpset`, not an ordinary
+`simpLib.simpset`.
 
 `threaded_cong_ss ths` is an anonymous fragment of congruence rules,
-normalised in the same way as the `congs` field of `SSFRAG`. Add it to a
-simpset with `++`, or pass it through the `SF` marker.
+normalised in the same way as the `congs` field of `simpExtLib.SSFRAG`.
+Add it with `simpExtLib.++`, or pass it through `simpExtLib.SF` after
+naming/registering it in the extension fragment registry.
 
 A threaded rule may name an intermediate result only in a later
 antecedent, rather than in the conclusion's right-hand side. For example,
@@ -27,8 +31,9 @@ the third antecedent consumes them to produce the final result `h`:
 Applied higher-order result variables are beta-reduced in the rebuilt
 right-hand side after instantiation. This does not beta-reduce the
 original term on the left-hand side. These extensions apply only to
-rules in `threaded_cong_ss`; ordinary `SSFRAG` congruences and `Cong`
-markers retain their existing handling.
+rules in `threaded_cong_ss`; the `congs` field of `simpExtLib.SSFRAG`
+and `simpExtLib.Cong` retain ordinary congruence handling. Ordinary
+`simpLib.SSFRAG` and `simpLib.Cong` are unchanged and need no migration.
 
 ### Failure
 
@@ -46,14 +51,13 @@ fragment to a simpset, or simplification with that simpset, to fail.
       DISCH_THEN (fn rebuilt => REWRITE_TAC [GSYM rebuilt]) THEN
       AP_TERM_TAC THEN ABS_TAC THEN ASM_REWRITE_TAC [] THEN
       ASM_CASES_TAC “Q (x:'a) : bool” THEN RES_TAC THEN ASM_REWRITE_TAC []);
->>_ val ss = bool_ss ++ simpLib.threaded_cong_ss [threaded];
->> SIMP_CONV ss [ASSUME “!y:'a. bnd y ==> (bdy y <=> bdy' y)”]
+>>_ val ss : simpExtLib.simpset = simpExtLib.++
+     (boolSimpsExt.bool_ss, simpExtLib.threaded_cong_ss [threaded]);
+>> simpExtLib.SIMP_CONV ss [ASSUME “!y:'a. bnd y ==> (bdy y <=> bdy' y)”]
      “?x:'a. bnd x /\ bdy x”;
 ```
 
 ### See also
 
-[`simpLib.SSFRAG`](#simpLib.SSFRAG),
-[`simpLib.Cong`](#simpLib.Cong),
-[`simpLib.SF`](#simpLib.SF),
-[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV).
+[`simpExtLib.mk_simpset`](#simpExtLib.mk_simpset),
+[`simpLib.Cong`](#simpLib.Cong).

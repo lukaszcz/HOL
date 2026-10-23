@@ -1,0 +1,15 @@
+{
+  "resolved_harness_failures": [
+    {
+      "command": "nested bwrap migration suite (initially omitted --dev /dev)",
+      "exit": 1,
+      "detail": "11 errors from Git /dev/null permission denied; repeated with a fresh /dev and read-only historical external bind: all 12 pass."
+    },
+    {
+      "command": "tools/h4pedant (directory rather than executable)",
+      "exit": 126,
+      "detail": "Corrected executable path tools/h4pedant/h4pedant; exit 0."
+    }
+  ],
+  "superseded_runs": "Redundant passing routine/runtime/doc receipts removed; final complete receipts retained. No failed attempt counted as acceptance."
+}

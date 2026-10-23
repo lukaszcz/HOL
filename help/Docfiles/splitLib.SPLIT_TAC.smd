@@ -1,3 +1,4 @@
+>>__ load "splitLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `SPLIT_TAC`
 

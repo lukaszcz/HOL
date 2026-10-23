@@ -1,5 +1,11 @@
 # TASK21: tracked source/view/bundle migration closure
 
+**Final ownership overlay:** [TASK27.md](TASK27.md). Native selftest paths
+below refer to the historical mixed file, now relocated byte-for-byte to
+`tests/native-extension/selftest.sml` by TASK26. TASK24 recipes and TASK25's
+isolated downstream migration are complete within their documented scopes;
+all temporary rows, including M6, are closed.
+
 Legacy clients require **no migration**. These branch-only APIs belong to
 `simpExtLib`; choose its fragments and simpset **before installation** of any
 source-sensitive rule. No import of an arbitrary `simpLib.simpset` exists.

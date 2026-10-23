@@ -1,5 +1,12 @@
 # External producer-output and type-boundary closure
 
+**Final closure overlay:** [TASK27.md](TASK27.md) resolves every producer,
+helper, factory, stored/public type, theory and dependency row below against
+[TASK25's isolated patch and executed closure](TASK25.md). Ordinary variants
+and independent ordinary observations are retained. Historical requirements
+and coordinates below are not a claim of still-pending TASK25 migration;
+the original caller-owned checkout was never patched. Limits are in TASK27.
+
 Continuation of [EXTERNAL.md](EXTERNAL.md), same pinned external revision.
 **TASK_25 owns every external caller/migration below**, including compilation,
 assertion-preserving tests, signatures, inferred helper types, docs and build

@@ -1,0 +1,97 @@
+>>__ load "boolSimpsExt";
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `mk_simpset`
+
+``` hol4
+simpExtLib.mk_simpset : simpExtLib.ssfrag list -> simpExtLib.simpset
+```
+
+------------------------------------------------------------------------
+
+Constructs a tracked extension simpset by adding fragments, in order, to
+`simpExtLib.empty_ss`. Fragment installation compiles native rewrites with
+source identities and paired runners sharing their actual bounded controls.
+Merge order matters for rewrite makers and congruences.
+
+### Typed construction
+
+Ordinary `simpLib.ssfrag`, `simpLib.simpset` and `Traverse.reducer` retain
+their ordinary APIs; develop clients need no migration or extension load.
+Branch-only configured, source-sensitive and child-first clients must choose
+extension construction **before** installing the rules they need to track:
+
+- Use `simpExtLib.empty_ss`, `pureSimpsExt.pure_ss` or
+  `boolSimpsExt.bool_ss` as the base, and `simpExtLib` fragment constructors
+  and update operations thereafter. `pureSimpsExt.PURE_ss`, the
+  `boolSimpsExt` fragment catalog and `combinSimpsExt.COMBIN_ss` are typed
+  extension recipes, not imports of already compiled ordinary sets.
+- `simpExtLib.dproc_ss` and the `dprocs` field of `simpExtLib.SSFRAG` take
+  `TraverseExt.reducer` values. Use `TraverseExt.lift ordinary_reducer`
+  explicitly for an opaque ordinary reducer. Lifting preserves its callback
+  interface but discovers no internal sources or rewrite quotas; there is
+  no reverse adapter into ordinary `Traverse`.
+- `simpExtLib.SSFRAG.rewrs`, like the ordinary field, takes
+  `(KernelSig.kernelname option * thm) list`; use `rewrites` for plain
+  theorem lists. Native rewrites, not arbitrary conversions or lifted
+  reducer internals, populate source inventories.
+- Named fragment registries are separate. Register extension fragments with
+  `simpExtLib.register_frag` and use `simpExtLib.SF`/extension tactics to
+  resolve them. Ordinary registration does not register an extension copy.
+- Configured congruence clients use `congExtLib` with an extension simpset
+  and a newly built extension congset. `congExtLib.lift_fragment` adapts
+  public ordinary `congLib.CSFRAG` data, explicitly lifting its reducers;
+  it does not promote an opaque compiled `congLib.congset`.
+
+### Rebuilding is not promotion
+
+There is no import/promotion of an arbitrary ordinary simpset. Rebuilding
+from known theorem/fragment recipes creates new compiled objects: makers,
+collectors and compilation traces may run again, source identities are new,
+and declared bounded allowances start anew. It cannot preserve an ordinary
+set's partially consumed or exhausted counters.
+
+In particular, `ssfrags_of` is inspection, not a complete reconstruction
+recipe: fragments alone lose deletions, excluded-fragment state, limits,
+rewrite-maker changes and other history. Do not hide rebuilding in source
+getters or projection accessors. Typed extension default providers and update
+functions must start from extension recipes, not mirror opaque ordinary
+updates after they have happened.
+
+For an already tracked set, both traversal projections share installed
+controls without recompilation or quota refresh. History operations are a
+different contract: `remove_ssfrags` and `filter_rewrites` reset declared
+allowances when they replay; their `_preserving_controls` variants retain
+compatible surviving sources' actual counters, including exhaustion and
+sharing with existing views. Local extension tactic directive replay also
+preserves installed controls.
+
+Branch clients must rebuild ML dependencies and saved heaps after the type
+split; old mixed `simpLib` values are not binary-compatible extension sets.
+Rebuild theories/heaps containing old `marker$Split`/`marker$ExcludeX` terms
+or the old persistent split format as described under
+`splitLib.enable_split_attribute`. Ordinary develop marker constants and
+theory-data formats are unchanged.
+
+### Failure
+
+Fragment compilation and user callbacks can fail or raise exceptions.
+
+### Example
+
+``` hol4
+>>_ val fragment : simpExtLib.ssfrag =
+     simpExtLib.rewrites [boolTheory.AND_CLAUSES];
+>>_ val ss : simpExtLib.simpset =
+     simpExtLib.mk_simpset [pureSimpsExt.PURE_ss, fragment];
+>>_ val data : TraverseExt.xtraverse_data =
+     simpExtLib.xtraversedata_for_ss ss;
+>> TraverseExt.XTRAVERSE data [] “T ∧ p”;
+```
+
+### See also
+
+[`simpExtLib.xtraversedata_for_ss`](#simpExtLib.xtraversedata_for_ss),
+[`simpExtLib.rewrite_source_handles`](#simpExtLib.rewrite_source_handles),
+[`simpExtLib.prepare_rewrite_bundle`](#simpExtLib.prepare_rewrite_bundle),
+[`simpExtLib.filter_rewrites`](#simpExtLib.filter_rewrites),
+[`splitLib.enable_split_attribute`](#splitLib.enable_split_attribute).

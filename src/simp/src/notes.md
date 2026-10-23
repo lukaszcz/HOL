@@ -1,326 +1,237 @@
-# Note on the Simplifier Code
+# Simplifier engines, construction and migration
 
-## API migration: branch extensions only
+## Ordinary develop clients: no migration
 
-Legacy clients require no migration: keep `traversedata_for_ss`, literal
-`Excl`/`-*`, and ordinary simplifier imports. In particular, do not replace
-literal names merely because they contain `rule:`, `solver:`, `looper:`,
-`split:` or `case:`. Those strings acquire no namespace meaning in `Excl`.
+Keep `simpLib`, `congLib`, `Traverse`, `Cond_rewr`, `Opening`, `Travrules`,
+`pureSimps`, `boolSimps` and `combinSimps`. Their ordinary types, callbacks,
+construction stages and literal exclusions remain the develop interfaces.
+In particular, `Traverse.reducer` has exactly the original `REDUCER`
+constructor. `simpLib.traversedata_for_ss` always returns ordinary traversal
+data; there is no eligibility scan or extension dispatch.
 
-Clients of the branch's earlier extension contracts must opt in explicitly:
+Ordinary fragments hold rewrite/AC theorems, conversions, congruences,
+reducers and a rewrite-maker filter. Ordinary simpsets compile these into
+rewrite nets and traversal rules, retaining history, limits and exclusions.
+They contain **no** strategy records, source handles, paired runners,
+tracking inventories or extension companions. Importing ordinary `simpLib`
+or `congLib` does not import the extension engines, markers, splitter,
+private split registrations or tracked default provider.
 
-- Conditional rewrite extensions: move branch-only `COND_REWR_CONVS`,
-  `COND_REWR_CONV_WITH_CONFIG` and `COND_REWR_CONV_WITH_CONTEXT` calls from
-  `Cond_rewr` to `Cond_rewrExt`. Ordinary `Cond_rewr.COND_REWR_CONV`,
-  `Cond_rewr.stack_limit` and `Cond_rewr.ac_term_ord` stay unchanged.
-- Configured native extraction: replace the earlier branch use of
-  `traversedata_for_ss` with `xtraversedata_for_ss ss`, normally the complete
-  pair for `Traverse.XTRAVERSE`. Use `#1` only for reducer data alone.
-- Namespace/fallback exclusions: replace the earlier branch use of `Excl`
-  with `ExclX`, preferably with an explicit `rule:`, `looper:`, `solver:`,
-  `split:` or `case:` namespace.
-- Persistent `[split]`: replace the earlier implicit load-time registration
-  assumption with an explicit `splitPersistLib` dependency on the earliest
-  split-bearing theory, as below.
+Do not change literal `Excl`/`-*` names because they contain `rule:`,
+`solver:`, `looper:`, `split:` or `case:`. These prefixes acquire no namespace
+meaning in ordinary exclusions. Strict dotted-name parsing, ancestry checks,
+unmatched deletion history and current-theory reparsing on replay remain.
 
-These opt-ins are not interchangeable compatibility wrappers. For example,
-`XTRAVERSE` refreshes contexts per application, while `TRAVERSE` initializes
-at construction; `ExclX` rejects missing targets, while literal `Excl` is
-silent. Both traversal projections share installed bounded controls.
-Finite regression results do not establish universal callback equivalence.
+## Branch-only migration: choose types before installing rules
 
-## Persistent split rules (explicit opt-in)
+The earlier mixed branch APIs are not develop APIs. Their final owners are:
 
-Ordinary `simpLib` and `splitLib` loading and split-rule queries claim no
-`split` attribute or theorem-set namespace. Local `Split`/`add_split` and
-TypeBase-driven `split_ss` work without opt-in; persistent queries return
-`[]` until library-owned registration is enabled.
+| Earlier branch use | Final module/type/construction |
+| --- | --- |
+| `Traverse.CONTEXT_REDUCER`, `CONFIG_REDUCER`, configuration/solver/policy types, `XTRAVERSE`, root/observed/child-first traversal | `TraverseExt`; use `TraverseExt.reducer` at the reducer factory. |
+| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. Pure `is_var_perm` remains available in both modules. |
+| `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `OpeningExt`, `TravrulesExt`, `simpExtLib.threaded_cong_ss`. Ordinary congruence factories are unchanged. |
+| Extended `dproc_ss`, `SSFRAG`, fragments/sets/weakener data | `simpExtLib.ssfrag/simpset`, with `TraverseExt.reducer`, from the first relevant construction. |
+| Configured `congLib` calls | `congExtLib`; construct its distinct congset before installation and pass an extension simpset. |
+| Strategy fragments/setters, loopers, safe/unsafe solvers, subgoaler/depth/order | `simpExtLib`, with `TraverseExt.ssolver/subgoaler` types. |
+| `Split`, `ExclX` | `simpExtLib`; marker inspection/recursive processing is `simpMarkerLib`, not generic `markerLib`. |
+| Source handles/views/bundles, filtering/preserving replay, child-first preparation | `simpExtLib`; start with tracked ingredients before source-sensitive rules, makers or reducers are installed. |
+| Configured `GEN_*`, global/child-first/BOUND tactics | `simpExtLib`, taking its simpset and `TraverseExt` policy. BOUND requires the bundle already installed. |
+| Configured extraction from an earlier mixed set | `simpExtLib.xtraversedata_for_ss` returns the full pair for `TraverseExt.XTRAVERSE`. |
+| Optional `legacy_traversedata_for_ss` | Removed, not a conversion API. Use total `simpLib.traversedata_for_ss` for an ordinary set, or `simpExtLib.traversedata_for_ss` for a tracked set. |
+| PURE/BOOL/COMBIN for extension consumers | `pureSimpsExt`, `boolSimpsExt`, `combinSimpsExt`, before installation; do not pass ordinary fragments to an extension set. |
+| Source-sensitive use of BasicProvers defaults/updates | Explicit `trackedSimpDefaults` recipes and extension-typed updates/windows; ordinary BasicProvers remains ordinary. |
 
-A split-bearing script explicitly includes `splitPersistLib` in `Libs`
-before its `[split]` declarations and calls
-`Theory.add_ML_dependency "splitPersistLib"`. The former enables the script;
-the latter initializes fresh imports before decoding and ancestry replay.
-Record this dependency on the earliest split-bearing theory: a child's
-ML dependencies cannot initialize its already-loading parents.
-An explicit loader prelude calling `splitLib.enable_split_attribute ()`
-before loading the whole graph is also supported.
+These replacements are not transparent compatibility wrappers. No operation
+promotes an arbitrary ordinary simpset/congset, recovers an opaque reducer's
+source inventory, or translates an already-applied ordinary update closure.
+`ssfrags_of` is inspection, **not** reconstruction: it omits exclusions,
+limits, maker changes and history. Rebuilding a fresh recipe creates fresh
+identities and allowances and may run makers/collectors again. It cannot
+preserve previously consumed controls. Bind sources before consumption.
 
-`splitLib.exclude_split "Thy.Name"` persistently retracts an ancestor's named
-rule; an unqualified name resolves in the writing theory. Exported REMOVE
-keys are already resolved and cannot delete a descendant's same-named rule.
-This differs from local `del_split` or `ExclX` exclusions. The theorem stays
-in DB. The attribute must remain library-owned; explicit
-initialization/removal rejects foreign ownership instead of replacing it.
+Only two one-way public adapters exist: `TraverseExt.lift` wraps an ordinary
+reducer while retaining its context/callbacks; `congExtLib.lift_fragment`
+lifts public ordinary fragment data. Neither imports an opaque compiled set.
+There is no reverse adapter into ordinary traversal.
 
-Ownership/data follow `Context.restore`, but the ML loader is process-global.
-After rewind to before opt-in, explicitly call the initialization API again;
-merely loading an already-loaded module may not execute its body. Arrange
-registration as serialized theory initialization, not during concurrent
-proofs. Arbitrary late/current-segment replay is not the supported contract.
-The fresh-process fixtures live in `../tests/split-persistence`; run them
-from the repository root with:
+The complete per-family, consumer, identity and temporary-cutover closure is
+[the TASK27 ledger](../tests/compatibility/migration/TASK27.md). Historical
+TASK07/08 inventories retain their original coordinates; final compiled
+signatures, not prototype spelling, are authoritative.
+
+## Executable tracked construction and projections
+
+Load extension modules explicitly (or list them in a Script's `Libs`).
+For example, after loading `boolSimpsExt`:
+
+```sml
+val tracked : simpExtLib.simpset =
+  simpExtLib.++ (pureSimpsExt.pure_ss, boolSimpsExt.BOOL_ss);
+val default_data : TraverseExt.traverse_data =
+  simpExtLib.traversedata_for_ss tracked;
+val configured_data : TraverseExt.xtraverse_data =
+  simpExtLib.xtraversedata_for_ss tracked;
+```
+
+Both projections belong to `TraverseExt`, **not** ordinary `Traverse`.
+The default projection omits simpset strategy settings and uses
+construction-once private contexts with `TraverseExt.TRAVERSE`; configured
+`TraverseExt.XTRAVERSE` refreshes contexts per application. Extracting either
+projection does not recompile, invoke collectors or reset actual counters.
+Both retain the tracked object's installed bounded controls, including zero.
+
+`boolSimpsExt.bool_ss` is the parallel tracked BOOL recipe; threaded CONG and
+ETA remain explicit choices. Further typed catalogs are `numSimpsExt`,
+`pred_setSimpsExt`, `listSimpsExt`, `intReduceExt`, `integer_wordLibExt` and
+`realSimpsExt`. `trackedSimpDefaults` (in `src/boss`) installs an ordered
+recipe/provider explicitly. Its getters only retrieve prepared state;
+missing-provider updates fail instead of falling back to `srw_ss()`.
+Ordinary local/logged/window updates are not automatically mirrored.
+
+Typed construction, reducer/public-fragment lifts, paired projections and
+actual bundle/view sharing are executable in
+[`Documentation.sml`](../tests/api-audit/Documentation.sml).
+Configured/global/child-first tactic witnesses are in
+[`APIExamples.sml`](../tests/simp-ext/APIExamples.sml). Run them through:
 
 ```sh
 bin/Holmake --holstate="$PWD/bin/hol.state0" \
-  -C src/simp/src split-persistence
+  -C src/simp/tests/api-audit check
+bin/Holmake --holstate="$PWD/bin/hol.state0" \
+  -C src/simp/tests/simp-ext check
 ```
 
-Persistent splits use a private ordered event stream
-`splitLib.persistent.rules.v1`, a direct `[split]` attribute, and one private
-listener. There is no library-owned generic `ThmSetData` split set or
-exporter. Query with `splitLib.split_thms`/`named_split_thms`, and retract
-with `exclude_split`. Local attributes update only live rules. The dispatcher
-selects the active context's registration on every event; ordinary loading
-installs neither persistence operations nor a listener.
+### Sources, views, replay and private derivation
 
-Rebuild pre-cleanup branch split theories and saved heaps from scripts.
-The branch's internal persistent format changed, and the extension constants
-moved from `marker$Split`/`marker$ExcludeX` to `simpMarker$Split`/
-`simpMarker$ExcludeX`. Rebuild extension theorem consumers as well. These
-branch artifacts have no binary compatibility guarantee; legacy develop
-formats and generic marker APIs remain unchanged. Marker extensions and
-recursive argument handling belong to the simplifier, and only simplifier
-theorem-list consumers interpret them.
+- `rewrite_sources`/`rewrite_source_handles` inspect installed native rules;
+  they neither compile supplied rules nor discover inside opaque reducers.
+  Directives must first pass through `prepare_rewrite_arguments`.
+- `prepare_rewrite_bundle` compiles supplied originals once, before binding
+  views. `install_rewrite_bundle` and attached `rewrite_views` reuse their
+  actual controls/matchers. `combine_rewrite_bundles` retains existing events
+  and rejects duplicate bindings; it does not refresh quotas.
+- Origin order (`rewrite_source_compare`) alone is not compatibility;
+  `same_rewrite_source` also checks compiled statement compatibility. Removal,
+  suspension or changed source statements invalidate dependent views while
+  surviving conjuncts retain their own identities/sharing.
+- Ordinary extension history removal/filtering resets declared allowances;
+  `remove_ssfrags_preserving_controls` and
+  `filter_rewrites_preserving_controls` explicitly keep surviving live refs,
+  including exhaustion. Neither accepts an ordinary simpset.
+- `prepare_child_first`/`prepare_child_first_observed` create reusable private
+  derivations. Every application uses declared private allowances and restores
+  the caller's exact prior counters on success, HOL errors, arbitrary
+  exceptions and interrupts. This includes native bounded entries without
+  handles, but cannot inspect/reset a lifted opaque reducer's internals.
 
-## Important Types
+## Context, solving, congruences and controls
 
-**simpset**
+Reducers carry exception-valued private contexts. Ordinary `Traverse.TRAVERSE`
+initializes contexts at conversion construction and eagerly constructs its
+congruence/weakener factories at the original stage. There is no mixed-state
+or all-REDUCER eligibility branch. Extended `TRAVERSE` retains the default
+schedule; configured/context/observed entry points explicitly refresh.
+`TRAVERSE_WITH_CONTEXT` separates reducer facts from solver-only facts;
+solver facts also protect binders but do not install rewrites a second time.
 
-:   (From `simpLib`.)
-    Typically built by bundling *fragments* together, but is actually a collection of four important components:
+`TraverseExt.simp_prover_ctxt` contains `{stack, context_thms, recurse}`.
+Unsafe solvers handle conditions; safe solvers are final solvers selected by
+safe tactics, not replacements for the unsafe condition list. Root rewriting
+omits descent only at entry; its side conditions still use full traversal.
+Child-first policies charge before work and can preserve abstractions.
+Observer/policy callback aborts retain original exception identity, including
+through nested solver/congruence continuations.
 
-    -   `mk_rewrs` function.
-        This processes “arbitrary” user-provided theorems to turn them into proper rewrites.
+There is one `Cond_rewr.stack_limit` ref. `NONE` in configured native depth
+reads it at each candidate check; `SOME n` is local and never changes it.
+A `CONTEXT_REDUCER` samples an integer immediately before its callback;
+`CONFIG_REDUCER` retains the option. Term order is passed explicitly and
+otherwise defaults to `Cond_rewr.ac_term_ord`. No temporary global setting
+implements configured invocation.
 
-    -   `net` a higher-order term-net containing simplifier-conversions
+`OpeningExt`/`TravrulesExt` share the original structural congruence/preorder
+identities while threading earlier results into later premises and
+beta-reducing rebuilt RHS terms. Ordinary factories do no such extra work.
+Both engines use the same original `Trace` action/hook/ref and registered
+`simplifier` knob; rewrite tracking has one internal `SimpTracking` thread-local
+slot. Nested tracking reports only its inner extent and restores on exceptions.
+Existing `BoundedRewrites.control`, `Conv.UNCHANGED`, `Feedback.HOL_ERR` and
+`Portable.Interrupt` identities are not copied. Named-fragment registries are
+intentionally **different typed Context slots**, `simpLib.ssfragDB` and
+`simpExtLib.ssfragDB`: SF syntax is shared, but lookup is late and solely in
+the consuming engine's registry, with no fallback to the other.
 
-    -   `dprocs` a list of “decision procedures” (lower priority routines), which are *reducer*s.
+## Extended arguments and exclusions
 
-    -   `travrules`, a *travrules* value
+Only explicit extension entry points interpret strategies, Split and ExclX.
+There is no goal-time promotion/strategy dispatch in ordinary tactics.
+Supplied extension rules bind once per invocation after abbreviation
+pretactics succeed; label/FRAG lookup keeps its documented late stage.
+GEN global passes share one invocation's rules and looper budget across
+fixpoint reentry/siblings; saved tactic reuse starts a new invocation.
+BOUND consumes its already-installed bundle without reinstalling/recompiling.
+NoAsms/IgnAsm apply to both bound and unbound paths.
 
-    It also holds strategy data: named loopers, named safe and unsafe solver lists, and an optional subgoaler, side-condition depth and term order.
-    Every strategy change goes through `apply_strategy_event` and is recorded in the simpset history, so simpsets rebuilt from history keep it.
+`ExclX` supports `rule:`, `looper:`, `solver:`, `split:` and `case:`.
+`rule:` accepts relaxed dotted/kernel `$` names. Bare names use the strict
+parser, preferring rules/dprocs before strategy fallback. Missing/ambiguous
+targets fail at processing, not construction. Resolved history retains keys
+rather than resolving again. Split/case suppression blocks later split
+additions and ambient persistent/TypeBase split rules, not user loopers with
+colliding display names. Other deletions are point-in-history operations:
+later additions can reinstall a target. Bounds on directives qualify their
+payload, not a bounded deletion; genuine bounded rewrite controls remain.
 
-**ssfrag** (a ‘simpset fragment’)
+## Persistent split rules: separate explicit opt-in
 
-:   (From `simpLib`.)
-    A collection of user-provided data that gets pushed into *simpset*s.
-    Includes rewrites, conversions, congruences, AC rewrites, decision procedures, relation-simplification data, loopers, safe and unsafe solvers and an optional `filter`, which is used to adjust the simpset `mk_rewrs` function.
-    The subgoaler, side-condition depth and term order are whole-simpset settings, not fragment data.
+Loading ordinary libraries, `splitLib`, or extension libraries and querying
+split rules claims no `split` namespace. Local `Split`/`add_split` and
+TypeBase `split_ss` work without persistent registration. A split-bearing
+Script includes `splitPersistLib` in `Libs` **before** declarations and calls
+`Theory.add_ML_dependency "splitPersistLib"` for fresh exported imports.
+Put this dependency on the earliest split-bearing parent; a child's ML
+initialization cannot repair an already-loading parent. An explicit prelude
+calling `splitLib.enable_split_attribute ()` before loading the entire graph
+is also supported.
 
-**reducer**
+`splitLib.exclude_split "Thy.Name"` persistently retracts a named ancestor
+rule (not its DB theorem). Unqualified names resolve in the writing theory;
+exported REMOVE keys cannot remove a descendant's same-named rule. This is
+not local `del_split`/`ExclX`. Foreign ownership causes initialization/removal
+to fail, never replacement. Registration follows `Context.restore`, but the
+ML loader is global: after rewind before opt-in, explicitly initialize again;
+loading an already-loaded module need not rerun it. Initialization is serial,
+not an operation during concurrent proofs or arbitrary late-segment replay.
 
-:   (From `Traverse`.)
-    A bundled piece of code/data that is capable of producing theorems relating input terms to fresh “outputs”.
-    Each reducer has its own notion of “context”, values to which clients can add theorems.
-    (These contexts are implemented with exceptions to give existential types.)
-    Such added theorems may be goal assumptions, or provided by congruence rules.
+Persistence uses one private ordered event stream,
+`splitLib.persistent.rules.v1`, one direct attribute and one private listener;
+there is no generic ThmSetData split set/exporter. Generic markerLib,
+ThmSetData and postkernel ownership remain unchanged. Query
+`splitLib.split_thms`/`named_split_thms`. Fresh-process export, rewind,
+ownership repair and heap-reload fixtures are normal selftests:
 
-    Each reducer has an `apply` function, which is passed a context, a `solver` for handling side conditions, a `stack` of already attempted side conditions, a continuation `conv`, a `relation` field and an input term.
-    The `apply` function is expected to return a theorem of the form
+```sh
+bin/Holmake --holstate="$PWD/bin/hol.state0" \
+  -C src/simp/src split-persistence split-lifecycle
+```
 
-        |- input  R   output
+Rebuild **branch-extension** theories/heaps from their scripts: private
+persistence format changed and `marker$Split`/`marker$ExcludeX` moved to
+`simpMarker$Split`/`simpMarker$ExcludeX`. Rebuild extension theorem consumers
+and compiled ML clients against the distinct new types. No old mixed-branch
+binary/heap compatibility is promised. Ordinary develop source clients and
+generic marker formats need no migration.
 
-    where `R` might be as given in the `relation` field.
-    A `CONTEXT_REDUCER`'s `apply` is additionally passed the traversal's
-    side-condition depth and term order.
-    A `CONFIG_REDUCER` receives an optional depth instead: `SOME n` is an
-    explicit depth, while `NONE` leaves the default live for each native
-    conditional rewrite candidate to read `Cond_rewr.stack_limit`.
-    Both older constructor record shapes and the `dest_reducer` and
-    `reducer_data` signatures are unchanged; `reducer_config_data` retains
-    the option when adapting reducers (including `congLib` wrappers).
+## Audit and acceptance boundary
 
-    Arithmetic decision procedures are `reducer`s.
-    Their context is the list of theorems that they believe to be relevant (*i.e.*, Presburger terms), and they ignore all of the information provided by `apply` except the context.
+`MANIFEST` gives module ownership. The final source gate is
+`../tests/compatibility/audit_task27.py`; fresh ordinary load paths,
+initialization callbacks, shared controls and executable examples are checked
+in `../tests/api-audit`. Physical coverage ownership is in
+`../tests/compatibility/migration/TASK26.md` (the unchanged develop selftest
+is separate from the complete native-extension suite).
 
-    Reducers don’t depend on anything else in the simplification code base (though their `conv` and `solver`  continuations will call back into simplifier code).
-
-**preorder**
-
-:   (From `Travrules`.)
-    A preorder encodes information enough to identify a relation (type `'a -> 'a -> bool`) as something that is reflexive and transitive.
-    The preorder stores the constant of the particular relation, and two functions to implement transitivity and reflexivity.
-    The former takes two theorems as input, while the latter takes both the argument to the relation and a relation term itself, which, if polymorphic, must have been instantiated so that it can be applied to the argument.
-    For the equality case, this data is thus (`min$=`, `TRANS` and (essentially) `REFL`).
-
-**travrules**
-
-:   (From `Travrules`.)
-    Embodies a list of *preorders* and two lists of *congprocs*: the “standard congprocs” (`congprocs`), and the “weakening congprocs” (`weakenprocs`).
-    The “default” travrules value is `EQ_tr`, and contains the equality preorder, and the equality congproc as a standard congproc.
-    (I.e., it has no weakening congprocs.)
-
-    The travrules is a static piece of information for guiding simplification.
-    The dynamic data that is maintained during simplification (containing context values, the relation currently being used and the context’s free variables) is a `trav_state`, which is private to module `Traverse`.
-
-    Each simpset contains a list of `travrules` values.
-
-**congproc**
-
-:   (From `Opening`.)
-    A congproc is a function that will set up recursive simplification of an input term.
-    With the exception of the core equality congruences (`MK_COMB` and `ABS`) these are built with `CONGPROC` or `THREADED_CONGPROC`.
-    In addition to the term, the congproc is passed a record of important data containing
-
-    -   `depther`: a function which will be applied to subterms to produce simplified sub-terms
-    -   `solver`: used to handle side-conditions in congruence rules
-    -   `relation`: identifies the relation we’re using
-    -   `freevars`: the free variables of the context, which may be relevant if descending under a binder
-
-    `congproc` values are stored in `travrules`.
-
-**simp_prover_ctxt**, **ssolver** and **subgoaler**
-
-:   (From `Traverse`.)
-    A `simp_prover_ctxt` is the record `{stack, context_thms, recurse}` passed to solvers and subgoalers: the side-condition stack, the theorems in scope, and recursive simplification of a term (returning `|- c = c'`).
-    An `ssolver` is a named function proving its input term; a `subgoaler` returns `|- c = c'` for its input `c`.
-
-## Context
-
-For all-`REDUCER` inputs, `TRAVERSE` uses a private original five-field
-state: reducer contexts, relation information and hypothesis free variables.
-Mixed contextual/configured reducers retain the generalized legacy schedule.
-The generalized state stores generic `context_thms` only when a configured
-subgoaler or unsafe solver can read them; otherwise that list stays empty.
-`add_context` still delivers every batch to the reducers and preserves its
-hypotheses' free variables, regardless of generic fact storage.
-`TRAVERSE_WITH_CONTEXT` splits its initial theorems: `reducer_context` goes
-through reducer collectors, while `solver_context` only contributes generic
-facts (when readable) and hypothesis free variables for binder capture.
-Reducer batches prepend generic facts; separated solver batches append them.
-This lets a caller show solvers the source of an already-installed rule
-without installing it twice or refreshing a bounded rewrite.
-
-## Side conditions
-
-The engine solver (`ctxt_solver` in `Traverse`) proves a condition `c` by running the subgoaler (or recursive traversal, if none is set) to get `|- c = c'`, then proving `c` from `c' = T` or from the first unsafe solver that proves `c'`.
-Only `HOL_ERR` means a solver is inapplicable; on failure the traversal limit is restored.
-With neither subgoaler nor solvers, the original `EQT_ELIM` path is taken.
-`traverseconfig_for_ss` always supplies the unsafe list, even under a safe tactic; safe solvers are only ever final solvers in `GEN_SIMP_TAC`.
-
-Native rule preparation produces direct legacy and configured runners
-sharing one matcher and the actual bound reference. Each net entry holds
-an original curried conversion and one cold companion containing the
-configured runner and quota metadata. Collector-created rules use this same
-insertion path; source handles alone do not inventory all bounded rules.
-Legacy candidate application selects only the original conversion.
-
-Depth and term order are options in `traverse_config`. On configured paths,
-native rewrites receive the depth option unchanged through `CONFIG_REDUCER`
-and `Cond_rewrExt.COND_REWR_CONV_WITH_CONFIG`. With `NONE`, each
-candidate-depth check reads the current `Cond_rewr.stack_limit`; a failing
-user conversion can
-change that default before the next candidate in the same net lookup.
-An explicit `SOME n` uses `n` without reading or updating that global.
-
-Older `CONTEXT_REDUCER` clients still receive an integer: an unset depth is
-resolved when their reducer is applied.
-`Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT` adapts an explicit integer to
-`SOME n`; it is not the live-default native path.
-The direct legacy runner reads the live stack limit at its candidate check
-and uses `Cond_rewr.ac_term_ord`. Configured term order defaults to that same
-function at traversal entry.
-Settings are passed explicitly, not installed by temporarily changing globals.
-A separate nested invocation uses its own configuration.
-
-## Exclusion names
-
-Every `Excl` name and `-*` retain develop's dots-only parser and ancestry
-check, with no namespace interpretation or strategy fallback. Unmatched
-names silently record develop's rule deletion, including history entries
-that are reparsed on replay.
-
-Extended exclusions use the distinct `ExclX` marker. Its `rule:` namespace
-accepts kernel `Thy$Name` spellings and non-ancestor theory names, keeping
-its resolved pattern on replay. Bare `ExclX` names still use the strict
-parser and prefer rewrites/decision procedures, falling back to strategy
-targets only when neither matches. Multiple strategy kinds are ambiguous;
-`looper:`, `solver:`, `split:` and `case:` select them explicitly. Every
-unmatched `ExclX` name, including a bare name, is an error at processing,
-not construction. Bounded `ExclX` remains an invocation control rather
-than bounded deletion; requirement-wrapper precedence is unchanged.
-
-Split/case ExclX targets record an incremental `EXCLUDE_LOOPER_EVENT` with
-one resolved display name. It suppresses later local additions and ambient
-split/TypeBase rules, including after fragment removal or Context.restore;
-replay does not resolve the target again. Local split deletion events
-precede this suppression event. Replaying suppression is idempotent, but
-processing a new `ExclX` still requires a matching target: a second exclusion
-of a removed local-only split fails, while an ambient persistent or TypeBase
-target remains resolvable. Ordinary looper and solver deletions remain
-point-in-history removals, as do strict and resolved rule deletions: a later
-addition can reinstall those targets.
-
-## Prepared global rewrites
-
-The old simplification tactics retain develop's marker processing and pass
-schedule for strategy-free invocations; strategy-bearing calls use the
-extended engines. This choice is made on the goal, not when a reusable
-tactic is constructed. Schedule compatibility does not imply a baseline-sized
-state, absence of extension bookkeeping or a measured speedup. Explicit
-`GEN_GLOBAL_SIMP_TAC` calls always select counted prepared passes.
-
-`GEN_GLOBAL_SIMP_TAC` decodes its ordinary theorem arguments once, without adding them to the simpset history.
-Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded rewrites share one invocation-wide control; their source theorems go to the solver context.
-`SIMP_CONV`, `GEN_SIMP_TAC`, `TRAVERSE` and `ROOT_REWRITE` do not use this path.
-
-## Important Functions
-
-`SIMP_QCONV`
-
-:   (From `simpLib`.)
-    Selects the trusted original-ABI projection when conversion settings
-    are absent and every decision procedure is an ordinary `REDUCER`.
-    Otherwise it retains the configured projection and appropriate engine.
-    Public `traversedata_for_ss` unconditionally returns the legacy
-    projection, with a native `REDUCER` and unchanged supplied decision
-    procedures. It carries the relation, traversal rules and limit, but
-    omits simpset-specific traversal configuration, even for configured
-    inputs. `legacy_traversedata_for_ss` is the optional dispatch API:
-    after pure eligibility inspection it shares that same default builder.
-    Neither extraction invokes collectors or recompiles installed rules.
-
-    `xtraversedata_for_ss` instead uses the configured builder, returning
-    a native `CONFIG_REDUCER` paired with the simpset's configuration.
-    Branch-only consumers needing configured reducer data alone must use
-    `#1 (xtraversedata_for_ss ss)`. Both projections share the actual
-    installed bounded controls; extraction does not reset remaining uses.
-
-`TRAVERSE`
-
-:   (From `Traverse`.)
-    Implements the logic of the simplifier’s traversal of terms.
-    In particular, this is where the preorder/top-down nature of the simplifier wrt its equality rewrites is decided, because of the way it begins with
-
-        repeat high_priority then descend ...
-
-    The `high_priority` stuff here is to do fire the equality reducer.
-    Descent is then the recursive simplification of sub-terms.
-    The `...` portion is where decision procedures get to fire, and where weakenprocs get a chance to fire.
-    These effectively see the term in bottom-up fashion as a result.
-
-    `TRAVERSE` initializes supplied contexts at conversion construction.
-    On each application, it constructs congruence and weakener conversions
-    once per traversal context, before any root reduction, as on develop.
-    Explicit `XTRAVERSE` refreshes contexts per application and accepts a
-    `traverse_config` (subgoaler, solvers, depth, term order).
-    `ROOT_REWRITE` applies the reducers at the root only. Entry selection
-    does not propagate to recursive conversions or side-condition proving:
-    these still use full traversal, including relation-changing recursion.
-
-`CONGPROC`
-
-:   (From `Opening`.)
-    This builds a *congproc* given a `congrule` theorem and a general notion of reflexivity in the function `refl`.
-    Only `simpLib.threaded_cong_ss` selects `THREADED_CONGPROC`, which reads intermediate results from later antecedents and beta-reduces applied result variables; ordinary congruences keep `CONGPROC`.
-    It’s important that `refl` be able to generate reflexivity theorems for multiple relations at once: this allows different relations to appear in the assumptions of `congrule`; the conclusion might want to draw conclusions about equality even as one of the assumptions is about another relation again (as happens in weakening congruences).
-
-    One problem here is that reprocessing of assumptions can unnecessarily descend into terms that have already been processed once.
-    For example, in the rule for conditional expressions, we have
-
-        p = p’ ==> (p’ ==> t = t’) ==> (~p’ ==> e = e’) ==>
-        (COND p t e = COND p’ t’ e’)
-
-    and the reprocess flag will be set to true for the `~p’` assumption (it’s not just a variable).
-    Sure, if negation descends over a disjunction or similar, this is an important thing to do (though the `mk_cond_rewr` could presumably do it too), but if nothing simplifies at the top level, it’s painful to have to descend into `p’` again.
+These are documentation/dependency/identity gates. They establish readiness
+for expanded acceptance measurements, **not** final runtime/allocation,
+independent clean-build, full regression or release approval (TASK28 onward).

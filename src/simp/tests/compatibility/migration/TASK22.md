@@ -1,5 +1,10 @@
 # TASK22 — traversal / derivation caller closure
 
+**Final ownership overlay:** [TASK27.md](TASK27.md). Historical native
+paths below now map byte-for-byte to `tests/native-extension/selftest.sml`;
+TASK26 restores the complete ordinary selftest and closes M6. TASK25's isolated
+consumer migration is complete within its sealed normal-level scope.
+
 All bounded clients use the existing explicit extension types. No ordinary
 client migration, rebuilding import, reverse reducer adapter, retrospective
 source discovery or new public entry point is needed.

@@ -1,3 +1,4 @@
+>>__ load "boolSimpsExt";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `GEN_SIMP_TAC`
 
@@ -57,4 +58,5 @@ Invalid directives or failed requirement checks can raise `HOL_ERR`.
 [`simpExtLib.add_looper`](#simpExtLib.add_looper),
 [`simpExtLib.add_unsafe_solver`](#simpExtLib.add_unsafe_solver),
 [`simpExtLib.add_safe_solver`](#simpExtLib.add_safe_solver),
-[`simpExtLib.GEN_GLOBAL_SIMP_TAC`](#simpExtLib.GEN_GLOBAL_SIMP_TAC).
+[`simpExtLib.GEN_GLOBAL_SIMP_TAC`](#simpExtLib.GEN_GLOBAL_SIMP_TAC),
+[`simpExtLib.mk_simpset`](#simpExtLib.mk_simpset).

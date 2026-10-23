@@ -1,5 +1,10 @@
 # TASK_15: ordinary fragment cutover
 
+**Final status:** [TASK27.md](TASK27.md) closes all temporary compiler rows
+below; TASK16 removed the installation adapter and mixed compiled state, and
+TASK26 closed M6. This supplement retains its historical fragment-only scope,
+source seals and explicitly limited cost evidence.
+
 Ordinary clients need no migration. `simpLib.ssfrag` is again a standalone
 single-constructor datatype with exactly develop's eight record fields:
 `name`, `convs`, `rewrs`, `ac`, `filter`, `dprocs`, `congs`, `relsimps`.

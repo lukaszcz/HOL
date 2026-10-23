@@ -1,5 +1,14 @@
 # Read-only external consumer provenance and migration ledger
 
+**Final closure overlay:** [TASK27.md](TASK27.md) resolves every API,
+construction, transitive-consumer and semantic-range row below using
+[TASK25's isolated migration](TASK25.md) and sealed patch/execution receipts.
+The caller-owned checkout remains unmodified. The old inspected path moved
+from `/home/lukasz/dev/HOL/worktrees/isabelle-tactics` to
+`/home/lukasz/work/HOL/worktrees/isabelle-tactics`; original provenance is
+retained below, not regenerated. Future-tense TASK25 requirements below are
+historical, not unresolved implementation work. See TASK27 for limits.
+
 ## Exact inspected checkout
 
 - Path: `/home/lukasz/dev/HOL/worktrees/isabelle-tactics`.

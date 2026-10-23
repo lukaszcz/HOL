@@ -1,5 +1,10 @@
 # TASK_12 conditional primitive cutover supplement
 
+**Final status:** [TASK27.md](TASK27.md) records final ownership and closure
+of X1/X2 and M0–M6. Temporary cooperation described below is historical;
+ordinary simpLib is restored and native integration is separately owned.
+TASK12's source-specific receipts retain their original bounded scope.
+
 This supplements [TASK11.md](TASK11.md) and [TASK10.md](TASK10.md).
 Historical inventories and frozen contracts are not regenerated.
 

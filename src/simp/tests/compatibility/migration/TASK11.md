@@ -1,5 +1,10 @@
 # TASK_11 datatype cutover supplement
 
+**Final status:** [TASK27.md](TASK27.md) closes every surviving temporary
+row listed below, including M6 under TASK26, and publishes final ownership and
+source/runtime evidence. This supplement retains TASK11's historical boundary
+and cost scope; its then-current mixed dependencies are no longer present.
+
 This supplements, rather than rewrites, TASK_08's cutover ledger and
 [TASK10.md](TASK10.md). Historical inventory line numbers remain historical.
 

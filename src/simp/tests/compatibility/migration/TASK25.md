@@ -1,5 +1,11 @@
 # TASK25 — isolated external consumer migration
 
+**Final closure cross-reference:** [TASK27.md](TASK27.md) maps every
+EXTERNAL/EXTERNAL_TYPES/MC01–MC14 row to this sealed isolated migration and
+actual execution evidence. TASK26 changes only test ownership, not the
+consumer's production prerequisites. The source-specific limits below remain
+in force; no caller-owned checkout modification or new consumer run is claimed.
+
 The patch in `../evidence/task25/consumer.patch` applies to consumer
 `442009a1f7f04366573dc2b649d31650ea7b113b`. It is **not** applied to the
 caller-owned `isabelle-tactics` worktree. The simplifier source prerequisite

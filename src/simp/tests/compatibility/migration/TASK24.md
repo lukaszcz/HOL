@@ -1,5 +1,11 @@
 # TASK24 internal consumer closure and standard recipes
 
+**Final ownership overlay:** [TASK27.md](TASK27.md) resolves every row here
+and in the historical consumer ledgers. Native constructions below now live
+byte-for-byte in `tests/native-extension/selftest.sml` (TASK26, M6 closed),
+not ordinary src/selftest.sml. TASK25's isolated migration is complete within
+its sealed scope; final documentation/plan-wide limits are stated in TASK27.
+
 This is a current-source closure overlay on [CONSUMERS.md](CONSUMERS.md), not
 an overwrite of TASK07's sealed inventory. Historical line ranges below are
 **row identifiers**, not current source coordinates. TASK10's checked relocation

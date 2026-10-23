@@ -1,5 +1,10 @@
 # TASK_10 typed native-test relocation supplement
 
+**Final status:** [TASK27.md](TASK27.md) closes all temporary rows recorded
+below (X1/X2, M0–M6) and publishes final production ownership/evidence. These
+TASK10 source coordinates and intermediate dependency descriptions remain
+historical; TASK26 completes physical separation without changing typed bodies.
+
 **TASK26 physical completion:** [TASK26.md](TASK26.md). This document and its
 JSON retain the historical typed mapping. A separately sealed overlay now
 maps the entire current native file byte-for-byte into `tests/native-extension`;

@@ -1,5 +1,12 @@
 # External marker-classification boundary
 
+**Final closure overlay:** [TASK27.md](TASK27.md) resolves **MC01–MC14**
+individually against TASK25's sealed isolated patch and executed rules,
+linarith, clasimp and aesop tests, including malformed/first-error and ordered
+forwarding regressions. The source-tied table below remains the historical
+requirement, not a claim that those migrations are pending or that the
+caller-owned checkout was edited. Generic marker identities stay unchanged.
+
 Continuation of [EXTERNAL.md](EXTERNAL.md), at the same read-only external
 revision `442009a1f7f04366573dc2b649d31650ea7b113b`. Paths below are relative to
 that checkout. These are **actual consumers**, not dispositions of lexical

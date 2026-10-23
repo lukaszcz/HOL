@@ -12,11 +12,14 @@ A simpset fragment for simplifying finite Cartesian product expressions.
 ### Example
 
 ``` hol4
-  simpLib.SSFRAG{ac = [], congs = [], convs = [], dprocs = [], filter = NONE,
+  simpLib.SSFRAG{name = NONE, ac = [], congs = [], convs = [],
+                 dprocs = [], filter = NONE,
                  rewrs =
-                   [|- !i. i < dimindex (:'b) ==> ($FCP g ' i = g i),
-                    |- !g. (FCP i. g ' i) = g,
-                    |- !x y. (x = y) = !i. i < dimindex (:'b) ==> (x ' i = y ' i)]}
+                   [(NONE, |- !i. i < dimindex (:'b) ==>
+                                  ($FCP g ' i = g i)),
+                    (NONE, |- !g. (FCP i. g ' i) = g),
+                    (NONE, |- !x y. (x = y) =
+                      !i. i < dimindex (:'b) ==> (x ' i = y ' i))]}
    : ssfrag
 ```
 

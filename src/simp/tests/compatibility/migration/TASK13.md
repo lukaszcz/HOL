@@ -1,5 +1,10 @@
 # TASK_13 congruence primitive cutover
 
+**Final status:** [TASK27.md](TASK27.md) closes all temporary rows below;
+M3's ordinary threaded fragment edge was removed in TASK15/16 and M6 closed in
+TASK26. Historical source correspondence/receipts below are not relabelled as
+a new final whole-tree dependency or performance audit.
+
 This supplements TASK12.md; historical inventories/oracles stay immutable.
 
 ## Completed APIs and work boundary

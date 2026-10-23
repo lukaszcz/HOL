@@ -1,5 +1,11 @@
 # Identity/control/registry ledger
 
+**Final ownership/closure:** [TASK27.md](TASK27.md) publishes the production
+module owners and resolves every identity row below to concrete source and
+execution evidence. X1/X2 and M0–M6 are closed; M6 closed under TASK26's exact
+physical relocation and independent ordinary launchers. Historical graph and
+extraction requirements below are retained, not asserted to be pending.
+
 Inventory source `50cfa5d70`; exact files/hashes in manifest.json. These are
 identity requirements for the implementation owners. **TASK_08** finalizes them
 in [DESIGN.md §5](../interfaces/DESIGN.md), with an acyclic checked graph and

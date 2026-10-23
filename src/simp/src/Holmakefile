@@ -2,6 +2,7 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
   ordinary-tactics.log standard-recipes.log legacy-contracts.log \
+  api-audit.log ../tests/api-audit/selftest.exe ../tests/api-audit/.hol/ \
   native-extension.log ../tests/native-extension/selftest.exe \
   ../tests/native-extension/.hol/ \
   ../tests/standard-recipes/selftest.exe ../tests/standard-recipes/.hol/ \
@@ -132,6 +133,13 @@ legacy-contracts: simpLib.uo congLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C ../tests/legacy-contracts check,legacy-contracts.log)
 
+# Fresh ordinary load paths/callbacks and deliberate extension control sharing.
+# Only the independent launcher imports the extension layer, after its guards.
+.PHONY: api-audit
+api-audit: simpLib.uo congLib.uo simpExtLib.uo congExtLib.uo boolSimpsExt.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C ../tests/api-audit check,api-audit.log)
+
 # Preserve the entire reviewed native suite and incremental migrations intact.
 .PHONY: native-extension
 native-extension: simpExtLib.uo congExtLib.uo boolSimpsExt.uo
@@ -169,7 +177,7 @@ ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   simp-ext cond-rewr-ext congruence-ext fragment-contracts compiled-core \
   literal-exclusions ordinary-tactics standard-recipes legacy-contracts \
-  native-extension \
+  native-extension api-audit \
   fresh-load-regressions split-registration split-persistence split-lifecycle
 
 simp-selftest.log: selftest.exe

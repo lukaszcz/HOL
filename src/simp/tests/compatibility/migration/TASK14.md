@@ -1,5 +1,10 @@
 # TASK_14 tracked compiler boundary
 
+**Final status:** [TASK27.md](TASK27.md) publishes final production owners
+and evidence for every family/consumer. All transitional ordinary helpers and
+imports mentioned below were removed by TASK16; M6 closed in TASK26. The
+tracked object/control contract below remains the extension boundary.
+
 The authoritative extension object is `simpExtLib.simpset`, constructed from
 `simpExtLib.empty_ss` or an explicitly tracked recipe **before installation**.
 There is no ordinary-simpset promotion, rebuilding import, closure inspection,

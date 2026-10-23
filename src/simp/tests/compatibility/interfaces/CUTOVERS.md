@@ -1,20 +1,26 @@
 # TASK_09–16 buildable cutovers
 
-This is the bounded implementation/validation plan, **not evidence that these
-cutovers have landed**. Final interfaces are in DESIGN.md/Task08API.sml. The
-compile-checked plumbing in Task08Cutovers.sml proves the critical intermediate
-type routes without permissive engine stubs. `graph.json` records temporary
-imports and their mandatory removal owners. Final ordinary code has no extension
-imports. Temporary mixed costs are not a performance/compatibility pass.
+**Final status (TASK27): X1/X2 and M0–M6 are closed.**
+[The final closure ledger](../migration/TASK27.md) maps every family, consumer,
+identity and transition to production ownership and concrete evidence. The
+step-by-step plan below is historical; its instructions describe the buildable
+route, not remaining mixed implementation. Final signatures are production
+`.sig` files; DESIGN.md/Task08API.sml retain the checked design/prototype.
+`graph.json` preserves historical transition/removal decisions, not current
+imports. Temporary mixed costs were never a performance/compatibility pass.
 
 **TASK_16 structural closure:** M1–M5 are closed by the byte-exact restoration
 of ordinary `simpLib.{sml,sig}` to pinned develop. M3's fragment edge was already
 removed in 15; 16 removes the remaining compiler/storage/helpers. See
 [the source audit and scope](../migration/TASK16.md). This records source
-closure, not completion of every runtime/performance gate below. **M6 remains
-owned by 26**: interleaved test integration is not an ordinary library import.
-`graph.json` retains historical transition/removal decisions; the TASK_16
-source manifest, not that design graph, audits the actual ordinary closure.
+closure, not completion of every runtime/performance gate below. **M6 closed
+in TASK26**: the complete native integration file moved byte-for-byte to
+`tests/native-extension/selftest.sml`; the complete ordinary selftest is pinned
+develop, with independent ordinary launchers and no splitLib link prerequisite.
+The strict post-list level-1 gate executes all 642 native checks, including the
+five later datatype cases. See [TASK26](../migration/TASK26.md) and its sealed
+native/legacy/routine receipts. The TASK_16 source manifest and TASK23/24/26
+fresh import tests, not the design graph, provide actual boundary evidence.
 
 ## Common gate at each landing
 
@@ -226,7 +232,7 @@ bind the unchanged production sources. Assertions, not line numbers, are invaria
 | M3 | Ordinary threaded factory at simpLib:1628 explicitly imports TravrulesExt | 13 retarget | **15/16**, no later than 16 | closed by 16; threaded fragment edge removed 15 |
 | M4 | Ordinary source slots/inventories/companions/history at 22–45,102–252,1681–1925; installation-local slot adapter after fragment restoration | existing; 15 adapter | fragments **15**, compiled state **16** | closed 16; baseline net/history and no adapter |
 | M5 | Ordinary split/strategy/extended marker helpers at 943–1051,2154–2162,2174–2422 and matching branch-only exports | 10 relocation | fragment fields **15**, remaining imports/code **16** | closed 16; ordinary markerLib only |
-| M6 | Interleaved test dependency aliases/local scopes and temporary duplicate assertions | 10/11 minimum migration | final integration **26**; must remain executable throughout | open; owner remains 26 |
+| M6 | Interleaved test dependency aliases/local scopes and temporary duplicate assertions | 10/11 minimum migration | final integration **26**; must remain executable throughout | closed 26; byte-exact native relocation, pinned ordinary selftest, independent launchers and strict post-list full regression |
 
 The graph's introduced-node ledger models the pre-extraction availability:
 SimpTracking/Cond_rewrExt arrive in 12, OpeningExt/TravrulesExt in 13. Prior to

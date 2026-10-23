@@ -1,5 +1,13 @@
 # TASK_08 interface design gate
 
+**Current production ownership and closure:**
+[../migration/TASK27.md](../migration/TASK27.md). All temporary rows, including
+M6's executable test integration, are closed. Production `.sig` files are the
+current interface authority; these TASK08 files remain checked design
+prototypes, not a replacement for production/runtime evidence. The final
+ledger distinguishes source closure, actual consumer execution, documentation
+status and remaining plan-wide acceptance limits.
+
 [DESIGN.md](DESIGN.md) finalizes types, control/identity ownership, recipes and
 the explicit provider boundary. [CUTOVERS.md](CUTOVERS.md) assigns build/test and
 transitional-removal obligations for TASK_09–16. The finalized 193-row API mapping

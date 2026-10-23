@@ -1,5 +1,12 @@
 # Extension API and migration inventory — TASK_07
 
+**Final closure overlay:** [TASK27.md](TASK27.md) resolves every family and
+consumer row to production ownership and concrete evidence, including all
+temporary rows (M6 closed by TASK26). TASK25's isolated consumer patch/build
+gate is complete within its recorded normal-level scope. The snapshot below
+remains historical inventory/design input, not a current export list or an
+unresolved-work list. TASK27 states documentation/validation limits explicitly.
+
 Inventory source: `50cfa5d709a306298991b113c7ac63e426f8aabd`.
 Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 External source: `442009a1f7f04366573dc2b649d31650ea7b113b`.

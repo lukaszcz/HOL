@@ -1,5 +1,15 @@
 # TASK_08: final interface and ownership decisions
 
+**Production closure (TASK27):** [the final ledger](../migration/TASK27.md)
+publishes actual module/signature ownership and maps every migration consumer,
+identity and temporary row to evidence. X1/X2 and M0–M6 are closed, including
+TASK26's physical test separation. This document retains the historical design
+and prototype contracts; `graph.json` is still a checked design, not a live
+import audit. Final production signatures include later additive APIs such as
+Cond_rewrExt.prepare/rebind and TraverseExt.CHILD_FIRST_WITH_ABORT. TASK25's
+isolated downstream migration passes its bounded normal-level gate; final
+release/performance and other explicitly excluded gates are not implied.
+
 Source inspected: `74ddf80bef07bad35e55416786cbfe2ead8eb67f`.
 Reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 This specifies the split; it does **not** implement or pass the production

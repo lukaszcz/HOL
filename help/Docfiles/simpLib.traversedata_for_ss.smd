@@ -12,9 +12,9 @@ is a `Traverse.REDUCER`; supplied decision procedures retain their original
 representation. The result carries equality as its relation and the
 simpset's traversal rules and limit.
 
-This projection omits simpset-specific subgoaler, unsafe solvers, condition
-depth and term order. It is unconditional, including for simpsets rejected
-by the optional dispatch accessor `legacy_traversedata_for_ss`.
+Every ordinary simpset has this projection. Ordinary `simpLib` has no
+configured subgoaler, solver list, condition-depth or term-order fields,
+and needs no eligibility test or optional dispatch accessor.
 
 Extraction does not invoke collectors, recompile installed rewrites or
 reset their remaining bounded uses. The returned rewriter shares the
@@ -50,4 +50,4 @@ Legacy constructor inspection needs no opt-in:
 ### See also
 
 [`simpExtLib.xtraversedata_for_ss`](#simpExtLib.xtraversedata_for_ss),
-[`simpLib.legacy_traversedata_for_ss`](#simpLib.legacy_traversedata_for_ss).
+[`simpExtLib.mk_simpset`](#simpExtLib.mk_simpset).

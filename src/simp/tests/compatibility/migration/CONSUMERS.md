@@ -1,5 +1,11 @@
 # Repository consumer ledger
 
+**Final closure overlay:** [TASK27.md](TASK27.md) maps every row below to
+its final owner and concrete evidence. All implementation rows and temporary
+plumbing, including M6, are closed. TASK26 supplies the physical test mapping;
+the historical coordinates/requirements below are not a pending-work list.
+Documentation status and validation limits are stated separately in TASK27.
+
 TASK26's [current executable ownership map](TASK26.md) closes test separation.
 Historical native references below now map line-for-line to
 `src/simp/tests/native-extension/selftest.sml`, without changing their typed

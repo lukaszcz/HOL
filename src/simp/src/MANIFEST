@@ -1,5 +1,12 @@
 High-level view of what the simplifier files in this directory do
 
+Ordinary develop clients need no migration. Extensions depend on ordinary
+and shared facilities, never the reverse. Ordinary simpLib/congLib imports
+omit extension strategies, source inventories, split caches/registrations
+and the opt-in tracked default provider. Signatures define the compiled API;
+notes.md and ../tests/compatibility/migration/TASK27.md give the final
+construction/type migration, module ownership and rebuilding caveats.
+
 Cache.sml:     Caching for context-aware decision procedures.
 
 Cond_rewr.sml: The fundamental rewriting-at-a-point implementation:
@@ -21,6 +28,10 @@ SimpTracking.sml: Internal shared thread-local rewrite reporter used by
 Opening.sml:   Moving into a term under the control of a congruence
                rule.
 
+OpeningExt.sml, TravrulesExt.sml:
+               Explicit threaded congruence construction. Alias the original
+               congproc/preorder/travrules types rather than copying them.
+
 Satisfy.sml:   Simplistic code to try to simplify existential goals
                through unification and examination of context.
                Available through the simpset fragment in
@@ -39,6 +50,12 @@ Traverse.sml:  High-level specification of traversal strategy.
                  something changed, then try for another rewrite.  If
                  there is one, loop.  Otherwise, try a decision
                  procedures.  If any succeeds, loop.
+
+TraverseExt.sml:
+               Distinct extended reducer/configuration/policy types;
+               explicit ordinary reducer lifting, refreshing contexts,
+               root/context/observed and child-first traversal. No reverse
+               adapter, implicit promotion or opaque source discovery.
 
 Travrules.sml: Generic datatype for storing information on how to
                traverse terms.  This types stores congruence rule
@@ -61,6 +78,14 @@ combinSimps.sml:
                Simplification data for combinators.  Just a collection
                of rewrites.
 
+pureSimpsExt.sml, boolSimpsExt.sml, combinSimpsExt.sml:
+               Independent tracked recipes built from ingredients, not
+               imports of installed ordinary simpsets. Threaded congruence
+               and ETA are explicit choices. Later typed numeric/set/list/
+               integer/real catalogs and src/boss/trackedSimpDefaults build
+               an explicit ordered recipe/provider; no automatic ordinary
+               update mirroring. The provider is not in ordinary hol.state.
+
 pureSimps.sml: A simpset that transforms rewrites according to
                mk_cond_rewr from Cond_rewr.sml, but wrapping each in
                the BOUNDED/UNBOUNDED tag.
@@ -80,9 +105,39 @@ splitPersistLib.sml:
                Record it with Theory.add_ML_dependency in exports so fresh
                imports initialize before theory-data replay.
 
-selftest.sml:  Regression tests
+selftest.sml:  Complete unchanged develop regression input. Extension tests
+               execute in separate processes under ../tests; no extension
+               prerequisite is linked into this ordinary launcher. The full
+               native suite is ../tests/native-extension/selftest.sml.
+               ../tests/api-audit checks actual fresh paths, callbacks,
+               control identities and executable migration examples.
 
 simpLib.sml:   Puts it all together. The simpset data structure is
                implemented here, as is the code that wraps up
                user-supplied conversions and rewrites, and makes them
                fit into the simplifier's data structures.
+
+simpExtLib.sml:
+               Separate opaque tracked simpsets/fragments, paired runners,
+               source handles/views/bundles, preserving replay, strategies,
+               extended markers and explicit configured/global tactics.
+               Source slots/serials belong here alone. Projections share
+               actual installed controls and do not compile or collect.
+               No arbitrary ordinary set import or ssfrags_of reconstruction.
+
+congLib.sml:   Ordinary preorder simplification with ordinary simpsets.
+
+congExtLib.sml:
+               Explicit configured preorder simplification on extension
+               simpsets/congsets; lifts public ordinary fragments only.
+
+Shared identities:
+               Cond_rewr owns the sole stack_limit; Trace owns the original
+               action, hook, level and registered trace knob. SimpTracking
+               owns one reporter slot; BoundedRewrites owns actual quota
+               refs. Both engines use original Context/types/exceptions.
+               Named fragment registries are deliberately different typed
+               slots, simpLib.ssfragDB and simpExtLib.ssfragDB, with no
+               cross-engine lookup fallback. SplitData/splitLib are single
+               simplifier-owned modules; generic markerLib, ThmSetData and
+               postkernel machinery are not extended for this split.

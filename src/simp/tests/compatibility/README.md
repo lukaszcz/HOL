@@ -1,5 +1,14 @@
 # Pinned simplifier review inputs
 
+TASK27's [final migration/ownership ledger](migration/TASK27.md) and
+[handoff](TASK_27_HANDOFF.md) close all consumer and temporary-cutover rows.
+Ordinary develop clients need no migration; tracked construction is explicit
+for branch-only extensions. The live gate `audit_task27.py` checks defining
+source dependencies/identity ownership, `check_task27_docs.py` checks final
+signature references and executable Docfile examples, and `../api-audit`
+checks fresh ordinary paths/callbacks and deliberate extension controls.
+These are readiness gates, not release/performance approval.
+
 TASK26's current [test ownership map](migration/TASK26.md) and
 [handoff](TASK_26_HANDOFF.md) cover physical separation and normal-level entry
 points. The 73-check ordinary selftest is byte-identical to pinned develop;
