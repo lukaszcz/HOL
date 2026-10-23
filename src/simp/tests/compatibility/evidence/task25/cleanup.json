@@ -1,0 +1,15 @@
+{
+  "caller_artifacts_removed": false,
+  "main_standard_build_products_preserved": true,
+  "remaining_task_scratch": [],
+  "removed_task_directories": [
+    "/tmp/task25-core",
+    "/tmp/task25-expanded",
+    "/tmp/task25-final2",
+    "/tmp/task25-final3",
+    "/tmp/task25-isolated",
+    "/tmp/task25-parser",
+    "/tmp/task25-prepare-control"
+  ],
+  "removed_task_files": 151
+}

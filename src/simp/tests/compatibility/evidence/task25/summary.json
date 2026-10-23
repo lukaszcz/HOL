@@ -1,0 +1,40 @@
+{
+  "all_39_driver_commands_exit": 0,
+  "caller_state_unchanged": true,
+  "not_claimed": [
+    "Independent clean builds of the whole distribution",
+    "Whole-corpus optional level-2 report/battery (pre-final exploration timed out after 1800 seconds)",
+    "Performance/allocation acceptance",
+    "Other platforms or runtimes"
+  ],
+  "scope": "Complete normal HOLSELFTESTLEVEL=1 consumer closure; actual launchers and theory proofs.",
+  "selftest_counts": {
+    "aesop": 148,
+    "benchmarks": 166,
+    "blast": 208,
+    "clasimp": 188,
+    "classical": 250,
+    "linarith": 149,
+    "linarith-instances": 52,
+    "order": 25,
+    "rules": 147,
+    "seeds": 74
+  },
+  "selftest_total": 1407,
+  "style": {
+    "command": [
+      "tools/h4pedant/h4pedant",
+      "--nolinelen",
+      "--unicodeok",
+      "<canonical migrated src/auto>"
+    ],
+    "exit": 0,
+    "tool": {
+      "bytes": 606400,
+      "sha256": "0e209c750e58068f8afe0de4ab105a7fa3c7aba91f27f578e67e4b468a656312"
+    }
+  },
+  "success": true,
+  "unit_controls": 8,
+  "unit_controls_exit": 0
+}
