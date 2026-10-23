@@ -36,10 +36,12 @@ holsmt-selftest-7-8.log: holsmt-selftest-6-8.log
 all: $(HOLSMT_SELFTEST_LOGS)
 
 ifdef POLY
-holsmt-selftest-%.log: selftest.uo smtheap
+# A .uo is a source-loading manifest on Poly/ML, not compiled ML code.
+# Restore the own-build replay heap rather than compile it in every shard.
+holsmt-selftest-%.log: selftest.uo smtreplayheap
 	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) $(HOLDIR)/bin/hol \
 	  --gcthreads=1 --maxheap $(HOLSMT_SELFTEST_MAXHEAP) run \
-	  --holstate=$(HOLHEAP) selftest 2>&1,$@)
+	  --holstate=smtreplayheap selftest 2>&1,$@)
 else
 holsmt-selftest-%.log: selftest.exe
 	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) ./selftest.exe 2>&1,$@)
