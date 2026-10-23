@@ -1,7 +1,8 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
-  ordinary-tactics.log \
+  ordinary-tactics.log standard-recipes.log \
+  ../tests/standard-recipes/selftest.exe ../tests/standard-recipes/.hol/ \
   traversal-contracts.log exclusion-contracts.log traverse-ext.log \
   cond-rewr-ext.log ../tests/cond-rewr-ext/selftest.exe \
   ../tests/cond-rewr-ext/.hol/ \
@@ -134,6 +135,12 @@ simp-ext: simpExtLib.uo pureSimpsExt.uo boolSimpsExt.uo congExtLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/simp-ext check,simp-ext.log)
 
+# Independent tracked catalog, TypeBase builders and explicit reducer lifts.
+.PHONY: standard-recipes
+standard-recipes: combinSimpsExt.uo boolSimpsExt.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C ../tests/standard-recipes check,standard-recipes.log)
+
 .PHONY: congruence-ext
 congruence-ext: OpeningExt.uo TravrulesExt.uo congExtLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
@@ -147,7 +154,7 @@ cond-rewr-ext: Cond_rewrExt.uo
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   simp-ext cond-rewr-ext congruence-ext fragment-contracts compiled-core \
-  literal-exclusions ordinary-tactics \
+  literal-exclusions ordinary-tactics standard-recipes \
   fresh-load-regressions split-registration split-persistence split-lifecycle
 
 simp-selftest.log: selftest.exe

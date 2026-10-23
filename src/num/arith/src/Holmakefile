@@ -1,5 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
-EXTRA_CLEANS = selftest.exe arith-selftest.log
+EXTRA_CLEANS = selftest.exe arith-selftest.log tracked-recipes.log \
+  ../tests/tracked-recipes/selftest.exe ../tests/tracked-recipes/.hol/
 BOOLLIB = $(dprot $(SIGOBJ)/boolLib.ui)
 NUMTHY = $(dprot $(SIGOBJ)/numeralTheory.uo)
 
@@ -16,8 +17,13 @@ NumRelNorms.uo: NumRelNorms.sml NumRelNorms.ui GenRelNorm.uo \
                 GenPolyCanon.uo $(BOOLLIB) $(NUMTHY)
 	$(HOLMOSMLC) -c Overlay.ui GenRelNorm.ui $<
 
+.PHONY: tracked-recipes
+tracked-recipes: numSimpsExt.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C ../tests/tracked-recipes check,tracked-recipes.log)
+
 ifdef HOLSELFTESTLEVEL
-all: arith-selftest.log
+all: arith-selftest.log tracked-recipes
 
 arith-selftest.log: selftest.exe
 	$(tee ./$<,$@)
