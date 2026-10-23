@@ -363,13 +363,44 @@ struct
      stock kernel and retains both supplied endpoint occurrences. *)
   fun checked_leaf_transport intern_type left right =
     let
-      val AdmissionTypeNode {id = left_id, ...} =
-        intern_type (Term.type_of left)
-      val AdmissionTypeNode {id = right_id, ...} =
-        intern_type (Term.type_of right)
+      val left_type = Term.type_of left
+      val right_type = Term.type_of right
+      val AdmissionTypeNode {id = left_id, tree_nodes, ...} =
+        intern_type left_type
+      val AdmissionTypeNode {id = right_id, ...} = intern_type right_type
       val _ = if left_id = right_id then () else
         raise Feedback.mk_HOL_ERR "Thm" "TRANS" ""
-    in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
+    in
+      if Thm.kernelid = "expknl" andalso
+         tree_nodes > SmtResource.max_bv_replay_term_nodes andalso
+         Portable.pointer_eq (left_type, right_type) andalso
+         Term.is_var left andalso Term.is_var right andalso
+         #1 (Term.dest_var left) = #1 (Term.dest_var right) then
+        let
+          (* Experimental aconv unfolds even a physically shared Type.
+             Beta's variable identity test instead uses built-in equality.
+             All Type checks below therefore see the very same Type pointer;
+             no inference compares the two distinct variable occurrences.
+
+             For f = (\left. left) and s = (\z. z) right, the diamond is
+                     f s --> s --> right
+                     f s --> f right --> left.
+             The final beta returns the existing body [left], not [right].
+             TRANS joins exact pointers, or applications with exact children.
+             All equality results have the original, already admitted Type;
+             no equality at the synthesized function Type is constructed. *)
+          val z = Term.mk_var (#1 (Term.dest_var left) ^ "'", left_type)
+          val f = Term.mk_abs (left, left)
+          val s = Term.mk_comb (Term.mk_abs (z, z), right)
+          val inner = Thm.BETA_CONV s
+          val direct = Thm.TRANS
+            (Thm.BETA_CONV (Term.mk_comb (f, s))) inner
+          val lifted = Thm.AP_TERM f inner
+          val (_, target) = Term.dest_eq (Thm.concl lifted)
+          val other = Thm.TRANS lifted (Thm.BETA_CONV target)
+        in Thm.TRANS (Thm.SYM other) direct end
+      else Thm.TRANS (Thm.REFL left) (Thm.REFL right)
+    end
 
   (* Build left = right one physical node at a time.  Both endpoint anchors
      compare only a newly built outer node whose children already have the

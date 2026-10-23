@@ -21080,6 +21080,18 @@ let
       "late Type mismatch entered native equality")) ()
   val poly_leaf = variable (poly_product 80)
   val _ = equal "polymorphic pointer depth80" poly_leaf poly_leaf
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => equal "shared polymorphic Type depth80" poly_leaf
+      (variable (Term.type_of poly_leaf))) ()
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => assert (
+      ((ignore (SmtSkeletonProve.bounded_nodewise_equality 16 poly_leaf
+          (Term.mk_var ("task21_other_leaf", Term.type_of poly_leaf)));
+        false)
+       handle Feedback.HOL_ERR error =>
+         Feedback.top_structure_of error = "Thm" andalso
+         Feedback.top_function_of error = "TRANS"),
+      "shared Type bridge equated distinct variable names")) ()
   val poly_type = poly_product 21
   val original = variable poly_type
   val independent = variable poly_type
@@ -21109,6 +21121,9 @@ let
     [Type.mk_vartype "'task21_prefix", product 80])
   val prefix = variable prefix_type
   val _ = equal "polymorphic prefix" prefix prefix
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => equal "shared polymorphic prefix" prefix
+      (variable prefix_type)) ()
   (* Conversely a late variable does not make the preceding ground walk
      cheap; nor does a polymorphic operator domain admit a ground range. *)
   val late = variable (Type.mk_type ("prod",
