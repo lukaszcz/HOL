@@ -225,11 +225,39 @@ struct
       val maximum = SmtResource.max_bv_replay_term_nodes
       val ids = ref (Redblackmap.mkDict admission_type_key_compare)
       val physical = ref ([] : (hol_type * admission_type_node) list)
+      (* Public type_of synthesizes fresh small function Types for binders
+         and partial applications. Bound their pointer-cache search before
+         bottom-up interning; deep shared Types still need complete exact
+         pointer memoization to avoid unfolding their trees. *)
+      fun small_type ty =
+        let
+          fun walk 0 _ = NONE
+            | walk fuel ty =
+                if Type.is_vartype ty then SOME (fuel - 1)
+                else children (fuel - 1) (Lib.snd (Type.dest_type ty))
+          and children fuel [] = SOME fuel
+            | children fuel (ty :: rest) =
+                case walk fuel ty of
+                  NONE => NONE
+                | SOME remaining => children remaining rest
+        in Option.isSome (walk 16 ty) end
+      fun recent_small ty =
+        let
+          fun seek 0 _ _ = NONE
+            | seek _ _ [] = NONE
+            | seek fuel previous ((entry as (saved, node)) :: rest) =
+                if Portable.pointer_eq (ty, saved) then
+                  (physical := entry :: List.revAppend (previous, rest);
+                   SOME node)
+                else seek (fuel - 1) (entry :: previous) rest
+        in seek 8 [] (!physical) end
       val next_id = ref 0
       val nodes = ref 0
       val edges = ref 0
       fun intern ty =
-        case SmtResource.recent_pointer_lookup physical ty of
+        let val small = small_type ty in
+        case (if small then recent_small ty else
+          SmtResource.recent_pointer_lookup physical ty) of
           SOME node => node
         | NONE =>
             let
@@ -264,6 +292,7 @@ struct
                 else ids := Redblackmap.insert (!ids, key, node)
               val _ = physical := (ty, node) :: !physical
             in node end
+        end
       fun type_id ty = let val AdmissionTypeNode {id, ...} = intern ty in id end
       fun admit_abstraction operation term =
         let
@@ -289,6 +318,9 @@ struct
           val atoms = HOLset.listItems
             (Term.all_atomsl [term] (HOLset.empty compare_atoms))
           val _ = List.app (ignore o intern o Term.type_of) atoms
+          (* REFL instantiates equality at the abstraction's result Type,
+             which can be larger than any individual atom annotation. *)
+          val _ = ignore (intern (Term.type_of term))
         in () end
     in
       {intern = intern, admit_abstraction = admit_abstraction,
@@ -302,6 +334,9 @@ struct
   fun bounded_nodewise_equality maximum left right =
     let
       val type_admission = new_type_admission_context ()
+      fun admit_type term =
+        ignore (#intern type_admission (Term.type_of term))
+      fun checked_refl term = (admit_type term; Thm.REFL term)
       fun inspect term =
         if Term.is_abs term then
           #admit_abstraction type_admission
@@ -335,7 +370,9 @@ struct
       fun pair_bucket (left, right) =
         (97 * shallow_hash 3 left + shallow_hash 3 right) mod bucket_count
       fun visit (left, right) =
-        if Portable.pointer_eq (left, right) then Thm.REFL left
+        (* A shared application needs only result-Type work, not the
+           annotations of descendants that this shortcut never visits. *)
+        if Portable.pointer_eq (left, right) then checked_refl left
         else
           let val bucket = pair_bucket (left, right) in
           case List.find
@@ -368,8 +405,19 @@ struct
                 val _ = #admit_abstraction type_admission
                   "skeleton-cache-abstraction" right
               in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
+            else if (Term.is_var left andalso Term.is_var right) orelse
+                    (Term.is_const left andalso Term.is_const right) then
+              let
+                (* Native leaf equality compares independent Types. Pair
+                   counting alone does not bound their unfolded work. *)
+                val _ = admit_type left
+                val _ = admit_type right
+              in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
             else
-              Thm.TRANS (Thm.REFL left) (Thm.REFL right)
+              (* Different constructors cannot be alpha-equal. Preserve
+                 TRANS's mismatch error without constructing unadmitted
+                 reflexivity theorems for the right endpoint. *)
+              raise Feedback.mk_HOL_ERR "Thm" "TRANS" ""
           val bucket = pair_bucket (left, right)
           val _ = Array.update
             (cache, bucket,

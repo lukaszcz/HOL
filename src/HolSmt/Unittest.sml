@@ -20976,6 +20976,92 @@ in
     "nested abstraction opened before shared type-work admission")
 end
 
+(* Ground Types exercise both native aconv and REFL's equality-constant
+   instantiation; a type variable can short-circuit polymorphic instead. *)
+fun skeleton_nodewise_leaf_type_admission_success () =
+let
+  fun product 0 = Type.bool
+    | product depth =
+        let val child = product (depth - 1)
+        in Type.mk_type ("prod", [child, child]) end
+  fun variable ty = Term.mk_var ("task21_typed_leaf", ty)
+  fun constant ty = boolSyntax.mk_arb ty
+  fun equal label left right =
+    let
+      val theorem = SmtSkeletonProve.bounded_nodewise_equality 16 left right
+      val (actual_left, actual_right) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (Portable.pointer_eq (actual_left, left) andalso
+          Portable.pointer_eq (actual_right, right),
+        label ^ " lost endpoints");
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  fun rejected label left right =
+    assert (((ignore (SmtSkeletonProve.bounded_nodewise_equality 16
+        left right); false)
+      handle Feedback.HOL_ERR error =>
+        Feedback.top_structure_of error = "SmtResource" andalso
+        String.isSubstring "resource-gate:BitVector:skeleton-type-work"
+          (Feedback.message_of error) andalso
+        String.isSubstring "observed=2097151"
+          (Feedback.message_of error)), label ^ " bypassed type admission")
+  fun leaves (label, make) =
+    let
+      val left_type = product 21
+      val right_type = product 21
+      val left = make left_type
+      val right = make right_type
+      val _ = assert (not (Portable.pointer_eq (left_type, right_type))
+          andalso not (Portable.pointer_eq (left, right)),
+        label ^ " lost independent allocations")
+      val shared_type_right = make left_type
+      val small_left = make (product 3)
+      val small_right = make (product 3)
+    in
+      equal (label ^ " small") small_left small_right;
+      (* 2^20-1 unfolded type nodes: the largest complete product below
+         the unchanged 2,000,000-node native type-work allowance. *)
+      equal (label ^ " near cap") (make (product 19)) (make (product 19));
+      rejected (label ^ " independent") left right;
+      rejected (label ^ " pointer hit") left left;
+      rejected (label ^ " shared type") left shared_type_right;
+      rejected (label ^ " asymmetric right") small_left right
+    end
+  val _ = List.app leaves [("variable", variable), ("constant", constant)]
+  val shared_leaf = variable (product 21)
+  val predicate = Term.mk_var ("task21_typed_predicate",
+    Type.mk_type ("fun", [Term.type_of shared_leaf, Type.bool]))
+  val shared_application = Term.mk_comb (predicate, shared_leaf)
+  val _ = equal "shared application shortcut"
+    shared_application shared_application
+  (* Each annotation fits, but the synthesized binder result Type does not.
+     Admit it before REFL even when the term itself is pointer-identical. *)
+  fun identity depth =
+    let val bound = variable (product depth)
+    in Term.mk_abs (bound, bound) end
+  val _ = equal "small binder" (identity 3) (identity 3)
+  val large_binder = identity 19
+  val _ = rejected "synthesized binder type" large_binder (identity 19)
+  val _ = rejected "shared synthesized binder type"
+    large_binder large_binder
+  (* No matching constructor: reject before REFL/type inspection of the
+     right. This retains the native TRANS mismatch diagnostic. *)
+  fun mismatch right =
+    assert (((ignore (SmtSkeletonProve.bounded_nodewise_equality 16
+        boolSyntax.T right); false)
+      handle Feedback.HOL_ERR error =>
+        Feedback.top_structure_of error = "Thm" andalso
+        Feedback.top_function_of error = "TRANS" andalso
+        Feedback.message_of error = ""),
+      "constructor mismatch reached native right type work")
+  val binder = variable (product 21)
+  val _ = mismatch shared_application
+  val _ = mismatch (Term.mk_abs (binder, binder))
+in
+  ()
+end
+
 fun z3_e0_sat_shape_opportunity_success () =
 let
   val p = ``task31_sat_shape_p:bool``
@@ -30415,7 +30501,9 @@ fun run_fp_graph_unittests () =
 
 fun run_cnf_graph_unittests () =
   List.app run_test
-    [("skeleton_typed_cnf_graph_success",
+    [("skeleton_nodewise_leaf_type_admission_success",
+       skeleton_nodewise_leaf_type_admission_success),
+     ("skeleton_typed_cnf_graph_success",
        skeleton_typed_cnf_graph_success),
      ("skeleton_structural_atom_cache_exact_lhs_success",
        skeleton_structural_atom_cache_exact_lhs_success),
@@ -30957,6 +31045,8 @@ let
     ("circuit_graph_checked_success", circuit_graph_checked_success),
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),
     ("skeleton_typed_cnf_graph_success", skeleton_typed_cnf_graph_success),
+    ("skeleton_nodewise_leaf_type_admission_success",
+     skeleton_nodewise_leaf_type_admission_success),
     ("word_graph_conversion_success", word_graph_conversion_success),
     ("cpc_reglan_native_aggregate_focused_success",
       cpc_reglan_native_aggregate_focused_success),
