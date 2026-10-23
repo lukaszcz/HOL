@@ -152,8 +152,9 @@ struct
     in {graph = graph,scope = scope,sources = sources,
         template = #template_limit limits} end
   (* Private row/object inspection precedes every legacy getter. Every row
-     visit, memo comparison and insertion pays original Work. The balanced
-     local index avoids quadratic shared-dependency membership scans.
+     visit, memo comparison and insertion pays original Work, after immutable
+     Original/PolicyOriginal Sources headers reject foreign owners. The
+     balanced local index avoids quadratic shared-dependency membership scans.
      This memo is local to ONE synchronous callback-free guard operation;
      neither template incidence nor earlier validation supplies credit. *)
   fun guard_facts work (expected : expectation) inputs =
@@ -165,11 +166,6 @@ struct
           (if Portable.pointer_eq (graph,#graph expected) andalso
               scope = #scope expected then () else
              raise ERR "guard_facts" "different original graph or scope";
-           charge ();
-           case Redblackmap.peek (!completed,identity) of SOME held =>
-             if Portable.pointer_eq (fact,held) then () else
-               raise ERR "guard_facts" "private fact identity collision"
-           | NONE =>
            (case row of
                 Original (sources,_) =>
                   if Portable.pointer_eq (sources,#sources expected) then ()
@@ -177,6 +173,15 @@ struct
               | PolicyOriginal (sources,_,_) =>
                   if Portable.pointer_eq (sources,#sources expected) then ()
                   else raise ERR "guard_facts" "different original Sources"
+              | _ => ());
+           charge ();
+           case Redblackmap.peek (!completed,identity) of SOME held =>
+             if Portable.pointer_eq (fact,held) then () else
+               raise ERR "guard_facts" "private fact identity collision"
+           | NONE =>
+           (case row of
+                Original _ => ()
+              | PolicyOriginal _ => ()
               | Closed conversion =>
                   C.validate_conversion_with_policy work conversion
               | RecordedClosed _ => ()
@@ -392,11 +397,6 @@ struct
       fun visit (fact as Fact {identity,graph=held,scope=frame,row,...}) =
         (if Portable.pointer_eq (graph,held) andalso scope=frame then () else
            raise ERR "guard_policy_facts" "different original graph or scope";
-         charge ();
-         case Redblackmap.peek (!completed,identity) of SOME held =>
-           if Portable.pointer_eq (fact,held) then () else
-             raise ERR "guard_policy_facts" "private fact identity collision"
-         | NONE =>
          (case row of
               Original (saved,_) =>
                 if Portable.pointer_eq (sources,saved) then () else
@@ -404,6 +404,15 @@ struct
             | PolicyOriginal (saved,_,_) =>
                 if Portable.pointer_eq (sources,saved) then () else
                   raise ERR "guard_policy_facts" "different original Sources"
+            | _ => ());
+         charge ();
+         case Redblackmap.peek (!completed,identity) of SOME held =>
+           if Portable.pointer_eq (fact,held) then () else
+             raise ERR "guard_policy_facts" "private fact identity collision"
+         | NONE =>
+         (case row of
+              Original _ => ()
+            | PolicyOriginal _ => ()
             | Closed conversion =>
                 C.validate_conversion_with_policy work conversion
             | RecordedClosed plan =>

@@ -21434,6 +21434,64 @@ in
        in ensure "dependency guard debit omitted chain growth"
          (large>small) end)) [false,true] end
 
+  (* Immutable Source headers must precede even the first row debit.
+     Use independent Sources on the SAME graph/root and test both row kinds;
+     neither endpoint equality nor an exhausted payer authorizes custody. *)
+  val _ = let
+      fun sample policy policy_work policy_row exhausted =
+        let val graph = G.new () val root = G.root_scope graph
+            val goal = ``portfolio_header_p:bool``
+            val sources = S.new graph root cap {goal=goal,assumptions=[]}
+            val foreign = S.new graph root cap {goal=goal,assumptions=[]}
+            val limits =
+              {input_limit=cap,output_limit=cap,template_limit=cap}
+            fun begin sources = if policy_work then
+                W.begin_with_policy graph root sources
+                  {limits=RP.semantic_from_ints limits,
+                   work_limit=RP.AtMost 20000000}
+              else W.begin graph root sources
+                {limits=limits,work_limit=20000000}
+            val work = begin sources val foreign_work = begin foreign
+            val denied = if policy_row then
+                #denied (GP.originals_with_policy foreign_work)
+              else GP.original graph root foreign 0
+            val _ = if exhausted then
+                (case W.remaining_policy work of RP.AtMost n =>
+                   W.with_step work (fn () => W.spend_policy work n)
+                 | _ => raise Fail "header test lost finite Work")
+              else ()
+            val prior = #charged (W.audit_policy work)
+            val foreign_prior = W.audit_policy foreign_work
+            val _ = Count.counting_thms true
+            val native = Count.thm_count ()
+            val result = Exn.capture (fn () =>
+              ((ignore ((if policy then GP.validate_portfolio_with_policy
+                  else GP.validate_portfolio_with_work) work
+                    {assumptions=[],goal= #node (S.goal_source sources),
+                     denied=denied});NONE)
+               handle Feedback.HOL_ERR error =>
+                 SOME (Feedback.message_of error))) ()
+            val no_native = native=Count.thm_count ()
+            val _ = Count.counting_thms false
+            val message = Exn.release result
+            val after = W.audit_policy work
+            val foreign_after = W.audit_policy foreign_work
+            val _ = W.close foreign_work
+        in ensure "foreign Source header was masked, paid or activated"
+          (message=SOME "different original Sources" andalso
+           #charged after=prior andalso #retired after andalso no_native
+           andalso #charged foreign_after= #charged foreign_prior andalso
+           not (#retired foreign_after)) end
+    in List.app (fn (policy,policy_work) =>
+      List.app (fn policy_row => List.app (fn exhausted =>
+        (testutils.tprint ("Foreign Sources precede payment: " ^
+           (if policy then "policy" else "finite") ^
+           (if policy_work then " policy Work" else " legacy Work") ^
+           (if policy_row then " PolicyOriginal" else " Original") ^
+           (if exhausted then " exhausted" else " ample"));
+         sample policy policy_work policy_row exhausted)) [false,true])
+        [false,true]) [(false,false),(true,false),(true,true)] end
+
   val _ = testutils.tprint
     "Fixed SIMPLE never reissues consumed plan work"
   val _ = let val e = setup ``(n+m:num) <= q`` []
