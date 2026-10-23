@@ -21,6 +21,13 @@ sys.dont_write_bytecode = True
 import acceptance as a
 
 
+def stamped_command(command, stdout, cwd="/archive/repo"):
+    data = stdout.encode()
+    return dict(command=command, cwd=cwd, exit=0, timed_out=False,
+                stdout=stdout, stdout_sha256=a.hashlib.sha256(data).hexdigest(),
+                stdout_bytes=len(data))
+
+
 def checked_git(root, *args):
     subprocess.run(["git", "-C", str(root), *args], check=True,
                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -579,18 +586,36 @@ class ArchivedAcceptanceTests(unittest.TestCase):
             performance=dict(pairs=10, samples=3, batch_seconds=0.2,
                              suite="matrix", case="frag_create", size=1000,
                              outliers="none removed"),
-            tools={"bin/hol": self.hash},
+            runtime_options=["--gcthreads=1", "run",
+                             "--holstate=/archive/repo/bin/hol.state0"],
+            tools={name: copy.deepcopy(self.hash) for name in
+                   ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
+                    "bin/Holmake", "holproject.toml", "/tools/poly",
+                    "/tools/libpolyml.so")},
+            poly_version=stamped_command(["/tools/poly", "--version"],
+                                        "Poly/ML 5.9.2 Release\n"),
+            dynamic_libraries=stamped_command(
+                ["ldd", "/archive/repo/bin/hol"],
+                "libpolyml.so => /tools/libpolyml.so (0x123)\n"),
             inputs={"src/simp/tests/performance/MatrixPerformance.sml": self.hash,
                     "src/simp/tests/performance/MatrixSupport.sml": self.hash,
                     "src/simp/tests/performance/RuntimeMetrics.sml": self.hash}, selections={}, runs=[])
         self.receipts = {}
         for side in ("baseline", "candidate"):
             private = "/archive/" + side
+            launcher = ("#!/bin/sh\nset -e\n/archive/repo/bin/hol "
+                        "--gcthreads=1 run "
+                        "--holstate=/archive/repo/bin/hol.state0 runner\n"
+                        "exit 0\n")
             selected = dict(private=private, revision=self.pin,
+                            build_exit=0, launcher=launcher,
                             fixture_products={"Performance.sml": self.hash,
                                               "MatrixSupport.sml": self.hash,
                                               "RuntimeMetrics.sml": self.hash},
-                            products={}, sources=[])
+                            products={"paired.exe": {
+                                "sha256": a.hashlib.sha256(
+                                    launcher.encode()).hexdigest(),
+                                "bytes": len(launcher.encode())}}, sources=[])
             for name in ("Traverse", "simpLib"):
                 selected["sources"].append(dict(
                     git_path="src/simp/src/" + name + ".sml",
@@ -658,6 +683,9 @@ class ArchivedAcceptanceTests(unittest.TestCase):
                 self.receipts[name] = receipt
                 self.manifest["runs"].append(dict(receipt=name, accepted=True,
                                                    exit=0))
+        shared = "/archive/repo/src/portableML/prelude.sml"
+        self.manifest["shared_inputs"] = {shared: copy.deepcopy(
+            self.first()["result"]["paths"][shared])}
         self.persist()
 
     def persist(self):

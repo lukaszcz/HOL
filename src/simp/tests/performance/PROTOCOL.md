@@ -40,8 +40,9 @@ baseline/candidate** for each requested case and size. Each child invocation is:
 A baseline control uses the baseline commit in both selection slots. It has the
 same sample counts, fresh processes, calibration and AB/BA order as its candidate
 comparison. No control costs are subtracted and no baseline variability is a
-regression budget. A baseline-control `fail` invalidates a candidate `pass`
-(turning it inconclusive); a candidate failure is never excused by control noise.
+regression budget. A baseline-control `fail` or `inconclusive` prevents a
+candidate pass (turning it inconclusive); a candidate failure is never excused
+by control noise. This applies to point metrics and retained-storage slopes.
 
 The SML harness consumes and verifies construction, reuse and complete-operation
 results. The Python schema contract is `suite="matrix", case=CASE, size=N`, one
@@ -79,7 +80,10 @@ and arithmetic. Acceptance reports preserve per-pair telemetry and separately
 compare compiled/fragment graph increments. `--case storage_graph` with all six
 `--size` values additionally compares every adjacent words-per-rule interval,
 including 0-to-1, and reports size-zero terms separately. Missing sizes block
-slope conclusions; no fitted slope or aggregate hides nonlinear differences.
+slope conclusions and makes the CLI exit 2 unless another metric fails
+(exit 1). Measured candidate slopes participate in CLI decisions just like
+point metrics, including their baseline controls and uncertainty. No fitted
+slope or aggregate hides nonlinear differences.
 
 Scope limits are mandatory:
 
@@ -133,7 +137,27 @@ results are revalidated through the existing schema and source-binding auditor,
 plus ordered heap/search/use/completion/loaded inventories and fixture/options
 checks. A precomputed summary is not sufficient evidence.
 
-CLI exit codes: 0 = all reported candidate metrics pass; 1 = at least one fails;
+Matrix manifests require `shared_inputs`: an inventory keyed by canonical
+absolute logical source path, with physical path, SHA256, byte count and the
+complete related `.uo`/`.ui`/`.dat` product fingerprints. The online runner
+checks these against live files and across all accepted processes before
+sealing the manifest. Offline admission binds every shared receipt entry to
+that inventory, including all related products, and rejects non-normalized or
+escaping paths without resolving deleted roots. Private sources and products
+remain bound to their selected inventories. Matrix archives predating this
+inventory are historical diagnostics only; do not reconstruct a supposedly
+independent inventory from the receipts being validated.
+
+Admission also requires exact runtime options (one GC thread and the recorded
+repo's `hol.state0`), runtime/heaps/Holmake/configuration fingerprints, a sealed
+successful Poly/ML version command, sealed successful dynamic-library discovery
+and fingerprints for its libraries. Selected builds must have succeeded, and
+each launcher's text, options and product hash must agree. These are local
+provenance-consistency checks, not authentication of a malicious producer or
+independent-build evidence. Non-matrix historical diagnostic audits retain
+their original weaker contract.
+
+CLI exit codes: 0 = all reported candidate metrics/slopes pass; 1 = any fails;
 2 = uncertainty, invalid evidence or a blocked prerequisite. `success=true`
 means the experiment completed and validated, **not that its metrics passed**.
 No overall performance acceptance decision substitutes for per-metric decisions.

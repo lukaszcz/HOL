@@ -270,6 +270,14 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
             "temporary_peaks": "uncollected: process HWM is not a batch peak"}
 
 
+def apply_control(data, control):
+    """A failed/uncertain control cannot establish parity; never excuse fail."""
+    data["control_decision"] = control["decision"]
+    if control["decision"] != "pass" and data["decision"] != "fail":
+        data["decision"] = "inconclusive"
+        data["reason"] = "baseline-control " + control["decision"]
+
+
 def retained_scaling(workloads):
     """All adjacent graph differences, never a fitted/averaged budget."""
     rows = {row["candidate"]["size"]: row for row in workloads
@@ -298,8 +306,34 @@ def retained_scaling(workloads):
                 result.append(dict(lower=lower, upper=upper,
                                    selection=selection, metric=metric,
                                    words_per_rule=stats))
+    controls = {(r["lower"], r["upper"], r["metric"]): r["words_per_rule"]
+                for r in result if r["selection"] == "control"}
+    for row in result:
+        if row["selection"] == "candidate":
+            apply_control(row["words_per_rule"], controls[
+                row["lower"], row["upper"], row["metric"]])
     return {"status": "measured", "adjacent_intervals": result,
             "constant_terms": "see separate size-zero per-workload decisions"}
+
+
+def report_exit_status(report):
+    """Include every requested gate; protocol success is not performance pass."""
+    if not report["success"]:
+        return 2
+    decisions = [m["decision"] for r in report["workloads"]
+                 for m in r["candidate"]["metrics"].values()]
+    scaling = report.get("retained_scaling")
+    if scaling is not None:
+        if scaling["status"] != "measured":
+            decisions.append("inconclusive")
+        else:
+            decisions.extend(r["words_per_rule"]["decision"]
+                             for r in scaling["adjacent_intervals"]
+                             if r["selection"] == "candidate")
+    require(decisions and all(d in ("pass", "fail", "inconclusive")
+                              for d in decisions), "missing/invalid decisions")
+    return 1 if "fail" in decisions else \
+        2 if "inconclusive" in decisions else 0
 
 
 def control_worker(kind):
@@ -629,11 +663,7 @@ def run(args):
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():
                         check = results["control"]["metrics"][metric]
-                        data["control_decision"] = check["decision"]
-                        if check["decision"] == "fail" and \
-                                data["decision"] != "fail":
-                            data["decision"] = "inconclusive"
-                            data["reason"] = "baseline-control slowdown"
+                        apply_control(data, check)
                     report["workloads"].append(results)
             report["retained_scaling"] = (
                 retained_scaling(report["workloads"])
@@ -691,12 +721,7 @@ def main(argv=None):
             return 0
         result = run(args)
         print(args.output / "acceptance.json")
-        if not result["success"]:
-            return 2
-        decisions = [m["decision"] for r in result["workloads"]
-                     for m in r["candidate"]["metrics"].values()]
-        return 1 if "fail" in decisions else \
-            2 if "inconclusive" in decisions else 0
+        return report_exit_status(result)
     except (ValueError, OSError, KeyError, IndexError, TypeError,
             subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)

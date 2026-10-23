@@ -460,6 +460,7 @@ def main():
             manifest["performance"].update(
                 suite="matrix", case=args.performance_case,
                 size=args.performance_size)
+            manifest["shared_inputs"] = {}
     try:
         for name in ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
                      "bin/Holmake", "holproject.toml"):
@@ -822,7 +823,16 @@ def main():
                 if run["accepted"]:
                     record = json.loads(gzip.decompress(
                         (output / run["receipt"]).read_bytes()))
-                    for info in record["result"]["paths"].values():
+                    for logical, info in record["result"]["paths"].items():
+                        if (args.matrix_performance and
+                                Path(info["physical"]).is_relative_to(repo)):
+                            sealed = {k: info[k] for k in
+                                      ("physical", "sha256", "bytes",
+                                       "related_products")}
+                            old = manifest["shared_inputs"].setdefault(
+                                logical, sealed)
+                            require(old == sealed,
+                                    "shared input/product changed during pair")
                         require(fingerprint(Path(info["physical"])) ==
                                 {k: info[k] for k in ("sha256", "bytes")},
                                 "loaded source changed during pair")
@@ -836,6 +846,9 @@ def main():
                         "harness input changed during experiment")
             for name, info in manifest["tools"].items():
                 require(fingerprint(repo / name) == info, "runtime/tool changed during pair")
+            if args.matrix_performance:
+                from audit_evidence import audit_manifest
+                audit_manifest(manifest)
         manifest["success"] = True
     except Exception as e:
         manifest["failure"] = str(e)

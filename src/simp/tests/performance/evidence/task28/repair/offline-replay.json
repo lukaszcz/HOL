@@ -1,0 +1,21 @@
+{
+  "command": [
+    "/usr/bin/python3",
+    "-B",
+    "src/simp/tests/performance/evidence/task28/repair/replay.py",
+    "--storage",
+    "/tmp/claude/task28-offline-replay-67zxqzbf/storage",
+    "--client",
+    "/tmp/claude/task28-offline-replay-67zxqzbf/client",
+    "--cong",
+    "/tmp/claude/task28-offline-replay-67zxqzbf/loading-cong",
+    "--simp",
+    "/tmp/claude/task28-offline-replay-67zxqzbf/loading-simp-smoke",
+    "--output",
+    "/tmp/claude/task28-offline-replay-67zxqzbf/replay.json"
+  ],
+  "exit": 0,
+  "stdout": "{\"source_bound_matrix_receipts\": 242, \"loading_receipts\": 48, \"replay\": \"pass\"}\n",
+  "every_decision_equal": true,
+  "original_scratch_removed": true
+}

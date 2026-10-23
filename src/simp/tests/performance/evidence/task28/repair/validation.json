@@ -1,0 +1,339 @@
+{
+  "schema": 1,
+  "landing": "TASK28-harness-review-repair-v2",
+  "starting_head": "c5595b85d7b1f5f7cfe4da6840fba773c166fa54",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "status": "all bounded TASK28 machinery criteria verified; TASK29 ready",
+  "production_source_edits": false,
+  "scope": "Linux/aarch64 Poly/ML 5.9.2; one GC thread; shared-heap source isolation only",
+  "inputs": {
+    "src/simp/tests/compatibility/run_paired.py": {
+      "sha256": "1244ac2a725ceaf12c522bbe820d941ec43c62c691c069f787dd25dae8607e39",
+      "bytes": 47058
+    },
+    "src/simp/tests/performance/ClientPerformance.sml": {
+      "sha256": "dc425d13ff0b8464db7adb14b36de409aa97e57f40f8f172681133ebdfa6adb3",
+      "bytes": 14725
+    },
+    "src/simp/tests/performance/ConditionalPerformance.sml": {
+      "sha256": "9fcdaff8001c9936afb5bb7c7c24032610c7e12ecf70110583bc677501814d9e",
+      "bytes": 5941
+    },
+    "src/simp/tests/performance/Holmakefile": {
+      "sha256": "31d92800727c58c30588f0cee6c7c49b51ff9f91ef12d0cf333eeee179bc32a9",
+      "bytes": 3286
+    },
+    "src/simp/tests/performance/MATRIX.md": {
+      "sha256": "2e9e4488e34cf3bdf6a6e1d47d10651fd98c78bd475599f79e21595e8c1cc78b",
+      "bytes": 18217
+    },
+    "src/simp/tests/performance/MatrixPerformance.sml": {
+      "sha256": "9b3ebfb8d4eaf1ec460856975db52440f64d95d2f390c39c174129b26cecdf30",
+      "bytes": 3953
+    },
+    "src/simp/tests/performance/MatrixSupport.sml": {
+      "sha256": "03548dcefd8e9489cc4cca757db93dc28c15b3cf047931424a27dce55980a1af",
+      "bytes": 22453
+    },
+    "src/simp/tests/performance/PROTOCOL.md": {
+      "sha256": "fa0d8d78b10ef118ef55838994401331fad4f0ab547526655a5b8ab9f231f229",
+      "bytes": 19028
+    },
+    "src/simp/tests/performance/PROTOCOL_LOADING.md": {
+      "sha256": "9c70c1f46886635dbb44aa2582b10680a44efec56f68ae21601436592fe464ba",
+      "bytes": 8473
+    },
+    "src/simp/tests/performance/Performance.sml": {
+      "sha256": "6296de2ef6db9c3cfa3e90372f9680be4691b4dee4e5d03cd159248e0a13e6ea",
+      "bytes": 5891
+    },
+    "src/simp/tests/performance/README.md": {
+      "sha256": "7e571fcec4170b870ebfafa1693cb95aba93de9e7377f32a81cefaff838cf915",
+      "bytes": 23917
+    },
+    "src/simp/tests/performance/RuntimeMetrics.sml": {
+      "sha256": "7b5ac22e6bbbe56fbe9401ae0b6a30c8f3d3d79fcc7a0eff3bbcfa09521a0dbd",
+      "bytes": 7326
+    },
+    "src/simp/tests/performance/TASK_03_HANDOFF.md": {
+      "sha256": "56641569b16bfabe49002b2698caa1d2e2757c87536b44ecb6b8b024987a2a97",
+      "bytes": 12571
+    },
+    "src/simp/tests/performance/TASK_28_HANDOFF.md": {
+      "sha256": "a542384b62df0c50b3136b6d41234d527b9a228e241d17b345ef1eb829e1227a",
+      "bytes": 22292
+    },
+    "src/simp/tests/performance/TraversalPerformance.sml": {
+      "sha256": "e78e4b2a551b3fbab17ec01264654b9ba018966a5372d8afe466cd034e6075ba",
+      "bytes": 5907
+    },
+    "src/simp/tests/performance/acceptance.py": {
+      "sha256": "f40defa66a64ca8d53744745de2678511b6a52eca490d3e048312081c6572534",
+      "bytes": 34210
+    },
+    "src/simp/tests/performance/audit_evidence.py": {
+      "sha256": "c59436ed5314dd9daf0da8da7f77462de49895dfb8ddf6648b5a7b0aa2cf4c54",
+      "bytes": 17256
+    },
+    "src/simp/tests/performance/client_dependencies.py": {
+      "sha256": "589fc81abb838dabc49d75b02de0c9c1421afb7bba6369ead54a07e1dd55a66b",
+      "bytes": 11174
+    },
+    "src/simp/tests/performance/evidence/task28/repair/README.md": {
+      "sha256": "9fb6dc221e13554f1d619e9c2f92e36c7c8640a5c6e33477cf839edb1fbe0946",
+      "bytes": 3712
+    },
+    "src/simp/tests/performance/evidence/task28/repair/replay.py": {
+      "sha256": "df3c061a51d0e4dd745c471c9379b4ddc263374831fd1a05593a34f8d1e92178",
+      "bytes": 8602
+    },
+    "src/simp/tests/performance/evidence_bundle.py": {
+      "sha256": "a989e8b177e6237d9cb1a5b3001aa73c1dac5bac060627fb055fd44ae3c78807",
+      "bytes": 4040
+    },
+    "src/simp/tests/performance/loading.py": {
+      "sha256": "eafcac0100d78182e8db367f84979c2fbad48ea56a2584fe4c3cbc62c4a02879",
+      "bytes": 24835
+    },
+    "src/simp/tests/performance/matrix.json": {
+      "sha256": "a7c87b2bfc7fb8e94efeee70672bae20fa00a83b8e95dabc2ad045b669bdc91b",
+      "bytes": 23994
+    },
+    "src/simp/tests/performance/matrix_schema.py": {
+      "sha256": "3941a6fffd42d8f4b0fce40b2fc8d4ab977659595998ae5f9cd27aff818e076c",
+      "bytes": 23517
+    },
+    "src/simp/tests/performance/performance_schema.py": {
+      "sha256": "b7dff5f1d8e15ac19fea1cfc15f6d3d80adeecdb6251af5f7a0f8d6efaa85f69",
+      "bytes": 8325
+    },
+    "src/simp/tests/performance/runtime_metrics.py": {
+      "sha256": "8b5ef218a1402710450786adb432f608fa82ca74917c1747a95f24b64a1b9dcb",
+      "bytes": 15446
+    },
+    "src/simp/tests/performance/smoke_clients.py": {
+      "sha256": "07d52df6a87f464907352bf61d9cf4936a1fe447d7087eedab08a9c857f3bf48",
+      "bytes": 16290
+    },
+    "src/simp/tests/performance/smoke_matrix.py": {
+      "sha256": "7bba227087ae821bb76dc9a5bd6196e891fa15c31f122c197a89043c51a2ee26",
+      "bytes": 15216
+    },
+    "src/simp/tests/performance/summarize.py": {
+      "sha256": "fd2c9cbce1c334bcc8bdd98e0a905d54ecdd3ed50eab7632ba1d9923279d4d24",
+      "bytes": 4637
+    },
+    "src/simp/tests/performance/test_acceptance.py": {
+      "sha256": "19a9a4f39555f7db9db379effa441bcdceac0c83a6489050c6c191f49bb9476f",
+      "bytes": 38372
+    },
+    "src/simp/tests/performance/test_acceptance_decisions.py": {
+      "sha256": "4e445a93a0cfcde24452efd88a91f5d985b19b3e63bbc099f5a7fd9eff510dd7",
+      "bytes": 4900
+    },
+    "src/simp/tests/performance/test_archive_provenance.py": {
+      "sha256": "ffb700e10d23603089ad89f62de62bbb55b13ede0e1dd3612490766d6a704035",
+      "bytes": 13006
+    },
+    "src/simp/tests/performance/test_client_dependencies.py": {
+      "sha256": "a19e3eab615d94b5d117298f8cf7edb0726878e4bc632eafe86947c89eb48cd1",
+      "bytes": 13628
+    },
+    "src/simp/tests/performance/test_conditional_performance.py": {
+      "sha256": "d2e948b1283dbae46b7f4c34fae916f46681cba81758c01358700092959b1390",
+      "bytes": 14930
+    },
+    "src/simp/tests/performance/test_evidence_bundle.py": {
+      "sha256": "9691acda753bb104cc9c944bca80933594f218edd2437cf7c2e25ce08364bd96",
+      "bytes": 2281
+    },
+    "src/simp/tests/performance/test_loading.py": {
+      "sha256": "c09a09cee5e76e6b1f3a401dcde8c723ba30659fc0bbfa762e4ce8e0826c1978",
+      "bytes": 17136
+    },
+    "src/simp/tests/performance/test_matrix.py": {
+      "sha256": "094c2ad8b46662b8050f3db79c7b4c7886da6324350cb03e4fbdd86da55819c7",
+      "bytes": 23764
+    },
+    "src/simp/tests/performance/test_matrix_protocol.py": {
+      "sha256": "18c2858d9399ef3463aa7c9098489dd1b96264c845fcd607cd4934bcf8d14f0b",
+      "bytes": 5026
+    },
+    "src/simp/tests/performance/test_performance.py": {
+      "sha256": "09780efc696905a3756838c5526be0c2318bcaf7aa5403461deba0260c4a1b40",
+      "bytes": 4044
+    },
+    "src/simp/tests/performance/test_runtime_metrics.py": {
+      "sha256": "4282d85de82bc9bb4213bb917c952244aae0a2a970e8e2db478b8f6f743b4301",
+      "bytes": 13478
+    },
+    "src/simp/tests/performance/test_traversal_performance.py": {
+      "sha256": "2f45eefb064e77011bc5a1609af0b6803d4bc8684d7eda68cb43f3d05f3c3783",
+      "bytes": 10832
+    }
+  },
+  "checks": [
+    {
+      "command": "python3 -B src/simp/tests/performance/evidence/task28/review/review_regressions.py -v",
+      "exit": 0,
+      "tests": 6,
+      "evidence": "review-tests.log.gz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh bin/Holmake --no-project --no-cache --no_prereqs --holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0 -C src/simp/tests/performance -j1 PERFORMANCE_CHECK_OUTPUT=/tmp/task28-repair-holmake check",
+      "exit": 0,
+      "tests": 224,
+      "optional_skips": 2,
+      "runner_tests": 13,
+      "matrix_checks": 306,
+      "client_checks": 336,
+      "evidence": [
+        "holmake.log.gz",
+        "holmake.json.xz"
+      ]
+    },
+    {
+      "command": "python3 -B -m unittest discover -s src/simp/tests/compatibility -p 'test_*.py'",
+      "exit": 0,
+      "tests": 196,
+      "evidence": "compatibility-tests.log.gz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh python3 -B src/simp/tests/performance/acceptance.py run --candidate c5595b85d7b1f5f7cfe4da6840fba773c166fa54 --case storage_graph --size 0 --size 1 --size 10 --size 100 --size 1000 --size 10000 --pairs 10 --samples 3 --batch-seconds 0.1 --authorize-measurements --timeout 300 --output /tmp/task28-repair-storage",
+      "exit": 2,
+      "protocol_complete": false,
+      "failure": "batch too short; recalibrate",
+      "evidence": "rejected-short-batch.json.xz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh python3 -B src/simp/tests/performance/acceptance.py run --candidate c5595b85d7b1f5f7cfe4da6840fba773c166fa54 --case storage_graph --size 0 --size 1 --size 10 --size 100 --size 1000 --size 10000 --pairs 10 --samples 3 --batch-seconds 0.3 --authorize-measurements --timeout 300 --output /tmp/task28-repair-storage-final",
+      "exit": 1,
+      "protocol_complete": true,
+      "timed_processes": 240,
+      "performance_pass": false,
+      "evidence": [
+        "storage.json.xz",
+        "replay.json.gz"
+      ]
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh python3 -B src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate c5595b85d7b1f5f7cfe4da6840fba773c166fa54 --module congLib --pairs 10 --api-audit /home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/api-audit/evidence/20261023T121652Z-d08b8d83/receipt.json --authorize-measurements --output /tmp/task28-repair-loading-cong",
+      "exit": 2,
+      "protocol_complete": true,
+      "processes": 42,
+      "performance_pass": false,
+      "evidence": "loading-cong.json.xz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh python3 -B src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate c5595b85d7b1f5f7cfe4da6840fba773c166fa54 --module simpLib --pairs 1 --smoke --authorize-measurements --output /tmp/task28-repair-loading-simp",
+      "exit": 0,
+      "protocol_complete": true,
+      "processes": 6,
+      "scope": "smoke only",
+      "evidence": "loading-simp-smoke.json.xz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh python3 -B src/simp/tests/compatibility/run_paired.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate c5595b85d7b1f5f7cfe4da6840fba773c166fa54 --candidate-signature pass --candidate-behavior baseline --negative-controls --matrix-performance --performance-case downstream_boss --performance-size 0 --performance-pairs 1 --samples 3 --batch-seconds 0.3 --timeout 300 --output /tmp/task28-repair-client",
+      "exit": 0,
+      "negative_controls_rejected": 12,
+      "timed_processes": 2,
+      "scope": "protocol only",
+      "evidence": "client.json.xz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh env HOL_CLIENT_REPO=/home/lukasz/dev/HOL/worktrees/simplifier python3 -B -m unittest discover -s src/simp/tests/performance -p test_client_dependencies.py -v",
+      "exit": 0,
+      "tests": 9,
+      "evidence": "real-client-tests.log.gz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh env RUNTIME_METRICS_SML=1 RUNTIME_METRICS_EVIDENCE=/tmp/task28-repair-runtime.json python3 -B src/simp/tests/performance/test_runtime_metrics.py",
+      "exit": 0,
+      "tests": 23,
+      "evidence": [
+        "real-runtime-tests.log.gz",
+        "runtime.json.gz",
+        "runtime.log.gz"
+      ]
+    },
+    {
+      "command": "python3 -B src/simp/tests/performance/evidence/task28/repair/replay.py --storage /tmp/task28-repair-storage-final --client /tmp/task28-repair-client --cong /tmp/task28-repair-loading-cong --simp /tmp/task28-repair-loading-simp --output /tmp/task28-repair-replay-final.json",
+      "exit": 0,
+      "matrix_receipts": 242,
+      "loading_receipts": 48,
+      "evidence": [
+        "replay.json.gz",
+        "replay.log.gz"
+      ]
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 0,
+      "evidence": "routine.log.gz",
+      "fresh_api_receipt": "src/simp/tests/api-audit/evidence/20261023T134511Z-2d38606e/receipt.json"
+    },
+    {
+      "command": "python3 -B src/simp/tests/performance/matrix_schema.py",
+      "exit": 0,
+      "requirements": 69,
+      "cases": 107,
+      "evidence": "matrix-completeness.log.gz"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/coverage_ledger.py",
+      "exit": 0,
+      "cases": 2153,
+      "evidence": "coverage.log.gz"
+    },
+    {
+      "command": "python3 -B src/simp/tests/compatibility/verify_evidence.py",
+      "exit": 0,
+      "inputs": 37,
+      "evidence": "immutable.log.gz"
+    },
+    {
+      "command": "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh tools/h4pedant/h4pedant --nolinelen --unicodeok src/simp/tests/performance",
+      "exit": 0,
+      "evidence": "pedant.log.gz"
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    },
+    {
+      "command": "evidence_bundle.pack/unpack; compare every original byte in all six bundles",
+      "exit": 0,
+      "evidence": "bundle-roundtrip.json"
+    },
+    {
+      "command": "recheck original TASK28 evidence seals",
+      "exit": 0,
+      "files": 49,
+      "evidence": "historical-seals.json"
+    },
+    {
+      "command": "evidence_bundle.unpack then replay.py in a new temporary directory after original scratch deletion",
+      "exit": 0,
+      "evidence": "offline-replay.json",
+      "every_decision_equal": true
+    }
+  ],
+  "policy": {
+    "minimum_pairs": 10,
+    "outliers": "none removed",
+    "estimator": "median of paired candidate/baseline ratios",
+    "bootstrap": "20000 paired resamples; seed 3003; ranks 499/19499",
+    "decision": "low > 1: fail; high <= 1: pass; otherwise inconclusive",
+    "zero_denominator": "inconclusive, including 0/0; no pairs dropped",
+    "budgets": null
+  },
+  "limitations": [
+    "not final numerical performance acceptance; CPU/wall failures remain published",
+    "historical matrix archives without shared_inputs fail strict admission",
+    "private-product completeness was tightened after measurement; all archives revalidated",
+    "seven explicit stronger prerequisites unchanged in matrix.json",
+    "routine build followed experiments: no final-build-product performance claim",
+    "no independent builds or additional runtime/platform measurement"
+  ],
+  "cleanup": "Task-owned private/unpacked trees and temporary outputs removed after sealing; caller-owned review files, old caches and ordinary build products preserved"
+}

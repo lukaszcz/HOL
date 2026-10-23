@@ -181,6 +181,26 @@ class LoadingProtocol(unittest.TestCase):
         self.assertEqual(l.numbers(RAW.replace("0.4", "4E~1"))["nongc_usr"],
                          0.4)
 
+    def test_forced_gc_must_exercise_both_gc_timer_views(self):
+        for raw in ("0,0,0,0,0,0,0,0",
+                    "1,0.4,0.1,0,0,0.4,0.1,0",
+                    "1,0.4,0.1,0.001,0,0.401,0.1,0",
+                    "1,0.4,0.1,0,0,0.4,0.1,0.001"):
+            es = copy.deepcopy(self.events)
+            for event in es:
+                if event[:2] == ["observation", "timer.accounting"]:
+                    event[2] = raw
+            with self.subTest(raw=raw), self.assertRaisesRegex(
+                    ValueError, "did not exercise GC"):
+                self.check(es)
+
+    def test_zero_gc_import_is_allowed_after_positive_control(self):
+        es = copy.deepcopy(self.events)
+        for event in es:
+            if event[:2] == ["observation", "loading.raw"]:
+                event[2] = "1,0.4,0.1,0,0,0.4,0.1,0"
+        self.assertEqual(self.check(es)[1]["raw"]["gc_cpu"], 0)
+
     def test_sub_resolution_import_is_inconclusive_not_rebatched(self):
         es = copy.deepcopy(self.events)
         for e in es:

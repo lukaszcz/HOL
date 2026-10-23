@@ -1,0 +1,32 @@
+[
+  {
+    "bundle": "storage",
+    "files": 337,
+    "every_original_byte_equal": true
+  },
+  {
+    "bundle": "rejected-short-batch",
+    "files": 269,
+    "every_original_byte_equal": true
+  },
+  {
+    "bundle": "client",
+    "files": 21,
+    "every_original_byte_equal": true
+  },
+  {
+    "bundle": "loading-cong",
+    "files": 45,
+    "every_original_byte_equal": true
+  },
+  {
+    "bundle": "loading-simp-smoke",
+    "files": 9,
+    "every_original_byte_equal": true
+  },
+  {
+    "bundle": "holmake",
+    "files": 5,
+    "every_original_byte_equal": true
+  }
+]

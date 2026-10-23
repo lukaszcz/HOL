@@ -72,7 +72,11 @@ wall,nongc_usr,nongc_sys,gc_usr,gc_sys,cpu_usr,cpu_sys,gc_user_only
 GC CPU and must not be added to inclusive CPU. Sequential snapshots are checked
 for agreement within 0.02s. Reported metrics are wall, inclusive CPU, and GC
 CPU (`gc_usr+gc_sys`). Process-launch wall time is archived separately; it is
-not an import metric. All fields must be finite and nonnegative.
+not an import metric. All fields must be finite and nonnegative. The
+forced-GC control must additionally show positive GC CPU and positive GC-user
+time; an all-zero or otherwise vacuous control rejects the process. Zero GC
+in the actual import is allowed after that positive accounting control, but
+undefined paired GC ratios remain inconclusive.
 
 One pilot per selected revision precedes measurements. Each pilot and each
 measured import must exceed 100 times both its own empty-bracket overhead and
@@ -86,7 +90,7 @@ mandatory. Each has at least ten fresh process pairs. Pair 0 is AB, pair 1 BA,
 and so on. In the B/B phase both labels execute the same private baseline
 launcher, but remain distinct fresh processes. Pilots are excluded from paired
 statistics. No sample/outlier is removed. Controls are never subtracted as a
-noise budget. A control slowdown prevents a candidate pass (inconclusive),
+noise budget. A failed or uncertain control prevents a candidate pass,
 while a reproducible candidate slowdown remains a failure.
 
 Statistics reuse `acceptance.paired_statistics`: median paired candidate /

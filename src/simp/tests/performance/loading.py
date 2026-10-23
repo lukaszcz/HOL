@@ -145,6 +145,8 @@ def observations(events, module):
                     Path(e[1]).stem in MODULES for e in events[:start]),
             "ordinary source loaded before timer")
     accounting, empty, raw = [numbers(obs[i][2]) for i in (0, 1, 4)]
+    require(accounting["gc_cpu"] > 0 and accounting["gc_user_only"] > 0,
+            "forced-GC accounting control did not exercise GC")
     # Operational calibration: first import cannot be batched in one process.
     # Require >=100x empty-bracket overhead AND the 1us timer granularity.
     calibrated = all(raw[k] >= 100 * max(empty[k], 1e-6)
@@ -452,11 +454,7 @@ def run(args):
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():
                         control = results["control"]["metrics"][metric]
-                        data["control_decision"] = control["decision"]
-                        if control["decision"] == "fail" and \
-                                data["decision"] != "fail":
-                            data["decision"] = "inconclusive"
-                            data["reason"] = "baseline-control slowdown"
+                        a.apply_control(data, control)
                         if not all(m["calibrated"] for m in
                                    report["calibration"]):
                             data["decision"] = "inconclusive"

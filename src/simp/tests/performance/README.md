@@ -24,6 +24,14 @@ builds**. Manifest verification is runnable, but independent mode still blocks
 until fresh independent launchers, inventories and consumed observations exist.
 Earlier temporary validation is not final evidence for changed source/fixtures.
 
+The TASK28 review repair requires manifest-bound shared sources/products and
+exact runtime/tool/launcher provenance; old matrix archives without
+`shared_inputs` are historical diagnostics, not admissible acceptance data.
+Storage slopes and their controls/uncertainty participate in CLI exits, and
+loading must exercise positive GC in its accounting control. Current commands,
+raw repair receipts and replay/mutation results are in
+[`TASK_28_HANDOFF.md`](TASK_28_HANDOFF.md) and `evidence/task28/repair/`.
+
 ### Maintained checks
 
 From the repository root, using new output paths each time:
@@ -41,10 +49,11 @@ bin/Holmake --no-project --no-cache --no_prereqs \
   PERFORMANCE_CHECK_OUTPUT=/absolute/path/to/new-task28-check check
 ```
 
-`python-tests` discovers all performance tests (191 at integration, with real
-HOL tests skipped unless enabled), plus compatibility runner tests. `check`
+`python-tests` discovers all performance tests (224 after review repair, with
+real HOL tests skipped unless enabled), plus compatibility runner tests. `check`
 serially runs discovery, matrix completeness, real Python subprocess controls,
-then `smoke_matrix.py --scope small`. It does **not** run performance acceptance,
+then `smoke_matrix.py` and `smoke_clients.py --scope small`. It does **not** run
+performance acceptance,
 loading measurements, runtime smoke or expensive full-grid cases implicitly.
 Plain Holmake retains the Python-test default; `diagnostic` retains its original
 six-pair TASK03 settings and separate `PERFORMANCE_OUTPUT` paths.
@@ -57,6 +66,7 @@ Other explicit targets in `src/simp/tests/performance/Holmakefile`:
 | `controls` | Actual Python slowdown/allocation/failed/missing subprocess controls; not Poly allocation |
 | `smoke` | `smoke_matrix.py`; 51 MatrixSupport cases at 0/1/10 on both selections by default, not all 107 cases |
 | `runtime-smoke` | Actual SML GC counts/RSS and controlled-ref collection on both selections, untimed |
+| `client-smoke` | All 56 client construction/reuse/complete cases at 0/1/10 on both selections |
 
 Set `PERFORMANCE_BASELINE` (default pinned develop), `PERFORMANCE_CANDIDATE`
 (default HEAD, resolved and recorded by smoke drivers), and

@@ -1,15 +1,122 @@
 # TASK28 — expanded acceptance machinery
 
+## Current completion: review repair v2
+
+Landing identifier: **TASK28-harness-review-repair-v2** (containing commit).
+Repair start and measured implementation: `c5595b85d7b1f5f7cfe4da6840fba773c166fa54`.
+Develop remains `cccaa27d7099cbadc886983020cbe745db7793f3`.
+
+**All bounded TASK28 criteria now pass.** The six supplied review regressions
+pass, with maintained rejection/CLI coverage and fresh real protocol evidence.
+TASK29 is ready. This is machinery readiness, not numerical P09 acceptance.
+The unchanged 69-requirement/107-case matrix still has seven explicit
+prerequisite blocks for later gates. No production SML, API, layout, mutable
+control, test assertion or extension capability changed in this repair.
+
+### Repairs and admission contract
+
+- `acceptance.py` includes every requested retained-storage slope in its CLI
+  decision, not just point metrics. Missing size grids, undefined/nonmonotonic
+  slopes and uncertainty cannot exit zero. Failed **or uncertain** baseline
+  controls prevent candidate parity claims for both point metrics and slopes;
+  neither can excuse a candidate failure. Protocol `success` remains distinct
+  from per-workload pass/fail/inconclusive decisions.
+- `run_paired.py` seals shared logical/physical source and related-product
+  inventories, checks live bytes and consistency across processes, then runs
+  strict manifest admission. `audit_evidence.py` binds archived shared sources
+  and complete related products to that inventory, validates normalized paths
+  without touching deleted roots, and checks private product completeness too.
+  Matrix runtime admission requires exact one-GC-thread/heap options, required
+  runtime/tool fingerprints, sealed successful compiler-version/library
+  discovery commands and library hashes, successful selected builds, and
+  matching launcher text/options/product hashes. These are local provenance
+  consistency checks, not hostile-producer authentication or clean builds.
+- `loading.py` rejects forced-GC controls without positive GC CPU **and**
+  GC-user evidence. Zero-GC actual imports remain valid observations, with
+  undefined paired ratios inconclusive. Loading uses the same strict control
+  uncertainty policy as the point/slope gates.
+- `test_acceptance_decisions.py`, `test_archive_provenance.py`, and existing
+  acceptance/loading tests preserve all six review cases plus product deletion,
+  path normalization, runtime/launcher/tool faults and every CLI outcome.
+  The original review directory is caller-supplied, unchanged input.
+
+**Historical matrix bundles below are no longer admissible for acceptance:**
+without a manifest-level `shared_inputs` inventory they fail closed. Their
+original observations/seals remain unchanged historical diagnostics; the
+inventory is never manufactured retrospectively from the receipts. Legacy
+non-matrix diagnostic audits retain their original contract. The fresh repair
+bundles use the new schema and replay through the current strict validator.
+
+### Fresh validation and exact scope
+
+All paths here are relative to `evidence/task28/repair/`. `validation.json`
+records exact commands/exits/input hashes; `replay.json.gz` records individual
+metric/slope decisions and real archive mutations. `replay.py` revalidates
+complete archives and recomputes statistics after lossless bundle unpack.
+
+- Supplied `review/review_regressions.py -v`: **6/6 pass**, exit 0.
+- Maintained `Holmake check`: exit 0; **224 Python tests**, two optional
+  real-runtime skips separately executed below; **13 runner tests**, real
+  slowdown/allocation/missing/failed controls, all **306 fragment-grid** and
+  **336 client-stage** smoke checks. Compatibility discovery: **196 pass**.
+- Full six-size `storage_graph` experiment: **240 timed fresh processes**,
+  ten B/B and ten B/C AB/BA pairs per size, three samples, 0.3s calibration.
+  Every receipt passes current strict admission. All ten candidate and ten
+  control adjacent graph slopes pass; all point graph increments pass.
+  CPU/wall fail at sizes 10 and 10000; other timing/GC decisions are
+  inconclusive. CLI correctly exits **1**, protocol complete. These timing
+  regressions remain published inputs to TASK29, not waived or declared fixed.
+- The earlier **whole** 0.1s six-size attempt correctly failed on a too-short
+  batch at size 1000, CLI **2**. `rejected-short-batch.json.xz` keeps every
+  observation, including completed earlier sizes. No favorable subset was
+  reused in the separate, predeclared 0.3s whole-experiment rerun.
+- Fresh downstream-boss client: both source versions pass with **799/801**
+  actual source paths and **12 executable fault controls** rejected. Its two
+  timing processes are protocol checks, not ten-pair performance acceptance.
+  Optional real client tests: **9/9 pass**, rebuilding 122/121 shared dependent
+  modules; real runtime/release/count/RSS tests: **23/23 pass**.
+- Fresh congLib loading: **42 processes**, pilots plus both ten-pair AB/BA
+  experiments, source-bound eight-process semantic prerequisite, all metrics
+  inconclusive, CLI **2**. SimpLib smoke: **6 processes**, CLI **0**, explicitly
+  not statistical acceptance. Forced-GC CPU minima: **0.003294/0.003398s**.
+  Replacing the accounting control with zero rejects **every one of the 48**
+  archived processes. Loading statistics are independently replayed.
+- `replay.py`: **242 strict source-bound matrix receipts**, all **48 loading
+  receipts**, source/product/path/tool/runtime mutations rejected on real
+  fragment and client archives. The final private-product-completeness guard
+  was added after measurement, then all archives were revalidated with it;
+  benchmark fixture/implementation bytes did not change.
+- Routine `bin/build -t --seq=tools/sequences/upto-parallel`: exit 0; ordinary,
+  extension, strict post-list native and fresh API-audit suites stay enabled.
+  Fresh eight-process receipt:
+  `../api-audit/evidence/20261023T134511Z-2d38606e/receipt.json`.
+- Completeness ledger, **2,153 coverage IDs**, **37 immutable inputs**, pedant
+  and whitespace checks all pass. No compiled-source edit required the build;
+  it was additionally rerun to verify normal integration. It occurred after
+  experiments; no final-revision performance/build-product parity is claimed.
+
+Linux/aarch64, Poly/ML 5.9.2, one GC thread, configured shared `hol.state0`.
+Commands used the existing `root-wrapper.sh` to bind the recorded historical
+configured root to this exact checkout. Inputs, actual process exits, options,
+raw timings, graphs and telemetry remain in the lossless XZ bundles. All
+agent-created scratch trees, unpacked bundles and temporary logs were removed
+once sealed; caller-owned review files, old caches and ordinary build products
+were preserved. No TASK28 machinery blocker remains; stronger unsupported
+allocation/peak/lifetime/independent-build prerequisites remain explicit at
+the affected later gates, as allowed by this task.
+
+## Original v1 handoff (historical; review invalidated completion claim)
+
 Landing identifier: **TASK28-expanded-harness-v1** (containing commit).
 Starting/measured candidate: `c2d8fb1c37e8920b35d4ffc23a7b5cce3d6c08e9`.
 Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 Starting main worktree was clean; unrelated nested `.agent-files` state was
 preserved. Linux/aarch64, Poly/ML 5.9.2, one GC thread, configured `hol.state0`.
 
-**The bounded TASK28 acceptance criteria are satisfied.** Every P09 requirement
-has a verified runnable fixture/external command or an explicit prerequisite
-block. This completes machinery, **not P09 performance acceptance**. TASK29 is
-ready to use it; none of TASK29–33's performance gates is declared passed.
+The original completion claim was invalidated by six review regressions.
+The v2 repair and evidence above supersede that claim and archived admission
+results below. The original workload fixtures and prerequisite ledger remain
+unchanged. None of TASK29–33's numerical performance gates is declared passed.
 
 ## Catalog and verified outputs
 
