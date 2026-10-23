@@ -20891,7 +20891,42 @@ let
        Feedback.top_structure_of error = "SmtResource" andalso
        String.isSubstring "resource-gate:BitVector:skeleton-type-work"
          (Feedback.message_of error))
+  (* Independent exponentially unfolded DAGs must align nodewise, even
+     when bounded routing sees the same prefix on a late mismatch. *)
+  val independent_left = shared_sum 80
+  val independent_right = shared_sum 80
+  fun wrong_sum 0 = ``task21_cnf_wrong_leaf:num``
+    | wrong_sum depth =
+        let val child = wrong_sum (depth-1)
+        in numSyntax.mk_plus (child,child) end
+  fun mismatch left right =
+    assert (((ignore (SmtSkeletonProve.bounded_nodewise_equality 8192
+        left right);false) handle Feedback.HOL_ERR _ => true),
+      "nodewise skeleton equality accepted mismatching DAGs")
+  val _ = mismatch independent_left (wrong_sum 80)
+  val _ = mismatch independent_left numSyntax.zero_tm
+  val _ = mismatch ``task21_mixed:bool`` ``task21_mixed:num``
+  val independent_equality = SmtSkeletonProve.bounded_nodewise_equality 8192
+    independent_left independent_right
+  val _ = assert (Portable.pointer_eq
+      (boolSyntax.lhs (Thm.concl independent_equality),independent_left)
+      andalso Portable.pointer_eq
+      (boolSyntax.rhs (Thm.concl independent_equality),independent_right)
+      andalso null (Thm.hyp independent_equality),
+    "nodewise skeleton equality lost an independent DAG endpoint")
+  val _ = check_oracle_tags "independent skeleton equality"
+    independent_equality
+  val asymmetric_type_rejected =
+    ((SmtSkeletonProve.bounded_nodewise_equality 16
+        (typed_identity "task21_small_left" Type.bool)
+        (typed_identity "task21_large_right" (shared_product 21)); false)
+     handle Feedback.HOL_ERR error =>
+       Feedback.top_structure_of error = "SmtResource" andalso
+       String.isSubstring "resource-gate:BitVector:skeleton-type-work"
+         (Feedback.message_of error))
 in
+  assert (asymmetric_type_rejected,
+    "right binder bypassed independent type-work admission");
   check ("typed CNF all connectives", connective_target, connective_result);
   check ("typed CNF opaque shared atoms", opaque_target, opaque_result);
   check ("typed CNF alpha/shadow atoms", alpha_target, alpha_result);
@@ -27569,6 +27604,136 @@ in
     "compact placeholder freshness or late-collision guard failed")
 end
 
+(* Exercise distinct application IDs, not just the interned node = node
+   case. Equal bounded hints deliberately collide below their sample depth. *)
+fun replay_graph_identity_success () =
+let
+  fun checked graph left right theorem =
+    let val (l,r) = boolSyntax.dest_eq (Thm.concl theorem)
+    in assert (ptr l (G.representative graph left) andalso
+        ptr r (G.representative graph right) andalso null (Thm.hyp theorem),
+        "nodewise equality lost exact endpoints or acquired hypotheses");
+       check_oracle_tags "typed graph identity" theorem end
+  fun sample (depth,width) =
+    let
+      val graph = G.new ()
+      val root = G.root_scope graph
+      val frame = G.new_scope graph root []
+      fun leaf () = Term.mk_var ("identity_leaf",Type.bool)
+      val left = shared depth (leaf ())
+      val right = shared depth (leaf ())
+      val _ = assert (not (ptr left right),
+        "independent DAG fixture reused its root")
+      val a = G.import graph root 8192 left
+      val b = G.import graph root 8192 right
+      val c = G.import graph frame 8192 right
+      val _ = List.app (fn (term,s) => source_bridge graph term s)
+        [(left,a),(right,b),(right,c)]
+      val _ = assert (#node a = #node b andalso #node a <> #node c,
+        "bottom-up interning or scope-sensitive application key lost")
+      val saved = valOf (G.source_anchor graph (#node a))
+      val _ = assert (ptr (#original saved) left andalso
+          ptr (#bridge saved) (#bridge a),
+        "independent import replaced the retained first Source bridge")
+      val theorem = G.equality graph (#node a,#node c)
+      val _ = checked graph (#node a) (#node c) theorem
+      val _ = checked graph (#node a) (#node c)
+        (G.equality graph (#node a,#node c))
+      val _ = source_bridge graph left (G.import graph root 8192 left)
+      fun column index =
+        let val suffix = Term.mk_var
+              ("identity_column_" ^ Int.toString index,Type.bool)
+            val l = boolSyntax.mk_conj (left,suffix)
+            val r = boolSyntax.mk_conj (right,suffix)
+            val x = G.import graph root 8192 l
+            val y = G.import graph frame 8192 r
+        in checked graph (#node x) (#node y)
+             (G.equality graph (#node x,#node y)) end
+      val _ = List.app column (List.tabulate (width,fn i => i))
+      (* Same four sampled levels, unequal deep leaves. No hash/ID hit
+         may establish equality; a failed comparison must not be cached. *)
+      val wrong = shared depth
+        (Term.mk_var ("identity_wrong",Type.bool))
+      val _ = assert (SmtReplayImport.pointer_bucket 4 4093 left =
+          SmtReplayImport.pointer_bucket 4 4093 wrong,
+        "forced collision fixture no longer collides")
+      val bad = G.import graph frame 8192 wrong
+      val _ = source_bridge graph wrong bad
+      fun mismatch l r = assert (rejected (fn () =>
+        ignore (G.equality graph (l,r))), "unequal DAGs acquired a bridge")
+      val _ = mismatch (#node a) (#node bad)
+      val _ = mismatch (#node a) (#node bad)
+      val head = G.variable graph frame G.RigidSource
+        (Term.mk_var ("identity_bad_head",Type.bool))
+      val _ = mismatch (#node a) head
+    in checked graph (#node a) (#node c)
+         (G.equality graph (#node a,#node c)) end
+  val _ = List.app sample [(24,1),(80,8),(160,32)]
+  val opaque_graph = G.new ()
+  val opaque_root = G.root_scope opaque_graph
+  fun opaque binder = G.import opaque_graph opaque_root 8192
+    (large_binder binder (shared 80 boolSyntax.T))
+  val opaque_left = opaque (Term.mk_var ("opaque_left",Type.bool))
+  val opaque_right = opaque (Term.mk_var ("opaque_right",Type.bool))
+  val _ = assert (rejected (fn () => ignore (G.equality opaque_graph
+      (#node opaque_left,#node opaque_right))),
+    "independent unadmitted binder reached an ALPHA fallback")
+  val graph = G.new ()
+  val root = G.root_scope graph
+  val bool_eq = G.constant graph root
+    (Term.rator (Term.rator (boolSyntax.mk_eq (boolSyntax.T,boolSyntax.T))))
+  val num_eq = G.constant graph root
+    (Term.rator (Term.rator
+      (boolSyntax.mk_eq (numSyntax.zero_tm,numSyntax.zero_tm))))
+  val _ = assert (bool_eq <> num_eq andalso
+      G.type_id graph bool_eq <> G.type_id graph num_eq andalso
+      rejected (fn () => ignore (G.equality graph (bool_eq,num_eq))),
+    "polymorphic declaration instantiations were conflated")
+  val x = G.variable graph root G.RigidSource
+    (Term.mk_var ("identity_mixed",Type.bool))
+  val n = G.variable graph root G.RigidSource
+    (Term.mk_var ("identity_mixed",numSyntax.num))
+  val partial = G.application graph root (bool_eq,x)
+  val _ = assert (x <> n andalso rejected (fn () =>
+      ignore (G.application graph root (partial,n))),
+    "same-name mixed-type operand passed checked application")
+  (* Same spelling AND instantiated type, but different declaration epoch.
+     Leave no test declaration behind, including on an assertion failure. *)
+  val name = "replay_identity_declaration"
+  fun declaration () = Term.mk_const (name,Type.bool)
+  fun declarations () =
+    let val _ = Theory.new_constant (name,Type.bool)
+        val old_term = declaration ()
+        val a = G.constant graph root old_term
+        val _ = Theory.delete_const name
+        val _ = Theory.new_constant (name,Type.bool)
+        val after = declaration ()
+        val b = G.constant graph root after
+    in assert (#Name (Term.dest_thy_const old_term) =
+          #Name (Term.dest_thy_const after) andalso a <> b andalso
+          rejected (fn () => ignore (G.equality graph (a,b))),
+        "printed name conflated distinct constant declarations") end
+  val type_name = "replay_identity_type"
+  fun types () =
+    let val _ = Theory.new_type (type_name,0)
+        val old_type = Type.mk_type (type_name,[])
+        val a = G.variable graph root G.RigidSource
+          (Term.mk_var ("identity_type",old_type))
+        val _ = Theory.delete_type type_name
+        val _ = Theory.new_type (type_name,0)
+        val new_type = Type.mk_type (type_name,[])
+        val b = G.variable graph root G.RigidSource
+          (Term.mk_var ("identity_type",new_type))
+    in assert (G.type_id graph a <> G.type_id graph b andalso a <> b
+          andalso rejected (fn () => ignore (G.equality graph (a,b))),
+        "printed type name conflated distinct type declarations") end
+in
+  (declarations () handle exn => (Theory.delete_const name;raise exn));
+  Theory.delete_const name;
+  (types () handle exn => (Theory.delete_type type_name;raise exn));
+  Theory.delete_type type_name
+end
+
 fun replay_import_metric_success () =
 let
   val x = Term.mk_var ("replay_count_x", Type.bool)
@@ -29919,6 +30084,7 @@ end
 fun run_replay_graph_unittests () =
   List.app run_test
     [("replay_graph_checked_success", replay_graph_checked_success),
+     ("replay_graph_identity_success", replay_graph_identity_success),
      ("replay_import_metric_success", replay_import_metric_success),
      ("replay_binder_type_admission_success",
        replay_binder_type_admission_success),
@@ -30761,6 +30927,7 @@ let
       cvc_cpc_command_uses_standard_proof),
     ("binder_opening_resource_success", binder_opening_resource_success),
     ("replay_graph_checked_success", replay_graph_checked_success),
+    ("replay_graph_identity_success", replay_graph_identity_success),
     ("replay_import_metric_success", replay_import_metric_success),
     ("replay_binder_type_admission_success",
       replay_binder_type_admission_success),

@@ -328,9 +328,9 @@ struct
               (41 * shallow_hash (depth - 1) (Term.rator term) +
                67 * shallow_hash (depth - 1) (Term.rand term) + 11) mod
                 bucket_count
-            else if Term.is_abs term then
-              (73 * shallow_hash (depth - 1) (Term.body term) + 13) mod
-                bucket_count
+            (* Routing is not binder admission. In particular the right
+               endpoint has not passed inspect yet. Keep both bodies opaque
+               until compute admits the matching abstraction pair. *)
             else shallow_hash 0 term
       fun pair_bucket (left, right) =
         (97 * shallow_hash 3 left + shallow_hash 3 right) mod bucket_count
