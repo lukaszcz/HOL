@@ -1,5 +1,101 @@
 # Simplifier performance evidence
 
+## Maintained TASK28 integration
+
+This directory provides acceptance **machinery**, not performance approval.
+[`MATRIX.md`](MATRIX.md) describes the frozen `matrix.json` contract: **69
+requirements, 107 case bindings**, runnable cases/external checks and seven
+explicit prerequisite blockers. [`PROTOCOL.md`](PROTOCOL.md) defines paired
+statistics, sealing and independent-build admission;
+[`PROTOCOL_LOADING.md`](PROTOCOL_LOADING.md) defines runnable fresh-import timing.
+
+Both matrix fixtures record raw CPU/wall/GC and actual runtime counter/snapshot
+records for **every** calibration/sample. The runner and offline auditor validate
+source seals, graph arithmetic, ordered runtime records and controlled weak-ref
+release. RSS snapshots and process-lifetime VmHWM are not exact temporary peaks;
+Poly/ML 5.9.2 lacks a cumulative allocated-byte counter. Weak collection proves
+only release of the controlled simpset-ref wrapper, not opaque internal objects
+or absence of global retention. Those stronger gates remain blocked, alongside
+missing independent integer/real dependencies and routine/full clean snapshots.
+
+The main ten-pair experiment validates integrated machinery, not matrix-wide
+performance approval. Shared-heap final-source isolation is **not independent
+builds**. Manifest verification is runnable, but independent mode still blocks
+until fresh independent launchers, inventories and consumed observations exist.
+Earlier temporary validation is not final evidence for changed source/fixtures.
+
+### Maintained checks
+
+From the repository root, using new output paths each time:
+
+```sh
+# Python-only discovery; real HOL integration tests are opt-in.
+python3 -B -m unittest discover -s src/simp/tests/performance -p 'test*.py'
+python3 -B -m unittest discover -s src/simp/tests/compatibility -p test_runner.py
+python3 -B src/simp/tests/performance/matrix_schema.py --json
+
+# Configured tree, no other build/benchmark running; use an exact candidate pin.
+bin/Holmake --no-project --no-cache --no_prereqs \
+  --holstate="$PWD/bin/hol.state0" -C src/simp/tests/performance -j1 \
+  PERFORMANCE_CANDIDATE=CANDIDATE_FULL_40_HEX_COMMIT \
+  PERFORMANCE_CHECK_OUTPUT=/absolute/path/to/new-task28-check check
+```
+
+`python-tests` discovers all performance tests (191 at integration, with real
+HOL tests skipped unless enabled), plus compatibility runner tests. `check`
+serially runs discovery, matrix completeness, real Python subprocess controls,
+then `smoke_matrix.py --scope small`. It does **not** run performance acceptance,
+loading measurements, runtime smoke or expensive full-grid cases implicitly.
+Plain Holmake retains the Python-test default; `diagnostic` retains its original
+six-pair TASK03 settings and separate `PERFORMANCE_OUTPUT` paths.
+
+Other explicit targets in `src/simp/tests/performance/Holmakefile`:
+
+| Target | Scope |
+| --- | --- |
+| `matrix-completeness` | Frozen schema and live source inventories; no measurements |
+| `controls` | Actual Python slowdown/allocation/failed/missing subprocess controls; not Poly allocation |
+| `smoke` | `smoke_matrix.py`; 51 MatrixSupport cases at 0/1/10 on both selections by default, not all 107 cases |
+| `runtime-smoke` | Actual SML GC counts/RSS and controlled-ref collection on both selections, untimed |
+
+Set `PERFORMANCE_BASELINE` (default pinned develop), `PERFORMANCE_CANDIDATE`
+(default HEAD, resolved and recorded by smoke drivers), and
+`PERFORMANCE_CHECK_OUTPUT` as needed. Prefer full immutable hashes for both.
+Set `MATRIX_SMOKE_SCOPE=smoke` for five scalable cases at larger sizes, `grid`
+for the non-expensive grid, or `expensive` for the four excluded 10000-rule
+single-add/AC cases. Nothing overwrites receipts: controls JSON and smoke JSON/
+sibling logs must be new. Do not invoke real targets concurrently; smoke drivers
+do not acquire the acceptance frontend's host-wide serial lock. Hosts with a
+heap embedding a historical root must use the configured-root wrapper from
+`../compatibility/evidence/task26/root-wrapper.sh`.
+
+Optional serial real-integration discovery switches are `HOL_CLIENT_REPO` (an
+absolute configured tree) and `RUNTIME_METRICS_SML=1`; the latter can retain its
+source-tied receipt via `RUNTIME_METRICS_EVIDENCE=/new/path/evidence.json`.
+Prefer the explicit `runtime-smoke` target for an archived runtime-only check.
+All private smoke trees are automatically removed after use.
+
+### Fresh loading commands
+
+`loading.py` requires **both** `--baseline` and `--candidate` as exact full
+commit hashes, even though `acceptance.py` has a pinned baseline default:
+
+```sh
+python3 -B src/simp/tests/performance/loading.py \
+  --baseline BASELINE_FULL_40_HEX_COMMIT \
+  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib --pairs 10 \
+  --api-audit /absolute/path/to/source-bound/receipt.json \
+  --authorize-measurements --output /absolute/path/to/new-loading-simp
+```
+
+Repeat for `--module congLib` with a different output directory. An explicit
+`--smoke --pairs 1` may omit the semantic receipt but gives no performance
+decision. The congLib import includes simpLib, not marginal cost after it.
+`success` means protocol completion; inspect every metric's decision. A fresh
+semantic receipt alone is not startup timing or independent-build acceptance.
+
+## Historical review bundle
+
 `review-20261021/` preserves the compact original review bundle unchanged.
 It is historical evidence tied to:
 
@@ -83,10 +179,10 @@ bin/Holmake --no-project --no-cache --no_prereqs \
   PERFORMANCE_OUTPUT=/tmp/task03-fresh diagnostic
 ```
 
-The output directory must not exist from an earlier run. This executes eight
-performance validator tests and thirteen compatibility validator tests, then
-six baseline/baseline fresh-process pairs, their summary, then six baseline/
-reviewed pairs and their summary. Independent signature/staging checks and
+The output directory must not exist from an earlier run. This now executes
+maintained Python discovery (see TASK28 above), then six baseline/baseline
+fresh-process pairs, their summary, then six baseline/reviewed pairs and their
+summary. Independent signature/staging checks and
 all six negative controls execute on both selections before timings. Builds
 finish before observations. Launcher/runtime/heap/dependency isolation is
 provided by `../compatibility/run_paired.py`; its full schemas still apply.

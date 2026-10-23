@@ -16,6 +16,7 @@ BASE = "cccaa27d7099cbadc886983020cbe745db7793f3"
 REVIEWED = "cf1f863b4e5a9712ce1b179f18274eb3451f3954"
 HERE = Path(__file__).resolve().parent
 PREFIX = "@@PAIR\t"
+PERFORMANCE_LOCK_FDS = ()
 
 
 class InvalidRun(ValueError):
@@ -243,7 +244,8 @@ def validate(receipt, *, selection, fixture, control, private, repo,
 def execute(command, cwd, env, timeout):
     p = subprocess.Popen(command, cwd=cwd, env=env, text=True,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         start_new_session=True)
+                         start_new_session=True,
+                         pass_fds=PERFORMANCE_LOCK_FDS)
     expired = False
     try:
         text, _ = p.communicate(timeout=timeout)
@@ -292,18 +294,25 @@ def extract(repo, rev, dst, public=False):
 
 
 def install_fixtures(dst, performance=False, traversal_performance=False,
-                     conditional_performance=False):
+                     conditional_performance=False, matrix_fixture=None):
     require(not (traversal_performance and conditional_performance),
             "mutually exclusive performance suites")
     for p in (HERE / "paired").iterdir():
         if p.suffix == ".sml" or p.name == "Holmakefile":
             shutil.copyfile(p, dst / p.name)
     if performance:
-        fixture = ("ConditionalPerformance.sml" if conditional_performance else
-                   "TraversalPerformance.sml" if traversal_performance else
-                   "Performance.sml")
+        fixture = (matrix_fixture or
+                   ("ConditionalPerformance.sml" if conditional_performance else
+                    "TraversalPerformance.sml" if traversal_performance else
+                    "Performance.sml"))
         shutil.copyfile(HERE.parent / "performance" / fixture,
                         dst / "Performance.sml")
+        if matrix_fixture:
+            shutil.copyfile(HERE.parent / "performance/RuntimeMetrics.sml",
+                            dst / "RuntimeMetrics.sml")
+        if matrix_fixture == "MatrixPerformance.sml":
+            shutil.copyfile(HERE.parent / "performance/MatrixSupport.sml",
+                            dst / "MatrixSupport.sml")
         with (dst / "Holmakefile").open("a") as out:
             out.write("\npaired.exe: Performance.uo\n")
     # Preserve the complete immutable signature and ascription. Only replace
@@ -374,13 +383,23 @@ def main():
                         help="direct ordinary Traverse workloads (requires pairs)")
     suites.add_argument("--conditional-performance", action="store_true",
                         help="direct ordinary Cond_rewr workloads (requires pairs)")
+    suites.add_argument("--matrix-performance", action="store_true",
+                        help="parameterized complete P09 matrix fixture")
+    p.add_argument("--performance-case")
+    p.add_argument("--performance-size", type=int)
     p.add_argument("--samples", type=int, default=5)
     p.add_argument("--batch-seconds", type=float, default=0.2)
     args = p.parse_args()
     if (args.performance_pairs < 0 or args.samples < 3 or
             not 0.1 <= args.batch_seconds <= 60):
         p.error("require nonnegative pairs, >=3 samples, 0.1..60 second batches")
-    for flag in ("traversal", "conditional"):
+    if args.matrix_performance != (args.performance_case is not None and
+                                   args.performance_size is not None):
+        p.error("--matrix-performance requires --performance-case and -size")
+    if not args.matrix_performance and (args.performance_case is not None or
+                                        args.performance_size is not None):
+        p.error("matrix parameters require --matrix-performance")
+    for flag in ("traversal", "conditional", "matrix"):
         if getattr(args, flag + "_performance") and not args.performance_pairs:
             p.error("--" + flag + "-performance requires --performance-pairs > 0")
     if args.staging_only and (not args.staging_contracts or
@@ -397,10 +416,15 @@ def main():
     if args.public_contracts:
         import public_contracts as public
     performance = None
+    matrix_fixture = None
     if args.performance_pairs:
         import sys
         sys.path.insert(0, str(HERE.parent / "performance"))
         import performance_schema as performance
+        if args.matrix_performance:
+            from matrix_schema import get_case
+            matrix_fixture = get_case(args.performance_case,
+                                      args.performance_size)
     repo, output = args.repo.resolve(), args.output.resolve()
     # Never overwrite historical/user evidence, even on a failed invocation.
     output.mkdir(parents=True, exist_ok=False)
@@ -431,6 +455,11 @@ def main():
         if args.conditional_performance:
             manifest["evidence_id"] = "TASK_12-conditional-performance-v1"
             manifest["performance"]["suite"] = "conditional"
+        if args.matrix_performance:
+            manifest["evidence_id"] = "TASK28-expanded-harness-v1"
+            manifest["performance"].update(
+                suite="matrix", case=args.performance_case,
+                size=args.performance_size)
     try:
         for name in ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
                      "bin/Holmake", "holproject.toml"):
@@ -501,10 +530,11 @@ def main():
                   HERE / "inputs/develop/Traverse.sig",
                   HERE.parent / "performance/review-20261021/abicheck.sml"]
         if performance:
-            fixture = ("ConditionalPerformance.sml"
-                       if args.conditional_performance else
-                       "TraversalPerformance.sml" if args.traversal_performance
-                       else "Performance.sml")
+            fixture = (matrix_fixture or
+                       ("ConditionalPerformance.sml"
+                        if args.conditional_performance else
+                        "TraversalPerformance.sml" if args.traversal_performance
+                        else "Performance.sml"))
             perfdir = HERE.parent / "performance"
             inputs += [perfdir / name for name in
                        (fixture, "performance_schema.py", "summarize.py",
@@ -513,6 +543,16 @@ def main():
                 inputs += [perfdir / "test_traversal_performance.py"]
             if args.conditional_performance:
                 inputs += [perfdir / "test_conditional_performance.py"]
+            if args.matrix_performance:
+                inputs += [perfdir / name for name in
+                           ("MatrixSupport.sml", "ClientPerformance.sml",
+                            "MatrixPerformance.sml", "matrix.json",
+                            "matrix_schema.py", "test_matrix.py",
+                            "acceptance.py", "PROTOCOL.md",
+                            "client_dependencies.py",
+                            "test_client_dependencies.py", "RuntimeMetrics.sml",
+                            "runtime_metrics.py", "test_runtime_metrics.py")]
+                inputs = list(dict.fromkeys(inputs))
         if public:
             inputs += [HERE / "public_contracts.py",
                        HERE / "test_public_contracts.py",
@@ -539,7 +579,17 @@ def main():
                 install_fixtures(
                     dst, performance=bool(performance),
                     traversal_performance=args.traversal_performance,
-                    conditional_performance=args.conditional_performance)
+                    conditional_performance=args.conditional_performance,
+                    matrix_fixture=matrix_fixture)
+                shared_dependencies = None
+                if matrix_fixture == "ClientPerformance.sml":
+                    from client_dependencies import install
+                    shared_dependencies = install(
+                        repo, dst, {Path(s["git_path"]).stem for s in inventory})
+                    for path, info in shared_dependencies["inputs"].items():
+                        key = str(Path(path).relative_to(repo))
+                        old = manifest["inputs"].setdefault(key, info)
+                        require(old == info, "shared client input changed")
                 if public:
                     public.install(HERE, dst, refs)
                 if staging:
@@ -549,10 +599,13 @@ def main():
                 manifest["selections"][selection] = {
                     "requested_ref": ref, "revision": rev, "private": str(dst),
                     "sources": inventory,
-                    "fixture_products": {f.name: fingerprint(f) for f in dst.iterdir()
-                                         if f.name not in {Path(s["git_path"]).name
-                                                           for s in inventory}}}
-                for f in dst.iterdir():
+                    "shared_dependencies": shared_dependencies,
+                    "fixture_products": {
+                        str(f.relative_to(dst)): fingerprint(f)
+                        for f in dst.rglob("*") if f.is_file() and
+                        str(f.relative_to(dst)) not in
+                        {Path(s["git_path"]).name for s in inventory}}}
+                for f in dst.rglob("*"):
                     if f.is_file():
                         sources[str(f)] = fingerprint(f)
             names = {Path(s["git_path"]).stem for v in manifest["selections"].values()
@@ -712,6 +765,9 @@ def main():
                             PAIR_PRIVATE=str(dst), PAIR_TARGET="Performance",
                             PERF_SAMPLES=str(args.samples),
                             PERF_SECONDS=str(args.batch_seconds))
+                        if args.matrix_performance:
+                            runenv.update(PERF_CASE=args.performance_case,
+                                          PERF_SIZE=str(args.performance_size))
                         receipt = execute([str(dst / "paired.exe")], dst,
                                           runenv, args.timeout)
                         receipt.update(
@@ -735,6 +791,17 @@ def main():
                                 conditional_performance=
                                 args.conditional_performance)
                             receipt["measurements"] = measurements
+                            if args.matrix_performance:
+                                lines = receipt["stdout"].splitlines()
+                                receipt["storage_graph"] = performance.graphs(
+                                    lines, args.performance_case,
+                                    args.performance_size)
+                                import runtime_metrics
+                                receipt["runtime"] = runtime_metrics.validate(
+                                    lines, measurements)
+                                if args.performance_case == "storage_graph":
+                                    receipt["release"] = runtime_metrics.release(
+                                        lines)
                             receipt["accepted"] = True
                         except (ValueError, OSError) as e:
                             receipt["accepted"] = False
@@ -780,4 +847,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    lock_parser = argparse.ArgumentParser(add_help=False)
+    lock_parser.add_argument("--repo", type=Path, default=HERE.parents[3])
+    lock_parser.add_argument("--performance-pairs", type=int, default=0)
+    lock_args, _ = lock_parser.parse_known_args()
+    if lock_args.performance_pairs:
+        import sys
+        sys.path.insert(0, str(HERE.parent / "performance"))
+        from acceptance import serial_lock
+        with serial_lock(lock_args.repo) as PERFORMANCE_LOCK_FDS:
+            main()
+    else:
+        main()

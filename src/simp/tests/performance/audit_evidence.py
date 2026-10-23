@@ -11,7 +11,7 @@ import gzip
 import json
 from pathlib import Path
 
-from performance_schema import require, suite_options, validate
+from performance_schema import graphs, require, suite_options, validate
 
 
 def audit(manifest, receipt):
@@ -77,6 +77,35 @@ def audit(manifest, receipt):
         required.add("Traverse.sml" if suite == "traversal" else "Cond_rewr.sml")
     else:
         required.update(("Traverse.sml", "simpLib.sml"))
+    if suite == "matrix":
+        from matrix_schema import get_case
+        fixture = get_case(options["case"], options["size"])
+        require(env["PERF_CASE"] == options["case"] and
+                int(env["PERF_SIZE"]) == options["size"],
+                "wrong matrix process parameters")
+        require(selected["fixture_products"]["Performance.sml"] ==
+                manifest["inputs"]["src/simp/tests/performance/" + fixture],
+                "wrong matrix fixture binding")
+        require(selected["fixture_products"]["RuntimeMetrics.sml"] ==
+                manifest["inputs"][
+                    "src/simp/tests/performance/RuntimeMetrics.sml"],
+                "wrong runtime metrics binding")
+        required.add("RuntimeMetrics.sml")
+        if fixture == "MatrixPerformance.sml":
+            require(selected["fixture_products"]["MatrixSupport.sml"] ==
+                    manifest["inputs"][
+                        "src/simp/tests/performance/MatrixSupport.sml"],
+                    "wrong matrix support binding")
+            required.add("MatrixSupport.sml")
+        require(receipt["storage_graph"] == graphs(
+            receipt["diagnostics"], options["case"], options["size"]),
+            "wrong archived storage graph")
+        import runtime_metrics
+        require(receipt["runtime"] == runtime_metrics.validate(
+            receipt["diagnostics"], data), "wrong archived runtime telemetry")
+        if options["case"] == "storage_graph":
+            require(receipt["release"] == runtime_metrics.release(
+                receipt["diagnostics"]), "wrong archived release probe")
     if suite == "conditional":
         forbidden = {n for n in source_names if
                      n in ("Traverse", "simpLib") or

@@ -67,8 +67,13 @@ def timing(value, prefix=0):
 
 def suite_options(options):
     suite = options.get("suite", "simplifier")
-    require(suite in ("simplifier", "traversal", "conditional"),
+    require(suite in ("simplifier", "traversal", "conditional", "matrix"),
             "unknown performance suite")
+    if suite == "matrix":
+        from matrix_schema import get_case
+        get_case(options["case"], options["size"])
+        return dict(labels=(options["case"],),
+                    consumed={options["case"]: 1}, storage=False)
     if suite == "traversal":
         return dict(labels=TRAVERSAL_LABELS, consumed=TRAVERSAL_CONSUMED,
                     storage=False)
@@ -76,6 +81,37 @@ def suite_options(options):
         return dict(labels=CONDITIONAL_LABELS, consumed=CONDITIONAL_CONSUMED,
                     storage=False)
     return {}
+
+
+GRAPH_FIELDS = ("rules", "base", "fragment", "simpset", "compiled_anchor",
+                "compiled_union", "compiled_increment", "fragment_anchor",
+                "fragment_union", "fragment_increment", "released_root")
+
+
+def graphs(lines, case, size):
+    """Separate raw reachable-word observations; never infer RSS/allocation."""
+    records = []
+    for line in lines:
+        if "@@MATRIX_STORAGE" not in line:
+            continue
+        fields = line.split("\t")
+        require(len(fields) == 3 and fields[:2] ==
+                ["@@MATRIX_STORAGE", "storage_graph"],
+                "malformed storage graph record")
+        values = numbers(fields[2], len(GRAPH_FIELDS))
+        require(all(v.is_integer() for v in values), "fractional graph words")
+        row = dict(zip(GRAPH_FIELDS, map(int, values)))
+        require(row["rules"] == size and
+                row["compiled_union"] - row["compiled_anchor"] ==
+                row["compiled_increment"] and
+                row["fragment_union"] - row["fragment_anchor"] ==
+                row["fragment_increment"] and
+                row["released_root"] == row["compiled_anchor"],
+                "invalid storage graph subtraction/root release")
+        records.append(row)
+    require(len(records) == (1 if case == "storage_graph" else 0),
+            "missing/duplicate/unexpected storage graph")
+    return records
 
 
 def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,

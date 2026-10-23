@@ -1,13 +1,65 @@
-# Diagnostic isolation only. No final performance acceptance is implied.
+# Machinery/diagnostic isolation only. No final acceptance is implied.
 ifndef PERFORMANCE_OUTPUT
 PERFORMANCE_OUTPUT = performance-results
 endif
-.PHONY: python-tests diagnostic
+ifndef PERFORMANCE_CHECK_OUTPUT
+PERFORMANCE_CHECK_OUTPUT = performance-check-results
+endif
+ifndef PERFORMANCE_BASELINE
+PERFORMANCE_BASELINE = cccaa27d7099cbadc886983020cbe745db7793f3
+endif
+ifndef PERFORMANCE_CANDIDATE
+PERFORMANCE_CANDIDATE = HEAD
+endif
+ifndef MATRIX_SMOKE_SCOPE
+MATRIX_SMOKE_SCOPE = small
+endif
+.PHONY: python-tests diagnostic check matrix-completeness controls smoke
+.PHONY: runtime-smoke client-smoke
 python-tests:
-	python3 -B test_performance.py
-	python3 -B test_traversal_performance.py
-	python3 -B test_conditional_performance.py
-	python3 -B ../compatibility/test_runner.py
+	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+	  -s . -p 'test*.py'
+	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+	  -s ../compatibility -p test_runner.py
+
+matrix-completeness:
+	python3 -B matrix_schema.py
+
+controls:
+	mkdir -p "$(PERFORMANCE_CHECK_OUTPUT)"
+	python3 -B acceptance.py controls \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/controls.json"
+
+# Exclusive-created JSON + sibling .log; never overwrite earlier evidence.
+# These shared-heap smokes need a configured tree and an exclusive window.
+smoke:
+	python3 -B smoke_matrix.py --baseline $(PERFORMANCE_BASELINE) \
+	  --candidate $(PERFORMANCE_CANDIDATE) --scope $(MATRIX_SMOKE_SCOPE) \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/matrix-smoke.json"
+
+client-smoke:
+	python3 -B smoke_clients.py --baseline $(PERFORMANCE_BASELINE) \
+	  --candidate $(PERFORMANCE_CANDIDATE) --scope small \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/client-smoke.json"
+
+runtime-smoke:
+	python3 -B runtime_metrics.py --baseline $(PERFORMANCE_BASELINE) \
+	  --candidate $(PERFORMANCE_CANDIDATE) \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/runtime-smoke.json"
+
+# Keep real controls before smoke even with a parallel caller. No acceptance
+# run, loading experiment or costly full-grid/10000 AC pass is implicit.
+check: python-tests
+	python3 -B matrix_schema.py
+	mkdir -p "$(PERFORMANCE_CHECK_OUTPUT)"
+	python3 -B acceptance.py controls \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/controls.json"
+	python3 -B smoke_matrix.py --baseline $(PERFORMANCE_BASELINE) \
+	  --candidate $(PERFORMANCE_CANDIDATE) --scope $(MATRIX_SMOKE_SCOPE) \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/matrix-smoke.json"
+	python3 -B smoke_clients.py --baseline $(PERFORMANCE_BASELINE) \
+	  --candidate $(PERFORMANCE_CANDIDATE) --scope small \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/client-smoke.json"
 
 # One recipe keeps baseline variability before reviewed observations even
 # when invoked by a parallel caller. Never benchmark alongside other builds.
