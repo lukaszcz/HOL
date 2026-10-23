@@ -218,7 +218,7 @@ struct
          | order => order)
 
   datatype admission_type_node = AdmissionTypeNode of
-    {id : int, tree_nodes : int}
+    {id : int, tree_nodes : int, polymorphic : bool, classification : int}
 
   fun new_type_admission_context () =
     let
@@ -254,7 +254,12 @@ struct
       val next_id = ref 0
       val nodes = ref 0
       val edges = ref 0
-      fun intern ty =
+      (* Exact below the allowance; retain the first excessive subtree's
+         lower bound above it, preserving the existing diagnostic. *)
+      fun add_work left right =
+        if left > maximum then left else if right > maximum then right
+        else saturated_add left right
+      fun metadata ty =
         let val small = small_type ty in
         case (if small then recent_small ty else
           SmtResource.recent_pointer_lookup physical ty) of
@@ -263,7 +268,7 @@ struct
             let
               val arguments = if Type.is_vartype ty then []
                 else Lib.snd (Type.dest_type ty)
-              val children = List.map intern arguments
+              val children = List.map metadata arguments
               fun node_id (AdmissionTypeNode {id, ...}) = id
               fun node_size (AdmissionTypeNode {tree_nodes, ...}) = tree_nodes
               val key = if Type.is_vartype ty then
@@ -271,32 +276,56 @@ struct
                 else AdmissionTypeOperator
                   (#Tyop (Type.dest_thy_typeid ty), List.map node_id children)
               val _ = edges := saturated_add (!edges) (List.length children)
-              val (id, tree_nodes) =
+              val node =
                 case Redblackmap.peek (!ids, key) of
-                  SOME (AdmissionTypeNode fields) =>
-                    (#id fields, #tree_nodes fields)
+                  SOME node => node
                 | NONE =>
                     let
                       val size = List.foldl
                         (fn (child, count) =>
-                          saturated_add count (node_size child)) 1 children
-                      val _ = if size <= maximum then () else
-                        SmtResource.check_term_size_for "BitVector"
-                          "skeleton-type-work" size
+                          add_work count (node_size child)) 1 children
+                      (* Type.polymorphic visits children left-to-right,
+                         stopping at the first type variable. Metadata for
+                         an unvisited suffix must not refuse a cheap REFL. *)
+                      fun classify [] count = (false, count)
+                        | classify (AdmissionTypeNode
+                            {polymorphic, classification, ...} :: rest)
+                            count =
+                            let val work = add_work count classification
+                            in if polymorphic then (true, work)
+                               else classify rest work end
+                      val (poly, work) = if Type.is_vartype ty then (true, 1)
+                        else classify children 1
                       val id = !next_id
                     in
-                      next_id := id + 1; nodes := !nodes + 1; (id, size)
+                      next_id := id + 1; nodes := !nodes + 1;
+                      AdmissionTypeNode {id = id, tree_nodes = size,
+                        polymorphic = poly, classification = work}
                     end
-              val node = AdmissionTypeNode {id = id, tree_nodes = tree_nodes}
               val _ = if Option.isSome (Redblackmap.peek (!ids, key)) then ()
                 else ids := Redblackmap.insert (!ids, key, node)
               val _ = physical := (ty, node) :: !physical
             in node end
         end
-      fun type_id ty = let val AdmissionTypeNode {id, ...} = intern ty in id end
+      fun check work = SmtResource.check_term_size_for "BitVector"
+        "skeleton-type-work" work
+      fun intern ty =
+        let val node as AdmissionTypeNode {classification, ...} = metadata ty
+        in check classification; node end
+      (* Opening/alpha comparison can inspect all annotation Types. Unlike
+         REFL's classification, this is intentionally a full traversal. *)
+      fun full_type ty =
+        let val node as AdmissionTypeNode {tree_nodes, ...} = metadata ty
+        in check tree_nodes; node end
+      fun type_id ty =
+        let val AdmissionTypeNode {id, ...} = full_type ty in id end
+      fun raw_size limit term =
+        (ignore (full_type (Term.type_of term));
+         SmtReplayImport.bounded_raw_size_with_type_check
+           (fn ty => ignore (intern (#2 (Type.dom_rng ty)))) limit term)
       fun admit_abstraction operation term =
         let
-          val _ = case SmtReplayImport.bounded_raw_size maximum term of
+          val _ = case raw_size maximum term of
               SOME _ => ()
             | NONE => SmtResource.check_term_size_for "BitVector" operation
                 (maximum + 1)
@@ -317,13 +346,14 @@ struct
             | order => order
           val atoms = HOLset.listItems
             (Term.all_atomsl [term] (HOLset.empty compare_atoms))
-          val _ = List.app (ignore o intern o Term.type_of) atoms
-          (* REFL instantiates equality at the abstraction's result Type,
-             which can be larger than any individual atom annotation. *)
-          val _ = ignore (intern (Term.type_of term))
+          val _ = List.app (ignore o full_type o Term.type_of) atoms
+          (* The synthesized abstraction Type was admitted before raw_size
+             opened anything. Nested count-only openings admit their actual
+             range classification, not unused synthesized function Types. *)
         in () end
     in
       {intern = intern, admit_abstraction = admit_abstraction,
+       raw_size = raw_size,
        nodes = nodes, edges = edges, physical = physical}
     end
 
@@ -392,6 +422,8 @@ struct
               let
                 val (left_operator, left_operand) = Term.dest_comb left
                 val (right_operator, right_operand) = Term.dest_comb right
+                val _ = admit_type left
+                val _ = admit_type right
               in
                 anchor_right right (anchor_left left
                   (Thm.MK_COMB
@@ -408,8 +440,10 @@ struct
             else if (Term.is_var left andalso Term.is_var right) orelse
                     (Term.is_const left andalso Term.is_const right) then
               let
-                (* Native leaf equality compares independent Types. Pair
-                   counting alone does not bound their unfolded work. *)
+                (* Admit native equality-constant classification, not the
+                   unfolded size of a possibly polymorphic annotation.
+                   TRANS still checks leaf identity in the stock kernel;
+                   pair counts do not claim to bound that comparison. *)
                 val _ = admit_type left
                 val _ = admit_type right
               in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
@@ -705,7 +739,7 @@ struct
       fun intern_abstraction occurrence =
         let
           val size =
-            case SmtReplayImport.bounded_raw_size maximum occurrence of
+            case #raw_size type_admission maximum occurrence of
               SOME size => size
             | NONE =>
                 (SmtResource.check_term_size_for "BitVector"
@@ -789,6 +823,10 @@ struct
                       in
                         anchor_right representative congruence
                       end
+                    val ty = Lib.snd (Type.dom_rng (raw_type operator_node))
+                    (* An operator's polymorphic domain can hide a ground
+                       range. Admit the actual result before any proof. *)
+                    val _ = admit_type ty
                     val children_unchanged =
                       Portable.pointer_eq
                         (operator, raw_representative operator_node) andalso
@@ -808,7 +846,6 @@ struct
                         end
                     val candidate = boolSyntax.rhs
                       (Thm.concl candidate_equality)
-                    val ty = Lib.snd (Type.dom_rng (raw_type operator_node))
                     val _ = raw_edges := saturated_add (!raw_edges) 2
                   in
                     canonical_raw key occurrence candidate candidate_equality

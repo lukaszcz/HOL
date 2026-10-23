@@ -91,8 +91,8 @@ struct
   (* This is deliberately an unfolded visitor. Public closure destructors
      need not preserve physical sharing, and these callers require a tree
      budget. The worklist stops before exposing an unadmitted binder body. *)
-  fun bounded_size_observed_program visit_seen binder_slot binder_seen
-      limit root =
+  fun bounded_size_observed_program before_open visit_seen binder_slot
+      binder_seen limit root =
     if limit < 0 then NONE
     else
       let
@@ -108,17 +108,24 @@ struct
               else if Term.is_abs term then
                 if binder_slot andalso limit - count < 2 then NONE
                 else (visit_seen ();binder_seen ();
+                  (* Standard count_body constructs REFL/Beta at the range
+                     Type. The caller must admit that work, not merely the
+                     function Type's short-circuit classification. *)
+                  before_open term;
                   walk (count_body term :: rest,
                     count + (if binder_slot then 2 else 1)))
               else (visit_seen ();walk (rest, count + 1)))
       in walk ([root], 0) end
   fun bounded_size_program binder_slot binder_seen limit root =
-    bounded_size_observed_program (fn () => ()) binder_slot binder_seen
-      limit root
+    bounded_size_observed_program (fn _ => ()) (fn () => ()) binder_slot
+      binder_seen limit root
 
   fun bounded_size binder_slot limit root =
     bounded_size_program binder_slot (fn () => ()) limit root
   val bounded_raw_size = bounded_size false
+  fun bounded_raw_size_with_type_check check_type limit root =
+    bounded_size_observed_program (check_type o Term.type_of)
+      (fn () => ()) false (fn () => ()) limit root
   val bounded_binder_size = bounded_size true
   datatype raw_bound = RawBound of
     {original:Term.term,raw_upper:IntInf.int,inc_upper:IntInf.int,
@@ -137,8 +144,8 @@ struct
         fun binder_seen () =
           (note ();binders := !binders+1)
         fun visit_seen () = if observed then note () else ()
-    in case bounded_size_observed_program visit_seen false binder_seen
-        limit original of
+    in case bounded_size_observed_program (fn _ => ()) visit_seen false
+        binder_seen limit original of
         NONE => NONE
       | SOME count =>
           let val _ = note ()

@@ -16,6 +16,11 @@ sig
 
   (* The raw Term.term_size metric excludes the binder variable slot. *)
   val bounded_raw_size : int -> Term.term -> int option
+  (* Same metric; check the function Type before count-only opening of
+     EVERY binder. The check must admit native classification of its range,
+     not just its domain (standard count_body uses REFL/Beta at the range). *)
+  val bounded_raw_size_with_type_check :
+    (Type.hol_type -> unit) -> int -> Term.term -> int option
 
   (* Sealed success from the SAME genuine bounded raw-size programme.
      This is a syntax upper bound, not a theorem, Scope or Source receipt. *)

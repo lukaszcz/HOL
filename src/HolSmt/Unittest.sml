@@ -21058,6 +21058,82 @@ let
   val binder = variable (product 21)
   val _ = mismatch shared_application
   val _ = mismatch (Term.mk_abs (binder, binder))
+  (* Native polymorphism classification stops on the first type variable.
+     A full unfolded-Type gate used to reject all three supported proofs. *)
+  fun poly_product 0 = Type.mk_vartype "'task21_poly"
+    | poly_product depth =
+        let val child = poly_product (depth - 1)
+        in Type.mk_type ("prod", [child, child]) end
+  val poly_leaf = variable (poly_product 80)
+  val _ = equal "polymorphic pointer depth80" poly_leaf poly_leaf
+  val poly_type = poly_product 21
+  val original = variable poly_type
+  val independent = variable poly_type
+  val occurrence = boolSyntax.mk_eq (original, original)
+  val expansion = Drule.EQT_INTRO (Thm.REFL independent)
+  val anchored = SmtSkeletonProve.exact_left occurrence expansion
+  val _ = assert (Portable.pointer_eq
+      (boolSyntax.lhs (Thm.concl anchored), occurrence) andalso
+      Portable.pointer_eq (boolSyntax.rhs (Thm.concl anchored), boolSyntax.T),
+    "polymorphic reanchoring lost endpoints")
+  val _ = assert_no_hyps ("polymorphic reanchoring", anchored)
+  val _ = check_oracle_tags "polymorphic reanchoring" anchored
+  val procedure = {name = "task21-poly", expand = fn _ =>
+    SmtSkeletonProve.Expanded expansion}
+  val owners = Redblackmap.insert
+    (Redblackmap.mkDict Term.compare, occurrence, "task21-poly")
+  val target = boolSyntax.mk_conj (occurrence, boolSyntax.T)
+  val {theorem = result, ...} = SmtSkeletonProve.prove_with_owners
+    (SmtSkeletonProve.new_context [procedure]) owners
+    (SmtSkeletonProve.term_measure target) target
+  val _ = assert (Portable.pointer_eq (Thm.concl result, target),
+    "polymorphic owner proof lost original target")
+  val _ = assert_no_hyps ("polymorphic owner", result)
+  val _ = check_oracle_tags "polymorphic owner" result
+  (* An unused ground suffix is not visited by native classification. *)
+  val prefix_type = Type.mk_type ("prod",
+    [Type.mk_vartype "'task21_prefix", product 80])
+  val prefix = variable prefix_type
+  val _ = equal "polymorphic prefix" prefix prefix
+  (* Conversely a late variable does not make the preceding ground walk
+     cheap; nor does a polymorphic operator domain admit a ground range. *)
+  val late = variable (Type.mk_type ("prod",
+    [product 80, Type.mk_vartype "'task21_suffix"]))
+  val _ = rejected "late polymorphic witness" late late
+  val domain = Type.mk_vartype "'task21_domain"
+  val operator = variable (Type.mk_type ("fun", [domain, product 80]))
+  val application = Term.mk_comb
+    (operator, Term.mk_var ("task21_domain_value", domain))
+  val _ = rejected "actual application result" application application
+  val huge_binder = identity 80
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => rejected "binder before count-only native opening"
+      huge_binder huge_binder) ()
+  (* Exercise the graph's separate raw preflight and nested binder callback.
+     No construction of equality at the huge result Type is needed here. *)
+  val graph_rejected = Timeout.apply (Time.fromSeconds 2)
+    (fn () =>
+      ((ignore (SmtSkeletonProve.build_cnf_graph huge_binder); false)
+       handle Feedback.HOL_ERR error =>
+         String.isSubstring "skeleton-type-work"
+           (Feedback.message_of error))) ()
+  val _ = assert (graph_rejected, "graph binder preflight skipped Type work")
+  val consume = Term.mk_var ("task21_consume_binder",
+    Term.type_of huge_binder --> Type.bool)
+  val nested = Term.mk_abs (Term.mk_var ("task21_outer", Type.bool),
+    Term.mk_comb (consume, huge_binder))
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => rejected "nested count-only Type admission" nested nested) ()
+  (* Count-only opening uses the range, not the larger function Type.
+     Admission of this outer frame does not compare the inner binder. *)
+  val medium_type = product 19
+  val medium = Term.mk_var ("task21_medium", medium_type)
+  val medium_identity = Term.mk_abs (medium, medium)
+  val discard = Term.mk_abs (medium, boolSyntax.T)
+  val count_only = Term.mk_abs (Term.mk_var ("task21_count", Type.bool),
+    Term.mk_comb (discard, Term.mk_comb (medium_identity, medium)))
+  val _ = #admit_abstraction (SmtSkeletonProve.new_type_admission_context ())
+    "nested admitted range despite synthesized function size" count_only
 in
   ()
 end
