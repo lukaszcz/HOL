@@ -130,10 +130,33 @@ inside the semantic audit and not a claim that the audit ran on the baseline.
 
 ## Provenance and failures
 
-`loading.json` records exact revisions, extracted source/git-blob seals,
+`loading.json` (`task28-loading-v2`) records exact revisions and immutable
+extracted source/git-blob seals,
 private generated fixtures/products, launcher text/options, interpreter/runtime
 versions and hashes, environment, calibration, ordered runs, shared actual
-source/product seals, paired statistics, and gate identity. Compressed unique
+source/product seals, paired statistics, and gate identity. Git extraction
+seals remain authoritative through fixture installation, builds, actual source
+validation and the final unchanged-input check. Generated fixtures are sealed
+before building too. Post-build product hashes cannot replace either input
+seal; a build that changes even an unloaded selected signature is rejected.
+
+On supported Linux dynamic runtimes, `ldd` discovers the libraries linked by
+**the actual `bin/hol`**, not PATH's `poly`. Discovery runs with the sanitized
+launch environment, timeout and inherited serial locks. Its command, output,
+exit and timeout are archived. Every file-backed dependency, including the
+loader, has a logical path, resolved target and content seal; the kernel VDSO
+is not a file. These hashes are included in `inputs`. Missing libraries,
+partial/unresolved output, failed/empty discovery and unsupported discovery
+formats block the run, rather than admitting a partial runtime inventory.
+Before success the original file seals are rechecked and discovery is repeated;
+changed mappings or same-byte symlink retargeting also reject. ASLR addresses
+are not identities. PATH's `poly --version` is separately archived compiler
+provenance, queried under the same environment/timeout; it is not proof of
+HOL's linked runtime version. This is local consistency checking, not hostile
+producer authentication or protection against concurrent changes restored
+between checks; the exclusive-window requirement still applies.
+
+Compressed unique
 process receipts retain raw output, complete ordered protocol and actual loaded
 paths. Inputs are checked again before success; shared actual inputs remain
 identical across processes. Processes use one GC thread. Timeouts kill/reap the
@@ -153,5 +176,5 @@ Non-timing regressions (no HOL imports or benchmarks):
 
 ```
 python3 -B -m unittest discover -s src/simp/tests/performance \
-  -p test_loading.py -v
+  -p 'test_loading*.py' -v
 ```

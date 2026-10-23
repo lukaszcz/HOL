@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -275,6 +276,57 @@ def execute(command, cwd, env, timeout, fds):
             "stdout_bytes": len(text.encode())}
 
 
+def check_seals(seals):
+    for raw, expected in seals.items():
+        require(a.seal(raw) == expected, "sealed input changed: " + raw)
+
+
+def extracted_seals(inventory, dst):
+    """Git extraction is the authority, never a post-install/build snapshot."""
+    seals = {}
+    for item in inventory:
+        path = dst / Path(item["git_path"]).name
+        require(str(path) == item["private_path"] and
+                str(path) not in seals, "invalid extraction inventory")
+        seals[str(path)] = {k: item[k] for k in ("bytes", "sha256")}
+    require(seals, "empty extraction inventory")
+    check_seals(seals)
+    return seals
+
+
+def library_paths(receipt):
+    """Linux ldd only: reject partial/unresolved/unsupported discovery."""
+    require(receipt["exit"] == 0 and not receipt["timed_out"],
+            "runtime library discovery failed")
+    text = receipt["stdout"]
+    require(text.endswith("\n"), "incomplete runtime library discovery")
+    paths = []
+    address = r"\s+\(0x[0-9a-fA-F]+\)"
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or re.fullmatch(r"linux-vdso\S*" + address, line):
+            continue  # kernel-provided virtual object, not a file
+        match = re.fullmatch(r"(?:\S+\s+=>\s+)?(/[^\s()]+)" +
+                             address, line)
+        require(match is not None, "unresolved/unsupported runtime library: " +
+                line)
+        path = match[1]
+        require(path not in paths, "duplicate runtime library")
+        paths.append(path)
+    require(paths, "empty runtime library inventory")
+    return paths
+
+
+def library_inputs(receipt):
+    inputs = {}
+    for raw in library_paths(receipt):
+        path = Path(raw)
+        target = path.resolve(strict=True)
+        require(target.is_file(), "runtime library is not a file: " + raw)
+        inputs[raw] = dict(resolved=str(target), **a.seal(path))
+    return inputs
+
+
 def archive(folder, name, receipt):
     path = folder / (name + ".json.gz")
     data = (json.dumps(receipt, indent=2, allow_nan=False) + "\n").encode()
@@ -317,7 +369,7 @@ def run(args):
     repo, output = args.repo.resolve(strict=True), args.output.resolve()
     with a.serial_lock(repo) as fds:
         output.mkdir(parents=True, exist_ok=False)
-        report = {"schema": "task28-loading-v1", "success": False,
+        report = {"schema": "task28-loading-v2", "success": False,
                   "mode": "smoke" if args.smoke else "isolated-source",
                   "claims": "NOT independent-build or release acceptance",
                   "repo": str(repo), "module": args.module,
@@ -335,6 +387,7 @@ def run(args):
                 "--gcthreads=1", "run", "--holstate=" +
                 str(repo / "bin/hol.state0")]
             paths = [Path(__file__), HERE / "test_loading.py",
+                     HERE / "test_loading_provenance.py",
                      HERE / "PROTOCOL_LOADING.md", Path(a.__file__),
                      Path(rp.__file__), HERE / "summarize.py",
                      HERE / "performance_schema.py"]
@@ -348,9 +401,23 @@ def run(args):
             paths += [Path(poly), Path(sys.executable)]
             inputs = {str(p.resolve()): a.seal(p) for p in paths}
             report["inputs"] = inputs
+            version = execute([poly, "--version"], repo, env, args.timeout,
+                              fds)
+            report["poly_version"] = archive(output, "poly-version", version)
+            require(version["exit"] == 0 and not version["timed_out"] and
+                    version["stdout"].strip(), "Poly/ML version query failed")
             report["tools"] = {"poly": poly, "python": sys.version,
-                               "poly_version": subprocess.check_output(
-                                   [poly, "--version"], text=True).strip()}
+                               "poly_version": version["stdout"].strip()}
+            linked = execute(["ldd", str(repo / "bin/hol")], repo, env,
+                             args.timeout, fds)
+            report["dynamic_libraries"] = {
+                "discovery": archive(output, "runtime-libraries", linked)}
+            libraries = library_inputs(linked)
+            report["dynamic_libraries"]["inputs"] = libraries
+            for raw, info in libraries.items():
+                seal = {k: info[k] for k in ("bytes", "sha256")}
+                inputs[raw] = seal
+                inputs[info["resolved"]] = seal
             report["environment"] = {k: env[k] for k in
                                      ("HOLDIR", "LC_ALL", "PATH", "TERM", "TZ")
                                      if k in env}
@@ -364,7 +431,13 @@ def run(args):
                     require(rp.git(repo, "rev-parse", pin + "^{commit}")
                             .decode().strip() == pin, "nonexact revision")
                     inventory = rp.extract(repo, pin, dst)
+                    sources.update(extracted_seals(inventory, dst))
                     install(dst, args.module)
+                    check_seals(sources)
+                    # Seal generated fixture inputs BEFORE the build as well.
+                    for path in dst.rglob("*"):
+                        if path.is_file() and str(path) not in sources:
+                            sources[str(path)] = a.seal(path)
                     selected = {"revision": pin, "private": str(dst),
                                 "sources": inventory}
                     report["selections"][side] = selected
@@ -377,6 +450,9 @@ def run(args):
                     selected["build"] = archive(output, side + "-build", build)
                     require(build["exit"] == 0 and not build["timed_out"],
                             side + " loading fixture build failed")
+                    # Includes the earlier selection: a later build may not
+                    # change it either. Never replace these expected Git seals.
+                    check_seals(sources)
                     launcher = (dst / "paired.exe").read_text()
                     require(str(repo / "bin/hol") + " --gcthreads=1 run "
                             in launcher and "--holstate=" +
@@ -386,8 +462,9 @@ def run(args):
                     selected["products"] = {
                         str(p.relative_to(dst)): a.seal(p)
                         for p in dst.rglob("*") if p.is_file()}
-                    sources.update({str(p.resolve()): a.seal(p)
-                                    for p in dst.rglob("*") if p.is_file()})
+                    for path in dst.rglob("*"):
+                        if path.is_file() and str(path) not in sources:
+                            sources[str(path)] = a.seal(path)
                 if args.api_audit:
                     report["semantic_gate"] = semantic_gate(
                         args.api_audit, repo,
@@ -461,9 +538,17 @@ def run(args):
                             data["reason"] = "uncalibrated pilot import"
                 report["results"] = results
                 report["shared_inputs"] = shared
-                for raw, seal in {**inputs, **sources, **shared}.items():
-                    require(a.seal(raw) == seal,
-                            "sealed input changed: " + raw)
+                check_seals(inputs)
+                check_seals(sources)
+                check_seals(shared)
+                # Recheck dependency resolution, not ASLR addresses. Keep the
+                # original logical paths AND targets to detect retargeting.
+                linked_after = execute(["ldd", str(repo / "bin/hol")], repo,
+                                       env, args.timeout, fds)
+                report["dynamic_libraries"]["recheck"] = archive(
+                    output, "runtime-libraries-after", linked_after)
+                require(library_inputs(linked_after) == libraries,
+                        "runtime library resolution changed")
                 report["success"] = True
         except (ValueError, OSError, KeyError, IndexError, TypeError,
                 subprocess.SubprocessError) as error:

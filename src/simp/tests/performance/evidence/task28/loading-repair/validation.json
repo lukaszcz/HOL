@@ -1,0 +1,417 @@
+{
+  "landing": "TASK28-loading-provenance-v3",
+  "schema": 1,
+  "starting_head": "859be8ed7672d6c319e231d18b3d5cbfcda34b30",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "status": "All bounded TASK28 machinery criteria verified; TASK29 ready",
+  "scope": "Linux/aarch64 Poly/ML 5.9.2; shared-heap isolation only",
+  "production_source_edits": false,
+  "commands": [
+    {
+      "argv": [
+        "sh",
+        "src/simp/tests/compatibility/evidence/task26/root-wrapper.sh",
+        "python3",
+        "-B",
+        "src/simp/tests/performance/loading.py",
+        "--baseline",
+        "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "--candidate",
+        "859be8ed7672d6c319e231d18b3d5cbfcda34b30",
+        "--module",
+        "simpLib",
+        "--pairs",
+        "10",
+        "--api-audit",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/api-audit/evidence/20261023T134511Z-2d38606e/receipt.json",
+        "--authorize-measurements",
+        "--output",
+        "/tmp/task28-loading-final-k6mm_9_2/simpLib"
+      ],
+      "exit": 1,
+      "log": "simpLib-final-cli.log.gz"
+    },
+    {
+      "argv": [
+        "sh",
+        "src/simp/tests/compatibility/evidence/task26/root-wrapper.sh",
+        "python3",
+        "-B",
+        "src/simp/tests/performance/loading.py",
+        "--baseline",
+        "cccaa27d7099cbadc886983020cbe745db7793f3",
+        "--candidate",
+        "859be8ed7672d6c319e231d18b3d5cbfcda34b30",
+        "--module",
+        "congLib",
+        "--pairs",
+        "10",
+        "--api-audit",
+        "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/api-audit/evidence/20261023T134511Z-2d38606e/receipt.json",
+        "--authorize-measurements",
+        "--output",
+        "/tmp/task28-loading-final-k6mm_9_2/congLib"
+      ],
+      "exit": 1,
+      "log": "congLib-final-cli.log.gz"
+    },
+    {
+      "argv": [
+        "sh",
+        "src/simp/tests/compatibility/evidence/task26/root-wrapper.sh",
+        "bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+        "-C",
+        "src/simp/tests/performance",
+        "-j1",
+        "PERFORMANCE_CHECK_OUTPUT=/tmp/task28-loading-final-k6mm_9_2/check",
+        "check"
+      ],
+      "exit": 0,
+      "log": "holmake-final.log.gz"
+    },
+    {
+      "argv": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "src/simp/tests/compatibility",
+        "-p",
+        "test_*.py"
+      ],
+      "exit": 0,
+      "log": "compatibility-tests.log.gz"
+    },
+    {
+      "command": "python3 -B .../loading-repair/review_probe.py --output .../loading-repair/review-probe-final.json",
+      "exit": 0
+    },
+    {
+      "command": "python3 -B .../review/review_regressions.py -v",
+      "exit": 0
+    },
+    {
+      "command": "W python3 -B .../loading-repair/replay.py FINAL/simpLib FINAL/congLib --output replay.json",
+      "exit": 0
+    },
+    {
+      "command": "evidence_bundle.py pack FINAL final.json.xz; unpack; repeat replay on unpacked inputs",
+      "exit": 0
+    },
+    {
+      "command": "python3 -B .../compatibility/coverage_ledger.py",
+      "exit": 0
+    },
+    {
+      "command": "python3 -B .../compatibility/verify_evidence.py",
+      "exit": 0
+    },
+    {
+      "command": "W tools/h4pedant/h4pedant --nolinelen --unicodeok src/simp/tests/performance",
+      "exit": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "observations": {
+    "simpLib": {
+      "processes": 42,
+      "libraries": {
+        "/usr/local/lib/libpolyml.so.16": {
+          "resolved": "/usr/local/lib/libpolyml.so.16.0.0",
+          "sha256": "8e39afa6fd362322a6e19b16e0055c39a6b3f8aae67d3fb04191feec4961fd7d",
+          "bytes": 784008
+        },
+        "/lib/aarch64-linux-gnu/libc.so.6": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+          "sha256": "0f1905dc27dbc6715875c70527bc8da846a10084c9c483e9d8ff76dce8d69d0e",
+          "bytes": 1722920
+        },
+        "/lib/aarch64-linux-gnu/libstdc++.so.6": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libstdc++.so.6.0.33",
+          "sha256": "6e3112d35cfc86db7ee85b27e1746f67408e2837ff8628b46386c3eabd5682a4",
+          "bytes": 2633224
+        },
+        "/lib/aarch64-linux-gnu/libm.so.6": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libm.so.6",
+          "sha256": "5e0391562de36de323fb9cb0f2c1b6bd6d034c840b1dac018499f5fe4ded1b4a",
+          "bytes": 591800
+        },
+        "/lib/ld-linux-aarch64.so.1": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+          "sha256": "390027e5f45f236bd1838bc54bf464c5ff01d260ab9f8b415ea8276641bce505",
+          "bytes": 203968
+        },
+        "/lib/aarch64-linux-gnu/libgcc_s.so.1": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+          "sha256": "f2d3ad2bf0b61f6bc944cc37d7b6ab7f88d2582b41ff989ca164803f56cc5f20",
+          "bytes": 133696
+        }
+      },
+      "results": {
+        "control": {
+          "wall": {
+            "decision": "inconclusive",
+            "baseline_median": 0.9058055,
+            "candidate_median": 0.907413,
+            "median_paired_ratio": 0.9958822104529979,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9873121441165676,
+              1.0193431777312931
+            ]
+          },
+          "cpu": {
+            "decision": "inconclusive",
+            "baseline_median": 0.9059174999999999,
+            "candidate_median": 0.9064479999999999,
+            "median_paired_ratio": 0.9952827465854645,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9849710099870057,
+              1.0201245760372148
+            ]
+          },
+          "gc_cpu": {
+            "decision": "inconclusive",
+            "baseline_median": 0.28584350000000003,
+            "candidate_median": 0.285726,
+            "median_paired_ratio": 0.99790010950886,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9817726541591898,
+              1.0299907624375513
+            ]
+          }
+        },
+        "candidate": {
+          "wall": {
+            "decision": "fail",
+            "baseline_median": 0.8856485000000001,
+            "candidate_median": 0.9062669999999999,
+            "median_paired_ratio": 1.02031963488183,
+            "paired_ratio_bootstrap_95_percent": [
+              1.0103408980426116,
+              1.0349867351578872
+            ]
+          },
+          "cpu": {
+            "decision": "fail",
+            "baseline_median": 0.8858135,
+            "candidate_median": 0.90544,
+            "median_paired_ratio": 1.0202921834165966,
+            "paired_ratio_bootstrap_95_percent": [
+              1.0102333414335043,
+              1.0347989690387474
+            ]
+          },
+          "gc_cpu": {
+            "decision": "fail",
+            "baseline_median": 0.27741699999999997,
+            "candidate_median": 0.28436300000000003,
+            "median_paired_ratio": 1.0284225052204943,
+            "paired_ratio_bootstrap_95_percent": [
+              1.0052246679221233,
+              1.0444569306762699
+            ]
+          }
+        }
+      },
+      "minimum_forced_gc_cpu": 0.00299
+    },
+    "congLib": {
+      "processes": 42,
+      "libraries": {
+        "/usr/local/lib/libpolyml.so.16": {
+          "resolved": "/usr/local/lib/libpolyml.so.16.0.0",
+          "sha256": "8e39afa6fd362322a6e19b16e0055c39a6b3f8aae67d3fb04191feec4961fd7d",
+          "bytes": 784008
+        },
+        "/lib/aarch64-linux-gnu/libc.so.6": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+          "sha256": "0f1905dc27dbc6715875c70527bc8da846a10084c9c483e9d8ff76dce8d69d0e",
+          "bytes": 1722920
+        },
+        "/lib/aarch64-linux-gnu/libstdc++.so.6": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libstdc++.so.6.0.33",
+          "sha256": "6e3112d35cfc86db7ee85b27e1746f67408e2837ff8628b46386c3eabd5682a4",
+          "bytes": 2633224
+        },
+        "/lib/aarch64-linux-gnu/libm.so.6": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libm.so.6",
+          "sha256": "5e0391562de36de323fb9cb0f2c1b6bd6d034c840b1dac018499f5fe4ded1b4a",
+          "bytes": 591800
+        },
+        "/lib/ld-linux-aarch64.so.1": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+          "sha256": "390027e5f45f236bd1838bc54bf464c5ff01d260ab9f8b415ea8276641bce505",
+          "bytes": 203968
+        },
+        "/lib/aarch64-linux-gnu/libgcc_s.so.1": {
+          "resolved": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+          "sha256": "f2d3ad2bf0b61f6bc944cc37d7b6ab7f88d2582b41ff989ca164803f56cc5f20",
+          "bytes": 133696
+        }
+      },
+      "results": {
+        "control": {
+          "wall": {
+            "decision": "inconclusive",
+            "baseline_median": 1.1988560000000001,
+            "candidate_median": 1.1970185,
+            "median_paired_ratio": 0.9965134478658149,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9932708010492713,
+              1.008729809036989
+            ]
+          },
+          "cpu": {
+            "decision": "inconclusive",
+            "baseline_median": 1.198127,
+            "candidate_median": 1.1966510000000001,
+            "median_paired_ratio": 0.9957584179288657,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9932077865518991,
+              1.0082556479028093
+            ]
+          },
+          "gc_cpu": {
+            "decision": "inconclusive",
+            "baseline_median": 0.3646505,
+            "candidate_median": 0.3639315,
+            "median_paired_ratio": 0.9994473293346868,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9942474721910277,
+              1.0117799378812808
+            ]
+          }
+        },
+        "candidate": {
+          "wall": {
+            "decision": "fail",
+            "baseline_median": 1.188126,
+            "candidate_median": 1.198772,
+            "median_paired_ratio": 1.0073619945743117,
+            "paired_ratio_bootstrap_95_percent": [
+              1.0042898385496044,
+              1.0150472599977605
+            ]
+          },
+          "cpu": {
+            "decision": "fail",
+            "baseline_median": 1.188401,
+            "candidate_median": 1.1987385,
+            "median_paired_ratio": 1.007324968012517,
+            "paired_ratio_bootstrap_95_percent": [
+              1.0045670764335375,
+              1.0150518646704125
+            ]
+          },
+          "gc_cpu": {
+            "decision": "inconclusive",
+            "baseline_median": 0.36068449999999996,
+            "candidate_median": 0.3638805,
+            "median_paired_ratio": 1.006203323612291,
+            "paired_ratio_bootstrap_95_percent": [
+              0.9919960913911203,
+              1.0234943097531894
+            ]
+          }
+        }
+      },
+      "minimum_forced_gc_cpu": 0.003219
+    }
+  },
+  "limitations": [
+    "Numerical failures retained, not performance approval",
+    "Seven explicit later-gate matrix prerequisites remain",
+    "Two unchanged optional real runtime/path tests not repeated",
+    "No compiled-source edits; no additional routine build required"
+  ],
+  "development": {
+    "compatibility_first_attempt_exit": 1,
+    "reason": "transient ENOSPC; complete retry passed",
+    "earlier_loading_cli_exits": [
+      2,
+      2
+    ],
+    "earlier_loading_processes": 84,
+    "rerun_reason": "Archive failed discovery before validation; new test and report schema; no SML change"
+  },
+  "cleanup": "All task-owned private trees and roundtrip copies removed; caller-owned caches, reviews and products preserved",
+  "inputs": {
+    "src/simp/tests/compatibility/run_paired.py": {
+      "sha256": "1244ac2a725ceaf12c522bbe820d941ec43c62c691c069f787dd25dae8607e39",
+      "bytes": 47058
+    },
+    "src/simp/tests/performance/loading.py": {
+      "sha256": "f784122663b161d0c4e1f33d6e4d0bb6ec74fcd13f8a174bbb149370a3dfb6f5",
+      "bytes": 28718
+    },
+    "src/simp/tests/performance/test_loading.py": {
+      "sha256": "c09a09cee5e76e6b1f3a401dcde8c723ba30659fc0bbfa762e4ce8e0826c1978",
+      "bytes": 17136
+    },
+    "src/simp/tests/performance/test_loading_provenance.py": {
+      "sha256": "d4a621f34d207edb091078dd3604e85ba633d51360ea98d4a2089afa00b28716",
+      "bytes": 12516
+    },
+    "src/simp/tests/performance/PROTOCOL_LOADING.md": {
+      "sha256": "fa3108d578b594580b1bdbcf9a2e91baffb6e4118136ac64b60d26db5540974a",
+      "bytes": 9970
+    },
+    "src/simp/tests/performance/TASK_28_HANDOFF.md": {
+      "sha256": "110a63c292d21c8732d1154adfec56ff1f90db8d662abaf09f953ecc4433a849",
+      "bytes": 28933
+    },
+    "src/simp/tests/performance/matrix.json": {
+      "sha256": "a7c87b2bfc7fb8e94efeee70672bae20fa00a83b8e95dabc2ad045b669bdc91b",
+      "bytes": 23994
+    },
+    "src/simp/tests/performance/matrix_schema.py": {
+      "sha256": "3941a6fffd42d8f4b0fce40b2fc8d4ab977659595998ae5f9cd27aff818e076c",
+      "bytes": 23517
+    },
+    "src/simp/tests/performance/acceptance.py": {
+      "sha256": "f40defa66a64ca8d53744745de2678511b6a52eca490d3e048312081c6572534",
+      "bytes": 34210
+    },
+    "src/simp/tests/performance/audit_evidence.py": {
+      "sha256": "c59436ed5314dd9daf0da8da7f77462de49895dfb8ddf6648b5a7b0aa2cf4c54",
+      "bytes": 17256
+    },
+    "src/simp/tests/performance/performance_schema.py": {
+      "sha256": "b7dff5f1d8e15ac19fea1cfc15f6d3d80adeecdb6251af5f7a0f8d6efaa85f69",
+      "bytes": 8325
+    },
+    "src/simp/tests/performance/summarize.py": {
+      "sha256": "fd2c9cbce1c334bcc8bdd98e0a905d54ecdd3ed50eab7632ba1d9923279d4d24",
+      "bytes": 4637
+    },
+    "src/simp/tests/performance/evidence_bundle.py": {
+      "sha256": "a989e8b177e6237d9cb1a5b3001aa73c1dac5bac060627fb055fd44ae3c78807",
+      "bytes": 4040
+    },
+    "src/simp/tests/performance/evidence/task28/loading-repair/validate.py": {
+      "sha256": "8c6bc4f5ed312070becd1eacd974820aabcc93b9747d0af9ea8f07e2cac9a0cd",
+      "bytes": 7396
+    },
+    "src/simp/tests/performance/evidence/task28/loading-repair/replay.py": {
+      "sha256": "c48079e9d4a98cea2e16fe524e36f76bd9a348980fc70cf070a7ffc76dde64be",
+      "bytes": 5778
+    },
+    "src/simp/tests/performance/evidence/task28/loading-repair/review_probe.py": {
+      "sha256": "0b1227022ecb1e72852d5874b7084c39dcfe8031dc47fe199864dc42d0a0d7eb",
+      "bytes": 1402
+    },
+    "src/simp/tests/performance/evidence/task28/loading-repair/README.md": {
+      "sha256": "6d0113526658357ea618cc59f40c689f7bdb98ec80e4adf938beec561c20be42",
+      "bytes": 5032
+    }
+  }
+}

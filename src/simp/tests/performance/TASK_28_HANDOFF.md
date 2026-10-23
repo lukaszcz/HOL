@@ -1,14 +1,113 @@
 # TASK28 — expanded acceptance machinery
 
-## Current completion: review repair v2
+## Current completion: loading provenance repair v3
+
+Landing identifier: **TASK28-loading-provenance-v3** (containing commit).
+Starting HEAD and selected candidate simplifier sources:
+`859be8ed7672d6c319e231d18b3d5cbfcda34b30`.
+Develop remains `cccaa27d7099cbadc886983020cbe745db7793f3`.
+
+**All bounded TASK28 machinery criteria are verified.** The two review-v2
+loading provenance defects are repaired, and the prior six regression repairs
+still pass. TASK29 is ready. This does not declare numerical P09 acceptance:
+new loading failures below remain published inputs to TASK31, alongside the
+existing TASK29 storage/timing findings. The seven explicit prerequisite
+blocks in the unchanged 69-requirement/107-case matrix retain their scope.
+No production SML, signature, layout, control, extension assertion or normal
+extension test integration changed.
+
+### Repair and runtime admission
+
+- `loading.py` retains extraction's original Git seals as validation authority.
+  They are checked before/after fixture installation, after each build (also
+  checking the earlier selection), during actual loaded-source validation, and
+  before success. Generated fixture inputs are sealed before building. Neither
+  a new post-build hash nor an unloaded selected signature can hide a mutation.
+- Loading schema `task28-loading-v2` adds actual `bin/hol`-linked library
+  discovery, not inference from PATH's compiler. Successful Linux `ldd` output
+  must be complete/resolved/nonempty. Every file-backed library and the loader
+  has a logical path, resolved target and content seal in the report/inputs.
+  Final checks verify original bytes and rediscover resolution, rejecting even
+  same-byte symlink retargeting. ASLR addresses and the kernel VDSO are not
+  file identities. Unsupported discovery blocks; no other platform is claimed.
+- Both discovery commands and the separate compiler-version command run under
+  the sanitized launch environment, timeout and inherited serial locks. Their
+  complete receipts are archived **before validation**, including failures.
+  `PROTOCOL_LOADING.md` documents this contract and its local-consistency,
+  exclusive-window/non-hostile-producer limitations.
+- `test_loading_provenance.py` adds 17 maintained tests. Real local Git
+  extraction, installation, source/path validators and statistics run around
+  explicitly synthetic build/process/timer events. Cases cover baseline and
+  candidate build mutation, installation mutation, unloaded signatures,
+  deletion, later-build mutation of the earlier selection, generated fixtures,
+  post-build mutation, missing/partial/failed/unsupported library discovery,
+  changed library bytes/resolution, same-byte symlinks, and failure receipts.
+
+### Fresh verification and retained decisions
+
+All new evidence is under `evidence/task28/loading-repair/`. `validation.json`
+records commands, exits and source/evidence seals. Caller-owned `review/` and
+`review-v2/` were read unchanged and remain caller-owned/untracked.
+
+- Caller review-v2 probe: **exit 0**. Its unmodified control still admits all
+  **42 synthetic observations** with the real source-bound semantic receipt.
+  Candidate build mutation now rejects before any observation, with the exact
+  original/mutated fingerprints retained. `review_probe.py` only adapts the old
+  mock's command dispatch to let the newly added compiler/library discovery
+  commands execute for real; it changes no supplied probe file or validator.
+- Prior supplied review regressions: **6/6 pass**, exit 0.
+- Final maintained `Holmake check`: **exit 0**, **241 Python tests** (two
+  unchanged optional runtime/path tests skipped), **13 runner tests**, complete
+  matrix validation, real slowdown/allocation/missing/failed controls, **306
+  fragment-grid** and **336 client-stage** semantic smoke checks. Compatibility
+  discovery: **196 pass**. Its first attempt hit transient ENOSPC; the complete
+  retry passed, with the failure log retained and no unrelated files deleted.
+- Final simpLib and congLib runs: **42 actual fresh processes each**, pilots
+  plus ten B/B and ten B/C AB/BA pairs. Both bind the existing eight-process
+  API-audit receipt to unchanged candidate Git bytes. All 84 processes pass
+  proof/path/source/timer protocol checks; both runs seal **six actual linked
+  libraries**, including libpolyml and the dynamic loader. Positive forced-GC
+  minima are **0.002990s / 0.003219s**.
+- Final simpLib: CPU/wall/GC **fail**. CPU ratio interval
+  **[1.010233, 1.034799]**. Final congLib: CPU/wall **fail**, GC inconclusive;
+  CPU interval **[1.004567, 1.015052]**. All final B/B metric decisions are
+  inconclusive. CLIs correctly exit **1**, while protocol `success` is true.
+  Failed/uncertain controls do not excuse candidate failures. These numerical
+  findings are not waived, averaged, or claimed fixed by this machinery task.
+- `replay.py`: independently recomputes all loading observations/statistics,
+  checks every actual source/product against immutable Git/product/shared
+  inventories, binds both library-discovery receipts and compiler provenance,
+  rejects source/product and missing-library archive mutations, and rejects
+  zero-GC substitutions in **all 84** real receipts. Lossless pack/unpack and
+  a second replay agree exactly: **101 files**, both commands exit 0.
+- An earlier whole 84-process experiment gave inconclusive timing decisions.
+  After review found that failed discovery receipts were lost, archive-before-
+  validation was repaired and the **whole** experiment rerun on final harness
+  bytes. `development.json.xz` retains the earlier observations unchanged;
+  no sample was discarded or reused in the final experiment.
+- Coverage **2,153 IDs**, immutable **37 inputs**, pedant and whitespace checks
+  pass. No compiled-source edit was made, so another routine build was not
+  required; the preceding repair's routine/extension evidence is unchanged.
+
+Runtime scope: Linux/aarch64, Poly/ML 5.9.2, one GC thread, configured shared
+`hol.state0`. Commands use the existing `root-wrapper.sh` to bind the configured
+historical root to this checkout. This is source isolation, not independent
+clean-build evidence. Older loading archives without these runtime seals and
+immutable build-stage binding are historical diagnostics, not v2 admission.
+The previous repair's unrelated matrix/provenance gates retain their evidence.
+Task-owned source/build/receipt/roundtrip scratch trees were removed immediately
+after sealing. No caller-owned caches, review files or build products changed.
+
+## Historical review repair v2 (loading completion invalidated by review-v2)
 
 Landing identifier: **TASK28-harness-review-repair-v2** (containing commit).
 Repair start and measured implementation: `c5595b85d7b1f5f7cfe4da6840fba773c166fa54`.
 Develop remains `cccaa27d7099cbadc886983020cbe745db7793f3`.
 
-**All bounded TASK28 criteria now pass.** The six supplied review regressions
-pass, with maintained rejection/CLI coverage and fresh real protocol evidence.
-TASK29 is ready. This is machinery readiness, not numerical P09 acceptance.
+The v2 landing reported completion after the six supplied review regressions
+passed. Review-v2 subsequently invalidated its loading provenance claim; the
+v3 section above supersedes that claim and the affected loading admission.
+The six repairs and unrelated matrix evidence below remain valid.
 The unchanged 69-requirement/107-case matrix still has seven explicit
 prerequisite blocks for later gates. No production SML, API, layout, mutable
 control, test assertion or extension capability changed in this repair.
