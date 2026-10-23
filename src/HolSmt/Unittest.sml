@@ -28599,6 +28599,136 @@ let
     (rejected (fn () => ignore (A.roots alignment)))
 in OK () end
 
+(* Independent depth/width sources must use the application-DAG contract,
+   not the unfolded binder budget. Lazy public wrappers, in contrast, pay
+   for every fresh exposed node under that SAME import contract. *)
+fun replay_independent_source_scale_success () =
+let
+  fun require message yes = if yes then () else raise Fail message
+  fun ptr a b = Portable.pointer_eq (a,b)
+  fun shared 0 term = term
+    | shared n term = let val child = shared (n-1) term
+      in boolSyntax.mk_conj (child,child) end
+  fun balanced [term] = term
+    | balanced terms =
+        let val half = length terms div 2 in
+          boolSyntax.mk_conj (balanced (List.take (terms,half)),
+            balanced (List.drop (terms,half))) end
+  fun clean theorem =
+    let val (tags,_) = Tag.dest_tag (Thm.tag theorem) in
+      List.all (fn tag => tag="DISK_THM") tags andalso
+      null (Tag.axioms_of (Thm.tag theorem)) end
+  val cap = 8192
+  val _ = Count.counting_thms true
+  val initial = #REFL (Count.thm_count ())
+  val _ = Thm.REFL boolSyntax.T
+  val _ = require "independent Source inference counter was inactive"
+    (#REFL (Count.thm_count ()) > initial)
+  fun check make (width,depth) =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      fun formula suffix =
+        let val prefix = shared depth
+              (Term.mk_var ("independent_source_prefix",Type.bool))
+            val leaves = List.tabulate (width,fn index =>
+              boolSyntax.mk_conj (prefix,Term.mk_var
+                ("independent_leaf_" ^ Int.toString index,Type.bool)))
+        in boolSyntax.mk_conj (balanced leaves,suffix) end
+      val goal = formula boolSyntax.F
+      val first = formula boolSyntax.F
+      val second = formula boolSyntax.T
+      val sources = make graph scope cap
+        {goal=goal,assumptions=[first,second,first]}
+      val nodes = S.assumption_nodes sources
+      val a = G.representative graph (hd nodes)
+      val b = G.representative graph (List.nth (nodes,1))
+      val denied = G.representative graph (S.denied_goal_node sources)
+      val _ = require "independent Source sharing or occurrences changed"
+        (not (ptr goal first) andalso not (ptr a first) andalso
+         ptr a (S.canonical_goal sources) andalso
+         nodes=[hd nodes,List.nth (nodes,1),hd nodes] andalso
+         ptr (#1 (boolSyntax.dest_conj a))
+             (#1 (boolSyntax.dest_conj b)) andalso
+         G.dag_nodes graph [hd nodes] < cap andalso
+         G.unfolded_nodes graph G.RawNodes cap (hd nodes)=SOME (cap+1))
+      val _ = List.app (fn (source:G.source) =>
+        let val (left,right) = Term.dest_eq (Thm.concl (#bridge source)) in
+          require "independent Source bridge lost exact checked endpoints"
+            (ptr left (#original source) andalso
+             ptr right (G.representative graph (#node source)) andalso
+             null (Thm.hyp (#bridge source)) andalso clean (#bridge source))
+        end) (S.goal_source sources :: S.reconciliation_sources sources)
+      val contradiction = Drule.ADD_ASSUM b
+        (Thm.MP (Thm.NOT_ELIM (Thm.ASSUME denied)) (Thm.ASSUME a))
+      val theorem = S.close_contradiction sources contradiction
+      val _ = S.check_goal sources theorem
+      val _ = require "independent Source finalization changed Goal/Hyp/tags"
+        (ptr (Thm.concl theorem) goal andalso clean theorem andalso
+         length (Thm.hyp theorem)=2 andalso
+         List.all (fn h => ptr h a orelse ptr h b) (Thm.hyp theorem))
+    in G.close_scope graph scope end
+  val cases = [(1,24),(1,40),(1,80),(1,160),
+               (8,80),(32,80),(128,80)]
+  val _ = tprint "Independent deep/wide Sources retain exact Goal and Hyp"
+  val _ = List.app (check (fn g => fn s => fn n => S.new g s n)) cases
+  val _ = List.app (check (fn g => fn s => fn n =>
+    S.new_with_policy g s
+      (SmtReplayResourcePolicy.AtMost (IntInf.fromInt n)))) cases
+  val _ = OK ()
+
+  fun lazy_source depth =
+    let val x = Term.mk_var ("independent_lazy_source",Type.bool)
+        val body = shared depth x
+    in boolSyntax.rhs (Thm.concl (Thm.Beta (Thm.REFL
+      (Term.mk_comb (Term.mk_abs (x,body),boolSyntax.F))))) end
+  fun lazy_check depth =
+    let
+      val raw = lazy_source depth
+      val graph = G.new () val scope = G.root_scope graph
+      val plan = G.plan_import graph scope cap raw
+      val exposed = length (G.import_types plan)
+      val before = Count.thm_count ()
+      val (denied,stats) = G.with_node_statistics graph scope (fn () =>
+        ((ignore (G.import graph scope (exposed-1) raw);false)
+         handle Feedback.HOL_ERR error =>
+           Feedback.message_of error =
+             "application import DAG budget exhausted"))
+      val _ = require "lazy exposure exceeded import budget before admission"
+        (denied andalso #node_creations stats=0 andalso
+         Count.thm_count ()=before)
+      val exact = G.import graph scope exposed raw
+      val (left,right) = Term.dest_eq (Thm.concl (#bridge exact))
+      val _ = require "lazy import lost exact endpoints or guessed FV"
+        (ptr left raw andalso
+         ptr right (G.representative graph (#node exact)) andalso
+         null (Thm.hyp (#bridge exact)) andalso clean (#bridge exact) andalso
+         (case G.free_variables graph (#node exact) of
+            G.Known variables => null variables | G.Unknown => false))
+      val _ = require "fresh standard lazy wrappers escaped import charging"
+        (Thm.kernelid<>"stdknl" orelse
+         exposed > G.dag_nodes graph [#node exact])
+      (* Use a FRESH Source owner: a prior raw import must not make this
+         production batch-admission check vacuous. *)
+      val home = G.new () val root = G.root_scope home
+      val sources = S.new_with_policy home root
+        (SmtReplayResourcePolicy.AtMost (IntInf.fromInt cap))
+        {goal=raw,assumptions=[raw,raw]}
+      val canonical = S.canonical_goal sources
+      val denied = G.representative home (S.denied_goal_node sources)
+      val theorem = S.close_contradiction sources
+        (Thm.MP (Thm.NOT_ELIM (Thm.ASSUME denied))
+          (Thm.ASSUME canonical))
+      val _ = S.check_goal sources theorem
+      val _ = require "lazy Source closure changed original Goal/Hyp/tags"
+        (ptr (Thm.concl theorem) raw andalso clean theorem andalso
+         length (Thm.hyp theorem)=1 andalso
+         ptr (hd (Thm.hyp theorem)) canonical)
+    in G.close_scope home root;G.close_scope graph scope end
+  val _ = tprint "Lazy public wrappers pay exact existing import contract"
+  val _ = List.app lazy_check [2,4,6]
+in Count.counting_thms false;OK () end
+handle primary => (Count.counting_thms false;raise primary)
+
 fun replay_source_alpha_membership_success () =
 let
   fun ensure message yes = if yes then () else die message
@@ -29802,6 +29932,8 @@ fun run_replay_graph_unittests () =
        replay_processed_goal_transport_success),
      ("replay_source_binder_alignment_success",
        replay_source_binder_alignment_success),
+     ("replay_independent_source_scale_success",
+       replay_independent_source_scale_success),
      ("replay_source_alpha_membership_success",
        replay_source_alpha_membership_success),
      ("replay_graph_unify_success", replay_graph_unify_success),
@@ -30642,6 +30774,8 @@ let
       replay_processed_goal_transport_success),
     ("replay_source_binder_alignment_success",
       replay_source_binder_alignment_success),
+    ("replay_independent_source_scale_success",
+      replay_independent_source_scale_success),
     ("replay_source_alpha_membership_success",
       replay_source_alpha_membership_success),
     ("replay_graph_unify_success", replay_graph_unify_success),
