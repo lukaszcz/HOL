@@ -1,0 +1,61 @@
+{
+  "allocation_success_hook_count": 5,
+  "artifact_sha256": {
+    "DESIGN_REVIEW.md": "158bfd32c2e92b25a83127b7613e0948c54098f42382d2dc704a4e2a745cd8c7",
+    "PATCHED_SHA256.json": "9fab3cdb5177bca9e8b37d09487660da8e4ef1d06ae806ff463f9e0a6d369dc4",
+    "README.md": "9c3f66494a0e80e297ddd7ac41caa3da72ac2bce90e4b714ff6445674f93544e",
+    "SOURCE_SHA256.json": "9e71b3185575ef440e3d8290850807e6242734885c82ac644738221c4bf5d5c0",
+    "check_patch.py": "46eb8804fa77ede2bc472d93a450edca06cfd749ac329ceb0036b402acd0a46e",
+    "counter_impl.inc": "339155319c4c3101b08460d9a80e4ebfb3acbd08b25c32c2b9c777cd0959b130",
+    "managed-allocation.patch": "f158590241c169be9c2a0a90aa2de354e6a6fccea4bf668a4b987b90e23d2986",
+    "managed_alloc_counter.h": "b50a7f40dec157bb4e66ab12625949dfb48c92e8d9ec31d1c4f426520c6f864f",
+    "prepare_patch.py": "3091e897c99f7659ff97ca60f9099a3acb156a75d4496b915371a0f968f0b1ec"
+  },
+  "benchmarks_run": false,
+  "checks": [
+    {
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "src/simp/tests/performance/allocator-counter/prepare_patch.py",
+        "--check"
+      ],
+      "exit_status": 0,
+      "stderr": "",
+      "stdout": "Verified 857 pinned inputs; checked 7 patch targets. No build or runtime execution.\n"
+    },
+    {
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "src/simp/tests/performance/allocator-counter/check_patch.py"
+      ],
+      "exit_status": 0,
+      "stderr": "",
+      "stdout": "PASS: seven targets replay byte-exactly; source/output hashes match\nfive success hooks; original ARM64 CRLF preserved. STATIC ONLY.\n"
+    },
+    {
+      "command": [
+        "git",
+        "apply",
+        "--numstat",
+        "src/simp/tests/performance/allocator-counter/managed-allocation.patch"
+      ],
+      "exit_status": 0,
+      "stderr": "",
+      "stdout": "2\t0\tlibpolyml/Makefile.am\n2\t0\tlibpolyml/Makefile.in\n5\t4\tlibpolyml/arm64.cpp\n4\t0\tlibpolyml/bytecode.cpp\n64\t0\tlibpolyml/managed_alloc_counter.h\n4\t0\tlibpolyml/memmgr.cpp\n71\t0\tlibpolyml/run_time.cpp\n"
+    }
+  ],
+  "inspection_host": "Linux-7.0.0-1011-aws-aarch64-with-glibc2.39",
+  "installed_source_modified": false,
+  "kind": "source_review_and_static_artifact_checks_only",
+  "outstanding": "Build/link provenance and executed known-size, failure, GC, thread, hybrid-code, overflow, and actual HOL FFI-bracket controls; then full TASK29B matrix. See DESIGN_REVIEW.md.",
+  "patch_target_count": 7,
+  "python_executable_sha256": "c86f21d0da9290ece2d7d49a3f7ed52aed59cb029abdf0ea25c79634f6cbe960",
+  "python_version": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "runtime_built": false,
+  "runtime_executed": false,
+  "source_file_count": 857,
+  "source_inventory_sha256": "6e4db7267c688624c92baed3d4968b0680fdf8163f06b77c73c6391304582020",
+  "task29b_acceptance_complete": false
+}

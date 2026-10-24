@@ -1,0 +1,9 @@
+{
+  "libpolyml/Makefile.am": "5138116917a2bfe605a424d5dbdf5a8e0cb55f5d57e64123a36f02cf9c40dd18",
+  "libpolyml/Makefile.in": "47903b6f5e5ef997b0995bc0827bb12dcc5694be61ccf6b7cf1a65cf02425190",
+  "libpolyml/arm64.cpp": "369f4d98fc5c72e3490c74e2ab13213ac6fa2e815806115ff3a4a61015e537da",
+  "libpolyml/bytecode.cpp": "8ad68898663a432bc85ee3e725f705b4cc305403464abf83d4911c28d0454365",
+  "libpolyml/managed_alloc_counter.h": "b50a7f40dec157bb4e66ab12625949dfb48c92e8d9ec31d1c4f426520c6f864f",
+  "libpolyml/memmgr.cpp": "09a95ecb937eb941531c48795449e4ace1005c43b42b97f2db0cf90e8c8b6518",
+  "libpolyml/run_time.cpp": "f8a7af6dfb50744cfe3b79ea93608232119205ffdbf39feab328076953a176b2"
+}

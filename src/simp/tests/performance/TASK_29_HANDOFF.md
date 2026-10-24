@@ -2,6 +2,113 @@
 
 ## Status: BLOCKED, not complete
 
+### Real cumulative-allocation prototype (after `b8e676a3a`)
+
+TASK29 is **not complete**. No production performance repair or replacement
+numerical grid is claimed. The exact **43 failed / 119 inconclusive** cells
+remain in `full-grid/decisions.json`; the equal-count collector CPU interval
+**[1.032421, 1.052741]** and wall failure remain unresolved. No numerical rule,
+zero-GC rule, B/B gate, workload or extension assertion was weakened.
+
+This increment goes beyond the preceding profiler diagnostic: a private,
+source-instrumented runtime actually counts successful managed reservations.
+`allocator-counter/` contains a seven-target patch over the sealed 857-file
+local Poly/ML distribution, exact replay tools, design/source review, a private
+build/cleanup driver, C-buffer FFI bracket and Holmake/testutils fixture.
+The gzip patch preserves upstream CRLF/tab bytes without adding foreign-source
+whitespace to HOL sources. The local distribution is explicitly **not proven
+to be the installed runtime's exact original source**. The experiment builds
+its own shared library, and never overwrites the installed/runtime HOL files.
+
+Accounting is cumulative **PolyWords**, with headers/alignment, split into
+native heap, RTS heap, interpreter heap and code-space reservations. GC copies,
+image relocation, unused segment capacity and host/C allocation are excluded.
+Native checks deliberately trap on every reservation; hooks count success,
+not profiler requests or temporary reserve/undo operations. A process-wide
+mutex protects coherent snapshots and saturating counters with sticky overflow.
+Forcing traps perturbs timing: these are **not ordinary-runtime timing data**.
+
+The final executed control receipt records **34 brackets / 339 testutils
+assertions**, all passing, and **22 successful commands**. Highlights:
+
+- Native arrays match exact storage slopes through **1,048,576 words**;
+  byte arrays match rounded slopes through **8,388,608 bytes**. Escaping
+  ref/cons lists match exactly five words per element.
+- Steady no-op FFI brackets cost **four native words**, not zero. The first
+  warmup costs eight total words. No constant is subtracted from workloads.
+- Bignum multiplication reserves **263 words**: four native, 259 RTS.
+- Compilation reserves **30,291 words**: 30,253 native, 38 code-space words.
+  These are a control's totals, not a fragment/compiler performance finding.
+- Repeated full GC, with and without large retained arrays, has the same
+  four-word wrapper delta. Retained data is not recounted as mutator allocation.
+- Direct C snapshot controls check null/short/unaligned buffers and no managed
+  allocation. Separate synthetic arithmetic tests check concurrent updates,
+  retired-thread totals, coherent snapshots and saturation/overflow flags.
+  Synthetic increments are explicitly **not allocated HOL words**.
+
+The driver checks actual snapshot-symbol binding and the running control
+process's mappings, rejecting a missing/second runtime. It records compiler/
+linker tool seals, clean effective build/launch environments, configuration,
+source/build/product/library seals and every command/exit/output. Runtime,
+source and generated fixture products are rechecked before cleanup. The
+11 protocol/identity/source tests plus two real-archive replay/mutation tests
+preserve strict completeness, physical slopes, metadata, endpoints and units.
+This is local source-bound evidence, not an independently rebuilt HOL/compiler
+or a hermetic header/toolchain closure.
+
+Evidence: `evidence/task29/managed-counter/`:
+
+- `controls.json.gz`: final source-bound runtime controls and complete receipts.
+- `development-source-block.json.gz`: first attempt rejected before building
+  because the wrapper hides the pristine `/home` distribution. An explicitly
+  sealed temporary input copy fixes that visibility issue.
+- `development*.json.gz`: earlier complete controls, retained separately;
+  no performance observations were filtered or selected for acceptance.
+- `counter-tests.log.gz`, `performance-tests.log.gz`,
+  `compatibility-tests.log.gz`: **13 / 276 / 196** tests, exits **0**;
+  performance discovery retains the two unchanged optional skips.
+- `routine.log.gz`: fresh
+  `bin/build -t --seq=tools/sequences/upto-parallel`, exit **0**. Its eight-process
+  API receipt is `../api-audit/evidence/20261024T044936Z-cea18e40/receipt.json`.
+  This build used the ordinary runtime, not the experimental one.
+- `validation.json`: exact source/evidence seals, commands, exits and blockers.
+  Pedant and staged whitespace checks pass.
+
+Reproduction (from root, using the existing `W` wrapper defined below):
+
+```sh
+# Supply an identical pristine source copy visible inside W's private /home.
+W python3 -B src/simp/tests/performance/allocator-counter/run_controls.py \
+  --source PRISTINE_VISIBLE_SOURCE --authorize-experimental-runtime \
+  --output NEW_RECEIPT.json
+# exit 0: narrow controls, NOT TASK29 or TASK29B acceptance
+python3 -B -m unittest discover -s src/simp/tests/performance \
+  -p test_allocator_counter.py -v
+```
+
+The counter still lacks executed hybrid-interpreter/failure-path and allocating
+ML worker-retirement validation, complete slow-path coverage, and established
+prebuilt native compiler/image lineage. Compact32 is untested. Foreign-created
+thread attachment is explicitly unsupported: a second source review found
+pre-existing null-procedure initialization and missing heap-register setup on
+that path. No unrelated runtime repair was smuggled into this patch. Most
+importantly, **the full 162-cell paired allocation matrix is not measured**.
+The prototype and its positive controls do not satisfy TASK29B by themselves.
+
+Read-only numerical source review reconfirmed that the shared tracking change
+can alter TLS/application instructions, but cannot directly explain a timed
+`frag_record/0` body or collector construction. Restoring local tracking
+ownership is therefore a hypothesis, not a justified broad repair. No such
+change was applied. The equality-straddling B/B and exact zero-GC `0/0` policy
+concerns below still require explicit review; no quiet-host rerun is promised
+to solve a ratio that is undefined by construction.
+
+No ordinary API/layout/control identity, extension or configured companion was
+changed. All task-created source/build/DSO/fixture and input-copy trees were
+removed immediately after their receipts were preserved. Caller-owned review
+directories, caches and pre-existing nested planning changes were preserved.
+TASK29, TASK29A and TASK29B remain incomplete; no completion-log line is added.
+
 ### Executed allocator-profiler falsification (after `70d82d40e`)
 
 TASK29 is **not complete**. A fresh full-grid offline replay re-admits all

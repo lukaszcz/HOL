@@ -23,6 +23,31 @@ This does not establish incidence in TASK29's workloads or validate all other
 coverage paths. Required counter construction and the full allocation matrix
 remain unsatisfied; this task is not complete.
 
+## Experimental successful-reservation counter (not closure)
+
+`allocator-counter/` now provides a fully source-pinned experimental patch,
+private build driver and real HOL/testutils controls. Unlike the lossy profiler,
+it counts successful native/RTS/interpreter/code reservations at their actual
+commit sites, with separate categories, coherent C-buffer snapshots and sticky
+overflow flags. Native checks deliberately trap on every allocation. It is a
+separate runtime, never installed into the ordinary checkout.
+
+The private eight-byte-word development run passed 34 brackets; the final
+source-bound receipt is `evidence/task29/managed-counter/controls.json.gz`.
+Read that receipt for its actual outcome and seals. Known native array/ref
+slopes, RTS bignum multiplication, code-space allocation and retained-data GC
+are exercised. The steady FFI no-op bracket allocates four native words; it is
+not allocation-free and is not subtracted from arbitrary workload results.
+Direct C ABI/no-allocation and separate synthetic concurrency/overflow tests
+are distinct controls, not workload measurements.
+
+This is not a supported full-matrix instrument yet. Actual interpreter/failure
+paths, allocating ML worker retirement, slow-path coverage and prebuilt native
+compiler/image lineage still need validation. Foreign-created-thread callbacks
+are expressly excluded after source review found pre-existing initialization
+defects; compact32 is untested. The entire 27-case/six-size paired allocation
+matrix is still missing. No TASK29B completion or ordinary timing claim follows.
+
 ## Required input
 
 A supported cumulative allocator counter or a reviewed, version-pinned Poly/ML
