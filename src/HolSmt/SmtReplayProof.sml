@@ -1167,7 +1167,7 @@ struct
 
   (* Source occurrences derive only from this genuine old owned block.
      Its proof-edge retirement leaves the retained backing Scope live. *)
-  fun retained_source_guard expected (RetainedSourceFrame
+  fun retained_source_guard_using charge expected (RetainedSourceFrame
       {block = Block {graph = old_graph,scope = old_scope,leaves,
           source_count,owned_frame,...},work,frame,graph,scope,template_limit,
        original_slots,selected_indices,sources,held,epoch,symbols}) =
@@ -1188,23 +1188,30 @@ struct
               Term.term_epoch () = symbols then () else
             raise ERR "retained_source_guard" "Source lifetime changed"
           fun slots index = if index = source_count then [] else
-            case Vector.sub (leaves,index) of Source node =>
+            (charge 2;case Vector.sub (leaves,index) of Source node =>
                 node::slots(index+1)
               | _ => raise ERR "retained_source_guard"
-                  "actual Source row changed"
+                  "actual Source row changed")
+          fun same [] [] = true
+            | same (a::rest) (b::tail) =
+                (charge 1;a=b andalso same rest tail)
+            | same _ _ = false
           val current = slots 0
-          val _ = if current = original_slots then () else
+          val _ = if same current original_slots then () else
             raise ERR "retained_source_guard" "original Source slots changed"
-          fun keep (index,node) =
-            not (List.exists (fn selected => selected = index) selected_indices)
-          val indexed = ListPair.zip
-            (List.tabulate (source_count,Lib.I),current)
-          val _ =
-            if List.map #2 (List.filter keep indexed) = sources then () else
+          fun selected index = List.exists
+            (fn held => (charge 1;held=index)) selected_indices
+          fun kept _ [] = []
+            | kept index (node::rest) =
+                (charge 2;if selected index then kept (index+1) rest
+                 else node::kept (index+1) rest)
+          val _ = if same (kept 0 current) sources then () else
             raise ERR "retained_source_guard" "retained Source order changed"
       in List.app (fn child =>
-        ignore (G.closure_child_node graph scope child)) held end)
+        (charge 1;ignore (G.closure_child_node graph scope child))) held end)
      handle primary => (W.close expected;raise primary))
+  fun retained_source_guard expected frame =
+    retained_source_guard_using (fn _=>()) expected frame
   fun retained_source_frame_for expected
       (old as Block {graph,scope,leaves,source_count,template_limit,
                     owned_frame,...}) indices =
@@ -4368,7 +4375,7 @@ struct
        parents,epoch,symbols}) =
     ((if Portable.pointer_eq (expected,work) then () else
         raise ERR "source_realization_guard" "different original Work";
-      retained_source_guard expected source_frame;
+      retained_source_guard_using charge expected source_frame;
       let
         val data = Scope.description_for expected frame
         val _ = if Portable.pointer_eq (#graph data,graph) andalso
@@ -4395,33 +4402,46 @@ struct
                 "held compact invocation or frame changed"
           | NONE => raise ERR "source_realization_guard"
               "unowned compact evidence"
-        val _ = if List.map #1 origins = List.map #1 occurrences then ()
-          else raise ERR "source_realization_guard"
+        fun same_origins [] [] = true
+          | same_origins ((a,_)::rest) ((b,_)::tail) =
+              (charge 1;a=b andalso same_origins rest tail)
+          | same_origins _ _ = false
+        val _ = if same_origins origins occurrences then () else
+          raise ERR "source_realization_guard"
             "actual occurrence origins changed"
         fun original_origin ((_,node),(_,OriginalPrefixSlot (held,index))) =
               let val _ = if Portable.pointer_eq (held,original_sources)
                     then () else raise ERR "source_realization_guard"
                       "different retained original Source origin"
-                  val prefix = SmtReplaySource.assumption_nodes held @
-                    [SmtReplaySource.denied_goal_node held]
-              in if index >= 0 andalso index < List.length prefix andalso
-                  List.nth (prefix,index) = node then () else
+                  fun at [] remaining =
+                        (charge 1;remaining=0 andalso
+                         SmtReplaySource.denied_goal_node held=node)
+                    | at (head::rest) remaining =
+                        (charge 1;if remaining=0 then head=node
+                         else at rest (remaining-1))
+              in if index >= 0 andalso
+                  at (SmtReplaySource.assumption_nodes held) index then () else
                 raise ERR "source_realization_guard"
                   "actual original-prefix occurrence changed" end
           | original_origin _ = ()
-        val _ = ListPair.appEq original_origin (occurrences,origins)
-        val _ = List.app (fn child => ignore
-          (G.closure_child_node graph scope child)) held
-        val _ = List.app
-          (validate_closed_fact graph scope template_limit) facts
-        val _ = List.app (validate_conversion_for expected) conversions
-        val _ = List.app
-          (validate_conversion graph scope template_limit) conversions
+        val _ = ListPair.appEq
+          (fn pair => (charge 1;original_origin pair)) (occurrences,origins)
+        val _ = List.app (fn child =>
+          (charge 1;ignore (G.closure_child_node graph scope child))) held
+        val _ = List.app (fn fact =>
+          (charge 1;validate_closed_fact graph scope template_limit fact))
+          facts
+        val _ = List.app (fn conversion =>
+          (charge 1;validate_conversion_for expected conversion)) conversions
+        val _ = List.app (fn conversion =>
+          (charge 1;validate_conversion graph scope template_limit conversion))
+          conversions
         val _ = if Portable.pointer_eq
             (Thm.concl theorem,G.representative graph target) andalso
             clean theorem andalso List.all (fn hypothesis =>
-              List.exists (fn (_,node) => Portable.pointer_eq
-                (hypothesis,G.representative graph node)) occurrences)
+              (charge 1;List.exists (fn (_,node) =>
+                (charge 1;Portable.pointer_eq
+                  (hypothesis,G.representative graph node))) occurrences))
               (Thm.hyp theorem) then () else
           raise ERR "source_realization_guard" "checked Source result changed"
       in
@@ -21899,11 +21919,49 @@ struct
     {work:W.portfolio,block:block,
      contract:SmtReplayNativeContract.contract,target:G.node,
      proof:Thm.thm,substitution:(Term.term,Term.term) Lib.subst,
-     epoch:int,symbols:int,used:bool ref}
+     batch_weight:IntInf.int,epoch:int,symbols:int,used:bool ref}
   datatype policy_source_realization = PolicySourceRealization of
     {work:W.portfolio,block:block,
      contract:SmtReplayNativeContract.contract,target:G.node,
      theorem:Thm.thm,sources:G.node list,epoch:int,symbols:int}
+
+  (* Batch only compact, individually admitted laws. A forest is not a new
+     input schema: imposing an aggregate native cap would newly refuse wide
+     Source portfolios. Pay its additional shells, closed proof construction
+     and projections on the SAME Work instead. No expanded syntax is read. *)
+  fun realization_batch_inventory pay profile error law_weights substitutions =
+    let
+      fun weight term =
+        let val (raw,inc,ann)=profile term
+        in raw+inc+ann end
+      fun compare (a,b) =
+        (pay 1;if Portable.pointer_eq(a,b) then EQUAL else
+          (pay (weight a+weight b);Term.compare(a,b)))
+      val bindings=ref (Redblackmap.mkDict compare)
+      fun insert {redex,residue} =
+        (pay 3;case Redblackmap.peek (!bindings,redex) of
+            SOME held => if Portable.pointer_eq(held,residue) then () else
+              raise error "inconsistent private realization substitution"
+          | NONE => bindings:=Redblackmap.insert
+              (!bindings,redex,residue))
+      val _=List.app (List.app insert) substitutions
+      val merged=Redblackmap.foldl (fn (redex,residue,rest) =>
+        (pay 2;{redex=redex,residue=residue}::rest)) [] (!bindings)
+      (* Scalar profiles were already paid and authenticated during each
+         component's admission. Reopening every law here is redundant. *)
+      val weights=Vector.fromList
+        (List.map (fn weight => (pay 2;weight)) law_weights)
+      fun forest start count =
+        if count=0 then 0 else if count=1 then Vector.sub(weights,start)
+        else let val left=count div 2
+                 val a=forest start left
+                 val b=forest (start+left) (count-left)
+                 (* CONJ and both projections, including compact operands,
+                    results and Boolean annotations; no expanded walk. *)
+                 val _=pay (32+6*(a+b+15))
+             in 15+a+b end
+      val _=ignore (forest 0 (Vector.length weights))
+    in merged end
 
   fun prepare_realization_with_policy work block target edge =
     ((let val (owner,native)=pp_owner work block
@@ -21955,16 +22013,17 @@ struct
           val count=IntInf.fromInt (Vector.length leaves)
           (* This is compact closing/projection work. Expanded replacements
              are borrowed existing terms, not a new unfolded result quote. *)
-          val amount=1+raw+inc+ann+8*count+count*(count+2)
+          val amount=5+raw+inc+ann+8*count+count*(count+2)
           val _=pp_future work amount
           val _=ignore (pp_owner work block)
       in PolicyRealizationPlan {work=work,block=block,
           contract= #contract owner,target=target,proof=proof,
-          substitution=replacements,epoch=Type.type_epoch (),
+          substitution=replacements,batch_weight=raw+inc+ann,
+          epoch=Type.type_epoch (),
           symbols=Term.term_epoch (),used=ref false} end)
      handle primary=>(W.close work;raise primary))
 
-  fun execute_realization_using finish expected
+  fun execute_realization_using instantiate finish expected
       (saved as PolicyRealizationPlan {work,...}) =
     ((if Portable.pointer_eq(expected,work) then () else
         raise ERR "policy_realize" "different original Work";
@@ -21980,7 +22039,7 @@ struct
               raise ERR "policy_realize" "used realization"
             else used:=true
           fun valid ()=ignore (pp_owner expected block)
-          val instantiated=SmtReplaySimultaneousRealization.instantiate
+          val instantiated=instantiate
             {guard=valid,error=ERR "policy_realize",contexts=[context],
              proof=proof,substitution=substitution}
           fun witness (Source node)=
@@ -22014,14 +22073,15 @@ struct
 
 
   fun execute_realization_with_policy expected saved =
-    execute_realization_using (fn realized=>realized:=true) expected saved
+    execute_realization_using SmtReplaySimultaneousRealization.instantiate
+      (fn realized=>realized:=true) expected saved
 
-  (* These are the original individual admitted plans over ONE private
-     block. Only the batch owner may delay that block's consumed bit;
-     no receipt, Source proof or native quote is accepted from a caller. *)
+  (* Individually admitted plans over ONE private block. All laws close
+     before ONE forest INST; only then are their own witnesses applied.
+     No receipt, Source proof or native quote is accepted from a caller. *)
   datatype policy_realization_batch = PolicyRealizationBatch of
     {work:W.portfolio,block:block,plans:policy_realization_plan list,
-     used:bool ref}
+     substitution:(Term.term,Term.term) Lib.subst,used:bool ref}
 
   fun prepare_realization_batch_with_policy expected block requests =
     ((let
@@ -22036,9 +22096,20 @@ struct
                   val _=W.spend_policy expected 1
               in plan::remaining end
         val plans=prepare requests
+        val (_,native)=pp_owner expected block
+        val inspect=pp_inspector expected block native
+        fun profile term=let val p= #profile inspect term
+          in (#raw p,#inc p,#ann p) end
+        val weights=List.map (fn PolicyRealizationPlan {batch_weight,...} =>
+          batch_weight) plans
+        val substitution=realization_batch_inventory
+          (pp_pay expected) profile (ERR "policy_realize_batch") weights
+          (List.map (fn PolicyRealizationPlan {substitution,...} =>
+            substitution) plans)
         val _=ignore (pp_owner expected block)
       in PolicyRealizationBatch
-        {work=expected,block=block,plans=plans,used=ref false} end)
+        {work=expected,block=block,plans=plans,substitution=substitution,
+         used=ref false} end)
      handle primary=>(W.close expected;raise primary))
 
   fun execute_realization_batch_with_policy expected
@@ -22046,24 +22117,39 @@ struct
     ((if Portable.pointer_eq(expected,work) then () else
         raise ERR "policy_realize_batch" "different original Work";
       let
-        val PolicyRealizationBatch {block,plans,used,...}=saved
+        val PolicyRealizationBatch {block,plans,substitution,used,...}=saved
         val _=ignore (pp_owner expected block)
         val _=W.spend_policy expected 2
         val Block {realized,...}=block
         val _=if !used orelse !realized then
             raise ERR "policy_realize_batch" "used realization"
           else used:=true
-        fun execute []=(ignore (pp_owner expected block);[])
-          | execute (plan::rest)=
-              let val _=W.spend_policy expected 2
-                  val result=execute_realization_using
+        fun valid ()=ignore (pp_owner expected block)
+        (* Pay the entire execution envelope BEFORE the first native
+           forest operation, not after an already instantiated batch. *)
+        fun quote []=W.spend_policy expected 1
+          | quote (_::rest)=(W.spend_policy expected 3;quote rest)
+        val _=quote plans
+        val Block {context,...}=block
+        fun component (PolicyRealizationPlan {proof,used,epoch,symbols,...}) =
+          if not (!used) andalso epoch=Type.type_epoch () andalso
+              symbols=Term.term_epoch () then ([context],proof) else
+            raise ERR "policy_realize_batch" "used or expired component"
+        val components=List.map component plans
+        val laws=SmtReplaySimultaneousRealization.instantiate_batch
+          {guard=valid,error=ERR "policy_realize_batch",proofs=components,
+           substitution=substitution}
+        fun execute [] []=(valid ();[])
+          | execute (plan::rest) (law::tail)=
+              let val result=execute_realization_using (fn _=>law)
                     (fn _=>()) expected plan
-                  val remaining=execute rest
-                  val _=W.spend_policy expected 1
+                  val remaining=execute rest tail
               in result::remaining end
-        val results=execute plans
+          | execute _ _=raise ERR "policy_realize_batch" "component count"
+        val results=execute plans laws
         val _=ignore (pp_owner expected block)
-        val _=W.spend_policy expected 1
+        (* No requests means retirement of an unused block, not emission
+           of a completed realized theorem (and needs no INST). *)
         val _=realized:=true
       in results end)
      handle primary=>(W.close expected;raise primary))
@@ -25599,7 +25685,7 @@ struct
      proof:Thm.thm,contexts:Term.term list,
      witnesses:policy_sparse_witness list,occurrences:int list,
      substitution:(Term.term,Term.term)Lib.subst,used:bool ref,
-     epoch:int,symbols:int}
+     batch_weight:IntInf.int,epoch:int,symbols:int}
   datatype policy_sparse_result=PolicySparseResult of
     {work:W.portfolio,frontier:policy_realization_frontier,
      contract:PSNC.contract,target:G.node,theorem:Thm.thm,
@@ -25849,15 +25935,18 @@ struct
       val _=if annotations<=ceiling then ()else
         raise ERR "policy_sparse_realize" "closing native Type work exceeded"
       val _=pay future
-      val _=pay 15
+      (* Include the retained scalar batch profile and its arithmetic. *)
+      val _=pay 19
       val result=PolicySparseRealizationPlan{work=expected,block=block,
         target=target,proof=proof,contexts=saved_contexts,witnesses=witnesses,
-        occurrences=occurrences,substitution=substitution,used=ref false,
+        occurrences=occurrences,substitution=substitution,
+        batch_weight= #raw law+ #inc law+ #ann law,used=ref false,
         epoch=Type.type_epoch(),symbols=Term.term_epoch()}
       val _=valid()
     in result end)
     handle primary=>(W.close expected;raise primary)
-  fun execute_policy_sparse_realization_using prepaid consume expected
+  fun execute_policy_sparse_realization_using instantiate prepaid consume
+      expected
       (saved as PolicySparseRealizationPlan{work,...})=
     (
       (if Portable.pointer_eq(expected,work)then ()else
@@ -25878,7 +25967,7 @@ struct
            raise ERR "policy_sparse_realize" "declaration lifetime changed"
          val _=if !used then raise ERR "policy_sparse_realize"
              "used sparse realization"else used:=true
-         val instantiated=SmtReplaySimultaneousRealization.instantiate
+         val instantiated=instantiate
            {guard=valid,error=ERR "policy_sparse_realize",contexts=contexts,
             proof=proof,substitution=substitution}
          fun witness(PSOriginalWitness(_,node))=
@@ -25922,11 +26011,13 @@ struct
          occurrences=occurrences,guard=stable,epoch=epoch,symbols=symbols}end))
     handle primary=>(W.close expected;raise primary)
   fun execute_policy_sparse_realization expected plan=
-    execute_policy_sparse_realization_using false true expected plan
+    execute_policy_sparse_realization_using
+      SmtReplaySimultaneousRealization.instantiate false true expected plan
 
   datatype policy_sparse_realization_batch=PolicySparseRealizationBatch of
     {work:W.portfolio,block:policy_sparse_block,
-     plans:policy_sparse_realization_plan list,used:bool ref}
+     plans:policy_sparse_realization_plan list,
+     substitution:(Term.term,Term.term) Lib.subst,used:bool ref}
   fun prepare_policy_sparse_realization_batch expected block requests=
     ((let
         val _=ps_guard expected block
@@ -25939,33 +26030,58 @@ struct
                     expected block request
               in plan::prepare rest end
         val plans=prepare requests
+        val PolicySparseBlock {named,...}=block
+        fun profile term=let val p=PSN.compact_profile named term
+          in (#raw p,#inc p,#ann p) end
+        val weights=List.map
+          (fn PolicySparseRealizationPlan {batch_weight,...} =>
+            batch_weight) plans
+        val substitution=realization_batch_inventory
+          (W.spend_policy expected) profile (ERR "policy_sparse_batch")
+          weights (List.map
+            (fn PolicySparseRealizationPlan {substitution,...} =>
+              substitution) plans)
         val _=ps_guard expected block
       in PolicySparseRealizationBatch{work=expected,block=block,
-        plans=plans,used=ref false}end)
+        plans=plans,substitution=substitution,used=ref false}end)
      handle primary=>(W.close expected;raise primary))
   fun execute_policy_sparse_realization_batch expected
       (saved as PolicySparseRealizationBatch{work,...})=
     ((if Portable.pointer_eq(expected,work)then ()else
         raise ERR "policy_sparse_batch" "different original Work";
       let
-        val PolicySparseRealizationBatch{block,plans,used,...}=saved
+        val PolicySparseRealizationBatch
+          {block,plans,substitution,used,...}=saved
         val _=ps_guard expected block
         val PolicySparseBlock{realized,...}=block
         (* Once state, two visitor closures and actual output list cells
            are quoted before the first closing native operation. *)
         val _=W.spend_policy expected 5
-        val _=if !used then raise ERR "policy_sparse_batch" "used batch"
+        val _=if !used orelse !realized then
+            raise ERR "policy_sparse_batch" "used batch"
           else used:=true
         fun quote []=ps_guard expected block
           | quote(_::rest)=
               (W.spend_policy expected 38;quote rest)
         val _=quote plans
-        fun execute []=(ps_guard expected block;[])
-          | execute(plan::rest)=
-              execute_policy_sparse_realization_using
-                true false expected plan::execute rest
-        val result=execute plans
+        fun valid ()=ps_guard expected block
+        fun component (PolicySparseRealizationPlan
+            {contexts,proof,used,epoch,symbols,...}) =
+          if not (!used) andalso epoch=Type.type_epoch () andalso
+              symbols=Term.term_epoch () then (contexts,proof) else
+            raise ERR "policy_sparse_batch" "used or expired component"
+        val components=List.map component plans
+        val laws=SmtReplaySimultaneousRealization.instantiate_batch
+          {guard=valid,error=ERR "policy_sparse_batch",proofs=components,
+           substitution=substitution}
+        fun execute [] []=(valid ();[])
+          | execute(plan::rest)(law::tail)=
+              execute_policy_sparse_realization_using (fn _=>law)
+                true false expected plan::execute rest tail
+          | execute _ _=raise ERR "policy_sparse_batch" "component count"
+        val result=execute plans laws
         val _=ps_guard expected block
+        (* Empty batches retire unused backing without realizing a result. *)
         val _=realized:=true
       in result end)
      handle primary=>(W.close expected;raise primary))

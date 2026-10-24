@@ -32614,6 +32614,28 @@ in
     in ensure "repeated cut renewed authority or lost genuine Source Hyp"
       valid end
   val _ = testutils.tprint
+    "Cross-block imports exhaust the SAME cumulative Work before native"
+  val _ = let val e = setup (G.new ())
+      val first = producer e
+      val second = result e (consumer e [first]) first
+      val third = result e (consumer e [second]) second
+      val valid = exact e third
+      val _ = W.with_step (#work e) (fn () =>
+        W.spend (#work e) (10000000- #charged(W.audit(#work e))-3))
+      val prior = Count.thm_count ()
+      val (outcome,statistics) = SmtReplayRuleObservation.with_statistics
+        (fn () => Exn.capture (consumer e) [third])
+      val refused = case outcome of
+          Exn.Exn (Feedback.HOL_ERR detail) =>
+            Feedback.message_of detail =
+              "original cumulative work allowance exhausted"
+        | _ => false
+      val audit = W.audit (#work e)
+    in ensure "cut reset allowance, lost diagnostic or ran native on refusal"
+      (valid andalso refused andalso #retired audit andalso
+       #charged audit<=10000000 andalso Count.thm_count ()=prior andalso
+       #selected_returns statistics=0) end
+  val _ = testutils.tprint
     "Distinct same-target Source receipts retain both exact support rows"
   val _ = let val e = setup (G.new ())
       val left = producer e
@@ -46068,6 +46090,82 @@ in
        andalso List.all(fn h=>List.exists(fn node=>
          Portable.pointer_eq(h,G.representative g node))allowed)(Thm.hyp proof))
     end)
+
+  val _=test "One policy batch INST preserves separate canonical multi-Hyp"
+    (fn()=>let
+        fun shared 0 t=t
+          | shared k t=let val c=shared(k-1)t
+            in boolSyntax.mk_conj(c,c)end
+        val x=Term.mk_var("__smt_replay_1",Type.bool)
+        val y=Term.mk_var("policy_batch_other",Type.bool)
+        val(g,_,s,w,n)=setup
+          [boolSyntax.mk_conj(shared 80 x,x),
+           boolSyntax.mk_conj(shared 80 x,y)]
+        val nodes=S.assumption_nodes s
+        val b=block w n [] []
+        val requests=List.tabulate(2,fn index=>
+          (List.nth(nodes,index),source w b index))
+        val saved=W.with_step w(fn()=>
+          P.prepare_realization_batch_with_policy w b requests)
+        val(results,stats)=SmtReplayInstanceObservation.with_statistics
+          (fn()=>W.with_step w(fn()=>
+            P.execute_realization_batch_with_policy w saved))
+        val proofs=List.map(P.policy_source_realization_theorem_for w)results
+        val prefix=nodes@[S.denied_goal_node s]
+        (* Dense common-D proofs retain the entire original Source context
+           in each result; sparse batches select actual Hyp instead. *)
+    in require "batch substituted twice, retyped or mixed canonical Hyp"
+      (#inst_calls stats=1 andalso #inst_type_calls stats=0 andalso
+       #schema_raw_nodes stats<20000 andalso
+       ListPair.allEq(fn(proof,node)=>
+         Portable.pointer_eq(Thm.concl proof,G.representative g node)andalso
+         length(Thm.hyp proof)=length prefix andalso
+         List.all(fn held=>List.exists(fn hyp=>
+           Portable.pointer_eq(hyp,G.representative g held))
+             (Thm.hyp proof))prefix) (proofs,nodes))end)
+
+  val _=test "Prepared policy batch exhausts Work before forest native rules"
+    (fn()=>let
+        val g=G.new () val r=G.root_scope g
+        val s=S.new_with_policy g r RP.Uncapped
+          {goal=boolSyntax.T,assumptions=[boolSyntax.T]}
+        val w=W.begin_with_policy g r s
+          {limits=metadata,work_limit=RP.AtMost 100000000}
+        val n=NC.capture w
+          {semantic_limits={input_limit=1,output_limit=1,template_limit=8192},
+           import_limit=1000000,type_work_limit=4000000}
+        val t=hd(S.assumption_nodes s)
+        val b=block w n [] [] val edge=source w b 0
+        val saved=W.with_step w(fn()=>
+          P.prepare_realization_batch_with_policy w b [(t,edge)])
+        val _=W.with_step w(fn()=>
+          case W.remaining_policy w of RP.AtMost remaining=>
+            W.spend_policy w (remaining-2)
+          | _=>raise Fail "finite fixture lost cumulative allowance")
+        val prior=Count.thm_count ()
+        val(outcome,statistics)=SmtReplayRuleObservation.with_statistics
+          (fn()=>Exn.capture(fn()=>W.with_step w(fn()=>
+            P.execute_realization_batch_with_policy w saved))())
+        val message=case outcome of Exn.Exn(Feedback.HOL_ERR detail)=>
+              SOME(Feedback.message_of detail)|_=>NONE
+    in require "batch ran native rules before original Work refusal"
+      (message=SOME "original cumulative work allowance exhausted"andalso
+       #selected_returns statistics=0 andalso
+       Count.thm_count ()=prior andalso #retired(W.audit_policy w))end)
+
+  val _=test "Empty policy batch only retires unused backing"
+    (fn()=>let val(_,_,_,w,_,b,_,_,_)=named_setup ()
+        val saved=W.with_step w(fn()=>
+          P.prepare_realization_batch_with_policy w b [])
+        val prior=Count.thm_count ()
+        val(results,stats)=SmtReplayInstanceObservation.with_statistics
+          (fn()=>W.with_step w(fn()=>
+            P.execute_realization_batch_with_policy w saved))
+    in require "empty batch emitted a theorem or retained reusable backing"
+      (null results andalso #inst_calls stats=0 andalso
+       Count.thm_count ()=prior andalso
+       refuses(fn()=>W.with_step w(fn()=>ignore
+         (P.execute_realization_batch_with_policy w saved))))end)
 
   val _=test "Policy canonical import handles actual lazy wrapper Source"
     (fn()=>let val x=Term.mk_var("policy_wrapper",Type.bool)
@@ -83375,11 +83473,11 @@ local
           P.prepare_owned_realization_tables_with_policy work frontier)
     in W.with_step work(fn()=>P.prepare_policy_sparse_freeze work
       {tables=tables,contract=contract,check_type=callback})end
-  fun fixture action=
+  fun fixture_sources assumptions action=
     let
       val graph=G.new()val scope=G.root_scope graph
       val sources=S.new_with_policy graph scope RP.Uncapped
-        {assumptions=[boolSyntax.T,boolSyntax.T],
+        {assumptions=assumptions,
          goal=Term.mk_var("sparse_source_goal",Type.bool)}
       val work=W.begin_with_policy graph scope sources
         {limits=limits,work_limit=RP.AtMost 100000000}
@@ -83402,6 +83500,7 @@ local
         (W.close work;if !closed then ()else G.close_scope graph scope))()
     in case result of Exn.Exn primary=>raise primary
       | Exn.Res answer=>(Exn.release cleanup;answer)end
+  fun fixture action=fixture_sources [boolSyntax.T,boolSyntax.T] action
   fun inside(e:env)action=W.with_step(#work e)action
   fun original(e:env)index=inside e(fn()=>
     P.policy_sparse_source_for(#work e)(#block e)index)
@@ -83458,8 +83557,13 @@ in
                 P.prepare_policy_sparse_realization_batch(#work e)(#block e)
                   [{target= #truth e,edge=first},
                    {target= #truth e,edge=second}])
-              val results=inside e(fn()=>
-                P.execute_policy_sparse_realization_batch(#work e)saved)
+              val(results,instances)=
+                SmtReplayInstanceObservation.with_statistics(fn()=>
+                  inside e(fn()=>
+                    P.execute_policy_sparse_realization_batch(#work e)saved))
+              val _=require "sparse batch repeated or retyped realization"
+                (#inst_calls instances=1 andalso
+                 #inst_type_calls instances=0)
               val receipts=List.map(data e)results
           in case receipts of [a,b]=>
               require "batch retained unused or reclassified native hypotheses"
@@ -83469,6 +83573,81 @@ in
                  null(Thm.hyp(#theorem b))andalso
                  exact e(#theorem a)andalso exact e(#theorem b)andalso live e)
             | _=>raise Fail "sparse batch changed ordered results"end))
+      val _=test "Sparse batch merges different domains with exact multi-Hyp"
+        (fn()=>let val p=Term.mk_var("__smt_replay_1",Type.bool)
+                   val q=Term.mk_var("sparse_batch_q",Type.bool)
+        in fixture_sources [boolSyntax.T,p,p,q](fn e=>
+          let val nodes=S.assumption_nodes(#sources e)
+              val pn=List.nth(nodes,1) val qn=List.nth(nodes,3)
+              val a=Term.mk_var("batch_a",Type.bool)
+              val b=Term.mk_var("batch_b",Type.bool)
+              val law=Thm.DISCH a(Thm.DISCH b(Thm.ASSUME a))
+              val first=original e 1 val second=original e 3
+              val both=inside e(fn()=>
+                let val w= #work e val block= #block e
+                    val saved=P.prepare_policy_sparse_named_inst w block
+                      {theorem=law,substitution=
+                        [{redex=a,residue=P.policy_sparse_name_for w block pn},
+                         {redex=b,
+                          residue=P.policy_sparse_name_for w block qn}]}
+                    val edge=P.execute_policy_sparse_named_inst w saved
+                    fun mp a b=P.policy_sparse_primitive_for w block
+                      P.ImplicationMP [a,b]
+                in mp (mp edge first) second end)
+              val saved=inside e(fn()=>
+                P.prepare_policy_sparse_realization_batch(#work e)(#block e)
+                  [{target=pn,edge=both},{target=qn,edge=second}])
+              val(results,stats)=SmtReplayInstanceObservation.with_statistics
+                (fn()=>inside e(fn()=>
+                  P.execute_policy_sparse_realization_batch(#work e)saved))
+              fun exact_hyp proof expected=
+                length(Thm.hyp proof)=length expected andalso
+                List.all(fn node=>List.exists(fn hyp=>Portable.pointer_eq
+                  (hyp,G.representative(#graph e)node))(Thm.hyp proof))expected
+          in case List.map(data e)results of [left,right]=>
+              require "merged batch changed domains, endpoints, Hyp or order"
+                (#inst_calls stats=1 andalso #inst_type_calls stats=0 andalso
+                 #original_occurrences left=[1,2,3]andalso
+                 #original_occurrences right=[3]andalso
+                 exact_hyp(#theorem left)[pn,qn]andalso
+                 exact_hyp(#theorem right)[qn]andalso
+                 Portable.pointer_eq(Thm.concl(#theorem left),
+                   G.representative(#graph e)pn)andalso
+                 Portable.pointer_eq(Thm.concl(#theorem right),
+                   G.representative(#graph e)qn)andalso
+                 clean(#theorem left)andalso clean(#theorem right))
+            | _=>raise Fail "batch lost result order"end)end)
+      val _=test "Empty sparse batch retires unused backing without native"
+        (fn()=>fixture(fn e=>
+          let val saved=inside e(fn()=>
+                P.prepare_policy_sparse_realization_batch(#work e)(#block e)[])
+              val prior=Count.thm_count ()
+              val(results,stats)=SmtReplayInstanceObservation.with_statistics
+                (fn()=>inside e(fn()=>
+                  P.execute_policy_sparse_realization_batch(#work e)saved))
+              val refused=message(fn()=>inside e(fn()=>
+                P.execute_policy_sparse_realization_batch(#work e)saved))
+          in require "empty sparse batch emitted or renewed a realization"
+            (null results andalso #inst_calls stats=0 andalso
+             Count.thm_count ()=prior andalso Option.isSome refused andalso
+             not(live e))end))
+      val _=test "A wide sparse forest adds no aggregate schema refusal"
+        (fn()=>fixture(fn e=>
+          let val edge=closed e
+              val requests=List.tabulate(128,fn _=>
+                {target= #truth e,edge=edge})
+              val saved=inside e(fn()=>
+                P.prepare_policy_sparse_realization_batch(#work e)(#block e)
+                  requests)
+              val(results,stats)=SmtReplayInstanceObservation.with_statistics
+                (fn()=>inside e(fn()=>
+                  P.execute_policy_sparse_realization_batch(#work e)saved))
+              val receipts=List.map(data e)results
+          in require "wide forest raised caps, substituted twice or mixed Hyp"
+            (#inst_calls stats=1 andalso #inst_type_calls stats=0 andalso
+             #schema_raw_nodes stats>512 andalso length receipts=128 andalso
+             List.all(fn row=>null(Thm.hyp(#theorem row))andalso
+               exact e(#theorem row))receipts)end))
       val _=test "A sparse Source index cannot address a CLOSED formal"
         (fn()=>fixture(fn e=>
           let val prior=Count.thm_count()

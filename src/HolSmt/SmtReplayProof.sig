@@ -1172,8 +1172,11 @@ sig
   val execute_realization_with_policy : SmtReplayInvocationWork.portfolio ->
     policy_realization_plan -> policy_source_realization
   (* SAME current Work action. Every entry retains the original individual
-     preparation/native quote. Execution consumes this private block once
-     after all witnesses succeed; a failed batch publishes no results. *)
+     preparation/native quote. Nonempty batches close a balanced compact
+     forest before ONE INST, then project before applying each result's own
+     witnesses. The original Work pays aggregation; no new wide schema cap.
+     Empty batches only retire unused backing (no theorem and no INST).
+     A failed batch publishes no results. *)
   type policy_realization_batch
   val prepare_realization_batch_with_policy :
     SmtReplayInvocationWork.portfolio -> block ->
@@ -1516,6 +1519,8 @@ sig
   val execute_policy_sparse_realization :
     SmtReplayInvocationWork.portfolio -> policy_sparse_realization_plan ->
     policy_sparse_result
+  (* Same single-INST forest discipline, with separately selected actual
+     Hyp/Original occurrence groups per result (never their union). *)
   val prepare_policy_sparse_realization_batch :
     SmtReplayInvocationWork.portfolio -> policy_sparse_block ->
     {target:SmtReplayGraph.node,edge:policy_sparse_edge} list ->

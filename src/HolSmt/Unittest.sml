@@ -28453,7 +28453,13 @@ let
         (P.source block 0) (List.tabulate (count, fn n => n + 1))
       val _ = assert (rejected (fn () => ignore
           (P.realize block head derived)), "wrong graph endpoint accepted")
-      val result = P.realize block target derived
+      val (result,instances) = SmtReplayInstanceObservation.with_statistics
+        (fn () => P.realize block target derived)
+      val _ = assert (#inst_calls instances = 1 andalso
+          #inst_type_calls instances = 0 andalso
+          #schema_raw_nodes instances <=
+            IntInf.fromInt (128*(count+source_depth+4)),
+        "realization revisited expanded syntax or retyped its result")
     in
       assert (ptr (Thm.concl result) (G.representative graph target) andalso
           List.length (Thm.hyp result) = 1 andalso
@@ -28464,7 +28470,7 @@ let
           rejected (fn () => ignore (P.realize block target derived)),
         "realized block remained available for expanded substitution")
     end
-  val _ = compact 0 256
+  val _ = List.app (compact 0) [1,16,256,1024,4096]
   val _ = compact 80 32
   val graph = G.new ()
   val scope = G.root_scope graph
