@@ -734,6 +734,35 @@ struct
         (inside p;scope_debit p 7;
          if amount >= 0 then scope_debit p (amount+6)
          else fail p "admit" "original cumulative work allowance exhausted")
+  fun require_callback_free_return p =
+    let
+      (* The actual live guard runs NOW, on the original meter. During the
+         private suffix only kernel rules/read-only result checks execute:
+         no callback, graph publication or scope mutation can change this
+         guard's programme. Its ordinary with_step exit remains payable. *)
+      val _=spend_policy p 8
+      val before_work= #charged(audit_policy p)
+      val _=case p of OriginalPortfolio {work,...}=>A.validate_work work
+        | _=>active p
+      val guard_work= #charged(audit_policy p)-before_work
+      val tail=case p of GuardedPortfolio _=>9
+        | PolicyPortfolio {priced=SOME _,...}=>9 | _=>0
+      val remaining=case p of
+          Portfolio {limit,used,...}=>RP.AtMost(IntInf.fromInt(limit- !used))
+        | GuardedPortfolio {limit,used,...}=>
+            RP.AtMost(IntInf.fromInt(limit- !used))
+        | PolicyPortfolio {limit,used,...}=>RP.remaining limit (!used)
+        | OriginalPortfolio {work,...}=>
+            (* remaining validates A too; its returned balance is AFTER
+               that guard, with no further payable balance query. *)
+            A.remaining work
+    in if RP.allows remaining (guard_work+tail) then ()else
+      (* Select the original payer's own first resource diagnostic. *)
+      case remaining of RP.AtMost left=>spend_policy p (left+1)
+        | RP.Uncapped=>raise ERR "require_callback_free_return"
+            "uncapped return allowance changed"
+    end
+
   fun reserve_finite_policy p names {role,ordinal,amount} =
     let
       val _=inside p

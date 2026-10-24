@@ -4354,7 +4354,7 @@ struct
      completed hit. Only successful recursive descendants are skipped.
      Metadata getters select unpriced memo events; owned consumer actions
      select their actual event debit. Neither selection caches across calls. *)
-  fun source_realization_guards_internal expected metered receipts =
+  fun source_realization_guards_observing expected metered observe receipts =
     let
       fun fence (SourceRealization {work,...}) =
         if Portable.pointer_eq (expected,work) then () else
@@ -4436,13 +4436,14 @@ struct
         val _ = List.app (fn conversion =>
           (charge 1;validate_conversion graph scope template_limit conversion))
           conversions
+        val (conclusion,hypotheses,clean_result)=observe receipt theorem
         val _ = if Portable.pointer_eq
-            (Thm.concl theorem,G.representative graph target) andalso
-            clean theorem andalso List.all (fn hypothesis =>
+            (conclusion,G.representative graph target) andalso
+            clean_result andalso List.all (fn hypothesis =>
               (charge 1;List.exists (fn (_,node) =>
                 (charge 1;Portable.pointer_eq
                   (hypothesis,G.representative graph node))) occurrences))
-              (Thm.hyp theorem) then () else
+              hypotheses then () else
           raise ERR "source_realization_guard" "checked Source result changed"
       in
         if completed receipt (!done) then () else
@@ -4454,10 +4455,43 @@ struct
         | visits (receipt::rest) =
             (charge 1;visit receipt;visits rest)
     in visits receipts end
+  fun source_realization_observations _ theorem =
+    (Thm.concl theorem,Thm.hyp theorem,clean theorem)
+  fun source_realization_guards_internal expected metered receipts =
+    source_realization_guards_observing expected metered
+      source_realization_observations receipts
   fun source_realization_guard expected receipt =
     source_realization_guards_internal expected false [receipt]
   fun source_realization_guards_with_work expected receipts =
     source_realization_guards_internal expected true receipts
+
+  (* Validate the receipt DATA and its entire backing before realization.
+     The anticipated endpoint/Hyp are derived privately from the closed
+     compact law and captured genuine witnesses, not supplied by a caller.
+     They confer no proof: finish checks the actual native theorem against
+     them. No candidate receipt or validation permission escapes this call.
+     Public receipt queries still run the complete original validator. *)
+  fun preflight_source_realization expected make (endpoint,hypotheses) =
+    let
+      val candidate=make boolTheory.TRUTH
+      fun observe held theorem=if Portable.pointer_eq(held,candidate) then
+          (endpoint,hypotheses,true)
+        else source_realization_observations held theorem
+      val _=source_realization_guards_observing expected true observe
+        [candidate]
+      val count=length hypotheses
+      (* Additional pointer-only comparison with the anticipated native
+         Hyp. The backing validator above pays its own original programme. *)
+      val _=W.spend expected (2+count*(count+3))
+      val _=W.require_callback_free_return expected
+      fun finish theorem=
+        if Portable.pointer_eq(Thm.concl theorem,endpoint) andalso
+            clean theorem andalso List.all (fn term=>List.exists
+              (fn held=>Portable.pointer_eq(term,held)) hypotheses)
+                (Thm.hyp theorem) then make theorem
+        else raise ERR "source_realization_guard"
+          "checked Source result changed"
+    in finish end
 
   (* Own one action. Quote actual named selected-context operands and the
      future DISCH law BEFORE realization. No expanded represented Source
@@ -4623,8 +4657,8 @@ struct
   (* Private specialization: ONLY source_cut_block retains the proof supply.
      Open Hyp must be exact promoted Source slots. Old realization is literal
      and retains its existing sparse closed-witness restriction. *)
-  fun realize_source_cut_internal (block as Block
-      {graph,scope,nodes,leaves,realized,leaf_index,...})
+  fun prepare_source_cut_internal (block as Block
+      {graph,scope,nodes,leaves,realized,leaf_index,owned_frame,...})
       resolution target
       edge supplied closed_images =
     let
@@ -4737,57 +4771,76 @@ struct
       val substitution = table_foldl
         (fn (_, (node,variable), list) =>
           {redex = variable,residue = resolved node} :: list) [] nodes
-      val _ = observe_proof graph #inst
-      val instantiated = SmtReplayRuleObservation.INST substitution law
-      val (antecedent,_) = boolSyntax.dest_imp (Thm.concl instantiated)
-      val actual_leaves = Vector.fromList
-        (project active_tree (SmtReplayRuleObservation.ASSUME antecedent))
-      fun discharge (position,(index,Source node)) =
-            if assignment node then
-              let
-                val equality = Thm.concl (Vector.sub (actual_leaves,position))
-                val (left,right) = boolSyntax.dest_eq equality
-                val _ = if Portable.pointer_eq (left,right) then () else
-                  raise ERR operation
-                    "resolved solver assignment is not reflexive"
-              in SmtReplayRuleObservation.REFL left end
-            else
-              (case image index of SOME proof => proof
-               | NONE => case Option.map
-                   (fn proofs => Vector.sub (proofs,index)) witnesses of
-                   SOME (SOME proof) => proof
-                 | _ => SmtReplayRuleObservation.ASSUME
-                     (G.representative graph node))
-        | discharge (_,(_,ClosedWitness fact)) = closed_proof fact
-        | discharge (position,(_,ConversionWitness plan)) =
-            let val (left,right) = boolSyntax.dest_eq
-                  (Thm.concl (Vector.sub (actual_leaves,position)))
-                val _ = if Portable.pointer_eq (left,G.representative graph
-                      (conversion_source plan)) andalso
-                    Portable.pointer_eq (right,G.representative graph
-                      (conversion_target plan)) then () else
-                  raise ERR operation "realized conversion endpoints differ"
-            in conversion_proof plan end
-        | discharge (position,(_,Definition _)) =
-            let val (left,right) = boolSyntax.dest_eq
-              (Thm.concl (Vector.sub (actual_leaves,position))) in
-              (* Applications retain the corresponding immediate children;
-                 constant aliases have identical endpoints. This is not a
-                 comparison of independently expanded graph residues. *)
-              SmtReplayRuleObservation.ALPHA left right
-            end
-      val actual_witnesses = case selected of NONE => Vector.mapi
-          (fn (index,leaf) => discharge (index,(index,leaf))) leaves
-        | SOME _ => Vector.mapi discharge (Vector.fromList
-            (ListPair.zip (indices,Vector.foldr
-              (fn (leaf,rest) => leaf :: rest) [] active_leaves)))
-      val result = SmtReplayRuleObservation.MP instantiated
-        (tree_proof actual_witnesses active_tree)
-      val _ = if Portable.pointer_eq
-          (Thm.concl result,G.representative graph target) andalso clean result
-        then () else raise ERR operation "endpoint or tags changed"
-      val _ = realized := true
-    in result end
+      fun pay amount=case owned_frame of NONE=>()
+        | SOME(work,_)=>W.spend work amount
+      fun captured proof=(fn _=>proof,Thm.hyp proof)
+      fun capture (index,leaf)=
+        (pay 4;case leaf of Source node=>
+          if assignment node then
+            (fn actual=>
+              let val(left,right)=boolSyntax.dest_eq(Thm.concl actual)
+                  val _=if Portable.pointer_eq(left,right)then ()else
+                    raise ERR operation
+                      "resolved solver assignment is not reflexive"
+              in SmtReplayRuleObservation.REFL left end,[])
+          else (case image index of SOME proof=>captured proof
+            | NONE=>case Option.map
+                (fn proofs=>Vector.sub(proofs,index)) witnesses of
+                SOME(SOME proof)=>captured proof
+              | _=>let val term=G.representative graph node
+                in (fn _=>SmtReplayRuleObservation.ASSUME term,[term])end)
+        | ClosedWitness fact=>captured(closed_proof fact)
+        | ConversionWitness plan=>
+            let val left=G.representative graph(conversion_source plan)
+                val right=G.representative graph(conversion_target plan)
+                val proof=conversion_proof plan
+                fun run actual=
+                  let val(a,b)=boolSyntax.dest_eq(Thm.concl actual)
+                  in if Portable.pointer_eq(a,left)andalso
+                      Portable.pointer_eq(b,right)then proof else
+                    raise ERR operation "realized conversion endpoints differ"
+                  end
+            in (run,Thm.hyp proof)end
+        | Definition _=>(fn actual=>
+            let val(left,right)=boolSyntax.dest_eq(Thm.concl actual)
+            in SmtReplayRuleObservation.ALPHA left right end,[]))
+      val programme=case selected of NONE=>Vector.mapi capture leaves
+        | SOME _=>Vector.map capture(Vector.fromList
+            (ListPair.zip(indices,Vector.foldr op:: [] active_leaves)))
+      (* Pointer union of retained witness Hyp, never a mixed-source kernel
+         set or expanded comparison. This is a permitted-Hyp upper bound:
+         the kernel may deduplicate distinct alpha-equal bounded Sources.
+         It predicts DATA only; the native theorem is still checked below. *)
+      fun member term []=(pay 1;false)
+        | member term(held::rest)=
+            (pay 1;Portable.pointer_eq(term,held)orelse member term rest)
+      fun insert(term,rest)=
+        (pay 2;if member term rest then rest else term::rest)
+      val hypotheses=Vector.foldl
+        (fn((_,terms),rest)=>List.foldl insert rest terms)[] programme
+      val endpoint=G.representative graph target
+      val epoch=Type.type_epoch() val symbols=Term.term_epoch()
+      fun run()=
+        let
+          val _=if epoch=Type.type_epoch()andalso
+              symbols=Term.term_epoch()then ()else
+            raise ERR operation "declaration lifetime changed"
+          val _=observe_proof graph #inst
+          val instantiated=SmtReplayRuleObservation.INST substitution law
+          val(antecedent,_)=boolSyntax.dest_imp(Thm.concl instantiated)
+          val actual_leaves=Vector.fromList(project active_tree
+            (SmtReplayRuleObservation.ASSUME antecedent))
+          val actual_witnesses=Vector.mapi
+            (fn(position,(discharge,_))=>
+              discharge(Vector.sub(actual_leaves,position))) programme
+          val result=SmtReplayRuleObservation.MP instantiated
+            (tree_proof actual_witnesses active_tree)
+          val _=if Portable.pointer_eq(Thm.concl result,endpoint)andalso
+              clean result then ()else
+            raise ERR operation "endpoint or tags changed"
+          val _=realized:=true
+        in result end
+    in {run=run,endpoint=endpoint,hypotheses=hypotheses} end
 
 
   (* Each target is an additional ordinary block Source with an authentic
@@ -5883,10 +5936,11 @@ struct
         val compact_cuts = List.map (fn (receipt,index,_) =>
           (index,leaf_term (name block) (Vector.sub (leaves,index)),
            receipt)) rows
-        val result = realize_source_cut_internal block NONE target edge
+        val prepared = prepare_source_cut_internal block NONE target edge
           (SOME supply) NONE
         val _ = source_realization_guards_with_work expected receipts
-        val receipt = SourceRealization
+        val epoch=Type.type_epoch () val symbols=Term.term_epoch ()
+        fun make result = SourceRealization
           {work = expected,source_frame = source_frame,graph = graph,
            root = #root data,scope = scope,frame = frame,
            original_sources = #sources data,target = target,
@@ -5904,9 +5958,11 @@ struct
            held = held,
            facts = facts,conversions = conversions,
            template_limit = template_limit,parents = receipts,
-           epoch = Type.type_epoch (),symbols = Term.term_epoch ()}
-        val _ = source_realization_guards_with_work expected [receipt]
-      in receipt end))
+           epoch = epoch,symbols = symbols}
+        val finish=preflight_source_realization expected make
+          (#endpoint prepared,#hypotheses prepared)
+        val result= #run prepared ()
+      in finish result end))
      handle primary => (W.close expected;raise primary)) end
 
 
@@ -10575,7 +10631,12 @@ struct
     | effective_owner(SEScoped{work,...})=work
     | effective_owner(SEFurtherGEN{work,...})=work
     | effective_owner(SENormalized{work,...})=work
-  fun effective_source_guard expected evidence=sr_fail expected(fn()=>
+  fun effective_source_guard expected evidence=
+    effective_source_guard_observing
+      (fn _=>fn theorem=>(Thm.concl theorem,Thm.hyp theorem,clean theorem))
+      expected evidence
+  and effective_source_guard_observing observe expected evidence=
+    sr_fail expected(fn()=>
     (if Portable.pointer_eq(expected,effective_owner evidence) then () else
        raise ERR "effective_source_guard" "foreign expected Work";
      case evidence of SEOriginal receipt=>
@@ -10618,10 +10679,11 @@ struct
            val _=List.app(validate_closed_fact graph scope template_limit)facts
            val _=List.app(validate_conversion_for expected)conversions
            val _=List.app(effective_source_guard expected)parents
-       in if clean theorem andalso Portable.pointer_eq(Thm.concl theorem,
+           val(conclusion,hypotheses,clean_result)=observe evidence theorem
+       in if clean_result andalso Portable.pointer_eq(conclusion,
            G.representative graph target) andalso List.all(fn hyp=>
              List.exists(fn(_,node)=>Portable.pointer_eq(hyp,
-               G.representative graph node))occurrences)(Thm.hyp theorem)
+               G.representative graph node))occurrences)hypotheses
          then () else raise ERR "effective_source_guard"
            "actual effective endpoint, Hyp or tags changed" end
      | SEScoped{parent,hypothesis,target,native_hypothesis,proof,rows,parents,
@@ -11458,10 +11520,11 @@ struct
         val _ = effective_cut_guard expected value
         val compact_cuts = List.map (fn (receipt,index,_) =>
           (index,receipt)) rows
-        val result = realize_source_cut_internal block NONE target edge
+        val prepared = prepare_source_cut_internal block NONE target edge
           (SOME supply) NONE
         val _ = List.app (effective_source_guard expected) receipts
-        val receipt = SEChecked
+        val epoch=Type.type_epoch () val symbols=Term.term_epoch ()
+        fun make result = SEChecked
           {work = expected,source_frame = source_frame,graph = graph,
            root = #root data,scope = scope,frame = frame,
            original_sources = #sources data,target = target,
@@ -11478,9 +11541,25 @@ struct
            held = held,
            facts = facts,conversions = conversions,
            template_limit = template_limit,parents = receipts,
-           epoch = Type.type_epoch (),symbols = Term.term_epoch ()}
-        val _ = effective_source_guard expected receipt
-      in receipt end) end)
+           epoch = epoch,symbols = symbols}
+        val candidate=make boolTheory.TRUTH
+        val endpoint= #endpoint prepared
+        val hypotheses= #hypotheses prepared
+        fun observe held theorem=if Portable.pointer_eq(held,candidate)then
+            (endpoint,hypotheses,true)
+          else (Thm.concl theorem,Thm.hyp theorem,clean theorem)
+        val _=effective_source_guard_observing observe expected candidate
+        val count=length hypotheses
+        val _=W.spend expected (2+count*(count+3))
+        val _=W.require_callback_free_return expected
+        val result= #run prepared ()
+        val _=if Portable.pointer_eq(Thm.concl result,endpoint)andalso
+            clean result andalso List.all(fn term=>List.exists
+              (fn held=>Portable.pointer_eq(term,held))hypotheses)
+                (Thm.hyp result)then ()else
+          raise ERR "effective_source_guard"
+            "actual effective endpoint, Hyp or tags changed"
+      in make result end) end)
      handle primary => (W.close expected;raise primary)) end
 
   (* Virtual implication/negation nodes record native canonical routes.
@@ -22023,7 +22102,23 @@ struct
           symbols=Term.term_epoch (),used=ref false} end)
      handle primary=>(W.close work;raise primary))
 
-  fun execute_realization_using instantiate finish expected
+  (* Private callback-free native programmes. Resolve ALL payable graph,
+     receipt and owner getters before the first native rule, including all
+     components of a batch. No Work credit or public guard bypass escapes
+     this extent. Kernel rules cannot change the validated owner/frame;
+     declaration stamps are still checked at each native boundary. *)
+  datatype realization_witness = RealizationSource of Term.term
+    | RealizationReflexive of Term.term | RealizationProof of Thm.thm
+  fun realization_witness_proof (RealizationSource term) =
+        SmtReplayRuleObservation.ASSUME term
+    | realization_witness_proof (RealizationReflexive term) =
+        SmtReplayRuleObservation.REFL term
+    | realization_witness_proof (RealizationProof proof) = proof
+  fun realization_stamp_guard epoch symbols () =
+    if epoch=Type.type_epoch () andalso symbols=Term.term_epoch () then ()
+    else raise ERR "policy_realize" "declaration lifetime changed"
+
+  fun preflight_realization expected
       (saved as PolicyRealizationPlan {work,...}) =
     ((if Portable.pointer_eq(expected,work) then () else
         raise ERR "policy_realize" "different original Work";
@@ -22038,43 +22133,53 @@ struct
           val _=if !used orelse !realized then
               raise ERR "policy_realize" "used realization"
             else used:=true
-          fun valid ()=ignore (pp_owner expected block)
-          val instantiated=instantiate
-            {guard=valid,error=ERR "policy_realize",contexts=[context],
-             proof=proof,substitution=substitution}
-          fun witness (Source node)=
-                SmtReplayRuleObservation.ASSUME (G.representative graph node)
-            | witness (Definition(node,_))=
-                (* Application representatives were minted from these same
-                   immediate child ports. Native MP checks that one shell;
-                   no library equality pass over the residue is requested. *)
-                SmtReplayRuleObservation.REFL (G.representative graph node)
-            | witness (ClosedWitness fact)=closed_proof fact
-            | witness (ConversionWitness conversion)=conversion_proof conversion
-          val witnesses=Vector.map (fn leaf=>
-            (valid ();let val proof=witness leaf val _=valid ()
-              in proof end)) leaves
-          val antecedent=tree_proof witnesses tree
-          val result=SmtReplaySimultaneousRealization.apply
-            {guard=valid,law=instantiated,witnesses=[antecedent]}
+          fun witness leaf=
+            (pp_spend expected 6;case leaf of Source node=>
+                RealizationSource (G.representative graph node)
+              | Definition(node,_)=>
+                  RealizationReflexive (G.representative graph node)
+              | ClosedWitness fact=>RealizationProof (closed_proof fact)
+              | ConversionWitness conversion=>
+                  RealizationProof (conversion_proof conversion))
+          val witnesses=Vector.map witness leaves
           val sources=Vector.foldr
             (fn(Source node,rest)=>node::rest | (_,rest)=>rest) [] leaves
-          fun permitted term=List.exists (fn node=>
-            Portable.pointer_eq(term,G.representative graph node)) sources
-          val _=if Portable.pointer_eq(Thm.concl result,
-              G.representative graph target) andalso clean result andalso
-              List.all permitted (Thm.hyp result) then () else
-            raise ERR "policy_realize" "native endpoint or Source Hyp changed"
-          val _=finish realized
-      in PolicySourceRealization {work=expected,block=block,
-          contract=contract,target=target,theorem=result,sources=sources,
-          epoch=epoch,symbols=symbols} end)
+          val permitted_terms=Vector.foldr
+            (fn(RealizationSource term,rest)=>term::rest | (_,rest)=>rest)
+            [] witnesses
+          val endpoint=G.representative graph target
+          val _=ignore (pp_owner expected block)
+          val valid=realization_stamp_guard epoch symbols
+          fun run instantiated=
+            let
+              val _=valid ()
+              val actual=Vector.map realization_witness_proof witnesses
+              val antecedent=tree_proof actual tree
+              val result=SmtReplaySimultaneousRealization.apply
+                {guard=valid,law=instantiated,witnesses=[antecedent]}
+              fun permitted term=List.exists
+                (fn held=>Portable.pointer_eq(term,held)) permitted_terms
+              val _=if Portable.pointer_eq(Thm.concl result,endpoint) andalso
+                  clean result andalso List.all permitted (Thm.hyp result)
+                then () else raise ERR "policy_realize"
+                  "native endpoint or Source Hyp changed"
+            in PolicySourceRealization {work=expected,block=block,
+              contract=contract,target=target,theorem=result,sources=sources,
+              epoch=epoch,symbols=symbols} end
+      in {contexts=[context],proof=proof,substitution=substitution,
+          guard=valid,run=run,realized=realized} end)
      handle primary=>(W.close expected;raise primary))
 
-
   fun execute_realization_with_policy expected saved =
-    execute_realization_using SmtReplaySimultaneousRealization.instantiate
-      (fn realized=>realized:=true) expected saved
+    ((let val {contexts,proof,substitution,guard,run,realized}=
+            preflight_realization expected saved
+          val _=W.require_callback_free_return expected
+          val instantiated=SmtReplaySimultaneousRealization.instantiate
+            {guard=guard,error=ERR "policy_realize",contexts=contexts,
+             proof=proof,substitution=substitution}
+          val result=run instantiated
+          val _=realized:=true
+      in result end) handle primary=>(W.close expected;raise primary))
 
   (* Individually admitted plans over ONE private block. All laws close
      before ONE forest INST; only then are their own witnesses applied.
@@ -22124,30 +22229,25 @@ struct
         val _=if !used orelse !realized then
             raise ERR "policy_realize_batch" "used realization"
           else used:=true
-        fun valid ()=ignore (pp_owner expected block)
         (* Pay the entire execution envelope BEFORE the first native
            forest operation, not after an already instantiated batch. *)
         fun quote []=W.spend_policy expected 1
           | quote (_::rest)=(W.spend_policy expected 3;quote rest)
         val _=quote plans
-        val Block {context,...}=block
-        fun component (PolicyRealizationPlan {proof,used,epoch,symbols,...}) =
-          if not (!used) andalso epoch=Type.type_epoch () andalso
-              symbols=Term.term_epoch () then ([context],proof) else
-            raise ERR "policy_realize_batch" "used or expired component"
-        val components=List.map component plans
+        val programmes=List.map (preflight_realization expected) plans
+        val components=List.map (fn {contexts,proof,...}=>(contexts,proof))
+          programmes
+        val valid=realization_stamp_guard
+          (Type.type_epoch ()) (Term.term_epoch ())
+        val _=ignore (pp_owner expected block)
+        val _=W.require_callback_free_return expected
         val laws=SmtReplaySimultaneousRealization.instantiate_batch
           {guard=valid,error=ERR "policy_realize_batch",proofs=components,
            substitution=substitution}
         fun execute [] []=(valid ();[])
-          | execute (plan::rest) (law::tail)=
-              let val result=execute_realization_using (fn _=>law)
-                    (fn _=>()) expected plan
-                  val remaining=execute rest tail
-              in result::remaining end
+          | execute (run::rest) (law::tail)=run law::execute rest tail
           | execute _ _=raise ERR "policy_realize_batch" "component count"
-        val results=execute plans laws
-        val _=ignore (pp_owner expected block)
+        val results=execute (List.map #run programmes) laws
         (* No requests means retirement of an unused block, not emission
            of a completed realized theorem (and needs no INST). *)
         val _=realized:=true
@@ -25945,8 +26045,7 @@ struct
       val _=valid()
     in result end)
     handle primary=>(W.close expected;raise primary)
-  fun execute_policy_sparse_realization_using instantiate prepaid consume
-      expected
+  fun preflight_policy_sparse_realization prepaid consume expected
       (saved as PolicySparseRealizationPlan{work,...})=
     (
       (if Portable.pointer_eq(expected,work)then ()else
@@ -25957,7 +26056,6 @@ struct
          val _=ps_guard expected block
          val PolicySparseBlock{frontier,contract,realized,...}=block
          val PolicyRealizationFrontier{graph,...}=frontier
-         fun valid()=ps_guard expected block
          (* Exact new execution envelope is quoted before the first
             native operation. The batch path leaves consumption private. *)
          val _=if prepaid then ()else
@@ -25967,38 +26065,19 @@ struct
            raise ERR "policy_sparse_realize" "declaration lifetime changed"
          val _=if !used then raise ERR "policy_sparse_realize"
              "used sparse realization"else used:=true
-         val instantiated=instantiate
-           {guard=valid,error=ERR "policy_sparse_realize",contexts=contexts,
-            proof=proof,substitution=substitution}
-         fun witness(PSOriginalWitness(_,node))=
-               SmtReplayRuleObservation.ASSUME(G.representative graph node)
-           | witness(PSClosedWitness fact)=closed_proof fact
-           | witness(PSConversionWitness conversion)=
-               conversion_proof conversion
-           | witness(PSDefinitionWitness node)=
-               SmtReplayRuleObservation.REFL(G.representative graph node)
-         (* This list copy/dispatch is quoted in prepare; no Work debit is
-            introduced after a native effect. Actual guard calls remain. *)
-         fun build []=(valid();[])
-           | build(selected::rest)=
-               let val _=valid() val actual=witness selected
-                   val _=valid()
-               in actual::build rest end
-         val actual_witnesses=build witnesses
-         val result=SmtReplaySimultaneousRealization.apply
-           {guard=valid,law=instantiated,witnesses=actual_witnesses}
-         fun permitted term []=false
-           | permitted term(PSOriginalWitness(_,node)::rest)=
-               Portable.pointer_eq(term,G.representative graph node)orelse
-                 permitted term rest
-           | permitted term(_::rest)=permitted term rest
-         val _=if Portable.pointer_eq(Thm.concl result,
-               G.representative graph target)andalso PSN.clean result andalso
-             List.all(fn term=>permitted term witnesses)(Thm.hyp result)
-           then ()else raise ERR "policy_sparse_realize"
-             "native endpoint or original Source Hyp changed"
-         val _=valid()
-         val _=if consume then realized:=true else ()
+         fun witness selected=
+           (W.spend_policy expected 6;case selected of
+               PSOriginalWitness(_,node)=>
+                 RealizationSource(G.representative graph node)
+             | PSClosedWitness fact=>RealizationProof(closed_proof fact)
+             | PSConversionWitness conversion=>
+                 RealizationProof(conversion_proof conversion)
+             | PSDefinitionWitness node=>
+                 RealizationReflexive(G.representative graph node))
+         val captured=List.map witness witnesses
+         val endpoint=G.representative graph target
+         val _=ps_guard expected block
+         val valid=realization_stamp_guard epoch symbols
          fun stable()=
            (pr_frontier_guard expected frontier;
             PSNC.validate_for expected contract;
@@ -26006,13 +26085,36 @@ struct
             if Type.type_epoch()=epoch andalso Term.term_epoch()=symbols
               then ()else raise ERR "policy_sparse_result"
                 "declaration lifetime changed")
-       in PolicySparseResult{work=expected,frontier=frontier,
-         contract=contract,target=target,theorem=result,
-         occurrences=occurrences,guard=stable,epoch=epoch,symbols=symbols}end))
+         fun run instantiated=
+           let
+             val _=valid()
+             val actual=List.map realization_witness_proof captured
+             val result=SmtReplaySimultaneousRealization.apply
+               {guard=valid,law=instantiated,witnesses=actual}
+             fun permitted term=List.exists
+               (fn RealizationSource held=>Portable.pointer_eq(term,held)
+                 | _=>false) captured
+             val _=if Portable.pointer_eq(Thm.concl result,endpoint)andalso
+                 PSN.clean result andalso List.all permitted(Thm.hyp result)
+               then ()else raise ERR "policy_sparse_realize"
+                 "native endpoint or original Source Hyp changed"
+             val _=if consume then realized:=true else ()
+           in PolicySparseResult{work=expected,frontier=frontier,
+             contract=contract,target=target,theorem=result,
+             occurrences=occurrences,guard=stable,epoch=epoch,symbols=symbols}
+           end
+       in {contexts=contexts,proof=proof,substitution=substitution,
+           guard=valid,run=run} end))
     handle primary=>(W.close expected;raise primary)
   fun execute_policy_sparse_realization expected plan=
-    execute_policy_sparse_realization_using
-      SmtReplaySimultaneousRealization.instantiate false true expected plan
+    ((let val {contexts,proof,substitution,guard,run}=
+            preflight_policy_sparse_realization false true expected plan
+          val _=W.require_callback_free_return expected
+          val instantiated=SmtReplaySimultaneousRealization.instantiate
+            {guard=guard,error=ERR "policy_sparse_realize",contexts=contexts,
+             proof=proof,substitution=substitution}
+      in run instantiated end)
+     handle primary=>(W.close expected;raise primary))
 
   datatype policy_sparse_realization_batch=PolicySparseRealizationBatch of
     {work:W.portfolio,block:policy_sparse_block,
@@ -26064,23 +26166,21 @@ struct
           | quote(_::rest)=
               (W.spend_policy expected 38;quote rest)
         val _=quote plans
-        fun valid ()=ps_guard expected block
-        fun component (PolicySparseRealizationPlan
-            {contexts,proof,used,epoch,symbols,...}) =
-          if not (!used) andalso epoch=Type.type_epoch () andalso
-              symbols=Term.term_epoch () then (contexts,proof) else
-            raise ERR "policy_sparse_batch" "used or expired component"
-        val components=List.map component plans
+        val programmes=List.map
+          (preflight_policy_sparse_realization true false expected) plans
+        val components=List.map (fn {contexts,proof,...}=>(contexts,proof))
+          programmes
+        val valid=realization_stamp_guard
+          (Type.type_epoch()) (Term.term_epoch())
+        val _=ps_guard expected block
+        val _=W.require_callback_free_return expected
         val laws=SmtReplaySimultaneousRealization.instantiate_batch
           {guard=valid,error=ERR "policy_sparse_batch",proofs=components,
            substitution=substitution}
         fun execute [] []=(valid ();[])
-          | execute(plan::rest)(law::tail)=
-              execute_policy_sparse_realization_using (fn _=>law)
-                true false expected plan::execute rest tail
+          | execute(run::rest)(law::tail)=run law::execute rest tail
           | execute _ _=raise ERR "policy_sparse_batch" "component count"
-        val result=execute plans laws
-        val _=ps_guard expected block
+        val result=execute (List.map #run programmes) laws
         (* Empty batches retire unused backing without realizing a result. *)
         val _=realized:=true
       in result end)

@@ -78,6 +78,12 @@ sig
      no IntInf.toInt conversion on the new route. Amounts are derived by
      owned programs exactly as today, not accepted as caller proof/fees. *)
   val spend_policy : portfolio -> IntInf.int -> unit
+  (* Last check before a callback-free, publication-free native suffix.
+     Validate and measure this SAME owner's actual action-return guard,
+     then require its remaining allowance without debiting it twice. No
+     credit/entitlement is minted; with_step retains its normal exit guard.
+     No further payable operations may follow within the native suffix. *)
+  val require_callback_free_return : portfolio -> unit
   val reserve_policy : portfolio ->
     {role : role, ordinal : int,
      amount : IntInf.int} -> entitlement

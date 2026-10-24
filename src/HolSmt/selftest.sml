@@ -32636,6 +32636,123 @@ in
        #charged audit<=10000000 andalso Count.thm_count ()=prior andalso
        #selected_returns statistics=0) end
   val _ = testutils.tprint
+    "Assembled Source cuts fund receipt validation before realization"
+  val _ = let
+      fun probe effective leave=
+        let val e=setup(G.new()) val w= #work e
+            val incoming=producer e
+            val(block,edge,run)=if effective then
+                let val parent=P.effective_source_for_receipt w incoming
+                    val value=P.prepare_effective_source_cut_rule_block w
+                      {frame= #frame e,roots=[],additional_sources=[],
+                       closed_facts=[],conversions=[],receipts=[parent],
+                       targets=[#target e],boolean=false,congruence=false}
+                    val block=P.effective_source_cut_block_for w value
+                    val edge=P.effective_source_cut_edge_for w value parent
+                    fun run()=
+                      let val receipt=P.realize_effective_source_cut_receipt
+                            w value (#target e)edge
+                      in fn()=>
+                        let val proof=P.effective_source_theorem_for w receipt
+                        in clean proof andalso length(Thm.hyp proof)=2 andalso
+                          Portable.pointer_eq(Thm.concl proof,
+                            G.representative(#graph e)(#target e))end end
+                in (block,edge,run)end
+              else let val value=consumer e [incoming]
+                       val block=P.source_cut_block_for w value
+                       val edge=P.source_cut_edge_for w value incoming
+                       fun run()=
+                         let val receipt=P.realize_source_cut_receipt
+                               w value (#target e)edge
+                         in fn()=>exact e receipt end
+                in (block,edge,run)end
+            (* Compact discovery/assembly precedes the realization budget.
+               Its native compact proof work is not expanded realization. *)
+            val _=W.with_step w(fn()=>ignore(P.assemble block edge))
+            val _=case leave of NONE=>() | SOME balance=>
+              W.with_step w(fn()=>W.spend w
+                (10000000- #charged(W.audit w)-balance))
+            val before_work= #charged(W.audit w)
+            val prior=Count.thm_count()
+            val(outcome,statistics)=SmtReplayRuleObservation.with_statistics
+              (fn()=>Exn.capture run ())
+            val cost= #charged(W.audit w)-before_work
+            val valid=case outcome of Exn.Res check=>
+                  (case leave of NONE=>check() | SOME _=>true)andalso
+                  #INST(Count.thm_count())- #INST prior=1
+              | Exn.Exn(Feedback.HOL_ERR detail)=>
+                  Feedback.message_of detail=
+                    "original cumulative work allowance exhausted"andalso
+                  #selected_returns statistics=0 andalso
+                  Count.thm_count()=prior andalso #retired(W.audit w)
+              | Exn.Exn ReplayRedblackPrivateWork.Limit=>
+                  #selected_returns statistics=0 andalso
+                  Count.thm_count()=prior andalso #retired(W.audit w)
+              | Exn.Exn primary=>raise primary
+            val _=W.close w val _=G.close_scope(#graph e)(#root e)
+        in if valid then (cost,case outcome of Exn.Res _=>true | _=>false)
+          else raise Fail
+            "Source-cut receipt validation exhausted Work after realization"
+        end
+      fun check effective=
+        let val(cost,_)=probe effective NONE
+            fun verify left=
+              let val(_,success)=probe effective(SOME left)
+              in if success=(left>=cost)then ()else
+                raise Fail "Source-cut execution changed its funded cutoff"end
+        in List.app verify [0,24,cost div 2,cost-1,cost,cost+1]end
+      val result=Exn.capture(fn()=>
+        (Count.counting_thms true;check false;check true))()
+      val _=Count.counting_thms false
+    in Exn.release result;testutils.OK()end
+  val _ = testutils.tprint
+    "Source-cut Hyp forecast permits kernel alpha deduplication"
+  val _ = let
+      val x=Term.mk_var("cut_alpha_x",Type.bool)
+      val y=Term.mk_var("cut_alpha_y",Type.bool)
+      val left=boolSyntax.mk_forall(x,boolSyntax.mk_eq(x,x))
+      val right=boolSyntax.mk_forall(y,boolSyntax.mk_eq(y,y))
+      fun setup_alpha():env=
+        let val graph=G.new()val root=G.root_scope graph
+            val sources=S.new graph root cap
+              {goal=boolSyntax.mk_conj(left,right),
+               assumptions=[left,left,right]}
+            val work=W.begin graph root sources
+              {limits={input_limit=100,output_limit=100,template_limit=cap},
+               work_limit=10000000}
+            val frame=Scope.root work
+            val target= #node(G.import graph root cap
+              (boolSyntax.mk_conj(left,right)))
+        in {graph=graph,root=root,sources=sources,work=work,
+            frame=frame,target=target}end
+      fun check effective=
+        let val e=setup_alpha() val w= #work e
+            val parent=producer e
+            val proof=if effective then
+                let val incoming=P.effective_source_for_receipt w parent
+                    val owner=P.prepare_effective_source_cut_rule_block w
+                      {frame= #frame e,roots=[],additional_sources=[],
+                       closed_facts=[],conversions=[],receipts=[incoming],
+                       targets=[#target e],boolean=false,congruence=false}
+                    val edge=P.effective_source_cut_edge_for w owner incoming
+                    val result=P.realize_effective_source_cut_receipt w owner
+                      (#target e)edge
+                in P.effective_source_theorem_for w result end
+              else P.source_realization_theorem_for w
+                (result e(consumer e[parent])parent)
+            val originals=S.assumption_nodes(#sources e)
+            val valid=clean proof andalso
+              Portable.pointer_eq(Thm.concl proof,
+                G.representative(#graph e)(#target e))andalso
+              not(null(Thm.hyp proof))andalso
+              List.all(fn hyp=>List.exists(fn node=>Portable.pointer_eq
+                (hyp,G.representative(#graph e)node))originals)(Thm.hyp proof)
+            val _=W.close w val _=G.close_scope(#graph e)(#root e)
+        in if valid then ()else raise Fail
+          "alpha-equal Source Hyp was counted as distinct native permission"
+        end
+    in check false;check true;testutils.OK()end
+  val _ = testutils.tprint
     "Distinct same-target Source receipts retain both exact support rows"
   val _ = let val e = setup (G.new ())
       val left = producer e
@@ -46124,34 +46241,77 @@ in
            Portable.pointer_eq(hyp,G.representative g held))
              (Thm.hyp proof))prefix) (proofs,nodes))end)
 
-  val _=test "Prepared policy batch exhausts Work before forest native rules"
+  val _=test "Prepared policy executions fund their complete native extent"
     (fn()=>let
-        val g=G.new () val r=G.root_scope g
-        val s=S.new_with_policy g r RP.Uncapped
-          {goal=boolSyntax.T,assumptions=[boolSyntax.T]}
-        val w=W.begin_with_policy g r s
-          {limits=metadata,work_limit=RP.AtMost 100000000}
-        val n=NC.capture w
-          {semantic_limits={input_limit=1,output_limit=1,template_limit=8192},
-           import_limit=1000000,type_work_limit=4000000}
-        val t=hd(S.assumption_nodes s)
-        val b=block w n [] [] val edge=source w b 0
-        val saved=W.with_step w(fn()=>
-          P.prepare_realization_batch_with_policy w b [(t,edge)])
-        val _=W.with_step w(fn()=>
-          case W.remaining_policy w of RP.AtMost remaining=>
-            W.spend_policy w (remaining-2)
-          | _=>raise Fail "finite fixture lost cumulative allowance")
-        val prior=Count.thm_count ()
-        val(outcome,statistics)=SmtReplayRuleObservation.with_statistics
-          (fn()=>Exn.capture(fn()=>W.with_step w(fn()=>
-            P.execute_realization_batch_with_policy w saved))())
-        val message=case outcome of Exn.Exn(Feedback.HOL_ERR detail)=>
-              SOME(Feedback.message_of detail)|_=>NONE
-    in require "batch ran native rules before original Work refusal"
-      (message=SOME "original cumulative work allowance exhausted"andalso
-       #selected_returns statistics=0 andalso
-       Count.thm_count ()=prior andalso #retired(W.audit_policy w))end)
+      fun probe priced batch leave=
+        let
+          val g=G.new () val r=G.root_scope g
+          val s=S.new_with_policy g r RP.Uncapped
+            {goal=boolSyntax.T,assumptions=[boolSyntax.T]}
+          val w=(if priced then W.begin_with_scope_guard_policy
+            else W.begin_with_policy) g r s
+            {limits=metadata,work_limit=RP.AtMost 100000000}
+          val n=NC.capture w
+            {semantic_limits={input_limit=1,output_limit=1,
+               template_limit=8192},
+             import_limit=1000000,type_work_limit=4000000}
+          val t=hd(S.assumption_nodes s)
+          val b=block w n [] [] val edge=source w b 0
+          val run=W.with_step w(fn()=>if batch then
+              let val saved=P.prepare_realization_batch_with_policy w b
+                    [(t,edge),(t,edge)]
+              in fn()=>ignore
+                (P.execute_realization_batch_with_policy w saved) end
+            else let val saved=P.prepare_realization_with_policy w b t edge
+              in fn()=>ignore(P.execute_realization_with_policy w saved) end)
+          val before_work=ref(#charged(W.audit_policy w))
+          fun action()=
+            let
+              val _=case leave of NONE=>() | SOME balance=>
+                let val initial= #charged(W.audit_policy w)
+                    val _=W.spend_policy w 0
+                    val overhead= #charged(W.audit_policy w)-initial
+                in case W.remaining_policy w of RP.AtMost left=>
+                    W.spend_policy w(left-balance-overhead)
+                  | _=>raise Fail "lost finite Work"end
+              val _=before_work:= #charged(W.audit_policy w)
+            in run()end
+          val prior=Count.thm_count ()
+          val(outcome,statistics)=SmtReplayRuleObservation.with_statistics
+            (fn()=>Exn.capture(fn()=>W.with_step w action)())
+          val cost= #charged(W.audit_policy w)- !before_work
+          val _=case outcome of Exn.Res _=>
+                require "funded execution omitted native realization"
+                  (#INST(Count.thm_count())- #INST prior=1)
+            | Exn.Exn(Feedback.HOL_ERR detail)=>require
+                "interior Work refusal followed a native effect"
+                (Feedback.message_of detail=
+                   "original cumulative work allowance exhausted"andalso
+                 #selected_returns statistics=0 andalso
+                 Count.thm_count()=prior andalso
+                 #retired(W.audit_policy w))
+            | Exn.Exn primary=>raise primary
+          val _=W.close w val _=G.close_scope g r
+        in (cost,case outcome of Exn.Res _=>true | _=>false)end
+      fun check priced batch=
+        let val(cost,_)=probe priced batch NONE
+            fun verify left=
+              let val(_,success)=probe priced batch(SOME left)
+              in require "policy execution changed its funded cutoff"
+                (success=(left>=cost))end
+            (* Every ordinary balance, including review's24 and the exact
+               cutoff. Priced Scope guards also exercise both sides of
+               their independently measured complete execution envelope. *)
+            fun sweep left=if left>cost+1 then ()else
+              (verify left;sweep(left+1))
+        in if priced then List.app verify
+              [0,24,cost div 2,cost-1,cost,cost+1]
+          else sweep 0 end
+      val result=Exn.capture(fn()=>
+        (Count.counting_thms true;check false false;check false true;
+         check true false;check true true))()
+      val _=Count.counting_thms false
+    in Exn.release result end)
 
   val _=test "Empty policy batch only retires unused backing"
     (fn()=>let val(_,_,_,w,_,b,_,_,_)=named_setup ()
@@ -83542,6 +83702,52 @@ in
                G.representative(#graph e)(#truth e))andalso
              exact e proof andalso #selected_returns statistics=4)
           end))
+      val _=test "Prepared sparse executions fund their complete native extent"
+        (fn()=>let
+          fun probe batch leave=fixture(fn e=>
+            let val first=original e 0 val second=closed e
+                val run=if batch then
+                    let val saved=inside e(fn()=>
+                          P.prepare_policy_sparse_realization_batch
+                            (#work e)(#block e)
+                            [{target= #truth e,edge=first},
+                             {target= #truth e,edge=second}])
+                    in fn()=>ignore(P.execute_policy_sparse_realization_batch
+                      (#work e)saved)end
+                  else let val saved=plan e first
+                    in fn()=>ignore(P.execute_policy_sparse_realization
+                      (#work e)saved)end
+                val w= #work e
+                val _=inside e(fn()=>case leave of NONE=>()
+                  | SOME balance=>case W.remaining_policy w of
+                      RP.AtMost left=>W.spend_policy w(left-balance)
+                    | _=>raise Fail "lost finite sparse Work")
+                val before_work= #charged(W.audit_policy w)
+                val prior=Count.thm_count()
+                val(outcome,statistics)=O.with_statistics(fn()=>
+                  Exn.capture(fn()=>inside e run)())
+                val cost= #charged(W.audit_policy w)-before_work
+                val _=case outcome of Exn.Res _=>require
+                      "funded sparse execution omitted native realization"
+                      (#INST(Count.thm_count())- #INST prior=1)
+                  | Exn.Exn(Feedback.HOL_ERR detail)=>require
+                      "sparse Work refusal followed a native effect"
+                      (Feedback.message_of detail=
+                         "original cumulative work allowance exhausted"andalso
+                       #selected_returns statistics=0 andalso
+                       Count.thm_count()=prior andalso not(live e))
+                  | Exn.Exn primary=>raise primary
+            in (cost,case outcome of Exn.Res _=>true | _=>false)end)
+          fun check batch=
+            let val(cost,_)=probe batch NONE
+                fun sweep left=if left>cost+1 then ()else
+                  let val(_,success)=probe batch(SOME left)
+                      val _=require
+                        "sparse execution changed its funded cutoff"
+                        (success=(left>=cost))
+                  in sweep(left+1)end
+            in sweep 0 end
+        in check false;check true end)
       val _=test "A selected CLOSED collision grants no Original occurrence"
         (fn()=>fixture(fn e=>
           let val edge=closed e val saved=plan e edge
