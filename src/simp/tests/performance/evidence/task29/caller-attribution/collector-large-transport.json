@@ -1,0 +1,81 @@
+{
+  "files": 24,
+  "archive": {
+    "sha256": "8b74c9c019705a279f3271aaf3aae6a3a1772bfced6845f171d2b1b6721b1cb7",
+    "bytes": 2513312
+  },
+  "dictionary_bytes": 268435456,
+  "roundtrip": true,
+  "replay": {
+    "baseline-control": {
+      "Cond_rewr.sml": {
+        "records": 785,
+        "exact_equal": 772,
+        "native_bodies": 116,
+        "native_equal_after_pool_relocation": 116
+      },
+      "Traverse.sml": {
+        "records": 659,
+        "exact_equal": 655,
+        "native_bodies": 106,
+        "native_equal_after_pool_relocation": 106
+      },
+      "simpLib.sml": {
+        "records": 4567,
+        "exact_equal": 4539,
+        "native_bodies": 668,
+        "native_equal_after_pool_relocation": 668
+      },
+      "MatrixSupport.sml": {
+        "records": 5043,
+        "exact_equal": 4800,
+        "native_bodies": 885,
+        "native_equal_after_pool_relocation": 885
+      },
+      "Performance.sml": {
+        "records": 453,
+        "exact_equal": 395,
+        "native_bodies": 68,
+        "native_equal_after_pool_relocation": 68
+      }
+    },
+    "baseline-candidate": {
+      "Cond_rewr.sml": {
+        "records": 791,
+        "exact_equal": 622,
+        "native_bodies": 117,
+        "native_equal_after_pool_relocation": 108
+      },
+      "Traverse.sml": {
+        "records": 659,
+        "exact_equal": 571,
+        "native_bodies": 106,
+        "native_equal_after_pool_relocation": 106
+      },
+      "simpLib.sml": {
+        "records": 4567,
+        "exact_equal": 4068,
+        "native_bodies": 668,
+        "native_equal_after_pool_relocation": 668
+      },
+      "MatrixSupport.sml": {
+        "records": 5043,
+        "exact_equal": 4624,
+        "native_bodies": 885,
+        "native_equal_after_pool_relocation": 885
+      },
+      "Performance.sml": {
+        "records": 453,
+        "exact_equal": 392,
+        "native_bodies": 68,
+        "native_equal_after_pool_relocation": 68
+      },
+      "SimpTracking.sml": {
+        "records": 29,
+        "exact_equal": 0,
+        "native_bodies": 5,
+        "native_equal_after_pool_relocation": 0
+      }
+    }
+  }
+}

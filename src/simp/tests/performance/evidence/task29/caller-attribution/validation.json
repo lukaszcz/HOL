@@ -1,0 +1,285 @@
+{
+  "schema": "task29-caller-attribution-validation-v1",
+  "status": "blocked-not-complete",
+  "production_changes": false,
+  "start": "90e528c41e5841713803746ba2789e0311561679",
+  "commands": {
+    "record": {
+      "command": "W python3 -B src/simp/tests/performance/caller_codegen.py --candidate 90e528c41 --case frag_record --size 0 --batch-iterations 33554432 --authorize-diagnostic --timeout 900 --output NEW_RECORD_DIRECTORY",
+      "exit": 0
+    },
+    "collector": {
+      "command": "W python3 -B src/simp/tests/performance/caller_codegen.py --candidate 90e528c41 --case compile_collector --size 10000 --batch-iterations 64 --authorize-diagnostic --timeout 900 --output NEW_COLLECTOR_DIRECTORY",
+      "exit": 0
+    },
+    "replay": {
+      "command": "python3 -B .../caller_codegen.py --replay UNPACKED_DIRECTORY (both final bundles)",
+      "exit": 0
+    },
+    "real-tests": {
+      "command": "CALLER_CODEGEN_EVIDENCE=UNPACKED_RECORD_DIRECTORY python3 -B -m unittest discover -s src/simp/tests/performance -p test_caller_codegen.py -v",
+      "exit": 0,
+      "tests": 12,
+      "real_mutations": 7
+    },
+    "performance-tests": {
+      "command": "CALLER_CODEGEN_EVIDENCE=UNPACKED_RECORD_DIRECTORY python3 -B -m unittest discover -s src/simp/tests/performance -p 'test*.py'",
+      "exit": 0,
+      "tests": 328,
+      "unchanged_optional_skips": 2
+    },
+    "compatibility-tests": {
+      "command": "python3 -B -m unittest discover -s src/simp/tests/compatibility -p 'test_*.py'",
+      "exit": 0,
+      "tests": 196
+    },
+    "routine": {
+      "command": "W bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 0
+    },
+    "grid-prefix": {
+      "command": "python3 -u -B src/simp/tests/performance/task29_gate.py replay --output src/simp/tests/performance/evidence/task29/full-grid",
+      "result": "caller timeout at 900s, 135 complete cells; NOT exit zero"
+    },
+    "grid-suffix": {
+      "command": "python3 -u -B src/simp/tests/performance/evidence/task29/caller-attribution/resume_grid_replay.py",
+      "exit": 0,
+      "remaining_cells": 27,
+      "scope": "locally trusted prefix plus original suffix checks; all 162 archive seals and aggregate decisions verified"
+    },
+    "equal-count": {
+      "command": "python3 -B src/simp/tests/performance/evidence/task29/equal-count/replay.py",
+      "exit": 0,
+      "meaning": "reproduced unresolved failures, not acceptance"
+    },
+    "pedant": {
+      "command": "W tools/h4pedant/h4pedant --nolinelen --unicodeok src/simp/tests/performance",
+      "exit": 0
+    },
+    "whitespace": {
+      "command": "git diff --check && git diff --cached --check",
+      "exit": 0
+    }
+  },
+  "observations": {
+    "failed_cells": 43,
+    "inconclusive_cells": 119,
+    "final_compiler_processes": 8,
+    "final_legacy_fixture_processes": 16
+  },
+  "inputs": {
+    "src/simp/tests/performance/caller_codegen.py": {
+      "bytes": 21584,
+      "sha256": "8ee05c222bf81a6c9d931ba5d474033ce3d1d50a523bc908189cf245b93f651a"
+    },
+    "src/simp/tests/performance/CallerCodegen.sml": {
+      "bytes": 1402,
+      "sha256": "78bf7267b998f4f7cfc456412be62dffc383a24205a7ae6eb0f6033786207f21"
+    },
+    "src/simp/tests/performance/test_caller_codegen.py": {
+      "bytes": 13274,
+      "sha256": "4e89145dc49ebd126c02dc78d91196a6f2851b41e34878e5e9ea495aca6a1345"
+    },
+    "src/simp/tests/performance/CALLER_CODEGEN.md": {
+      "bytes": 4798,
+      "sha256": "1bb86f585f0af9be71aabbcad5a1c3172fe0de781a538f5bebec3c0bf5263a50"
+    },
+    "src/simp/tests/performance/TASK_29_HANDOFF.md": {
+      "bytes": 41542,
+      "sha256": "d09f0e73c1eec4750a861feb15d2f413ec02adea2f65a6c7e5654f5872ff90ca"
+    },
+    "src/simp/tests/performance/TASK_29A_numerical_attribution_closure.md": {
+      "bytes": 5862,
+      "sha256": "3b8e7686d81710bcccbfccb10476fff8344ab89a8d8a89e86bdbe636c1a1571a"
+    },
+    "src/simp/tests/performance/evidence/task29/full-grid/inventory.json": {
+      "bytes": 49576,
+      "sha256": "919be8fa2387f4389da04d3a6f32ea859440e096fbdb3f3924935518f1a65746"
+    },
+    "src/simp/tests/performance/evidence/task29/full-grid/decisions.json": {
+      "bytes": 222708,
+      "sha256": "b13ab3313dbde592ae47a36423334e75c4e2b23fae72692de8424dce83379edf"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/actual-files.json.gz": {
+      "bytes": 23501,
+      "sha256": "c8eb94b6da6fc74af970fa6867d266b5dc02e457a8c93e837b1885d51d09abba"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/cong-first-attribute-after.log.gz": {
+      "bytes": 13222,
+      "sha256": "8cfd63d82a232150eaacc1acef33eb881c9b488a82e7adaf721c7ebbdad4b27e"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/cong-first-attribute-before.log.gz": {
+      "bytes": 13298,
+      "sha256": "de077dc2b64e236a6577a918f523ead3b71ab3f78dee8b2f3f0d26dbedcda884"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/cong-first-exporter-after.log.gz": {
+      "bytes": 13268,
+      "sha256": "febf20ebd1dbd0c576b90929b18fb79fcd8469967f5928edc9388bd487f00757"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/cong-first-exporter-before.log.gz": {
+      "bytes": 13357,
+      "sha256": "91aca9ca6b3cec63e79740dd3eaece82d80b9f051e51a9f0e6a509e24d56881f"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/receipt.json": {
+      "bytes": 8049,
+      "sha256": "14251165f7ed9bc3b91e121ec6d77ff880d5961e109461b3874978f9db4ace74"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/simp-first-attribute-after.log.gz": {
+      "bytes": 13151,
+      "sha256": "47890f9fb577abd66dc2fa647e347aeb0c24638a518e54c154894302a7d0fa49"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/simp-first-attribute-before.log.gz": {
+      "bytes": 13231,
+      "sha256": "a31f1a721579d149b8152cfccb82dbebcb0e8c3fc342fdb975376fa7501fe207"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/simp-first-exporter-after.log.gz": {
+      "bytes": 13197,
+      "sha256": "1b3133c56504e3dac2e8067a3a82843d2129383c6a7ea369e328d634e38e14c5"
+    },
+    "src/simp/tests/api-audit/evidence/20261024T070025Z-929ee34d/simp-first-exporter-before.log.gz": {
+      "bytes": 13289,
+      "sha256": "4619f67a57656dd1a10a093af4ae4469382c18f98c656f8113ec4a56b815da20"
+    }
+  },
+  "evidence": {
+    "RESULTS.md": {
+      "bytes": 6611,
+      "sha256": "2fcc06ece97c56b56dceb998b20c2a0450129baef0f6d44fb612c1e8d115f57e"
+    },
+    "collector-large-transport.json": {
+      "bytes": 2111,
+      "sha256": "7c37a3c4ee390c16d1e90ee3c96e6e53d8cdc0ba4637e0b596ed1f8c0008199a"
+    },
+    "collector-large.json.xz": {
+      "bytes": 2513312,
+      "sha256": "8b74c9c019705a279f3271aaf3aae6a3a1772bfced6845f171d2b1b6721b1cb7"
+    },
+    "collector-replay.log.gz": {
+      "bytes": 307,
+      "sha256": "71ce103a38493430505814520a3babdecf8ca7abb56a3f9230b881daa29308de"
+    },
+    "collector.log.gz": {
+      "bytes": 153,
+      "sha256": "4f0dbc6d8a3895847b01cf4ceff16c56c7b4f4fd4fa259c29aca22d831a6a6a8"
+    },
+    "compatibility-tests.log.gz": {
+      "bytes": 58,
+      "sha256": "210c830877a436bbd836835ab495099de243a180facd7122431bf2d8b4315a1e"
+    },
+    "development-calibrated-count.json.xz": {
+      "bytes": 5937296,
+      "sha256": "395587df4a9be5a0dbc6af887e8807c4d0bf7d4c8bc7841c8ba2022840546ef7"
+    },
+    "development-calibrated-count.log.gz": {
+      "bytes": 140,
+      "sha256": "0a149bbd024d23473938dfa6fda26b5f3c6a1d1bb2ffef17e7c33f2b97fc85c0"
+    },
+    "development-fixed-collector.log.gz": {
+      "bytes": 158,
+      "sha256": "6385d810158f31ae11890fcea8d4b58a2a2b9eca610cbab1a1a0912bf7310d4b"
+    },
+    "development-fixed-record.log.gz": {
+      "bytes": 155,
+      "sha256": "b769dd872a91e1aa4dea74160db6643de40a645c7cd062d1f24f1cf657bcaa86"
+    },
+    "development-optional-form.json.xz": {
+      "bytes": 4543300,
+      "sha256": "018b518a92a329a07b8fe0609eb7c52bd8cb8bd9773bfafbb63189165dc0d935"
+    },
+    "development-optional-form.log.gz": {
+      "bytes": 449,
+      "sha256": "bcdf9df7634012a3e11e9f31f6eca70dd02ac526cda3c600a33d992e40c7391b"
+    },
+    "development-real-tests.log.gz": {
+      "bytes": 747,
+      "sha256": "91a3d95565a6241d3a24a8210b544dcb0d7b48bd487fe36c7aebf779a724d4a3"
+    },
+    "development-test-guard-collector.json.xz": {
+      "bytes": 1408520,
+      "sha256": "934109e780730d42731d7e87eb9fc0dd7535f8580d6d1a0766054e248b00b3cb"
+    },
+    "development-test-guard-record.json.xz": {
+      "bytes": 1428584,
+      "sha256": "a9c9a1e47307292a030cd3bcea5ed3c7756fa61a1522cff963da1a52097b2ab6"
+    },
+    "equal-count-replay.log.gz": {
+      "bytes": 9772,
+      "sha256": "87bf6f57a814e4936e88a42908c42f0c90502aa5891a2f9ca60a7731f12fe872"
+    },
+    "grid-prefix.log.gz": {
+      "bytes": 404,
+      "sha256": "c72e00714e9f80f64c140f6424b6c069d5d5f966fcfcace141945090ff4d089a"
+    },
+    "grid-resumed.json": {
+      "bytes": 2017,
+      "sha256": "4290f5ab160b569fc591c67c6e4215285843826bb34bf745ad138b9ac8be7af3"
+    },
+    "grid-suffix.log.gz": {
+      "bytes": 621,
+      "sha256": "5f07f5860915aa219353c8d4848c98449af30b4cf4c0b09b92d418feae0ac9ba"
+    },
+    "pack-collector.log.gz": {
+      "bytes": 419,
+      "sha256": "1c1f87e8abf57c5c607b7322b9c64b00f38a1f6340b9cc0c23e545f27cc5c95c"
+    },
+    "pack-record.log.gz": {
+      "bytes": 415,
+      "sha256": "1c1fb0764d0b577760f0fbc7f0ee46d170d60ef7872f989f0f3989d2599b164f"
+    },
+    "pack.py": {
+      "bytes": 1877,
+      "sha256": "72b2a95797a720301555d6f338433ff88641543cff1e7e2d8227fa35a8441702"
+    },
+    "pedant.log.gz": {
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    "performance-tests.log.gz": {
+      "bytes": 305,
+      "sha256": "0cd766983cf5c94a46fd2fa1849c213276ff86ae86cb0216faba957e363b2df6"
+    },
+    "real-tests.log.gz": {
+      "bytes": 463,
+      "sha256": "37231b32c9c652fdab1260a81bf0dc6166ce4c8811d34e825075f2cf94622221"
+    },
+    "record-replay.log.gz": {
+      "bytes": 303,
+      "sha256": "221b8760786c5128ad04ac423c3620beb649832d2f450c223ac187cbda2fc42d"
+    },
+    "record-zero-transport.json": {
+      "bytes": 2111,
+      "sha256": "66f03165e42923d935c7d2f8050d1bab87d142f1c869a3cbedb05b0800f345c1"
+    },
+    "record-zero.json.xz": {
+      "bytes": 2530356,
+      "sha256": "932d53ff7c9be87149bc0cc9fdacfeb42ed708f59a28f153d7e61dc23ce203c7"
+    },
+    "record.log.gz": {
+      "bytes": 150,
+      "sha256": "489f9e1dc1d4cba827a42acc345ffd9db093bb1f41ebd7a0a80807be1dbaa858"
+    },
+    "resume_grid_replay.py": {
+      "bytes": 2713,
+      "sha256": "7484d0d00c335fa83ff6525af5074b3d5c88d0bd1e06f9900987668547481234"
+    },
+    "routine.log.gz": {
+      "bytes": 3075,
+      "sha256": "fcda6b6cdd8ef8e6b53c32cde2efc02e41a1070a5a9493256576c762d399ac49"
+    },
+    "seal.py": {
+      "bytes": 5421,
+      "sha256": "9f7085a8c237494ab6c50b636ce650fc135160c18a5318f67a2ef4d352e28b21"
+    },
+    "whitespace.log.gz": {
+      "bytes": 53,
+      "sha256": "a54567990dd634e49e47631c8a83c309457020b5cc7389e9930e6a35117b83f8"
+    }
+  },
+  "blockers": [
+    "Every failed/inconclusive timing cell remains unresolved",
+    "Pool/indirect-target and ordinary heap/layout attribution unresolved",
+    "Allocator branch/failure coverage and native compiler/image lineage",
+    "Full 162-cell ten-pair B/B and B/C allocation matrix absent"
+  ],
+  "cleanup": "Task-owned private source/build, unpacked/roundtrip trees and scratch logs removed. Caller-owned review/cache/planning state kept."
+}

@@ -38,6 +38,32 @@ compile_single/0 has all 120 measured GC values exactly zero, which cannot
 pass a ratio-only 0/0 policy. These policy concerns require explicit review,
 not silently accepting uncertainty, adding a budget or manufacturing GC work.
 
+## Fresh caller diagnostics after `90e528c41` — still not closure
+
+`CALLER_CODEGEN.md` and `evidence/task29/caller-attribution/RESULTS.md` now
+supply actual caller/loop optimized/backend/ICode/native output, with fresh
+B/B controls and all raw operands retained. Both targeted cases use fixed
+counts. All 885 MatrixSupport, 68 Performance, 668 simpLib and 106 Traverse
+native bodies match after pool relocation in B/B and B/C. Fresh Cond_rewr
+constructor output reconfirms smaller captures; its union still differs and
+SimpTracking has five separate candidate-only bodies. The data do not establish
+literal identity or a causal explanation for the slower ordinary workloads.
+
+A new concrete caller confound is recorded, not waived: `sample` is compiled
+after calibration and captures its actual selected count as immediate operands.
+The initial automatic-count diagnostic had four different operands; final
+fixed-count diagnostics remove that difference. Printing changes heap/layout,
+so their sample times are deliberately inadmissible for acceptance. These
+single structural pairs do not replace ten-pair ordinary-runtime evidence.
+
+The full-grid decisions remain 43 failed / 119 inconclusive after a documented
+two-stage offline replay (135 cells before a 900s timeout; original checks for
+the remaining 27; all archive seals and aggregate decisions rechecked). The
+equal-count collector CPU/wall failure is also replayed unchanged. No source
+repair, numerical-policy change or TASK29A completion is claimed. Required
+next attribution is pool/indirect-target and ordinary-process heap/layout,
+not another assumption that matching instruction text proves equal cost.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

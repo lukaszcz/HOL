@@ -2,6 +2,65 @@
 
 ## Status: BLOCKED, not complete
 
+### Fresh actual-caller compiler attribution
+
+Starting and selected candidate: `90e528c41`. New `caller_codegen.py`,
+`CallerCodegen.sml`, twelve maintained tests and `CALLER_CODEGEN.md` collect
+source-isolated compiler output for the actual matrix callers and loops.
+No production source, ordinary representation, public control identity,
+extension assertion, numerical policy or allocator patch changed.
+
+Two final whole diagnostics use fixed histories/counts: `frag_record/0` at
+33,554,432 and `compile_collector/10000` at 64. They execute eight fresh
+compiler-printing B/B and B/C processes, plus sixteen ordinary legacy fixture
+processes. All source/path/runtime, proof, callback and consumption checks
+pass. Complete stdout is archived before parsing; repeated emissions and all
+representations retain original offsets/hashes. The manifest suite deliberately
+rejects timing admission. These are NOT ten-pair acceptance observations.
+
+In BOTH experiments the B/C native listings match after pool relocation for
+all **885 MatrixSupport / 68 Performance / 668 simpLib / 106 Traverse** bodies.
+B/B matches the corresponding groups and all 116 Cond_rewr bodies. B/C
+Cond_rewr retains **108 matches among 117 union entries**, plus five separate
+SimpTracking bodies. Fresh constructor reservations reconfirm the known
+72-to-64 and 80-to-72-byte reductions. This closes the gap in *collecting*
+fresh caller output, not numerical or literal-layout attribution: normalized
+instructions do not identify pool contents/indirect targets, printing alters
+layout, and static reservations are not dynamic allocation totals. No
+speculative tracking-ownership repair is justified for these failures.
+
+An earlier whole automatic-count diagnostic also exposed that `sample` is
+compiled AFTER calibration and embeds the selected count. Its four differing
+immediate operands disappear in both final fixed-count experiments. Original
+ordinary-runtime evidence is not replaced by this printing experiment.
+Development outcomes, including the optional SimpTracking printer-form reject
+and the corrected expectation of an earlier fixture-mutation guard, remain
+explicitly preserved; no timing observation was removed.
+
+Evidence: `evidence/task29/caller-attribution/RESULTS.md`, two final 24-file
+lossless XZ bundles, transport/replay receipts, development evidence, logs and
+`validation.json`. Both bundles roundtrip byte-for-byte and independently
+replay. **12 focused tests** (seven real archive mutations), **328 performance
+tests** (two unchanged optional skips), **196 compatibility tests**, routine
+`bin/build -t --seq=tools/sequences/upto-parallel`, pedant and whitespace checks
+pass. Fresh routine API receipt:
+`../api-audit/evidence/20261024T070025Z-929ee34d/receipt.json`.
+The routine build follows diagnostics; no final-product timing claim follows.
+
+The grid replay reached 135 fully checked cells before a **900-second caller
+timeout**. A hash-bound locally trusted prefix plus the original checker over
+the remaining 27 cells rechecks all 162 archive seals and aggregate decisions
+(`grid-resumed.json`); this is explicitly a two-stage replay. All **43 failed /
+119 inconclusive** decisions remain unchanged. The separate equal-count replay
+still fails collector CPU **[1.032421, 1.052741]** and wall. The full allocation
+matrix, allocator coverage and native compiler/image lineage remain missing.
+TASK29/TASK29A/TASK29B are not complete; no completion line is warranted.
+
+All task-created private builds, source copies, unpacked/roundtrip trees and
+scratch logs were removed after sealing. Caller-owned review directories and
+pre-existing caches/nested planning changes remain untouched. See the new
+results report for exact commands, exits, source seals and remaining limits.
+
 ### Executed interpreter, ML-worker and native-failure coverage
 
 Starting revision: `fe97e59a6`. No production simplifier, runtime patch,
