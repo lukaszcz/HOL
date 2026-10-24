@@ -1,0 +1,86 @@
+[
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/performance/heap_attribution.py",
+      "generate",
+      "--inventory",
+      "src/simp/tests/performance/evidence/task29/full-grid/inventory.json",
+      "--output",
+      "src/simp/tests/performance/evidence/task29/boundary-attribution/historical-grid"
+    ],
+    "exit": 2,
+    "expected_exit": 2,
+    "scope": "offline diagnostics; NOT task acceptance",
+    "elapsed_seconds": 1117.7069535581395,
+    "log": "historical-grid-generate.log.gz",
+    "log_seal": {
+      "sha256": "fede12d20dbb784d78fd3f8cd06ee19b921980abaf9be0986de693a0147a8587",
+      "bytes": 495
+    }
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/performance/heap_attribution.py",
+      "generate",
+      "--inventory",
+      "src/simp/tests/performance/evidence/task29/experiment-driver/validation.json",
+      "--output",
+      "src/simp/tests/performance/evidence/task29/boundary-attribution/repaired-driver"
+    ],
+    "exit": 2,
+    "expected_exit": 2,
+    "scope": "offline diagnostics; NOT task acceptance",
+    "elapsed_seconds": 13.66012266650796,
+    "log": "repaired-driver-generate.log.gz",
+    "log_seal": {
+      "sha256": "d4c130fdc3152536478455aec2d6ebdd52bae4d48e8c7832d767f6107c0c682d",
+      "bytes": 71
+    }
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/performance/heap_attribution.py",
+      "replay",
+      "--inventory",
+      "src/simp/tests/performance/evidence/task29/full-grid/inventory.json",
+      "--output",
+      "src/simp/tests/performance/evidence/task29/boundary-attribution/historical-grid"
+    ],
+    "exit": 2,
+    "expected_exit": 2,
+    "scope": "offline diagnostics; NOT task acceptance",
+    "elapsed_seconds": 1115.2416603500023,
+    "log": "historical-grid-replay.log.gz",
+    "log_seal": {
+      "sha256": "e4f75cdecbdf4cba0130b491a032c7c921b4d5568691a2cf5804bb1879b828ff",
+      "bytes": 483
+    }
+  },
+  {
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/performance/heap_attribution.py",
+      "replay",
+      "--inventory",
+      "src/simp/tests/performance/evidence/task29/experiment-driver/validation.json",
+      "--output",
+      "src/simp/tests/performance/evidence/task29/boundary-attribution/repaired-driver"
+    ],
+    "exit": 2,
+    "expected_exit": 2,
+    "scope": "offline diagnostics; NOT task acceptance",
+    "elapsed_seconds": 13.901532103307545,
+    "log": "repaired-driver-replay.log.gz",
+    "log_seal": {
+      "sha256": "cdc52881cf97695ee32da3560f4139c0c6c4005f98444a062bb3b917587d89b1",
+      "bytes": 66
+    }
+  }
+]

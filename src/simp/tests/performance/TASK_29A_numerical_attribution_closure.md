@@ -104,6 +104,30 @@ obstruction; a narrow straddling interval alone does not prove instability.
 This review is NOT a repair, fresh grid, heap/pool attribution or task
 completion. All numerical failures, uncertainty and other requirements remain.
 
+## Ordinary-process boundary attribution — not closure
+
+`heap_attribution.py` and
+`evidence/task29/boundary-attribution/RESULTS.md` re-admit all 162 historical
+cells (6,480 processes / 136,960 batches) and both repaired-driver experiments
+(80 processes / 1,560 batches). They preserve raw-archive/receipt bindings,
+every calibration/sample count, boundary GC schedules, untimed counter gaps,
+signed capacity differences and the original unchanged numerical decisions.
+This is offline attribution of existing observations, not fresh timing.
+
+The two repaired-driver cases have equal counts but different GC schedules and
+heap capacities; every B/C sample boundary has +4,096 bytes of code capacity,
+versus zero B/B difference. Independently recorded non-GC B/C intervals are
+[1.009594, 1.019958] for fragment/0 and [1.003961, 1.039454] for
+collector/10000.
+These are diagnostic decompositions, not replacement gates or causal proofs.
+Capacity does not bind instruction identity, live objects, pools or targets.
+All original failures/uncertainty remain; no production repair is selected.
+
+Full ordinary-process heap/pool/indirect-target attribution, the complete
+fresh repaired-driver grid, an exclusive stable measurement environment and
+explicit zero-GC/B/B policy-owner disposition remain unsatisfied. TASK29A is
+NOT done.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

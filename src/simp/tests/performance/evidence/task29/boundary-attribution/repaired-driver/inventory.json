@@ -1,0 +1,208 @@
+{
+  "schema": "task29-boundary-attribution-v1",
+  "status": "blocked; NOT task acceptance",
+  "limits": [
+    "Historical observations, not new measurements or full-grid closure.",
+    "Heap/free values are GC-updated capacities, not live object layouts.",
+    "Code capacity does not identify native bodies, literals or targets.",
+    "Counter boundaries do not locate individual collections within a batch.",
+    "Snapshots allocate outside timing and are not atomic with timer reads.",
+    "RSS/HWM are approximate process snapshots, not temporary batch peaks.",
+    "Allocation-area capacity/free space is not cumulative allocated bytes.",
+    "Differences are observations, not a causal repair or a noise budget."
+  ],
+  "inventory": {
+    "path": "/home/lukasz/work/HOL/worktrees/simplifier/src/simp/tests/performance/evidence/task29/experiment-driver/validation.json",
+    "sha256": "a60d9de5a7a446411584cc2a30c862d82928c4a3477943745a788177b06e4137",
+    "bytes": 15201
+  },
+  "inputs": {
+    "heap_attribution.py": {
+      "sha256": "f8c8ee52f667273190d22f5274e74f39788ae2ee8230f304824d8c6e48c53532",
+      "bytes": 17144
+    },
+    "acceptance.py": {
+      "sha256": "80533c9361da67526721d4158740dc7cc76e7139d979a7bc800a52da32d8f963",
+      "bytes": 34833
+    },
+    "runtime_metrics.py": {
+      "sha256": "8b5ef218a1402710450786adb432f608fa82ca74917c1747a95f24b64a1b9dcb",
+      "bytes": 15446
+    },
+    "evidence_bundle.py": {
+      "sha256": "a989e8b177e6237d9cb1a5b3001aa73c1dac5bac060627fb055fd44ae3c78807",
+      "bytes": 4040
+    },
+    "summarize.py": {
+      "sha256": "fd2c9cbce1c334bcc8bdd98e0a905d54ecdd3ed50eab7632ba1d9923279d4d24",
+      "bytes": 4637
+    },
+    "audit_evidence.py": {
+      "sha256": "bb2dc352c7d118f6e1277fe16476aec72dfc04cfce7f85c492fb665d94de7e67",
+      "bytes": 17459
+    },
+    "performance_schema.py": {
+      "sha256": "a70094f40084c72b1f6ed4f4dbe08833dd19a9e994c26ddc015e3145cc9ae1ad",
+      "bytes": 9220
+    },
+    "task29_gate.py": {
+      "sha256": "604f5fcc198b3b71ea4835ce99f019933f858c9efb858557de6f8eb63ceea952",
+      "bytes": 9611
+    },
+    "matrix_schema.py": {
+      "sha256": "3941a6fffd42d8f4b0fce40b2fc8d4ab977659595998ae5f9cd27aff818e076c",
+      "bytes": 23517
+    },
+    "matrix.json": {
+      "sha256": "a7c87b2bfc7fb8e94efeee70672bae20fa00a83b8e95dabc2ad045b669bdc91b",
+      "bytes": 23994
+    },
+    "MatrixPerformance.sml": {
+      "sha256": "b805611bc816a19bf7e17734b10a40cb65996086366be5e34078266dc010c13c",
+      "bytes": 4954
+    },
+    "MatrixSupport.sml": {
+      "sha256": "03548dcefd8e9489cc4cca757db93dc28c15b3cf047931424a27dce55980a1af",
+      "bytes": 22453
+    },
+    "ClientPerformance.sml": {
+      "sha256": "ec2bc80c1e3b495b6f713dc014d67a3670cde6daa8c9b6c37eecd0dfb594f1ff",
+      "bytes": 15455
+    }
+  },
+  "cells": [
+    {
+      "case": "frag_record",
+      "size": 0,
+      "file": "frag_record-0.json.gz",
+      "seal": {
+        "sha256": "1bc4c5dab2db9a3a1da7bbc8a132d4af9ef753f2067a4320974ec9831579d3d1",
+        "bytes": 13828
+      },
+      "original_exit": 1,
+      "gates": {
+        "control": {
+          "cpu": "inconclusive",
+          "wall": "inconclusive",
+          "gc": "fail"
+        },
+        "candidate": {
+          "cpu": "fail",
+          "wall": "fail",
+          "gc": "fail"
+        }
+      },
+      "counts": {
+        "control": {
+          "processes": 20,
+          "batches": 580,
+          "pairs_with_different_calibration": 0,
+          "pairs_with_different_sample_counts": 0,
+          "processes_with_blocked_rss": 20,
+          "sample_boundaries_with_different_capacity": {
+            "sizeHeap": 29,
+            "sizeHeapFreeLastGC": 60,
+            "sizeHeapFreeLastFullGC": 60,
+            "sizeAllocation": 29,
+            "sizeAllocationFree": 29,
+            "sizeStacks": 0,
+            "sizeCode": 0
+          },
+          "samples_with_different_gc_counts": {
+            "gcFullGCs": 0,
+            "gcPartialGCs": 28,
+            "gcSharePasses": 0
+          }
+        },
+        "candidate": {
+          "processes": 20,
+          "batches": 580,
+          "pairs_with_different_calibration": 0,
+          "pairs_with_different_sample_counts": 0,
+          "processes_with_blocked_rss": 20,
+          "sample_boundaries_with_different_capacity": {
+            "sizeHeap": 30,
+            "sizeHeapFreeLastGC": 60,
+            "sizeHeapFreeLastFullGC": 60,
+            "sizeAllocation": 30,
+            "sizeAllocationFree": 30,
+            "sizeStacks": 0,
+            "sizeCode": 60
+          },
+          "samples_with_different_gc_counts": {
+            "gcFullGCs": 0,
+            "gcPartialGCs": 30,
+            "gcSharePasses": 0
+          }
+        }
+      }
+    },
+    {
+      "case": "compile_collector",
+      "size": 10000,
+      "file": "compile_collector-10000.json.gz",
+      "seal": {
+        "sha256": "d6709b225a68ff9c6e6df55a41ed8e2ba4a9691a6497b81276bb8f07922484cf",
+        "bytes": 10511
+      },
+      "original_exit": 2,
+      "gates": {
+        "control": {
+          "cpu": "inconclusive",
+          "wall": "inconclusive",
+          "gc": "inconclusive"
+        },
+        "candidate": {
+          "cpu": "inconclusive",
+          "wall": "inconclusive",
+          "gc": "inconclusive"
+        }
+      },
+      "counts": {
+        "control": {
+          "processes": 20,
+          "batches": 200,
+          "pairs_with_different_calibration": 0,
+          "pairs_with_different_sample_counts": 0,
+          "processes_with_blocked_rss": 20,
+          "sample_boundaries_with_different_capacity": {
+            "sizeHeap": 18,
+            "sizeHeapFreeLastGC": 60,
+            "sizeHeapFreeLastFullGC": 60,
+            "sizeAllocation": 9,
+            "sizeAllocationFree": 9,
+            "sizeStacks": 0,
+            "sizeCode": 0
+          },
+          "samples_with_different_gc_counts": {
+            "gcFullGCs": 4,
+            "gcPartialGCs": 6,
+            "gcSharePasses": 0
+          }
+        },
+        "candidate": {
+          "processes": 20,
+          "batches": 200,
+          "pairs_with_different_calibration": 0,
+          "pairs_with_different_sample_counts": 0,
+          "processes_with_blocked_rss": 20,
+          "sample_boundaries_with_different_capacity": {
+            "sizeHeap": 56,
+            "sizeHeapFreeLastGC": 60,
+            "sizeHeapFreeLastFullGC": 60,
+            "sizeAllocation": 30,
+            "sizeAllocationFree": 30,
+            "sizeStacks": 0,
+            "sizeCode": 60
+          },
+          "samples_with_different_gc_counts": {
+            "gcFullGCs": 18,
+            "gcPartialGCs": 27,
+            "gcSharePasses": 0
+          }
+        }
+      }
+    }
+  ],
+  "complete_inventory": true
+}

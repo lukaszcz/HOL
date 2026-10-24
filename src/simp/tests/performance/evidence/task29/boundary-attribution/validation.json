@@ -1,0 +1,41 @@
+{
+  "schema": "task29-boundary-validation-v1",
+  "status": "blocked; NOT task acceptance",
+  "sources": {
+    "src/simp/tests/performance/heap_attribution.py": {
+      "sha256": "f8c8ee52f667273190d22f5274e74f39788ae2ee8230f304824d8c6e48c53532",
+      "bytes": 17144
+    },
+    "src/simp/tests/performance/test_heap_attribution.py": {
+      "sha256": "bb2eb98beb3475cd4c2161d52cfb34fc5831e6a1f5aba3bc5fd4c59ac2a454b7",
+      "bytes": 28274
+    },
+    "src/simp/tests/performance/TASK_29A_numerical_attribution_closure.md": {
+      "sha256": "8d0c97e8e885a637854803bb8c0bdb1cb53c2f457946a0568b35b6d7cbae620e",
+      "bytes": 9591
+    },
+    "src/simp/tests/performance/evidence/task29/boundary-attribution/RESULTS.md": {
+      "sha256": "c9fbd9b921e33707802b64de425d14602bb9bf8d327c52a9a59ec7589809b49e",
+      "bytes": 9235
+    }
+  },
+  "inventories": {
+    "historical-grid": {
+      "sha256": "cce40f2eba1579a1594557e4cae526fcdc149d0584804b457c00f9fbeb88a1c3",
+      "bytes": 318560
+    },
+    "repaired-driver": {
+      "sha256": "64229e9bb7b31f8bb70c2e1623e4bd71d5257a6614ef987a3daf7551a395f652",
+      "bytes": 6719
+    }
+  },
+  "commands": {
+    "sha256": "0071c7960404184120ec15b0814e217d827f853c7a1c485cae9eaba28bf7b21d",
+    "bytes": 2606
+  },
+  "tests": {
+    "sha256": "485f9864705e6bff180beb59d39d644467d5f9d029d9ac3921436d1871381633",
+    "bytes": 1151
+  },
+  "cleanup": "Only compact derived evidence retained; all task-created unpack trees and superseded generated reports removed. No caller-owned artifacts removed."
+}
