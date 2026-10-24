@@ -12,14 +12,13 @@ struct
   type cache =
     {run : request -> Thm.thm,
      statistics : unit -> {hits : int, misses : int, retained : int}}
-  fun same left right = Portable.pointer_eq (left, right) orelse
-    Term.aconv left right
   fun new {enabled, capacity, hash} =
     let
       val _ = capacity >= 0 orelse raise ERR "new" "negative cache capacity"
       val saved = ref (Redblackmap.mkDict Int.compare)
       val index = SmtSkeletonProve.new_cache_index
         SmtResource.max_bv_replay_term_nodes
+      val semantic_order = SmtSkeletonProve.new_semantic_order ()
       val reuse = enabled andalso capacity > 0
       val size = ref 0
       val hits = ref 0
@@ -69,10 +68,9 @@ struct
           fun attempt () =
             (let
                val theorem = prove ()
-               (* Fresh checked laws normally retain the requested pointers.
-                  Independent application copies can also be validated by
-                  exact typed IDs. If optional indexing is unavailable, keep
-                  the original fresh-result validator, never refuse a miss. *)
+               (* Fresh-result validation is mandatory, independently of
+                  optional index capacity. Exhaustion never grants native
+                  whole-term comparison or transport permission. *)
                val expected = boolSyntax.mk_imp (source, target)
                val valid =
                  if (case Lib.total boolSyntax.dest_imp
@@ -83,17 +81,14 @@ struct
                      | NONE => false) then true
                  else case (index (Thm.concl theorem), index expected) of
                      (SOME left, SOME right) => left = right
-                   | _ => same (Thm.concl theorem) expected
+                   | _ => semantic_order
+                       (Thm.concl theorem, expected) = EQUAL
                val _ = List.null (Thm.hyp theorem) andalso valid
                  orelse raise ERR "run" "invalid closed implication schema"
                val _ = Library.check_oracle_tags
                  "SmtReplayAttempt" "implication schema" theorem
-               val result = anchor (Proved theorem)
-                 handle SmtSkeletonProve.REANCHOR_LIMIT => Proved theorem
-                      | Feedback.HOL_ERR detail =>
-                          if SmtSkeletonProve.cache_admission_refusal detail
-                          then Proved theorem
-                          else raise Feedback.HOL_ERR detail
+               val result = Proved
+                 (SmtSkeletonProve.exact_conclusion expected theorem)
              in result end
              handle HolSatLib.SAT_satisfiable _ => Satisfiable
                   | HolSatLib.SAT_cex theorem => Counterexample theorem)

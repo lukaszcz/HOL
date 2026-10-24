@@ -20753,6 +20753,115 @@ let
     "unadmitted alpha copy lost its required semantic owner")
 in () end
 
+fun replay_compact_canon_boundary_success () =
+let
+  fun shared 0 = Term.mk_var ("compact_canon_leaf",Type.bool)
+    | shared n = let val child = shared (n - 1)
+                 in boolSyntax.mk_conj (child,child) end
+  val left = shared 80
+  val right = shared 80
+  val order = SmtReplayCanon.new_term_order ()
+  fun checked source conversion =
+    let
+      val theorem = conversion source
+      val (actual,result) = boolSyntax.dest_eq (Thm.concl theorem)
+      val _ = assert (Portable.pointer_eq (actual,source),
+        "compact canonicalization lost the original endpoint")
+      val _ = assert_no_hyps ("compact canonicalization",theorem)
+      val _ = check_oracle_tags "compact canonicalization" theorem
+    in result end
+  val _ = print "TASK28_BOUNDARY independent-DAG\n"
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    let
+      val source = boolSyntax.mk_eq (left,right)
+      val normalized = checked source SmtReplayCanon.cpc_canon_conv
+      val _ = assert (order (source,normalized) = EQUAL,
+        "outer canonical equality was not preserved")
+      val reduced = checked source SmtReplayCanon.reflexive_equality_conv
+    in assert (Portable.pointer_eq (reduced,boolSyntax.T),
+      "independent shared reflexivity did not reduce") end) ()
+  (* Exercise the actual entry wrapper too: QCHANGED_CONV would compare
+     the independent whole result after the compact converter returned. *)
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    let
+      val target = boolSyntax.mk_eq (left,right)
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial,0,Z3_Proof.REWRITE target)
+      val proof = Z3_Proof.update_proof_steps initial steps
+      val theorem = Z3_ProofReplay.replay_root_for_test proof
+    in assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),"Z3 canonical entry lost its exact conclusion");
+      check_oracle_tags "compact Z3 entry" theorem
+    end) ()
+  (* These schemas are small, but their atomic Types are not. Matching must
+     use the generic declaration, not unfold the instantiated annotations. *)
+  fun poly 0 = Type.mk_vartype "'compact_canon_type"
+    | poly n = let val ty = poly (n - 1) in Type.--> (ty,ty) end
+  val ty = poly 80
+  val x = Term.mk_var ("compact_canon_x",ty)
+  val y = Term.mk_var ("compact_canon_y",ty)
+  val source = boolSyntax.mk_eq (y,x)
+  val _ = print "TASK28_BOUNDARY polymorphic-schema\n"
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    let
+      val result = checked source SmtReplayCanon.reorient_equality_conv
+      val (a,b) = boolSyntax.dest_eq result
+    in assert (order (a,x) = EQUAL andalso order (b,y) = EQUAL,
+      "generic typed orientation lost an opaque operand") end) ()
+  (* An absent optional index must not enable whole-term alpha validation. *)
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    assert ((ignore (SmtSkeletonProve.validate_theorem_with (fn _ => NONE)
+        "no-index" left (Thm.REFL right));false)
+      handle HOL_ERR detail => String.isSubstring "made no progress"
+        (Feedback.message_of detail),
+      "index exhaustion changed mandatory atom validation")) ()
+  fun mono 0 = Type.bool
+    | mono n = let val ty = mono (n - 1) in Type.--> (ty,ty) end
+  val huge = mono 22
+  val f = Term.mk_var ("compact_canon_predicate",Type.--> (huge,Type.bool))
+  val a = Term.mk_var ("compact_canon_argument",huge)
+  val request = Term.mk_comb (f,a)
+  val returned = Term.mk_comb (f,a)
+  val cache = SmtReplayAttempt.new
+    {enabled = false,capacity = 0,hash = fn _ => raise Fail "disabled hash"}
+  val law = #run cache {procedure = "fresh-no-index",
+    source = request,target = request,
+    prove = fn () => Thm.DISCH returned (Thm.ASSUME returned)}
+  val (l,r) = boolSyntax.dest_imp (Thm.concl law)
+  val _ = assert (Portable.pointer_eq (l,request) andalso
+    Portable.pointer_eq (r,request),
+    "fresh checked fallback required a proof at an unvisited leaf Type")
+  (* Cheap polymorphism must not visit this unused metadata suffix. *)
+  val admission = SmtSkeletonProve.new_type_admission_context ()
+  val prefix = Type.--> (Type.alpha,huge)
+  val _ = Count.counting_thms true
+  val admitted = Exn.capture (fn () =>
+    let val prior = Count.thm_count ()
+        val _ = #intern admission prefix
+    in assert (Count.thm_count () = prior andalso
+      !(#nodes admission) = 0,
+      "classification constructed metadata or invoked a native rule") end) ()
+  val _ = Count.counting_thms false
+  val _ = Exn.release admitted
+  (* Bookkeeping exhaustion is optional, not native Type admission. The
+     compact graph retains its original exact Type statistics on fallback. *)
+  fun spine 0 ty = ty
+    | spine n ty = spine (n - 1) (Type.--> (Type.bool,ty))
+  val deep = Type.--> (Type.alpha,spine 4000 Type.bool)
+  val context = SmtSkeletonProve.new_type_admission_context ()
+  val _ = #intern context deep
+  val limited = ((ignore (#metadata context deep);false)
+    handle HOL_ERR detail => SmtResource.is_resource_gate detail)
+  val _ = assert (limited,"Type fixture did not exhaust optional metadata")
+  val SmtSkeletonProve.AdmissionTypeNode {id,tree_nodes,...} =
+    #full_type context deep
+  val _ = assert (tree_nodes = 8003 andalso #type_id context deep = id
+    andalso !(#nodes context) = 4003 andalso
+    !(#edges context) = 8002,
+    "metadata exhaustion changed native admission, IDs or original metrics")
+in () end
+
 fun circuit_graph_admission_success () =
 let
   val attempts = ref 0
@@ -31931,6 +32040,8 @@ let
     ("replay_attempt_reuse_success", replay_attempt_reuse_success),
     ("replay_indexed_cache_boundaries_success",
       replay_indexed_cache_boundaries_success),
+    ("replay_compact_canon_boundary_success",
+      replay_compact_canon_boundary_success),
     ("circuit_graph_admission_success", circuit_graph_admission_success),
     ("circuit_graph_checked_success", circuit_graph_checked_success),
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),

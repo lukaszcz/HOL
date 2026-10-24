@@ -127,24 +127,28 @@ struct
         else raise ERR "checked_graph_schema" "operand outside active scope")
         operands
       val (left,right) = Term.dest_eq (Thm.concl theorem)
-      val left_recipe = B.compile_recipe
-        {template = left,holes = holes,template_limit = template_limit}
-      val right_recipe = B.compile_recipe
-        {template = right,holes = holes,template_limit = template_limit}
-      val backend = B.graphs {graph = graph,scope = scope,
-        import_limit = template_limit,literal_limit = template_limit,
-        binder_limit = template_limit}
-      val frame = B.root backend
       val _ = if List.length holes = List.length operands then () else
         raise ERR "checked_graph_schema" "operator schema arity mismatch"
+      val _ = List.foldl (fn (hole,seen) =>
+        let
+          val _ = if Term.is_var hole then () else
+            raise ERR "checked_graph_schema" "non-variable schema hole"
+          val identity = G.resolve_variable graph scope hole
+        in
+          if List.exists (fn prior => prior = identity) seen then
+            raise ERR "checked_graph_schema" "duplicate typed schema hole"
+          else identity :: seen
+        end) [] holes
       val _ = G.reserve_schema_holes graph (ListPair.zip (holes,operands))
+      val hole_ids = List.map (G.resolve_variable graph scope) holes
       fun hole term =
-        let fun seek [] [] = NONE
+        let val identity = G.resolve_variable graph scope term
+            fun seek [] [] = NONE
               | seek (name::names) (node::nodes) =
-                  if Term.aconv term name then SOME node else seek names nodes
+                  if identity = name then SOME node else seek names nodes
               | seek _ _ = raise ERR "checked_graph_schema"
                   "operator schema arity mismatch"
-        in seek holes operands end
+        in seek hole_ids operands end
       fun tree term =
         if Term.is_var term then
           (case hole term of SOME node => Operand node
@@ -163,11 +167,12 @@ struct
           "binder schema requires a bounded local proof block"
       val left_tree = tree left
       val right_tree = tree right
-      val constructed_left = B.construct backend frame left_recipe operands
-      val constructed_right = B.construct backend frame right_recipe operands
-      val _ = if template_node left_tree = constructed_left andalso
-          template_node right_tree = constructed_right then () else
-        raise ERR "checked_graph_schema" "recipe/tree constructor disagreement"
+      val _ = ListPair.appEq (fn (hole,node) =>
+        ignore (G.resolve_reference graph scope hole node)) (holes,operands)
+      (* The typed graph constructors check every application and hole.
+         Do not reconstruct the same recipe through the ordinary backend:
+         its native Type.compare can unfold a huge annotation on a tiny
+         schema. Owned IDs validate syntax, never prove the schema law. *)
       val _ = observe_schema graph 1 (IntInf.fromInt admitted_size) 0 false
     in GraphSchema {left = left_tree,right = right_tree,
       holes = holes,operands = operands,theorem = theorem,
@@ -923,7 +928,10 @@ struct
       fun reflexive node = P.checked block (SmtReplayRuleObservation.REFL
         (P.name block node))
       fun trans left right = P.compose block
-        (fn [left,right] => SmtReplayRuleObservation.TRANS left right
+        (fn [left,right] =>
+          SmtReplayRuleObservation.TRANS left
+            (SmtReplayTermBridge.exact_left
+              (boolSyntax.rhs (Thm.concl left)) right)
           | _ => raise Fail "graph trans premises") [left,right]
       fun expansion (Operand node) = reflexive node
         | expansion (Literal (node,_)) = P.definition block node
@@ -942,8 +950,10 @@ struct
           (* The theorem is still a bounded schema; residues are compact
              names. This is not an INST of a realized graph theorem. *)
           val _ = observe_schema graph 1 (IntInf.fromInt admitted_size) 1 true
-          val instantiated = P.checked block (SmtReplayRuleObservation.INST
-            substitution theorem)
+          val _ = SmtReplayTermBridge.prepare_schema_substitution
+            admitted_size theorem substitution
+          val instantiated = P.checked block
+            (SmtReplayRuleObservation.INST substitution theorem)
           val backwards = P.compose block
             (fn [proof] => SmtReplayRuleObservation.SYM proof
               | _ => raise Fail "graph schema symmetry") [expansion right]

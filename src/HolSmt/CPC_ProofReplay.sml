@@ -2242,8 +2242,8 @@ local
 
   (* Normalize the certificate conclusion with 'canon', check that the
      replayed result matches it, and map the result back to the conclusion
-     the certificate declared.  The aconv check is the security-relevant
-     step, so every restoration rung shares this one implementation. *)
+     the certificate declared. Semantic validation and checked nodewise
+     transport are mandatory, independently of optional cache capacity. *)
   fun restore_with canon what name conclusion theorem =
     case conclusion of
       NONE => theorem
@@ -2251,13 +2251,15 @@ local
         let
           val target_norm = canon target
           val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
-          val _ = Term.aconv (Thm.concl theorem) normalized_target orelse
+          val order = SmtSkeletonProve.new_semantic_order ()
+          val _ = order (Thm.concl theorem,normalized_target) = EQUAL orelse
             raise ERR name
               (what ^ " result differs from the certificate conclusion; " ^
                "result=" ^ Library.term_to_string (Thm.concl theorem) ^
                "; target=" ^ Library.term_to_string normalized_target)
         in
-          Thm.EQ_MP (Thm.SYM target_norm) theorem
+          Thm.EQ_MP (Thm.SYM target_norm)
+            (SmtSkeletonProve.exact_conclusion normalized_target theorem)
         end
 
   val restore_canonical_conclusion =
@@ -2270,8 +2272,10 @@ local
      by a semantic replay route.  A recorded boundary survives only when
      canonicalizing each child independently produces the corresponding
      child of the route's actual normalized term. *)
-  fun align_canonical_provenance canon original normalized provenance =
+  fun align_canonical_provenance_using order
+      canon original normalized provenance =
     let
+      fun same left right = order (left,right) = EQUAL
       fun normalized_term term = boolSyntax.rhs (Thm.concl (canon term))
       fun split_conjunction n term =
         if n = 1 then [term]
@@ -2288,16 +2292,16 @@ local
           (fn ((old_term, new_term), child_provenance) =>
             let
               val expected = normalized_term old_term
-              val _ = Term.aconv expected new_term orelse
+              val _ = same expected new_term orelse
                 raise ERR "canonical_provenance"
                   "canonical child differs from the semantic route"
             in
-              align_canonical_provenance canon old_term new_term
-                child_provenance
+              align_canonical_provenance_using order
+                canon old_term new_term child_provenance
             end)
           (ListPair.zip (originals, normalizeds), provenances)
     in
-      if Term.aconv original normalized then provenance
+      if same original normalized then provenance
       else
         (case provenance of
            ConjunctionProvenance (source, operands) =>
@@ -2314,9 +2318,9 @@ local
                         not (Term.aconv (normalized_term child) boolSyntax.T))
                      (ListPair.zip (originals, operands)) of
                     [(child, occurrence)] =>
-                      if Term.aconv (normalized_term child) normalized then
-                        align_canonical_provenance canon child normalized
-                          occurrence
+                      if same (normalized_term child) normalized then
+                        align_canonical_provenance_using order
+                          canon child normalized occurrence
                       else UnavailableProvenance
                         "canonical surviving conjunct differs from result"
                   | _ => UnavailableProvenance
@@ -2357,7 +2361,7 @@ local
                  boolSyntax.strip_comb original
                val (normalized_operator, normalizeds) =
                  boolSyntax.strip_comb normalized
-               val _ = Term.aconv original_operator normalized_operator orelse
+               val _ = same original_operator normalized_operator orelse
                  raise ERR "canonical_provenance"
                    "canonical application operator changed"
              in
@@ -2378,18 +2382,22 @@ local
                  else if kind = "lambda" then Term.strip_abs
                  else raise ERR "canonical_provenance"
                    "unknown binder-block constructor"
+               val _ = List.app
+                 (SmtReplayTermBridge.admit_native "canonical-provenance")
+                 [original,normalized]
                val (old_binders, old_body) = strip original
                val (new_binders, new_body) = strip normalized
                val _ = List.length old_binders = count andalso
                  List.length new_binders = count andalso
-                 ListPair.allEq (fn (old, new) => Term.aconv old new)
-                   (old_binders, new_binders) andalso
-                 Term.aconv (normalized_term old_body) new_body orelse
+                 ListPair.allEq (fn (old,new) => same old new)
+                   (old_binders,new_binders) andalso
+                 same (normalized_term old_body) new_body orelse
                    raise ERR "canonical_provenance"
                      "canonical binder body does not align"
              in
                BinderBlockProvenance (kind, count,
-                 align_canonical_provenance canon old_body new_body body)
+                 align_canonical_provenance_using order
+                   canon old_body new_body body)
              end
          | AtomicProvenance =>
              if term_contains_conjunction normalized then
@@ -2402,6 +2410,10 @@ local
     handle Feedback.HOL_ERR holerr => UnavailableProvenance
       ("canonical occurrence alignment failed: " ^
        Feedback.message_of holerr)
+
+  fun align_canonical_provenance canon =
+    align_canonical_provenance_using
+      (SmtSkeletonProve.new_semantic_order ()) canon
 
   (* Relate integer and real atoms before abstracting casts.  The three
      parametric embedding theorems cover equality and both order relations;

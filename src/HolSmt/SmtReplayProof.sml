@@ -4289,12 +4289,14 @@ struct
       val active_leaves = case selected of NONE => leaves
         | SOME _ => Vector.fromList
             (List.map (fn index => Vector.sub (leaves,index)) indices)
-      val compact = assemble_internal block edge
-      val active_tree = #tree compact
-      val law = #law compact
       val substitution = table_foldl
         (fn (_, (node,variable), list) =>
           {redex = variable,residue = resolved node} :: list) [] nodes
+      val _ = SmtReplayTermBridge.prepare_schema_substitution
+        1 proof substitution
+      val compact = assemble_internal block edge
+      val active_tree = #tree compact
+      val law = #law compact
       val _ = observe_proof graph #inst
       val instantiated = SmtReplayRuleObservation.INST substitution law
       val (antecedent,_) = boolSyntax.dest_imp (Thm.concl instantiated)
@@ -4332,13 +4334,21 @@ struct
               (* Applications retain the corresponding immediate children;
                  constant aliases have identical endpoints. This is not a
                  comparison of independently expanded graph residues. *)
-              SmtReplayRuleObservation.ALPHA left right
+              SmtReplayTermBridge.nodewise_equality left right
             end
-      val actual_witnesses = case selected of NONE => Vector.mapi
+      fun exact_witness (position,proof) =
+        let val expected = Thm.concl (Vector.sub (actual_leaves,position))
+        in if Portable.pointer_eq (Thm.concl proof,expected) then proof
+           else SmtReplayRuleObservation.EQ_MP
+             (SmtReplayTermBridge.nodewise_equality
+               (Thm.concl proof) expected) proof
+        end
+      val actual_witnesses = Vector.mapi exact_witness
+        (case selected of NONE => Vector.mapi
           (fn (index,leaf) => discharge (index,(index,leaf))) leaves
         | SOME _ => Vector.mapi discharge (Vector.fromList
             (ListPair.zip (indices,Vector.foldr
-              (fn (leaf,rest) => leaf :: rest) [] active_leaves)))
+              (fn (leaf,rest) => leaf :: rest) [] active_leaves))))
       val result = SmtReplayRuleObservation.MP instantiated
         (tree_proof actual_witnesses active_tree)
       val _ = if Portable.pointer_eq

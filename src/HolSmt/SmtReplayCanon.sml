@@ -7,13 +7,7 @@ struct
 
   open SmtReplayGraph SmtReplayCanonGraph
   structure G = SmtReplayGraph
-
-  val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
-
-  (* Left-to-right conversion chain, total: an all-unchanged chain yields
-     REFL rather than raising. *)
-  fun compose conversions =
-    Conv.QCONV (List.foldr Conv.THENC Conv.ALL_CONV conversions)
+  structure P = SmtReplayProof
 
   (* The SMT arithmetic sorts: Int and Real. *)
   fun is_arith_type ty =
@@ -44,19 +38,6 @@ struct
     end
     handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
 
-  fun is_ground_total tm =
-    let
-      val (head, args) = boolSyntax.strip_comb tm
-    in
-      List.length args = 2 andalso List.null (Term.free_vars tm) andalso
-      (Term.same_const head smt_ediv_total_tm orelse
-       Term.same_const head smt_emod_total_tm)
-    end
-    handle Feedback.HOL_ERR _ => false
-
-  fun ground_total_conv tm =
-    if is_ground_total tm then bossLib.EVAL tm else raise Conv.UNCHANGED
-
   val cpc_alias_rewrites = [
     Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
     Thm.CONJUNCT2 boolTheory.NOT_CLAUSES,
@@ -78,74 +59,25 @@ struct
     HolSmtTheory.smt_rdiv_rneg
   ]
 
-  (* Built once: PURE_REWRITE_CONV constructs its net when applied to the
-     theorem list, so a per-call occurrence rebuilds it at every step. *)
-  val cpc_alias_conv = Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites
+  open SmtReplayTermBridge
 
-  val not_clauses_conv = Rewrite.PURE_REWRITE_CONV
-    [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
-     Thm.CONJUNCT2 boolTheory.NOT_CLAUSES]
+  val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
 
-  val real_div_conv = Rewrite.PURE_REWRITE_CONV [realTheory.real_div]
-
-  fun reorient_equality_conv tm =
-    let
-      val (left, right) = boolSyntax.dest_eq tm
-      val reversed = boolSyntax.mk_eq (right, left)
-    in
-      if Term.compare (right, left) = LESS then
-        Drule.IMP_ANTISYM_RULE
-          (Thm.DISCH tm (Thm.SYM (Thm.ASSUME tm)))
-          (Thm.DISCH reversed (Thm.SYM (Thm.ASSUME reversed)))
-      else raise Conv.UNCHANGED
+  fun is_ground_total tm =
+    let val (head,args) = boolSyntax.strip_comb tm in
+      (Term.same_const head smt_ediv_total_tm orelse
+       Term.same_const head smt_emod_total_tm) andalso
+      List.length args = 2 andalso
+      (admit_native "canon-ground-total" tm; null (Term.free_vars tm))
     end
 
-  (* Z3 emits propositionally identical rewrite conclusions with arbitrary
-     operand order.  Use one proof-producing key space for rewrite proformas:
-     equality atoms and binary Boolean operands are oriented deterministically
-     without simplifying, deleting, or reassociating operands.  Recursive
-     binary orientation stays linear on large solver-generated formulas. *)
-  fun reorient_binary_conv dest comm tm =
-    let
-      val (left, right) = dest tm
-    in
-      if Term.compare (right, left) = LESS then Conv.REWR_CONV comm tm
-      else raise Conv.UNCHANGED
-    end
+  fun ground_total_conv tm =
+    if is_ground_total tm then bossLib.EVAL tm else raise Conv.UNCHANGED
 
-  fun boolean_commute_conv tm =
-    let
-      fun conjunction source =
-        let val premise = Thm.ASSUME source in
-          Thm.DISCH source
-            (Thm.CONJ (Thm.CONJUNCT2 premise) (Thm.CONJUNCT1 premise))
-        end
-      fun disjunction source left right =
-        Thm.DISCH source
-          (Thm.DISJ_CASES (Thm.ASSUME source)
-            (Thm.DISJ2 right (Thm.ASSUME left))
-            (Thm.DISJ1 (Thm.ASSUME right) left))
-      val (left, right, forward, backward) =
-        if boolSyntax.is_conj tm then
-          let
-            val (left, right) = boolSyntax.dest_conj tm
-            val reverse = boolSyntax.mk_conj (right, left)
-          in (left, right,
-              fn () => conjunction tm,
-              fn () => conjunction reverse) end
-        else if boolSyntax.is_disj tm then
-          let
-            val (left, right) = boolSyntax.dest_disj tm
-            val reverse = boolSyntax.mk_disj (right, left)
-          in (left, right,
-              fn () => disjunction tm left right,
-              fn () => disjunction reverse right left) end
-        else raise Conv.UNCHANGED
-    in
-      if Term.compare (right, left) = LESS then
-        Drule.IMP_ANTISYM_RULE (forward ()) (backward ())
-      else raise Conv.UNCHANGED
-    end
+  (* Compose checked conversions without losing the caller's occurrence
+     at the outer application rebuilt by ordinary conversion combinators. *)
+  fun compose conversions root = exact_left root
+    (Conv.QCONV (List.foldr Conv.THENC Conv.ALL_CONV conversions) root)
 
   (* Canonical orientation only permutes children.  Visit each physically
      shared input node once, normalize its children first, and cache the
@@ -157,6 +89,7 @@ struct
       val cache = Array.array
         (bucket_count, [] : (Term.term * Thm.thm) list)
       val active = ref ([] : Term.term list)
+      val order = new_term_order ()
       fun normalize term =
         let
           val index = SmtResource.pointer_bucket bucket_count term
@@ -172,6 +105,7 @@ struct
                     (!active)) orelse
                   raise ERR "dag_conversion" "cyclic rewrite expansion"
                 val _ = active := term :: !active
+                val _ = admit_type (Term.type_of term)
                 val children =
                   if Term.is_comb term then
                     let
@@ -183,25 +117,35 @@ struct
                            boolSyntax.rhs (Thm.concl operator_thm)) andalso
                          Portable.pointer_eq (operand,
                            boolSyntax.rhs (Thm.concl operand_thm)) then
-                        Thm.REFL term
-                      else Thm.MK_COMB (operator_thm, operand_thm)
+                        checked_refl term
+                      else anchor_left term
+                        (Thm.MK_COMB (operator_thm, operand_thm))
                     end
                   else if Term.is_abs term then
                     let
+                      val _ = admit_native "canon-binder-opening" term
                       val (variable, body) = Term.dest_abs term
                       val body_thm = normalize body
                     in
                       if Portable.pointer_eq
                            (body, boolSyntax.rhs (Thm.concl body_thm)) then
-                        Thm.REFL term
-                      else Thm.ABS variable body_thm
+                        checked_refl term
+                      else
+                        let
+                          val _ = List.app
+                            (admit_native "canon-binder-hypothesis")
+                            (Thm.hyp body_thm)
+                          val _ = admit_body_result
+                            (boolSyntax.rhs (Thm.concl body_thm))
+                        in anchor_left term (Thm.ABS variable body_thm) end
                     end
-                  else Thm.REFL term
+                  else checked_refl term
                 val current = boolSyntax.rhs (Thm.concl children)
-                val orientation = Conv.QCONV (Conv.TRY_CONV orient) current
+                val orientation = exact_left current
+                  (Conv.QCONV (Conv.TRY_CONV orient) current)
                 val right = boolSyntax.rhs (Thm.concl orientation)
                 val orientation =
-                  if revisit andalso not (Term.aconv current right) then
+                  if revisit andalso order (current,right) <> EQUAL then
                     Thm.TRANS orientation (normalize right)
                   else orientation
                 val theorem =
@@ -219,81 +163,334 @@ struct
   val dag_orientation_conv = dag_conversion false
   val dag_rewrite_conv = dag_conversion true
 
-  (* Canonicalize source syntax bottom-up through typed constructor IDs.
-     Retained children justify local checked bridges. Binders are opened
-     only after bounded admission; oversized opaque binders stay retained. *)
+  exception SHARE_LIMIT
+
+  (* Do not first call the ordinary whole-source importer: an intern hit
+     there can align two application trees with a whole-term ALPHA. Retain
+     physical occurrences and prove each constructor/leaf bridge locally.
+     Only opaque or admitted bounded binder islands use the import adapter.
+     Required conversion has no new application-DAG admission allowance. *)
+  fun import_nodewise graph scope allowance binder root =
+    let
+      val types = new_type_order ()
+      val count = 4093
+      val memo = Array.array (count,[] : (Term.term * G.source) list)
+      val observed = ref 0
+      fun visit term =
+        let val bucket = SmtResource.pointer_bucket count term in
+          case List.find (fn (old,_) => Portable.pointer_eq (old,term))
+              (Array.sub (memo,bucket)) of
+            SOME (_,source) => source
+          | NONE =>
+              let
+                val _ = case allowance of NONE => ()
+                  | SOME maximum =>
+                      if !observed < maximum then () else raise SHARE_LIMIT
+                val _ = case allowance of NONE => ()
+                  | SOME _ => observed := !observed + 1
+                val source =
+                  if Term.is_comb term then
+                    let
+                      val (f,x) = Term.dest_comb term
+                      val left = visit f and right = visit x
+                      val node = G.application graph scope
+                        (#node left,#node right)
+                      val canonical = G.representative graph node
+                      val bridge = application_bridge term canonical
+                        (#bridge left) (#bridge right)
+                    in {node = node,original = term,bridge = bridge} end
+                  else if Term.is_abs term then binder term
+                  else
+                    let
+                      val node = if Term.is_var term then
+                          G.resolve_variable graph scope term
+                        else G.constant graph scope term
+                      val target = G.representative graph node
+                      val theorem = if Portable.pointer_eq (term,target)
+                          then checked_refl term
+                        else leaf_equality types term target
+                    in {node = node,original = term,bridge = theorem} end
+                val _ = Array.update (memo,bucket,
+                  (term,source) :: Array.sub (memo,bucket))
+              in source end
+        end
+    in visit root end
+
+  (* Binder interning is optional here. Keep the opaque fallback when its
+     native island cannot be admitted, without opening an unadmitted body.
+     Admitted small alpha-equivalent binders must still share an ID, so a
+     reflexive schema sees a single hole for their two occurrences. *)
+  fun import_binder_island graph scope maximum operation term =
+    (admit_native operation term;
+     G.admit_binder graph scope maximum term)
+    handle Feedback.HOL_ERR detail =>
+      if SmtResource.is_resource_gate detail andalso
+          (String.isSubstring operation (Feedback.message_of detail) orelse
+           String.isSubstring "canon-type-work"
+             (Feedback.message_of detail)) then
+        (admit_type (Term.type_of term);G.import graph scope 1 term)
+      else raise Feedback.HOL_ERR detail
+
+  (* Optional sharing retains the old DAG allowance and opaque-binder
+     fallback. Exhaustion is still identity, never a new replay refusal. *)
   fun share_conv root =
     let
       val graph = G.new ()
       val scope = G.root_scope graph
       val maximum = SmtResource.max_bv_replay_term_nodes
-      val source = G.import graph scope maximum root
-      val memo = ref (Redblackmap.mkDict Int.compare)
-      fun share node = case Redblackmap.peek (!memo,G.node_id node) of
-          SOME result => result
-        | NONE =>
-          let
-            val original = G.representative graph node
-            val result = case G.view graph node of
-                G.OpaqueRetained =>
-                  (case SmtReplayImport.bounded_raw_size maximum original of
-                     NONE => (node,Thm.REFL original)
-                   | SOME _ =>
-                     let val admitted = G.admit_binder graph
-                       (G.node_scope graph node) maximum original in
-                       (#node admitted,#bridge admitted) end)
-              | G.Application (operator,operand) =>
-                  let
-                    val (left,left_proof) = share operator
-                    val (right,right_proof) = share operand
-                  in if left = operator andalso right = operand then
-                      (node,Thm.REFL original)
-                    else
-                      let
-                        val canonical = G.application graph scope (left,right)
-                        val combined = Thm.MK_COMB (left_proof,right_proof)
-                        val (rebuilt,rebuilt_right) = Term.dest_eq
-                          (Thm.concl combined)
-                        val bridge = Thm.TRANS (Thm.ALPHA original rebuilt)
-                          (Thm.TRANS combined (Thm.ALPHA rebuilt_right
-                            (G.representative graph canonical)))
-                      in (canonical,bridge) end
-                  end
-              | _ => (node,Thm.REFL original)
-            val _ = memo := Redblackmap.insert (!memo,G.node_id node,result)
-          in result end
-    in Thm.TRANS (#bridge source) (#2 (share (#node source))) end
-    handle Feedback.HOL_ERR error =>
-      if Feedback.top_structure_of error = "SmtReplayGraph" andalso
-         Feedback.top_function_of error = "import" andalso
-         Feedback.message_of error = "application import DAG budget exhausted"
-      then Thm.REFL root
-      else raise Feedback.HOL_ERR error
+      (* Preserve the old metadata-only refusal before any source proof. *)
+      val _ = G.plan_import graph scope maximum root
+      val binder = import_binder_island graph scope maximum
+        "canon-binder-sharing"
+    in #bridge (import_nodewise graph scope (SOME maximum) binder root) end
+    handle SHARE_LIMIT => checked_refl root
+      | Feedback.HOL_ERR error =>
+          if Feedback.top_structure_of error = "SmtReplayGraph" andalso
+             Feedback.top_function_of error = "import" andalso
+             Feedback.message_of error =
+               "application import DAG budget exhausted"
+          then checked_refl root else raise Feedback.HOL_ERR error
 
-  (* The head patterns are disjoint.  Orienting each parent after all of its
-     children therefore establishes both normal forms in one postorder pass,
-     including equalities whose Boolean operands were just permuted. *)
-  val z3_primary_rewrite_canon_conv = dag_orientation_conv
-    (Conv.FIRST_CONV [reorient_equality_conv, boolean_commute_conv])
+  (* Expose exactly a declaration's constructor shape, not an arbitrary
+     depth of the source DAG. Pattern variables are opaque typed holes;
+     repeated source IDs share a hole even across different pattern vars.
+     This handles reflexivity without matching the expanded operand. *)
+  fun schema_patterns theorem =
+    List.map (boolSyntax.lhs o Thm.concl) (Rewrite.mk_rewrites theorem)
+
+  val canonical_schema_patterns =
+    let
+      val laws = cpc_alias_rewrites @
+        [boolTheory.EQ_SYM_EQ,boolTheory.CONJ_COMM,boolTheory.DISJ_COMM,
+         boolTheory.REFL_CLAUSE,HolSmtTheory.COND_NEG,
+         integerTheory.INT_NOT_LT,integerTheory.INT_NOT_LE,
+         realTheory.REAL_NOT_LT,realTheory.REAL_NOT_LE,
+         integerTheory.INT_ADD_COMM,realTheory.REAL_ADD_COMM]
+      fun guarded theorem =
+        let
+          val guard = boolSyntax.rhs (Thm.concl (Drule.SPEC_ALL theorem))
+          val left = Term.genvar Type.alpha
+          val right = Term.genvar Type.alpha
+        in boolSyntax.mk_cond (guard,left,right) end
+    in List.concat (List.map schema_patterns laws) @
+      [guarded integerTheory.INT_NOT_LT,guarded realTheory.REAL_NOT_LT]
+    end
+
+  fun compact_schema patterns graph scope conversion source =
+    let
+      exception Shape
+      val template_limit = 4096
+      fun attempt pattern =
+        let
+          val holes = ref (Redblackmap.mkDict Int.compare)
+          val type_bindings = ref ([] : (Type.hol_type,Type.hol_type)
+            Lib.subst)
+          val types = new_type_order ()
+          (* Match a bounded declaration Type, not a native annotation
+             tree. A variable binds the opaque actual Type in one step. *)
+          fun match_type expected actual =
+            if Type.is_vartype expected then
+              (case List.find (fn {redex,...} =>
+                  Type.dest_vartype redex = Type.dest_vartype expected)
+                  (!type_bindings) of
+                 SOME {residue,...} =>
+                   if types (residue,actual) = EQUAL then () else raise Shape
+               | NONE => type_bindings :=
+                   {redex = expected,residue = actual} :: !type_bindings)
+            else if Type.is_vartype actual then raise Shape
+            else
+              let
+                val a = Type.dest_thy_typeid expected
+                val b = Type.dest_thy_typeid actual
+                val _ = if KernelSig.id_compare (#Tyop a,#Tyop b) = EQUAL
+                  then () else raise Shape
+              in ListPair.appEq (fn (x,y) => match_type x y)
+                (#Args a,#Args b) handle ListPair.UnequalLengths => raise Shape
+              end
+          fun operand pattern node =
+            case Redblackmap.peek (!holes,G.node_id node) of
+              SOME (_,term) => term
+            | NONE =>
+                let val term = Term.genvar (Term.type_of pattern) in
+                  holes := Redblackmap.insert
+                    (!holes,G.node_id node,(node,term));term
+                end
+          fun template pattern node =
+            (match_type (Term.type_of pattern) (G.type_of graph node);
+             if Term.is_var pattern then operand pattern node
+             else if Term.is_const pattern then
+               (case G.view graph node of
+                  G.Constant id =>
+                    if KernelSig.id_compare
+                        (id,#Name (Term.dest_thy_constid pattern)) = EQUAL
+                    then pattern else raise Shape
+                | _ => raise Shape)
+             else if Term.is_comb pattern then
+               (case G.view graph node of
+                  G.Application (f,x) =>
+                    let val (pf,px) = Term.dest_comb pattern in
+                      Term.mk_comb (template pf f,template px x)
+                    end
+                | _ => raise Shape)
+             else raise Shape)
+          (* Conversion/matching sees only the bounded declaration's own
+             Types. Specialize this small, closed schema afterwards; never
+             normalize or match an actual operand or its annotation. *)
+          val term = template pattern source
+          val _ = admit_native "canon-schema" term
+          val generic = Conv.QCONV (Conv.TRY_CONV conversion) term
+          val _ = admit_native "canon-schema-result" (Thm.concl generic)
+          val theorem = Thm.INST_TYPE (!type_bindings) generic
+          val pairs = List.map (fn (_, (node,hole)) =>
+            (node,Term.inst (!type_bindings) hole))
+            (Redblackmap.listItems (!holes))
+          val schema = checked_graph_schema graph scope
+            {theorem = theorem,holes = List.map #2 pairs,
+             operands = List.map #1 pairs,template_limit = template_limit}
+        in
+          if graph_schema_source schema = graph_schema_result schema then
+            NONE else SOME schema
+        end
+        handle Shape => NONE
+      fun choose [] = NONE
+        | choose (pattern::rest) =
+            case attempt pattern of NONE => choose rest | some => some
+    in choose patterns end
+
+  (* Discover on IDs and prove only bounded constructor prefixes. The
+     original operands enter neither matching nor schema INST: assembly
+     uses graph names and realization happens once, after closing D.
+     Bounded binder bodies use the same compact pass; only their opening
+     and final ABS/alpha bridge are native island operations. *)
+  fun compact_conversion_with_patterns patterns descend revisit propose root =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val maximum = SmtResource.max_bv_replay_term_nodes
+      fun binder term =
+        if not descend then
+          import_binder_island graph scope maximum "canon-binder-import" term
+        else
+          let
+            val _ = admit_native "canon-binder-opening" term
+            val (variable,body) = Term.dest_abs term
+            val body_thm = compact_conversion_with_patterns patterns
+              true revisit propose body
+            val _ = List.app (admit_native "canon-binder-hypothesis")
+              (Thm.hyp body_thm)
+            val _ = admit_body_result (boolSyntax.rhs (Thm.concl body_thm))
+            val theorem = anchor_left term (Thm.ABS variable body_thm)
+            val target = boolSyntax.rhs (Thm.concl theorem)
+            val _ = admit_native "canon-binder-import" target
+            val imported = G.admit_binder graph scope maximum target
+          in {node = #node imported,original = term,
+              bridge = Thm.TRANS theorem (#bridge imported)} end
+      val source = import_nodewise graph scope NONE binder root
+      fun schema node =
+        if not descend andalso node <> #node source then NONE
+        else case propose (G.representative graph node) of NONE => NONE
+          | SOME conversion =>
+              compact_schema patterns graph scope conversion node
+      val converted = graph_conversion graph scope revisit schema
+        (#node source)
+    in
+      if graph_source converted = graph_result converted then
+        #bridge source
+      else
+        let
+          val block = P.freeze graph
+            {scope = scope,roots = graph_roots converted,sources = [],
+             template_limit = SmtResource.max_metric}
+          val proof = graph_assemble graph block converted
+          val realized = exact_left (G.representative graph (#node source))
+            (P.realize block (graph_equality converted) proof)
+        in Thm.TRANS (#bridge source) realized end
+    end
+
+  val compact_conversion =
+    compact_conversion_with_patterns canonical_schema_patterns
+
+  fun root_conversion_with_patterns patterns propose term =
+    case propose term of NONE => raise Conv.UNCHANGED
+    | SOME _ => compact_conversion_with_patterns patterns
+        false false propose term
+
+  val root_conversion =
+    root_conversion_with_patterns canonical_schema_patterns
+
+  fun orient_binary order dest comm term =
+    let val (left,right) = dest term in
+      if order (right,left) = LESS then SOME (Conv.REWR_CONV comm)
+      else NONE
+    end
+
+  fun equality_orientation order term =
+    if boolSyntax.is_eq term then
+      orient_binary order boolSyntax.dest_eq boolTheory.EQ_SYM_EQ term
+    else NONE
+
+  fun boolean_orientation order term =
+    if boolSyntax.is_conj term then
+      orient_binary order boolSyntax.dest_conj boolTheory.CONJ_COMM term
+    else if boolSyntax.is_disj term then
+      orient_binary order boolSyntax.dest_disj boolTheory.DISJ_COMM term
+    else NONE
+
+  fun reorient_equality_conv term =
+    let val _ = boolSyntax.dest_eq term in
+      root_conversion (equality_orientation (new_term_order ())) term
+    end
+
+  fun reorient_binary_conv dest comm term =
+    root_conversion_with_patterns (schema_patterns comm)
+      (orient_binary (new_term_order ()) dest comm) term
+
+  fun boolean_commute_conv term =
+    root_conversion (boolean_orientation (new_term_order ())) term
+
+  (* Build rewrite nets once, but run them only on compact prefixes (or
+     already admitted native binder islands), never on an expanded DAG. *)
+  val alias_schema_conv = Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites
+  val not_schema_conv = Rewrite.PURE_REWRITE_CONV
+    [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
+     Thm.CONJUNCT2 boolTheory.NOT_CLAUSES]
+  val cpc_alias_conv = compact_conversion true true
+    (fn _ => SOME alias_schema_conv)
+  val not_clauses_conv = compact_conversion true true
+    (fn _ => SOME not_schema_conv)
+
+  (* Kept for the arithmetic adapter below, not the selected graph pass. *)
+  val real_div_conv = Rewrite.PURE_REWRITE_CONV [realTheory.real_div]
+
+  (* Both disjoint orientations share one invocation-local ordering memo.
+     The order is the public semantic order, not allocation order. *)
+  fun z3_primary_rewrite_canon_conv term =
+    let
+      val order = new_term_order ()
+      fun propose current = case equality_orientation order current of
+          NONE => boolean_orientation order current | some => some
+    in compact_conversion true false propose term end
 
   (* Z3 may express the same arithmetic rewrite through a dual relation,
      a negated conditional guard, or commuted addition.  These rules are
      deliberately separate from the primary canonicalizer: their broader
      normalization is accepted only when it closes the concrete difference
      between the two sides of the rewrite. *)
-  val z3_cond_polarity_conv =
-    dag_orientation_conv (Conv.REWR_CONV HolSmtTheory.COND_NEG)
+  val z3_cond_polarity_conv = compact_conversion true false
+    (fn _ => SOME (Conv.REWR_CONV HolSmtTheory.COND_NEG))
 
-  val z3_relation_dual_conv = dag_orientation_conv
-    (Conv.FIRST_CONV (List.map Conv.REWR_CONV
-    [integerTheory.INT_GT,
-     integerTheory.INT_GE,
-     integerTheory.INT_NOT_LT,
-     integerTheory.INT_NOT_LE,
-     realTheory.real_gt,
-     realTheory.real_ge,
-     realTheory.REAL_NOT_LT,
-     realTheory.REAL_NOT_LE]))
+  val relation_dual_schema_conv =
+    Conv.FIRST_CONV (List.map Conv.REWR_CONV
+      [integerTheory.INT_GT,
+       integerTheory.INT_GE,
+       integerTheory.INT_NOT_LT,
+       integerTheory.INT_NOT_LE,
+       realTheory.real_gt,
+       realTheory.real_ge,
+       realTheory.REAL_NOT_LT,
+       realTheory.REAL_NOT_LE])
+  val z3_relation_dual_conv = compact_conversion true false
+    (fn _ => SOME relation_dual_schema_conv)
 
   (* After relation aliases are normalized, a non-strict order in an ite
      guard is the complement of the reversed strict order.  Expose that
@@ -327,16 +524,28 @@ struct
     else
       raise Conv.UNCHANGED
 
+  fun additive_orientation order term =
+    if intSyntax.is_plus term then
+      orient_binary order intSyntax.dest_plus integerTheory.INT_ADD_COMM term
+    else if realSyntax.is_plus term then
+      orient_binary order realSyntax.dest_plus realTheory.REAL_ADD_COMM term
+    else NONE
+
+  fun additive_canon_conv term =
+    compact_conversion true false
+      (additive_orientation (new_term_order ())) term
+
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
-     dag_orientation_conv z3_order_cond_polarity_conv,
+     compact_conversion true false
+       (fn _ => SOME z3_order_cond_polarity_conv),
      z3_cond_polarity_conv,
-     dag_orientation_conv additive_order_conv,
+     additive_canon_conv,
      z3_primary_rewrite_canon_conv]
 
   fun equality_operands_alpha_equal tm =
-    let val (left, right) = boolSyntax.dest_eq tm
-    in Term.aconv left right end
+    let val (left,right) = boolSyntax.dest_eq tm
+    in new_term_order () (left,right) = EQUAL end
 
   fun z3_rewrite_canon_conv tm =
     let
@@ -358,13 +567,25 @@ struct
         end
     end
 
-  fun reflexive_equality_conv tm =
-    let
-      val (left, right) = boolSyntax.dest_eq tm
-    in
-      if Term.aconv left right then Drule.EQT_INTRO (Thm.REFL left)
-      else raise Conv.UNCHANGED
+  fun reflexive_orientation order term =
+    if boolSyntax.is_eq term then
+      let val (left,right) = boolSyntax.dest_eq term in
+        if order (left,right) = EQUAL then
+          SOME (Conv.REWR_CONV boolTheory.REFL_CLAUSE)
+        else NONE
+      end
+    else NONE
+
+  fun reflexive_equality_conv term =
+    let val _ = boolSyntax.dest_eq term in
+      root_conversion (reflexive_orientation (new_term_order ())) term
     end
+
+  fun reflexive_canon_conv term = compact_conversion true false
+    (reflexive_orientation (new_term_order ())) term
+
+  fun equality_canon_conv term = compact_conversion true false
+    (equality_orientation (new_term_order ())) term
 
   (* Normalization below propositions: relation aliases, pushed real_of_int,
      ground total computation, and eta.  Symbolic totalized integer
@@ -373,27 +594,27 @@ struct
   val cpc_term_canon_conv =
     compose
       [cpc_alias_conv,
-       Conv.TOP_DEPTH_CONV ground_total_conv,
+       dag_rewrite_conv ground_total_conv,
        cpc_alias_conv,
-       Conv.TOP_DEPTH_CONV Drule.ETA_CONV]
+       dag_orientation_conv Drule.ETA_CONV]
 
   val cpc_operand_canon_conv =
     compose
       [cpc_term_canon_conv,
-       Conv.TOP_DEPTH_CONV reflexive_equality_conv,
-       Conv.TOP_DEPTH_CONV reorient_equality_conv,
+       reflexive_canon_conv,
+       equality_canon_conv,
        (* Reflexive reduction only replaces a Boolean equality by T.  Of the
           term canonicalizer's rules, this can expose only ~T/~F; avoid a
           second ground-arithmetic and eta traversal at every CPC step. *)
        not_clauses_conv,
-       Conv.TOP_DEPTH_CONV reflexive_equality_conv,
-       Conv.TOP_DEPTH_CONV reorient_equality_conv]
+       reflexive_canon_conv,
+       equality_canon_conv]
 
   (* Preserve the outer equality needed by TRANS and EQ_MP.  Its operands use
      the same recursive orientation as CPC congruence sources, but only the
      structurally neutral Boolean reduction [x = x] -> T; a broad Boolean
      simplifier here could erase the very context a congruence step consumes.
-     The Term.compare choice remains deterministic and idempotent. *)
+     The semantic order remains deterministic and idempotent. *)
   fun cpc_canon_conv tm =
     if boolSyntax.is_eq tm then
       compose

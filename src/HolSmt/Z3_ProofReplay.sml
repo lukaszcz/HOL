@@ -6054,7 +6054,7 @@ local
        TextIO.flushOut TextIO.stdOut) else ()
     val orientation =
       profile "rewrite(entry)(canonical-orientation)"
-        (Conv.QCHANGED_CONV SmtReplayCanon.z3_rewrite_canon_conv) target
+        SmtReplayCanon.z3_rewrite_canon_conv target
       handle Conv.UNCHANGED => Thm.REFL target
     val _ = if trace then
       (Feedback.HOL_MESG "Z3 rewrite: canonicalized";
@@ -6065,7 +6065,8 @@ local
       (Feedback.HOL_MESG "Z3 rewrite: proved";
        TextIO.flushOut TextIO.stdOut) else ()
   in
-    (state, Thm.EQ_MP (Thm.SYM orientation) theorem)
+    (state, Thm.EQ_MP (Thm.SYM orientation)
+      (SmtSkeletonProve.exact_conclusion canonical theorem))
   end))
   end
 
