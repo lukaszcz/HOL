@@ -9,6 +9,20 @@ allocation. Poly/ML 5.9.2's `sizeAllocation`/`sizeAllocationFree` fields report
 allocation-area capacity/free space updated by GC, not an allocated-byte total.
 Python `tracemalloc` negative controls do not measure HOL allocations.
 
+## Executed profiler negative control
+
+`ALLOCATION_PROFILER.md` and `evidence/task29/profiler-loss/receipt.json.gz`
+now demonstrate loss in HOL's actual hash-pinned linked runtime. Injecting
+one synthetic unknown-PC request of 1 or 1048576 words produces the same
+`UNKNOWN=1`; seven large requests produce 7, including after full GC. Five
+selftest/testutils assertions and eight Python guards pass. These are injected
+profiler arguments, **not actual allocated words or an allocator instrument**.
+The installed disassembly confirms that `incr` is discarded on this path.
+A displayed-entry sum is therefore not a general cumulative allocator total.
+This does not establish incidence in TASK29's workloads or validate all other
+coverage paths. Required counter construction and the full allocation matrix
+remain unsatisfied; this task is not complete.
+
 ## Required input
 
 A supported cumulative allocator counter or a reviewed, version-pinned Poly/ML

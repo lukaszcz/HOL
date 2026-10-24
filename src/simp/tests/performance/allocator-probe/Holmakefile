@@ -1,0 +1,5 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+EXTRA_CLEANS = profiler-probe.exe
+
+profiler-probe.exe: selftest.uo
+	$(HOLMOSMLC) -o $@ $<

@@ -15,7 +15,7 @@ ifndef MATRIX_SMOKE_SCOPE
 MATRIX_SMOKE_SCOPE = small
 endif
 .PHONY: python-tests diagnostic check matrix-completeness controls smoke
-.PHONY: runtime-smoke client-smoke
+.PHONY: runtime-smoke client-smoke profiler-loss-control
 python-tests:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
 	  -s . -p 'test*.py'
@@ -46,6 +46,13 @@ runtime-smoke:
 	python3 -B runtime_metrics.py --baseline $(PERFORMANCE_BASELINE) \
 	  --candidate $(PERFORMANCE_CANDIDATE) \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/runtime-smoke.json"
+
+# Explicit, binary-pinned private-ABI diagnostic; never run implicitly on
+# other runtimes. This proves profiler information loss, NOT allocation parity.
+profiler-loss-control:
+	mkdir -p "$(PERFORMANCE_CHECK_OUTPUT)"
+	python3 -B allocation_profiler_probe.py --authorize-runtime-probe \
+	  --output "$(PERFORMANCE_CHECK_OUTPUT)/profiler-loss.json"
 
 # Keep real controls before smoke even with a parallel caller. No acceptance
 # run, loading experiment or costly full-grid/10000 AC pass is implicit.

@@ -2,6 +2,84 @@
 
 ## Status: BLOCKED, not complete
 
+### Executed allocator-profiler falsification (after `70d82d40e`)
+
+TASK29 is **not complete**. A fresh full-grid offline replay re-admits all
+162 archives/6,480 timed receipts and reproduces the original **43 failed /
+119 inconclusive cells**, exit **2**. The equal-count archive replay also
+passes admission and reproduces collector CPU **[1.032421, 1.052741]**, wall
+**[1.032385, 1.052508]**, both failures. These are replays, not new performance
+observations or a replacement grid. No production repair has been justified.
+
+The proposed `ProfileAllocations` shortcut is now falsified by execution on
+HOL's **actual linked** libpolyml, not just inspection of potentially different
+Isabelle sources. New `allocation_profiler_probe.py` and the private
+`allocator-probe/selftest.sml`/C++ shim inject synthetic unknown-PC profiler
+events through the binary's exported private symbol. Admission requires the
+exact reviewed Linux/aarch64 library hash before compiling/loading the shim.
+The launcher is Holmake-built and executed with testutils and `hol.state0`.
+
+One synthetic event requesting 1 word and one requesting 1048576 words both
+produce `UNKNOWN=1`; seven large requests produce `UNKNOWN=7`, including after
+full GC. Empty/reset controls give zero. All **six cases / five assertions**
+pass. The preserved installed-symbol disassembly independently shows literal
+`+1` on that path. These are **profiler arguments, not actual allocations**;
+the shim does not allocate the requested memory. Displayed totals include
+bracket costs and are not relabelled allocation. Summing profiler entries
+cannot recover lost word counts. This does not prove real workload incidence,
+solve other coverage gaps, or supply TASK29B's counter.
+
+`ALLOCATION_PROFILER.md` documents the optional explicit
+`profiler-loss-control` Holmake target, private-ABI limits and reproducible
+command. Eight Python regression tests cover exact binary admission, explicit
+authorization, all expected counts and missing/duplicate/reordered/malformed
+or semantically changed observations. No threshold, zero-GC policy, B/B policy,
+workload, ordinary API, extension, tracking identity or production source
+changed. No profiler runs inside an acceptance timing process.
+
+New durable evidence: `evidence/task29/profiler-loss/`:
+
+- `receipt.json.gz`: final six-case runtime control, all commands/exits,
+  source/heap/tool/library seals, loaded-library discovery, native disassembly,
+  generated-shim/launcher seals and all outputs. `development.json.gz` retains
+  the preliminary diagnostic before final tool/copied-input guards.
+- `grid-replay.log.gz`: all 162 cells replayed, exit **2** (blocked).
+- `equal-count-replay.json.gz`: complete fresh recomputation, exit **0**,
+  preserving the collector failures and zero-GC/short-count controls.
+- `performance-tests.log.gz`: **263 tests**, two unchanged optional skips,
+  exit **0**; `compatibility-tests.log.gz`: **196 tests**, exit **0**.
+- `routine.log.gz`: fresh
+  `bin/build -t --seq=tools/sequences/upto-parallel`, exit **0**, after the
+  diagnostic. Fresh eight-process API receipt:
+  `../api-audit/evidence/20261024T040100Z-dacf103f/receipt.json`.
+  This is not a final-build-product performance parity claim.
+- `validation.json`: commands, statuses, source/evidence seals and exact
+  outstanding counts. Pedant and whitespace checks pass.
+
+Commands from repository root, using the existing `W` wrapper below:
+
+```sh
+W bin/Holmake --no-project --no-cache --no_prereqs \
+  --holstate=CONFIGURED_ROOT/bin/hol.state0 \
+  -C src/simp/tests/performance -j1 \
+  PERFORMANCE_CHECK_OUTPUT=NEW_DIRECTORY profiler-loss-control
+# exit 0: diagnostic reproduced, NOT allocation acceptance
+python3 -B src/simp/tests/performance/task29_gate.py replay \
+  --output src/simp/tests/performance/evidence/task29/full-grid
+# exit 2: complete replay, gate still blocked
+python3 -B src/simp/tests/performance/evidence/task29/equal-count/replay.py
+# exit 0: original failures reproduced
+```
+
+TASK29B still requires a reviewed complete counter, with allocation/no-allocation
+and GC controls, and the full paired allocation matrix. The ratio-only 0/0
+and equality-straddling B/B policy issues below also remain; silently changing
+those gates would violate this task. TASK29A is still the next unblocked work.
+All task-created private source/build/DSO trees and scratch outputs were removed
+after preserving compact evidence. Caller-owned review files, caches and
+pre-existing nested planning changes were preserved. No completion-log line
+is warranted for TASK29, TASK29A or TASK29B.
+
 ### Equal-count investigation (after `e86df07bf`)
 
 TASK29 is **still blocked**. The complete original grid below is preserved;
