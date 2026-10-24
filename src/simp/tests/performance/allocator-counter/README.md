@@ -1,11 +1,13 @@
 # Experimental Poly/ML managed allocation counter
 
-**Experimental runtime, not TASK29B acceptance.** A private runtime build and
-HOL launcher executed 34 brackets successfully in the development run. Native
-known-size slopes, real RTS bignum allocation, code allocation and GC controls
-passed. Steady no-op FFI brackets cost four native words, not zero. The full
-paired allocation matrix and remaining coverage checks are still unsatisfied.
-Nothing replaces the installed runtime or changes production HOL.
+**Experimental runtime, not TASK29B acceptance.** Four private Holmake/testutils
+launchers now execute 122 brackets: 34 original native/RTS/code/GC, 22 allocating
+ML worker/retirement, 31 hybrid bytecode, and 35 native failure/recovery controls.
+Exact native and interpreter storage slopes pass. Steady native no-op brackets
+cost four words; native-bracketed interpreted declaration entries cost 31 native
+words. Neither is zero or subtracted from workloads. The full paired allocation
+matrix and remaining coverage checks are still unsatisfied. Nothing replaces
+the installed runtime or changes production HOL.
 
 ## Deliverables
 
@@ -26,8 +28,24 @@ Nothing replaces the installed runtime or changes production HOL.
 - `STATIC_REVIEW.json`: initial static-check receipt, **not runtime evidence**.
 - `run_controls.py`: authorized private build/execution driver; removes its
   source/build/fixture copies on success or failure and preserves receipts.
-- `selftest.sml`, `bracket.c`, `control_schema.py`: real allocator controls,
+- `selftest.sml`, `bracket.c`, `control_schema.py`: original allocator controls,
   raw C-buffer endpoints, actual symbol/mapping identity and strict admission.
+- `worker_selftest.sml`: four real ML workers, precreated/parked outside
+  allocation brackets, exact aggregate escaping-ref slopes, actual
+  `isActive=false` retirement, and retained-data GC. No synthetic increments.
+- `interpreter_selftest.sml`, `interpreter_body.sml`, `interpreter_host.sml`:
+  bootstrap the sealed bytecode compiler/basis, precompile declaration-entry
+  closures, and bracket their execution with native FFI. Compilation and
+  declaration installation are outside brackets; fixed native result packaging
+  remains counted. No interpreted generic FFI or unsafe bridge/cast is used.
+- `failure_selftest.sml`, `failure_limit.c`: separate capped process, real
+  OS-address-space exhaustion, prebuilt-interrupt comparison and allocation
+  recovery. `--maxheap` alone permits oversized objects, so a one-shot verified
+  `RLIMIT_AS=current virtual bytes+64MiB` limit is essential. It never increases
+  an existing soft limit. Failed 128/192MiB requests must emit actual RTS
+  diagnostics and leave the rooted sentinel unchanged.
+- `../{worker,interpreter,failure}_schema.py`: separate strict protocols,
+  complete endpoints/raw categories/results, and fault/receipt controls.
 - `arithmetic_test.cpp`: separately executed synthetic overflow/concurrency
   tests of the exact implementation; not allocated HOL words.
 
@@ -75,11 +93,20 @@ Poly/ML distribution: supply an identical, sealed copy under `/tmp` via
 `--source`, then remove that input copy immediately after the run. The driver
 never writes to the supplied pristine source. Do not run alongside benchmarks.
 
-Durable results are in `../evidence/task29/managed-counter/`. Read the actual
-receipt outcome; a completed control run is **not** TASK29B matrix acceptance.
-Native eight-byte-word controls do not validate compact32, foreign-created
-thread callbacks, all interpreter/failure paths or every prebuilt image.
-The original ordinary-runtime timing failures remain unchanged.
+Durable results are in `../evidence/task29/managed-counter/` (original) and
+`../evidence/task29/managed-coverage/` (extended). Read the actual receipt
+outcome; a completed run is **not** TASK29B matrix acceptance. Eight-byte-word
+controls do not validate compact32, foreign-created-thread callbacks, all
+interpreter fast/slow paths, RTS/interpreter/code failures or prebuilt image
+lineage. The original ordinary-runtime timing failures remain unchanged.
+
+The development interpreted-FFI attempt crashed in the hybrid interpreter;
+its receipt is retained, not admitted. The replacement uses typed
+`CompilerBody.compiler` entry thunks and native brackets. The initial
+maxheap-only failure attempt correctly failed its outcome guard because the
+allocation succeeded; it is not relabelled a failed reservation. Both defects
+are isolated from production and the final controls. All development receipts
+remain distinct from the final source-bound run.
 
 ## Remaining validation
 

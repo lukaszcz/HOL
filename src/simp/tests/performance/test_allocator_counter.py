@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -136,16 +137,19 @@ class ArchivedControlTests(unittest.TestCase):
         observed = s.observations(receipt["control_output"])
         self.assertEqual(json.dumps(observed, sort_keys=True),
                          json.dumps(receipt["observations"], sort_keys=True))
-        # Rebind current control/patch inputs to their original seals, not
-        # newly manufactured hashes of deleted private build products.
-        for source in COUNTER.iterdir():
-            if not source.is_file():
+        # This historical control fixture predates the extended coverage
+        # driver. Bind its ORIGINAL input bytes to the containing commit;
+        # never manufacture updated seals or demand newly added files there.
+        revision = "fe97e59a6"
+        for path, seal in receipt["inputs"].items():
+            if "/allocator-counter/" not in path:
                 continue
-            matches = [v for p, v in receipt["inputs"].items()
-                       if p.endswith("/allocator-counter/" + source.name)]
-            self.assertEqual(len(matches), 1, source.name)
-            self.assertEqual(matches[0]["sha256"],
-                             hashlib.sha256(source.read_bytes()).hexdigest())
+            relative = "src/simp/tests/performance/allocator-counter/" + (
+                path.rsplit("/", 1)[1])
+            raw = subprocess.check_output(
+                ["git", "show", revision + ":" + relative], cwd=HERE)
+            self.assertEqual(seal["sha256"], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(seal["bytes"], len(raw))
 
     def test_actual_endpoint_loss_or_change_rejected(self):
         path = HERE / "evidence/task29/managed-counter/controls.json.gz"

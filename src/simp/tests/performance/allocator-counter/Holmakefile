@@ -4,16 +4,28 @@
 # Run separately with TASK29_ALLOC_SHIM set to the absolute bracket.so path.
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 CC = cc
-EXTRA_CLEANS = counter-controls.exe bracket.so
+EXTRA_CLEANS = counter-controls.exe worker-controls.exe \
+               interpreter-controls.exe failure-controls.exe bracket.so
 
-all: counter-controls.exe bracket.so
+all: counter-controls.exe worker-controls.exe interpreter-controls.exe \
+     failure-controls.exe bracket.so
 
 counter-controls.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
+worker-controls.exe: worker_selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+interpreter-controls.exe: interpreter_selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+failure-controls.exe: failure_selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
 # Linux/aarch64 experiment; fail linking if the patched symbol is absent.
 # Explicit shared-library path avoids accidentally selecting libpolyml.a.
-bracket.so: bracket.c managed_alloc_counter.h $(POLYMLLIBDIR)/libpolyml.so
+bracket.so: bracket.c failure_limit.c managed_alloc_counter.h \
+            $(POLYMLLIBDIR)/libpolyml.so
 	$(CC) -std=c11 -O2 -Wall -Wextra -fPIC -shared -Wl,-z,defs \
-	  -o $@ bracket.c $(POLYMLLIBDIR)/libpolyml.so \
+	  -o $@ bracket.c failure_limit.c $(POLYMLLIBDIR)/libpolyml.so \
 	  -Wl,-rpath,$(POLYMLLIBDIR)

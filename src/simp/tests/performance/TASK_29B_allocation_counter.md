@@ -41,12 +41,24 @@ not allocation-free and is not subtracted from arbitrary workload results.
 Direct C ABI/no-allocation and separate synthetic concurrency/overflow tests
 are distinct controls, not workload measurements.
 
-This is not a supported full-matrix instrument yet. Actual interpreter/failure
-paths, allocating ML worker retirement, slow-path coverage and prebuilt native
-compiler/image lineage still need validation. Foreign-created-thread callbacks
-are expressly excluded after source review found pre-existing initialization
-defects; compact32 is untested. The entire 27-case/six-size paired allocation
-matrix is still missing. No TASK29B completion or ordinary timing claim follows.
+The extended source-bound run at
+`evidence/task29/managed-coverage/controls.json.gz` now executes **122 brackets**
+across four private launchers: the original 34, 22 allocating ML worker/actual
+retirement, 31 hybrid bytecode, and 35 native failure/recovery controls. Exact
+native/interpreter storage slopes, retained-data GC and prebuilt-interrupt
+failure comparisons pass. The bytecode compiler/basis is rebuilt from sealed
+source; native brackets execute precompiled typed entries without interpreted
+FFI or casts. Failed requests use an actual OS address-space cap because
+Poly/ML's maxheap alone permits oversized objects. Development failures are
+preserved and explicitly not admitted.
+
+This is not a supported full-matrix instrument yet. Both interpreter allocator
+branches, RTS/interpreter/code failure paths, remaining slow-path coverage and
+prebuilt native compiler/image lineage still need validation. Foreign-created
+thread callbacks are expressly excluded after source review found pre-existing
+initialization defects; compact32 is untested. The entire 27-case/six-size
+paired allocation matrix is still missing. No TASK29B completion or ordinary
+timing claim follows.
 
 ## Required input
 

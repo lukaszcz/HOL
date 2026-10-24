@@ -2,6 +2,101 @@
 
 ## Status: BLOCKED, not complete
 
+### Executed interpreter, ML-worker and native-failure coverage
+
+Starting revision: `fe97e59a6`. No production simplifier, runtime patch,
+representation, public control identity or numerical decision rule changed.
+The full-grid replay still admits all **162 cells / 6,480 timed receipts**
+and returns **2**: **43 failed / 119 inconclusive** cells. Equal-count replay
+returns **0** only for reproducing its diagnostic, retaining collector CPU
+**[1.032421, 1.052741]** and wall failure. These are not new timing observations
+or closure. B/B and zero-GC rules remain unchanged; TASK29A is not complete.
+
+The experimental allocation instrument now has **122 executed brackets**:
+
+| Private launcher | Brackets | Executed evidence |
+| --- | ---: | --- |
+| Original native/RTS/code/GC | 34 | original exact slopes preserved |
+| ML workers | 22 | four real workers; aggregate 5 words/ref+cons; actual retirement |
+| Hybrid bytecode | 31 | freshly compiled basis; exact interpreter-only slopes |
+| Native failure/recovery | 35 | four real rejected reservations; exact recovery slopes |
+
+All **25 commands** succeed; **786 testutils assertions** pass across four
+launchers. Each process's actual maps and snapshot-symbol binding identify the
+same sealed private runtime, never a second installed libpolyml. Full receipts,
+source/build/product/library/tool seals, raw endpoints/category deltas,
+retained results, failures and effective environments are preserved in
+`evidence/task29/managed-coverage/controls.json.gz`.
+
+- Four precreated ML workers allocate 0/256/512 escaping refs each, twice.
+  Raw totals are **4 / 5124 / 10244 native words**. Mutex gates exclude work
+  outside designated rounds, worker exceptions are published, and all four
+  `isActive` observations become false before retired snapshots. Counters
+  never decrease at retirement; full GC does not recount retained objects.
+- The pinned RootInterpreted/BuildAll recipe builds the bytecode compiler and
+  basis outside measurement. Native brackets invoke precompiled declaration
+  entries through typed `CompilerBody.compiler`, without closure casts,
+  declaration installation or compiler execution in the interval. Fixed
+  successful-result packaging remains visible: **31 native words** per
+  no-op entry. Additional interpreter counts are exactly **5*n** for refs
+  and **n+1** for word arrays. No native no-op baseline is subtracted.
+- A separate native process sets/rechecks **RLIMIT_AS=current virtual bytes
+  +64MiB**, outside the bracket and without increasing an existing soft limit.
+  Dynamic **128/192MiB** requests each fail twice with the actual RTS exhaustion
+  diagnostic and `Thread.Interrupt` caught only after action entry. Attributes
+  are restored and the rooted sentinel is unchanged. Raw deltas equal the
+  prebuilt-interrupt control: **four native words**, not the requested object.
+  Successful arrays recover their exact slopes after every failure.
+
+Development receipts are all retained separately. The first worker launcher
+found HOL's narrowed Thread aliases; map admission then exposed trailing spaces
+on anonymous mappings. Bootstrap attempts exposed Word8 aliasing, one-declaration
+compiler consumption, testutils constructor shadowing and absolute-path concat.
+An interpreted generic-FFI attempt crashed (`Unknown instruction 5c`); the final
+approach instead brackets typed bytecode entries natively, with no runtime
+repair. A maxheap-only failure attempt correctly rejected an oversized
+**successful** allocation: maxheap is a soft target. The final OS-limited run
+is a separate complete experiment, not a selected subset of any attempt.
+
+Strict worker/interpreter/failure schemas and **40 new Python tests** preserve
+complete/order/metadata/category/physical-slope/retirement/failure/GC semantics.
+The historical 34-bracket receipt still replays against its original containing
+commit's source seals, not newly manufactured current inputs. The new receipt
+rebinds every live counter/schema input and independently replays all controls;
+real record-loss/duplication and missing exhaustion diagnostics reject.
+
+Validation from repository root (W is the existing TASK26 root wrapper):
+
+| Command | Exit / durable evidence |
+| --- | --- |
+| `W python3 -B .../allocator-counter/run_controls.py --source SEALED_COPY --authorize-experimental-runtime --timeout 300 --output NEW_RECEIPT` | **0**; `controls.json.gz` |
+| performance discovery `-p 'test*.py'` | **0**, 316 tests, two unchanged optional skips; `performance-tests.log.gz` |
+| allocator discovery `-p 'test_allocator*.py'` | **0**, 53 tests; `allocator-tests.log.gz` |
+| compatibility discovery `-p 'test_*.py'` | **0**, 196 tests; `compatibility-tests.log.gz` |
+| `W bin/build -t --seq=tools/sequences/upto-parallel` | **0**; `routine.log.gz` |
+| full-grid / equal-count archive replays | **2 / 0**, unresolved decisions reproduced; respective replay logs |
+| `W tools/h4pedant/h4pedant --nolinelen --unicodeok src/simp/tests/performance`, `git diff --check` | **0 / 0** |
+
+Fresh routine-build API evidence:
+`../api-audit/evidence/20261024T055820Z-e1a63f0a/receipt.json`.
+`managed-coverage/validation.json` binds final source/evidence hashes and exits.
+The routine build uses the ordinary runtime and follows the controls; it is
+not a final-build-product performance parity claim.
+
+**Still blocked:** every failed/inconclusive numerical cell; both interpreter
+allocation-branch closure; RTS/interpreter/code failures and remaining slow
+paths; prebuilt native compiler/image lineage; and the **entire 162-cell,
+ten-pair B/B and B/C allocation matrix**. Compact32 and foreign-created-thread
+callbacks remain untested/unsupported. Controls do not satisfy those missing
+prerequisites or establish TASK29B completion. No extension cost or inventory
+was hidden, no workload removed, and no ordinary-runtime timing was inferred
+from instrumentation. Source review again finds no tracking lookup in the
+`frag_record/0` timed constructor; no speculative production repair is made.
+
+All task-created copied source/build/DSO/fixture/input-copy trees were removed
+immediately after sealing. Caller-owned review directories and caches remain
+untouched. TASK29/TASK29A/TASK29B remain incomplete; no completion-log entry.
+
 ### Real cumulative-allocation prototype (after `b8e676a3a`)
 
 TASK29 is **not complete**. No production performance repair or replacement

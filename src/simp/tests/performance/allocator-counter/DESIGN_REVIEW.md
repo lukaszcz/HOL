@@ -7,10 +7,12 @@ This is an experimental patch derived from the local Isabelle2025-2
 reviewed by inspection of the allocator, ARM64 trap/entry mechanisms, native
 allocation emitters, interpreter allocator, code allocator, and relevant
 GC/image paths. A second source review checked native pointer conventions and
-ordinary FFI paths. A private runtime build and 34 real HOL brackets succeeded
-in development; this is not independent maintainer approval or executed proof
-of completeness. Static and runtime receipts are kept distinct. Nothing here closes TASK29B's executed-control or matrix
-requirements, TASK29's comparison, or TASK33's lifetime/peak requirements.
+ordinary FFI paths. Private runtime controls now execute 122 brackets across
+four Holmake/testutils launchers (original, ML workers, hybrid bytecode, native
+failures). This is not independent maintainer approval or executed proof of
+completeness. Static and runtime receipts are kept distinct. Nothing here
+closes TASK29B's full coverage or matrix requirements, TASK29's comparison, or
+TASK33's lifetime/peak requirements.
 
 The supported target is the native Linux/aarch64 runtime, with either 64-bit
 PolyWords or compact32 (32-bit PolyWords in the 64-bit process). The hybrid
@@ -251,11 +253,46 @@ The hardened driver additionally checks the actual process's mappings and
 snapshot-symbol binding, the direct C ABI, and synthetic overflow/concurrency
 arithmetic. Consult the corresponding receipt for executed outcomes.
 
-Coverage is still incomplete: hybrid interpreter allocation, failed requests,
-actual allocating ML worker retirement, foreign-thread attachment, all slow
-paths, compact32 and prebuilt compiler/image lineage are not established by
-these controls. These remain explicit prerequisite checks before full matrix
-acceptance, not claims inferred from the 34-bracket run.
+The extended receipt in `../evidence/task29/managed-coverage/` adds:
+
+- Four precreated ML workers, two rounds at 0/256/512 escaping refs each:
+  native totals 4/5124/10244 words. Mutex gates exclude worker allocation
+  outside the designated rounds. No-op, retirement, and retained-data GC
+  deltas are each four words. `isActive=false` establishes actual retirement;
+  acknowledgement alone is not used. Errors are published, not discarded by
+  Thread.fork. These controls do not validate foreign-thread attachment.
+- A freshly source-bootstrapped bytecode compiler and basis, following
+  RootInterpreted.ML/BuildAll.sml. Typed `CompilerBody.compiler` entries are
+  compiled before measurement, then invoked inside native FFI brackets.
+  No unsafe closure cast or interpreted-to-native FFI call is used. Native
+  declaration-result packaging costs 31 words and remains visible. Exact
+  additional interpreter words are 5*n for retained ref/cons lists and n for
+  arrays, including their separate one-word header. Repeated full GC does not
+  recount retained interpreted objects. No branch diagnostics prove coverage
+  of both interpreter allocation branches; these are not slow-path closure.
+- Actual native allocation failures in a separate process. `--maxheap=96`
+  alone is NOT a hard limit: memmgr.cpp explicitly allows a large object to
+  exceed the target. The final fixture additionally sets/rechecks a one-shot
+  RLIMIT_AS at current virtual bytes + 64MiB, outside the bracket, never
+  increasing an existing soft limit. Dynamic 128/192MiB requests then fail
+  twice each, with actual RTS exhaustion output and Thread.Interrupt caught
+  only after action entry. Attributes are restored and a rooted sentinel is
+  unchanged. Each failed bracket equals the prebuilt manual-interrupt
+  control's four native words; the requested object is not counted. Exact
+  successful-array slopes recover after every failure. This does not validate
+  RTS, interpreter or code-space failure branches.
+
+Development receipts retain static-loading/bootstrap errors, a crashing
+interpreted generic-FFI attempt, and the rejected maxheap-only oversized
+success. They are not admitted allocation controls. Using native-bracketed
+precompiled bytecode entries avoids the unsupported hybrid-FFI path without
+changing the runtime or production HOL.
+
+Coverage is still incomplete: interpreter fast/slow branch closure,
+RTS/interpreter/code failures, foreign-thread attachment, remaining slow
+paths, compact32 and prebuilt compiler/image lineage are not established.
+These remain explicit prerequisite checks before full matrix acceptance,
+not claims inferred from successful narrower controls.
 
 In particular:
 

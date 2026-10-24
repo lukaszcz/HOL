@@ -21,6 +21,9 @@ import loading
 from prepare_patch import DEFAULT_SOURCE, transformations, sha256
 from check_patch import replay, read_patch
 from control_schema import observations
+import worker_schema
+import interpreter_schema
+import failure_schema
 
 
 def runtime_identity(text, library):
@@ -75,7 +78,7 @@ def main(argv=None):
     repo = args.repo.resolve(strict=True)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    report = dict(schema="task29-managed-counter-controls-v1", success=False,
+    report = dict(schema="task29-managed-counter-controls-v2", success=False,
                   task29_complete=False, commands=[], inputs={},
                   scope="experimental runtime controls; NOT allocation gate",
                   command=[sys.executable, *sys.argv])
@@ -84,7 +87,9 @@ def main(argv=None):
             a.require(sys.platform == "linux" and
                       platform.machine() == "aarch64", "unsupported host")
             inputs = [p for p in HERE.iterdir() if p.is_file()]
-            inputs += [HERE.parent / "acceptance.py", HERE.parent / "loading.py"]
+            inputs += [HERE.parent / name for name in (
+                "acceptance.py", "loading.py", "worker_schema.py",
+                "interpreter_schema.py", "failure_schema.py")]
             inputs += [repo / p for p in (
                 "bin/hol", "bin/hol.state0", "bin/Holmake")]
             report["inputs"] = {str(p): a.seal(p) for p in inputs}
@@ -175,7 +180,11 @@ def main(argv=None):
                     fixture = dst / "fixture"
                     fixture.mkdir()
                     copied = {}
-                    for name in ("selftest.sml", "Holmakefile", "bracket.c",
+                    for name in ("selftest.sml", "worker_selftest.sml",
+                                 "interpreter_selftest.sml",
+                                 "interpreter_body.sml", "interpreter_host.sml",
+                                 "failure_selftest.sml", "failure_limit.c",
+                                 "Holmakefile", "bracket.c",
                                  "managed_alloc_counter.h"):
                         target = fixture / name
                         shutil.copyfile(HERE / name, target)
@@ -183,7 +192,9 @@ def main(argv=None):
                     shim = fixture / "bracket.so"
                     run([env["CC"], "-std=c11", "-shared", "-fPIC", "-O2",
                          "-Wall", "-Wextra", "-Wl,-z,defs",
-                         str(fixture / "bracket.c"), str(lib), "-ldl",
+                         str(fixture / "bracket.c"),
+                         str(fixture / "failure_limit.c"),
+                         str(lib), "-ldl",
                          "-o", str(shim)])
                     shim_libs = loading.library_inputs(run(
                         ["ldd", str(shim)], runtime_env=run_env))
@@ -194,10 +205,24 @@ def main(argv=None):
                     report["shim"] = a.seal(shim)
                     run([str(repo / "bin/Holmake"), "--no-project", "--no-cache",
                          "--no_prereqs", "--holstate=" + str(repo / "bin/hol.state0"),
-                         "-C", str(fixture), "-j1", "counter-controls.exe"])
+                         "-C", str(fixture), "-j1", "counter-controls.exe",
+                         "worker-controls.exe", "interpreter-controls.exe",
+                         "failure-controls.exe"])
                     launcher = fixture / "counter-controls.exe"
                     report["launcher"] = a.seal(launcher)
                     report["launcher_text"] = launcher.read_text()
+                    worker_launcher = fixture / "worker-controls.exe"
+                    report["worker_launcher"] = a.seal(worker_launcher)
+                    report["worker_launcher_text"] = worker_launcher.read_text()
+                    interpreter_launcher = fixture / "interpreter-controls.exe"
+                    report["interpreter_launcher"] = a.seal(
+                        interpreter_launcher)
+                    report["interpreter_launcher_text"] = (
+                        interpreter_launcher.read_text())
+                    failure_launcher = fixture / "failure-controls.exe"
+                    report["failure_launcher"] = a.seal(failure_launcher)
+                    report["failure_launcher_text"] = (
+                        failure_launcher.read_text())
                     products = {str(p): a.seal(p) for p in fixture.rglob("*")
                                 if p.is_file()}
                     # The testutils loader is the only fixture dependency not
@@ -216,6 +241,36 @@ def main(argv=None):
                     report["observations"] = observations(result["stdout"])
                     report["process_identity"] = runtime_identity(
                         result["stdout"], lib)
+                    result = run([str(worker_launcher), "--gcthreads=1"],
+                                 fixture, run_env)
+                    report["worker_output"] = result["stdout"]
+                    report["worker_observations"] = worker_schema.observations(
+                        result["stdout"])
+                    report["worker_process_identity"] = runtime_identity(
+                        result["stdout"].replace("@@TASK29_WORKER_",
+                                                 "@@TASK29_ALLOC_"), lib)
+                    run_env["TASK29_ALLOC_SOURCE"] = str(source)
+                    run_env["TASK29_ALLOC_BODY"] = str(
+                        fixture / "interpreter_body.sml")
+                    run_env["TASK29_ALLOC_HOST"] = str(
+                        fixture / "interpreter_host.sml")
+                    result = run([str(interpreter_launcher), "--gcthreads=1"],
+                                 fixture, run_env)
+                    report["interpreter_output"] = result["stdout"]
+                    report["interpreter_observations"] = (
+                        interpreter_schema.observations(result["stdout"]))
+                    report["interpreter_process_identity"] = runtime_identity(
+                        result["stdout"].replace("@@TASK29_INTERPRETER_",
+                                                 "@@TASK29_ALLOC_"), lib)
+                    result = run([str(failure_launcher), *failure_schema.FLAGS],
+                                 fixture, run_env)
+                    report["failure_output"] = result["stdout"]
+                    report["failure_observations"] = (
+                        failure_schema.validate_receipt(result,
+                                                        timeout=args.timeout))
+                    report["failure_process_identity"] = runtime_identity(
+                        result["stdout"].replace("@@TASK29_FAILURE_",
+                                                 "@@TASK29_ALLOC_"), lib)
                     loading.check_seals(copied)
                     loading.check_seals(products)
                     loading.check_seals(source_seals)
