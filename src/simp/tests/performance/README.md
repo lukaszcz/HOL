@@ -1,5 +1,20 @@
 # Simplifier performance evidence
 
+## TASK29 isolated fragment/compiler/storage gate
+
+[`TASK_29_HANDOFF.md`](TASK_29_HANDOFF.md) reports the full 27-case, six-size
+experiment: 6,480 timed fresh processes, exact per-workload CPU/wall/GC
+intervals, graph slopes and source/layout attribution. **TASK29 is blocked**:
+43 failed cells, 119 uncertain cells, and no supported cumulative HOL
+allocation counter. Passing retained-graph slopes do not waive timing failures.
+
+`task29_gate.py run` executes the entire fixed grid, uses unchanged TASK28
+admission/statistics and losslessly archives each cell before cleanup.
+`task29_gate.py replay --output ARCHIVE_DIRECTORY` revalidates all archives
+and recomputes decisions without live private builds. Both commands deliberately
+exit 2 while the allocation/gate prerequisites remain blocked. Neither is an
+implicit normal selftest or independent-build measurement.
+
 ## Maintained TASK28 integration
 
 This directory provides acceptance **machinery**, not performance approval.

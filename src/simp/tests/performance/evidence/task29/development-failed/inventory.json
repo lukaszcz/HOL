@@ -1,0 +1,14 @@
+{
+  "schema": "task29-experiment-v1",
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "candidate": "18e4a1ecb624b9b13bb9a0f3ba3caf8c189bdff8",
+  "seconds": 0.3,
+  "pairs": 10,
+  "samples": 3,
+  "outliers": "none removed",
+  "runs": [],
+  "driver": {
+    "sha256": "71fcfb4128596962976e3641447bc12d0b94e65992750966a568876b88247be6",
+    "bytes": 9552
+  }
+}
