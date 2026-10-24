@@ -41,7 +41,15 @@ fun warn ss =
                 \set_trace \"HolSatLib_warn\" 0; RET\n\n")
     else ()
 
-fun replay_proof is_proved sva nr in_name solver vc clauseth lfn ntm proof =
+fun fallback check_sat_model clauseth lfn ntm =
+    satTools.observed_internal_solver (fn () =>
+      if check_sat_model then DPLL_TAUT (dest_neg ntm)
+      else case DPLL_REFUTE lfn clauseth of
+          SOME th => th
+        | NONE => raise SAT_satisfiable ())
+
+fun replay_proof check_sat_model is_proved sva nr in_name solver vc
+                 clauseth lfn ntm proof =
     if is_proved then
         ((case getSolverPostExe solver of (* post-process proof, if required *)
              SOME post_exe => let
@@ -56,8 +64,7 @@ fun replay_proof is_proved sva nr in_name solver vc clauseth lfn ntm proof =
                 (replayProof sva nr in_name solver vc clauseth lfn) proof of
              SOME th => (sat_trace "resolution replay done"; th)
            | NONE => (warn "Proof replay failed. Using internal prover.";
-                      satTools.observed_internal_solver
-                        (fn () => DPLL_TAUT (dest_neg ntm)))))
+                      fallback check_sat_model clauseth lfn ntm)))
                         (*triv prob/unknown err*)
     else mk_sat_oracle_thm([ntm],F)
 
@@ -94,15 +101,14 @@ fun invoke_solver solver lfn ntm clauseth cnfv vc is_proved
                    profile_stage "model-check" (satCheck model') ntm
                  else mk_sat_oracle_thm([],mk_imp(list_mk_conj model',ntm)) end
             | NONE    => (* returns ~t |- F *)
-                replay_proof is_proved sva nr in_name solver vc clauseth
-                             lfn ntm NONE
+                replay_proof check_sat_model is_proved sva nr in_name solver
+                             vc clauseth lfn ntm NONE
         end
       else (* do not have execute access to solver binary, or it doesn't exist*)
         (if nr > !sat_limit then
            warn "SAT solver not found. Using slow internal prover."
          else ();
-         satTools.observed_internal_solver
-                        (fn () => DPLL_TAUT (dest_neg ntm)))
+         fallback check_sat_model clauseth lfn ntm)
     end
 end
 
@@ -183,8 +189,9 @@ fun GEN_SAT_WITH check_sat_model conf =
                            " clauses=" ^
                            int_to_string (Array.length clauseth))
         val th = (if isSome proof
-                 then replay_proof is_proved sva (Array.length clauseth) in_name
-                                   solver vc clauseth lfn ntm proof
+                 then replay_proof check_sat_model is_proved sva
+                        (Array.length clauseth) in_name solver vc clauseth
+                        lfn ntm proof
                  else invoke_solver solver lfn ntm clauseth cnfv vc
                                     is_proved check_sat_model svm sva in_name)
                  handle SAT_satisfiable _ =>
@@ -198,7 +205,23 @@ fun GEN_SAT_WITH check_sat_model conf =
 
 fun GEN_SAT conf = GEN_SAT_WITH true conf
 fun GEN_SAT_PROVE_ONLY conf =
-    GEN_SAT_WITH false (set_flag_is_proved true conf)
+    let
+      val checked = set_flag_is_proved true conf
+      val th = GEN_SAT_WITH false checked
+      (* Unlike the legacy entry, proof-only clients accept only the requested
+         closed endpoint, never a partial refutation with residual literals.
+         File input replaces the configured term and denotes a CNF problem. *)
+      val expected = case get_infile checked of
+          NONE => if get_flag_is_cnf checked then mk_neg (get_term checked)
+                  else get_term checked
+        | SOME name => mk_neg (#1 (genReadDimacs name))
+      val (oracles, axioms) = Tag.dest_tag (tag th)
+      val _ = null (hyp th) andalso aconv (concl th) expected andalso
+        null axioms andalso List.all (fn s => s = "DISK_THM") oracles
+        orelse raise mk_HOL_ERR "minisatProve" "GEN_SAT_PROVE_ONLY"
+          "checked refutation endpoint/hypotheses/tags mismatch"
+    in th end
+    handle SAT_cex _ => raise SAT_satisfiable ()
 
 (* default config invokes pre-installed MiniSat 1.14p *)
 fun SAT_PROVE tm = GEN_SAT (set_term tm base_config)
