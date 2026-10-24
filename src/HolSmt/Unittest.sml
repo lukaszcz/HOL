@@ -21092,6 +21092,57 @@ let
          Feedback.top_structure_of error = "Thm" andalso
          Feedback.top_function_of error = "TRANS"),
       "shared Type bridge equated distinct variable names")) ()
+  (* Independently annotated leaves need the exact two source endpoints,
+     not REFL of a canonical substitute. Small Types must stay on the cheap
+     route; large Types use a checked bridge, never an admission refusal. *)
+  val _ = List.app (fn (depth, expected) =>
+    assert (SmtReplayLeafProof.large_type (fn _ => ())
+      (poly_product depth) = expected,
+      "Type programme switch boundary changed"))
+    [(21,false),(24,false),(30,false),(31,true),(80,true)]
+  val common = poly_product 79
+  val partial_left = Type.mk_type ("prod",[common,common])
+  val partial_right = Type.mk_type ("prod",[common,common])
+  val _ = assert (not (SmtReplayLeafProof.large_type_pair (fn _ => ())
+      partial_left partial_right),
+    "shared Type suffix was mistaken for expensive built-in equality")
+  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+    equal "shared suffix" (variable partial_left) (variable partial_right)) ()
+  val _ = assert (SmtReplayLeafProof.large_type_pair (fn _ => ())
+      (poly_product 80) (poly_product 80),
+    "independent Type pair missed the hard proof programme")
+  fun independent_poly (label, make) depth =
+    let
+      val left_type = poly_product depth
+      val right_type = poly_product depth
+      val left = make left_type
+      val right = make right_type
+      val _ = assert (not (Portable.pointer_eq (left_type, right_type)),
+        label ^ " Type allocations were not independent")
+    in Timeout.apply (Time.fromSeconds 2)
+      (fn () => equal (label ^ Int.toString depth) left right) () end
+  val _ = List.app (fn make => List.app (independent_poly make) [21, 80])
+    [("independent polymorphic variable", variable),
+     ("independent polymorphic constant", constant)]
+  val _ = Timeout.apply (Time.fromSeconds 2)
+    (fn () => equal "shared polymorphic constant"
+      (constant (Term.type_of poly_leaf))
+      (constant (Term.type_of poly_leaf))) ()
+  val graph_target = boolSyntax.mk_conj
+    (boolSyntax.mk_eq (poly_leaf, poly_leaf),
+     let val leaf = variable (poly_product 80)
+     in boolSyntax.mk_eq (leaf, leaf) end)
+  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+    let
+      val {root = SmtSkeletonProve.GraphNode {equality, ...}, ...} =
+        SmtSkeletonProve.build_cnf_graph graph_target
+    in
+      assert (Portable.pointer_eq
+        (boolSyntax.lhs (Thm.concl equality), graph_target),
+        "independent Type graph lost original endpoint");
+      assert_no_hyps ("independent Type graph", equality);
+      check_oracle_tags "independent Type graph" equality
+    end) ()
   val poly_type = poly_product 21
   val original = variable poly_type
   val independent = variable poly_type
@@ -27860,6 +27911,59 @@ let
     in checked graph (#node a) (#node c)
          (G.equality graph (#node a,#node c)) end
   val _ = List.app sample [(24,1),(80,8),(160,32)]
+  (* Boolean application DAGs do not cover independent annotation DAGs.
+     Exercise both atomic import policies and retain the first Source. *)
+  fun poly_type 0 = Type.mk_vartype "'identity_poly"
+    | poly_type n = let val child = poly_type (n - 1)
+                    in Type.mk_type ("prod",[child,child]) end
+  fun typed_import make =
+    let
+      val graph = G.new ()
+      val root = G.root_scope graph
+      val left = make (poly_type 80)
+      val right = make (poly_type 80)
+      val _ = assert (not (ptr (Term.type_of left) (Term.type_of right)),
+        "typed graph fixture lost independent Type roots")
+      val a = G.import graph root 8192 left
+      val b = G.import graph root 8192 right
+      val policy_term = make (poly_type 80)
+      val c = G.import_with_policy graph root
+        SmtReplayResourcePolicy.Uncapped policy_term
+      val _ = List.app (fn (term,source) => source_bridge graph term source)
+        [(left,a),(right,b),(policy_term,c)]
+      val saved = valOf (G.source_anchor graph (#node a))
+    in
+      assert (#node a = #node b andalso #node a = #node c andalso
+          ptr (#original saved) left andalso ptr (#bridge saved) (#bridge a),
+        "typed graph import lost canonical node or first Source bridge");
+      checked graph (#node a) (#node b)
+        (G.equality graph (#node a,#node b))
+    end
+  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+    List.app typed_import
+      [fn ty => Term.mk_var ("identity_poly_leaf",ty),
+       boolSyntax.mk_arb]) ()
+  (* Constructors also accept separately interned representatives, without
+     a prior leaf bridge that could have shared their annotation fields. *)
+  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+    let
+      val graph = G.new ()
+      val root = G.root_scope graph
+      val domain = poly_type 80
+      val argument_type = poly_type 80
+      val f = Term.mk_var ("identity_function", domain --> Type.bool)
+      val x = Term.mk_var ("identity_argument", argument_type)
+      val fn_node = G.variable graph root G.RigidSource f
+      val arg_node = G.variable graph root G.RigidSource x
+      val result = G.application graph root (fn_node,arg_node)
+      val repeated = G.application graph root (fn_node,arg_node)
+      val term = G.representative graph result
+      val (operator,operand) = Term.dest_comb term
+    in
+      assert (result = repeated andalso ptr operator f andalso ptr operand x,
+        "independent Type application lost children or graph identity");
+      checked graph result repeated (G.equality graph (result,repeated))
+    end) ()
   val opaque_graph = G.new ()
   val opaque_root = G.root_scope opaque_graph
   fun opaque binder = G.import opaque_graph opaque_root 8192

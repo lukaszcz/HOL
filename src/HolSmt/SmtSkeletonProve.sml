@@ -218,7 +218,8 @@ struct
          | order => order)
 
   datatype admission_type_node = AdmissionTypeNode of
-    {id : int, tree_nodes : int, polymorphic : bool, classification : int}
+    {id : int, tree_nodes : int, comparison_nodes : IntInf.int,
+     polymorphic : bool, classification : int}
 
   fun new_type_admission_context () =
     let
@@ -296,10 +297,16 @@ struct
                                else classify rest work end
                       val (poly, work) = if Type.is_vartype ty then (true, 1)
                         else classify children 1
+                      val comparison_nodes = List.foldl
+                        (fn (AdmissionTypeNode {comparison_nodes, ...}, n) =>
+                          IntInf.min
+                            (SmtReplayLeafProof.native_tree_switch + 1,
+                             n + comparison_nodes)) 1 children
                       val id = !next_id
                     in
                       next_id := id + 1; nodes := !nodes + 1;
                       AdmissionTypeNode {id = id, tree_nodes = size,
+                        comparison_nodes = comparison_nodes,
                         polymorphic = poly, classification = work}
                     end
               val _ = if Option.isSome (Redblackmap.peek (!ids, key)) then ()
@@ -365,7 +372,8 @@ struct
     let
       val left_type = Term.type_of left
       val right_type = Term.type_of right
-      val AdmissionTypeNode {id = left_id, tree_nodes, ...} =
+      val AdmissionTypeNode
+        {id = left_id, tree_nodes, comparison_nodes, ...} =
         intern_type left_type
       val AdmissionTypeNode {id = right_id, ...} = intern_type right_type
       val _ = if left_id = right_id then () else
@@ -376,29 +384,13 @@ struct
          Portable.pointer_eq (left_type, right_type) andalso
          Term.is_var left andalso Term.is_var right andalso
          #1 (Term.dest_var left) = #1 (Term.dest_var right) then
-        let
-          (* Experimental aconv unfolds even a physically shared Type.
-             Beta's variable identity test instead uses built-in equality.
-             All Type checks below therefore see the very same Type pointer;
-             no inference compares the two distinct variable occurrences.
-
-             For f = (\left. left) and s = (\z. z) right, the diamond is
-                     f s --> s --> right
-                     f s --> f right --> left.
-             The final beta returns the existing body [left], not [right].
-             TRANS joins exact pointers, or applications with exact children.
-             All equality results have the original, already admitted Type;
-             no equality at the synthesized function Type is constructed. *)
-          val z = Term.mk_var (#1 (Term.dest_var left) ^ "'", left_type)
-          val f = Term.mk_abs (left, left)
-          val s = Term.mk_comb (Term.mk_abs (z, z), right)
-          val inner = Thm.BETA_CONV s
-          val direct = Thm.TRANS
-            (Thm.BETA_CONV (Term.mk_comb (f, s))) inner
-          val lifted = Thm.AP_TERM f inner
-          val (_, target) = Term.dest_eq (Thm.concl lifted)
-          val other = Thm.TRANS lifted (Thm.BETA_CONV target)
-        in Thm.TRANS (Thm.SYM other) direct end
+        SmtReplayLeafProof.shared_variable left right
+      else if comparison_nodes > SmtReplayLeafProof.native_tree_switch
+          andalso SmtReplayLeafProof.same_atom left right andalso
+          (Thm.kernelid = "expknl" orelse
+           SmtReplayLeafProof.large_type_pair (fn _ => ())
+             left_type right_type) then
+        SmtReplayLeafProof.redex_equality left right
       else Thm.TRANS (Thm.REFL left) (Thm.REFL right)
     end
 

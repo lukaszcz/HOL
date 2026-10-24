@@ -915,7 +915,8 @@ struct
       val _ = if intern_type g domain = #type_id right then () else
         raise ERR "application" "application operand type mismatch"
       val tid = intern_type g range
-      val term = Term.mk_comb (#term left,#term right)
+      val term = SmtReplayLeafProof.application (semantic_entry_charge g)
+        (#term left) (#term right)
     in intern g
       (ApplicationKey (scope_id scope,node_id operator,node_id operand))
       {scope = scope, ty = range, type_id = tid, term = term,
@@ -1022,6 +1023,37 @@ struct
       val _ = if Option.isSome (!anchor) then () else
         (validation_change g;anchor := SOME source)
     in source end
+  (* The paid Type summary selects a checked proof, never an equality
+     verdict or new admission limit. Small native comparisons stay native:
+     they must not incur the cold full-GC cost of runtime sharing. *)
+  fun atomic_equality g left right =
+    if Portable.pointer_eq (left,right) then Thm.REFL left
+    else if SmtReplayLeafProof.same_atom left right andalso
+        (Thm.kernelid = "expknl" orelse not (Portable.pointer_eq
+          (Term.type_of left, Term.type_of right))) andalso
+        (if Thm.kernelid = "expknl" then
+           SmtReplayLeafProof.large_type (semantic_entry_charge g)
+             (Term.type_of left)
+         else SmtReplayLeafProof.large_type_pair (semantic_entry_charge g)
+           (Term.type_of left) (Term.type_of right)) then
+      ((if Thm.kernelid = "expknl" andalso Term.is_var left andalso
+           Portable.pointer_eq (Term.type_of left, Term.type_of right) then
+          SmtReplayLeafProof.shared_variable left right
+        else SmtReplayLeafProof.redex_equality left right)
+       handle Feedback.HOL_ERR _ => raise Feedback.mk_HOL_ERR
+         "Thm" "ALPHA" "Terms not alpha-convertible")
+    else Thm.ALPHA left right
+
+  fun import_atom g scope term =
+    let
+      val node = if Term.is_var term then
+          case lookup_binding g scope term of SOME node => node
+            | NONE => variable g (root_scope g) RigidSource term
+        else constant g scope term
+      (* Environments may denote different terms. Parser elaboration is not
+         permission to invent a source bridge; the kernel still checks it. *)
+    in (node,atomic_equality g term (representative g node)) end
+
   fun align_application original left right canonical =
     let
       val theorem = Thm.MK_COMB (left,right)
@@ -1097,18 +1129,8 @@ struct
                   val node = application g scope (#node l,#node r)
                 in (node,align_application term (#bridge l) (#bridge r)
                       (representative g node)) end
-              else if Term.is_var term then
-                let
-                  val node = case lookup_binding g scope term of
-                      SOME node => node
-                    | NONE => variable g (root_scope g) RigidSource term
-                  (* A scope environment may denote a different term. It is
-                     parser elaboration, not a source alpha bridge. *)
-                  val canonical = representative g node
-                in (node,Thm.ALPHA term canonical) end
-              else if Term.is_const term then
-                let val node = constant g scope term in
-                  (node,Thm.ALPHA term (representative g node)) end
+              else if Term.is_var term orelse Term.is_const term then
+                import_atom g scope term
               else if Term.is_abs term then
                 let
                   val ty = Term.type_of term
@@ -3246,11 +3268,11 @@ struct
                   (equality g (lx,rx)) (#term r)
             | (Variable (lk,lv),Variable (rk,rv)) =>
                 if lk = rk andalso #scope l = #scope r then
-                  Thm.ALPHA lv rv else
+                  atomic_equality g lv rv else
                   raise ERR "equality" "variable ownership differs"
             | (Constant lc,Constant rc) =>
                 if KernelSig.id_compare (lc,rc) = EQUAL then
-                  Thm.ALPHA (#term l) (#term r) else
+                  atomic_equality g (#term l) (#term r) else
                   raise ERR "equality" "constant declarations differ"
             | (AdmittedBinder _,AdmittedBinder _) =>
                 Thm.ALPHA (#term l) (#term r)
@@ -4007,18 +4029,8 @@ struct
                   val node = application g scope (#node l,#node r)
                 in (node,align_application term (#bridge l) (#bridge r)
                       (representative g node)) end
-              else if Term.is_var term then
-                let
-                  val node = case lookup_binding g scope term of
-                      SOME node => node
-                    | NONE => variable g (root_scope g) RigidSource term
-                  (* A scope environment may denote a different term. It is
-                     parser elaboration, not a source alpha bridge. *)
-                  val canonical = representative g node
-                in (node,Thm.ALPHA term canonical) end
-              else if Term.is_const term then
-                let val node = constant g scope term in
-                  (node,Thm.ALPHA term (representative g node)) end
+              else if Term.is_var term orelse Term.is_const term then
+                import_atom g scope term
               else if Term.is_abs term then
                 let
                   val ty = Term.type_of term
