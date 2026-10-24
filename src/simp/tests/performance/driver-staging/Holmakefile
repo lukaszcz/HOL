@@ -1,0 +1,8 @@
+# Ordinary runtime only: executable scheduling regression, NOT timing evidence.
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+EXTRA_CLEANS = driver-staging.exe
+
+all: driver-staging.exe
+
+driver-staging.exe: selftest.uo
+	$(HOLMOSMLC) -o $@ $<

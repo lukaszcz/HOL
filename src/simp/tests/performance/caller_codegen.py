@@ -403,7 +403,7 @@ def main(argv=None):
                         type=int, default=0)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--batch-iterations", type=int,
-        help="common predeclared count; also fixes sample's compiled literal")
+        help="common predeclared calibration history and sample count")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--output", type=Path)
     mode.add_argument("--replay", type=Path)

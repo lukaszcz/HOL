@@ -2,6 +2,64 @@
 
 ## Status: BLOCKED, not complete
 
+### Repair: precompile calibration and samples in one driver
+
+Starting/selected candidate: `40f2189c3`. Both matrix fixtures now compile
+`experiment` before executing calibration, keeping the selected count local.
+The former top-level calibration followed by sample compilation embedded that
+count and introduced compiler work between calibration and samples. No timed
+workload, size, callback check, metric, numerical policy, ordinary source,
+representation, shared control or allocator patch changed.
+
+New `driver-staging/selftest.sml` executes **36 passing testutils assertions**
+against the actual live suffixes through HOLSource/PolyML.compiler. Both
+fixtures cover adaptive/fixed schedules, exact output counts/indices, full
+consumption, result checks and short-count rejection. Reverting each driver to
+its old top-level count actually trips the compiler-entry serial guard. This
+control is integrated into normal `Holmake check`, before semantic smokes.
+Synthetic durations test scheduling, not runtime performance or allocation.
+
+Two complete fresh ten-pair B/B and ten-pair B/C experiments (**80 timed
+processes / 240 samples**, fixed N=33554432 and N=64) pass strict protocol:
+
+- `frag_record/0` still **fails** CPU **[1.014519, 1.032057]**, wall and GC.
+- `compile_collector/10000` CPU **[0.988111, 1.032104]**, wall and GC remain
+  **inconclusive** after the unchanged B/B policy. Its smaller raw GC interval
+  is not a pass through an uncertain control. This does not close its previous
+  failure or establish causal attribution of the difference between runs.
+
+All prior matrix timing is historical for the changed fixture; the **full
+162-cell affected grid still requires fresh evidence**, not replacement of
+unfavorable cells by the two new experiments. The original **43 failed / 119
+inconclusive** decisions and equal-count failures remain preserved. No scoped
+cell is newly declared closed. Allocation coverage/compiler lineage and the
+entire paired allocation matrix remain missing.
+
+Six more real adaptive/fixed client/fragment timing processes pass protocol
+smoke, not numerical acceptance. All five bundles roundtrip losslessly;
+`experiment-driver/replay.py` re-admits all 86 timed processes and recomputes
+the complete paired decisions. **328 performance tests** (three explicit
+optional skips outside W/four inside W), **196 compatibility tests**, normal
+`Holmake check` (13 runner tests, 306 fragment/336 client semantic checks),
+routine selftest-enabled build, pedant and whitespace all pass. The extra
+inside-W skip is the existing pristine-runtime-source check hidden by W's
+private /home, not a disabled assertion. Fresh routine API audit:
+`../api-audit/evidence/20261024T080434Z-a4dbc9dc/receipt.json`.
+
+Exact commands/exits, raw observations, source/runtime seals, intervals,
+development-control issues and cleanup are in
+`evidence/task29/experiment-driver/RESULTS.md`, `commands.json`, five runtime
+bundles, smoke bundle, replay and `validation.json`. Task-created copied
+source/build/transport/check trees are removed; caller-owned files are intact.
+No independent-build or final-product performance acceptance is claimed.
+
+**Required policy input remains explicit:** all-zero `compile_single/0` GC
+cannot pass ratio-only 0/0; B/B upper-CI<=1 is a directional decision, not a
+separately specified stability criterion. These rules were NOT changed. They
+need explicit review before closure can be claimed; more quiet-host repetition
+cannot be promised to solve them. TASK29/TASK29A/TASK29B remain incomplete,
+with no completion-log line. The driver repair is not a production cost fix.
+
 ### Fresh actual-caller compiler attribution
 
 Starting and selected candidate: `90e528c41`. New `caller_codegen.py`,

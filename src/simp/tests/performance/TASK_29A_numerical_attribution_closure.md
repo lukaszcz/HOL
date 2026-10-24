@@ -64,6 +64,29 @@ repair, numerical-policy change or TASK29A completion is claimed. Required
 next attribution is pool/indirect-target and ordinary-process heap/layout,
 not another assumption that matching instruction text proves equal cost.
 
+## Precompiled driver repair after `40f2189c3` — not closure
+
+Both matrix fixtures now compile calibration and sampling together inside
+`experiment`, rather than executing a global calibration binding before
+compiling `sample`. The chosen count is a runtime local. This removes a real
+compiler-staging confound without changing any workload or numerical rule.
+Thirty-six executable HOLSource/compiler scheduling assertions cover both
+fixtures, including actual old-driver negative controls, and are integrated
+into `Holmake check`.
+
+Two complete fresh ten-pair B/B and B/C experiments retain fragment/0 CPU
+**[1.014519, 1.032057]**, wall and GC failures. Collector/10000 CPU
+**[0.988111, 1.032104]**, wall and GC are all inconclusive after unchanged
+control admission. Neither result closes a historical cell or proves causation.
+The complete earlier 43-failed/119-inconclusive grid remains preserved; changed
+fixture code requires an entire affected-grid rerun before acceptance. The two
+new experiments are not a replacement subset. Details and complete replays:
+`evidence/task29/experiment-driver/RESULTS.md`.
+
+The all-zero GC and equality-straddling B/B policy issues above require explicit
+review, not silent threshold changes. Attribution/repair, the complete fresh
+grid and TASK29B's allocation coverage/lineage/matrix are still unresolved.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

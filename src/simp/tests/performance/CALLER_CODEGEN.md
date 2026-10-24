@@ -18,9 +18,11 @@ python3 -B src/simp/tests/performance/caller_codegen.py --replay NEW_DIRECTORY
 ```
 
 Both selections must meet the runner's 0.1-second minimum at the declared
-count; a short count rejects, not silently recalibrates. The common count also
-fixes the literal captured when Poly/ML compiles `sample` **after** calibration.
-Without it, even the sample function's machine code can differ between sides.
+count; a short count rejects, not silently recalibrates. Historical fixtures
+compiled `sample` AFTER calibration and embedded the selected count, so the
+common count also fixed that literal. The current fixtures precompile the
+complete driver (see `PROTOCOL.md`); common counts still control calibration
+history and operation counts, not heap state, pool identity or GC scheduling.
 
 ## Isolation and interpretation
 

@@ -15,7 +15,7 @@ ifndef MATRIX_SMOKE_SCOPE
 MATRIX_SMOKE_SCOPE = small
 endif
 .PHONY: python-tests diagnostic check matrix-completeness controls smoke
-.PHONY: runtime-smoke client-smoke profiler-loss-control
+.PHONY: runtime-smoke client-smoke profiler-loss-control driver-staging-control
 python-tests:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
 	  -s . -p 'test*.py'
@@ -47,6 +47,13 @@ runtime-smoke:
 	  --candidate $(PERFORMANCE_CANDIDATE) \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/runtime-smoke.json"
 
+# Execute real loader/compiler scheduling checks before any timing smoke.
+driver-staging-control:
+	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs \
+	  --holstate=$(HOLDIR)/bin/hol.state0 -C driver-staging -j1 \
+	  driver-staging.exe
+	cd driver-staging && TASK29_STAGING_ROOT=$(HOLDIR) ./driver-staging.exe
+
 # Explicit, binary-pinned private-ABI diagnostic; never run implicitly on
 # other runtimes. This proves profiler information loss, NOT allocation parity.
 profiler-loss-control:
@@ -57,6 +64,8 @@ profiler-loss-control:
 # Keep real controls before smoke even with a parallel caller. No acceptance
 # run, loading experiment or costly full-grid/10000 AC pass is implicit.
 check: python-tests
+	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs \
+	  -C . -j1 driver-staging-control
 	python3 -B matrix_schema.py
 	mkdir -p "$(PERFORMANCE_CHECK_OUTPUT)"
 	python3 -B acceptance.py controls \

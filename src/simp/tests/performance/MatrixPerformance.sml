@@ -74,13 +74,19 @@ fun calibrate count = let
                                  | SOME n => count = n
 in if finished then (required (wall >= seconds); count) else
      (required (count < 1073741824); calibrate (count * 2)) end
-val count = calibrate 1
-fun sample i = let
-  val (_,fields) = measured "sample" count
-  val _ = emit ("batch." ^ label)
-    (Int.toString i :: Int.toString count :: fields)
-in Paired.check ("results " ^ label) true end
-val _ = List.app sample (List.tabulate (samples,I))
+(* Compile the entire driver BEFORE executing calibration. A top-level
+   [val count = calibrate 1] followed by [fun sample ... count ...] lets the
+   compiler embed the measured count and allocates compiler data between
+   calibration and sampling. The count here is a runtime local instead. *)
+fun experiment () = let
+  val count = calibrate 1
+  fun sample i = let
+    val (_,fields) = measured "sample" count
+    val _ = emit ("batch." ^ label)
+      (Int.toString i :: Int.toString count :: fields)
+  in Paired.check ("results " ^ label) true end
+in List.app sample (List.tabulate (samples,I)) end
+val _ = experiment ()
 val _ = emit "sink" [Int.toString (!sink)]
 (* Optional graph evidence has its own prefix and schema, deliberately not
    an extra Paired event. Timings above still have consumption exactly one.

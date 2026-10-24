@@ -88,6 +88,31 @@ confidence-interval or pass/fail threshold changes with this mode. In particular
 equal counts cannot turn uncertain B/B controls or zero/zero GC into passes.
 See `TASK_29_HANDOFF.md` for the still-failing ten-pair equal-count experiment.
 
+### Precompiled experiment driver
+
+Both matrix fixtures now compile calibration AND sampling inside `experiment`
+before either executes. The calibrated count is a runtime local, not a global
+constant available when the compiler subsequently builds `sample`. This also
+removes intervening sample-compilation allocations. The workload, complete
+calibration history, result checks, timers and decision policy are unchanged.
+Earlier fixture receipts remain historical observations, not acceptance for
+this changed driver; all affected numerical gates require fresh experiments.
+This repair is not a causal explanation or closure of their failures.
+
+`Holmake check` executes `driver-staging-control` before semantic smokes. The
+Holmake-built `driver-staging/selftest.sml` compiles the exact live driver
+suffixes through the same HOLSource reader as QUse. A compiler-entry serial
+must remain fixed from first calibration to last sample. Synthetic durations
+exercise adaptive and fixed schedules, complete observation fields and short
+calibration rejection. Reinstating the old top-level count must trigger the
+serial guard for BOTH fixtures. These 36 assertions are scheduling tests, not
+HOL timing or allocation measurements. Run separately from the repository root:
+
+```sh
+W bin/Holmake --no-project --no-cache --no_prereqs \
+  -C src/simp/tests/performance -j1 driver-staging-control
+```
+
 ## Runtime, graph and release records
 
 Both matrix fixtures load sealed `RuntimeMetrics.sml`. Every calibration and

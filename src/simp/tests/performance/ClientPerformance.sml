@@ -335,11 +335,15 @@ fun calibrate count = let
                                       | SOME n => count = n
 in if finished then (required (wall >= seconds); count) else
      (required (count < 1073741824); calibrate (count*2)) end
-val iterations = calibrate 1
-fun sample i = let
-  val (_,fields) = measured "sample" iterations
-  val _ = emit ("batch." ^ selected)
-    (Int.toString i :: Int.toString iterations :: fields)
-in Paired.check ("results " ^ selected) true end
-val _ = List.app sample (List.tabulate (samples,I))
+(* Keep calibration and samples in one precompiled driver, as in the fragment
+   fixture. No compiler invocation may intervene after calibration starts. *)
+fun experiment () = let
+  val iterations = calibrate 1
+  fun sample i = let
+    val (_,fields) = measured "sample" iterations
+    val _ = emit ("batch." ^ selected)
+      (Int.toString i :: Int.toString iterations :: fields)
+  in Paired.check ("results " ^ selected) true end
+in List.app sample (List.tabulate (samples,I)) end
+val _ = experiment ()
 val _ = emit "sink" [Int.toString (!sink)]
