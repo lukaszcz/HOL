@@ -339,6 +339,34 @@ struct
       (* Preserve the existing namespace reservation for native INST holes;
          this is metadata only, after all actual endpoint checks above. *)
       val _=step () val _=G.reserve_schema_holes graph bindings
+      (* The matcher above resolves duplicate typed declarations to their
+         FIRST binding. Native INST need not do so. Publish that same
+         substitution without duplicates for every schema consumer, not
+         merely the Boolean root shortcut. All supplied pairs have already
+         passed visibility/Type checks and namespace reservation above.
+         Their cached operand Type IDs therefore identify declaration Types
+         without another native Type traversal or lexical scope lookup. *)
+      fun compare_binding ((name,ty),(other,sty))=
+        (charge(1+IntInf.fromInt(String.size name)+
+          IntInf.fromInt(String.size other));
+         case String.compare(name,other) of
+           EQUAL=>(step ();Int.compare(ty,sty))
+         | order=>order)
+      fun first_bindings [] seen=(step ();([],[]))
+        | first_bindings ((hole,node)::rest) seen=
+            let val _=step ()
+                val identity=(#1(Term.dest_var hole),G.type_id graph node)
+            in case Redblackmap.peek(seen,identity) of
+                SOME ()=>first_bindings rest seen
+              | NONE=>
+                  let val _=step ()
+                      val seen=Redblackmap.insert(seen,identity,())
+                      val (holes,operands)=first_bindings rest seen
+                      val _=step ()
+                  in (hole::holes,node::operands) end
+            end
+      val (holes,operands)=first_bindings bindings
+        (Redblackmap.mkDict compare_binding)
       val _=step () val truth=G.constant graph scope boolSyntax.T
       val _=step () val right=Literal(truth,boolSyntax.T)
       val _=step () val equality=Drule.EQT_INTRO theorem

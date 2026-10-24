@@ -14,6 +14,10 @@ sig
      use this view for binding, free-variable analysis or proof endpoints. *)
   val count_body : Term.term -> Term.term
 
+  (* Exact native dest_abs names, with name-only clash handling. Caller
+     must first bound the raw body and admit range-Type classification. *)
+  val dest_abs_preserving_names : Term.term -> Term.term * Term.term
+
   (* The raw Term.term_size metric excludes the binder variable slot. *)
   val bounded_raw_size : int -> Term.term -> int option
   (* Same metric; check the function Type before count-only opening of

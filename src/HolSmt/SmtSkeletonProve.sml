@@ -586,10 +586,9 @@ struct
      orelse String.isSubstring "skeleton-cache-abstraction"
        (Feedback.message_of detail))
 
-  (* Public destructors have different costs on the two stock kernels.
-     Standard dest_abs may invoke free_vars on a name clash. Choose a name
-     absent from the bounded count-only body first, so that branch (and its
-     annotation comparisons) is unreachable. No Type is compared here. *)
+  (* Preserve native destructor names: these children also define the
+     original skeleton DAG metric, including sharing outside binders.
+     Name-only clash handling avoids native annotation comparisons. *)
   fun admitted_dest_abs term =
     let
       val admission = new_type_admission_context ()
@@ -599,27 +598,7 @@ struct
           before_open maximum term of SOME _ => ()
         | NONE => SmtResource.check_term_size_for "BitVector"
             "skeleton-cache-abstraction" (maximum + 1)
-    in
-      if Thm.kernelid = "expknl" then Term.dest_abs term
-      else
-        let
-          val names = ref (HOLset.empty String.compare)
-          fun scan tm =
-            if Term.is_var tm then
-              names := HOLset.add (!names, #1 (Term.dest_var tm))
-            else if Term.is_comb tm then
-              (scan (Term.rator tm); scan (Term.rand tm))
-            else if Term.is_abs tm then
-              (before_open (Term.type_of tm);
-               scan (SmtReplayImport.count_body tm))
-            else ()
-          val _ = scan (SmtReplayImport.count_body term)
-          fun fresh () =
-            let val name = #1 (Term.dest_var (Term.genvar Type.bool)) in
-              if HOLset.member (!names, name) then fresh () else name
-            end
-        in Term.dest_abs (Term.rename_bvar (fresh ()) term) end
-    end
+    in SmtReplayImport.dest_abs_preserving_names term end
 
   (* Semantic comparison is independent of optional cache reservations.
      Applications and Types are compared nodewise; only the public binder
@@ -721,8 +700,9 @@ struct
                                (Term.type_of left, Term.type_of right)
                            | result => result)
                         else
-                          (case types (Term.type_of (Term.bvar left),
-                                       Term.type_of (Term.bvar right)) of
+                          (case types
+                              (#1 (Type.dom_rng (Term.type_of left)),
+                               #1 (Type.dom_rng (Term.type_of right))) of
                              EQUAL =>
                                let
                                  val (lv, lb) = admitted_dest_abs left

@@ -369,29 +369,46 @@ struct
      uses graph names and realization happens once, after closing D.
      Bounded binder bodies use the same compact pass; only their opening
      and final ABS/alpha bridge are native island operations. *)
-  fun compact_conversion_with_patterns patterns descend revisit propose root =
+  fun compact_conversion_status patterns descend revisit propose root =
     let
       val graph = G.new ()
       val scope = G.root_scope graph
       val maximum = SmtResource.max_bv_replay_term_nodes
+      val binder_changed = ref false
       fun binder term =
         if not descend then
           import_binder_island graph scope maximum "canon-binder-import" term
         else
           let
-            val _ = admit_native "canon-binder-opening" term
-            val (variable,body) = Term.dest_abs term
-            val body_thm = compact_conversion_with_patterns patterns
+            (* Opening only needs the raw body and range classification.
+               Name-only clash handling preserves native names without a
+               full annotation admission. Unchanged binders need no ABS. *)
+            val _ = admit_count_up_to "canon-binder-opening" maximum term
+            val (variable,body) =
+              SmtReplayImport.dest_abs_preserving_names term
+            val (body_thm,changed) = compact_conversion_status patterns
               true revisit propose body
-            val _ = List.app (admit_native "canon-binder-hypothesis")
-              (Thm.hyp body_thm)
-            val _ = admit_body_result (boolSyntax.rhs (Thm.concl body_thm))
-            val theorem = anchor_left term (Thm.ABS variable body_thm)
-            val target = boolSyntax.rhs (Thm.concl theorem)
-            val _ = admit_native "canon-binder-import" target
-            val imported = G.admit_binder graph scope maximum target
-          in {node = #node imported,original = term,
-              bridge = Thm.TRANS theorem (#bridge imported)} end
+            val result = boolSyntax.rhs (Thm.concl body_thm)
+          in
+            if not changed then
+              import_binder_island graph scope maximum
+                "canon-binder-import" term
+            else
+              let
+                (* ABS and the final alpha anchor can inspect BOTH sides,
+                   including annotations erased by the body conversion. *)
+                val _ = binder_changed := true
+                val _ = admit_native "canon-binder-opening" term
+                val _ = List.app (admit_native "canon-binder-hypothesis")
+                  (Thm.hyp body_thm)
+                val _ = admit_body_result result
+                val theorem = anchor_left term (Thm.ABS variable body_thm)
+                val target = boolSyntax.rhs (Thm.concl theorem)
+                val _ = admit_native "canon-binder-import" target
+                val imported = G.admit_binder graph scope maximum target
+              in {node = #node imported,original = term,
+                  bridge = Thm.TRANS theorem (#bridge imported)} end
+          end
       val source = import_nodewise graph scope NONE binder root
       fun schema node =
         if not descend andalso node <> #node source then NONE
@@ -400,7 +417,9 @@ struct
               compact_schema patterns graph scope conversion node
       val converted = graph_conversion graph scope revisit schema
         (#node source)
-    in
+      val changed = !binder_changed orelse
+        graph_source converted <> graph_result converted
+      val theorem =
       if graph_source converted = graph_result converted then
         #bridge source
       else
@@ -417,7 +436,13 @@ struct
           val realized = exact_left (G.representative graph (#node source))
             theorem
         in Thm.TRANS (#bridge source) realized end
-    end
+    in (theorem,changed) end
+
+  (* Import bridges may change representation without changing the normal
+     form. Keep that distinction explicit, so unchanged binder bodies do
+     not trigger native ABS/alpha work merely to install optional sharing. *)
+  fun compact_conversion_with_patterns patterns descend revisit propose root =
+    #1 (compact_conversion_status patterns descend revisit propose root)
 
   val compact_conversion =
     compact_conversion_with_patterns canonical_schema_patterns

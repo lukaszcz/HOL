@@ -88,6 +88,36 @@ struct
         boolSyntax.rhs (Thm.concl (Thm.Beta (Thm.REFL application)))
       end
 
+  (* After the caller's raw/range-Type admission, open with exactly the
+     stock destructor's names, but without its possible typed free_vars
+     set. Standard all_atomsl visits the stored outer binder first, even
+     for a closure. A singleton forces that first insertion through our
+     comparator; no body or annotation is compared by this probe. FVL
+     below collects only free names. Native variant also uses only names,
+     so on a clash this chooses exactly the native dest_abs variant. *)
+  fun dest_abs_preserving_names term =
+    if Thm.kernelid = "expknl" then Term.dest_abs term
+    else
+      let
+        exception Binder of Term.term
+        val seed = Term.mk_var ("smt_replay_binder_probe",Type.bool)
+        fun capture (left,right) = raise Binder
+          (if Portable.pointer_eq (left,seed) then right else left)
+        val variable =
+          (ignore (Term.all_atomsl [term]
+             (HOLset.add (HOLset.empty capture,seed)));
+           raise Fail "abstraction without binder")
+          handle Binder variable => variable
+        fun names (left,right) = String.compare
+          (#1 (Term.dest_var left),#1 (Term.dest_var right))
+        val free = Term.FVL [term] (HOLset.empty names)
+        val opened = if HOLset.member (free,variable) then
+            Term.rename_bvar
+              (#1 (Term.dest_var (Term.variant (HOLset.listItems free)
+                variable))) term
+          else term
+      in Term.dest_abs opened end
+
   (* This is deliberately an unfolded visitor. Public closure destructors
      need not preserve physical sharing, and these callers require a tree
      budget. The worklist stops before exposing an unadmitted binder body. *)

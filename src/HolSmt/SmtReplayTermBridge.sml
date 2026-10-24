@@ -60,6 +60,21 @@ struct
 
   fun checked_refl term = (admit_type (Term.type_of term); Thm.REFL term)
 
+  (* Count-only opening uses an atomic marker, not dest_abs's possible
+     name-clash/free_vars path. Its only annotation traversal is REFL/Beta's
+     short-circuit classification of the range Type. Keep this separate
+     from admission for native opening, comparison and abstraction. *)
+  fun count_body term =
+    (admit_type (#2 (Type.dom_rng (Term.type_of term)));
+     SmtReplayImport.count_body term)
+
+  fun admit_count_up_to operation maximum term =
+    case SmtReplayImport.bounded_raw_size_with_type_check
+        (fn ty => admit_type (#2 (Type.dom_rng ty))) maximum term of
+      SOME _ => ()
+    | NONE => SmtResource.check_term_size_for "BitVector" operation
+        (SmtResource.max_bv_replay_term_nodes + 1)
+
   (* Native binder work can inspect every annotation. Visit raw Type
      incidences directly, admitting each BEFORE inspecting it. In particular
      neither an unbounded cache probe nor a postorder sum can run ahead of
@@ -67,38 +82,81 @@ struct
   fun admit_native_up_to operation maximum term =
     let
       val ceiling = SmtResource.max_bv_replay_term_nodes
-      fun fail () = SmtResource.check_term_size_for "BitVector" operation
-        (ceiling + 1)
+      val type_sizes = ref ([] : (Type.hol_type * int) list)
+      fun check size = SmtResource.check_term_size_for
+        "BitVector" operation size
+      exception SummaryLimit
+      fun size visits calls probes ty =
+        let
+          val _ = calls := !calls + 1
+          fun find [] = NONE
+            | find ((saved,count)::rest) =
+                (probes := !probes + 1;
+                 if !probes > 64 + 4 * !calls then raise SummaryLimit
+                 else if Portable.pointer_eq (ty,saved) then SOME count
+                 else find rest)
+        in case find (!type_sizes) of
+          SOME count => count
+        | NONE =>
+            let
+              val _ = check (!visits + 1)
+              val _ = visits := !visits + 1
+              (* Every child is checked before adding another incidence.
+                 Exact-pointer reuse only summarizes native work; it never
+                 authorizes equality or changes the unfolded Type gate. *)
+              val children = if Type.is_vartype ty then []
+                else #Args (Type.dest_thy_typeid ty)
+              fun add (child,total) =
+                let val count = size visits calls probes child
+                    val next = if count > ceiling - total then ceiling + 1
+                      else total + count
+                in check next; next end
+              val count = List.foldl add 1 children
+              val _ = type_sizes := (ty,count) :: !type_sizes
+            in count end
+        end
+      (* Keep small annotations on the allocation-free native walk. Large
+         shared annotations need a prospective summary: walking up to two
+         million incidences merely to decline optional binder interning
+         was measurable hidden work on an otherwise unchanged binder. *)
       fun full ty =
         let
-          val visited = ref 0
-          fun visit ty =
-            (SmtResource.check_term_size_for "BitVector" operation
-               (!visited + 1);
-             visited := !visited + 1;
-             if Type.is_vartype ty then () else
-               List.app visit (#Args (Type.dest_thy_typeid ty)))
-        in visit ty end
-      (* Counting abstractions opens their bodies. Admit the actual range's
-         classification before each opening, like the native REFL gate. *)
+          exception Large
+          val remaining = ref 64
+          fun native () =
+            let
+              val visited = ref 0
+              fun walk ty =
+                (check (!visited + 1); visited := !visited + 1;
+                 if Type.is_vartype ty then () else
+                   List.app walk (#Args (Type.dest_thy_typeid ty)))
+            in walk ty end
+          fun small ty =
+            if !remaining = 0 then raise Large
+            else (remaining := !remaining - 1;
+              if Type.is_vartype ty then () else
+                List.app small (#Args (Type.dest_thy_typeid ty)))
+        in small ty handle Large =>
+          (check (size (ref 0) (ref 0) (ref 0) ty)
+           (* Optional pointer probes have a linear envelope. Independent
+              unshared Types fall back to the original native visitor,
+              never quadratic cache scans or a new refusal. *)
+           handle SummaryLimit => native ()) end
       val _ = full (Term.type_of term)
-      val _ = case SmtReplayImport.bounded_raw_size_with_type_check
-          (fn ty => admit_type (#2 (Type.dom_rng ty))) maximum term of
-          SOME _ => () | NONE => fail ()
+      val _ = admit_count_up_to operation maximum term
       fun atoms tm =
         if Term.is_comb tm then
           (atoms (Term.rator tm);atoms (Term.rand tm))
         else if Term.is_abs tm then
           let
-            val (domain,range) = Type.dom_rng (Term.type_of tm)
+            val (domain,_) = Type.dom_rng (Term.type_of tm)
             (* count_body substitutes only an atomic marker of this exact
                domain Type. Unlike standard dest_abs it cannot take the
                name-clash/free_vars branch before the body's annotations
                have been admitted. Count the binder annotation explicitly;
                the marker need not occur in a vacuous abstraction. *)
             val _ = full domain
-            val _ = admit_type range
-          in atoms (SmtReplayImport.count_body tm) end
+          in atoms (count_body tm) end
         else full (Term.type_of tm)
     in atoms term end
 

@@ -20888,6 +20888,56 @@ let
       "frame/schema variable reserved after placeholder allocation"
       (fn () => reserve owned y)
   in () end
+  (* The alternate closed-proof producer permits repeated declarations.
+     Its checked first binding must also govern native INST realization. *)
+  val _ = print "TASK28_BOUNDARY duplicate-closed-schema-holes\n"
+  val _ = let
+    fun check theorem holes terms statement direct =
+      let
+        val graph = SmtReplayGraph.new ()
+        val scope = SmtReplayGraph.root_scope graph
+        fun import term = #node (SmtReplayGraph.import graph scope 100 term)
+        val operands = List.map import terms
+        val source = import statement
+        val schema = SmtReplayCanonGraph.checked_closed_graph_schema_at
+          graph scope
+          {theorem = theorem,holes = holes,operands = operands,
+           source = source,template_limit = 100,type_work_limit = 1000,
+           observe = fn () => (),pay = fn _ => ()}
+        val plan = SmtReplayCanonGraph.graph_schema_leaf graph scope
+          {schema = schema,observe = fn () => ()}
+        val expected = boolSyntax.mk_eq (statement,boolSyntax.T)
+        fun verify theorem =
+          (assert (aconv (Thm.concl theorem) expected,
+             "duplicate schema holes changed the checked endpoint");
+           assert_no_hyps ("duplicate schema holes",theorem);
+           check_oracle_tags "duplicate schema holes" theorem)
+        val _ = case (direct,
+            SmtReplayCanonGraph.realize_boolean_root_schema
+              graph scope plan) of
+            (true,SOME theorem) => verify theorem
+          | (false,NONE) => ()
+          | _ => die "duplicate schema holes changed root eligibility"
+        val block = SmtReplayProof.freeze graph
+          {scope = scope,roots = SmtReplayCanonGraph.graph_roots plan,
+           sources = [],template_limit = 10000}
+      in verify (SmtReplayProof.realize block
+        (SmtReplayCanonGraph.graph_equality plan)
+        (SmtReplayCanonGraph.graph_assemble graph block plan)) end
+    val a = ``a:bool``
+    val copy = Term.mk_var ("a",Type.bool)
+    val numeric = ``a:num``
+    val _ = check (Thm.REFL a) [a,a]
+      [``p:bool``,``q:bool``] ``(p:bool) = p`` true
+    val _ = check (Thm.REFL a) [a,copy]
+      [``q:bool``,``p:bool``] ``(q:bool) = q`` true
+    val _ = check (Thm.REFL a) [a,a]
+      [``p:bool``,``p:bool``] ``(p:bool) = p`` true
+    val _ = check (Thm.CONJ (Thm.REFL numeric) (Thm.REFL a))
+      [a,numeric,copy,Term.mk_var ("a",numSyntax.num)]
+      [``p:bool``,``n:num``,``q:bool``,``m:num``]
+      ``((n:num) = n) /\ ((p:bool) = p)`` false
+  in () end
   val _ = print "TASK28_BOUNDARY independent-DAG\n"
   val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
     let
@@ -20933,6 +20983,76 @@ let
   val x = Term.mk_var ("compact_canon_x",ty)
   val y = Term.mk_var ("compact_canon_y",ty)
   val source = boolSyntax.mk_eq (y,x)
+  val _ = print "TASK28_BOUNDARY binder-compatibility-and-metrics\n"
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    let
+      val b = Term.mk_var ("compact_canon_bound",Type.bool)
+      fun unchanged source = assert (Portable.pointer_eq
+        (checked source SmtReplayCanon.z3_primary_rewrite_canon_conv,source),
+        "unchanged polymorphic binder lost exact reflexivity")
+      val _ = (print "TASK28_BINDER atomic\n";
+        unchanged (Term.mk_abs (b,x)))
+      val _ = (print "TASK28_BINDER nested\n";
+        unchanged (Term.mk_abs (b,Term.mk_abs (b,x))))
+      (* A schema constructor can be present without any actual rewrite. *)
+      val _ = (print "TASK28_BINDER equality\n";
+        unchanged (Term.mk_abs (b,boolSyntax.mk_eq (x,y))))
+      val changed = ``\b:bool. ~~b``
+      val result = checked changed SmtReplayCanon.not_clauses_conv
+      val _ = assert (aconv result ``\b:bool. b``,
+        "changed binder lost checked body normalization")
+      fun metric term = assert (SmtSkeletonProve.term_measure term =
+        SmtResource.term_measure term,"original binder DAG metric changed")
+      val identity = Term.mk_abs (b,b)
+      val _ = metric (Term.mk_comb (identity,b))
+      val _ = List.app metric
+        [``(\x:bool. \x:bool. x) x``,
+         ``(\x:bool. x /\ q) (x /\ q)``,
+         Term.rename_bvar "q" ``\x:bool. x /\ q``,
+         Term.rename_bvar "q" ``\x:bool. (x /\ q) /\ q'``,
+         Term.rename_bvar "T" identity]
+      (* A differing-Type free-name clash must also preserve the exact
+         native variant. Native free_vars is safe for these small fixtures. *)
+      val clash = Term.rename_bvar "x" ``\b:bool. (x:num) = x``
+      val _ = metric clash
+      val _ = List.app (fn term =>
+        let val (a,body) = Term.dest_abs term
+            val (b,opened) = SmtSkeletonProve.admitted_dest_abs term
+        in assert (Term.dest_var a = Term.dest_var b andalso
+            aconv body opened,"admitted opener changed native names") end)
+        [clash,Term.rename_bvar "q" ``\x:bool. x /\ q``]
+    in () end) ()
+  (* Exercise dispatch AT its unchanged gate, not only the three-node
+     symptom: renaming a binder used to add one artificial DAG node. *)
+  val _ = print "TASK28_BOUNDARY original-8192-dispatch-gate\n"
+  val _ = let
+    val p = Term.mk_var ("metric_gate_0",Type.bool)
+    val identity = Term.mk_abs (p,p)
+    val first = Term.mk_comb (identity,p)
+    val leaves = first :: List.tabulate (2729,fn i =>
+      Term.mk_var ("metric_gate_" ^ Int.toString (i+1),Type.bool))
+    fun balanced [term] = term
+      | balanced terms =
+          let val n = List.length terms div 2 in
+            boolSyntax.mk_conj (balanced (List.take (terms,n)),
+              balanced (List.drop (terms,n))) end
+    val base = balanced leaves
+    val maximum = SmtResource.max_skeleton_replay_dag_nodes
+    val target = Term.mk_comb (identity,base)
+    val measured = SmtSkeletonProve.term_measure target
+    val _ = assert (#dag_nodes measured = maximum andalso
+      measured = SmtResource.term_measure target,
+      "gate-sized binder fixture changed its original DAG count")
+    val context = SmtSkeletonDispatch.new_context
+      (fn _ => raise Fail "metric analysis invoked a prover")
+    val _ = ignore (SmtSkeletonDispatch.analyze context target)
+    val _ = assert (((ignore (SmtSkeletonDispatch.analyze context
+        (Term.mk_comb (identity,target)));false)
+      handle HOL_ERR detail => String.isSubstring
+        "resource-gate:Skeleton:general-reduction"
+        (Feedback.message_of detail)),
+      "dispatch no longer rejects the first original excess DAG node")
+  in () end
   val _ = print "TASK28_BOUNDARY polymorphic-schema\n"
   val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
     let
@@ -20950,6 +21070,21 @@ let
   fun mono 0 = Type.bool
     | mono n = let val ty = mono (n - 1) in Type.--> (ty,ty) end
   val huge = mono 22
+  (* Pointer-summary misses must stay optional and linearly bounded.
+     This annotation is genuinely unshared, not another repeated DAG. *)
+  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+    let
+      fun independent 0 = Type.bool
+        | independent n = Type.--> (independent (n-1),independent (n-1))
+      val term = Term.mk_var ("unshared_native_annotation",independent 15)
+    in SmtReplayTermBridge.admit_native "unshared-annotation" term end) ()
+  val _ = assert (((SmtReplayTermBridge.admit_native "shared-annotation"
+        (Term.mk_var ("oversized_native_annotation",huge));false)
+      handle HOL_ERR detail => String.isSubstring
+        "resource-gate:BitVector:shared-annotation"
+        (Feedback.message_of detail) andalso String.isSubstring
+        "observed=2000001" (Feedback.message_of detail)),
+    "prospective Type summary changed the original unfolded gate")
   val f = Term.mk_var ("compact_canon_predicate",Type.--> (huge,Type.bool))
   val a = Term.mk_var ("compact_canon_argument",huge)
   val request = Term.mk_comb (f,a)
