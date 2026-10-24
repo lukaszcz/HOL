@@ -291,6 +291,11 @@ sig
      Other schema holes retain ordinary name-collision checks. No allocation. *)
   val reserve_schema_holes : graph -> (Term.term * node) list -> unit
   val placeholder : graph -> node -> Term.term
+  (* Atom and ProofBoundary stop extraction; Let follows only its final
+     (body) child. Context/Clause are ordered occurrence containers, not
+     evidence that their node is a conjunction/disjunction. Explicit binary
+     connective roles must match their actual graph children. Only Let and
+     ProofBoundary may enter descendant scopes; every node must be visible. *)
   val occurrence_leaves : occurrence -> occurrence list
   val validate_occurrence : graph -> occurrence -> unit
 (* Proposed additive G interface; Source-only and UNCOMPILED. *)

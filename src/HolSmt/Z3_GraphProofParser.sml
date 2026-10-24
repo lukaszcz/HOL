@@ -56,6 +56,13 @@ struct
     | atom context _ = raise ERR context "expected an atomic symbol"
   fun list context (List entries) = entries
     | list context _ = raise ERR context "expected parenthesized entries"
+  (* Binder names shadow both retained term syntax and proof aliases.
+     Use descriptor text, just as alias lookup does, including quoted names. *)
+  fun shadow_aliases aliases binders =
+    List.foldl (fn ((_, name, _), aliases) =>
+      if Redblackmap.inDomain (aliases, name) then
+        #1 (Redblackmap.remove (aliases, name))
+      else aliases) aliases binders
   fun named_id text =
     if String.isPrefix "@x" text then
       case Int.fromString (String.extract (text, 2, NONE)) of
@@ -305,7 +312,8 @@ struct
               val (entries, sizes, raw_body) = strip body [] []
               val binding = scope session entries
               val child = binding_session binding
-              val result = parse_value child aliases raw_body
+              val result = parse_value child
+                (shadow_aliases aliases entries) raw_body
             in save (Bind {binding = binding, body = proof result,
               lambda_blocks = sizes}) end
         | _ => parse_value session aliases body
@@ -660,7 +668,8 @@ struct
               val (entries, sizes, raw_body) = strip body [] []
               val binding = scope session entries
               val child = binding_session binding
-              val result = parse_value child aliases raw_body
+              val result = parse_value child
+                (shadow_aliases aliases entries) raw_body
             in save (Bind {binding = binding, body = proof result,
               lambda_blocks = sizes}) end
         | _ => parse_value session aliases body

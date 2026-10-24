@@ -3286,12 +3286,53 @@ struct
         in theorem end
     end
 
-  fun occurrence_leaves (occurrence as Occurrence {children,...}) =
-    if List.null children then [occurrence]
-    else List.concat (List.map occurrence_leaves children)
-  fun validate_occurrence g (Occurrence {node,scope,children,...}) =
-    (ignore (entry g node); check_scope g scope;
-     List.app (validate_occurrence g) children)
+  (* Occurrences are syntax, not semantic-node traversal. In particular a
+     LET contributes its body, never its RHSs; proof boundaries are opaque. *)
+  fun occurrence_leaves (occurrence as Occurrence {role,children,...}) =
+    case role of
+        Atom => [occurrence]
+      | ProofBoundary => [occurrence]
+      | Let => (case List.rev children of body::_ => occurrence_leaves body
+          | [] => raise ERR "occurrence_leaves" "let has no recorded body")
+      | _ => List.concat (List.map occurrence_leaves children)
+  fun validate_occurrence g =
+    let
+      fun invalid message = raise ERR "validate_occurrence" message
+      fun root (Occurrence {node,...}) = node
+      fun binary constant node children = case children of
+          [left,right] =>
+            (case view g node of Application (operator,operand) =>
+              (case view g operator of Application (head,argument) =>
+                (case view g head of Constant _ =>
+                  if Term.same_const (representative g head) constant andalso
+                      argument = root left andalso operand = root right then ()
+                  else invalid "recorded connective children differ"
+                | _ => invalid "recorded connective head is not constant")
+              | _ => invalid "recorded connective is not binary")
+            | _ => invalid "recorded connective is not an application")
+        | _ => invalid "recorded connective needs two children"
+      fun validate (Occurrence {node,scope,role,children}) =
+        let
+          val _ = check_scope g scope
+          val _ = usable g scope node
+          val _ = case role of
+              Atom => if null children then () else
+                invalid "atom has recorded children"
+            | Conjunction => binary boolSyntax.conjunction node children
+            | Disjunction => binary boolSyntax.disjunction node children
+            | Let => (case List.rev children of body::_ =>
+                if node = root body then () else
+                  invalid "let body has another semantic node"
+              | [] => invalid "let has no recorded body")
+            | _ => ()
+          fun child (item as Occurrence {scope=inner,...}) =
+            (if inner = scope orelse
+                ((role = Let orelse role = ProofBoundary) andalso
+                 scope_visible g inner scope) then () else
+               invalid "child escapes recorded scope";
+             validate item)
+        in List.app child children end
+    in validate end
 
   (* Private closure-issued identity view: metadata planning, then exactly
      one REFL on execution. No import, source anchor, opening or rehome. *)

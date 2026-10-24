@@ -68494,6 +68494,117 @@ local
             (#arguments left,#arguments right)
       | _ => false
 
+  (* Small syntax-only binder/alias regressions. Both carrier instances run
+     the same identity and occurrence checks; no proof replay is involved. *)
+  fun alias_rule (proof:''a Z.constructed_proof) id =
+    case Redblackmap.find (#steps proof,id) of
+      Z.Rule info => info | _ => raise Fail "alias fixture expected Rule"
+  fun alias_bind (proof:''a Z.constructed_proof) id =
+    case Redblackmap.find (#steps proof,id) of
+      Z.Bind {binding,body,lambda_blocks=[1]} => (binding,body)
+    | _ => raise Fail "alias fixture expected one-variable Bind"
+  fun alias_atom expected
+      (SmtLib_Parser.ConstructionOccurrence {value,role,children,...}) =
+    value=expected andalso null children andalso
+    (case role of SmtLib_Parser.ConstructionAtom => true | _ => false)
+  fun alias_or (term:''a F.constructed_term) =
+    case #occurrence term of
+      SmtLib_Parser.ConstructionOccurrence
+        {value,role=SmtLib_Parser.ConstructionApplication,
+         token="or",children=[left,right]} =>
+          value= #node term andalso
+          List.all (fn SmtLib_Parser.ConstructionOccurrence {role,...} =>
+            case role of SmtLib_Parser.ConstructionAtom => true | _ => false)
+            [left,right]
+    | _ => false
+  fun check_alias_shadow mode is_bound (proof:''a Z.constructed_proof) =
+    let
+      val (binding,body) = alias_bind proof (#root proof)
+      val F.ScopedSession {session,variables,scope,...} = binding
+      val variable = case variables of [v] => v
+        | _ => raise Fail "shadow fixture lost binder identity"
+      val _ = F.scoped_session_origin binding
+      val _ = require "shadowed alias did not resolve to a Bound variable"
+        (is_bound variable)
+      val conclusion = #conclusion (alias_rule proof body)
+      fun exact (term:''a F.constructed_term) =
+        #node term=variable andalso alias_atom variable (#occurrence term)
+      val nested = ref []
+      val _ = if mode="nested" then
+        let val rule = alias_rule proof body
+            val (inner_id,outer_id) = case #premises rule of
+                [inner,outer] => (inner,outer)
+              | _ => raise Fail "nested shadow fixture lost premises"
+            val (inner,inner_body) = alias_bind proof inner_id
+            val F.ScopedSession
+                {session=child,variables=inner_vars,scope=child_scope,...} =
+              inner
+            val fresh = case inner_vars of [v] => v
+              | _ => raise Fail "nested shadow fixture lost inner variable"
+            val inside = #conclusion (alias_rule proof inner_body)
+            val _ = require "nested binder reused an outer identity"
+              (fresh<>variable andalso is_bound fresh andalso
+               #node inside=fresh andalso
+               alias_atom fresh (#occurrence inside) andalso
+               exact (#conclusion (alias_rule proof outer_id)) andalso
+               exact conclusion)
+        in nested := [(child_scope,fn () =>
+             ignore ((#sort_dictionary child) ()))] end
+      else if mode="simultaneous" then
+        require "simultaneous inner LET RHS did not see the incoming binder"
+          (exact conclusion)
+      else if mode="retained" then
+        let val rule = alias_rule proof body
+            val (prior,local_id) = case #premises rule of [p,q] => (p,q)
+              | _ => raise Fail "retained alias fixture lost proof premise"
+            val earlier = #conclusion (alias_rule proof prior)
+            val later = #conclusion (alias_rule proof local_id)
+        in require "nonshadowed proof/OR aliases changed identity or roles"
+          (prior<>local_id andalso #node earlier= #node later andalso
+           alias_or earlier andalso alias_or later andalso
+           length (case F.disjunction_children (#occurrence later) of
+             SOME children => children | NONE => [])=2 andalso
+           exact conclusion) end
+      else require "binder kept a term/proof alias or its OR occurrence"
+        (exact conclusion)
+    in (scope,fn () => ignore ((#sort_dictionary session) ())) :: !nested end
+  fun alias_expired (e:env) saved =
+    List.app (fn (scope,_) => require "proof binder scope survived close"
+      (Option.isSome (error (fn () =>
+        G.validate_scope (#graph e) scope)))) saved
+  fun alias_both text mode =
+    let
+      val _ = owned (fn e =>
+        let val held = Z.create_packet_with_policy_from_input
+              (native_options e) "4.15.3" (input text)
+            fun bound node = case G.view (#graph e) node of
+                G.Variable (G.Bound,_) => true | _ => false
+            val outcome = Exn.capture (fn () =>
+              check_alias_shadow mode bound (OldPacket.proof held)) ()
+            val cleanup = Exn.capture OldPacket.close held
+            val saved = Exn.release outcome
+            val _ = Exn.release cleanup
+            val _ = alias_expired e saved
+        in List.app (fn (_,observe) => require
+          "native binder syntax callback survived packet close"
+          (Option.isSome (error observe))) saved end)
+    in owned (fn e =>
+      let val held = packet e text
+          val outcome = Exn.capture (fn () => W.with_step (#work e)
+            (fn () =>
+              let val current = contents e held
+                  fun bound value = case PV.view (#context current) value of
+                      PV.Variable (G.Bound,_) => true | _ => false
+              in check_alias_shadow mode bound (#proof current) end)) ()
+          val cleanup = Exn.capture VP.close held
+          val saved = Exn.release outcome
+          val _ = Exn.release cleanup
+          val _ = alias_expired e saved
+          val (_,observe) = hd saved
+          val expired = error (fn () => W.with_step (#work e) observe)
+      in require "Value binder syntax callback survived packet/context close"
+        (Option.isSome expired) end) end
+
 in
   val _ = run_postlude 386 "shared-z3-value-proof-packets-8" (fn () =>
     let
@@ -68736,6 +68847,38 @@ in
           in case outcome of Exn.Exn primary => raise primary
             | Exn.Res () => Exn.release cleanup end))
     in () end)
+
+  fun run_z3_binder_alias_shadowing_controls () =
+    let
+      fun wrap body = "((proof " ^ body ^ "))"
+      val names = [("x","x","x"),("|x|","x","|x|"),
+        ("x","|x|","x"),
+        ("|alias name|","|alias name|","|alias name|")]
+      fun shadow rhs (alias,binder,reference) =
+        alias_both (wrap ("(let ((" ^ alias ^ " " ^ rhs ^
+          ")) (proof-bind (lambda ((" ^ binder ^ " Bool)) (asserted " ^
+          reference ^ "))))")) "atom"
+      val _ = test "Native/Value binders shadow term aliases, including quotes"
+        (fn () => List.app (shadow "(or true false)") names)
+      val _ = test "Native/Value binders shadow quoted and plain proof aliases"
+        (fn () => List.app (shadow "(asserted true)") names)
+      val _ = test "Native/Value simultaneous LET RHS sees the bound identity"
+        (fn () => List.app (fn rhs => alias_both (wrap
+          ("(let ((x " ^ rhs ^ ")) (proof-bind (lambda ((x Bool)) " ^
+           "(let ((x false) (copy x)) (asserted copy)))))"))
+          "simultaneous") ["(or true false)","(asserted true)"])
+      val _ = test "Native/Value nested binders have fresh expiring identities"
+        (fn () => alias_both (wrap
+          "(let ((x (or true false))) (proof-bind (lambda ((x Bool))\
+          \ (unit-resolution\
+          \ (proof-bind (lambda ((x Bool)) (asserted x)))\
+          \ (asserted x) x))))") "nested")
+      val _ = test "Native/Value nonshadowed OR and proof aliases stay exact"
+        (fn () => alias_both (wrap
+          "(let ((a (or true false))) (let ((p (asserted a)))\
+          \ (proof-bind (lambda ((x Bool))\
+          \ (unit-resolution p (asserted a) x)))))") "retained")
+    in () end
 end
 
 
@@ -84084,9 +84227,12 @@ end
 val _=run_postlude 432 "fixed-name-physical-Type-identity-5"
   run_fixed_name_Type_identity_controls
 
+val _ = run_postlude 433 "z3-binder-alias-shadowing-5"
+  run_z3_binder_alias_shadowing_controls
+
 val () =
   let
-    val expected = 433
+    val expected = 434
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso

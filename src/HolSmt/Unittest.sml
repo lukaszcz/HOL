@@ -27833,6 +27833,44 @@ let
       (G.Occurrence {node = rigid, scope = G.root_scope foreign,
                      role = G.Atom, children = []})),
     "foreign occurrence scope accepted")
+  fun occ node scope role children = G.Occurrence
+    {node = node,scope = scope,role = role,children = children}
+  fun nodes tree = List.map (fn G.Occurrence {node,...} => node)
+    (G.occurrence_leaves tree)
+  val connective = G.application graph scope
+    (G.application graph scope
+      (G.constant graph scope boolSyntax.conjunction,rigid),rigid)
+  val split = occ connective scope G.Conjunction [leaf,leaf]
+  val boundary = occ connective scope G.ProofBoundary [split]
+  val let_body = occ connective scope G.Let [atom,split]
+  val _ = List.app (G.validate_occurrence graph) [split,boundary,let_body]
+  val _ = assert (nodes split = [rigid,rigid] andalso
+      nodes boundary = [connective] andalso
+      nodes let_body = [rigid,rigid] andalso
+      nodes (occ rigid scope G.Context []) = [] andalso
+      nodes (occ rigid scope G.Clause []) = [],
+    "recorded proof/let boundaries, empty containers or duplicates lost")
+  val _ = List.app (fn malformed => assert
+    (rejected (fn () => G.validate_occurrence graph malformed),
+     "malformed recorded occurrence tree accepted"))
+    [occ rigid scope G.Atom [leaf],
+     occ connective scope G.Conjunction [leaf],
+     occ connective scope G.Disjunction [leaf,leaf],
+     occ connective scope G.Conjunction [atom,leaf],
+     occ rigid scope G.Let [],occ rigid scope G.Let [atom],
+     occ bound_x scope G.Atom [],
+     occ rigid scope G.Context [occ bound_x local_frame G.Atom []],
+     occ bound_x unbound_scope G.Atom [],
+     occ rigid unbound_scope G.ProofBoundary
+       [occ rigid local_frame G.Atom []]]
+  val scoped_leaf = occ bound_x local_frame G.Atom []
+  val scoped_proof = occ rigid scope G.ProofBoundary [scoped_leaf]
+  val _ = G.validate_occurrence graph scoped_proof
+  val _ = G.close_scope graph local_frame
+  val _ = assert (rejected (fn () => G.validate_occurrence graph
+      (occ bound_x scope G.Atom [])) andalso
+      rejected (fn () => G.validate_occurrence graph scoped_proof),
+    "retired node or nested proof scope revived by active occurrence scope")
   val names = G.new ()
   val name_scope = G.root_scope names
   val collision = G.variable names name_scope G.RigidSource
@@ -28166,6 +28204,32 @@ end handle primary => (Count.counting_thms false; raise primary)
 
 fun replay_compact_proof_success () =
 let
+  val _ = List.app (fn count =>
+    let
+      val p = Term.mk_var ("recorded_context_p",Type.bool)
+      val q = Term.mk_var ("recorded_context_q",Type.bool)
+      val compound = boolSyntax.mk_conj (p,q)
+      val leaves = List.take
+        ([compound,boolSyntax.mk_disj (p,q),compound,boolSyntax.T,p],count)
+      val names = List.tabulate (count,fn index =>
+        Term.mk_var ("recorded_context_" ^ Int.toString index,Type.bool))
+      val tree = SmtReplayNamedContext.make_tree 0 count
+      val context = SmtReplayNamedContext.tree_term
+        (Vector.fromList names) tree
+      val instantiated = Thm.INST (ListPair.map
+        (fn (name,term) => {redex=name,residue=term}) (names,leaves))
+        (Thm.ASSUME context)
+      val projections = SmtReplayNamedContext.project tree instantiated
+      val _ = assert (length projections = count andalso
+          ListPair.allEq (fn (proof,leaf) =>
+            Term.aconv (Thm.concl proof) leaf andalso
+            length (Thm.hyp proof) = 1 andalso
+            Term.aconv (hd (Thm.hyp proof)) (Thm.concl instantiated))
+              (projections,leaves),
+        "instantiated balanced context flattened/reordered a recorded leaf")
+    in List.app (check_oracle_tags "recorded balanced context") projections
+    end)
+    [0,1,3,5]
   fun conjunction block graph node first second =
     let val (operator, child) = case G.view graph node of
         G.Application fields => fields
