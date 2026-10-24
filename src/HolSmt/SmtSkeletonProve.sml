@@ -13,7 +13,8 @@ struct
   datatype context = Context of
     {procedures : atom_procedure list,
      fallback : atom_procedure option,
-     atom_cache : (term, thm) Redblackmap.dict ref}
+     atom_index : term -> int option,
+     atom_cache : (int, thm) Redblackmap.dict ref}
 
   type metrics =
     {target_tree_nodes : int,
@@ -103,14 +104,6 @@ struct
     in
       Portable.finally restore run ()
     end
-
-  fun new_context procedures = Context
-    {procedures = procedures, fallback = NONE,
-     atom_cache = ref (Redblackmap.mkDict Term.compare)}
-
-  fun new_dynamic_context procedures fallback = Context
-    {procedures = procedures, fallback = SOME fallback,
-     atom_cache = ref (Redblackmap.mkDict Term.compare)}
 
   fun cache_size (Context {atom_cache, ...}) =
     Redblackmap.numItems (!atom_cache)
@@ -394,6 +387,47 @@ struct
       else Thm.TRANS (Thm.REFL left) (Thm.REFL right)
     end
 
+  (* Optional-cache admission has no theorem/procedure side effects. Only
+     these local transport gates become misses; actual proving exceptions
+     and timeouts still escape unchanged. *)
+  fun cache_admission_refusal detail =
+    SmtResource.is_resource_gate detail andalso
+    (String.isSubstring "skeleton-type-work" (Feedback.message_of detail)
+     orelse String.isSubstring "skeleton-cache-abstraction"
+       (Feedback.message_of detail))
+
+  fun new_cache_index maximum =
+    let
+      val admission = new_type_admission_context ()
+      fun binder term =
+        (#admit_abstraction admission "skeleton-cache-abstraction" term;
+         true)
+        handle Feedback.HOL_ERR detail =>
+          if cache_admission_refusal detail then false
+          else raise Feedback.HOL_ERR detail
+      fun type_id ty =
+        let val AdmissionTypeNode {id, ...} = #intern admission ty
+        in id end
+      val index = SmtResource.new_bounded_term_index_with_types
+        {admit_binder = binder, intern_type = SOME type_id} maximum
+    in fn term => index term handle Feedback.HOL_ERR detail =>
+      if cache_admission_refusal detail then NONE
+      else raise Feedback.HOL_ERR detail
+    end
+
+  fun new_cache_order maximum =
+    SmtResource.semantic_term_order (new_cache_index maximum)
+
+  fun make_context procedures fallback = Context
+    {procedures = procedures, fallback = fallback,
+     atom_index = new_cache_index SmtResource.max_bv_replay_term_nodes,
+     atom_cache = ref (Redblackmap.mkDict Int.compare)}
+
+  fun new_context procedures = make_context procedures NONE
+
+  fun new_dynamic_context procedures fallback =
+    make_context procedures (SOME fallback)
+
   (* Build left = right one physical node at a time.  Both endpoint anchors
      compare only a newly built outer node whose children already have the
      requested endpoint pointers.  Structural cache collisions use separate
@@ -517,8 +551,12 @@ struct
       else reanchor_cached_theorem occurrence theorem
     end
 
-  fun validate_theorem procedure atom theorem =
+  fun validate_theorem_with index procedure atom theorem =
     let
+      fun same left right = Portable.pointer_eq (left, right) orelse
+        (case (index left, index right) of
+           (SOME a, SOME b) => a = b
+         | _ => Term.aconv left right)
       val _ =
         if List.null (Thm.hyp theorem) then ()
         else raise ERR "validate_theorem"
@@ -529,7 +567,7 @@ struct
             ("atom procedure " ^ procedure ^
              " did not return an equality")
       val _ =
-        if Term.aconv left atom then ()
+        if same left atom then ()
         else raise ERR "validate_theorem"
           ("atom procedure " ^ procedure ^ " returned the wrong left side")
       val _ =
@@ -537,7 +575,7 @@ struct
         else raise ERR "validate_theorem"
           ("atom procedure " ^ procedure ^ " returned a non-Boolean residue")
       val _ =
-        if Term.aconv left right then
+        if same left right then
           raise ERR "validate_theorem"
             ("atom procedure " ^ procedure ^ " made no progress")
         else ()
@@ -546,6 +584,11 @@ struct
     in
       theorem
     end
+
+  fun validate_theorem procedure atom theorem =
+    validate_theorem_with
+      (new_cache_index SmtResource.max_bv_replay_term_nodes)
+      procedure atom theorem
 
   fun procedure_names (Context {procedures, fallback, ...}) =
     List.map #name procedures @
@@ -1557,7 +1600,7 @@ struct
     congruence_prove_in (new_sat_context ()) target
 
   fun prove_with_owners
-      (Context {procedures, fallback, atom_cache}) owners
+      (Context {procedures, fallback, atom_index, atom_cache}) owners
       (target_measure : {tree_nodes : int, dag_nodes : int}) target =
     let
       val _ =
@@ -1569,9 +1612,18 @@ struct
             "whole obligation is a theory atom; local solve is forbidden"
         | SOME _ => ()
       val total_timer = Timer.startRealTimer ()
-      val nodes = ref (Redblackmap.mkDict Term.compare)
-      val skeleton_nodes = ref (HOLset.empty Term.compare)
-      val distinct_atoms = ref (HOLset.empty Term.compare)
+      (* Owner/node IDs are obligation-local, independent of any exhausted
+         cross-obligation atom-cache index. Reindex legacy owner maps once. *)
+      val node_index = new_cache_index
+        SmtResource.max_bv_replay_term_nodes
+      val term_order = SmtResource.semantic_term_order node_index
+      val owners = Redblackmap.foldl
+        (fn (atom, owner, result) =>
+          Redblackmap.insert (result, atom, owner))
+        (Redblackmap.mkDict term_order) owners
+      val nodes = ref (Redblackmap.mkDict Int.compare)
+      val skeleton_nodes = ref (HOLset.empty term_order)
+      val distinct_atoms = ref (HOLset.empty term_order)
       val calls = ref (Redblackmap.mkDict String.compare)
       val working_cache = ref (!atom_cache)
       val node_hits = ref 0
@@ -1603,6 +1655,7 @@ struct
               val {expand, ...} = procedure
               val _ = atom_requests := !atom_requests + 1
               val _ = distinct_atoms := HOLset.add (!distinct_atoms, atom)
+              val cache_key = atom_index atom
               fun prove () =
                 let
                   val timer = Timer.startRealTimer ()
@@ -1620,30 +1673,35 @@ struct
                   | Expanded theorem =>
                       let
                         val theorem = exact_left atom
-                          (validate_theorem name atom theorem)
+                          (validate_theorem_with atom_index name atom theorem)
                         val _ = owned_atoms := !owned_atoms + 1
-                        val _ = working_cache :=
-                          Redblackmap.insert
-                            (!working_cache, atom, theorem)
+                        val _ = case cache_key of NONE => ()
+                          | SOME id => working_cache :=
+                              Redblackmap.insert (!working_cache, id, theorem)
                         val _ = atom_proofs := !atom_proofs + 1
                       in
                         (theorem, true)
                       end
                 end
             in
-              case Redblackmap.peek (!working_cache, atom) of
+              case Option.mapPartial
+                  (fn id => Redblackmap.peek (!working_cache, id)) cache_key of
                 SOME theorem =>
                   (let
                      val theorem = reanchor_cached_theorem atom theorem
                    in
                      atom_hits := !atom_hits + 1;
                      (theorem, true)
-                   end handle REANCHOR_LIMIT => prove ())
+                   end handle REANCHOR_LIMIT => prove ()
+                     | Feedback.HOL_ERR detail =>
+                         if cache_admission_refusal detail then prove ()
+                         else raise Feedback.HOL_ERR detail)
               | NONE => prove ()
             end
       fun visit term =
         let
           val _ = skeleton_nodes := HOLset.add (!skeleton_nodes, term)
+          val cache_key = node_index term
           fun compute children =
             let
               val child_results = List.map visit children
@@ -1655,8 +1713,9 @@ struct
                       (List.map Lib.fst child_results))
                 else Thm.REFL term
               val result = (theorem, changed)
-              val _ = nodes :=
-                Redblackmap.insert (!nodes, term, (term, result))
+              val _ = case cache_key of NONE => ()
+                | SOME id => nodes :=
+                    Redblackmap.insert (!nodes, id, (term, result))
             in
               result
             end
@@ -1680,7 +1739,8 @@ struct
                      else (first, changed)
                    end)
           | SOME children =>
-              (case Redblackmap.peek (!nodes, term) of
+              (case Option.mapPartial
+                  (fn id => Redblackmap.peek (!nodes, id)) cache_key of
                  SOME (saved, (theorem, changed)) =>
                    (node_hits := !node_hits + 1;
                     if Portable.pointer_eq (term, saved) then
@@ -1709,6 +1769,12 @@ struct
                                 observe_node_cache
                                   (NodeCacheReanchorTime elapsed)
                               end
+                        fun fallback () =
+                          (node_reanchor_fallbacks :=
+                             !node_reanchor_fallbacks + 1;
+                           observe_node_cache
+                             NodeCacheStructuralReanchorFallback;
+                           compute children)
                         fun reanchor () =
                           let val result = (exact_left term theorem, changed)
                           in
@@ -1720,12 +1786,11 @@ struct
                           end
                       in
                         (Portable.finally finish reanchor ()
-                         handle REANCHOR_LIMIT =>
-                           (node_reanchor_fallbacks :=
-                              !node_reanchor_fallbacks + 1;
-                            observe_node_cache
-                              NodeCacheStructuralReanchorFallback;
-                            compute children))
+                         handle REANCHOR_LIMIT => fallback ()
+                              | Feedback.HOL_ERR detail =>
+                                  if cache_admission_refusal detail then
+                                    fallback ()
+                                  else raise Feedback.HOL_ERR detail)
                       end)
                | NONE => compute children)
         end
@@ -1733,7 +1798,8 @@ struct
         (phase "skeleton/conversion" visit target)
       val normalized = boolSyntax.rhs (Thm.concl normalization)
       val _ =
-        if !owned_atoms > 0 andalso Term.aconv normalized target then
+        if !owned_atoms > 0 andalso
+            term_order (normalized, target) = EQUAL then
           raise ERR "prove" "atom expansion made no progress"
         else ()
       val graph = phase "skeleton/cnf-normalization"
@@ -1832,8 +1898,10 @@ struct
           else raise ERR "prove" "result theorem has hypotheses") ()
       val _ = phase "skeleton/final-conclusion-check"
         (fn () =>
-          if Term.aconv (Thm.concl theorem) target then ()
-          else raise ERR "prove" "result theorem does not match the target") ()
+          if Portable.pointer_eq (Thm.concl theorem, target) then ()
+          else ignore (bounded_nodewise_equality
+            SmtResource.max_skeleton_replay_dag_nodes
+            (Thm.concl theorem) target)) ()
       val _ = phase "skeleton/final-oracle-check"
         (fn () => Library.check_oracle_tags
           "SmtSkeletonProve" "result" theorem) ()

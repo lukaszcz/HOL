@@ -55833,7 +55833,9 @@ in
              native_contract=native,profiles=[],check_type=fn _=>()})
         val proof=Core.theorem_with_policy_for w result
     in require "memo debit, fresh-call guard or genuine cut realization lost"
-      (one=prior+1 andalso three=one+3 andalso again=three+3 andalso
+      (* Backing-law validation pays 10 guard units and 11 root-frame
+         descriptions, in addition to the 1/3 outer memo probes/stores. *)
+      (one=prior+22 andalso three=one+24 andalso again=three+24 andalso
        no_rules andalso null(Thm.hyp proof)andalso
        Term.aconv(Thm.concl proof)
          (boolSyntax.mk_eq(boolSyntax.T,boolSyntax.T)))
@@ -55848,13 +55850,13 @@ in
               val shared=pair(#g e)(#r e)(#w e)single
               val _=leave(#w e)amount
           in (#w e,shared)end
-        val (short,first)=ready 2 val (exact,second)=ready 3
+        val (short,first)=ready 23 val (exact,second)=ready 24
         val prior=charged short val count=Count.thm_count()
         val denied=refused(fn()=>C.validate_conversion_for short first)
         val _=C.validate_conversion_for exact second
     in require "finite memo bookkeeping stored without paying original Work"
       (denied=SOME "original cumulative work allowance exhausted"andalso
-       charged short=prior+2 andalso #retired(W.audit_policy short)andalso
+       charged short=prior+23 andalso #retired(W.audit_policy short)andalso
        W.remaining_policy exact=RP.AtMost 0 andalso
        not(#retired(W.audit_policy exact))andalso Count.thm_count()=count)end)
 

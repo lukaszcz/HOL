@@ -20542,11 +20542,20 @@ val _ = run memo "raw" boolean boolean;
 val _ = assert (!calls = 6, "colliding typed atoms shared the wrong schema");
 val _ = List.app (fn _ => case Exn.capture
     (fn () => run memo "raw" boolSyntax.T boolSyntax.F) () of
-      Exn.Exn (HolSatLib.SAT_cex theorem) =>
-        Library.check_oracle_tags "CpcAttempt" "simplification counterexample"
-          theorem
-    | _ => die "simplification SAT decline changed its constructor") [(), ()];
-val _ = assert (!calls = 7, "simplification SAT decline repeated its attempt");
+      Exn.Exn (HolSatLib.SAT_satisfiable _) => ()
+    | _ => die "proof-only SAT decline changed its constructor") [(), ()];
+val _ = assert (!calls = 7, "proof-only SAT decline repeated its attempt");
+val counterexample_calls = ref 0;
+fun counterexample () = #run memo
+  {procedure = "model", source = boolSyntax.T, target = boolSyntax.F,
+   prove = fn () => (counterexample_calls := !counterexample_calls + 1;
+     HolSatLib.SAT_PROVE (boolSyntax.mk_imp (boolSyntax.T, boolSyntax.F)))};
+val _ = List.app (fn _ => case Exn.capture counterexample () of
+    Exn.Exn (HolSatLib.SAT_cex theorem) =>
+      Library.check_oracle_tags "CpcAttempt" "counterexample" theorem
+  | _ => die "model-producing SAT decline changed its constructor") [(), ()];
+val _ = assert (!counterexample_calls = 1,
+  "model-producing SAT decline repeated its attempt");
 val _ = List.app (fn (enabled, capacity) =>
   let val local_cache = cache enabled capacity
       val prior_calls = !calls
@@ -20591,6 +20600,157 @@ val _ = List.app (fn _ => case Exn.capture bad_schema () of
   | _ => die "cache accepted a schema with hypotheses") [(), ()];
 val _ = assert (!invalid = 2 andalso #retained (#statistics bad ()) = 0,
   "invalid schema validation was cached as a logical decline");
+in () end
+
+(* Complete compatibility cache routes, not just the occurrence bridge:
+   independent shared applications must never be unfolded by map lookup. *)
+fun replay_indexed_cache_boundaries_success () =
+let
+  fun shared 0 = Term.mk_var ("indexed-cache-leaf", Type.bool)
+    | shared n = let val child = shared (n - 1)
+                 in boolSyntax.mk_conj (child, child) end
+  val left = shared 80
+  val right = shared 80
+  val _ = assert (not (Portable.pointer_eq (left, right)),
+    "independent cache inputs unexpectedly share their root")
+  val calls = ref 0
+  val cache = SmtReplayAttempt.new
+    {enabled = true, capacity = 4, hash = fn _ => 0}
+  fun run source = #run cache
+    {procedure = "shared", source = source, target = source,
+     prove = fn () => (calls := !calls + 1;
+       Thm.DISCH source (Thm.ASSUME source))}
+  val _ = run left
+  val law = run right
+  val (source, target) = boolSyntax.dest_imp (Thm.concl law)
+  val _ = assert (!calls = 1 andalso #hits (#statistics cache ()) = 1 andalso
+    Portable.pointer_eq (source, right) andalso
+    Portable.pointer_eq (target, right),
+    "independent attempt hit lost reuse or exact requested endpoints")
+  val applied = Thm.MP law (Thm.ASSUME right)
+  val _ = assert (Portable.pointer_eq (Thm.concl applied, right) andalso
+    List.length (Thm.hyp applied) = 1,
+    "attempt transport changed the complete premise")
+  val _ = check_oracle_tags "indexed attempt" applied
+  val _ = List.app (fn (enabled, capacity) =>
+    let
+      val cache = SmtReplayAttempt.new
+        {enabled = enabled, capacity = capacity,
+         hash = fn _ => raise Fail "disabled attempt hashed an endpoint"}
+      val theorem = #run cache
+        {procedure = "disabled", source = left, target = left,
+         prove = fn () => Thm.DISCH left (Thm.ASSUME left)}
+    in assert (#misses (#statistics cache ()) = 1 andalso
+      List.null (Thm.hyp theorem), "disabled attempt skipped checked proving")
+    end) [(false, 4), (true, 0)]
+  val target = boolSyntax.mk_imp (left, right)
+  val {theorem, metrics} = SmtSkeletonProve.prove_with_owners
+    (SmtSkeletonProve.new_context []) (Redblackmap.mkDict Term.compare)
+    (SmtSkeletonProve.term_measure target) target
+  val _ = assert (Portable.pointer_eq (Thm.concl theorem, target) andalso
+    List.null (Thm.hyp theorem) andalso
+    #node_cache_structural_reanchor_successes metrics > 0,
+    "complete skeleton cache route lost independent-copy transport")
+  val _ = check_oracle_tags "indexed skeleton" theorem
+  fun word_shared 0 = Term.mk_var ("indexed-word", ``:word16``)
+    | word_shared n = let val child = word_shared (n - 1)
+                     in wordsSyntax.mk_word_and (child, child) end
+  fun atom () = wordsSyntax.mk_word_bit
+    (numSyntax.zero_tm, word_shared 40)
+  val dispatch_target = boolSyntax.mk_imp (atom (), atom ())
+  val context = SmtSkeletonDispatch.new_context
+    (fn _ => raise Fail "ownership analysis invoked a prover")
+  val _ = assert (Option.isSome
+    (SmtSkeletonDispatch.analyze context dispatch_target),
+    "independent word copies lost ownership dispatch")
+  val fresh = SmtReplayAttempt.new
+    {enabled = true, capacity = 4, hash = fn _ => 0}
+  val fresh_law = #run fresh
+    {procedure = "independent-result", source = left, target = left,
+     prove = fn () => Thm.DISCH right (Thm.ASSUME right)}
+  val (fresh_source, fresh_target) = boolSyntax.dest_imp (Thm.concl fresh_law)
+  val _ = assert (Portable.pointer_eq (fresh_source, left) andalso
+    Portable.pointer_eq (fresh_target, left),
+    "fresh independent checked schema was not aligned nodewise")
+  val _ = case Exn.capture
+      (SmtSkeletonProve.validate_theorem "independent-result" left)
+      (Thm.REFL right) of
+      Exn.Exn (HOL_ERR detail) => assert
+        (String.isSubstring "made no progress" (Feedback.message_of detail),
+         "independent fresh atom validation changed its first diagnostic")
+    | _ => die "independent unchanged atom expansion was accepted"
+  fun mono 0 = Type.bool
+    | mono n = let val child = mono (n - 1)
+               in Type.--> (child, child) end
+  val large_type = mono 22
+  val predicate = Term.mk_var ("large-cache-predicate",
+    Type.--> (large_type, Type.bool))
+  val argument = Term.mk_var ("large-cache-argument", large_type)
+  fun typed_atom () = Term.mk_comb (predicate, argument)
+  val optional = SmtReplayAttempt.new
+    {enabled = true, capacity = 4, hash = fn _ => 0}
+  val optional_calls = ref 0
+  fun typed_run source = #run optional
+    {procedure = "type-admission", source = source, target = source,
+     prove = fn () => (optional_calls := !optional_calls + 1;
+       Thm.DISCH source (Thm.ASSUME source))}
+  val _ = typed_run (typed_atom ())
+  val typed_copy = typed_atom ()
+  val _ = typed_run typed_copy
+  val _ = assert (!optional_calls = 2 andalso
+    #hits (#statistics optional ()) = 0,
+    "optional Type-work refusal did not run the checked miss procedure")
+  fun poly 0 = Type.mk_vartype "'cache_index_type"
+    | poly n = let val child = poly (n - 1)
+               in Type.--> (child, child) end
+  fun poly_atom () =
+    let val ty = poly 40
+    in Term.mk_comb
+      (Term.mk_var ("poly-cache-predicate", Type.--> (ty, Type.bool)),
+       Term.mk_var ("poly-cache-argument", ty)) end
+  val poly_cache = SmtReplayAttempt.new
+    {enabled = true, capacity = 4, hash = fn _ => 0}
+  val poly_calls = ref 0
+  fun poly_run source = #run poly_cache
+    {procedure = "poly-type", source = source, target = source,
+     prove = fn () => (poly_calls := !poly_calls + 1;
+       Thm.DISCH source (Thm.ASSUME source))}
+  val _ = poly_run (poly_atom ())
+  val poly_copy = poly_atom ()
+  val poly_law = poly_run poly_copy
+  val _ = assert (!poly_calls = 1 andalso
+    Portable.pointer_eq (#1 (boolSyntax.dest_imp (Thm.concl poly_law)),
+      poly_copy), "independent shared Type annotations unfolded on a hit")
+  val binder = boolSyntax.mk_forall (argument,
+    Term.mk_var ("large-cache-body", Type.bool))
+  val index = SmtSkeletonProve.new_cache_index 8192
+  val _ = Count.counting_thms true
+  val counted = Exn.capture (fn () =>
+    let val prior = Count.thm_count ()
+    in assert (index binder = NONE andalso Count.thm_count () = prior,
+      "unadmitted binder lookup performed native work or acquired an ID")
+    end) ()
+  val _ = Count.counting_thms false
+  val _ = Exn.release counted
+  val exhausted_order = SmtSkeletonProve.new_cache_order 1
+  val _ = assert (exhausted_order (left, right) = EQUAL andalso
+    exhausted_order (left, left) = EQUAL,
+    "optional index exhaustion changed semantic node membership")
+  val binder_copy = boolSyntax.mk_forall
+    (Term.mk_var ("renamed-cache-argument", large_type),
+     Term.mk_var ("large-cache-body", Type.bool))
+  val owners = Redblackmap.insert
+    (Redblackmap.mkDict Term.compare, binder, "required")
+  val owner_calls = ref 0
+  val context = SmtSkeletonProve.new_context
+    [{name = "required", expand = fn _ =>
+      (owner_calls := !owner_calls + 1; SmtSkeletonProve.Unable)}]
+  val result = SmtSkeletonProve.attempt_with_owners context owners
+    {tree_nodes = 1, dag_nodes = 1}
+    (boolSyntax.mk_imp (binder_copy, boolSyntax.T))
+  val _ = assert (!owner_calls = 1 andalso
+    (case result of SmtSkeletonProve.Declined => true | _ => false),
+    "unadmitted alpha copy lost its required semantic owner")
 in () end
 
 fun circuit_graph_admission_success () =
@@ -31769,6 +31929,8 @@ let
     ("replay_scoped_binder_closure_success",
       replay_scoped_binder_closure_success),
     ("replay_attempt_reuse_success", replay_attempt_reuse_success),
+    ("replay_indexed_cache_boundaries_success",
+      replay_indexed_cache_boundaries_success),
     ("circuit_graph_admission_success", circuit_graph_admission_success),
     ("circuit_graph_checked_success", circuit_graph_checked_success),
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),

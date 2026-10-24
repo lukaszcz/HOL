@@ -18,6 +18,9 @@ struct
     let
       val _ = capacity >= 0 orelse raise ERR "new" "negative cache capacity"
       val saved = ref (Redblackmap.mkDict Int.compare)
+      val index = SmtSkeletonProve.new_cache_index
+        SmtResource.max_bv_replay_term_nodes
+      val reuse = enabled andalso capacity > 0
       val size = ref 0
       val hits = ref 0
       val misses = ref 0
@@ -27,44 +30,92 @@ struct
         | Counterexample theorem => raise HolSatLib.SAT_cex theorem
       fun run ({procedure, source, target, prove} : request) =
         let
-          (* Keep user-supplied hashes separate to avoid arithmetic overflow.
-             Exact typed endpoints and the procedure label decide a hit. *)
-          val key = hash source
-          val target_key = hash target
+          (* Hash collisions never establish equality. Typed child IDs decide
+             reuse; exhaustion is a miss, not a new admission requirement.
+             Disabled reuse must not even invoke an optional hash callback. *)
+          val key = if reuse then hash source else 0
+          val target_key = if reuse then hash target else 0
+          val endpoints = if reuse then
+              (case (index source, index target) of
+                 (SOME left, SOME right) => SOME (left, right)
+               | _ => NONE)
+            else NONE
           val bucket = Option.getOpt (Redblackmap.peek (!saved, key), [])
-          val found = if not enabled orelse capacity = 0 then NONE else
-            List.find (fn (label, left, right, right_key, _) =>
-              label = procedure andalso right_key = target_key andalso
-              same source left andalso same target right) bucket
+          val candidate = case endpoints of NONE => NONE
+            | SOME (left, right) =>
+                List.find (fn (label, saved_left, saved_right, right_key, _) =>
+                  label = procedure andalso right_key = target_key andalso
+                  left = saved_left andalso right = saved_right) bucket
+          fun anchor (Proved theorem) =
+                let
+                  val (left, right) = boolSyntax.dest_imp (Thm.concl theorem)
+                in
+                  if Portable.pointer_eq (left, source) andalso
+                     Portable.pointer_eq (right, target) then Proved theorem
+                  else Proved (Thm.EQ_MP
+                    (SmtSkeletonProve.bounded_nodewise_equality
+                      SmtResource.max_bv_replay_term_nodes
+                      (Thm.concl theorem) (boolSyntax.mk_imp (source, target)))
+                    theorem)
+                end
+            | anchor outcome = outcome
+          val found = case candidate of NONE => NONE
+            | SOME (_, _, _, _, outcome) =>
+                (SOME (anchor outcome)
+                 handle SmtSkeletonProve.REANCHOR_LIMIT => NONE
+                      | Feedback.HOL_ERR detail =>
+                          if SmtSkeletonProve.cache_admission_refusal detail
+                          then NONE else raise Feedback.HOL_ERR detail)
           fun attempt () =
             (let
                val theorem = prove ()
-               val _ = List.null (Thm.hyp theorem) andalso
-                   same (Thm.concl theorem) (boolSyntax.mk_imp (source, target))
+               (* Fresh checked laws normally retain the requested pointers.
+                  Independent application copies can also be validated by
+                  exact typed IDs. If optional indexing is unavailable, keep
+                  the original fresh-result validator, never refuse a miss. *)
+               val expected = boolSyntax.mk_imp (source, target)
+               val valid =
+                 if (case Lib.total boolSyntax.dest_imp
+                       (Thm.concl theorem) of
+                       SOME (left, right) =>
+                         Portable.pointer_eq (left, source) andalso
+                         Portable.pointer_eq (right, target)
+                     | NONE => false) then true
+                 else case (index (Thm.concl theorem), index expected) of
+                     (SOME left, SOME right) => left = right
+                   | _ => same (Thm.concl theorem) expected
+               val _ = List.null (Thm.hyp theorem) andalso valid
                  orelse raise ERR "run" "invalid closed implication schema"
                val _ = Library.check_oracle_tags
                  "SmtReplayAttempt" "implication schema" theorem
-             in Proved theorem end
+               val result = anchor (Proved theorem)
+                 handle SmtSkeletonProve.REANCHOR_LIMIT => Proved theorem
+                      | Feedback.HOL_ERR detail =>
+                          if SmtSkeletonProve.cache_admission_refusal detail
+                          then Proved theorem
+                          else raise Feedback.HOL_ERR detail
+             in result end
              handle HolSatLib.SAT_satisfiable _ => Satisfiable
                   | HolSatLib.SAT_cex theorem => Counterexample theorem)
         in case found of
-            SOME (_, _, _, _, outcome) =>
-              (hits := !hits + 1; return outcome)
+            SOME outcome => (hits := !hits + 1; return outcome)
           | NONE =>
               let
                 val _ = misses := !misses + 1
                 val outcome = attempt ()
-                val _ = if not enabled orelse capacity = 0 then () else
-                  let
-                    val _ = if !size < capacity then () else
-                      (saved := Redblackmap.mkDict Int.compare; size := 0)
-                    val bucket = Option.getOpt
-                      (Redblackmap.peek (!saved, key), [])
-                  in
-                    saved := Redblackmap.insert (!saved, key,
-                      (procedure, source, target, target_key, outcome) :: bucket);
-                    size := !size + 1
-                  end
+                val _ = case endpoints of NONE => ()
+                  | SOME (left, right) =>
+                    let
+                      val _ = if !size < capacity then () else
+                        (saved := Redblackmap.mkDict Int.compare; size := 0)
+                      val bucket = Option.getOpt
+                        (Redblackmap.peek (!saved, key), [])
+                    in
+                      saved := Redblackmap.insert (!saved, key,
+                        (procedure, left, right, target_key, outcome) ::
+                        bucket);
+                      size := !size + 1
+                    end
               in return outcome end
         end
     in
