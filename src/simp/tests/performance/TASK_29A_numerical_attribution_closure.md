@@ -87,6 +87,23 @@ The all-zero GC and equality-straddling B/B policy issues above require explicit
 review, not silent threshold changes. Attribution/repair, the complete fresh
 grid and TASK29B's allocation coverage/lineage/matrix are still unresolved.
 
+## Explicit policy review — input required, not closure
+
+`TASK29A_POLICY_REVIEW.md` and `evidence/task29/policy-review/review.json`
+record a reproducible review of the unchanged executable contract. The new
+`policy_review.py` fully re-admits the original `compile_single/0` B/B and B/C
+archive and retains all 120 zero-GC samples plus positive-GC timer controls.
+Synthetic contract examples and regression tests distinguish undefined ratios,
+precise equality-straddling controls and passing exact positive equality.
+
+The analysis is now recorded; policy-owner disposition is still required:
+confirm whether exact zero/zero must remain nonpassing and whether B/B is
+intended as a directional upper-CI<=1 requirement. No alternative contract is
+selected or implemented. Repetitions that remain zero cannot resolve the first
+obstruction; a narrow straddling interval alone does not prove instability.
+This review is NOT a repair, fresh grid, heap/pool attribution or task
+completion. All numerical failures, uncertainty and other requirements remain.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

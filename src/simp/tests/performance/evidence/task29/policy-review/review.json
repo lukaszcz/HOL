@@ -1,0 +1,2555 @@
+{
+  "schema": "task29-policy-review-v1",
+  "task29a": "incomplete",
+  "status": "policy-owner input required; no waiver granted",
+  "scope": "one historical cell re-admitted; NOT full-grid replay or fresh timing/layout/allocation evidence",
+  "policy": {
+    "minimum_pairs": 10,
+    "outliers": "none removed",
+    "estimator": "median of paired candidate/baseline ratios",
+    "bootstrap": "20000 paired resamples; seed 3003; ranks 499/19499",
+    "decision": "low > 1: fail; high <= 1: pass; otherwise inconclusive",
+    "zero_denominator": "inconclusive, including 0/0; no pairs dropped",
+    "budgets": null
+  },
+  "sources": {
+    "policy_review.py": {
+      "sha256": "eb57cab2643093815f58154e16b79d3295d64e44bc537be8d89c6b48f0f44b26",
+      "bytes": 7951
+    },
+    "acceptance.py": {
+      "sha256": "80533c9361da67526721d4158740dc7cc76e7139d979a7bc800a52da32d8f963",
+      "bytes": 34833
+    },
+    "summarize.py": {
+      "sha256": "fd2c9cbce1c334bcc8bdd98e0a905d54ecdd3ed50eab7632ba1d9923279d4d24",
+      "bytes": 4637
+    },
+    "task29_gate.py": {
+      "sha256": "604f5fcc198b3b71ea4835ce99f019933f858c9efb858557de6f8eb63ceea952",
+      "bytes": 9611
+    },
+    "PROTOCOL.md": {
+      "sha256": "47b0fbab06aa54df61e228fd29453ca27cf70cc187d5cfe0bc1ba1821c7c68f5",
+      "bytes": 22307
+    },
+    "evidence_bundle.py": {
+      "sha256": "a989e8b177e6237d9cb1a5b3001aa73c1dac5bac060627fb055fd44ae3c78807",
+      "bytes": 4040
+    },
+    "test_policy_review.py": {
+      "sha256": "c747652d19bbd1d510d9ba167c1dc311918942c0da5534a376d45c1e53a6bb23",
+      "bytes": 5872
+    },
+    "TASK29A_POLICY_REVIEW.md": {
+      "sha256": "faede122500ae6403fdbe2933898786910f68abfe474d94b2835ef2ac16b3afe",
+      "bytes": 5574
+    }
+  },
+  "grid_inventory": {
+    "sha256": "919be8fa2387f4389da04d3a6f32ea859440e096fbdb3f3924935518f1a65746",
+    "bytes": 49576
+  },
+  "reviewed_cell": {
+    "case": "compile_single",
+    "size": 0,
+    "archive": "compile_single-0.json.xz",
+    "archive_seal": {
+      "sha256": "bd0d6f146ac705889faa23a99e671a106b3897c745af8982ca368dbbd70d1b44",
+      "bytes": 437788
+    },
+    "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+    "candidate": "18e4a1ecb624b9b13bb9a0f3ba3caf8c189bdff8",
+    "fixture": "historical driver, NOT repaired-driver acceptance",
+    "processes": [
+      {
+        "experiment": "control",
+        "pair": 0,
+        "selection": "baseline",
+        "receipt": "pair-00-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "40f0c206114ce3b8ed71cfe96ea265ea6ac08670ed22f1e716fa1e3acf02dd54",
+          "bytes": 50267
+        },
+        "timer_accounting": {
+          "wall": 0.083684,
+          "nongc_usr": 0.000208,
+          "nongc_sys": 1.4e-05,
+          "gc_usr": 0.072397,
+          "gc_sys": 0.011078,
+          "cpu_usr": 0.072613,
+          "cpu_sys": 0.011092,
+          "check_gc_user": 0.072397,
+          "consumed": 5.0,
+          "cpu": 0.083705,
+          "gc": 0.08347500000000001
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 0,
+        "selection": "candidate",
+        "receipt": "pair-00-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "dfdd9d57e1775f30814119aaf1b69ce7636f7801ab1b610bd8d361530be3ae05",
+          "bytes": 50218
+        },
+        "timer_accounting": {
+          "wall": 0.080007,
+          "nongc_usr": 0.000213,
+          "nongc_sys": 1.3e-05,
+          "gc_usr": 0.073841,
+          "gc_sys": 0.005955,
+          "cpu_usr": 0.074061,
+          "cpu_sys": 0.005969,
+          "check_gc_user": 0.073841,
+          "consumed": 5.0,
+          "cpu": 0.08003,
+          "gc": 0.079796
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 1,
+        "selection": "candidate",
+        "receipt": "pair-01-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "0a0d71bed2b13152e03bf0e1dcac6bf59cdc124d92b0e7800c5549e89faef5a9",
+          "bytes": 50218
+        },
+        "timer_accounting": {
+          "wall": 0.089315,
+          "nongc_usr": 0.000194,
+          "nongc_sys": 0.000289,
+          "gc_usr": 0.078102,
+          "gc_sys": 0.01071,
+          "cpu_usr": 0.078309,
+          "cpu_sys": 0.010999,
+          "check_gc_user": 0.078102,
+          "consumed": 5.0,
+          "cpu": 0.089308,
+          "gc": 0.088812
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 1,
+        "selection": "baseline",
+        "receipt": "pair-01-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "83aba153dacac9e30ddf8945688db71280ed9e3a2a0cb365990468a069cfa9c6",
+          "bytes": 50113
+        },
+        "timer_accounting": {
+          "wall": 0.087079,
+          "nongc_usr": 0.000236,
+          "nongc_sys": 7e-06,
+          "gc_usr": 0.073733,
+          "gc_sys": 0.01308,
+          "cpu_usr": 0.07399,
+          "cpu_sys": 0.013087,
+          "check_gc_user": 0.073733,
+          "consumed": 5.0,
+          "cpu": 0.087077,
+          "gc": 0.086813
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 2,
+        "selection": "baseline",
+        "receipt": "pair-02-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "311d488e40132a3df05020307961df4f25cef72141776d005b36ee9b2e70c405",
+          "bytes": 50097
+        },
+        "timer_accounting": {
+          "wall": 0.080099,
+          "nongc_usr": 0.000185,
+          "nongc_sys": 7.6e-05,
+          "gc_usr": 0.07193,
+          "gc_sys": 0.007925,
+          "cpu_usr": 0.072123,
+          "cpu_sys": 0.008002,
+          "check_gc_user": 0.07193,
+          "consumed": 5.0,
+          "cpu": 0.080125,
+          "gc": 0.079855
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 2,
+        "selection": "candidate",
+        "receipt": "pair-02-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "1770e6d30485c3c7997bdffa4bdc22760cc590ca0e1bd504be6e24d248fdca1d",
+          "bytes": 50232
+        },
+        "timer_accounting": {
+          "wall": 0.083633,
+          "nongc_usr": 0.000235,
+          "nongc_sys": 1.8e-05,
+          "gc_usr": 0.073369,
+          "gc_sys": 0.010022,
+          "cpu_usr": 0.073615,
+          "cpu_sys": 0.010041,
+          "check_gc_user": 0.073369,
+          "consumed": 5.0,
+          "cpu": 0.083656,
+          "gc": 0.083391
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 3,
+        "selection": "candidate",
+        "receipt": "pair-03-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "e2cf283e16660faf005e241d605d80953891f5897749b8e07a46ec900e44438a",
+          "bytes": 50271
+        },
+        "timer_accounting": {
+          "wall": 0.08078,
+          "nongc_usr": 0.000246,
+          "nongc_sys": 0.0,
+          "gc_usr": 0.073487,
+          "gc_sys": 0.007058,
+          "cpu_usr": 0.073742,
+          "cpu_sys": 0.007058,
+          "check_gc_user": 0.073487,
+          "consumed": 5.0,
+          "cpu": 0.0808,
+          "gc": 0.08054499999999999
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 3,
+        "selection": "baseline",
+        "receipt": "pair-03-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "835ee1973879c8bc3647004df480c94067a846b9176fd99f3dd03a0d330b3498",
+          "bytes": 50283
+        },
+        "timer_accounting": {
+          "wall": 0.082655,
+          "nongc_usr": 0.000229,
+          "nongc_sys": 1.5e-05,
+          "gc_usr": 0.074387,
+          "gc_sys": 0.008039,
+          "cpu_usr": 0.074625,
+          "cpu_sys": 0.008054,
+          "check_gc_user": 0.074387,
+          "consumed": 5.0,
+          "cpu": 0.082679,
+          "gc": 0.082426
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 4,
+        "selection": "baseline",
+        "receipt": "pair-04-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "fcf4a85aeba8d422933ed51c4f86a77c8ddcf6b65a51ba6256e648489b204937",
+          "bytes": 50241
+        },
+        "timer_accounting": {
+          "wall": 0.081235,
+          "nongc_usr": 0.000202,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.071786,
+          "gc_sys": 0.008891,
+          "cpu_usr": 0.071995,
+          "cpu_sys": 0.00891,
+          "check_gc_user": 0.071786,
+          "consumed": 5.0,
+          "cpu": 0.080905,
+          "gc": 0.080677
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 4,
+        "selection": "candidate",
+        "receipt": "pair-04-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "99d4fd4a729a605add27ef398cf2a8abe32efa8432a825b32d097300699dc666",
+          "bytes": 50294
+        },
+        "timer_accounting": {
+          "wall": 0.080243,
+          "nongc_usr": 0.000211,
+          "nongc_sys": 1.1e-05,
+          "gc_usr": 0.073998,
+          "gc_sys": 0.006037,
+          "cpu_usr": 0.074218,
+          "cpu_sys": 0.006048,
+          "check_gc_user": 0.073998,
+          "consumed": 5.0,
+          "cpu": 0.080266,
+          "gc": 0.080035
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 5,
+        "selection": "candidate",
+        "receipt": "pair-05-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "e820b6cf5d1f6810024353166a54c388bd26fbe686994e7c878787d13c76f82f",
+          "bytes": 50248
+        },
+        "timer_accounting": {
+          "wall": 0.07982,
+          "nongc_usr": 0.000205,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.071656,
+          "gc_sys": 0.007955,
+          "cpu_usr": 0.071867,
+          "cpu_sys": 0.007974,
+          "check_gc_user": 0.071656,
+          "consumed": 5.0,
+          "cpu": 0.079841,
+          "gc": 0.079611
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 5,
+        "selection": "baseline",
+        "receipt": "pair-05-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "d88daaea7c4e3bf1e423a192b45449b5a5a4b56076486f252b30a82ca1c24dbc",
+          "bytes": 50219
+        },
+        "timer_accounting": {
+          "wall": 0.080556,
+          "nongc_usr": 0.00021,
+          "nongc_sys": 1.4e-05,
+          "gc_usr": 0.072382,
+          "gc_sys": 0.007949,
+          "cpu_usr": 0.072601,
+          "cpu_sys": 0.007963,
+          "check_gc_user": 0.072382,
+          "consumed": 5.0,
+          "cpu": 0.080564,
+          "gc": 0.080331
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 6,
+        "selection": "baseline",
+        "receipt": "pair-06-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "a0d4a7830fb623ee7595976cf3d863245acb3c320935637f5271ce4929fb0307",
+          "bytes": 50225
+        },
+        "timer_accounting": {
+          "wall": 0.083016,
+          "nongc_usr": 0.000224,
+          "nongc_sys": 1.4e-05,
+          "gc_usr": 0.075753,
+          "gc_sys": 0.007013,
+          "cpu_usr": 0.075986,
+          "cpu_sys": 0.007027,
+          "check_gc_user": 0.075753,
+          "consumed": 5.0,
+          "cpu": 0.083013,
+          "gc": 0.082766
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 6,
+        "selection": "candidate",
+        "receipt": "pair-06-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "698d11b83dbeb4bbb626bb864aa41b1f348101f5520800bb83c8c622313a854e",
+          "bytes": 50278
+        },
+        "timer_accounting": {
+          "wall": 0.082831,
+          "nongc_usr": 0.000217,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.074493,
+          "gc_sys": 0.008072,
+          "cpu_usr": 0.074741,
+          "cpu_sys": 0.008091,
+          "check_gc_user": 0.074493,
+          "consumed": 5.0,
+          "cpu": 0.082832,
+          "gc": 0.082565
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 7,
+        "selection": "candidate",
+        "receipt": "pair-07-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "faf0d970036b24a9c12fcd07307fafe90c2d94befb09b80706b574afd76233be",
+          "bytes": 50223
+        },
+        "timer_accounting": {
+          "wall": 0.080708,
+          "nongc_usr": 0.000203,
+          "nongc_sys": 1.4e-05,
+          "gc_usr": 0.072479,
+          "gc_sys": 0.00801,
+          "cpu_usr": 0.072689,
+          "cpu_sys": 0.008024,
+          "check_gc_user": 0.072479,
+          "consumed": 5.0,
+          "cpu": 0.08071300000000001,
+          "gc": 0.080489
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 7,
+        "selection": "baseline",
+        "receipt": "pair-07-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "775f0441bf45610fe12e376a19803447cd498c4dd8fdca5b283c2f6856e527fa",
+          "bytes": 50341
+        },
+        "timer_accounting": {
+          "wall": 0.078162,
+          "nongc_usr": 0.000235,
+          "nongc_sys": 1.3e-05,
+          "gc_usr": 0.071929,
+          "gc_sys": 0.006001,
+          "cpu_usr": 0.072174,
+          "cpu_sys": 0.006014,
+          "check_gc_user": 0.071929,
+          "consumed": 5.0,
+          "cpu": 0.07818800000000001,
+          "gc": 0.07793000000000001
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 8,
+        "selection": "baseline",
+        "receipt": "pair-08-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "7252e86238afe6269df1b6f5937d88985efa9f621907070542664ff57c7b0699",
+          "bytes": 50189
+        },
+        "timer_accounting": {
+          "wall": 0.07945,
+          "nongc_usr": 0.00025,
+          "nongc_sys": 1.2e-05,
+          "gc_usr": 0.072175,
+          "gc_sys": 0.007027,
+          "cpu_usr": 0.072434,
+          "cpu_sys": 0.007039,
+          "check_gc_user": 0.072175,
+          "consumed": 5.0,
+          "cpu": 0.079473,
+          "gc": 0.07920200000000001
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 8,
+        "selection": "candidate",
+        "receipt": "pair-08-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "7131fc0dabaad83c07b0e1de99bd65f8fbc04641aec7b4b9ca3d088b1d818b40",
+          "bytes": 50166
+        },
+        "timer_accounting": {
+          "wall": 0.082696,
+          "nongc_usr": 0.000176,
+          "nongc_sys": 6.4e-05,
+          "gc_usr": 0.070591,
+          "gc_sys": 0.011878,
+          "cpu_usr": 0.070775,
+          "cpu_sys": 0.011942,
+          "check_gc_user": 0.070591,
+          "consumed": 5.0,
+          "cpu": 0.082717,
+          "gc": 0.082469
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 9,
+        "selection": "candidate",
+        "receipt": "pair-09-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "2cb0481e0039238a5176a9688ab93edcfb7639e45582c09eda664465eae84aaf",
+          "bytes": 50160
+        },
+        "timer_accounting": {
+          "wall": 0.079485,
+          "nongc_usr": 0.000206,
+          "nongc_sys": 1.5e-05,
+          "gc_usr": 0.072309,
+          "gc_sys": 0.006971,
+          "cpu_usr": 0.072523,
+          "cpu_sys": 0.006986,
+          "check_gc_user": 0.072309,
+          "consumed": 5.0,
+          "cpu": 0.07950900000000001,
+          "gc": 0.07928
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "control",
+        "pair": 9,
+        "selection": "baseline",
+        "receipt": "pair-09-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "adbc23a399f92327dbd482dde92d041e7e4407d66da38e0e15582ba2ff561b86",
+          "bytes": 50187
+        },
+        "timer_accounting": {
+          "wall": 0.081001,
+          "nongc_usr": 0.0002,
+          "nongc_sys": 2e-05,
+          "gc_usr": 0.072796,
+          "gc_sys": 0.007997,
+          "cpu_usr": 0.073005,
+          "cpu_sys": 0.008017,
+          "check_gc_user": 0.072796,
+          "consumed": 5.0,
+          "cpu": 0.081022,
+          "gc": 0.080793
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 0,
+        "selection": "baseline",
+        "receipt": "pair-00-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "8dc999e25cc96b23f9f6f30739c6ee34f069d054e33cd44872725124d0d9ec18",
+          "bytes": 50271
+        },
+        "timer_accounting": {
+          "wall": 0.082897,
+          "nongc_usr": 0.000176,
+          "nongc_sys": 6.9e-05,
+          "gc_usr": 0.071746,
+          "gc_sys": 0.010919,
+          "cpu_usr": 0.071928,
+          "cpu_sys": 0.010988,
+          "check_gc_user": 0.071746,
+          "consumed": 5.0,
+          "cpu": 0.082916,
+          "gc": 0.082665
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 0,
+        "selection": "candidate",
+        "receipt": "pair-00-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "c60d1dea61bffbad2199d752be63ecc6bf9ef9aee311be52403317eb9de9e3b7",
+          "bytes": 50426
+        },
+        "timer_accounting": {
+          "wall": 0.087877,
+          "nongc_usr": 0.000219,
+          "nongc_sys": 8e-06,
+          "gc_usr": 0.080425,
+          "gc_sys": 0.007002,
+          "cpu_usr": 0.080652,
+          "cpu_sys": 0.00701,
+          "check_gc_user": 0.080425,
+          "consumed": 5.0,
+          "cpu": 0.087662,
+          "gc": 0.08742699999999999
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 1,
+        "selection": "candidate",
+        "receipt": "pair-01-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "51f82c9b07247bd1adfe7effe47dbeb9911855edac20cc8023d3338cd9468eaf",
+          "bytes": 50579
+        },
+        "timer_accounting": {
+          "wall": 0.091222,
+          "nongc_usr": 0.000246,
+          "nongc_sys": 2.4e-05,
+          "gc_usr": 0.079974,
+          "gc_sys": 0.010991,
+          "cpu_usr": 0.08023,
+          "cpu_sys": 0.011015,
+          "check_gc_user": 0.079974,
+          "consumed": 5.0,
+          "cpu": 0.09124499999999999,
+          "gc": 0.090965
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 1,
+        "selection": "baseline",
+        "receipt": "pair-01-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "4d92a653f94687ae2b46f4e8b15959fc5dddd233200cbe5f560af6860536fc50",
+          "bytes": 50303
+        },
+        "timer_accounting": {
+          "wall": 0.080903,
+          "nongc_usr": 0.00019,
+          "nongc_sys": 6.8e-05,
+          "gc_usr": 0.07377,
+          "gc_sys": 0.006896,
+          "cpu_usr": 0.073968,
+          "cpu_sys": 0.006964,
+          "check_gc_user": 0.07377,
+          "consumed": 5.0,
+          "cpu": 0.080932,
+          "gc": 0.080666
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 2,
+        "selection": "baseline",
+        "receipt": "pair-02-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "ba06a295800b4898694de621a22192cad10dee6c3709c14c009a434c77872458",
+          "bytes": 50176
+        },
+        "timer_accounting": {
+          "wall": 0.082988,
+          "nongc_usr": 0.000231,
+          "nongc_sys": 6.1e-05,
+          "gc_usr": 0.072678,
+          "gc_sys": 0.010047,
+          "cpu_usr": 0.072909,
+          "cpu_sys": 0.01011,
+          "check_gc_user": 0.072678,
+          "consumed": 5.0,
+          "cpu": 0.083019,
+          "gc": 0.082725
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 2,
+        "selection": "candidate",
+        "receipt": "pair-02-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "fa4e1ef84b5ff89b7fe2819e49952b6d20c72e758daf883fafc9651944858710",
+          "bytes": 50486
+        },
+        "timer_accounting": {
+          "wall": 0.091365,
+          "nongc_usr": 0.000243,
+          "nongc_sys": 1.6e-05,
+          "gc_usr": 0.081117,
+          "gc_sys": 0.009997,
+          "cpu_usr": 0.081368,
+          "cpu_sys": 0.010013,
+          "check_gc_user": 0.081117,
+          "consumed": 5.0,
+          "cpu": 0.09138099999999999,
+          "gc": 0.091114
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 3,
+        "selection": "candidate",
+        "receipt": "pair-03-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "4bcf6f7533d5e1dd5514b073116a7156742c069e065e5277abe8291d6a7ae9c7",
+          "bytes": 50511
+        },
+        "timer_accounting": {
+          "wall": 0.089408,
+          "nongc_usr": 0.00021,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.081226,
+          "gc_sys": 0.007966,
+          "cpu_usr": 0.081444,
+          "cpu_sys": 0.007985,
+          "check_gc_user": 0.081226,
+          "consumed": 5.0,
+          "cpu": 0.08942900000000001,
+          "gc": 0.08919200000000001
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 3,
+        "selection": "baseline",
+        "receipt": "pair-03-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "00b5bfe4029980f931d86411384ab65010ad8acf1c07f0cbaa8be80049fb366d",
+          "bytes": 50253
+        },
+        "timer_accounting": {
+          "wall": 0.080724,
+          "nongc_usr": 0.000236,
+          "nongc_sys": 2.4e-05,
+          "gc_usr": 0.074332,
+          "gc_sys": 0.006139,
+          "cpu_usr": 0.074579,
+          "cpu_sys": 0.006163,
+          "check_gc_user": 0.074332,
+          "consumed": 5.0,
+          "cpu": 0.08074200000000001,
+          "gc": 0.080471
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 4,
+        "selection": "baseline",
+        "receipt": "pair-04-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "36c9e07361af9bf54afcb54518ab656ff0ed25042e3311327febb535fe9edbdc",
+          "bytes": 50199
+        },
+        "timer_accounting": {
+          "wall": 0.081875,
+          "nongc_usr": 0.000251,
+          "nongc_sys": 9e-06,
+          "gc_usr": 0.074514,
+          "gc_sys": 0.007051,
+          "cpu_usr": 0.074777,
+          "cpu_sys": 0.00706,
+          "check_gc_user": 0.074514,
+          "consumed": 5.0,
+          "cpu": 0.081837,
+          "gc": 0.081565
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 4,
+        "selection": "candidate",
+        "receipt": "pair-04-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "4698b9b1b1bca7a13d620f956e470e32c3ee23960e23bdc4e000e3aac5f5e4ab",
+          "bytes": 50492
+        },
+        "timer_accounting": {
+          "wall": 0.088228,
+          "nongc_usr": 0.000233,
+          "nongc_sys": 1e-05,
+          "gc_usr": 0.080007,
+          "gc_sys": 0.007994,
+          "cpu_usr": 0.080248,
+          "cpu_sys": 0.008004,
+          "check_gc_user": 0.080007,
+          "consumed": 5.0,
+          "cpu": 0.088252,
+          "gc": 0.088001
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 5,
+        "selection": "candidate",
+        "receipt": "pair-05-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "6032f07d37146ca5513975fa4a7a901e0901db627c0ec233c4f1e62ba05892e5",
+          "bytes": 50440
+        },
+        "timer_accounting": {
+          "wall": 0.088562,
+          "nongc_usr": 0.000221,
+          "nongc_sys": 3.2e-05,
+          "gc_usr": 0.079371,
+          "gc_sys": 0.008958,
+          "cpu_usr": 0.079599,
+          "cpu_sys": 0.00899,
+          "check_gc_user": 0.079371,
+          "consumed": 5.0,
+          "cpu": 0.088589,
+          "gc": 0.08832899999999999
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 5,
+        "selection": "baseline",
+        "receipt": "pair-05-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "dc63492d0192abcb2be78cad511e63c241a1e977f2ae071adf51f2ac33083603",
+          "bytes": 50327
+        },
+        "timer_accounting": {
+          "wall": 0.083077,
+          "nongc_usr": 0.000187,
+          "nongc_sys": 6.7e-05,
+          "gc_usr": 0.070877,
+          "gc_sys": 0.011926,
+          "cpu_usr": 0.071072,
+          "cpu_sys": 0.011994,
+          "check_gc_user": 0.070877,
+          "consumed": 5.0,
+          "cpu": 0.083066,
+          "gc": 0.082803
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 6,
+        "selection": "baseline",
+        "receipt": "pair-06-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "ef365e4105ca8dd221f4ef66a6b40faab7b87349ee50aa034962e0ef1baff8c7",
+          "bytes": 50180
+        },
+        "timer_accounting": {
+          "wall": 0.082814,
+          "nongc_usr": 0.000234,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.074582,
+          "gc_sys": 0.007994,
+          "cpu_usr": 0.074828,
+          "cpu_sys": 0.008013,
+          "check_gc_user": 0.074582,
+          "consumed": 5.0,
+          "cpu": 0.082841,
+          "gc": 0.082576
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 6,
+        "selection": "candidate",
+        "receipt": "pair-06-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "830998df30d0e2c310d05913ac8d425e8e50946c5d140b7049af8f2e262378ad",
+          "bytes": 50413
+        },
+        "timer_accounting": {
+          "wall": 0.090254,
+          "nongc_usr": 0.000194,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.079052,
+          "gc_sys": 0.011005,
+          "cpu_usr": 0.079252,
+          "cpu_sys": 0.011024,
+          "check_gc_user": 0.079052,
+          "consumed": 5.0,
+          "cpu": 0.09027600000000001,
+          "gc": 0.090057
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 7,
+        "selection": "candidate",
+        "receipt": "pair-07-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "37b474f6a2a3ccf94fa8b00368fc38bfd005ac58049c6e959b9878224415bb82",
+          "bytes": 50502
+        },
+        "timer_accounting": {
+          "wall": 0.086031,
+          "nongc_usr": 0.000235,
+          "nongc_sys": 1.7e-05,
+          "gc_usr": 0.080757,
+          "gc_sys": 0.005032,
+          "cpu_usr": 0.081005,
+          "cpu_sys": 0.005049,
+          "check_gc_user": 0.080757,
+          "consumed": 5.0,
+          "cpu": 0.08605399999999999,
+          "gc": 0.08578899999999999
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 7,
+        "selection": "baseline",
+        "receipt": "pair-07-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "0ef7250e75016b23a279aea2dcc25b2eedcaff1c61edf18a98f35ce3f24fb4b4",
+          "bytes": 50291
+        },
+        "timer_accounting": {
+          "wall": 0.081618,
+          "nongc_usr": 0.00024,
+          "nongc_sys": 1.9e-05,
+          "gc_usr": 0.073011,
+          "gc_sys": 0.00801,
+          "cpu_usr": 0.073261,
+          "cpu_sys": 0.008029,
+          "check_gc_user": 0.073011,
+          "consumed": 5.0,
+          "cpu": 0.08129,
+          "gc": 0.08102100000000001
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 8,
+        "selection": "baseline",
+        "receipt": "pair-08-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "5167ef610770573afe2d383e5c15b52162bd7bd47439fd7f8fa0ccd1610a8807",
+          "bytes": 50217
+        },
+        "timer_accounting": {
+          "wall": 0.082608,
+          "nongc_usr": 0.000244,
+          "nongc_sys": 1.3e-05,
+          "gc_usr": 0.072644,
+          "gc_sys": 0.008945,
+          "cpu_usr": 0.072895,
+          "cpu_sys": 0.008958,
+          "check_gc_user": 0.072644,
+          "consumed": 5.0,
+          "cpu": 0.08185300000000001,
+          "gc": 0.081589
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 8,
+        "selection": "candidate",
+        "receipt": "pair-08-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "a2c4be2899a0657f13b6101821197818eff7344a6b81076684c11e92d2c5d557",
+          "bytes": 50451
+        },
+        "timer_accounting": {
+          "wall": 0.090255,
+          "nongc_usr": 0.000148,
+          "nongc_sys": 0.000128,
+          "gc_usr": 0.079761,
+          "gc_sys": 0.008634,
+          "cpu_usr": 0.079917,
+          "cpu_sys": 0.008763,
+          "check_gc_user": 0.079761,
+          "consumed": 5.0,
+          "cpu": 0.08868000000000001,
+          "gc": 0.088395
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 9,
+        "selection": "candidate",
+        "receipt": "pair-09-candidate.json.gz",
+        "receipt_seal": {
+          "sha256": "23159a18c195d586504dda7673f98923a97aa2598f08b75ee08f127f3d34db86",
+          "bytes": 50511
+        },
+        "timer_accounting": {
+          "wall": 0.090934,
+          "nongc_usr": 0.0002,
+          "nongc_sys": 2.3e-05,
+          "gc_usr": 0.080678,
+          "gc_sys": 0.010021,
+          "cpu_usr": 0.080886,
+          "cpu_sys": 0.010044,
+          "check_gc_user": 0.080678,
+          "consumed": 5.0,
+          "cpu": 0.09093,
+          "gc": 0.090699
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      },
+      {
+        "experiment": "candidate",
+        "pair": 9,
+        "selection": "baseline",
+        "receipt": "pair-09-baseline.json.gz",
+        "receipt_seal": {
+          "sha256": "d067e9293a8ea01af156d946c05379351a3919695af9f8f8b4a72b48d53c21d4",
+          "bytes": 50303
+        },
+        "timer_accounting": {
+          "wall": 0.083238,
+          "nongc_usr": 0.000231,
+          "nongc_sys": 1.8e-05,
+          "gc_usr": 0.074048,
+          "gc_sys": 0.008954,
+          "cpu_usr": 0.07429,
+          "cpu_sys": 0.008972,
+          "check_gc_user": 0.074048,
+          "consumed": 5.0,
+          "cpu": 0.083262,
+          "gc": 0.083002
+        },
+        "samples": [
+          {
+            "sample": 0,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 1,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          },
+          {
+            "sample": 2,
+            "iterations": 67108864,
+            "gc_usr": 0.0,
+            "gc_sys": 0.0,
+            "check_gc_user": 0.0,
+            "gc": 0.0
+          }
+        ]
+      }
+    ],
+    "measured_samples": 120,
+    "gc_metrics": {
+      "control": {
+        "observations": [
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          }
+        ],
+        "baseline_median": 0.0,
+        "candidate_median": 0.0,
+        "paired_ratios": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "median_paired_ratio": null,
+        "paired_ratio_bootstrap_95_percent": null,
+        "decision": "inconclusive",
+        "reason": "zero baseline metric"
+      },
+      "candidate": {
+        "observations": [
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          },
+          {
+            "baseline": 0.0,
+            "candidate": 0.0
+          },
+          {
+            "candidate": 0.0,
+            "baseline": 0.0
+          }
+        ],
+        "baseline_median": 0.0,
+        "candidate_median": 0.0,
+        "paired_ratios": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "median_paired_ratio": null,
+        "paired_ratio_bootstrap_95_percent": null,
+        "decision": "inconclusive",
+        "reason": "baseline-control inconclusive",
+        "control_decision": "inconclusive"
+      }
+    }
+  },
+  "contract_examples": {
+    "scope": "synthetic contract examples, NOT runtime evidence",
+    "zero_over_zero": {
+      "observations": [
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        },
+        {
+          "baseline": 0,
+          "candidate": 0
+        }
+      ],
+      "baseline_median": 0.0,
+      "candidate_median": 0.0,
+      "paired_ratios": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "median_paired_ratio": null,
+      "paired_ratio_bootstrap_95_percent": null,
+      "decision": "inconclusive",
+      "reason": "zero baseline metric"
+    },
+    "positive_over_zero": {
+      "observations": [
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        },
+        {
+          "baseline": 0,
+          "candidate": 1
+        }
+      ],
+      "baseline_median": 0.0,
+      "candidate_median": 1.0,
+      "paired_ratios": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "median_paired_ratio": null,
+      "paired_ratio_bootstrap_95_percent": null,
+      "decision": "inconclusive",
+      "reason": "zero baseline metric"
+    },
+    "exact_positive_equality": {
+      "observations": [
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        },
+        {
+          "baseline": 1,
+          "candidate": 1
+        }
+      ],
+      "baseline_median": 1.0,
+      "candidate_median": 1.0,
+      "paired_ratios": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "median_paired_ratio": 1.0,
+      "paired_ratio_bootstrap_95_percent": [
+        1.0,
+        1.0
+      ],
+      "decision": "pass",
+      "reason": "paired bootstrap"
+    },
+    "precise_equality_straddling": {
+      "observations": [
+        {
+          "baseline": 1,
+          "candidate": 0.999999
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.999999
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.999999
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.999999
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.999999
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        }
+      ],
+      "baseline_median": 1.0,
+      "candidate_median": 1.0,
+      "paired_ratios": [
+        0.999999,
+        1.000001,
+        0.999999,
+        1.000001,
+        0.999999,
+        1.000001,
+        0.999999,
+        1.000001,
+        0.999999,
+        1.000001
+      ],
+      "median_paired_ratio": 1.0,
+      "paired_ratio_bootstrap_95_percent": [
+        0.999999,
+        1.000001
+      ],
+      "decision": "inconclusive",
+      "reason": "paired bootstrap"
+    },
+    "faster_with_uncertain_control": {
+      "observations": [
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        },
+        {
+          "baseline": 1,
+          "candidate": 0.9
+        }
+      ],
+      "baseline_median": 1.0,
+      "candidate_median": 0.9,
+      "paired_ratios": [
+        0.9,
+        0.9,
+        0.9,
+        0.9,
+        0.9,
+        0.9,
+        0.9,
+        0.9,
+        0.9,
+        0.9
+      ],
+      "median_paired_ratio": 0.9,
+      "paired_ratio_bootstrap_95_percent": [
+        0.9,
+        0.9
+      ],
+      "decision": "inconclusive",
+      "reason": "baseline-control inconclusive",
+      "control_decision": "inconclusive"
+    },
+    "slower_with_uncertain_control": {
+      "observations": [
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        },
+        {
+          "baseline": 1,
+          "candidate": 1.000001
+        }
+      ],
+      "baseline_median": 1.0,
+      "candidate_median": 1.000001,
+      "paired_ratios": [
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001,
+        1.000001
+      ],
+      "median_paired_ratio": 1.000001,
+      "paired_ratio_bootstrap_95_percent": [
+        1.000001,
+        1.000001
+      ],
+      "decision": "fail",
+      "reason": "paired bootstrap",
+      "control_decision": "inconclusive"
+    }
+  },
+  "conclusions": [
+    "Any zero baseline process median makes its ratio null; one such pair prevents a passing ratio-only GC gate.",
+    "Repeating observations that remain all zero cannot resolve it. Zero GC is not zero allocation.",
+    "B/B upper-CI<=1 is directional, not an independently specified stability test. Straddling equality alone does not establish host instability.",
+    "Exact positive equality can pass B/B. This review does not prove that every future B/B experiment must block.",
+    "Policy clarification cannot repair measured slowdowns or replace the required fresh grid and attribution."
+  ],
+  "required_input": [
+    "Policy owner: confirm whether zero-denominator GC must remain nonpassing, including exact zero/zero.",
+    "Policy owner: confirm whether B/B admission is intended to require directional upper-CI<=1 rather than a separately specified validity/stability criterion."
+  ]
+}
