@@ -129,20 +129,23 @@ struct
       val (left,right) = Term.dest_eq (Thm.concl theorem)
       val _ = if List.length holes = List.length operands then () else
         raise ERR "checked_graph_schema" "operator schema arity mismatch"
+      (* Schema variables are declarations, not lexical references. Two
+         distinct holes may intentionally denote the same scoped operand. *)
+      val declaration = G.declaration_variable_key graph scope
       val _ = List.foldl (fn (hole,seen) =>
         let
           val _ = if Term.is_var hole then () else
             raise ERR "checked_graph_schema" "non-variable schema hole"
-          val identity = G.resolve_variable graph scope hole
+          val identity = declaration hole
         in
           if List.exists (fn prior => prior = identity) seen then
             raise ERR "checked_graph_schema" "duplicate typed schema hole"
           else identity :: seen
         end) [] holes
       val _ = G.reserve_schema_holes graph (ListPair.zip (holes,operands))
-      val hole_ids = List.map (G.resolve_variable graph scope) holes
+      val hole_ids = List.map declaration holes
       fun hole term =
-        let val identity = G.resolve_variable graph scope term
+        let val identity = declaration term
             fun seek [] [] = NONE
               | seek (name::names) (node::nodes) =
                   if identity = name then SOME node else seek names nodes
@@ -343,6 +346,56 @@ struct
       val _=observe_schema graph 1 (IntInf.fromInt(raw+4)) 0 false
     in GraphSchema {left=left,right=right,holes=holes,operands=operands,
       theorem=equality,admitted_size=raw+4} end
+
+  (* This fast realization is intentionally restricted to fixed Boolean
+     annotations. Hard Types and multi-step recipes keep the existing
+     compact assembly and annotation-sharing boundary. The checked closed
+     declaration itself is the complete compact proof: no definition for
+     an unchanged hole's interior is a premise of that proof. *)
+  fun realize_boolean_root_schema graph scope
+      (GraphConversion {source,result,steps,...}) =
+    let
+      val _ = G.validate_scope graph scope
+      fun key ty = #2 (G.declaration_variable_key graph scope
+        (Term.genvar ty))
+      val boolean = key Type.bool
+      fun arrows 0 = Type.bool
+        | arrows n = Type.--> (Type.bool,arrows (n-1))
+      val grammar = List.tabulate (4,key o arrows)
+      fun visible node =
+        if G.scope_visible graph scope (G.node_scope graph node) then ()
+        else raise ERR "realize_boolean_root_schema" "retired operand"
+      fun bounded (Operand node) =
+            (visible node;G.type_id graph node = boolean)
+        | bounded (Literal (node,_)) =
+            (visible node;List.exists (fn id => id = G.type_id graph node)
+              grammar)
+        | bounded (Constructor (node,left,right)) =
+            (visible node;List.exists (fn id => id = G.type_id graph node)
+              grammar andalso bounded left andalso bounded right)
+    in case Redblackmap.peek (steps,G.node_id source) of
+      SOME (GraphStep {current,continuation = NONE,
+        schema = SOME (GraphSchema {left,right,holes,operands,theorem,
+                                   admitted_size}),...}) =>
+        if current = source andalso template_node left = source andalso
+            template_node right = result andalso
+            List.length holes <= admitted_size andalso
+            List.all (fn node => (visible node;
+              G.type_id graph node = boolean)) operands andalso
+            bounded left andalso bounded right then
+          let
+            val substitution = ListPair.mapEq (fn (hole,node) =>
+              {redex = hole,residue = G.representative graph node})
+              (holes,operands)
+            (* Every redex/residue has Boolean Type and every declaration
+               annotation is in the fixed grammar above. INST needs no
+               hard-Type sharing/preparation of expanded operand interiors. *)
+            val _ = observe_schema graph 1 (IntInf.fromInt admitted_size)
+              1 true
+          in SOME (SmtReplayRuleObservation.INST substitution theorem) end
+        else NONE
+    | _ => NONE end
+    | realize_boolean_root_schema _ _ _ = NONE
 
   fun graph_schema_source (GraphSchema {left,...}) = template_node left
   fun graph_schema_result (GraphSchema {right,...}) = template_node right

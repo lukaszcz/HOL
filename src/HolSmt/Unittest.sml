@@ -20770,6 +20770,124 @@ let
       val _ = assert_no_hyps ("compact canonicalization",theorem)
       val _ = check_oracle_tags "compact canonicalization" theorem
     in result end
+  (* A Boolean operand can occupy both a Boolean guard and a generic
+     branch. Keep those declaration holes distinct before INST_TYPE. *)
+  val _ = print "TASK28_BOUNDARY repeated-conditional-operands\n"
+  val _ = List.app (fn source =>
+    let
+      val aliases = checked source (Conv.QCONV SmtReplayCanon.cpc_alias_conv)
+      val native = boolSyntax.rhs (Thm.concl
+        (Conv.QCONV
+          (Rewrite.PURE_REWRITE_CONV SmtReplayCanon.cpc_alias_rewrites)
+          source))
+      val _ = assert (aconv aliases native,
+        "conditional specialization changed the CPC alias normal form")
+      val result = checked source SmtReplayCanon.z3_cond_polarity_conv
+      val expected = boolSyntax.rhs (Thm.concl
+        (Conv.REWR_CONV HolSmtTheory.COND_NEG source))
+    in assert (aconv result expected,
+      "conditional specialization changed the checked rewrite") end)
+    [``if ~p then p else q:bool``, ``if ~p then q else p:bool``,
+     ``if ~p then p else p:bool``,
+     ``if ~(p /\ q) then (p /\ q) else r:bool``]
+  (* Schema declarations are not lexical references. Distinct declarations
+     can alias the same operand, but duplicate typed holes still refuse. *)
+  val _ = print "TASK28_BOUNDARY scoped-schema-declarations\n"
+  val _ = let
+    val graph = SmtReplayGraph.new ()
+    val root = SmtReplayGraph.root_scope graph
+    val p = #node (SmtReplayGraph.import graph root 10 ``p:bool``)
+    val number = #node (SmtReplayGraph.import graph root 10 ``n:num``)
+    val a = ``a:bool`` and b = ``b:bool``
+    val scope = SmtReplayGraph.new_scope graph root [(a,p),(b,p)]
+    fun schema theorem holes operands =
+      SmtReplayCanonGraph.checked_graph_schema graph scope
+        {theorem = theorem,holes = holes,operands = operands,
+         template_limit = 100}
+    val law = Library.prove (``(a:bool) /\ b <=> b /\ a``,
+      tautLib.TAUT_TAC)
+    val saved = schema law [a,b] [p,p]
+    val source = SmtReplayCanonGraph.graph_schema_source saved
+    val converted = SmtReplayCanonGraph.graph_conversion graph scope false
+      (fn node => if node = source then SOME saved else NONE) source
+    val (direct,counts) = SmtReplayCanonGraph.with_schema_statistics
+      graph scope (fn () =>
+        SmtReplayCanonGraph.realize_boolean_root_schema graph scope converted)
+    val direct = case direct of SOME theorem => theorem
+      | NONE => die "closed Boolean root schema declined direct realization"
+    val _ = assert (#schema_inst_calls counts = 1 andalso
+      aconv (Thm.concl direct) ``(p /\ p) <=> (p /\ p)`` andalso
+      null (Thm.hyp direct),"Boolean root schema lost its one-shot proof")
+    val _ = check_oracle_tags "direct scoped schema" direct
+    val block = SmtReplayProof.freeze graph {scope = scope,
+      roots = SmtReplayCanonGraph.graph_roots converted,sources = [],
+      template_limit = 100}
+    val theorem = SmtReplayProof.realize block
+      (SmtReplayCanonGraph.graph_equality converted)
+      (SmtReplayCanonGraph.graph_assemble graph block converted)
+    val _ = assert (aconv (Thm.concl theorem) ``(p /\ p) <=> (p /\ p)``,
+      "scoped schema aliases changed the realized endpoints")
+    val _ = assert_no_hyps ("scoped schema aliases",theorem)
+    val _ = check_oracle_tags "scoped schema aliases" theorem
+    fun refuses message action =
+      case Exn.capture action () of
+        Exn.Exn (HOL_ERR detail) =>
+          assert (Feedback.message_of detail = message,
+            "expected " ^ message ^ "; got " ^ Feedback.message_of detail)
+      | _ => die "invalid typed schema declaration was accepted"
+    val numeric = ``a:num``
+    val mixed = boolSyntax.mk_conj (a,boolSyntax.mk_eq (numeric,numeric))
+    val _ = ignore (schema (Thm.REFL mixed) [a,numeric] [p,number])
+    val numeric_schema = schema (Thm.REFL numeric) [numeric] [number]
+    val numeric_plan = SmtReplayCanonGraph.graph_schema_leaf graph scope
+      {schema = numeric_schema,observe = fn () => ()}
+    val unused_numeric = schema (Thm.REFL a) [a,numeric] [p,number]
+    val extras = List.tabulate (16,fn _ => Term.genvar Type.bool)
+    val unused_boolean = schema (Thm.REFL a) (a::extras)
+      (List.tabulate (17,fn _ => p))
+    fun leaf saved = SmtReplayCanonGraph.graph_schema_leaf graph scope
+      {schema = saved,observe = fn () => ()}
+    val negation = schema
+      (Library.prove (``~~a <=> a``,tautLib.TAUT_TAC)) [a] [p]
+    val negated = SmtReplayCanonGraph.graph_schema_source negation
+    val continued = SmtReplayCanonGraph.graph_conversion graph scope true
+      (fn node => if node = negated then SOME negation else NONE) negated
+    val (declined,counts) = SmtReplayCanonGraph.with_schema_statistics
+      graph scope (fn () => List.map
+        (SmtReplayCanonGraph.realize_boolean_root_schema graph scope)
+        [numeric_plan,leaf unused_numeric,leaf unused_boolean,continued])
+    val _ = assert (List.all (not o Option.isSome) declined andalso
+      #schema_inst_calls counts = 0,
+      "non-Boolean/unused/continued schema bypassed compact assembly")
+    val _ = refuses "duplicate typed schema hole"
+      (fn () => schema (Thm.REFL a) [a,a] [p,p])
+    val copy = Term.mk_var ("a",Type.bool)
+    val _ = refuses "duplicate typed schema hole"
+      (fn () => schema (Thm.REFL a) [a,copy] [p,p])
+    val _ = refuses "declaration type mismatch"
+      (fn () => schema (Thm.REFL numeric) [numeric] [p])
+    val _ = refuses "declaration type mismatch"
+      (fn () => schema (Thm.REFL a) [a,numeric] [p,p])
+    val _ = refuses "unowned schema variable"
+      (fn () => schema (Thm.REFL numeric) [a] [p])
+    val fresh = SmtReplayGraph.new ()
+    val frame = SmtReplayGraph.root_scope fresh
+    val x = #node (SmtReplayGraph.import fresh frame 10 ``x:bool``)
+    val y = #node (SmtReplayGraph.import fresh frame 10 ``y:bool``)
+    fun reserve hole operand =
+      SmtReplayCanonGraph.checked_graph_schema fresh frame
+        {theorem = Thm.REFL hole,holes = [hole],operands = [operand],
+         template_limit = 100}
+    val reserved = Term.mk_var ("__smt_replay_0",Type.bool)
+    val _ = ignore (reserve reserved x)
+    val owned = SmtReplayGraph.placeholder fresh x
+    val _ = assert (#1 (Term.dest_var owned) <> "__smt_replay_0",
+      "schema declaration failed to reserve its placeholder name")
+    val _ = ignore (reserve owned x)
+    val _ = refuses
+      "frame/schema variable reserved after placeholder allocation"
+      (fn () => reserve owned y)
+  in () end
   val _ = print "TASK28_BOUNDARY independent-DAG\n"
   val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
     let
@@ -20780,6 +20898,19 @@ let
       val reduced = checked source SmtReplayCanon.reflexive_equality_conv
     in assert (Portable.pointer_eq (reduced,boolSyntax.T),
       "independent shared reflexivity did not reduce") end) ()
+  (* Exercise the repaired cross-Type path with shared operands and an
+     independently allocated copy, without native whole-DAG comparison. *)
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    List.app (fn branch =>
+      let
+        val q = Term.mk_var ("compact_conditional_leaf",Type.bool)
+        val source = boolSyntax.mk_cond (boolSyntax.mk_neg left,branch,q)
+        val aliases = checked source (Conv.QCONV SmtReplayCanon.cpc_alias_conv)
+        val result = checked source SmtReplayCanon.z3_cond_polarity_conv
+      in assert (order (aliases,source) = EQUAL andalso
+          order (result,boolSyntax.mk_cond (left,q,branch)) = EQUAL,
+        "large repeated conditional operand changed its normal form") end)
+      [left,right]) ()
   (* Exercise the actual entry wrapper too: QCHANGED_CONV would compare
      the independent whole result after the compact converter returned. *)
   val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>

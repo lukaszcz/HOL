@@ -45,6 +45,12 @@ sig
   val graph_schema_leaf : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     {schema:graph_schema,observe:unit -> unit} -> graph_conversion
 
+  (* A root-only Boolean schema is already a closed compact proof. Realize
+     it with one INST, without unused operand-interior definitions. NONE
+     retains the ordinary assembler for other recipes or annotations. *)
+  val realize_boolean_root_schema : SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> graph_conversion -> Thm.thm option
+
   (* Discover postorder rewrites, retain successful checked schemas and
      detect expansion cycles. Cache keys and constructor matching use IDs.
      Abstractions remain completed atoms; no binder is opened here. *)

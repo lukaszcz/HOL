@@ -889,6 +889,11 @@ struct
           | NONE => case parent of NONE => NONE | SOME scope => seek scope
         end
     in seek scope end
+  fun declaration_variable_key g scope term =
+    let
+      val _ = check_scope g scope
+      val (name,ty) = Term.dest_var term
+    in (name,intern_type g ty) end
   fun resolve_variable g scope term =
     (check_scope g scope;
      case lookup_binding g scope term of SOME node => node

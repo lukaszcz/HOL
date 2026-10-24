@@ -253,8 +253,10 @@ struct
 
   (* Expose exactly a declaration's constructor shape, not an arbitrary
      depth of the source DAG. Pattern variables are opaque typed holes;
-     repeated source IDs share a hole even across different pattern vars.
-     This handles reflexivity without matching the expanded operand. *)
+     repeated source IDs share a hole at the same declaration Type, even
+     across different pattern vars. Distinct generic Types must stay apart
+     until specialization. This handles reflexivity without matching the
+     expanded operand. *)
   fun schema_patterns theorem =
     List.map (boolSyntax.lhs o Thm.concl) (Rewrite.mk_rewrites theorem)
 
@@ -282,10 +284,13 @@ struct
       val template_limit = 4096
       fun attempt pattern =
         let
-          val holes = ref (Redblackmap.mkDict Int.compare)
+          val types = new_type_order ()
+          val holes = ref (Redblackmap.mkDict
+            (fn ((left,lty),(right,rty)) =>
+              case Int.compare (left,right) of
+                EQUAL => types (lty,rty) | order => order))
           val type_bindings = ref ([] : (Type.hol_type,Type.hol_type)
             Lib.subst)
-          val types = new_type_order ()
           (* Match a bounded declaration Type, not a native annotation
              tree. A variable binds the opaque actual Type in one step. *)
           fun match_type expected actual =
@@ -308,13 +313,15 @@ struct
                 (#Args a,#Args b) handle ListPair.UnequalLengths => raise Shape
               end
           fun operand pattern node =
-            case Redblackmap.peek (!holes,G.node_id node) of
-              SOME (_,term) => term
-            | NONE =>
-                let val term = Term.genvar (Term.type_of pattern) in
-                  holes := Redblackmap.insert
-                    (!holes,G.node_id node,(node,term));term
-                end
+            let val key = (G.node_id node,Term.type_of pattern) in
+              case Redblackmap.peek (!holes,key) of
+                SOME (_,term) => term
+              | NONE =>
+                  let val term = Term.genvar (Term.type_of pattern) in
+                    holes := Redblackmap.insert
+                      (!holes,key,(node,term));term
+                  end
+            end
           fun template pattern node =
             (match_type (Term.type_of pattern) (G.type_of graph node);
              if Term.is_var pattern then operand pattern node
@@ -398,12 +405,17 @@ struct
         #bridge source
       else
         let
-          val block = P.freeze graph
-            {scope = scope,roots = graph_roots converted,sources = [],
-             template_limit = SmtResource.max_metric}
-          val proof = graph_assemble graph block converted
+          val theorem = case realize_boolean_root_schema graph scope
+              converted of SOME theorem => theorem
+            | NONE =>
+                let
+                  val block = P.freeze graph
+                    {scope = scope,roots = graph_roots converted,sources = [],
+                     template_limit = SmtResource.max_metric}
+                  val proof = graph_assemble graph block converted
+                in P.realize block (graph_equality converted) proof end
           val realized = exact_left (G.representative graph (#node source))
-            (P.realize block (graph_equality converted) proof)
+            theorem
         in Thm.TRANS (#bridge source) realized end
     end
 
@@ -476,8 +488,10 @@ struct
      deliberately separate from the primary canonicalizer: their broader
      normalization is accepted only when it closes the concrete difference
      between the two sides of the rewrite. *)
-  val z3_cond_polarity_conv = compact_conversion true false
-    (fn _ => SOME (Conv.REWR_CONV HolSmtTheory.COND_NEG))
+  val z3_cond_polarity_conv = compact_conversion_with_patterns
+    (schema_patterns HolSmtTheory.COND_NEG) true false
+    (fn term => if boolSyntax.is_cond term then
+      SOME (Conv.REWR_CONV HolSmtTheory.COND_NEG) else NONE)
 
   val relation_dual_schema_conv =
     Conv.FIRST_CONV (List.map Conv.REWR_CONV

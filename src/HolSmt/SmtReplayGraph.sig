@@ -234,6 +234,9 @@ sig
   val implication_with_graph_debit : graph -> scope ->
     (IntInf.int -> unit) ->
     node list -> node -> node
+  (* Typed declaration identity, independent of lexical aliases. Interns
+     only Type metadata, without creating a variable or reserving its name. *)
+  val declaration_variable_key : graph -> scope -> Term.term -> string * int
   (* Resolve environments without claiming an alpha source bridge. *)
   val resolve_variable : graph -> scope -> Term.term -> node
   (* Lexical aliases retain their owned kind; a declaration is the checked
