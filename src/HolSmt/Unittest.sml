@@ -30107,6 +30107,73 @@ let
     in check graph expanded
       [G.representative graph (C.root original)] theorem end
 
+  fun chain_boundaries prefix =
+    let
+      val graph = G.new () val scope = G.root_scope graph
+      val p = source graph scope "chain_boundary_p"
+      val q = source graph scope "chain_boundary_q"
+      val r = source graph scope "chain_boundary_r"
+      val s = source graph scope "chain_boundary_s"
+      val expanded = C.discover graph scope [pos r,pos q]
+      val leading = if prefix then [pos s] else []
+      val residual = leading @ [pos (C.root expanded)]
+      val first = C.discover graph scope (pos p::residual)
+      val second = C.discover graph scope [neg p]
+      val original = C.discover graph scope residual
+      val target = C.discover graph scope (leading @ [pos r,pos q])
+      val false_target = C.discover graph scope []
+      val strengthened = C.discover graph scope (leading @ [pos r])
+      val block = freeze graph scope
+        [original,target,false_target,strengthened] [first,second]
+      val left = C.from_source block first (P.source block 0)
+      val right = C.from_source block second (P.source block 1)
+      fun chain target = C.resolve_chain
+        {pivots = [pos p],premises = [left,right],target = target}
+      fun require result = case result of SOME clause => clause
+        | NONE => fail "compound target resolution chain declined"
+      fun same_entries expected clause =
+        List.map (fn {atom,negative} => (atom,negative))
+          (C.literals clause) =
+        List.map (fn {atom,negative} => (atom,negative)) expected
+      val _ = ensure "target-free chain opened a compound occurrence"
+        (same_entries residual (require (chain NONE)))
+      val _ = ensure "compact fast route changed recorded order/boundaries"
+        (same_entries residual (require (chain (SOME original))))
+      val result = require (chain (SOME target))
+      val _ = ensure "reframed chain lost target occurrence order"
+        (same_entries (C.recorded target) result)
+      val _ = ensure "compound chain accepted a false target"
+        (not (Option.isSome (chain (SOME false_target))))
+      val _ = ensure "compound chain deleted a target literal"
+        (not (Option.isSome (chain (SOME strengthened))))
+
+      (* Ordinary Terms already expose this exact endpoint to SmtClause;
+         graph names must not lose that compatibility. *)
+      fun term ({atom,negative} : C.literal) =
+        let val atom = G.representative graph atom
+        in if negative then boolSyntax.mk_neg atom else atom end
+      fun ordinary layout = SmtClause.from_literals
+        (List.map term (C.recorded layout))
+        (Thm.ASSUME (G.representative graph (C.root layout)))
+      fun ordinary_chain target = SmtClause.resolve_chain
+        {pivots = [term (pos p)],
+         premises = [ordinary first,ordinary second],
+         target = SOME (List.map term (C.recorded target))}
+      val comparator = case ordinary_chain target of
+          SOME clause => SmtClause.theorem clause
+        | NONE => fail "ordinary compound target comparator declined"
+      val _ = ensure "ordinary comparator accepted a false target"
+        (not (Option.isSome (ordinary_chain false_target)))
+      val theorem = P.realize block (C.root target) (C.to_target target result)
+      val expected = List.map (G.representative graph o C.root) [first,second]
+      val _ = check graph target expected theorem
+    in ensure "graph/ordinary compound target results differ"
+      (Term.aconv (Thm.concl theorem) (Thm.concl comparator) andalso
+       List.length (Thm.hyp comparator) = List.length expected andalso
+       List.all (fn hypothesis => List.exists (Term.aconv hypothesis)
+         expected) (Thm.hyp comparator) andalso clean comparator)
+    end
+
   fun empty_unit () =
     let
       val graph = G.new () val scope = G.root_scope graph
@@ -30181,6 +30248,9 @@ let
   val _ = OK ()
   val _ = tprint "Graph clause recorded source/target boundaries stay separate"
   val _ = boundaries ()
+  val _ = OK ()
+  val _ = tprint "Graph chains reframe exact compound targets, not false ones"
+  val _ = List.app chain_boundaries [false,true]
   val _ = OK ()
   val _ = tprint "Graph clauses preserve empty/unit resolution and false sources"
   val _ = empty_unit ()

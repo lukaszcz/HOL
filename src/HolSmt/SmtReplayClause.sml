@@ -205,7 +205,7 @@ struct
   fun resolve_chain {pivots,premises,target} =
     case premises of
       [] => raise ERR "resolve_chain" "empty premise list"
-    | (first as Clause {block,graph,...})::_ =>
+    | (first as Clause {block,graph,scope,...})::_ =>
         let
           val _ = List.app (checked_pair first) premises
           val _ = case target of NONE => ()
@@ -217,7 +217,32 @@ struct
              premises = List.map (fn Clause {compact,...} => compact) premises,
              target = Option.map
                (compact_literals graph block o recorded) target}
-        in Option.map (finish first vocabulary premises target) result end
+        in case result of
+            SOME compact =>
+              SOME (finish first vocabulary premises target compact)
+          | NONE => case target of
+              NONE => NONE
+            | SOME wanted =>
+                (* Compact names hide compound atoms. Retry only the same
+                   ordered chain, without target alignment, then compare
+                   its recorded semantic root. No atom syntax is opened. *)
+                case C.resolve_chain
+                  {pivots = compact_literals graph block pivots,
+                   premises = List.map
+                     (fn Clause {compact,...} => compact) premises,
+                   target = NONE} of
+                    NONE => NONE
+                  | SOME compact =>
+                      let
+                        val clause = finish first vocabulary premises
+                          NONE compact
+                        val original = discover graph scope (literals clause)
+                      in if root original = root wanted then
+                        SOME (from_source block wanted
+                          (to_target original clause))
+                        else NONE
+                      end
+        end
   structure W=SmtReplayInvocationWork
   structure Scope=SmtReplayOwnedScopeReceipt
   structure F=SmtLib_GraphFrontend

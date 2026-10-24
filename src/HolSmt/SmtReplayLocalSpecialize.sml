@@ -18,7 +18,10 @@ struct
       val checked_metrics=ref NONE
       fun guard()=
         let
-          val _=W.spend_policy work 9
+          (* Retained fact validation also runs between replay actions.
+             This callback-free guard still debits the SAME original Work;
+             it grants no action or native-proof authority. *)
+          val _=W.spend_guard_policy work 9
           val stamp=(G.validation_revision graph scope,
             G.scope_retirement_epoch graph scope)
           val _=if !checked_metrics=SOME stamp then ()else
@@ -26,7 +29,7 @@ struct
               let val held=metric_data graph scope capture
               in if #node held=node then ()else
                 raise error "metric changed"end)metrics
-          val _=W.spend_policy work 6
+          val _=W.spend_guard_policy work 6
           val after=(G.validation_revision graph scope,
             G.scope_retirement_epoch graph scope)
         in checked_metrics:=if after=stamp then SOME stamp else NONE end

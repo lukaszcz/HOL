@@ -617,7 +617,7 @@ struct
           let val equality=bridge tree
               val(alias,expression)=boolSyntax.dest_eq(expr equality)
           in case lookup expression of SOME value=>value|NONE=>
-            case alias_lookup tree alias of SOME value=>
+            let val result=case alias_lookup tree alias of SOME value=>
               modus(discharge alias value)
                 (equality_mp(reverse equality)(assume expression))
             | NONE=>case tree_view tree of ClauseOr{left=a,right=b,...}=>
@@ -641,7 +641,16 @@ struct
                       in modus(discharge opened actual)
                         (equality_mp constructor(assume expression))end
                     | _=>fail "fallback is not an actual OR tree"))
-              | _=>fail "ordered resolution leaves an unmatched literal"end
+              | _=>fail "ordered resolution leaves an unmatched literal"
+                (* A solved raw expression proves wanted from that exact
+                   compact expression. Reuse the checked programme slot,
+                   not an expanded source theorem. In particular two equal
+                   children of a shallow fallback must not solve the same
+                   suffix twice. Keep the original target/unit precedence. *)
+                val _=if null fallbacks then ()else
+                  (pay 3;put expression result)
+            in result end
+          end
         val(head,head_value)=List.hd inputs
         val raw_result=modus(discharge(expr head_value)(solve head))head_value
         val result=equality_mp(reverse expanded_bridge)raw_result

@@ -1865,14 +1865,30 @@ struct
   fun xor_matching block profile(HeldSyntax term)=
         let val _=pay block 1 val p=profile term
             val text=xor_spelling block term
-        in if Thm.kernelid="stdknl"then
-          1+2*(xor_weight block p+text)else 1 end
+        in 1+2*(xor_weight block p+text)end
     | xor_matching block profile(ApplicationSyntax(a,b))=
         (pay block 1;4+xor_matching block profile a+
           xor_matching block profile b)
     | xor_matching block profile(EqualitySyntax(a,b))=
         (pay block 1;8+xor_matching block profile a+
           xor_matching block profile b)
+  (* Only admitted, bounded binder-free compact XOR shapes reach this
+     matcher. SUBST_LITERAL may rebuild Apps, so both kernels need the
+     full comparison prepaid by xor_matching, not just pointer identity. *)
+  fun xor_matches (HeldSyntax held) actual=
+        Portable.pointer_eq(held,actual) orelse Term.aconv held actual
+    | xor_matches (ApplicationSyntax(a,b)) actual=
+        Term.is_comb actual andalso
+        let val(x,y)=Term.dest_comb actual
+        in xor_matches a x andalso xor_matches b y end
+    | xor_matches (EqualitySyntax(a,b)) actual=
+        Term.is_comb actual andalso
+        let val(f,y)=Term.dest_comb actual
+        in Term.is_comb f andalso
+          let val(c,x)=Term.dest_comb f
+          in Term.is_const c andalso
+            Term.same_const c boolSyntax.equality andalso
+            xor_matches a x andalso xor_matches b y end end
   fun xor_length block []=(pay block 1;0:IntInf.int)
     | xor_length block(_::rest)=(pay block 1;1+xor_length block rest)
   fun xor_tag_work block [] total=(pay block 1;total)
@@ -2174,7 +2190,7 @@ struct
             | XorPrimitive{opcode,inputs=indices,shape,hypotheses,oracles}=>
                 let val proof=primitive xor_identity opcode(inputs indices)
                     val tag=Thm.tag proof
-                    val _=if matches shape(Thm.concl proof)andalso
+                    val _=if xor_matches shape(Thm.concl proof)andalso
                         null(Tag.axioms_of tag)andalso
                         #1(Tag.dest_tag tag)=oracles andalso
                         List.all(fn term=>List.exists

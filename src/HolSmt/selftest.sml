@@ -76624,6 +76624,25 @@ in
                   (count=70 andalso Count.thm_count()=prior andalso
                    #node_creations statistics=0 andalso
                    not(#retired(W.audit_policy(#work e))))end))end)
+      val _=test "Shared16 raw proof completes without duplicated suffixes"
+        (fn()=>let
+            fun shared 0=p
+              | shared n=let val child=shared(n-1)
+                  in boolSyntax.mk_disj(child,child)end
+            fun name n="raw409_complete_" ^ Int.toString n
+            fun text n=if n>16 then name 16
+              else "(let ((" ^ name n ^ " " ^
+                (if n=0 then "p"else"(or " ^ name(n-1) ^
+                  " " ^ name(n-1) ^ ")") ^ ")) " ^ text(n+1) ^ ")"
+            val certificate="((proof (unit-resolution (asserted (! " ^
+              text 0 ^ " :named raw409_complete)) " ^
+              "(asserted (not p)) false)))"
+            val prior=Count.thm_count()
+            val theorem=final[shared 16,np]certificate
+            val cases= #DISJ_CASES(Count.thm_count())- #DISJ_CASES prior
+        in require "raw compact proof duplicated a shared suffix or lost Hyp"
+          (cases>=16 andalso cases<=32 andalso
+           length(Thm.hyp theorem)=2)end)
       val _=test "Shared70 proof LET retains the genuine recorded OR boundary"
         (fn()=>let
             fun shared 0=p
