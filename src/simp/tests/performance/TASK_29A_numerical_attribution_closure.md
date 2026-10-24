@@ -17,6 +17,27 @@ There are **43 distinct failed cells and 119 uncertain cells**, not passes.
 Ten CPU, eight wall and two GC baseline controls also fail; uncertain controls
 are not parity and do not excuse candidate failures.
 
+## Investigation after `e86df07bf` — not closure
+
+`TASK_29_HANDOFF.md` and `evidence/task29/equal-count/` record a reproduced
+calibration confound and the new optional `--batch-iterations` mode. All B/B
+and B/C processes now can use a predeclared common calibration history and
+sample count without changing any numerical gate. Eight new controls and
+real fragment/client/short-batch processes validate the mode.
+
+The ten-pair collector/10000 experiment at common N=64 **still fails** CPU
+(CI [1.032421, 1.052741]) and wall; GC and all B/B metrics are inconclusive.
+No original grid cell is replaced or closed. Equal counts do not establish
+identical heaps, GC schedules or generated code. No production repair is
+selected; fresh generated-work/layout closure and the full affected grid
+remain unsatisfied requirements, not deferred completion claims.
+
+The unchanged B/B rule also requires an upper ratio bound <=1; an interval
+straddling equality is not by itself evidence of host instability. The original
+compile_single/0 has all 120 measured GC values exactly zero, which cannot
+pass a ratio-only 0/0 policy. These policy concerns require explicit review,
+not silently accepting uncertainty, adding a budget or manufacturing GC work.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

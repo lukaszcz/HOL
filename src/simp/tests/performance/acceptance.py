@@ -199,7 +199,7 @@ def archive_protocol(manifest, receipt):
 
 
 def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
-            seconds):
+            seconds, iterations=None):
     """Revalidate complete protocol and source binding before statistics."""
     folder = Path(folder)
     manifest = load(folder / "manifest.json")
@@ -211,6 +211,8 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
             options["suite"] == "matrix" and options["case"] == case and
             options["size"] == size, "wrong matrix/timing options")
     require(options.get("outliers") == "none removed", "changed outlier rule")
+    require(options.get("batch_iterations") == iterations,
+            "wrong predeclared batch iterations")
     for side, pin in (("baseline", baseline), ("candidate", candidate)):
         require(manifest["selections"][side]["revision"] == pin,
                 "wrong selected revision")
@@ -592,6 +594,10 @@ def run(args):
     require(args.pairs >= 10 and args.samples >= 3 and
             0.1 <= args.batch_seconds <= 60 and args.timeout > 0,
             "require >=10 pairs, >=3 samples, 0.1..60s batches, timeout >0")
+    iterations = getattr(args, "batch_iterations", None)
+    if iterations is not None:
+        from performance_schema import batch_iterations
+        batch_iterations(iterations)
     exact_pin(args.baseline)
     exact_pin(args.candidate)
     require(args.authorize_measurements,
@@ -646,6 +652,8 @@ def run(args):
                                    "--batch-seconds", str(args.batch_seconds),
                                    "--timeout", str(args.timeout),
                                    "--output", str(folder)]
+                        if iterations is not None:
+                            command += ["--batch-iterations", str(iterations)]
                         command_result = run_logged(
                             command, output / (tag + ".log"), fds, None)
                         report["commands"].append(command_result)
@@ -658,7 +666,8 @@ def run(args):
                             folder, case=case, size=size,
                             baseline=args.baseline,
                             candidate=candidate, pairs=args.pairs,
-                            samples=args.samples, seconds=args.batch_seconds)
+                            samples=args.samples, seconds=args.batch_seconds,
+                            iterations=iterations)
                     # Controls are never subtracted as a noise budget.
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():
@@ -704,6 +713,8 @@ def main(argv=None):
     execute.add_argument("--pairs", type=int, default=10)
     execute.add_argument("--samples", type=int, default=5)
     execute.add_argument("--batch-seconds", type=float, default=0.2)
+    execute.add_argument("--batch-iterations", type=int,
+                         help="common predeclared power-of-two matrix count")
     execute.add_argument("--timeout", type=int, default=1800)
     execute.add_argument("--output", type=Path, required=True)
     execute.add_argument("--authorize-measurements", action="store_true")

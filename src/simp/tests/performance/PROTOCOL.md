@@ -59,6 +59,35 @@ Process pair order is AB, BA, AB, BA, ... with no missing, duplicate or reordere
 receipts. Warm-up/calibration work is recorded separately, not silently counted
 as independent samples. Increase the predeclared batch duration for tiny work.
 
+### Equal-count attribution
+
+Independent time-based calibration can choose different iteration counts in
+paired selections. Per-operation normalization does not remove nonlinear GC
+and heap-sizing effects. For a predeclared common operation count, add
+`--batch-iterations N` to `acceptance.py run` (or the matrix paired runner).
+`N` must be a power of two in 1..1073741824. The front end passes the **same N**
+to B/B and B/C; every process performs **all** calibrations 1,2,...,N, even if
+an earlier calibration reaches the duration target, then every sample uses N.
+This fixes operation counts and calibration history, not the resulting heap
+state or GC schedule. Record both; identical GC behavior is not assumed.
+
+The final calibration must still reach `--batch-seconds`; every sample must
+still reach half that target. A short fixed experiment fails closed, never
+silently recalibrates one side, drops a pair or selects a favorable repetition.
+Choose the schedule before observing the new experiment. A new schedule is a
+new whole experiment, with prior observations preserved. Fixed mode is matrix
+only (both fragment and client fixtures); omitting it retains the historical
+adaptive protocol for replay, not proof that its GC comparisons are unconfounded.
+
+The count is bound to the manifest, `PERF_ITERATIONS` environment, complete
+ordered calibrations, samples and consumed-result counts by online and offline
+validation. Injecting that environment variable into an adaptive archive also
+rejects. `analyze(..., iterations=N)` must match the requested schedule; default
+analysis cannot silently admit fixed-mode evidence. No timing, GC, control,
+confidence-interval or pass/fail threshold changes with this mode. In particular,
+equal counts cannot turn uncertain B/B controls or zero/zero GC into passes.
+See `TASK_29_HANDOFF.md` for the still-failing ten-pair equal-count experiment.
+
 ## Runtime, graph and release records
 
 Both matrix fixtures load sealed `RuntimeMetrics.sml`. Every calibration and

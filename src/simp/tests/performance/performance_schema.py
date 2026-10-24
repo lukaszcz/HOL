@@ -65,15 +65,30 @@ def timing(value, prefix=0):
     return data[:prefix], ts
 
 
+def batch_iterations(value):
+    """A predeclared common doubling endpoint, never selected by one side."""
+    require(type(value) is int and 1 <= value <= 1073741824 and
+            value & (value - 1) == 0,
+            "batch iterations must be a power of two in 1..1073741824")
+    return value
+
+
 def suite_options(options):
     suite = options.get("suite", "simplifier")
+    fixed = options.get("batch_iterations")
+    if "batch_iterations" in options:
+        batch_iterations(fixed)
+        require(suite == "matrix", "fixed batches require matrix suite")
     require(suite in ("simplifier", "traversal", "conditional", "matrix"),
             "unknown performance suite")
     if suite == "matrix":
         from matrix_schema import get_case
         get_case(options["case"], options["size"])
-        return dict(labels=(options["case"],),
-                    consumed={options["case"]: 1}, storage=False)
+        result = dict(labels=(options["case"],),
+                      consumed={options["case"]: 1}, storage=False)
+        if fixed is not None:
+            result["iterations"] = fixed
+        return result
     if suite == "traversal":
         return dict(labels=TRAVERSAL_LABELS, consumed=TRAVERSAL_CONSUMED,
                     storage=False)
@@ -115,7 +130,9 @@ def graphs(lines, case, size):
 
 
 def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
-             storage=True):
+             storage=True, iterations=None):
+    if iterations is not None:
+        batch_iterations(iterations)
     require(labels and len(set(labels)) == len(labels) and
             all(label in consumed for label in labels), "invalid workload schema")
     es = [e for e in events if e[0] in ("observation", "check", "exception")]
@@ -160,7 +177,12 @@ def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
                     "wrong calibration result consumption")
             total_consumed += ts["consumed"]
             calibrations.append(dict(iterations=n, **ts))
-            if ts["wall"] >= seconds:
+            if iterations is None:
+                if ts["wall"] >= seconds:
+                    break
+            elif n == iterations:
+                require(ts["wall"] >= seconds,
+                        "fixed calibration too short; new experiment required")
                 break
             n *= 2
             require(n <= 1073741824, "unbounded calibration")

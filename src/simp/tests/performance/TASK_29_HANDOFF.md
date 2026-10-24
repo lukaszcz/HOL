@@ -2,6 +2,119 @@
 
 ## Status: BLOCKED, not complete
 
+### Equal-count investigation (after `e86df07bf`)
+
+TASK29 is **still blocked**. The complete original grid below is preserved;
+no failure or uncertain cell is replaced by this targeted diagnostic. TASK29A
+is in progress, not complete; TASK29B remains blocked. No production source,
+public simplifier API, representation, control identity or extension changed.
+
+A concrete measurement confound was reproduced from the sealed archives:
+`compile_collector/10000` chose **32 baseline versus 16 candidate iterations**
+in every B/C pair. B/B also chose both counts. Normalizing time per operation
+cannot remove nonlinear collection/heap-sizing effects. The new
+`--batch-iterations N` option fixes the full doubling history and sample count
+identically across both selections and B/B versus B/C. It does **not** fix
+heap state or claim identical collections. It is optional for old-archive
+replay; the historical default and all numerical thresholds remain unchanged.
+A short fixed calibration rejects rather than silently recalibrating one side.
+Manifest, requested count, environment, observations, consumption and source
+bindings are checked online and offline.
+
+A **predeclared N=64** complete local experiment (twice the largest original
+collector count, chosen before its new observations) ran ten fresh B/B and ten
+fresh B/C alternating pairs, three samples, 0.3-second target. All **40 timed
+processes / 120 samples** pass semantic, callback, source/path and runtime
+admission. Every process calibrates 1/2/4/8/16/32/64 and samples at 64.
+The candidate remains slower:
+
+| Metric | B/B 95% ratio interval | B/C 95% ratio interval | Gate |
+| --- | --- | --- | --- |
+| CPU | [0.990465, 1.016269] | **[1.032421, 1.052741]** | fail |
+| Wall | [0.990407, 1.016490] | **[1.032385, 1.052508]** | fail |
+| GC | [0.818452, 1.100784] | [0.810305, 1.311080] | inconclusive |
+
+This removes unequal counts **without closing the regression**. The difference
+from the original interval is not attributed solely to iteration counts;
+these are separate experiments, not control-subtracted estimates. Load averages
+changed during the run (recorded raw); the cooperating-runner lock establishes
+serialization, not host exclusivity or a causal noise explanation. No sample,
+pair, metric, original grid cell or outlier was dropped.
+
+New durable evidence: `evidence/task29/equal-count/`:
+
+- `collector-10000.json.xz`: lossless complete ten-pair B/B and B/C experiment;
+  actual runner commands, loaded paths, tools/libraries, proofs, callbacks,
+  raw observations, heaps, GC counts, ratios and unrounded intervals.
+- `client-smoke.json.xz`: two real client-fixture processes with the common
+  1..1048576 history/count; protocol/semantic smoke only, not acceptance.
+- `short-negative.json.xz`: real count=1 collector experiment exits nonzero;
+  independently replayed rejection is `fixed calibration too short; new
+  experiment required`. No rejected observation is counted in the above run.
+- `replay.py` / `replay.json.gz`: freshly re-admit both original collector and
+  zero-rule single-addition archives, re-admit all 40 equal-count processes,
+  recompute unchanged strict statistics/controls, audit both client processes,
+  and reproduce the actual short-count rejection. All three new bundles also
+  roundtrip byte-for-byte (57/9/8 files) before removing scratch trees.
+- `validation.json`: source/evidence seals, commands and exits. Fresh performance
+  discovery: **255 tests**, two unchanged optional skips; compatibility:
+  **196 tests**; routine `bin/build -t --seq=tools/sequences/upto-parallel`:
+  **exit 0**. Eight new fixed-mode tests cover dispatch, both experiment counts,
+  early time-target crossings, calibration history, durations, consumption,
+  invalid types/bounds, environment/archive/request mismatches and CLI misuse.
+  Routine build follows the experiment; no final-build-product parity claim.
+  Its fresh eight-process, 1,374-check API audit is retained at
+  `../api-audit/evidence/20261024T031714Z-c5555d9a/receipt.json`.
+
+Commands use `W` as defined below and candidate
+`e86df07bf` (full pin in the archive); new evidence outputs must not exist:
+
+```sh
+W python3 -B src/simp/tests/performance/acceptance.py run \
+  --candidate FULL_E86DF07BF_PIN --case compile_collector --size 10000 \
+  --pairs 10 --samples 3 --batch-seconds 0.3 --batch-iterations 64 \
+  --timeout 1800 --authorize-measurements --output NEW_DIRECTORY
+# exit 1: protocol complete, CPU/wall fail
+python3 -B src/simp/tests/performance/evidence/task29/equal-count/replay.py
+# exit 0: diagnostics reproduced; explicitly NOT TASK29 approval
+```
+
+Two policy/coverage concerns were also made precise, **not waived**:
+
+1. `apply_control` demands B/B's CI upper bound <=1, not merely a sufficiently
+   precise measurement of equality. A noisy equal baseline normally has an
+   interval straddling 1; this alone does not prove an unstable host. The current
+   policy still calls it inconclusive. More repetitions or a quieter machine
+   cannot be promised to make every unchanged-baseline control pass. Changing
+   that policy requires explicit review; no tolerance or parity shortcut was
+   introduced here.
+2. Original `compile_single/0` has zero GC in every measured batch on both
+   sides; its operation folds an empty list. The ratio-only policy cannot pass
+   0/0. No collection was inserted into its timed body to manufacture a ratio.
+   Exact zero observations and the original blocked decision are replayed.
+
+Cumulative allocation remains unmeasured. Inspection found the supported
+`PolyML.Profiling.ProfileAllocations` interval profiler, but it is **not yet a
+validated cumulative total**: per-function extraction can omit unnamed or
+reclaimed code, and unknown-PC events need not retain requested-word counts.
+It cannot simply replace the missing counter by summing displayed entries.
+The local Poly/ML source under Isabelle's `polyml-5.9.2-2` includes later fixes
+(commit `ccd3e3717f72`), not proven matching configured libpolyml bytes. No
+instrumented runtime was installed, no profiler numbers are claimed, and no
+heap-capacity value is relabelled allocated bytes. TASK29B's reviewed,
+version-pinned instrument and executed coverage/GC controls remain required.
+
+Changed files: `run_paired.py`, both matrix SML fixtures, `performance_schema.py`,
+`acceptance.py`, `audit_evidence.py`, new `test_fixed_batches.py`, protocol and
+this handoff, plus narrow equal-count evidence. The optional harness API is
+additive; ordinary clients need no migration. All task-created private builds,
+unpacked receipts, raw scratch/logs were removed after sealing. Caller-owned
+review trees, caches and unrelated nested planning changes remain untouched.
+There is **no production performance repair**, full-grid rerun, cumulative
+allocation result, TASK29A completion, or TASK29 completion claim.
+
+### Original complete-grid observations
+
 Starting/measured candidate: `18e4a1ecb624b9b13bb9a0f3ba3caf8c189bdff8`.
 Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 No production SML, signature, build manifest, representation, callback order,

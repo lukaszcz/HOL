@@ -389,6 +389,8 @@ def main():
     p.add_argument("--performance-size", type=int)
     p.add_argument("--samples", type=int, default=5)
     p.add_argument("--batch-seconds", type=float, default=0.2)
+    p.add_argument("--batch-iterations", type=int,
+                   help="predeclared common matrix calibration/batch count")
     args = p.parse_args()
     if (args.performance_pairs < 0 or args.samples < 3 or
             not 0.1 <= args.batch_seconds <= 60):
@@ -425,6 +427,13 @@ def main():
             from matrix_schema import get_case
             matrix_fixture = get_case(args.performance_case,
                                       args.performance_size)
+    if args.batch_iterations is not None:
+        if not args.matrix_performance:
+            p.error("--batch-iterations requires --matrix-performance")
+        try:
+            performance.batch_iterations(args.batch_iterations)
+        except ValueError as error:
+            p.error(str(error))
     repo, output = args.repo.resolve(), args.output.resolve()
     # Never overwrite historical/user evidence, even on a failed invocation.
     output.mkdir(parents=True, exist_ok=False)
@@ -461,6 +470,9 @@ def main():
                 suite="matrix", case=args.performance_case,
                 size=args.performance_size)
             manifest["shared_inputs"] = {}
+            if args.batch_iterations is not None:
+                manifest["performance"]["batch_iterations"] = \
+                    args.batch_iterations
     try:
         for name in ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
                      "bin/Holmake", "holproject.toml"):
@@ -769,6 +781,9 @@ def main():
                         if args.matrix_performance:
                             runenv.update(PERF_CASE=args.performance_case,
                                           PERF_SIZE=str(args.performance_size))
+                            if args.batch_iterations is not None:
+                                runenv["PERF_ITERATIONS"] = \
+                                    str(args.batch_iterations)
                         receipt = execute([str(dst / "paired.exe")], dst,
                                           runenv, args.timeout)
                         receipt.update(

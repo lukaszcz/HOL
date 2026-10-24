@@ -12,6 +12,14 @@ val label = Paired.env "PERF_CASE"
 val size = integer "PERF_SIZE"
 val samples = integer "PERF_SAMPLES"
 val seconds = valOf (Real.fromString (Paired.env "PERF_SECONDS"))
+(* Fixed-count experiments use the same complete calibration history in both
+   selections, even if an earlier doubling already exceeds the time target. *)
+val iterations = Option.map (fn s => valOf (Int.fromString s))
+                            (OS.Process.getEnv "PERF_ITERATIONS")
+fun powerOfTwo n = n = 1 orelse
+                  (n > 1 andalso n mod 2 = 0 andalso powerOfTwo (n div 2))
+val _ = required (case iterations of NONE => true | SOME n =>
+                  n <= 1073741824 andalso powerOfTwo n)
 val _ = required (Lib.mem label cases andalso Lib.mem size sizes andalso
                   samples > 0 andalso Real.isFinite seconds andalso
                   seconds > 0.0)
@@ -62,7 +70,9 @@ in result end
 fun calibrate count = let
   val (wall,fields) = measured "calibration" count
   val _ = emit ("calibration." ^ label) (Int.toString count :: fields)
-in if wall >= seconds then count else
+  val finished = case iterations of NONE => wall >= seconds
+                                 | SOME n => count = n
+in if finished then (required (wall >= seconds); count) else
      (required (count < 1073741824); calibrate (count * 2)) end
 val count = calibrate 1
 fun sample i = let

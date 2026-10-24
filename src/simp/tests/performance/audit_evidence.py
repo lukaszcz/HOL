@@ -189,6 +189,10 @@ def audit(manifest, receipt):
     require(int(env["PERF_SAMPLES"]) == options["samples"] and
             float(env["PERF_SECONDS"]) == options["batch_seconds"],
             "wrong timing options")
+    require(env.get("PERF_ITERATIONS") == (
+                str(options["batch_iterations"])
+                if "batch_iterations" in options else None),
+            "wrong fixed iteration environment")
     result = receipt["result"]
     events = result["events"]
     require(events[:2] == [["begin", selection, "performance", "none"],
