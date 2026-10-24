@@ -281,6 +281,21 @@ sig
   val free_variables : graph -> node -> variable_summary
   (* Identity/ownership-preserving version; NONE is an unknown opaque view. *)
   val free_variable_nodes : graph -> node -> node list option
+  (* Optional query-local cost attribution, not proof/admission evidence.
+     Compare counts scalar key comparisons (including list items).
+     Excluded reports each materialized exclusion list; Visited reports the
+     lists retained as fresh visited keys. Variable reports output-map writes
+     by node ID; Type reports canonical type-ID reads for typed output keys.
+     These are logical entries/items, not native heap bytes or a constant-time
+     claim for maps, strings, type admission or public kernel primitives.
+     No observer or full dependency set is retained at graph nodes. *)
+  datatype dependency_event = DependencyVisit | DependencyCompare
+    | DependencyExcluded of int list | DependencyVisited of int list
+    | DependencyVariable of int | DependencyType of int
+  val free_variable_nodes_observed : (dependency_event -> unit) ->
+    graph -> node -> node list option
+  val free_variables_observed : (dependency_event -> unit) ->
+    graph -> node -> variable_summary
 
   (* Reserve admitted frame/schema variables before allocating placeholders.
      Known source variables and solver names are reserved automatically.

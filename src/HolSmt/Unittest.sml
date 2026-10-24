@@ -28202,6 +28202,190 @@ in
   Count.counting_thms false
 end handle primary => (Count.counting_thms false; raise primary)
 
+(* Resource/dependency agreement is checked only on bounded native inputs.
+   The depth-80 application case is checked from graph provenance, not FVL. *)
+fun replay_dependency_metadata_success () =
+let
+  val x = Term.mk_var ("metadata_x",Type.bool)
+  val y = Term.mk_var ("metadata_y",Type.bool)
+  val n = Term.mk_var ("metadata_x",numSyntax.num)
+  val identity = Term.mk_abs (x,x)
+  val shifted = boolSyntax.rhs (Thm.concl (Thm.Beta (Thm.REFL
+    (Term.mk_comb (Term.mk_abs (x,Term.mk_abs (y,x)),y)))))
+  val atoms = [x,y,boolSyntax.T,boolSyntax.mk_eq (n,n)]
+  val samples = atoms @ List.concat (List.map (fn term =>
+    [Term.mk_abs (x,term),Term.mk_abs (y,Term.mk_abs (x,term)),
+     Term.mk_comb (identity,term),boolSyntax.mk_conj (term,term)]) atoms)
+    @ [shifted,Term.mk_abs (x,Term.mk_abs (x,x)),
+       boolSyntax.mk_conj (x,boolSyntax.mk_eq (n,n))]
+  fun inclusive term =
+    if Term.is_comb term then
+      let val (left,right) = Term.dest_comb term
+      in 1 + inclusive left + inclusive right end
+    else if Term.is_abs term then 2 + inclusive (#2 (Term.dest_abs term))
+    else 1
+  fun same_variables expected actual =
+    HOLset.equal (HOLset.addList (Term.empty_tmset,expected),
+                 HOLset.addList (Term.empty_tmset,actual))
+  fun known (G.Known variables) = variables
+    | known G.Unknown = raise Fail "bounded dependency query was unknown"
+  fun check term =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val source = G.import graph scope 8192 term
+      fun opened node = case G.view graph node of
+          G.Application (left,right) => G.application graph scope
+            (opened left,opened right)
+        | G.OpaqueRetained => #node (G.admit_binder graph scope 128
+            (G.representative graph node))
+        | _ => node
+      val node = opened (#node source)
+      val expected = Term.free_vars term
+      val summary = SmtReplayDependencies.graph_summary
+        {graph=graph,root= #node source,admit_binder=fn _ => SOME 128}
+      val _ = assert (same_variables expected (known summary) andalso
+          same_variables expected (known (G.free_variables graph node)) andalso
+          SmtReplayDependencies.source_presence
+            {dag_limit=8192,admit_binder=fn _ => SOME 128} term =
+              SOME (not (null expected)),
+        "bounded native and metadata FV/presence queries disagree")
+      val _ = List.app (fn (metric,size) => List.app (fn limit =>
+        assert (G.unfolded_nodes graph metric limit node =
+            SOME (Int.min (limit+1,size)),
+          "graph summary changed an exact caller-metric boundary"))
+        [0,1,size-1,size,size+1])
+        [(G.RawNodes,Term.term_size term),
+         (G.BinderInclusiveNodes,inclusive term)]
+    in () end
+  val _ = List.app check samples
+  val graph = G.new ()
+  val scope = G.root_scope graph
+  val deep = G.import graph scope 8192 (shared 80 x)
+  val visits = ref 0 and comparisons = ref 0
+  val materialized = ref 0 and retained = ref 0 and entries = ref 0
+  val writes = ref ([] : int list) and types = ref ([] : int list)
+  fun observe event = case event of
+      G.DependencyVisit => visits := !visits+1
+    | G.DependencyCompare => comparisons := !comparisons+1
+    | G.DependencyExcluded ids => materialized := !materialized+length ids
+    | G.DependencyVisited ids =>
+        (entries := !entries+1;retained := !retained+length ids)
+    | G.DependencyVariable id => writes := id :: !writes
+    | G.DependencyType id => types := id :: !types
+  val actual = G.free_variables_observed observe graph (#node deep)
+  val _ = assert (same_variables [x] (known actual) andalso
+      !visits = 321 andalso !entries = 162 andalso !comparisons > 0 andalso
+      !materialized = 0 andalso !retained = 0 andalso length (!writes) = 1
+      andalso !types = [G.type_id graph (hd
+        (valOf (G.free_variable_nodes graph (#node deep))))],
+    "dependency observation lost DAG visits, storage or typed output work")
+  fun denied _ = raise Fail "application DAG requested binder admission"
+  val _ = assert (same_variables [x] (known
+      (SmtReplayDependencies.source_summary
+        {dag_limit=8192,admit_binder=denied} (shared 80 x))) andalso
+      SmtReplayDependencies.source_presence
+        {dag_limit=8192,admit_binder=denied} (shared 80 x) = SOME true,
+    "ordinary dependency DAG acquired an unfolded-root cutoff")
+  val rigid = G.variable graph scope G.RigidSource x
+  val flexible = G.variable graph scope G.SolverFlexible x
+  val generated = G.variable graph scope G.Generated x
+  val conjunction = G.constant graph scope boolSyntax.conjunction
+  fun conjunction_of left right = G.application graph scope
+    (G.application graph scope (conjunction,left),right)
+  val mixed = conjunction_of rigid (conjunction_of flexible generated)
+  val mixed_nodes = valOf (G.free_variable_nodes graph mixed)
+  val _ = assert (length mixed_nodes = 3 andalso
+      List.all (fn node => List.exists (fn held => node=held) mixed_nodes)
+        [rigid,flexible,generated] andalso
+      same_variables [x] (known (G.free_variables graph mixed)),
+    "typed term summaries erased identity-preserving rigidity dependencies")
+  fun typed_cost node expected expected_reads =
+    let
+      val base = ref 0 and typed = ref 0 and reads = ref 0
+      fun count counter G.DependencyCompare = counter := !counter+1
+        | count _ _ = ()
+      val _ = G.free_variable_nodes_observed (count base) graph node
+      fun observe (G.DependencyType _) = reads := !reads+1
+        | observe event = count typed event
+      val result = G.free_variables_observed observe graph node
+    in assert (same_variables expected (known result) andalso
+        !typed > !base andalso !reads = expected_reads,
+      "typed output comparisons, reads or deduplication were hidden") end
+  val _ = typed_cost mixed [x] 3
+  val typed_root = #node (G.import graph scope 8192
+    (boolSyntax.mk_conj (x,boolSyntax.mk_eq (n,n))))
+  val _ = typed_cost typed_root [x,n] 2
+  val opaque = #node (G.import graph scope 8192 (Term.mk_abs (y,x)))
+  val unknown_root = G.application graph scope (opaque,rigid)
+  val unknown_types = ref 0
+  fun observe_unknown (G.DependencyType _) = unknown_types := !unknown_types+1
+    | observe_unknown _ = ()
+  val _ = assert
+    (not (Option.isSome (G.free_variable_nodes_observed
+       observe_unknown graph unknown_root)) andalso
+     (case G.free_variables_observed observe_unknown graph unknown_root of
+        G.Unknown => true | _ => false) andalso !unknown_types = 0 andalso
+     (case G.free_variables graph opaque of G.Unknown => true | _ => false),
+    "observed opaque query certified closure or collected partial typed FV")
+  val _ = assert (case SmtReplayDependencies.graph_summary
+      {graph=graph,root=opaque,admit_binder=fn _ => NONE} of
+        G.Unknown => true | _ => false,
+    "unadmitted opaque dependencies became closed")
+  val _ = assert (SmtReplayDependencies.source_presence
+      {dag_limit=8192,admit_binder=fn _ => NONE} (Term.mk_abs (y,x)) = NONE,
+    "unknown presence was reported as absence")
+  val _ = assert (SmtReplayDependencies.source_presence
+      {dag_limit=8192,admit_binder=denied}
+      (boolSyntax.mk_conj (x,Term.mk_comb (Term.mk_abs (y,y),x))) = SOME true,
+    "exposed source witness needlessly opened an opaque binder")
+  exception Primary
+  val _ = assert (((ignore (G.free_variables_observed
+      (fn _ => raise Primary) graph (#node deep));false)
+      handle Primary => true) andalso
+      same_variables [x] (known (G.free_variables graph (#node deep))),
+    "query observer exception was consumed or changed later dependencies")
+  (* Exclusion lists are query-local, not permanent FV sets per graph node.
+     Expose their actual quadratic storage here instead of claiming O(N). *)
+  fun exclusion_cost depth =
+    let
+      fun nest 0 = x
+        | nest k = Term.mk_abs
+            (Term.mk_var ("metadata_bound_" ^ Int.toString k,Type.bool),
+             nest (k-1))
+      val node = #node (G.admit_binder graph scope 128 (nest depth))
+      val stored = ref 0
+      fun count (G.DependencyVisited ids) = stored := !stored+length ids
+        | count _ = ()
+      val actual = G.free_variables_observed count graph node
+      val _ = assert (same_variables [x] (known actual),
+        "nested exclusion keys hid a free variable")
+    in !stored end
+  val shared_binder = #node (G.admit_binder graph scope 128
+    (Term.mk_abs (y,boolSyntax.mk_conj (x,x))))
+  val materialized_keys = ref 0 and retained_keys = ref 0
+  fun exclusion_event (G.DependencyExcluded ids) =
+        materialized_keys := !materialized_keys+length ids
+    | exclusion_event (G.DependencyVisited ids) =
+        retained_keys := !retained_keys+length ids
+    | exclusion_event _ = ()
+  val shared_variables = G.free_variables_observed exclusion_event
+    graph shared_binder
+  val _ = assert (same_variables [x] (known shared_variables) andalso
+      !materialized_keys = 5 andalso !retained_keys = 4,
+    "shared binder hid exclusion materialization or retained duplicate keys")
+  val small = exclusion_cost 8
+  val large = exclusion_cost 16
+  val _ = assert (small = 36 andalso large = 136,
+    "query-local exclusion storage was hidden or misattributed")
+in
+  print ("DEPENDENCY_COST depth80 visits=" ^ Int.toString (!visits) ^
+    " entries=" ^ Int.toString (!entries) ^
+    " comparisons=" ^ Int.toString (!comparisons) ^
+    " exclusion8=" ^ Int.toString small ^
+    " exclusion16=" ^ Int.toString large ^ "\n")
+end
+
 fun replay_compact_proof_success () =
 let
   val _ = List.app (fn count =>
@@ -30447,6 +30631,8 @@ fun run_replay_graph_unittests () =
      ("replay_import_metric_success", replay_import_metric_success),
      ("replay_binder_type_admission_success",
        replay_binder_type_admission_success),
+     ("replay_dependency_metadata_success",
+       replay_dependency_metadata_success),
      ("replay_compact_proof_success", replay_compact_proof_success),
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
@@ -31292,6 +31478,8 @@ let
     ("replay_import_metric_success", replay_import_metric_success),
     ("replay_binder_type_admission_success",
       replay_binder_type_admission_success),
+    ("replay_dependency_metadata_success",
+      replay_dependency_metadata_success),
     ("replay_compact_proof_success", replay_compact_proof_success),
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),

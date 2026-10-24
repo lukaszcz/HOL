@@ -1329,28 +1329,40 @@ struct
   fun unfolded_nodes_observed observe g metric limit node =
     unfolded_nodes_program observe g metric limit node
   exception UnknownFreeVariables
-  fun free_variable_nodes g root =
+  datatype dependency_event = DependencyVisit | DependencyCompare
+    | DependencyExcluded of int list | DependencyVisited of int list
+    | DependencyVariable of int | DependencyType of int
+  (* Keep event construction and instrumented comparators off the ordinary
+     path. Only the explicitly observed entry points install those actions. *)
+  fun free_variable_nodes_using
+      {compare,visit,excluded_items,visited_key,variable} g root =
     let
-      val initial = Redblackset.empty Int.compare
+      val initial = Redblackset.empty compare
       fun loop [] _ variables =
             SOME (List.map #2 (Redblackmap.listItems variables))
         | loop ((node,excluded)::rest) visited variables =
           let
+            val _ = visit ()
             val fields = entry g node
-            val key = (node_id node,Redblackset.listItems excluded)
+            val exclusions = Redblackset.listItems excluded
+            val _ = excluded_items exclusions
+            val key = (node_id node,exclusions)
           in if Redblackset.member (visited,key) then
               loop rest visited variables
             else
               let
                 val visited = Redblackset.add (visited,key)
+                val _ = visited_key exclusions
                 fun next pending vars = loop pending visited vars
               in case #view fields of
                   OpaqueRetained => raise UnknownFreeVariables
                 | Variable _ =>
                     next rest
                       (if Redblackset.member (excluded,node_id node) then
-                         variables else Redblackmap.insert
-                           (variables,node_id node,node))
+                         variables else
+                           (variable (node_id node);
+                            Redblackmap.insert
+                              (variables,node_id node,node)))
                 | Application (left,right) =>
                     next ((left,excluded)::(right,excluded)::rest) variables
                 | AdmittedBinder {binder,body,...} =>
@@ -1361,20 +1373,41 @@ struct
           end
     in loop [(root,initial)]
       (Redblackset.empty
-        (pair_compare Int.compare (list_compare Int.compare)))
-      (Redblackmap.mkDict Int.compare)
+        (pair_compare compare (list_compare compare)))
+      (Redblackmap.mkDict compare)
     end handle UnknownFreeVariables => NONE
-  fun free_variables g root =
-    case free_variable_nodes g root of NONE => Unknown
+  val free_variable_nodes = free_variable_nodes_using
+    {compare = Int.compare,visit = fn () => (),excluded_items = fn _ => (),
+     visited_key = fn _ => (),variable = fn _ => ()}
+  fun free_variable_nodes_observed observe = free_variable_nodes_using
+    {compare = fn pair => (observe DependencyCompare; Int.compare pair),
+     visit = fn () => observe DependencyVisit,
+     excluded_items = fn ids => observe (DependencyExcluded ids),
+     visited_key = fn ids => observe (DependencyVisited ids),
+     variable = fn id => observe (DependencyVariable id)}
+  fun free_variables_using {query,read_type,compare_name,compare_type} g root =
+    case query g root of NONE => Unknown
     | SOME nodes =>
       let
         fun collect (node,variables) =
-          let val term = representative g node in
-            Redblackmap.insert (variables,
-              (#1 (Term.dest_var term),type_id g node),term) end
+          let val term = representative g node
+              val ty = read_type g node
+          in Redblackmap.insert (variables,
+            (#1 (Term.dest_var term),ty),term) end
       in Known (List.map #2 (Redblackmap.listItems
         (List.foldl collect (Redblackmap.mkDict
-          (pair_compare String.compare Int.compare)) nodes))) end
+          (pair_compare compare_name compare_type)) nodes))) end
+  val free_variables = free_variables_using
+    {query = free_variable_nodes,read_type = type_id,
+     compare_name = String.compare,compare_type = Int.compare}
+  fun free_variables_observed observe = free_variables_using
+    {query = free_variable_nodes_observed observe,
+     read_type = fn g => fn node =>
+       let val ty = type_id g node
+       in observe (DependencyType ty); ty end,
+     compare_name = fn pair => (observe DependencyCompare;
+       String.compare pair),
+     compare_type = fn pair => (observe DependencyCompare; Int.compare pair)}
 
   fun placeholder (g : graph) node =
     let val fields = entry g node
