@@ -3319,6 +3319,67 @@ local
     in ensure "closed-image needed route retained private law Hyp"
       (List.length (Thm.hyp theorem) = 1 andalso
        Portable.pointer_eq (List.hd (Thm.hyp theorem),boolSyntax.F)) end
+  fun sparse_optional_case {auxiliary,junk} =
+    let
+      val (g,s,f,t) = base ()
+      val x = variable g s "needed_optional_x"
+      val a = G.variable g s G.RigidSource
+        (Term.mk_var ("needed_optional_a",Type.bool))
+      val d = equation g s x a
+      val reflexive = equation g s x x
+      val fact = P.record_closed g s
+        {node = reflexive,theorem = Thm.REFL (G.representative g x),
+         template_limit = 100000,check_type = fn _ => ()}
+      val sources = [d,f]
+      fun run facts roots prime_cache =
+        let
+          val b = P.prepare_needed_sources_with_closed g
+            {scope = s,roots = roots,sources = sources,
+             closed_facts = facts,template_limit = 100000}
+          val edge = P.checked b (Drule.ADD_ASSUM (P.name b d)
+            (P.theorem b (P.source b 1)))
+          val actual = P.needed_sources_using b edge (fn _ => NONE)
+          val _ = ensure "assignment was not selected from actual Hyp"
+            (#needed actual = sources andalso
+             P.needed_source_occurrences b edge = [0,1])
+          val env = E.prepare g {scope = s,allocated = [x],
+            sources = sources,needed = #needed actual,roots = [f]}
+          val resolution = resolve env f (#laws actual)
+          val _ = if prime_cache then
+              let val cached = P.assemble b edge
+              in ensure "preparation assembly did not retain its cache"
+                (Portable.pointer_eq (cached,P.assemble b edge)) end
+            else ()
+          val next = final b f edge (R.roots resolution)
+          val block = #block next
+          val _ = ensure "refreeze changed actual Source occurrences"
+            (P.sources block = sources andalso
+             P.needed_source_occurrences block (#edge next) = [0,1])
+          val _ = if null facts then () else
+            ensure "unused auxiliary survived final refreeze"
+              (refuses (fn () => ignore (P.closed block fact)))
+          val _ = if prime_cache then
+              let val cached = P.assemble block (#edge next)
+              in ensure "refreeze cache changed or retained legacy junk root"
+                (Portable.pointer_eq
+                   (cached,P.assemble block (#edge next)) andalso
+                 null (Thm.hyp cached) andalso
+                 refuses (fn () => ignore (P.name block t))) end
+            else ()
+        in P.realize_resolved_with_closed_sources block resolution f
+          (#edge next) [] (fn _ => NONE) end
+      val baseline = run [] [f] false
+      val result = run (if auxiliary then [fact] else [])
+        (if junk then [f,t] else [f]) junk
+    in ensure "optional preparation changed exact F Hyp, endpoint or tags"
+      (exact_source_list [boolSyntax.F] (Thm.hyp baseline) andalso
+       exact_source_list [boolSyntax.F] (Thm.hyp result) andalso
+       Portable.pointer_eq (Thm.concl baseline,boolSyntax.F) andalso
+       Portable.pointer_eq (Thm.concl result,Thm.concl baseline) andalso
+       Tag.dest_tag (Thm.tag result) = Tag.dest_tag (Thm.tag baseline) andalso
+       Tag.axioms_of (Thm.tag result) = Tag.axioms_of (Thm.tag baseline)
+       andalso Tag.dep_of (Thm.tag result) = Tag.dep_of (Thm.tag baseline))
+    end
 in
   val _ = run_postlude 5 "postlude-0046-line-3173" (fn () =>
     let
@@ -3352,6 +3413,12 @@ in
        List.all (fn row => not (#name_on_left row)) (E.definitions env)) end
   val _ = testutils.tprint "Actual needed closed law connects U R I P"
   val _ = closed_case ()
+  val _ = testutils.tprint
+    "Unused closed auxiliary preserves needed resolution"
+  val _ = sparse_optional_case {auxiliary = true,junk = false}
+  val _ = testutils.tprint
+    "Refreeze prunes legacy junk roots after cached assembly"
+  val _ = sparse_optional_case {auxiliary = false,junk = true}
   val _ = testutils.tprint "Needed open witness declines exact Hyp expansion"
   val _ = let val (g,s,f,_) = base () val b = prepare g s [f] [f]
       val edge = P.source b 0
@@ -26771,6 +26838,7 @@ local
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
   structure P = SmtReplayProof
+  structure Observation = SmtReplayRuleObservation
   structure E = SmtReplayDefinitionEnvironment
   val _ = SmtReplayRules.boolean_rule
   structure Rules = SmtReplayRules
@@ -26844,6 +26912,95 @@ in
       (needed = [0,1] andalso final_needed = [0,1] andalso
        retained = prefix e andalso Portable.pointer_eq (proof,final_proof)
        andalso retired andalso #charged (W.audit (#work e)) > before) end
+
+  val _ = testutils.tprint "Owned sparse final drops failed-alternative roots"
+  val _ = let val e = setup ()
+      (* Negating #p e would alias the denied-goal Source. Use a fresh
+         operand so the abandoned alternative really is constructor junk. *)
+      val p = variable e "sparse_failed_alternative_p"
+      val negation = G.constant (#graph e) (#root e) boolSyntax.negation
+      val junk = G.application (#graph e) (#root e) (negation,p)
+      val old = preparation e [] [#p e,junk]
+      val junk_name = action e (fn () => P.name old junk)
+      val _ = action e (fn () => P.constructor old junk)
+      (* That candidate is abandoned: only the original Source succeeds. *)
+      val edge = action e (fn () => P.source old 0)
+      val proof = action e (fn () => P.theorem old edge)
+      val needed = indices e old edge
+      val next = finish e old (#p e) edge []
+      val final_proof = action e (fn () =>
+        P.theorem (#block next) (#edge next))
+      val final_needed = indices e (#block next) (#edge next)
+      val retained = action e (fn () => P.sources (#block next))
+      val valid = not (List.exists (fn node => node = junk) (prefix e))
+        andalso Term.aconv junk_name (G.placeholder (#graph e) junk)
+        andalso needed = [0,1] andalso final_needed = needed
+        andalso retained = prefix e
+        andalso Portable.pointer_eq (proof,final_proof)
+        andalso ListPair.allEq Portable.pointer_eq
+          (Thm.hyp proof,Thm.hyp final_proof)
+        andalso not (#retired (W.audit (#work e)))
+      (* Owned refusal retires Work: no final-block reads after this probe. *)
+      val dropped = refuses (fn () => action e (fn () =>
+        P.name (#block next) junk))
+    in ensure "failed-alternative constructor survived or actual Hyp changed"
+      (valid andalso dropped andalso #retired (W.audit (#work e))) end
+
+  val _ = testutils.tprint "Owned sparse final assembly reuses its closed law"
+  val _ = let val e = setup () val old = preparation e [] [#p e]
+      val edge = action e (fn () => P.source old 0)
+      val proof = action e (fn () => P.theorem old edge)
+      val needed = indices e old edge
+      val next = finish e old (#p e) edge []
+      val final_proof = action e (fn () =>
+        P.theorem (#block next) (#edge next))
+      val final_needed = indices e (#block next) (#edge next)
+      (* finish already assembled. Neither subsequent lookup may rebuild
+         DISCH/projections; owner validation still pays on the SAME Work.
+         Deliberately do not pin an exact lookup charge. *)
+      val before = #charged (W.audit (#work e))
+      val (first,first_events) = Observation.with_statistics (fn () =>
+        action e (fn () => P.assemble (#block next) (#edge next)))
+      val between = #charged (W.audit (#work e))
+      val (second,second_events) = Observation.with_statistics (fn () =>
+        action e (fn () => P.assemble (#block next) (#edge next)))
+      val after = #charged (W.audit (#work e))
+      val compact = case Thm.hyp proof of [hypothesis] =>
+          Term.aconv (Thm.concl first)
+            (boolSyntax.mk_imp
+              (boolSyntax.mk_conj (hypothesis,hypothesis),Thm.concl proof))
+        | _ => false
+      val valid = needed = [0,1] andalso final_needed = needed
+        andalso Portable.pointer_eq (proof,final_proof)
+        andalso ListPair.allEq Portable.pointer_eq
+          (Thm.hyp proof,Thm.hyp final_proof)
+        andalso Portable.pointer_eq (first,second)
+        andalso null (Thm.hyp first) andalso clean first andalso compact
+        andalso #selected_returns first_events = 0
+        andalso #theorem_operand_edges first_events = 0
+        andalso #selected_returns second_events = 0
+        andalso #theorem_operand_edges second_events = 0
+        andalso between > before andalso after > between
+        andalso not (#retired (W.audit (#work e)))
+      val _ = W.close (#work e)
+    in ensure "cached assembly rebuilt a law, changed Hyp or renewed Work"
+      valid end
+
+  val _ = testutils.tprint
+    "Owned sparse projection fee precedes native effects"
+  val _ = let val e = setup () val old = preparation e [] [#p e]
+      val edge = action e (fn () => P.source old 0)
+      val (_,events) = Observation.with_statistics (fn () =>
+        ensure "unpaid sparse assembly returned a theorem"
+          (refuses (fn () => action e (fn () =>
+            let val available = W.work_limit (#work e) -
+                    #charged (W.audit (#work e))
+                val _ = W.spend (#work e) (available-1)
+            in ignore (P.assemble old edge) end))))
+    in ensure "exhausted projection budget performed native work"
+      (#selected_returns events = 0 andalso
+       #theorem_operand_edges events = 0 andalso
+       #retired (W.audit (#work e))) end
 
   val _ = testutils.tprint "Owned sparse unused cycles reach original receiver"
   val _ = let val e = setup () val x = variable e "sparse_unused_x"

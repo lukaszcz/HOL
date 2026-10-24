@@ -401,6 +401,9 @@ struct
      bytes:(Term.term * IntInf.int) list Array.array,
      operands:(Term.term * int) list Array.array,
      pending:(Term.term * SmtReplayNamedContext.profile) option ref}
+  type compact_assembly =
+    {proof:Thm.thm,indices:int list option,tree:boundary,
+     context:Term.term,projections:Thm.thm vector,law:Thm.thm}
   datatype block = Block of
     {owner : unit ref, graph : G.graph, scope : G.scope,
      nodes : (G.node * Term.term) table,
@@ -413,6 +416,7 @@ struct
      source_count : int, template_limit : int, realized : bool ref,
      next_dependency : int ref,
      primitive_metadata : primitive_metadata option ref,
+     assembly : compact_assembly option ref,
      owned_frame : (W.portfolio * Scope.receipt) option}
   datatype edge = Edge of
     {owner : unit ref, theorem : Thm.thm, dependencies : dependency}
@@ -1769,6 +1773,7 @@ struct
         definitions = definition_index, source_count = List.length sources,
         template_limit = template_limit, realized = ref false,
         next_dependency = ref 0,primitive_metadata = ref NONE,
+        assembly = ref NONE,
         owned_frame = owned_frame}
     end
 
@@ -2283,6 +2288,203 @@ struct
     in observe_proof graph #edges;Edge {owner = owner, theorem = lifted,
       dependencies = new_dependency block (Leaves dependencies)} end
 
+  (* Prospectively inspect bounded compact operands. In contrast to the
+     older sparse admission helper, every syntax/Type edge is paid before
+     visiting it; a failed quote cannot construct a term or theorem. *)
+  fun assembly_term_quote pay limit term =
+    let
+      fun type_size ty =
+        (pay 2;if Type.is_vartype ty then
+           let val bytes=String.size (Type.dest_vartype ty)
+               val _=pay bytes
+           in 1+bytes end
+         else List.foldl (fn (child,n) => n+type_size child) 1
+           (#2 (Type.dest_type ty)))
+      val raw = ref 0 val inclusive = ref 0
+      val annotations = ref 0 val text = ref 0
+      fun visit current =
+        let val _=pay 5
+            val _=raw := !raw+1 val _=inclusive := !inclusive+1
+            val _=if !raw<=limit andalso !inclusive<=limit then () else
+              raise ERR "owned_sparse_projection"
+                "compact leaf exceeds original binder cap"
+            val own=type_size (Term.type_of current)
+            val _=annotations := !annotations+own
+        in if Term.is_comb current then
+             let val (a,b)=Term.dest_comb current
+             in visit a;visit b end
+           else if Term.is_abs current then
+             let val (binder,body)=Term.dest_abs current
+                 val _=pay 3 val _=inclusive := !inclusive+1
+                 val _=annotations := !annotations+
+                   type_size (Term.type_of binder)
+             in visit body end
+           else
+             let val bytes=if Term.is_var current then
+                   String.size (#1 (Term.dest_var current))
+                 else if Term.is_const current then
+                   let val {Thy,Name,...}=Term.dest_thy_const current
+                   in String.size Thy+String.size Name end else 0
+                 val _=pay bytes
+             in text := !text+bytes end
+        end
+      val _=visit term
+      (* Native input/result/Hyp incidence and bounded name/Type matches;
+         metadata inspection above is additional, not future credit. *)
+      val _=pay (2*(!raw+ !inclusive+ !annotations+ !text))
+    in () end
+
+  (* Capture actual Hyp before lifting. Only successful leaves enter D;
+     semantic rewrites are never assumed as syntax definitions. Cache the
+     closed compact law and projections, not discovery callbacks. *)
+  fun assemble_internal (block as Block {assembly,leaf_index,tree,
+      context,projections,nodes,template_limit,...}) edge =
+    let
+      val proof = theorem block edge
+      val _ = case (leaf_index,nodes) of
+          (SOME _,FixedTable {work,...}) => W.spend work 3
+        | _ => ()
+      fun build () =
+        let
+          (* Callback-free microsteps share prepaid credit from the SAME
+             Work. This avoids revalidating the entire priced scope path
+             for each Type edge. No credit survives this assembly; at most
+             255 unused units remain charged, never refunded or reset. *)
+          val credit = ref 0
+          val payer = case (leaf_index,nodes) of
+              (SOME _,FixedTable {work,...}) =>
+                let val ceiling = W.work_limit work
+                    val overhead = case W.priced_root_scope_path work of
+                        NONE => 0
+                      | SOME path => 33 +
+                          IntInf.toInt (G.scope_path_validation_work path)
+                in fn amount =>
+                  if amount <= !credit then credit := !credit-amount else
+                    let val need = amount- !credit
+                        val available = ceiling- #charged (W.audit work)
+                        val batch = Int.max
+                          (need,Int.min (256,Int.max (0,available-overhead)))
+                        val _ = W.spend work batch
+                    in credit := !credit+batch-amount end
+                end
+            | _ => fn _ => ()
+          val indices = case leaf_index of NONE => NONE
+            | SOME _ => SOME (needed_leaves block edge)
+          val chosen = Option.getOpt (indices,[])
+          val terms = Vector.fromList (List.map (fn index =>
+            (payer 3;Thm.concl (Vector.sub (projections,index)))) chosen)
+          (* Subselection cannot exceed the already admitted full context.
+             Pay the balanced skeleton before constructing it; every leaf
+             is an existing Boolean term with the same owned-name guard. *)
+          fun boundary start count =
+            (payer 3;if count=0 then Empty else if count=1 then Leaf start
+             else let val half=count div 2 in Split
+               (boundary start half,boundary (start+half) (count-half)) end)
+          fun syntax Empty = (payer 1;boolSyntax.T)
+            | syntax (Leaf index) = (payer 1;Vector.sub (terms,index))
+            | syntax (Split (a,b)) =
+                let val left=syntax a val right=syntax b
+                    val _=payer 12
+                in boolSyntax.mk_conj (left,right) end
+          val boundary = case indices of NONE => tree
+            | SOME _ => boundary 0 (Vector.length terms)
+          val d = case indices of NONE => context
+            | SOME _ => syntax boundary
+          (* Query-local syntax-cost memo, never a proof or permission.
+             Charge lookup/storage as well as every future native use.
+             No callbacks/declaration changes intervene in this assembly. *)
+          val _ = payer 128
+          val costs = Array.array (127,[] : (Term.term * int) list)
+          fun term_quote term =
+            let val index = SmtReplayImport.pointer_bucket_observed
+                  (fn n => payer (IntInf.toInt n)) 4 127 term
+                fun find [] = (payer 1;NONE)
+                  | find ((held,amount)::rest) =
+                      (payer 2;if Portable.pointer_eq (held,term) then
+                         SOME amount else find rest)
+            in case find (Array.sub (costs,index)) of
+                SOME amount => payer amount
+              | NONE =>
+                let val amount = ref 0
+                    fun record n = (payer n;amount := !amount+n)
+                    val _ = assembly_term_quote record template_limit term
+                    val _ = payer 4
+                    val _ = Array.update (costs,index,
+                      (term,!amount)::Array.sub (costs,index))
+                in () end
+            end
+          (* Non-sparse owned callers retain their authenticated native
+             preflight quotation; do not bill it twice. Sparse uses pay the
+             repeated D/Hyp portfolios, not only the leaf conclusions. *)
+          fun quote terms = case (leaf_index,nodes) of
+              (SOME _,FixedTable {work,...}) =>
+                (W.spend work 0;payer 20;List.app term_quote terms)
+            | _ => ()
+          fun project_paid Empty _ = []
+            | project_paid (Leaf _) held = [held]
+            | project_paid (Split (a,b)) held =
+                let val (left,right) = boolSyntax.dest_conj (Thm.concl held)
+                    val _ = quote [d,Thm.concl held,left]
+                    val l = SmtReplayRuleObservation.CONJUNCT1 held
+                    val _ = quote [d,Thm.concl held,right]
+                    val r = SmtReplayRuleObservation.CONJUNCT2 held
+                in project_paid a l @ project_paid b r end
+          val projected = case indices of NONE => projections
+            | SOME _ =>
+                (quote [d,d];Vector.fromList
+                  (project_paid boundary
+                    (SmtReplayRuleObservation.ASSUME d)))
+          fun lift (premise,result) =
+            let val hyp = Thm.hyp result
+                (* D is present at most once in Hyp; do not re-traverse
+                   it for every other leaf. Source leaves are names and
+                   generated leaves have fixed equality heads, distinct
+                   from a multi-leaf conjunction's head. *)
+                val _ = List.app (fn term =>
+                  quote [term,Thm.concl premise]) hyp
+                val _ = quote (Thm.concl result :: d :: hyp)
+            in SmtReplayRuleObservation.D_PROVE_HYP premise result end
+          val lifted = case indices of NONE => proof
+            | SOME _ => Vector.foldl lift proof projected
+          val _ = quote (d :: Thm.concl lifted :: Thm.hyp lifted)
+          val law = SmtReplayRuleObservation.DISCH d lifted
+          val _ = guard block [Thm.concl law]
+          val _ = if null (Thm.hyp law) andalso clean law then () else
+            raise ERR "assemble" "compact proof is not closed"
+          val result = {proof=proof,indices=indices,tree=boundary,context=d,
+            projections=projected,law=law}:compact_assembly
+          val _ = assembly := SOME result
+        in result end
+    in case !assembly of SOME held =>
+         if Portable.pointer_eq (proof,#proof held) then held else build ()
+       | NONE => build () end
+
+  fun assemble block edge =
+    (policy_legacy_block_only "assemble" block;
+     #law (assemble_internal block edge))
+
+  (* Insertion guards exclude graph names below binders. Inspect only
+     compact syntax, never expanded representatives. *)
+  fun retained_proof_nodes (Block {nodes,...}) proof =
+    let
+      fun spend n = case nodes of FixedTable {work,...} => W.spend work n
+        | _ => ()
+      fun compare (a,b) =
+        (spend (1+String.size a+String.size b);String.compare (a,b))
+      fun visit term set =
+        (spend 1;
+         if Term.is_var term then
+           Redblackset.add (set,#1 (Term.dest_var term))
+         else if Term.is_comb term then
+           let val (a,b) = Term.dest_comb term
+           in visit b (visit a set) end
+         else set)
+      val used = List.foldl (fn (term,set) => visit term set)
+        (Redblackset.empty compare) (Thm.concl proof :: Thm.hyp proof)
+    in table_foldl (fn (_, (node,variable),rest) =>
+      (spend 1;if Redblackset.member (used,#1 (Term.dest_var variable))
+        then node::rest else rest)) [] nodes end
+
   fun refreeze_needed_sources (old as Block
       {graph,scope,nodes,leaves,template_limit,realized,leaf_index,...})
       {roots,target,edge} =
@@ -2295,24 +2497,28 @@ struct
         raise ERR "refreeze_needed_sources" "not a sparse preparation block"
       val _ = if Term.aconv (Thm.concl proof) (name old target) then () else
         raise ERR "refreeze_needed_sources" "wrong compact target"
-      val original_nodes = List.map (fn (_, (node,_)) => node)
-        (table_list nodes)
+      val original_nodes = retained_proof_nodes old proof
+      val used = Redblackset.addList (Redblackset.empty Int.compare,
+        needed_leaves old edge)
       val original_sources = sources old
       val _ = realized := true
-      val closed_facts = Vector.foldr
-        (fn (ClosedWitness fact,rest) => fact :: rest | (_,rest) => rest)
-        [] leaves
-      val conversions = Vector.foldr
-        (fn (ConversionWitness plan,rest) => plan :: rest | (_,rest) => rest)
-        [] leaves
+      val closed_facts = Vector.foldri
+        (fn (i,ClosedWitness fact,rest) =>
+              if Redblackset.member (used,i) then fact::rest else rest
+          | (_,_,rest) => rest) [] leaves
+      val conversions = Vector.foldri
+        (fn (i,ConversionWitness plan,rest) =>
+              if Redblackset.member (used,i) then plan::rest else rest
+          | (_,_,rest) => rest) [] leaves
       val next = freeze_internal true closed_facts conversions graph
         {scope = scope,roots = roots @ original_nodes,
          sources = original_sources,template_limit = template_limit}
-      val _ = table_app (fn (_, (node,original)) =>
-        if Portable.pointer_eq (original,name next node) then () else
-          raise ERR "refreeze_needed_sources" "compact name identity changed")
-        nodes
+      val _ = List.app (fn node =>
+        if Portable.pointer_eq (G.placeholder graph node,name next node)
+          then () else raise ERR "refreeze_needed_sources"
+            "compact name identity changed") original_nodes
       val transferred = checked next proof
+      val _ = assemble next transferred
     in {block = next,edge = transferred} end
 
   (* The checked sparse edge, not a caller's needed array, is the only
@@ -2337,10 +2543,10 @@ struct
         in indices end))
      handle primary => (W.close expected;raise primary))
 
-  (* Keep every original Source occurrence and exact typed witness. New
-     resolution demands are added while old constructor demands dominate
-     genuine realization cuts. Transfer the immutable checked theorem only
-     after both name inventories and actual sparse Hyp have been checked. *)
+  (* Keep original Source occurrences, but only actual successful witness
+     and constructor demands. New resolution roots remain explicit. Transfer
+     the immutable sparse theorem after checking its retained names/Hyp;
+     separately cache its balanced, closed common-context assembly. *)
   fun refreeze_needed_sources_with_work expected
       (old as Block {graph,scope,nodes,leaves,template_limit,realized,
         leaf_index,owned_names,...}) {roots,target,edge} =
@@ -2367,38 +2573,40 @@ struct
             "wrong compact target"
         (* Certify the entire actual Hyp against the old sparse index.
            Constructor/closed/conversion leaves participate, not only S. *)
-        val _ = List.app (fn _ => W.spend expected 1)
-          (needed_leaves old edge)
+        val used = Redblackset.addList
+          (Redblackset.empty (fn (a,b) =>
+            (W.spend expected 1;Int.compare (a,b))),needed_leaves old edge)
+        val retained = retained_proof_nodes old proof
         val source_frame = retained_source_frame_for expected old []
-        val definitions = Vector.foldr
-          (fn (Definition (node,_),rest) =>
-                (W.spend expected 2;node::rest)
-            | (_,rest) => (W.spend expected 1;rest)) [] leaves
-        val facts = Vector.foldr
-          (fn (ClosedWitness held,rest) =>
-                (W.spend expected 2;held::rest)
-            | (_,rest) => (W.spend expected 1;rest)) [] leaves
-        val conversions = Vector.foldr
-          (fn (ConversionWitness held,rest) =>
-                (W.spend expected 2;held::rest)
-            | (_,rest) => (W.spend expected 1;rest)) [] leaves
+        fun live i = (W.spend expected 1;Redblackset.member (used,i))
+        val definitions = Vector.foldri
+          (fn (i,Definition (node,_),rest) =>
+                if live i then node::rest else rest
+            | (_,_,rest) => (W.spend expected 1;rest)) [] leaves
+        val facts = Vector.foldri
+          (fn (i,ClosedWitness held,rest) =>
+                if live i then held::rest else rest
+            | (_,_,rest) => (W.spend expected 1;rest)) [] leaves
+        val conversions = Vector.foldri
+          (fn (i,ConversionWitness held,rest) =>
+                if live i then held::rest else rest
+            | (_,_,rest) => (W.spend expected 1;rest)) [] leaves
         (* Standalone variable/binder/opaque names carry no application
            demand. Application cuts remain justified only by the SAME
            held genuine realization leaves, not by an inferred atom flag. *)
-        val anchors = table_foldl (fn (_, (node,_),rest) =>
+        val anchors = List.filter (fn node =>
           (W.spend expected 1;case G.view graph node of
-             G.Application _ => rest
-           | _ => node::rest)) [] nodes
+             G.Application _ => false | _ => true)) retained
         val frontier = prepare_retained_source_frontier expected source_frame
           {roots = target::definitions @ roots @ anchors,closed_facts = facts,
            conversions = conversions}
         val tables = prepare_owned_realization_tables expected frontier
         val next as Block {owner,leaf_index = next_index,...} =
           freeze_owned_needed_realization_tables_plan expected tables
-        val _ = table_app (fn (_, (node,original)) =>
-          if Portable.pointer_eq (original,name next node) then () else
-            raise ERR "refreeze_needed_sources_with_work"
-              "compact name identity changed") nodes
+        val _ = List.app (fn node =>
+          if Portable.pointer_eq (G.placeholder graph node,name next node)
+            then () else raise ERR "refreeze_needed_sources_with_work"
+              "compact name identity changed") retained
         val index = case next_index of SOME held => held
           | NONE => raise ERR "refreeze_needed_sources_with_work"
               "missing final sparse index"
@@ -2415,6 +2623,7 @@ struct
         val transferred = Edge {owner = owner,theorem = proof,
           dependencies = dependency}
         val _ = needed_leaves next transferred
+        val _ = assemble next transferred
         val _ = retained_source_guard expected source_frame
         val _ = validate_block_for expected next
         val _ = W.spend expected 1
@@ -3964,8 +4173,7 @@ struct
   (* Cross-block witnesses already use retained endpoints and canonical
      source hypotheses. They are not instantiated or re-abstracted here. *)
   fun realize_internal (block as Block
-      {graph,scope,nodes,leaves,tree,context,realized,leaf_index,
-       projections,...})
+      {graph,scope,nodes,leaves,realized,leaf_index,...})
       resolution target
       edge supplied closed_images =
     let
@@ -4074,26 +4282,9 @@ struct
       val active_leaves = case selected of NONE => leaves
         | SOME _ => Vector.fromList
             (List.map (fn index => Vector.sub (leaves,index)) indices)
-      val active_tree = case selected of NONE => tree
-        | SOME _ => make_tree 0 (Vector.length active_leaves)
-      val active_context = case selected of NONE => context
-        | SOME _ => tree_term
-            (Vector.fromList (List.map (fn index =>
-              Thm.concl (Vector.sub (projections,index))) indices))
-            active_tree
-      val _ = case selected of NONE => ()
-        | SOME _ => guard block [active_context]
-      val lifted = case selected of NONE => proof | SOME _ =>
-        let val projected = Vector.fromList
-              (project active_tree
-                (SmtReplayRuleObservation.ASSUME active_context))
-        in Vector.foldl (fn (premise,result) =>
-          SmtReplayRuleObservation.D_PROVE_HYP premise result)
-          proof projected end
-      val law = SmtReplayRuleObservation.DISCH active_context lifted
-      val _ = guard block [Thm.concl law]
-      val _ = if List.null (Thm.hyp law) andalso clean law then ()
-        else raise ERR operation "compact proof is not closed"
+      val compact = assemble_internal block edge
+      val active_tree = #tree compact
+      val law = #law compact
       val substitution = table_foldl
         (fn (_, (node,variable), list) =>
           {redex = variable,residue = resolved node} :: list) [] nodes
@@ -4413,8 +4604,7 @@ struct
      Open Hyp must be exact promoted Source slots. Old realization is literal
      and retains its existing sparse closed-witness restriction. *)
   fun realize_source_cut_internal (block as Block
-      {graph,scope,nodes,leaves,tree,context,realized,leaf_index,
-       projections,...})
+      {graph,scope,nodes,leaves,realized,leaf_index,...})
       resolution target
       edge supplied closed_images =
     let
@@ -4521,26 +4711,9 @@ struct
       val active_leaves = case selected of NONE => leaves
         | SOME _ => Vector.fromList
             (List.map (fn index => Vector.sub (leaves,index)) indices)
-      val active_tree = case selected of NONE => tree
-        | SOME _ => make_tree 0 (Vector.length active_leaves)
-      val active_context = case selected of NONE => context
-        | SOME _ => tree_term
-            (Vector.fromList (List.map (fn index =>
-              Thm.concl (Vector.sub (projections,index))) indices))
-            active_tree
-      val _ = case selected of NONE => ()
-        | SOME _ => guard block [active_context]
-      val lifted = case selected of NONE => proof | SOME _ =>
-        let val projected = Vector.fromList
-              (project active_tree
-                (SmtReplayRuleObservation.ASSUME active_context))
-        in Vector.foldl (fn (premise,result) =>
-          SmtReplayRuleObservation.D_PROVE_HYP premise result)
-          proof projected end
-      val law = SmtReplayRuleObservation.DISCH active_context lifted
-      val _ = guard block [Thm.concl law]
-      val _ = if List.null (Thm.hyp law) andalso clean law then ()
-        else raise ERR operation "compact proof is not closed"
+      val compact = assemble_internal block edge
+      val active_tree = #tree compact
+      val law = #law compact
       val substitution = table_foldl
         (fn (_, (node,variable), list) =>
           {redex = variable,residue = resolved node} :: list) [] nodes
@@ -21448,6 +21621,7 @@ struct
           source_count=IntInf.toInt source_count,
           template_limit=native_template,realized=ref false,
           next_dependency=ref 0,primitive_metadata=ref NONE,
+          assembly=ref NONE,
           owned_frame=SOME(expected,frame)}
         val _=valid ()
         val _=validate_block_for expected block

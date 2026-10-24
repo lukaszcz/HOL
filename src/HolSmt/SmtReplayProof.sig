@@ -224,6 +224,11 @@ sig
      context. Only source facts and constructor definitions are admitted. *)
   val checked : block -> Thm.thm -> edge
   val theorem : block -> edge -> Thm.thm
+  (* Return |- D ==> C, caching the balanced context/projections and closed
+     law for realization. Sparse actual Hyp is captured before lifting;
+     original occurrence queries remain available on the unchanged edge.
+     Owned finite callers use their existing active Work action. *)
+  val assemble : block -> edge -> Thm.thm
   val dependencies : block -> edge -> int list
   val compose : block -> (Thm.thm list -> Thm.thm) -> edge list -> edge
 

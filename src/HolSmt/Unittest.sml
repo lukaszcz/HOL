@@ -30624,6 +30624,195 @@ in Count.counting_thms false end
 handle primary => (Count.counting_thms false;raise primary)
 end
 
+(* Discovery owns proposals; freeze retains only its successful recipe. *)
+local
+  structure G = SmtReplayGraph
+  structure C = SmtReplayCanonGraph
+  structure P = SmtReplayProof
+in
+fun replay_discovery_freeze_success () =
+let
+  fun ensure message yes = if yes then () else raise Fail message
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun refused origin operation message action = (action ();false)
+    handle Feedback.HOL_ERR detail =>
+      Feedback.top_structure_of detail = origin andalso
+      Feedback.top_function_of detail = operation andalso
+      Feedback.message_of detail = message
+  fun test label action =
+    let
+      val _ = testutils.tprint label
+      val _ = Count.counting_thms true
+      val result = Exn.capture action ()
+      val _ = Count.counting_thms false
+    in Exn.release result;testutils.OK () end
+  val cap = 10000
+  val hole = Term.mk_var ("discovery_freeze_hole",Type.bool)
+  val and_law = Thm.CONJUNCT1 (Thm.CONJUNCT2
+    (Thm.SPEC hole boolTheory.AND_CLAUSES))
+  val or_law = Thm.CONJUNCT1 (Thm.CONJUNCT2 (Thm.CONJUNCT2
+    (Thm.CONJUNCT2 (Thm.SPEC hole boolTheory.OR_CLAUSES))))
+  fun schema graph scope theorem operands = C.checked_graph_schema graph scope
+    {theorem=theorem,holes=[hole],operands=operands,template_limit=cap}
+  fun freeze graph scope plan sources = P.freeze graph
+    {scope=scope,roots=C.graph_roots plan,sources=sources,template_limit=cap}
+  fun fixture () =
+    let val graph = G.new () val scope = G.root_scope graph
+        val p = G.variable graph scope G.RigidSource
+          (Term.mk_var ("discovery_freeze_p",Type.bool))
+    in (graph,scope,p) end
+in
+  test "Retained schemas name generated intermediate syntax without reproposal"
+    (fn () =>
+      let
+        val (graph,scope,p) = fixture ()
+        val original = boolSyntax.mk_disj
+          (boolSyntax.mk_conj (G.representative graph p,boolSyntax.T),
+           boolSyntax.F)
+        val source = #node (G.import graph scope cap original)
+        val proposals = ref 0
+        val live = ref true
+        val intermediate = ref (NONE : G.node option)
+        fun propose node =
+          let
+            val _ = ensure "assembly reentered proposal callback" (!live)
+            val _ = proposals := !proposals+1
+          in case G.view graph node of
+              G.Application (inner,right) =>
+                (case G.view graph inner of
+                   G.Application (head,left) =>
+                     if head=G.constant graph scope boolSyntax.conjunction
+                         andalso right=G.constant graph scope boolSyntax.T then
+                       SOME (schema graph scope and_law [left])
+                     else if head=G.constant graph scope boolSyntax.disjunction
+                         andalso right=G.constant graph scope boolSyntax.F then
+                       (intermediate := SOME node;
+                        SOME (schema graph scope or_law [left]))
+                     else NONE
+                 | _ => NONE)
+            | _ => NONE
+          end
+        val (plan,discovered) = C.with_schema_statistics graph scope (fn () =>
+          C.graph_conversion graph scope false propose source)
+        val calls = !proposals
+        val _ = live := false
+        val middle = valOf (!intermediate)
+        val _ = ensure "discovery did not retain both successful schemas"
+          (calls>0 andalso #created_schemas discovered=2 andalso
+           #applied_schemas discovered=0 andalso middle<>source andalso
+           C.graph_source plan=source andalso C.graph_result plan=p andalso
+           Term.aconv (G.representative graph middle)
+             (boolSyntax.mk_disj (G.representative graph p,boolSyntax.F)))
+        val block = freeze graph scope plan []
+        val _ = ignore (P.name block middle)
+        val (edge,assembled) = C.with_schema_statistics graph scope (fn () =>
+          C.graph_assemble graph block plan)
+        val _ = ensure "assembly did not apply only the retained laws"
+          (!proposals=calls andalso #created_schemas assembled=0 andalso
+           #applied_schemas assembled=2 andalso #schema_inst_calls assembled=2
+           andalso Term.aconv (Thm.concl (P.theorem block edge))
+             (P.name block (C.graph_equality plan)))
+        val theorem = P.realize block (C.graph_equality plan) edge
+        val _ = ensure "retained recipe lost its closed exact equality"
+          (null (Thm.hyp theorem) andalso ptr (Thm.concl theorem)
+             (G.representative graph (C.graph_equality plan)) andalso
+           Term.aconv (Thm.concl theorem)
+             (boolSyntax.mk_eq (original,G.representative graph p)))
+      in check_oracle_tags "discovery/freeze retained schemas" theorem end);
+  test "Failed proposal syntax stays outside freeze; projections reuse proofs"
+    (fn () =>
+      let
+        val (graph,scope,p) = fixture ()
+        val source = #node (G.import graph scope cap
+          (boolSyntax.mk_conj (G.representative graph p,boolSyntax.T)))
+        val discarded = ref ([] : G.node list)
+        val failures = ref 0
+        fun propose node = if node<>p then NONE else
+          C.graph_schema_conversion graph scope
+            {prefix_depth=1,template_limit=cap,conversion=fn _ =>
+              let
+                val head = G.constant graph scope boolSyntax.negation
+                val negated = G.application graph scope (head,p)
+                val unused = schema graph scope and_law [negated]
+                val _ = discarded :=
+                  [head,negated,C.graph_schema_source unused]
+                val _ = failures := !failures+1
+              in raise Conv.UNCHANGED end} node
+        val plan = C.graph_conversion graph scope false propose source
+        val _ = ensure "failed proposal fixture did not generate syntax"
+          (!failures=1 andalso length (!discarded)=3 andalso
+           C.graph_result plan=source)
+        val block = freeze graph scope plan [source,source]
+        val prior = Count.thm_count ()
+        val first = P.theorem block (P.source block 0)
+        val second = P.theorem block (P.source block 1)
+        val definition = P.theorem block (P.definition block source)
+        val name = P.name block source
+        val _ = List.app (fn _ =>
+          ensure "projection lookup rebuilt a theorem or collapsed occurrences"
+            (ptr first (P.theorem block (P.source block 0)) andalso
+             ptr second (P.theorem block (P.source block 1)) andalso
+             ptr definition (P.theorem block (P.definition block source))
+             andalso ptr name (P.name block source) andalso
+             P.dependencies block (P.source block 0)=[0] andalso
+             P.dependencies block (P.source block 1)=[1])) [(),(),()]
+        val _ = List.app (fn node => ensure
+          "failed proposal syntax leaked into frozen names"
+          (refused "SmtReplayProof" "name" "node outside frozen block"
+            (fn () => ignore (P.name block node)))) (!discarded)
+        val _ = ensure "name/projection lookup invoked a native rule"
+          (Count.thm_count ()=prior)
+        val edge = C.graph_assemble graph block plan
+        val _ = ensure "assembly retried a failed proposal" (!failures=1)
+      in check_oracle_tags "failed proposal identity recipe"
+        (P.theorem block edge) end);
+  test "Direct malformed schema endpoint, open Hyp and operand Type refuse"
+    (fn () =>
+      let
+        val (graph,scope,p) = fixture ()
+        val law = schema graph scope and_law [p]
+        val open_law = Drule.ADD_ASSUM boolSyntax.T and_law
+        val number = G.constant graph scope numSyntax.zero_tm
+        val prior = Count.thm_count ()
+        val _ = ensure "wrong schema endpoint became a conversion"
+          (refused "SmtReplayCanonGraph" "graph_conversion"
+            "wrong checked schema endpoint" (fn () => ignore
+              (C.graph_conversion graph scope false (fn _ => SOME law) p)))
+        val _ = ensure "schema with open Hyp was accepted"
+          (refused "SmtReplayCanonGraph" "checked_graph_schema"
+            "operator schema has assumptions or unexpected tags"
+            (fn () => ignore (schema graph scope open_law [p])))
+        val _ = ensure "Boolean schema accepted a numeric operand"
+          (refused "SmtReplayGraph" "application"
+            "application operand type mismatch" (fn () => ignore
+              (schema graph scope and_law [number])))
+      in ensure "malformed metadata reached a native rule"
+        (Count.thm_count ()=prior) end);
+  test "Rewrite expansion rejects both mutual cycles and self embedding"
+    (fn () =>
+      let
+        val (graph,scope,p) = fixture ()
+        val commutation = Thm.SPEC boolSyntax.T
+          (Thm.SPEC hole boolTheory.CONJ_COMM)
+        val forward = schema graph scope commutation [p]
+        val backward = schema graph scope (Thm.SYM commutation) [p]
+        val embedding = schema graph scope (Thm.SYM and_law) [p]
+        fun cyclic start propose = refused "SmtReplayCanonGraph"
+          "graph_conversion" "cyclic checked rewrite expansion"
+          (fn () => ignore (C.graph_conversion graph scope true propose start))
+        val prior = Count.thm_count ()
+        val _ = ensure "mutually cyclic schemas were accepted"
+          (cyclic (C.graph_schema_source forward) (fn node =>
+            if node=C.graph_schema_source forward then SOME forward
+            else if node=C.graph_schema_source backward then SOME backward
+            else NONE))
+        val _ = ensure "self-embedding rewrite was accepted"
+          (cyclic p (fn node => if node=p then SOME embedding else NONE))
+      in ensure "cycle detection reached native assembly"
+        (Count.thm_count ()=prior) end)
+end
+end
+
 fun run_replay_graph_unittests () =
   List.app run_test
     [("replay_graph_checked_success", replay_graph_checked_success),
@@ -30634,6 +30823,7 @@ fun run_replay_graph_unittests () =
      ("replay_dependency_metadata_success",
        replay_dependency_metadata_success),
      ("replay_compact_proof_success", replay_compact_proof_success),
+     ("replay_discovery_freeze_success", replay_discovery_freeze_success),
      ("replay_graph_attempt_reuse_success",
        replay_graph_attempt_reuse_success),
      ("replay_source_checked_success", replay_source_checked_success),
@@ -31481,6 +31671,7 @@ let
     ("replay_dependency_metadata_success",
       replay_dependency_metadata_success),
     ("replay_compact_proof_success", replay_compact_proof_success),
+    ("replay_discovery_freeze_success", replay_discovery_freeze_success),
     ("replay_graph_attempt_reuse_success",
       replay_graph_attempt_reuse_success),
     ("replay_source_checked_success", replay_source_checked_success),
