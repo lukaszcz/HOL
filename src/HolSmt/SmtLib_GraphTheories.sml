@@ -36,15 +36,13 @@ struct
   (* Literal indices retain source LET/binder syntax independently of the
      semantic value. Only admitted small operands reach ordinary callbacks;
      semantic indices never enter this re-elaboration path. *)
-  fun source_index backend frame maximum dictionary
+  exception IndexLimit
+  fun source_index_raw backend frame maximum dictionary
       ({tokens,binding_type,heads,callbacks,sorts,symbol_key,type_symbol_key,
-        parse_choice,parse_lambda,binder_lists,fixed,literal}
+        parse_choice,parse_lambda,binder_lists,fixed,literal,diagnostic}
         : 'a P.index_source) =
     let
       val _ = B.frame_scope backend frame
-      exception IndexLimit
-      fun limit_error () = Feedback.mk_HOL_ERR "SmtLib_GraphBackend"
-        "index" "expanded literal index"
       fun admit term =
         case SmtReplayImport.raw_size_with_policy maximum term of
           SOME _ => term
@@ -124,9 +122,24 @@ struct
                Term.mk_var ("(",Type.mk_vartype "'smtlib_index"))
           val _ = literal := SOME term
         in term end
-    in (case fixed of SOME term => admit term | NONE => elaborate ())
-       handle IndexLimit => raise limit_error ()
-    end
+    in case fixed of SOME term => admit term | NONE => elaborate () end
+
+  fun source_index backend frame maximum dictionary source =
+    source_index_raw backend frame maximum dictionary source
+    handle IndexLimit => raise Feedback.mk_HOL_ERR "SmtLib_GraphBackend"
+      "index" "expanded literal index"
+
+  (* Diagnostic admission must not replace the constructor's rejection.
+     Oversized syntax keeps the bounded placeholder, not a new refusal. *)
+  fun diagnostic_index backend frame maximum dictionary source =
+    SOME (source_index_raw backend frame maximum dictionary source)
+    handle IndexLimit => NONE
+    | error as Feedback.HOL_ERR detail =>
+        if not (B.failure_requires_propagation backend) andalso
+           Feedback.top_structure_of detail = "SmtLib_GraphBackend" andalso
+           Feedback.top_function_of detail = "index" andalso
+           Feedback.message_of detail = "expanded literal index" then NONE
+        else raise error
 
   (* Legacy LET indices see the lexical variable, not its substituted RHS.
      Keep that distinction (and its malformed-index diagnostic). External
@@ -135,7 +148,12 @@ struct
   fun prepare_indices backend frame maximum dictionary token indices =
     if token = "divisible" then
       List.map (fn P.LexicalIndex pair => P.ValueIndex pair
-        | P.SourceIndex (value,_) => P.ValueIndex (value,"(")
+        | P.SourceIndex (value,source as {diagnostic,...}) =>
+            (* Only final dictionary rejection asks for source syntax.
+               Successful semantic indices remain IDs, even for shared DAGs. *)
+            (diagnostic := SOME (fn () =>
+               diagnostic_index backend frame maximum dictionary source);
+             P.ValueIndex (value,"("))
         | index => index) indices
     else List.map
       (fn P.SourceIndex (_,source) => P.LiteralIndex

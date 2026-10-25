@@ -32,6 +32,8 @@ sig
   exception IndexBinderError of exn
   val index_callback : 'a backend -> (unit -> 'b) -> 'b
   val index_source_active : 'a backend -> bool
+  (* Failure-only veto, never a liveness lease or validation substitute. *)
+  val failure_requires_propagation : 'a backend -> bool
   val root : 'a backend -> 'a frame
   val type_of : 'a backend -> 'a -> Type.hol_type
   (* Shallow syntax observations, never native compound operands. Identity

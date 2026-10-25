@@ -168,7 +168,12 @@ struct
       List.map fpr2 ["fp.add","fp.sub","fp.mul","fp.div"])]
   val malformed =
     [("QF_LIA",["01","1.2.3","(+ 1)","((_ divisible 2 3) 1)","(abs true)",
-      "(forall ((x MissingSort)) true)"]),
+      "(forall ((x MissingSort)) true)",
+      "((_ divisible (let ((i 3)) i) 4) 9)",
+      "(let ((i 3)) ((_ divisible i 4) 9))",
+      "((_ divisible (! (let ((i 3)) i) :named width) 4) 9)",
+      "((_ divisible (let ((i 3)) i)))",
+      "((_ divisible (let ((i 3)) i)) true)"]),
      ("QF_BV",["#b","#b2","#xg","(_ bvbad 3)",
       "(let ((i 2)) ((_ zero_extend i) #b10))",
       "((_ zero_extend (let ((i 2)) i)) #b10)",
@@ -210,6 +215,48 @@ struct
       (Feedback.top_structure_of e,Feedback.top_function_of e,
        Feedback.message_of e)
     | exn => SOME (General.exnName exn,"",General.exnMessage exn)
+  fun primary_index_errors () =
+    let
+      val primary = List.map (fn (s,f,m) => Feedback.mk_HOL_ERR s f m)
+        [("GraphScalarTests","spend","injected resource primary"),
+         ("Library","spend","injected resource primary"),
+         ("SmtLib_Parser","t_with_args","injected resource primary"),
+         ("SmtLib_Theories","spend","injected resource primary"),
+         ("Type","dom_rng","injected resource primary"),
+         ("SmtLib_GraphBackend","application",
+          "application operand type mismatch")] @
+        [Fail "injected resource primary",Interrupt]
+      val texts =
+        ["((_ zero_extend (! 2 :named width)) #b10)",
+         "((_ zero_extend (let ((i 2)) i)) #b10)",
+         "((_ zero_extend (forall ((p Bool)) p)) #b10)"]
+      fun check primary text exact debit =
+        let
+          val expected = failure (fn () => raise primary)
+          val graph = G.new () val scope = G.root_scope graph
+          val calls = ref 0 val retired = ref 0
+          fun spend amount = if amount <= 0 then () else
+            (calls := !calls+1; if !calls=debit then raise primary else ())
+          val context = PV.create {graph=graph,scope=scope,
+            validate=fn () => (),spend=spend,
+            retire=fn () => retired := !retired+1}
+          val held = B.values_with_policy {context=context,graph=graph,
+            scope=scope,import_limit=RP.AtMost 4096,
+            literal_limit=RP.AtMost 4096,binder_limit=RP.AtMost 4096}
+          val result = failure (fn () =>
+            parsed (#backend held) exact "QF_BV" text)
+          val _ = (#close held) () val _ = G.close_scope graph scope
+        in ensure "compound index replaced primary spend failure"
+             (result=expected);
+           ensure "spend failure did not retire the context"
+             (!calls=debit andalso !retired>0)
+        end
+      val _ = tprint "Compound indices preserve primary errors after retirement"
+      val _ = List.app (fn primary => List.app (fn text =>
+        List.app (fn exact => List.app (check primary text exact) [1,2,4,8])
+          [false,true]) texts) primary
+    in OK () end
+
   fun dialect_indices () =
     let
       val registry_parsed = parsed
@@ -422,6 +469,19 @@ struct
            in ensure "compound value index was realized"
              (#node_creations stats<100) end))) [false,true]
       val _=OK ()
+      val bad = "((_ divisible (let ((x 1)) "^nest 80^" ) 4) 3)"
+      fun rejected backend exact =
+        case failure (fn () => parsed backend exact "QF_LIA" bad) of
+          SOME ("SmtLib_Parser","t_with_args",message) =>
+            ensure "diagnostic admission replaced the arity rejection"
+              (String.isSuffix ": one argument expected" message)
+        | _ => raise Fail "lost shared-index arity rejection"
+      val _=tprint "Oversized index diagnostics preserve constructor rejection"
+      val _=List.app (fn exact =>
+        (with_graph (fn _ => fn backend => rejected backend exact);
+         with_values (fn _ => fn _ => fn backend => rejected backend exact)))
+        [false,true]
+      val _=OK ()
     in () end
   fun uncapped () =
     let
@@ -454,6 +514,7 @@ struct
     in () end
   fun run () =
     let
+      val _=primary_index_errors ()
       val _=dialect_indices ()
       fun positive logic text =
         let val _=print ("SCALAR "^logic^" "^text^"\n")

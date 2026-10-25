@@ -186,7 +186,8 @@ struct
      symbol_key : string -> string, type_symbol_key : string -> string,
      parse_choice : bool, parse_lambda : bool,
      binder_lists : unit -> (string * Term.term list) list,
-     fixed : Term.term option, literal : Term.term option ref}
+     fixed : Term.term option, literal : Term.term option ref,
+     diagnostic : (unit -> Term.term option) option ref}
   datatype 'a construction_index =
       LiteralIndex of Term.term
     | ValueIndex of 'a * string
@@ -2367,10 +2368,14 @@ local
     | construction_index_text (ValueIndex (_, token)) =
         "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
     | construction_index_text (LexicalIndex (_, token)) =
-        "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
-    | construction_index_text (SourceIndex (_, {literal,...})) =
+        construction_index_text (SymbolIndex (proof_symbol_text token))
+    | construction_index_text (SourceIndex (_, {literal,diagnostic,...})) =
         (case !literal of SOME term => Hol_pp.term_to_string term
-         | NONE => "<term index (>")
+         | NONE => case !diagnostic of
+             SOME describe => (case describe () of
+                 SOME term => Hol_pp.term_to_string term
+               | NONE => "<term index (>")
+           | NONE => "<term index (>")
 
   fun apply_construction_symbol (cfg : 'a construction_cfg) dictionary frame
       token indices arguments =
@@ -2500,6 +2505,10 @@ local
         end
       fun source frame token parse =
         let
+          (* Capture backend kind while live. Recovery must never validate
+             a context already retired by the primary parse failure. *)
+          val native = not (Option.isSome (B.frame_scope backend frame))
+        in let
           val binding_type = B.binding_type_lookup backend frame
           val before_tokens = !history
           val before_heads = !heads
@@ -2534,26 +2543,32 @@ local
              type_symbol_key=type_symbol_key,parse_choice=parse_choice,
              parse_lambda=parse_lambda,
              binder_lists=fn () => prefix before_lists after_lists,
-             fixed=fixed,literal=ref fixed}
+             fixed=fixed,literal=ref fixed,diagnostic=ref NONE}
         in (SourceIndex (construction_value parsed,source),SOME parsed,token)
-        end handle B.IndexBinderError _ =>
-          (* Native binders check the body type after reading their close. *)
-          (ignore (get_token ());
-           (SymbolIndex (proof_symbol_text token),NONE,token))
-        | B.IndexSyntaxError _ =>
-          (SymbolIndex (proof_symbol_text token),NONE,token)
+        end handle B.IndexBinderError primary =>
+          if B.failure_requires_propagation backend then raise primary
+          else
+            (* Native binders read their close before checking body type. *)
+            (ignore (get_token ());
+             (SymbolIndex (proof_symbol_text token),NONE,token))
+        | B.IndexSyntaxError primary =>
+          if B.failure_requires_propagation backend then raise primary
+          else (SymbolIndex (proof_symbol_text token),NONE,token)
         | Feedback.HOL_ERR error =>
-          if Feedback.top_function_of error = "parse_indexed_term" andalso
+          if B.failure_requires_propagation backend then
+            raise Feedback.HOL_ERR error
+          else if Feedback.top_function_of error = "parse_indexed_term" andalso
              Feedback.message_of error =
                "index literal exceeds its bounded import contract" then
             raise Feedback.HOL_ERR error
-          else if not (Option.isSome (B.frame_scope backend frame)) orelse
+          else if native orelse
              (Feedback.top_structure_of error = "Type" andalso
               Feedback.top_function_of error = "dom_rng") orelse
              List.exists (fn name => name=Feedback.top_structure_of error)
                ["SmtLib_Parser","SmtLib_Theories","Library"] then
             (SymbolIndex (proof_symbol_text token),NONE,token)
           else raise Feedback.HOL_ERR error
+        end
       fun occurrence value role token children =
         let
           (* Reject at the same cursor as native mk_anylet: AFTER the LET's

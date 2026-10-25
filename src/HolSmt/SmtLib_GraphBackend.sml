@@ -16,6 +16,7 @@ struct
   datatype 'a backend = Backend of
     {owner : unit ref, graph : G.graph option, initial : environment,
      index_callbacks : {depth:int ref, history:index_callback list ref},
+     failure_requires_propagation : unit -> bool,
      validate_environment : environment -> unit,
      type_of : 'a -> Type.hol_type,
      view : environment -> 'a -> 'a view,
@@ -69,11 +70,16 @@ struct
       entry =
     if !depth=0 then () else history := entry :: !history
   fun index_source_active (Backend {index_callbacks={depth,...},...}) = !depth>0
+  fun failure_requires_propagation
+      (Backend {failure_requires_propagation,...}) =
+    failure_requires_propagation ()
   exception IndexSyntaxError of exn
   exception IndexBinderError of exn
   fun index_callback backend action =
     action () handle error as Feedback.HOL_ERR _ =>
-      if index_source_active backend then raise IndexSyntaxError error
+      if index_source_active backend andalso
+         not (failure_requires_propagation backend) then
+        raise IndexSyntaxError error
       else raise error
 
   fun type_of (Backend {type_of, ...}) value = type_of value
@@ -96,7 +102,8 @@ struct
   fun finish_scopes close_scope environments action =
     let
       fun close () = List.app close_scope environments
-      val result = action () handle error => (close (); raise error)
+      val result = action () handle error =>
+        ((close () handle _ => ()); raise error)
     in close (); result end
   fun lookup backend frame key =
     Redblackmap.peek (#2 (checked_frame backend frame), key)
@@ -124,6 +131,7 @@ struct
     in application environment (function,argument)
       handle error as Feedback.HOL_ERR detail =>
         if index_source_active backend andalso
+           not (failure_requires_propagation backend) andalso
            Feedback.top_function_of detail = "application" andalso
            Feedback.message_of detail = "application operand type mismatch"
         then
@@ -171,6 +179,7 @@ struct
   fun terms {mk_bound_var, mk_let} = Backend
     {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
      index_callbacks = new_index_callbacks (),
+     failure_requires_propagation = fn () => false,
      view = fn _ => term_view, same_value = Portable.pointer_eq,
      variable_descriptor = fn term =>
        if Term.is_var term then SOME term else NONE,
@@ -298,6 +307,7 @@ struct
              {binder = binder,body = body,
               body_frame = construction body_environment},
        index_callbacks = new_index_callbacks (),
+       failure_requires_propagation = fn () => false,
        new_abstraction_scope = fn environment =>
          let val retained = G.new_construction_scope graph
                {lexical = lexical environment,
@@ -582,7 +592,8 @@ struct
               (variable :: variables) end
       val (environment, dictionary, variables) =
         bind descriptors initial dictionary []
-        handle error => (close_environments (); raise error)
+        handle error =>
+          ((close_environments () handle _ => ()); raise error)
       val active = ref true
       val frame = Frame {owner = owner, active = active,
                          environment = environment, bindings = dictionary}
@@ -954,6 +965,7 @@ struct
              {binder = binder,body = body,
               body_frame = construction body_environment},
        index_callbacks = new_index_callbacks (),
+       failure_requires_propagation = fn () => false,
        new_abstraction_scope = fn environment =>
          let val retained = G.new_construction_scope graph
                {lexical = lexical environment,
@@ -1043,6 +1055,8 @@ struct
       val backend = Backend
         {owner=owner,graph=SOME graph,index_callbacks=index_callbacks,
          initial=SOME {lexical=scope,construction=scope},
+         failure_requires_propagation=fn () =>
+           PV.failure_requires_propagation context,
          validate_environment=fn environment =>
            (PV.spend context 0;
             G.validate_scope graph (lexical environment);

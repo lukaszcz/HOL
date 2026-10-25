@@ -44,6 +44,7 @@ struct
                     (NONE,Exn.Exn primary) => SOME primary | _ => failure
             in releases rest failure end
     in releases (!order) NONE end
+  fun failure_requires_propagation (Context {active,...}) = not (!active)
   fun protected (context as Context {retire_owner,...}) action = action ()
     handle primary =>
       ((retire_owner () handle _ => ());

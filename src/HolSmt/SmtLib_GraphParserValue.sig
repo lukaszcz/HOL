@@ -26,6 +26,9 @@ sig
      No native binder is built and no value can be cast to a G.node. *)
   val validate : context -> unit
   val close : context -> unit
+  (* Failure-only veto on syntax recovery; false grants no permission.
+     Reads local retirement state without validation, spending or callbacks. *)
+  val failure_requires_propagation : context -> bool
   val key : context -> value -> int
   val view : context -> value -> view
   (* Shallow constructor observation of retained applications. Child values
