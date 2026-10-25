@@ -21022,6 +21022,45 @@ let
             aconv body opened,"admitted opener changed native names") end)
         [clash,Term.rename_bvar "q" ``\x:bool. x /\ q``]
     in () end) ()
+  (* Mandatory traversal must retain the original first diagnostic, not
+     the optional cache's admission failure (which can become a miss). *)
+  val _ = print "TASK28_BOUNDARY mandatory-binder-diagnostic\n"
+  val _ = let
+    fun shared 0 = Term.mk_var ("review_p",Type.bool)
+      | shared n = let val child = shared (n - 1)
+                   in boolSyntax.mk_conj (child,child) end
+    val binder = Term.mk_abs
+      (Term.mk_var ("review_b",Type.bool),shared 20)
+    fun diagnostic action = case Exn.capture action () of
+        Exn.Exn (HOL_ERR detail) => detail
+      | Exn.Exn error => raise error
+      | Exn.Res _ => raise Fail "oversized raw binder unexpectedly admitted"
+    val original = diagnostic
+      (fn () => ignore (SmtResource.term_children binder))
+    val message = Feedback.message_of original
+    val _ = assert (String.isSubstring
+      "feature=resource-gate:BitVector:binder-opening" message andalso
+      String.isSubstring "observed=2000001" message,
+      "binder fixture did not reach the original raw-size gate")
+    val context = SmtSkeletonDispatch.new_context
+      (fn _ => raise Fail "binder analysis invoked a prover")
+    val _ = List.app (fn action =>
+      let val detail = diagnostic action in
+        assert (Feedback.message_of detail = message andalso
+          not (SmtSkeletonProve.cache_admission_refusal detail),
+          "mandatory binder diagnostic became an optional cache refusal")
+      end)
+      [fn () => ignore (SmtSkeletonProve.admitted_dest_abs binder),
+       fn () => ignore (SmtSkeletonProve.term_children binder),
+       fn () => ignore (SmtSkeletonProve.term_measure binder),
+       fn () => ignore (SmtSkeletonDispatch.analyze context binder)]
+    val admission = SmtSkeletonProve.new_type_admission_context ()
+    val optional = diagnostic (fn () => #admit_abstraction admission
+      "skeleton-cache-abstraction" binder)
+    val _ = assert (SmtSkeletonProve.cache_admission_refusal optional
+      andalso SmtSkeletonProve.new_cache_index 32 binder = NONE,
+      "optional binder cache admission no longer becomes a miss")
+  in () end
   (* Exercise dispatch AT its unchanged gate, not only the three-node
      symptom: renaming a binder used to add one artificial DAG node. *)
   val _ = print "TASK28_BOUNDARY original-8192-dispatch-gate\n"

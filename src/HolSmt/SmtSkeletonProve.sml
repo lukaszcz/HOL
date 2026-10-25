@@ -596,6 +596,8 @@ struct
 
   (* Preserve native destructor names: these children also define the
      original skeleton DAG metric, including sharing outside binders.
+     Mandatory measurement/dispatch retains the binder-opening diagnostic;
+     optional cache admission uses its separate abstraction gate below.
      Name-only clash handling avoids native annotation comparisons. *)
   fun admitted_dest_abs term =
     let
@@ -608,7 +610,7 @@ struct
       val _ = case SmtReplayImport.bounded_raw_size_with_type_check
           before_open maximum term of SOME _ => ()
         | NONE => SmtResource.check_term_size_for "BitVector"
-            "skeleton-cache-abstraction" (maximum + 1)
+            "binder-opening" (maximum + 1)
     in SmtReplayImport.dest_abs_preserving_names term end
 
   (* Semantic comparison is independent of optional cache reservations.
