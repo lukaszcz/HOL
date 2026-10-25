@@ -2441,13 +2441,17 @@ local
   (* Lexical bindings are nullary dictionary entries, not a separate
      rejection path. On applied/indexed uses they decline so older entries
      (including builtins and the literal catch-all) can still be tried.
-     Keep values as backend operands; no native projection is needed. *)
-  fun construction_scope_dictionary backend frame dictionary key value =
+     Record the successful lexical callback, including `_` fallback, rather
+     than guessing its origin from the requested name. Keep values as backend
+     operands; no native projection is needed. *)
+  fun construction_scope_dictionary backend frame dictionary key value
+      selected =
     let
       fun extend (key, value, dictionary) =
         Library.extend_dict
           ((key, fn _ => fn token => fn indices => fn arguments =>
-            if List.null indices andalso List.null arguments then value
+            if List.null indices andalso List.null arguments then
+              (selected := SOME (if key = "_" then "_" else token); value)
             else SmtLib_Theories.decline token "wrong number of arguments"),
            dictionary)
       val dictionary = case value of
@@ -2482,6 +2486,7 @@ local
       val history = ref []
       val heads = ref []
       val binder_lists = ref []
+      val lexical = ref NONE
       fun prefix tail pending =
         if Portable.pointer_eq (tail,pending) then []
         else case pending of x::xs => x :: prefix tail xs
@@ -2491,10 +2496,11 @@ local
         in if !depth = 0 then () else history := token :: !history;
            token
         end
-      fun record frame token indices arguments value =
-        if !depth = 0 orelse not (null indices) orelse
-           Option.isSome (B.lookup backend frame (symbol_key token)) then ()
-        else heads := (token,value,List.length arguments) :: !heads
+      fun record token indices arguments value selected =
+        (lexical := selected;
+         if !depth = 0 orelse not (null indices) orelse
+            Option.isSome selected then ()
+         else heads := (token,value,List.length arguments) :: !heads)
       fun lookup token =
         let val result = lookup_binder_list token in
           if !depth = 0 then () else
@@ -2583,6 +2589,7 @@ local
         in ConstructionOccurrence
           {value=value,role=role,token=token,children=children} end
     in {get_token=get_token,source=source,record=record,
+        lexical=fn () => !lexical,
         lookup_binder_list=lookup,occurrence=occurrence} end
 
   fun parse_term_recorded_with_backend_and_indices
@@ -2606,19 +2613,24 @@ local
         let
           val key = (#symbol_key cfg) token
           val arguments = List.map construction_value arguments
+          val selected = ref NONE
           val value =
           case B.lookup backend frame key of
             SOME value => if List.null indices andalso List.null arguments then
-              value
+              (selected := SOME token; value)
             else apply_construction_symbol cfg
               (construction_scope_dictionary backend frame dictionary key
-                (SOME value)) frame token indices arguments
+                (SOME value) selected) frame token indices arguments
           | NONE => apply_construction_symbol cfg
-              (construction_scope_dictionary backend frame dictionary key NONE)
-              frame token indices arguments
-          val _ = (#record reader) frame token indices arguments value
+              (construction_scope_dictionary backend frame dictionary key NONE
+                selected) frame token indices arguments
+          val _ = (#record reader) token indices arguments value (!selected)
         in occurrence value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
+      fun resolved_index value token =
+        case (#lexical reader) () of
+          SOME name => LexicalIndex (value,name)
+        | NONE => ValueIndex (value,token)
       fun bounded_index term =
         case SmtReplayImport.bounded_raw_size (#index_limit cfg) term of
           SOME _ => LiteralIndex term
@@ -2633,11 +2645,7 @@ local
           SOME term => (bounded_index term, NONE, token)
         | NONE =>
             (let val parsed = term_aux frame token []
-                 val pair = (construction_value parsed,token)
-                 val index = case B.lookup backend frame
-                     ((#symbol_key cfg) token) of
-                     SOME _ => LexicalIndex pair
-                   | NONE => ValueIndex pair
+                 val index = resolved_index (construction_value parsed) token
              in (index,SOME parsed,token)
              end handle Feedback.HOL_ERR error =>
                if Feedback.top_structure_of error = "SmtLib_Parser" andalso
@@ -2892,19 +2900,24 @@ local
         let
           val key = (#symbol_key cfg) token
           val arguments = List.map construction_value arguments
+          val selected = ref NONE
           val value =
           case B.lookup backend frame key of
             SOME value => if List.null indices andalso List.null arguments then
-              value
+              (selected := SOME token; value)
             else apply_construction_symbol_with_policy cfg
               (construction_scope_dictionary backend frame dictionary key
-                (SOME value)) frame token indices arguments
+                (SOME value) selected) frame token indices arguments
           | NONE => apply_construction_symbol_with_policy cfg
-              (construction_scope_dictionary backend frame dictionary key NONE)
-              frame token indices arguments
-          val _ = (#record reader) frame token indices arguments value
+              (construction_scope_dictionary backend frame dictionary key NONE
+                selected) frame token indices arguments
+          val _ = (#record reader) token indices arguments value (!selected)
         in occurrence value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
+      fun resolved_index value token =
+        case (#lexical reader) () of
+          SOME name => LexicalIndex (value,name)
+        | NONE => ValueIndex (value,token)
       fun bounded_index term =
         case SmtReplayImport.raw_size_with_policy (#index_limit cfg) term of
           SOME _ => LiteralIndex term
@@ -2919,11 +2932,7 @@ local
           SOME term => (bounded_index term, NONE, token)
         | NONE =>
             (let val parsed = term_aux frame token []
-                 val pair = (construction_value parsed,token)
-                 val index = case B.lookup backend frame
-                     ((#symbol_key cfg) token) of
-                     SOME _ => LexicalIndex pair
-                   | NONE => ValueIndex pair
+                 val index = resolved_index (construction_value parsed) token
              in (index,SOME parsed,token)
              end handle Feedback.HOL_ERR error =>
                if Feedback.top_structure_of error = "SmtLib_Parser" andalso

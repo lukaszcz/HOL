@@ -116,6 +116,8 @@ struct
       "(abs (- 3))","((_ divisible 3) 9)","(< 1 2 3)",
       "(<= 1 2 3)","(> 3 2 1)","(>= 3 2 1)",
       "(let ((i 3)) ((_ divisible i) 9))",
+      "(let ((_ 3)) ((_ divisible missing) 9))",
+      "(let ((_ 3)) ((_ divisible (! missing :named divisor)) 9))",
       "((_ divisible (let ((i 3)) i)) 9)",
       "(forall ((i Int)) ((_ divisible i) 9))"]),
      ("QF_LRA",["123","1.2500","(- 1.2)","(- 3.0 2.0 1.0)",
@@ -129,6 +131,7 @@ struct
       "((_ @bit_of 0) #b1)","((_ repeat 3) #b10)",
       "((_ zero_extend 2) #b10)","((_ sign_extend 2) #b10)",
       "((_ zero_extend (! 2 :named width)) #b10)",
+      "(let ((_ 2) (w #b10)) ((_ zero_extend 2) w))",
       "((_ rotate_left 2) #b101)","((_ rotate_right 2) #b101)",
       "(ubv_to_int #b101)","(sbv_to_int #b101)",
       "((_ int_to_bv 3) 5)",
@@ -176,6 +179,13 @@ struct
       "((_ divisible (let ((i 3)) i)) true)"]),
      ("QF_BV",["#b","#b2","#xg","(_ bvbad 3)",
       "(let ((i 2)) ((_ zero_extend i) #b10))",
+      "(let ((_ 2) (w #b10)) ((_ zero_extend missing) w))",
+      "(let ((_ 2) (w #b10)) "^
+        "((_ zero_extend (! missing :named width)) w))",
+      "(let ((_ 2)) ((_ zero_extend (let ((i missing)) i)) #b10))",
+      "((_ zero_extend (let ((_ 2)) missing)) #b10)",
+      "(let ((_ 2)) ((_ zero_extend (! true :named width)) #b10))",
+      "(let ((_ 2) (i 3)) ((_ zero_extend (! i :named width)) #b10))",
       "((_ zero_extend (let ((i 2)) i)) #b10)",
       "((_ zero_extend (forall ((p Bool)) p)) #b10)",
       "((_ zero_extend (let ((i 2)) i) 3) #b10)",
@@ -200,6 +210,8 @@ struct
       "(forall ((x (_ BitVec))) true)"]),
      ("QF_FP",["RoundingGarbage","(forall ((x (Float16 Int))) true)",
       "(let ((e 5) (s 11)) (_ +zero e s))",
+      "(let ((_ 5)) (_ +zero missing 11))",
+      "(let ((_ 5)) (_ +zero (! missing :named exponent) 11))",
       "(_ +zero (let ((e 5)) e) 11)",
       "(_ +zero (forall ((p Bool)) p) 11)",
       "(_ +zero (let ((e 5)) e))",
@@ -558,8 +570,15 @@ struct
       val _=OK ()
       val _=tprint "Quoted lexical index roles retain legacy rejection"
       val _=symbol_key := Lib.I
-      val _=negative "QF_BV"
-        "(let ((|i| 2)) ((_ zero_extend |i|) #b10))"
+      val _=List.app (negative "QF_BV")
+        ["(let ((|i| 2)) ((_ zero_extend |i|) #b10))",
+         "(let ((_ 2) (w #b10)) ((_ zero_extend |missing|) w))",
+         "(let ((_ 2) (w #b10)) "^
+           "((_ zero_extend (! |missing| :named width)) w))",
+         "(let ((_ 2) (|_| 3) (w #b10)) ((_ zero_extend |_|) w))",
+         "(let ((|_| 2) (w #b10)) ((_ zero_extend missing) w))"]
+      val _=positive "QF_BV"
+        "(let ((|_| 2)) ((_ zero_extend 2) #b10))"
       val _=symbol_key := P.proof_symbol_text
       val _=OK ()
       val _=identities ()

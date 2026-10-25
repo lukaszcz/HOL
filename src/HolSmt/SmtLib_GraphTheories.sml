@@ -89,7 +89,10 @@ struct
                     else T.decline token "wrong number of arguments"),dict)
                 end
             end
-          val dictionary = List.foldl binding dictionary tokens
+          (* The selected lexical catch-all may be absent from the source
+             tokens (e.g. `missing` resolved through `_`). Recreate that
+             dictionary entry before replaying the original syntax. *)
+          val dictionary = List.foldl binding (binding ("_",dictionary)) tokens
           fun bounded parse token indices arguments =
             admit (parse token (List.map admit indices)
               (List.map admit arguments))
