@@ -28,6 +28,10 @@ sig
   val close : context -> unit
   val key : context -> value -> int
   val view : context -> value -> view
+  (* Shallow constructor observation of retained applications. Child values
+     retain authentic graph backing and exact known graph FV identities;
+     unknown FV/binders stay opaque. No native compound is constructed. *)
+  val constructor_view : context -> value -> view
   val type_of : context -> value -> Type.hol_type
   val scope_of : context -> value -> SmtReplayGraph.scope
   val free_variables : context -> value -> value list

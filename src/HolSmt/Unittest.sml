@@ -33135,6 +33135,7 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("smtlib_graph_scalar_recipes_success", SmtLib_GraphScalarTests.run),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",

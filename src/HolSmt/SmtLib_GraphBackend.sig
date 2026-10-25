@@ -21,6 +21,15 @@ sig
     -> SmtReplayGraph.node backend
   val root : 'a backend -> 'a frame
   val type_of : 'a backend -> 'a -> Type.hol_type
+  (* Shallow syntax observations, never native compound operands. Identity
+     is syntax identity only; it is not a semantic equality proof. *)
+  datatype 'a view = Atom of Term.term | Apply of 'a * 'a | Opaque
+  val view : 'a backend -> 'a frame -> 'a -> 'a view
+  val same_value : 'a backend -> 'a * 'a -> bool
+  (* Explicitly admit the unfolded small index before reconstructing it.
+     Binders/opaque syntax are not opened, evaluated or substituted. *)
+  val small_index_with_policy : 'a backend -> 'a frame ->
+    SmtReplayResourcePolicy.limit -> 'a -> Term.term
   val lookup : 'a backend -> 'a frame -> string -> 'a option
   (* Retained original source syntax is imported in the backend's source
      scope. Lexical references use lookup/variable rather than source

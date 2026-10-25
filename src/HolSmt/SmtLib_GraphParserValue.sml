@@ -22,6 +22,7 @@ struct
      epoch:int,symbols:int,active:bool ref,next:int ref,
      entries:(int,entry) Redblackmap.dict ref,
      leaves:(int,value) Redblackmap.dict ref,
+     constructor_children:(int,value) Redblackmap.dict ref,
      mapped:(int,value) Redblackmap.dict ref,
      applications:((int * int * int),value) Redblackmap.dict ref,
      scopes:(int,owned_scope) Redblackmap.dict ref,order:owned_scope list ref}
@@ -77,6 +78,7 @@ struct
       symbols=Term.term_epoch (),active=ref true,next=ref 0,
       entries=ref (Redblackmap.mkDict Int.compare),
       leaves=ref (Redblackmap.mkDict Int.compare),
+      constructor_children=ref (Redblackmap.mkDict Int.compare),
       mapped=ref (Redblackmap.mkDict Int.compare),
       applications=ref (Redblackmap.mkDict compare_application),
       scopes=ref (Redblackmap.mkDict Int.compare),order=ref []} end)
@@ -232,6 +234,48 @@ struct
           in remember context scope (G.type_of graph node) RetainedGraph
             (List.map (key context) free) (SOME node) end
     end)
+  fun constructor_view context current = protected context (fn () =>
+    let
+      val original = row context current
+      val Context {graph,constructor_children,...} = context
+      fun observed G.DependencyVisit = tick context 1
+        | observed G.DependencyCompare = tick context 1
+        | observed (G.DependencyExcluded entries) =
+            tick context (IntInf.fromInt (length entries)+1)
+        | observed (G.DependencyVisited entries) =
+            tick context (IntInf.fromInt (length entries)+1)
+        | observed _ = tick context 1
+      fun child node =
+        let val _ = tick context 1 in
+          case Redblackmap.peek (!constructor_children,G.node_id node) of
+            SOME value => (guard context value;SOME value)
+          | NONE => case G.view graph node of
+              G.Variable _ => SOME (graph_leaf context (#scope original) node)
+            | G.Constant _ => SOME (graph_leaf context (#scope original) node)
+            | _ => case G.free_variable_nodes_observed observed graph node of
+                NONE => NONE
+              | SOME variables =>
+                  let val free = List.map (fn variable =>
+                        (tick context 1;
+                         key context (graph_leaf context
+                           (#scope original) variable))) variables
+                      val value = remember context (#scope original)
+                        (G.type_of graph node) RetainedGraph free (SOME node)
+                      val _ = constructor_children := Redblackmap.insert
+                        (!constructor_children,G.node_id node,value)
+                  in SOME value end
+        end
+    in case (#view original,#graph_node original) of
+        (RetainedGraph,SOME node) =>
+          (case G.view graph node of
+             G.Application (f,x) =>
+               (case (child f,child x) of
+                  (SOME f,SOME x) => Application (f,x)
+                | _ => RetainedGraph)
+           | _ => RetainedGraph)
+      | _ => #view original
+    end)
+
   fun literal context scope maximum original = protected context (fn () =>
     let val _ = tick context 1 val _ = confined context scope
         val _ = case SmtReplayImport.raw_size_with_policy maximum original of

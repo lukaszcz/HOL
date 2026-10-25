@@ -23,9 +23,30 @@ struct
      metadata : T.symbol_metadata list, support : string -> support}
 
   fun recipe _ = Recipe
-  fun word_support "@bbterm" =
-        Shape "bit-selector/Boolean constructor recovery requires graph IDs"
-    | word_support _ = Recipe
+  fun word_support _ = Recipe
+  fun finite_policy ({template_limit,index_limit,operand_limit,token_limit}
+      : limits) : SmtReplayResourcePolicy.recipe_policy =
+    {template_limit=SmtReplayResourcePolicy.AtMost
+       (IntInf.fromInt template_limit),
+     index_limit=SmtReplayResourcePolicy.AtMost (IntInf.fromInt index_limit),
+     operand_limit=SmtReplayResourcePolicy.AtMost
+       (IntInf.fromInt operand_limit),
+     token_limit=SmtReplayResourcePolicy.AtMost (IntInf.fromInt token_limit)}
+
+  (* Legacy LET indices see the lexical variable, not its substituted RHS.
+     Keep that distinction (and its malformed-index diagnostic). External
+     literal indices are observed only under the explicit small contract.
+     Divisibility accepts a semantic Int index directly as an ID. *)
+  fun prepare_indices backend frame maximum token indices =
+    if token = "divisible" then
+      List.map (fn P.LexicalIndex pair => P.ValueIndex pair
+        | index => index) indices
+    else List.map
+      (fn P.LexicalIndex (value,name) => P.LiteralIndex
+          (Term.mk_var (P.proof_symbol_text name,B.type_of backend value))
+        | P.ValueIndex (value,_) => P.LiteralIndex
+            (B.small_index_with_policy backend frame maximum value)
+        | index => index) indices
   fun sequence_support "seq.unit" =
         Shape "String selector provenance requires graph constructor roles"
     | sequence_support _ = Recipe
@@ -45,7 +66,8 @@ struct
   (* These are audited constructor families: their admitted callbacks
      inspect types/indices or build constant/application syntax. Exceptions
      that inspect an operand's shape or introduce operand-bearing binders
-     are classified above and never fed schematic stand-ins. *)
+     are classified above and never fed schematic stand-ins. @bbterm uses
+     the ID-aware word builder, not its ordinary shape-inspecting callback. *)
   val packets : packet list =
     [{theory = "Core", dictionary = T.Core.tmdict,
       metadata = T.Core.metadata, support = recipe},
@@ -134,8 +156,8 @@ struct
         raise ERR "schema" "constructor token exceeds bounded contract"
       val _ = if List.length operand_types <= #operand_limit limits then ()
         else raise ERR "schema" "constructor operand count exceeds contract"
-      val _ = if argument_offset = 0 then () else
-        raise ERR "schema" "semantic indices require an ID-aware constructor"
+      val holes = Lib.mapi (fn position => fn ty => Term.mk_var
+        ("__smt_recipe_operand_" ^ Int.toString position, ty)) operand_types
       fun index (P.RecipeLiteral term) =
             (case SmtReplayImport.bounded_raw_size (#index_limit limits)
                 term of SOME _ => term
@@ -144,13 +166,11 @@ struct
             if String.size name <= #token_limit limits then
               Term.mk_var (name, Type.mk_vartype "'smtlib_index")
             else raise ERR "schema" "symbol index exceeds bounded contract"
-        | index (P.RecipeOperand _) =
-            raise ERR "schema" "semantic indices require graph constructor"
-      val holes = Lib.mapi (fn position => fn ty => Term.mk_var
-        ("__smt_recipe_operand_" ^ Int.toString position, ty)) operand_types
+        | index (P.RecipeOperand {position,...}) = List.nth (holes,position)
       (* Native type instantiation occurs on this bounded schema before any
          actual graph operands are plugged. Declaration IDs stay intact. *)
-      val template = parse token (List.map index indices) holes
+      val template = parse token (List.map index indices)
+        (List.drop (holes,argument_offset))
     in B.compile_recipe {template = template, holes = holes,
       template_limit = #template_limit limits} end
 
@@ -180,8 +200,13 @@ struct
         let val description = describe name overload parse in
           case special description of SOME parse => parse
           | NONE => case #support description of
-              Recipe => P.construction_recipe_parsefn backend
-                (schema limits parse)
+              Recipe => if #theory description = "Fixed_Size_BitVectors"
+                  andalso name = "@bbterm" then
+                SmtLib_GraphWordBuilders.bbterm backend (finite_policy limits)
+              else (fn frame => fn token => fn indices =>
+                P.construction_recipe_parsefn backend (schema limits parse)
+                  frame token (prepare_indices backend frame
+                    (#index_limit (finite_policy limits)) token indices))
             | _ => deferred description
         end
       val dictionary = Redblackmap.map (fn (name, callbacks) =>
@@ -190,7 +215,10 @@ struct
       metadata = L.metadata_of_logic logic} end
   fun recipe_parsefn backend limits parse =
     (checked_limits limits;
-     P.construction_recipe_parsefn backend (schema limits parse))
+     fn frame => fn token => fn indices =>
+       P.construction_recipe_parsefn backend (schema limits parse)
+         frame token (prepare_indices backend frame
+           (#index_limit (finite_policy limits)) token indices))
   fun select backend limits options =
     select_with backend limits (fn _ => NONE) options
 
@@ -231,8 +259,8 @@ struct
       val _ = if SmtReplayResourcePolicy.allows (#operand_limit limits)
           (policy_list_length operand_types) then ()
         else raise ERR "schema" "constructor operand count exceeds contract"
-      val _ = if argument_offset = 0 then () else
-        raise ERR "schema" "semantic indices require an ID-aware constructor"
+      val holes = Lib.mapi (fn position => fn ty => Term.mk_var
+        ("__smt_recipe_operand_" ^ Int.toString position, ty)) operand_types
       fun index (P.RecipeLiteral term) =
             (case SmtReplayImport.raw_size_with_policy (#index_limit limits)
                 term of SOME _ => term
@@ -242,20 +270,19 @@ struct
                 (IntInf.fromInt (String.size name)) then
               Term.mk_var (name, Type.mk_vartype "'smtlib_index")
             else raise ERR "schema" "symbol index exceeds bounded contract"
-        | index (P.RecipeOperand _) =
-            raise ERR "schema" "semantic indices require graph constructor"
-      val holes = Lib.mapi (fn position => fn ty => Term.mk_var
-        ("__smt_recipe_operand_" ^ Int.toString position, ty)) operand_types
+        | index (P.RecipeOperand {position,...}) = List.nth (holes,position)
       (* Native type instantiation occurs on this bounded schema before any
          actual graph operands are plugged. Declaration IDs stay intact. *)
-      val template = parse token (List.map index indices) holes
+      val template = parse token (List.map index indices)
+        (List.drop (holes,argument_offset))
     in B.compile_recipe_with_policy {template = template, holes = holes,
       template_limit = #template_limit limits} end
 
   fun construction_recipe_parsefn_with_policy backend build frame
       token indices arguments =
     let
-      fun index (LiteralIndex term, (descriptions, values, next)) =
+      fun index (LexicalIndex pair,state) = index (ValueIndex pair,state)
+        | index (LiteralIndex term, (descriptions, values, next)) =
             (RecipeLiteral term :: descriptions, values, next)
         | index (SymbolIndex name, (descriptions, values, next)) =
             (RecipeSymbol name :: descriptions, values, next)
@@ -290,8 +317,14 @@ struct
         let val description = describe name overload parse in
           case special description of SOME parse => parse
           | NONE => case #support description of
-              Recipe => construction_recipe_parsefn_with_policy backend
-                (schema_with_policy limits parse)
+              Recipe => if #theory description = "Fixed_Size_BitVectors"
+                  andalso name = "@bbterm" then
+                SmtLib_GraphWordBuilders.bbterm backend limits
+              else (fn frame => fn token => fn indices =>
+                construction_recipe_parsefn_with_policy backend
+                  (schema_with_policy limits parse) frame token
+                  (prepare_indices backend frame (#index_limit limits)
+                    token indices))
             | _ => deferred description
         end
       val dictionary = Redblackmap.map (fn (name, callbacks) =>
@@ -300,8 +333,10 @@ struct
       metadata = L.metadata_of_logic logic} end
   fun recipe_parsefn_with_policy backend limits parse =
     (checked_policy_limits limits;
-     construction_recipe_parsefn_with_policy backend
-       (schema_with_policy limits parse))
+     fn frame => fn token => fn indices =>
+       construction_recipe_parsefn_with_policy backend
+         (schema_with_policy limits parse) frame token
+         (prepare_indices backend frame (#index_limit limits) token indices))
   fun select_with_policy_no_override backend limits options =
     select_with_policy backend limits (fn _ => NONE) options
 

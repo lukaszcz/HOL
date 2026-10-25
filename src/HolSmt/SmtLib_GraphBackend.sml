@@ -9,10 +9,13 @@ struct
   type environment = {lexical : G.scope, construction : G.scope} option
   type 'a solver_variable =
     {node : 'a, lexical : Term.term, scope : G.scope option}
+  datatype 'a view = Atom of Term.term | Apply of 'a * 'a | Opaque
   datatype 'a backend = Backend of
     {owner : unit ref, graph : G.graph option, initial : environment,
      validate_environment : environment -> unit,
      type_of : 'a -> Type.hol_type,
+     view : environment -> 'a -> 'a view,
+     same_value : 'a * 'a -> bool,
      variable_descriptor : 'a -> Term.term option,
      solver_variables : unit -> 'a solver_variable list,
      mk_bound_var : string * Type.hol_type -> Term.term,
@@ -81,9 +84,40 @@ struct
     reference (#1 (checked_frame backend frame)) declaration
   fun application (backend as Backend {application, ...}) frame operands =
     application (#1 (checked_frame backend frame)) operands
+  fun view (backend as Backend {view, ...}) frame value =
+    view (#1 (checked_frame backend frame)) value
+  fun same_value (backend as Backend {same_value, ...}) (left,right) =
+    (ignore (type_of backend left); ignore (type_of backend right);
+     same_value (left,right))
+
+  fun small_index_with_policy backend frame limit value =
+    let
+      val used = ref (0:IntInf.int)
+      fun admit current =
+        (used := !used + 1;
+         if SmtReplayResourcePolicy.allows limit (!used) then () else
+           raise ERR "index" "expanded literal index";
+         case view backend frame current of
+           Atom term => term
+         | Apply (f,x) => Term.mk_comb (admit f,admit x)
+         | Opaque => raise ERR "index" "opaque literal index")
+      (* Reconstruct only explicitly admitted index syntax, never a graph
+         operand. No binder opening, evaluation or substitution occurs. *)
+    in admit value end
+
+  fun term_view term =
+    if Term.is_var term orelse Term.is_const term then Atom term
+    else if Term.is_comb term then Apply (Term.dest_comb term)
+    else Opaque
+  fun graph_view graph node = case G.view graph node of
+      G.Variable (_,term) => Atom term
+    | G.Constant _ => Atom (G.representative graph node)
+    | G.Application pair => Apply pair
+    | _ => Opaque
 
   fun terms {mk_bound_var, mk_let} = Backend
     {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
+     view = fn _ => term_view, same_value = Portable.pointer_eq,
      variable_descriptor = fn term =>
        if Term.is_var term then SOME term else NONE,
      solver_variables = fn () => [],
@@ -175,7 +209,8 @@ struct
        validate_environment = fn environment =>
          (G.validate_scope graph (lexical environment);
           G.validate_scope graph (construction environment)),
-       type_of = G.type_of graph,
+       type_of = G.type_of graph, view = fn _ => graph_view graph,
+       same_value = op=,
        variable_descriptor = fn node =>
          (ignore (G.type_of graph node);
           Redblackmap.peek (!lexical_descriptors, G.node_id node)),
@@ -828,7 +863,8 @@ struct
        validate_environment = fn environment =>
          (G.validate_scope graph (lexical environment);
           G.validate_scope graph (construction environment)),
-       type_of = G.type_of graph,
+       type_of = G.type_of graph, view = fn _ => graph_view graph,
+       same_value = op=,
        variable_descriptor = fn node =>
          (ignore (G.type_of graph node);
           Redblackmap.peek (!lexical_descriptors, G.node_id node)),
@@ -954,7 +990,17 @@ struct
            (PV.spend context 0;
             G.validate_scope graph (lexical environment);
             G.validate_scope graph (construction environment)),
-         type_of=PV.type_of context,variable_descriptor=descriptor,
+         type_of=PV.type_of context,
+         view=fn environment => fn value =>
+           (case PV.constructor_view context value of
+              PV.Variable (_,term) => Atom term
+            | PV.Constant term => Atom term
+            | PV.Application pair => Apply pair
+            | _ => Opaque),
+         same_value=fn (left,right) =>
+           PV.proof_key context (PV.proof_term context left) =
+           PV.proof_key context (PV.proof_term context right),
+         variable_descriptor=descriptor,
          solver_variables=fn () =>
            (PV.spend context 1;List.rev (!variables)),
          mk_bound_var=fn pair => (step ();Term.mk_var pair),

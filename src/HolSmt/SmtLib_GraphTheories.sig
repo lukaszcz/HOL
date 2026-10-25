@@ -14,7 +14,8 @@ sig
 
   (* Select exactly the ordinary registry's solver/logic packet and callback
      order. Admitted recipes receive schematic holes and types, never actual
-     graph representatives. Deferred callbacks produce explicit refusals. *)
+     graph representatives. @bbterm has a built-in ID-aware implementation;
+     other deferred callbacks produce explicit refusals. *)
   val select : 'a SmtLib_GraphBackend.backend -> limits ->
     {logic : string, solver : string option} ->
     {dictionaries : 'a dictionaries, entries : entry list,

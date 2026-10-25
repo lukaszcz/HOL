@@ -175,10 +175,13 @@ struct
 
   (* Construction is selected before elaborating let bodies or binders.
      Proof dialects may use semantic terms as indices (notably CPC skolems),
-     so retain those as backend values instead of forcing a HOL expansion. *)
+     so retain those as backend values instead of forcing a HOL expansion.
+     Lexical indices additionally preserve the legacy pre-LET variable role;
+     ordinary recipes must not confuse them with external literal aliases. *)
   datatype 'a construction_index =
       LiteralIndex of Term.term
     | ValueIndex of 'a * string
+    | LexicalIndex of 'a * string
     | SymbolIndex of string
   type 'a construction_parse_fn =
     'a SmtLib_GraphBackend.frame -> string ->
@@ -2352,6 +2355,8 @@ local
     | construction_index_text (SymbolIndex name) = name
     | construction_index_text (ValueIndex (_, token)) =
         "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
+    | construction_index_text (LexicalIndex (_, token)) =
+        "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
 
   fun apply_construction_symbol (cfg : 'a construction_cfg) dictionary frame
       token indices arguments =
@@ -2373,7 +2378,8 @@ local
      Semantic indices are extra typed operand holes, never expanded terms. *)
   fun construction_recipe_parsefn backend build frame token indices arguments =
     let
-      fun index (LiteralIndex term, (descriptions, values, next)) =
+      fun index (LexicalIndex pair, state) = index (ValueIndex pair,state)
+        | index (LiteralIndex term, (descriptions, values, next)) =
             (RecipeLiteral term :: descriptions, values, next)
         | index (SymbolIndex name, (descriptions, values, next)) =
             (RecipeSymbol name :: descriptions, values, next)
@@ -2403,6 +2409,7 @@ local
     let
       fun term_index (LiteralIndex term) = term
         | term_index (ValueIndex (term, _)) = term
+        | term_index (LexicalIndex (term, _)) = term
         | term_index (SymbolIndex name) =
             Term.mk_var (name, Type.mk_vartype "'smtlib_index")
       fun adapt parse _ token indices arguments =
@@ -2472,9 +2479,13 @@ local
         | NONE => case Lib.total index_numeral_term token of
           SOME term => (bounded_index term, NONE, token)
         | NONE =>
-            (let val parsed = term_aux frame token [] in
-               (ValueIndex (construction_value parsed, token),
-                SOME parsed, token)
+            (let val parsed = term_aux frame token []
+                 val pair = (construction_value parsed,token)
+                 val index = case B.lookup backend frame
+                     ((#symbol_key cfg) token) of
+                     SOME _ => LexicalIndex pair
+                   | NONE => ValueIndex pair
+             in (index,SOME parsed,token)
              end handle Feedback.HOL_ERR error =>
                if Feedback.top_structure_of error = "SmtLib_Parser" andalso
                   Feedback.top_function_of error = unknown_symbol_origin then
@@ -2748,9 +2759,13 @@ local
         | NONE => case Lib.total index_numeral_term token of
           SOME term => (bounded_index term, NONE, token)
         | NONE =>
-            (let val parsed = term_aux frame token [] in
-               (ValueIndex (construction_value parsed, token),
-                SOME parsed, token)
+            (let val parsed = term_aux frame token []
+                 val pair = (construction_value parsed,token)
+                 val index = case B.lookup backend frame
+                     ((#symbol_key cfg) token) of
+                     SOME _ => LexicalIndex pair
+                   | NONE => ValueIndex pair
+             in (index,SOME parsed,token)
              end handle Feedback.HOL_ERR error =>
                if Feedback.top_structure_of error = "SmtLib_Parser" andalso
                   Feedback.top_function_of error = unknown_symbol_origin then

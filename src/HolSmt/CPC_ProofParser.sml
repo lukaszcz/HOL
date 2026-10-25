@@ -3787,7 +3787,8 @@ in
         let val value = numeral_of_term "graph private index" (admitted term)
         in if Arbnum.<= (value, Arbnum.fromInt width_limit) then value else
           raise ERR "graph_index" "private numeric index exceeds contract" end
-      fun index (P.LiteralIndex term) = natural term
+      fun index (P.LexicalIndex pair) = index (P.ValueIndex pair)
+        | index (P.LiteralIndex term) = natural term
         | index (P.ValueIndex (node, _)) =
             (case G.unfolded_nodes graph
                 G.RawNodes width_limit node of
@@ -4311,7 +4312,8 @@ in
         let val value = numeral_of_term "graph private index" (admitted term)
         in if policy_reader_width width_limit value then value else
           raise ERR "graph_index" "private numeric index exceeds contract" end
-      fun index (P.LiteralIndex term) = natural term
+      fun index (P.LexicalIndex pair) = index (P.ValueIndex pair)
+        | index (P.LiteralIndex term) = natural term
         | index (P.ValueIndex (node, _)) = value_index natural node
         | index _ = raise ERR "graph_index" "nonliteral private index"
       fun marker frame token indices args =
