@@ -128,6 +128,34 @@ fresh repaired-driver grid, an exclusive stable measurement environment and
 explicit zero-GC/B/B policy-owner disposition remain unsatisfied. TASK29A is
 NOT done.
 
+## Fresh post-workload object/pool inspection — not closure
+
+`RUNTIME_LAYOUT.md` and `evidence/task29/runtime-layout/RESULTS.md` now
+retain actual instantiated object/code/capture/inline-pool dumps, rather than
+only compiler text. Eight final structural processes cover fresh B/B and B/C
+for both targeted repaired-driver cases. The private runner's original target
+executes before a separately compiled postlude; ordinary sources/fixtures and
+compiler printing are unchanged. Raw operands, aliasing, graph differences,
+source/proof/runtime admission and complete rejected development output remain
+available. The diagnostic suite cannot enter timing acceptance.
+
+Actual `run` callable capture counts remain two words for fragment and three
+for collector; selected root/build code sizes and address-immediate-masked
+words match. Decoded inline loads bind actual caller/build/compiler targets,
+not opaque printed names. B/C code alignment and collector reachable graphs
+differ. Every process still has 213 split pools whose slots `showSize` omits.
+Postlude compilation may move objects after timing: these are not boundary
+snapshots, executed-target traces, complete graph equivalence or causation.
+No production repair is selected, nor extra ordinary-path cost ruled out.
+
+Both final archives replay and their real 13-test mutation suites pass.
+Current-tree discovery passes 392 performance tests (five opt-in skips) and
+196 compatibility tests. These checks do not close a numerical cell. All
+historical/repaired-driver failures and uncertainty remain; a fresh passing
+full grid, complete attribution, verified exclusive measurement environment
+and explicit zero-GC/B/B policy-owner disposition are still required.
+TASK29A is NOT complete; TASK29B remains separate.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

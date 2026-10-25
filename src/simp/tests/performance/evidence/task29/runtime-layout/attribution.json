@@ -1,0 +1,1734 @@
+{
+  "record": {
+    "baseline-control": {
+      "scope": "Actual root operands; names/masked words do NOT prove parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.fragwork(4)(1)",
+          "candidate_name": "MatrixSupport.fragwork(4)(1)",
+          "baseline_words": 15,
+          "candidate_words": 15,
+          "baseline_address_mod64": 16,
+          "candidate_address_mod64": 16,
+          "baseline_address_mod4096": 2832,
+          "candidate_address_mod4096": 2832,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [],
+            "candidate": []
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 48,
+          "baseline_address_mod4096": 2992,
+          "candidate_address_mod4096": 2992,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 253987766104064,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 253987766107232,
+                "pool_slot": 4,
+                "target": {
+                  "address": 253985595425352,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 253987766033168,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 253987766104064,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 253987766107216,
+                "pool_slot": 2,
+                "target": {
+                  "address": 253987766033168,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 253987766104064,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 253987766107224,
+                "pool_slot": 3,
+                "target": {
+                  "address": 253985594809840,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 253987766104064,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 253987766107224,
+                "pool_slot": 3,
+                "target": {
+                  "address": 253985594809840,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 253987766104064,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 253987766107240,
+                "pool_slot": 5,
+                "target": {
+                  "address": 194469165223040,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 249439311851520,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 249439311854688,
+                "pool_slot": 4,
+                "target": {
+                  "address": 249437141173000,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 249439311780624,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 249439311851520,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 249439311854672,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249439311780624,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 249439311851520,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 249439311854680,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249437140557296,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 249439311851520,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 249439311854680,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249437140557296,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 249439311851520,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 249439311854696,
+                "pool_slot": 5,
+                "target": {
+                  "address": 211914318892160,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 56,
+          "candidate_address_mod64": 56,
+          "baseline_address_mod4096": 3704,
+          "candidate_address_mod4096": 3704,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 253987766427648,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 253987766431480,
+                "pool_slot": 2,
+                "target": {
+                  "address": 253987765714952,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 249439312175104,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 249439312178936,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249439311462408,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 8,
+          "baseline_address_mod4096": 3592,
+          "candidate_address_mod4096": 3592,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 253987765760000,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 253987765763792,
+                "pool_slot": 3,
+                "target": {
+                  "address": 253987765715472,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 253987765760000,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 253987765763784,
+                "pool_slot": 2,
+                "target": {
+                  "address": 253987765792552,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 253987765760000,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 253987765763800,
+                "pool_slot": 4,
+                "target": {
+                  "address": 253987765716448,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 249439311507456,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 249439311511248,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249439311462928,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 249439311507456,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 249439311511240,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249439311540008,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 249439311507456,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 249439311511256,
+                "pool_slot": 4,
+                "target": {
+                  "address": 249439311463904,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        },
+        "build": {
+          "baseline_name": "MatrixSupport.workload(2)(1)",
+          "candidate_name": "MatrixSupport.workload(2)(1)",
+          "baseline_words": 34,
+          "candidate_words": 34,
+          "baseline_address_mod64": 40,
+          "candidate_address_mod64": 40,
+          "baseline_address_mod4096": 3048,
+          "candidate_address_mod4096": 3048,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 253987765764096,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182143504,
+                "load_address": 253987765767392,
+                "pool_slot": 3,
+                "target": {
+                  "address": 253987766065920,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 253987765764096,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182142480,
+                "load_address": 253987765767384,
+                "pool_slot": 2,
+                "target": {
+                  "address": 253987766070880,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 253987765764096,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182144528,
+                "load_address": 253987765767400,
+                "pool_slot": 4,
+                "target": {
+                  "address": 253987766078952,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 249439311511552,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182143504,
+                "load_address": 249439311514848,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249439311813376,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 249439311511552,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182142480,
+                "load_address": 249439311514840,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249439311818336,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 249439311511552,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182144528,
+                "load_address": 249439311514856,
+                "pool_slot": 4,
+                "target": {
+                  "address": 249439311826408,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 412600,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 412600,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 34089,
+        "differences": 8,
+        "native_word_differences": 0
+      }
+    },
+    "baseline-candidate": {
+      "scope": "Actual root operands; names/masked words do NOT prove parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.fragwork(4)(1)",
+          "candidate_name": "MatrixSupport.fragwork(4)(1)",
+          "baseline_words": 15,
+          "candidate_words": 15,
+          "baseline_address_mod64": 16,
+          "candidate_address_mod64": 40,
+          "baseline_address_mod4096": 2832,
+          "candidate_address_mod4096": 3752,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [],
+            "candidate": []
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 0,
+          "baseline_address_mod4096": 2992,
+          "candidate_address_mod4096": 512,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 268214656528384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 268214656531552,
+                "pool_slot": 4,
+                "target": {
+                  "address": 268212486898248,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 268214656457488,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 268214656528384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 268214656531536,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268214656457488,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 268214656528384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 268214656531544,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268212486282736,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 268214656528384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 268214656531544,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268212486282736,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 268214656528384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 268214656531560,
+                "pool_slot": 5,
+                "target": {
+                  "address": 202233148755072,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 266030135287808,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181809416,
+                "load_address": 266030135288496,
+                "pool_slot": 4,
+                "target": {
+                  "address": 266027964781808,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 266030134775464,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 266030135287808,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181807632,
+                "load_address": 266030135288480,
+                "pool_slot": 2,
+                "target": {
+                  "address": 266030134775464,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 266030135287808,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808425,
+                "load_address": 266030135288488,
+                "pool_slot": 3,
+                "target": {
+                  "address": 266027963710800,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 266030135287808,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808458,
+                "load_address": 266030135288488,
+                "pool_slot": 3,
+                "target": {
+                  "address": 266027963710800,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 266030135287808,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181810176,
+                "load_address": 266030135288504,
+                "pool_slot": 5,
+                "target": {
+                  "address": 219049065925760,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 56,
+          "candidate_address_mod64": 40,
+          "baseline_address_mod4096": 3704,
+          "candidate_address_mod4096": 2536,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 268214656851968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 268214656855800,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268214656139272,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 266030135259136,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182062410,
+                "load_address": 266030135261800,
+                "pool_slot": 2,
+                "target": {
+                  "address": 266030134686232,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 8,
+          "baseline_address_mod4096": 3592,
+          "candidate_address_mod4096": 3784,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 268214656184320,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 268214656188112,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268214656139792,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 268214656184320,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 268214656188104,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268214656216872,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 268214656184320,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 268214656188120,
+                "pool_slot": 4,
+                "target": {
+                  "address": 268214656140768,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 266030134685696,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182231568,
+                "load_address": 266030134689680,
+                "pool_slot": 3,
+                "target": {
+                  "address": 266030134686752,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 266030134685696,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182230544,
+                "load_address": 266030134689672,
+                "pool_slot": 2,
+                "target": {
+                  "address": 266030134687952,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 266030134685696,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182232592,
+                "load_address": 266030134689688,
+                "pool_slot": 4,
+                "target": {
+                  "address": 266030134688176,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        },
+        "build": {
+          "baseline_name": "MatrixSupport.workload(2)(1)",
+          "candidate_name": "MatrixSupport.workload(2)(1)",
+          "baseline_words": 34,
+          "candidate_words": 34,
+          "baseline_address_mod64": 40,
+          "candidate_address_mod64": 24,
+          "baseline_address_mod4096": 3048,
+          "candidate_address_mod4096": 3608,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 268214656188416,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182143504,
+                "load_address": 268214656191712,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268214656490240,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 268214656188416,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182142480,
+                "load_address": 268214656191704,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268214656495200,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 268214656188416,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182144528,
+                "load_address": 268214656191720,
+                "pool_slot": 4,
+                "target": {
+                  "address": 268214656503272,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 266030134751232,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182215184,
+                "load_address": 266030134755088,
+                "pool_slot": 3,
+                "target": {
+                  "address": 266030134776912,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 266030134751232,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182214160,
+                "load_address": 266030134755080,
+                "pool_slot": 2,
+                "target": {
+                  "address": 266030134783664,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 266030134751232,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182216208,
+                "load_address": 266030134755096,
+                "pool_slot": 4,
+                "target": {
+                  "address": 266030134783352,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 412600,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 412599,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 32250,
+        "differences": 118,
+        "native_word_differences": 32
+      }
+    }
+  },
+  "collector": {
+    "baseline-control": {
+      "scope": "Actual root operands; names/masked words do NOT prove parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.sswork(2)(1)",
+          "candidate_name": "MatrixSupport.sswork(2)(1)",
+          "baseline_words": 16,
+          "candidate_words": 16,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 8,
+          "baseline_address_mod4096": 2952,
+          "candidate_address_mod4096": 2952,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 249365596790784,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182113808,
+                "load_address": 249365596793848,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249365596858776,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 250646501580800,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182113808,
+                "load_address": 250646501583864,
+                "pool_slot": 2,
+                "target": {
+                  "address": 250646501648792,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ]
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 48,
+          "baseline_address_mod4096": 2992,
+          "candidate_address_mod4096": 2992,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 249365596958720,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 249365596961888,
+                "pool_slot": 4,
+                "target": {
+                  "address": 249363312387168,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 249365596793736,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 249365596958720,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 249365596961872,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249365596793736,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 249365596958720,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 249365596961880,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249363426713072,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 249365596958720,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 249365596961880,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249363426713072,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 249365596958720,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 249365596961896,
+                "pool_slot": 5,
+                "target": {
+                  "address": 216077450824832,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 250646501748736,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 250646501751904,
+                "pool_slot": 4,
+                "target": {
+                  "address": 250644217174776,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 250646501583752,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 250646501748736,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 250646501751888,
+                "pool_slot": 2,
+                "target": {
+                  "address": 250646501583752,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 250646501748736,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 250646501751896,
+                "pool_slot": 3,
+                "target": {
+                  "address": 250644331503088,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 250646501748736,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 250646501751896,
+                "pool_slot": 3,
+                "target": {
+                  "address": 250644331503088,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 250646501748736,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 250646501751912,
+                "pool_slot": 5,
+                "target": {
+                  "address": 189279924341888,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 24,
+          "candidate_address_mod64": 24,
+          "baseline_address_mod4096": 3928,
+          "candidate_address_mod4096": 3928,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 249365597294592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182240586,
+                "load_address": 249365597298648,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249365596569608,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 250646502084608,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182240586,
+                "load_address": 250646502088664,
+                "pool_slot": 2,
+                "target": {
+                  "address": 250646501359624,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 32,
+          "candidate_address_mod64": 32,
+          "baseline_address_mod4096": 224,
+          "candidate_address_mod4096": 224,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 249365596614656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181775888,
+                "load_address": 249365596615080,
+                "pool_slot": 3,
+                "target": {
+                  "address": 249365596570160,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 249365596614656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181774864,
+                "load_address": 249365596615072,
+                "pool_slot": 2,
+                "target": {
+                  "address": 249365596647208,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 249365596614656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181776912,
+                "load_address": 249365596615088,
+                "pool_slot": 4,
+                "target": {
+                  "address": 249365596571160,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 250646501404672,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181775888,
+                "load_address": 250646501405096,
+                "pool_slot": 3,
+                "target": {
+                  "address": 250646501360176,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 250646501404672,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181774864,
+                "load_address": 250646501405088,
+                "pool_slot": 2,
+                "target": {
+                  "address": 250646501437224,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 250646501404672,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181776912,
+                "load_address": 250646501405104,
+                "pool_slot": 4,
+                "target": {
+                  "address": 250646501361176,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 2780452,
+          "objects": 617010,
+          "kinds": {
+            "WORDS": 557170,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56887
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 2780452,
+          "objects": 617010,
+          "kinds": {
+            "WORDS": 557170,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56887
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 616241,
+        "differences": 8,
+        "native_word_differences": 0
+      }
+    },
+    "baseline-candidate": {
+      "scope": "Actual root operands; names/masked words do NOT prove parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.sswork(2)(1)",
+          "candidate_name": "MatrixSupport.sswork(2)(1)",
+          "baseline_words": 16,
+          "candidate_words": 16,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 16,
+          "baseline_address_mod4096": 2952,
+          "candidate_address_mod4096": 2768,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 252680078417920,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182113808,
+                "load_address": 252680078420984,
+                "pool_slot": 2,
+                "target": {
+                  "address": 252680078485912,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 279409584914432,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182090256,
+                "load_address": 279409584917312,
+                "pool_slot": 2,
+                "target": {
+                  "address": 279409585153656,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ]
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 0,
+          "baseline_address_mod4096": 2992,
+          "candidate_address_mod4096": 512,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 252680078585856,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 252680078589024,
+                "pool_slot": 4,
+                "target": {
+                  "address": 252677792965728,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 252680078420872,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 252680078585856,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 252680078589008,
+                "pool_slot": 2,
+                "target": {
+                  "address": 252680078420872,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 252680078585856,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 252680078589016,
+                "pool_slot": 3,
+                "target": {
+                  "address": 252677907721712,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 252680078585856,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 252680078589016,
+                "pool_slot": 3,
+                "target": {
+                  "address": 252677907721712,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 252680078585856,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 252680078589032,
+                "pool_slot": 5,
+                "target": {
+                  "address": 205085417032832,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 279409585463296,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181809416,
+                "load_address": 279409585463984,
+                "pool_slot": 4,
+                "target": {
+                  "address": 279407150868712,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 279409584917200,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 279409585463296,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181807632,
+                "load_address": 279409585463968,
+                "pool_slot": 2,
+                "target": {
+                  "address": 279409584917200,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 279409585463296,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808425,
+                "load_address": 279409585463976,
+                "pool_slot": 3,
+                "target": {
+                  "address": 279407347350864,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 279409585463296,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808458,
+                "load_address": 279409585463976,
+                "pool_slot": 3,
+                "target": {
+                  "address": 279407347350864,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 279409585463296,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181810176,
+                "load_address": 279409585463992,
+                "pool_slot": 5,
+                "target": {
+                  "address": 218016938937472,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 24,
+          "candidate_address_mod64": 40,
+          "baseline_address_mod4096": 3928,
+          "candidate_address_mod4096": 2536,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 252680078921728,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182240586,
+                "load_address": 252680078925784,
+                "pool_slot": 2,
+                "target": {
+                  "address": 252680078196744,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 279409585434624,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182062410,
+                "load_address": 279409585437288,
+                "pool_slot": 2,
+                "target": {
+                  "address": 279409584861720,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 32,
+          "candidate_address_mod64": 32,
+          "baseline_address_mod4096": 224,
+          "candidate_address_mod4096": 3872,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 252680078241792,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181775888,
+                "load_address": 252680078242216,
+                "pool_slot": 3,
+                "target": {
+                  "address": 252680078197296,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 252680078241792,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181774864,
+                "load_address": 252680078242208,
+                "pool_slot": 2,
+                "target": {
+                  "address": 252680078274344,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 252680078241792,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181776912,
+                "load_address": 252680078242224,
+                "pool_slot": 4,
+                "target": {
+                  "address": 252680078198296,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 279409584861184,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182242832,
+                "load_address": 279409584865256,
+                "pool_slot": 3,
+                "target": {
+                  "address": 279409584862272,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 279409584861184,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182241808,
+                "load_address": 279409584865248,
+                "pool_slot": 2,
+                "target": {
+                  "address": 279409584863496,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 279409584861184,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182243856,
+                "load_address": 279409584865264,
+                "pool_slot": 4,
+                "target": {
+                  "address": 279409584863720,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 2780452,
+          "objects": 617010,
+          "kinds": {
+            "WORDS": 557170,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56887
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 2397860,
+          "objects": 506216,
+          "kinds": {
+            "WORDS": 446484,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56779
+          },
+          "split_pools": 213,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 493524,
+        "differences": 172806,
+        "native_word_differences": 113
+      }
+    }
+  }
+}
