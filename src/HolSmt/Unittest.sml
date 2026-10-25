@@ -31797,22 +31797,56 @@ in
          "Skeleton" "word-graph-terminal-callback" 0 1;
        unexpected)
       handle exn => exn
-    fun run injected =
-      SmtWordGraph.normalize_using_with_metrics
-        {word_conversion = blastLib.WORD_SIMP_CONV,
-         bit_conversion = fn _ => raise injected,
-         node_conversion = fn _ => raise Conv.UNCHANGED} projection
     fun expect label injected matches =
-      ((ignore (run injected);
-        die ("FAIL: word graph swallowed terminal " ^ label))
-       handle exn =>
-         assert (matches exn,
-           "word graph changed terminal " ^ label ^ " exception: " ^
-           General.exnMessage exn))
+      let
+        fun normalize term conversions =
+          ignore (SmtWordGraph.normalize_using_with_metrics conversions term)
+        val binder = Term.mk_abs (Term.genvar Type.bool,projection)
+        fun graph_normalize conversions =
+          let
+            val graph = SmtReplayGraph.new ()
+            val scope = SmtReplayGraph.root_scope graph
+            val source = #node (SmtReplayGraph.import graph scope
+              SmtResource.max_bv_replay_term_nodes binder)
+          in ignore (SmtWordGraph.graph_normalize_using_with_metrics
+            conversions graph scope source) end
+        fun probe path normalize kind one_shot =
+          let
+            val calls = ref 0
+            fun callback name conversion term =
+              if name <> kind then conversion term else
+                (calls := !calls + 1;
+                 if !calls = 1 orelse not one_shot then raise injected
+                 else conversion term)
+            val result = Exn.capture normalize
+              {word_conversion = callback "word" blastLib.WORD_SIMP_CONV,
+               bit_conversion = callback "bit" blastLib.BIT_BLAST_CONV,
+               node_conversion = callback "node"
+                 (fn _ => raise Conv.UNCHANGED)}
+            val name = label ^ "/" ^ path ^ "/" ^ kind ^
+              (if one_shot then "/one-shot" else "/always")
+          in
+            (case result of
+               Exn.Exn exn => assert (matches exn,
+                 "word graph changed terminal " ^ name ^ " exception: " ^
+                 General.exnMessage exn)
+             | Exn.Res _ => die ("word graph swallowed terminal " ^ name));
+            assert (!calls = 1,
+              "word graph retried terminal callback " ^ name)
+          end
+      in
+        List.app (fn (path,run) =>
+          List.app (fn kind => List.app (probe path run kind) [false,true])
+            ["word","bit","node"])
+          [("term",normalize projection), ("binder",normalize binder),
+           ("graph-binder",graph_normalize)]
+      end
   in
     expect "resource"
       resource
-      (fn Feedback.HOL_ERR holerr => SmtResource.is_resource_gate holerr
+      (fn exn as Feedback.HOL_ERR holerr =>
+          SmtResource.is_resource_gate holerr andalso
+          General.exnMessage exn = General.exnMessage resource
         | _ => false);
     expect "HOL_ERR" unexpected
       (fn Feedback.HOL_ERR holerr =>

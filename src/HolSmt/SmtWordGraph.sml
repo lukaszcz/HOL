@@ -506,17 +506,36 @@ struct
     else (admit_callback_dimensions admission term; callback term)
 
   fun guarded_conversions {word_conversion,bit_conversion,node_conversion} =
-    {word_conversion=word_conversion,bit_conversion=bit_conversion,
-     node_conversion=fn admission =>
-       if Portable.pointer_eq (node_conversion,unchanged_node)
-       then unchanged_node
-       else checked_node_callback admission node_conversion}
+    let
+      (* Optional schema admission may fall back, but a primitive's first
+         resource exception is terminal. Keep the exception itself intact
+         for profiling/cleanup, and share this flag through binder discovery.
+         Admission stays OUTSIDE the tracked raw callback. *)
+      val callback_failed = ref false
+      fun track conversion =
+        if Portable.pointer_eq (conversion,unchanged_node) then conversion
+        else fn term => conversion term
+          handle exn as Feedback.HOL_ERR error =>
+            (if SmtResource.is_resource_gate error then
+               callback_failed := true else ();
+             raise exn)
+      val node_conversion = track node_conversion
+    in
+      {callback_failed=callback_failed,
+       word_conversion=track word_conversion,
+       bit_conversion=track bit_conversion,
+       node_conversion=fn admission =>
+         if Portable.pointer_eq (node_conversion,unchanged_node)
+         then unchanged_node
+         else checked_node_callback admission node_conversion}
+    end
 
   (* Graph producers run this worker only on bounded operator templates:
      their INST residues are schema holes, never actual graph operands.
      The independent term-facing FP adapter below retains its old contract. *)
   fun normalize_template_using_in (context : context) reuse type_admission
-      protect_callbacks {word_conversion, bit_conversion, node_conversion}
+      protect_callbacks
+      {word_conversion, bit_conversion, node_conversion, callback_failed}
       root =
     let
       val input_nodes = SmtResource.dag_nodes_up_to maximum root
@@ -1301,11 +1320,13 @@ struct
           val shallow = frontier 0 node
           val projection = wordsSyntax.is_index shallow
           val template = if projection then frontier 1 node else shallow
-          val {word_conversion,bit_conversion,node_conversion} = conversions
+          val {word_conversion,bit_conversion,node_conversion,
+               callback_failed} = conversions
           (* The word child was normalized by graph postorder already.
              Projection discovery must not repeat that primitive call. *)
           val local_conversions =
-            {word_conversion=if projection then
+            {callback_failed=callback_failed,
+             word_conversion=if projection then
                (fn _ => raise Conv.UNCHANGED) else word_conversion,
              bit_conversion=bit_conversion,node_conversion=node_conversion}
           val outcome = Exn.capture
@@ -1467,7 +1488,8 @@ struct
         end
       val ready = completed_frontier ()
         handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then NONE
+          if SmtResource.is_resource_gate error andalso
+             not (!(#callback_failed conversions)) then NONE
           else raise Feedback.HOL_ERR error
       val (plan,metrics) = case ready of SOME ready => ready
         | NONE => discover_using_in context reuse admission conversions
@@ -1527,7 +1549,8 @@ struct
      graph word consumers retain the discovery recipe instead. *)
   fun normalize_with_node_conversion_and_metrics node_conversion root =
     normalize_template_using_in (new_context ()) false (new_type_admission ())
-      false {word_conversion = blastLib.WORD_SIMP_CONV,
+      false {callback_failed = ref false,
+       word_conversion = blastLib.WORD_SIMP_CONV,
        bit_conversion = blastLib.BIT_BLAST_CONV,
        node_conversion = fn _ => node_conversion} root
 
@@ -1610,15 +1633,20 @@ struct
       val scope = G.root_scope graph
       val source = #node (G.import graph scope maximum target)
       val admission = new_type_admission ()
+      val conversions = guarded_conversions
+        {word_conversion=blastLib.WORD_SIMP_CONV,
+         bit_conversion=blastLib.BIT_BLAST_CONV,
+         node_conversion=node_conversion}
       fun reflexive admission =
-        let val callback = checked_node_callback admission node_conversion
+        let val callback = #node_conversion conversions admission
         in fn term => if boolSyntax.is_eq term then
             (SmtReplayCanon.reflexive_equality_conv term
              handle Conv.UNCHANGED => callback term)
           else callback term end
       val (plan,_) = discover_using_in context true admission
-        {word_conversion=blastLib.WORD_SIMP_CONV,
-         bit_conversion=blastLib.BIT_BLAST_CONV,node_conversion=reflexive}
+        {callback_failed= #callback_failed conversions,
+         word_conversion= #word_conversion conversions,
+         bit_conversion= #bit_conversion conversions,node_conversion=reflexive}
         graph scope source
     in SmtSkeletonProve.exact_conclusion target
       (prove_discovered_in context graph scope plan) end
@@ -1667,7 +1695,8 @@ struct
                 let
                   val normalized = #1 (normalize_template_using_in context true
                     admission true
-                    {word_conversion=blastLib.WORD_SIMP_CONV,
+                    {callback_failed=ref false,
+                     word_conversion=blastLib.WORD_SIMP_CONV,
                      bit_conversion=blastLib.BIT_BLAST_CONV,
                      node_conversion=fn _ => reflexive} template)
                     handle Conv.UNCHANGED => Thm.REFL template
