@@ -27211,14 +27211,15 @@ let
     [rejects_before_type_inst SmtFpGraph.represent mixed_fp]
   val _ = Count.counting_thms false
   val _ = assert (List.all I admitted_first,
-    "FP helper entered native Type instantiation before full admission")
+    "FP helper entered native Type instantiation before admission")
   (* Already represented bits need only reflexivity, not full admission of
      an unused polymorphic format suffix. Keep this formerly cheap path. *)
   fun shared_poly_type 0 = Type.mk_vartype "'fp_bits_dimension"
     | shared_poly_type n = let val child = shared_poly_type (n - 1)
       in Type.mk_type ("prod", [child, child]) end
+  val poly_dimension = shared_poly_type 21
   val bits = Term.inst
-    [Type.mk_vartype "'z" |-> shared_poly_type 21]
+    [Type.mk_vartype "'z" |-> poly_dimension]
     ``smtfp_bits (s:word1) (e:'a word) (f:'z word)``
   val descriptor = SmtFpGraph.represent bits
   val _ = assert (Portable.pointer_eq (#value descriptor, bits) andalso
@@ -27229,6 +27230,28 @@ let
     "FP bits reflexivity imposed a new format-admission refusal")
   val _ = assert_no_hyps ("FP polymorphic bits", #representation descriptor)
   val _ = check_oracle_tags "FP polymorphic bits" (#representation descriptor)
+  val poly_leaf = Term.mk_var ("fp_poly_leaf", Type.mk_thy_type
+    {Thy = "smtfloat", Tyop = "smtfp",
+     Args = [poly_dimension, poly_dimension]})
+  val poly_helper_head = Term.inst
+    [Type.mk_vartype "'e" |-> poly_dimension,
+     Type.mk_vartype "'c" |-> poly_dimension]
+    (Term.prim_mk_const
+      {Thy = "smtfloatReplayAddSubWord", Name = "smtfp_word_addsub_exp"})
+  val poly_helper = Term.mk_comb (poly_helper_head, Term.mk_var
+    ("fp_poly_trace", #1 (Type.dom_rng (Term.type_of poly_helper_head))))
+  val _ = List.app (fn input =>
+    let val proof = #representation (SmtFpGraph.represent input) in
+      assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl proof), input),
+        "FP polymorphic representation lost its exact source");
+      assert_no_hyps ("FP polymorphic representation", proof);
+      check_oracle_tags "FP polymorphic representation" proof
+    end) [Term.mk_comb
+      (Term.inst [Type.mk_vartype "'z" |-> poly_dimension]
+        (Term.rator ``smtfp_abs (x:('z,'a) smtfp)``), bits), poly_leaf]
+  val poly_proof = SmtFpGraph.convert_word_projection poly_helper
+  val _ = assert_no_hyps ("FP polymorphic helper", poly_proof)
+  val _ = check_oracle_tags "FP polymorphic helper" poly_proof
   val huge_type = wordsSyntax.mk_int_word_type 8193
   val ignored = Term.mk_var ("fp_ignored", huge_type)
   val producer = wordsSyntax.mk_word_add (ignored, ignored)

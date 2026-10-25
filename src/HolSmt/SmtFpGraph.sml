@@ -387,9 +387,10 @@ struct
       fun helper term definition =
         let
           val (head, arguments) = boolSyntax.strip_comb term
-          val _ = ignore (#full_type admission (Term.type_of head))
+          val _ = #intern admission (Term.type_of head)
           val _ = List.app (fn argument =>
-            ignore (#full_type admission (Term.type_of argument))) arguments
+            #intern admission (Term.type_of argument)) arguments
+          val _ = #intern admission (Term.type_of term)
           (* The head fixes all types.  Literal/alias relationships need not
              be guessed: instantiate the same checked law for every operand. *)
           val key = (#Name (Term.dest_thy_constid head),
@@ -671,12 +672,14 @@ struct
     else
       let
         val _ = ignore (#intern admission (Term.type_of term))
-        (* Representation changes (t,e) into sign/exponent/fraction fields.
-           That reorders polymorphic annotations: native classification of
-           an instantiated bits constructor can see a formerly hidden suffix.
-           Admit the active format fully before any representation schema. *)
+        (* Representation exposes each dimension as a word field. Admit
+           those classification prefixes before constructing selectors, not
+           the unused unfolded suffix of a polymorphic annotation. Already
+           represented bits need no schema or additional classification. *)
         val _ = if full_named "smtfloat" "smtfp_bits" 3 term then ()
-          else ignore (#full_type admission (Term.type_of term))
+          else List.app (fn dimension => #intern admission
+            (wordsSyntax.mk_word_type dimension))
+            (#Args (Type.dest_thy_typeid (Term.type_of term)))
         val equality =
           case head_name term of
             SOME ("smtfloat", "smtfp_bits") => Thm.REFL term
