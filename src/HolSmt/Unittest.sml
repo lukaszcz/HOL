@@ -31827,8 +31827,488 @@ in
   end
 end
 
+(* Word discovery owns typed schemas and the projection first-refusal cut. *)
+local
+  structure G = SmtReplayGraph
+  structure C = SmtReplayCanonGraph
+  structure P = SmtReplayProof
+in
+fun word_graph_discovery_invariants_success () =
+let
+  val cap = SmtResource.max_bv_replay_term_nodes
+  fun unchanged _ = raise Conv.UNCHANGED
+  fun ptr left right = Portable.pointer_eq (left,right)
+  fun check label action =
+    (tprint label; action (); OK ())
+  fun fixture term =
+    let val graph = G.new () val scope = G.root_scope graph
+    in (graph,scope,#node (G.import graph scope cap term)) end
+  fun exact graph plan theorem =
+    let val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (ptr (Thm.concl theorem)
+          (G.representative graph (C.graph_equality plan)) andalso
+          ptr left (G.representative graph (C.graph_source plan)) andalso
+          ptr right (G.representative graph (C.graph_result plan)),
+        "word graph realization lost an exact endpoint");
+      assert_no_hyps ("word graph discovery",theorem);
+      check_oracle_tags "word graph discovery" theorem
+    end
+  fun assemble graph scope plan =
+    let
+      val types = #INST_TYPE (Count.thm_count ())
+      (* Exercise the real sparse freezer and named assembler directly,
+         not a word wrapper which might rediscover missing dependencies. *)
+      val block = P.prepare_needed_sources graph
+        {scope=scope,roots=C.graph_roots plan,sources=[],template_limit=cap}
+      val _ = List.app (fn node => ignore (P.name block node))
+        (C.graph_roots plan)
+      val edge = C.graph_assemble_named graph block plan
+      val prior = #INST (Count.thm_count ())
+      val theorem = P.realize block (C.graph_equality plan) edge
+      val _ = assert (#INST (Count.thm_count ()) = prior+1 andalso
+          #INST_TYPE (Count.thm_count ()) = types,
+        "word assembly repeated Type instantiation or final operand insertion")
+    in exact graph plan theorem end
+  val x = ``discovery_x:word8``
+  val y = ``discovery_y:word8``
+  val relation = boolSyntax.mk_eq (wordsSyntax.mk_word_add (x,y),x)
+  val _ = Count.counting_thms true
+  val _ = check "Word discovery retains generated projections before freeze"
+    (fn () =>
+      let
+        val (graph,scope,source) = fixture relation
+        val live = ref true
+        val calls = ref 0 and bits = ref 0
+        fun record conversion term =
+          (assert (!live,"word assembly reentered a proposal callback");
+           calls := !calls+1; conversion term)
+        val original = G.reachable graph [source]
+        val _ = assert (not (List.exists (fn node =>
+            wordsSyntax.is_index (G.representative graph node)) original),
+          "generated-projection fixture already contains a projection")
+        val (plan,metrics) = SmtWordGraph.graph_normalize_using_with_metrics
+          {word_conversion=record blastLib.WORD_SIMP_CONV,
+           bit_conversion=record (fn term =>
+             (bits := !bits+1; blastLib.BIT_BLAST_CONV term)),
+           node_conversion=record unchanged} graph scope source
+        val snapshot = (!calls,!bits)
+        val _ = assert (!bits>0 andalso #projection_states metrics>0 andalso
+            #generated_nodes metrics>0 andalso
+            List.exists (fn node => not (List.exists (fn old => old=node)
+              original) andalso wordsSyntax.is_index
+                (G.representative graph node))
+              (G.reachable graph (C.graph_roots plan)),
+          "discovery omitted generated projection syntax or its proof work")
+        val _ = live := false
+        val _ = assemble graph scope plan
+      in assert ((!calls,!bits)=snapshot,
+        "freeze/assembly/realization reproposed a word dependency") end)
+  val _ = check "Context graph normalization uses the same final boundary"
+    (fn () =>
+      let
+        val (graph,scope,source) = fixture relation
+        val (plan,_) = SmtWordGraph.graph_normalize_in
+          (SmtWordGraph.new_context ()) graph scope source
+      in assemble graph scope plan end)
+  (* Task05's original depth, circuit and 2000-node cap, promoted here so
+     every actual primitive input is checked, not only bit-blast inputs. *)
+  val _ = check "Proof-only reflexivity does not pollute word normalization"
+    (fn () =>
+      let
+        val context = SmtWordGraph.new_context ()
+        val numeric = ``(0:num) = 0``
+        val target = boolSyntax.mk_conj (``(w:word8) + 0w = w``,numeric)
+        val theorem = SmtWordGraph.prove_in context target
+        val _ = assert_concl_alpha ("word proof cache",theorem,target)
+        val (graph,scope,source) = fixture numeric
+        val (warm,_) = SmtWordGraph.graph_normalize_in context
+          graph scope source
+        val (cold,_) = SmtWordGraph.graph_normalize_in
+          (SmtWordGraph.new_context ()) graph scope source
+      in assert (C.graph_result warm=source andalso
+          C.graph_result cold=source,
+        "proof-only reflexivity changed the word normal form through reuse")
+      end)
+  val _ = check "Opaque non-word-theory operands remain graph operands"
+    (fn () =>
+      let
+        val value = ``HD (words:word8 list)``
+        val source = boolSyntax.mk_eq
+          (wordsSyntax.mk_word_add (value,``0w:word8``),value)
+        val theorem = SmtWordGraph.prove source
+        val arguments = List.tabulate (2000,fn i =>
+          Term.mk_var ("opaque_bool_" ^ Int.toString i,Type.bool))
+        val function_type = List.foldr (fn (_,range) =>
+          Type.mk_type ("fun",[Type.bool,range])) (Term.type_of x) arguments
+        val operand = Term.list_mk_comb
+          (Term.mk_var ("opaque_word_function",function_type),arguments)
+        val large_source = boolSyntax.mk_eq
+          (wordsSyntax.mk_word_add (operand,``0w:word8``),operand)
+        val large_theorem = SmtResource.with_bitblast_step_time
+          "opaque-word-operand"
+          (SmtWordGraph.prove_with_node_conversion unchanged) large_source
+      in
+        assert_concl_alpha ("opaque word operand",theorem,source);
+        assert_no_hyps ("opaque word operand",theorem);
+        check_oracle_tags "opaque word operand" theorem;
+        assert_concl_alpha ("large opaque word operand",large_theorem,
+          large_source);
+        assert_no_hyps ("large opaque word operand",large_theorem);
+        check_oracle_tags "large opaque word operand" large_theorem
+      end)
+  val _ = check "Retained native operands keep unknown FV/size metadata"
+    (fn () =>
+      let
+        val graph = G.new () val scope = G.root_scope graph
+        val term = ``HD (opaque_words:word8 list)``
+        val source = G.retain_source graph scope term
+      in
+        assert (case G.free_variables graph (#node source) of
+            G.Unknown => true | _ => false,
+          "opaque operand was mistaken for a closed source");
+        assert (ptr (G.representative graph (#node source)) term andalso
+            ptr (boolSyntax.lhs (Thm.concl (#bridge source))) term andalso
+            ptr (boolSyntax.rhs (Thm.concl (#bridge source))) term,
+          "retained source lost its exact reflexive bridge")
+      end)
+  val _ = check "CPC word aliases close together above the old per-leaf gate"
+    (fn () =>
+      let
+        fun literal term = wordsSyntax.is_word_bit term orelse
+          (boolSyntax.is_eq term andalso
+           wordsSyntax.is_word_type (Term.type_of (boolSyntax.lhs term)))
+        val bank = CPC_ProofReplay.resolution_word_graph_for_test literal
+        val arguments = List.tabulate (2000,fn i =>
+          Term.mk_var ("wide_word_arg_" ^ Int.toString i,Type.bool))
+        val function_type = List.foldr (fn (_,range) =>
+          Type.mk_type ("fun",[Type.bool,range])) (Term.type_of x) arguments
+        fun obligation i =
+          let
+            val operand = Term.list_mk_comb
+              (Term.mk_var ("wide_word_uf_" ^ Int.toString i,function_type),
+               arguments)
+            val left = wordsSyntax.mk_word_bit (numSyntax.zero_tm,
+              wordsSyntax.mk_word_add (operand,``0w:word8``))
+            val right = wordsSyntax.mk_word_bit (numSyntax.zero_tm,operand)
+            val _ = assert (#key bank left = #key bank right,
+              "word alias key required realized operand syntax")
+          in boolSyntax.mk_eq (left,right) end
+        val goal = boolSyntax.list_mk_conj (List.tabulate (5,obligation))
+        val _ = assert (SmtResource.dag_nodes_up_to 8192 goal>8192,
+          "wide source did not cross the irrelevant whole-source gate")
+        val _ = #key bank goal
+        val theorem = #prove bank goal
+        val atom = wordsSyntax.mk_word_bit (numSyntax.zero_tm,x)
+        val rejected =
+          ((#prove bank (boolSyntax.mk_eq (atom,boolSyntax.mk_neg atom)); false)
+           handle HolSatLib.SAT_cex _ => true
+                | HolSatLib.SAT_satisfiable _ => true)
+      in
+        assert (ptr (Thm.concl theorem) goal andalso rejected,
+          "word/Boolean closure lost its exact source or proved a false alias");
+        assert_no_hyps ("wide word aliases",theorem);
+        check_oracle_tags "wide word aliases" theorem
+      end)
+  val _ = check "CPC resolution closes word-bit/equality aliases on names"
+    (fn () =>
+      let
+        fun proof destination = parse_cpc_proof_string
+          ("((declare-const x (_ BitVec 1)) (declare-const q Bool) " ^
+           "(assume @a (or (@bit_of 0 x) q)) " ^
+           "(assume @nx (not (= x #b1))) " ^
+           "(step @out :rule chain_m_resolution :premises (@a @nx) " ^
+           ":args (" ^ destination ^ " (@list true) (@list (@bit_of 0 x)))))")
+        val theorem = CPC_ProofReplay.replay_root_for_test (proof "q")
+        val rejected =
+          ((CPC_ProofReplay.replay_root_for_test (proof "false"); false)
+           handle Feedback.HOL_ERR _ => true | HolSatLib.SAT_cex _ => true)
+      in
+        assert_concl_alpha ("CPC word resolution",theorem,``q:bool``);
+        assert (length (Thm.hyp theorem)=2 andalso rejected,
+          "word resolution changed its hypotheses or accepted strengthening");
+        check_oracle_tags "CPC word resolution" theorem
+      end)
+  val _ = check "An empty Boolean frame does not prove an opaque atom"
+    (fn () =>
+      ((ignore (SmtWordGraph.prove_with_node_conversion unchanged
+          ``undecided_word_atom:bool``);
+        raise Fail "an empty frame proved its opaque Boolean atom")
+       handle HolSatLib.SAT_cex _ => ()
+            | HolSatLib.SAT_satisfiable _ => ()))
+  val _ = check "Callback Type admission precedes native matching"
+    (fn () =>
+      let
+        fun product 0 ty = ty
+          | product n ty = product (n-1) (Type.mk_type ("prod",[ty,ty]))
+        val dimension = product 23 (fcpSyntax.mk_int_numeric_type 1)
+        val word = Term.mk_var ("word_callback_type",
+          wordsSyntax.mk_word_type dimension)
+        val (graph,scope,source) = fixture (boolSyntax.mk_eq (word,word))
+        val calls = ref 0
+        val prior = Count.thm_count ()
+        fun callback _ = (calls := !calls+1;
+          raise Fail "shared Type reached a native callback")
+        val _ = (ignore (SmtWordGraph.graph_normalize_using_with_metrics
+            {word_conversion=callback,bit_conversion=callback,
+             node_conversion=callback} graph scope source);
+            raise Fail "shared callback Type escaped admission")
+          handle Feedback.HOL_ERR error =>
+            assert (SmtResource.is_resource_gate error andalso
+              String.isSubstring "word-graph-primitive-type-tree"
+                (Feedback.message_of error),
+              "callback Type admission changed its original diagnostic")
+      in assert (!calls=0 andalso
+          #INST (Count.thm_count ()) = #INST prior andalso
+          #INST_TYPE (Count.thm_count ()) = #INST_TYPE prior,
+        "callback Type rejection followed a matcher or substitution") end)
+  val _ = check "Callback admission bounds eager dimension evaluation"
+    (fn () =>
+      let
+        fun universe 0 ty = ty
+          | universe n ty = universe (n-1) (Type.mk_type
+              ("fun",[fcpSyntax.mk_int_numeric_type 2,ty]))
+        val dimension = universe 23 (fcpSyntax.mk_int_numeric_type 16)
+        val word = Term.mk_var ("word_callback_dimension",
+          wordsSyntax.mk_word_type dimension)
+        val (graph,scope,source) = fixture
+          (wordsSyntax.mk_word_add (word,word))
+        val calls = ref 0
+        fun callback _ = (calls := !calls+1;
+          raise Fail "eager dimension reached a native callback")
+        val _ = (ignore (SmtWordGraph.graph_normalize_using_with_metrics
+            {word_conversion=callback,bit_conversion=callback,
+             node_conversion=callback} graph scope source);
+            raise Fail "eager callback dimension escaped admission")
+          handle Feedback.HOL_ERR error =>
+            assert (SmtResource.is_resource_gate error andalso
+              String.isSubstring "word-graph-dimension-evaluation"
+                (Feedback.message_of error),
+              "callback dimension admission changed its original diagnostic")
+        val _ = assert (!calls=0,
+          "dimension rejection followed native matching")
+        val other = Term.mk_var ("word_callback_dimension_other",
+          Term.type_of word)
+        val relation = boolSyntax.mk_eq (word,other)
+        fun recursive_callback template =
+          if SmtResource.contains (fn term => boolSyntax.is_eq term andalso
+              wordsSyntax.is_word_type
+                (Term.type_of (boolSyntax.lhs term))) template then
+            raise Fail "nested word dimension reached a recursive callback"
+          else raise Conv.UNCHANGED
+        val _ = (ignore (SmtWordGraph.normalize_using_with_metrics
+            {word_conversion=callback,bit_conversion=callback,
+             node_conversion=recursive_callback}
+            (boolSyntax.mk_conj (relation,``p:bool``)));
+            raise Fail "nested callback dimension escaped admission")
+          handle Feedback.HOL_ERR error =>
+            assert (SmtResource.is_resource_gate error andalso
+              String.isSubstring "word-graph-dimension-evaluation"
+                (Feedback.message_of error),
+              "recursive callback changed its original dimension diagnostic")
+        val discarded = boolSyntax.mk_conj (boolSyntax.F,relation)
+        val (theorem,_) = SmtWordGraph.normalize_using_with_metrics
+          {word_conversion=callback,bit_conversion=callback,
+           node_conversion=Conv.TRY_CONV (Conv.REWR_CONV (List.nth
+             (Drule.CONJUNCTS (Drule.SPEC_ALL boolTheory.AND_CLAUSES),2)))}
+          discarded
+      in
+        assert_concl_alpha ("unused dimension first refusal",theorem,
+          boolSyntax.mk_eq (discarded,boolSyntax.F));
+        assert_no_hyps ("unused dimension first refusal",theorem);
+        check_oracle_tags "unused dimension first refusal" theorem;
+        assert (!calls=0,"discarded dimension reached a word primitive")
+      end)
+  val _ = check "Deep shared word source reaches only small typed templates"
+    (fn () =>
+      let
+        fun circuit 0 term = term
+          | circuit n term = circuit (n-1)
+              (wordsSyntax.mk_word_xor
+                (wordsSyntax.mk_word_add (term,term),
+                 wordsSyntax.mk_word_1comp term))
+        val source = wordsSyntax.mk_index
+          (circuit 18 x,numSyntax.zero_tm)
+        val word_calls = ref 0 and bit_calls = ref 0 and node_calls = ref 0
+        fun bounded_type fuel ty = fuel>0 andalso
+          (Type.is_vartype ty orelse
+           List.all (bounded_type (fuel-1)) (#2 (Type.dest_type ty)))
+        fun record counter conversion term =
+          (counter := !counter+1;
+           assert (SmtResource.term_nodes_up_to 2000 term < 2000 andalso
+               bounded_type 32 (Term.type_of term) andalso
+               List.all (bounded_type 32 o Term.type_of) (Term.free_vars term),
+             "primitive word prover received an expanded/untyped frontier");
+           conversion term)
+        val (theorem,metrics) = SmtWordGraph.normalize_using_with_metrics
+          {word_conversion=record word_calls blastLib.WORD_SIMP_CONV,
+           bit_conversion=record bit_calls blastLib.BIT_BLAST_CONV,
+           node_conversion=record node_calls unchanged} source
+        val (cached,cached_metrics) = SmtWordGraph.normalize_with_metrics source
+      in
+        assert (!word_calls>0 andalso !bit_calls>0 andalso !node_calls>0
+            andalso #memo_hits metrics>0 andalso
+            ptr (boolSyntax.lhs (Thm.concl theorem)) source,
+          "shared callback control missed a prover or lost its source");
+        assert (#operator_calls cached_metrics = #operator_calls metrics
+            andalso #memo_hits cached_metrics > #memo_hits metrics andalso
+            ptr (boolSyntax.lhs (Thm.concl cached)) source andalso
+            Lib.can (SmtSkeletonProve.nodewise_equality
+              (boolSyntax.rhs (Thm.concl theorem)))
+              (boolSyntax.rhs (Thm.concl cached)),
+          "local built-in schema reuse lost its benefit or normal form");
+        assert_no_hyps ("Task05 typed frontiers",theorem);
+        check_oracle_tags "Task05 typed frontiers" theorem;
+        assert_no_hyps ("cached typed frontiers",cached);
+        check_oracle_tags "cached typed frontiers" cached
+      end)
+  val _ = check "Word discovery shares one cumulative Type admission"
+    (fn () =>
+      let
+        fun atom i =
+          let
+            fun variable j = Type.mk_vartype
+              ("'word_discovery_type_" ^ Int.toString i ^ "_" ^
+               Int.toString j)
+            val dimension = Type.mk_type ("prod",
+              [variable 0,Type.mk_type ("prod",[variable 1,variable 2])])
+            val term = Term.mk_var ("typed_word_" ^ Int.toString i,
+              wordsSyntax.mk_word_type dimension)
+          in boolSyntax.mk_eq (term,term) end
+        val source = boolSyntax.list_mk_conj
+          (List.tabulate (1100,atom))
+      in
+        (ignore (SmtWordGraph.normalize source);
+         raise Fail "per-template Type admission reset the word budget")
+        handle Feedback.HOL_ERR error =>
+          assert (SmtResource.is_resource_gate error andalso
+            String.isSubstring "word-graph-type-dag"
+              (Feedback.message_of error),
+            "word discovery changed the cumulative Type diagnostic")
+      end)
+  val _ = check "Malformed disabled-cache callbacks refuse before INST"
+    (fn () =>
+      let
+        fun shared 0 term = term
+          | shared n term = let val child = shared (n-1) term
+                            in boolSyntax.mk_conj (child,child) end
+        val deep_hyp = shared 80 ``discovery_private:bool``
+        val projection = wordsSyntax.mk_index
+          (wordsSyntax.mk_word_add (x,y),numSyntax.zero_tm)
+        fun reject which malformed =
+          let
+            val returned = ref (NONE : int option)
+            fun bad term =
+              let val theorem = malformed term
+              in returned := SOME (#INST (Count.thm_count ())); theorem end
+            val (graph,scope,source) = fixture
+              (if which="word" then wordsSyntax.mk_word_add (x,y)
+               else projection)
+            val result = Exn.capture (fn () =>
+              SmtWordGraph.graph_normalize_using_with_metrics
+                {word_conversion=if which="word" then bad else Thm.REFL,
+                 bit_conversion=if which="bit" then bad else Thm.REFL,
+                 node_conversion=if which="node" then bad else unchanged}
+                graph scope source) ()
+            val refused = case result of
+                Exn.Exn (Feedback.HOL_ERR _) => true | _ => false
+          in assert (refused andalso
+              (case !returned of SOME count =>
+                 #INST (Count.thm_count ())=count | NONE => false),
+            "malformed " ^ which ^ " callback escaped or reached INST") end
+      in List.app (fn which => List.app (reject which)
+          [fn term => Drule.ADD_ASSUM boolSyntax.T (Thm.REFL term),
+           fn term => Drule.ADD_ASSUM deep_hyp (Thm.REFL term),
+           fn _ => boolTheory.TRUTH,
+           fn _ => Thm.REFL numSyntax.zero_tm]) ["word","bit","node"]
+      end)
+  val _ = check "Typed root schema inserts operands once after before callback"
+    (fn () =>
+      let
+        val (graph,scope,operand) = fixture (wordsSyntax.mk_word_add (x,y))
+        val other = #node (G.import graph scope cap y)
+        val a = Term.genvar (Term.type_of x)
+        val b = Term.genvar (Term.type_of y)
+        val law = Conv.REWR_CONV pairTheory.FST
+          (pairSyntax.mk_fst (pairSyntax.mk_pair (a,b)))
+        val schema = C.checked_graph_schema graph scope
+          {theorem=law,holes=[a,b],operands=[operand,other],template_limit=cap}
+        val source = C.graph_schema_source schema
+        val proposals = ref 0
+        fun forbidden _ = raise Fail "before callback lost first refusal"
+        val plan = C.graph_conversion_with_schema_leaves graph scope
+          {revisit=false,template_limit=cap,propose=forbidden,
+           pre_propose=fn node =>
+             (assert (node=source,"before callback descended into operands");
+              proposals := !proposals+1; SOME schema),
+           local_conversion=forbidden,observe=fn () => ()} source
+        val prior = Count.thm_count ()
+        val theorem = case C.realize_typed_root_schema graph scope cap plan of
+            SOME theorem => theorem
+          | NONE => raise Fail "bounded typed root schema declined"
+        val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+        val (first,second) = pairSyntax.dest_pair (pairSyntax.dest_fst left)
+        val _ = assert (!proposals=1 andalso ptr first
+            (G.representative graph operand) andalso ptr second
+            (G.representative graph other) andalso ptr right first andalso
+            #INST (Count.thm_count ()) = #INST prior+1 andalso
+            #INST_TYPE (Count.thm_count ()) = #INST_TYPE prior,
+          "typed root schema repeated discovery/Types or lost endpoints")
+        val _ = assert_no_hyps ("typed root schema",theorem)
+        val _ = check_oracle_tags "typed root schema" theorem
+        val _ = assemble graph scope plan
+      in assert (!proposals=1,"typed schema assembly reproposed its law") end)
+  val _ = check "Nested FP selectors discard unused huge word producers first"
+    (fn () =>
+      let
+        val huge_type = wordsSyntax.mk_int_word_type
+          (SmtResource.max_skeleton_replay_dag_nodes+1)
+        val huge = Term.mk_var ("unused_projection_word",huge_type)
+        val producer = wordsSyntax.mk_word_add (huge,huge)
+        val first = pairSyntax.mk_fst (pairSyntax.mk_snd
+          (pairSyntax.mk_pair (producer,pairSyntax.mk_pair (x,producer))))
+        val second = pairSyntax.mk_snd (pairSyntax.mk_fst
+          (pairSyntax.mk_pair (pairSyntax.mk_pair (producer,x),producer)))
+        val ignored = Term.mk_var ("unused_projection_argument",huge_type)
+        val constant = Term.mk_abs (ignored,x)
+        val beta = Term.mk_comb (constant,producer)
+        val let_term = boolSyntax.mk_let (constant,producer)
+        fun run term =
+          let
+            val (graph,scope,source) = fixture term
+            val selected = #node (G.import graph scope cap x)
+            fun forbidden _ = raise Fail "unused word producer was normalized"
+            val (plan,_) = SmtWordGraph.graph_normalize_using_with_metrics
+              {word_conversion=forbidden,bit_conversion=forbidden,
+               node_conversion=SmtFpGraph.convert_word_projection}
+              graph scope source
+            val _ = assert (C.graph_result plan=selected,
+              "nested FST/SND callback did not retain first refusal")
+          in assemble graph scope plan end
+      in
+        List.app run [first,second];
+        (* FP's term-facing local-binder adapter is a separate boundary.
+           Keep its existing first refusal while word discovery migrates. *)
+        check "FP beta/LET compatibility adapter retains first refusal"
+          (fn () => List.app (fn term =>
+            let val theorem = SmtWordGraph.normalize_with_node_conversion
+                  SmtFpGraph.convert_word_projection term
+            in
+              assert_concl_alpha ("FP local binder compatibility",theorem,
+                boolSyntax.mk_eq (term,x));
+              assert_no_hyps ("FP local binder compatibility",theorem);
+              check_oracle_tags "FP local binder compatibility" theorem
+            end) [beta,let_term])
+      end)
+in Count.counting_thms false end
+handle primary => (Count.counting_thms false; raise primary)
+end
+
 fun run_word_graph_unittests () =
-  run_test ("word_graph_conversion_success", word_graph_conversion_success)
+  List.app run_test
+    [("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_discovery_invariants_success",
+       word_graph_discovery_invariants_success)]
 
 fun run_binder_resource_unittests () =
   run_test
@@ -32393,6 +32873,8 @@ let
     ("skeleton_nodewise_leaf_type_admission_success",
      skeleton_nodewise_leaf_type_admission_success),
     ("word_graph_conversion_success", word_graph_conversion_success),
+    ("word_graph_discovery_invariants_success",
+      word_graph_discovery_invariants_success),
     ("cpc_reglan_native_aggregate_focused_success",
       cpc_reglan_native_aggregate_focused_success),
     ("cvc_tac_oracle_tag_gate_rejects_oracle_thm",

@@ -436,6 +436,46 @@ struct
     | _ => NONE end
     | realize_boolean_root_schema _ _ _ = NONE
 
+  fun realize_typed_root_schema graph scope type_limit
+      (GraphConversion {source,result,steps,...}) =
+    let
+      val _ = G.validate_scope graph scope
+      val remaining = ref type_limit
+      exception LargeType
+      fun visit_type ty =
+        if !remaining <= 0 then raise LargeType
+        else (remaining := !remaining-1;
+          if Type.is_vartype ty then ()
+          else List.app visit_type (#2 (Type.dest_type ty)))
+      fun term tm =
+        (visit_type (Term.type_of tm);
+         if Term.is_comb tm then
+           let val (f,x) = Term.dest_comb tm in term f; term x end
+         else ())
+    in (case Redblackmap.peek (steps,G.node_id source) of
+        SOME (GraphStep {current,continuation=NONE,
+          schema=SOME (GraphSchema {left,right,holes,operands,theorem,
+                                    admitted_size}),...}) =>
+          if current=source andalso template_node left=source andalso
+              template_node right=result then
+            let
+              val _ = List.app (fn node =>
+                if G.scope_visible graph scope (G.node_scope graph node)
+                then visit_type (G.type_of graph node)
+                else raise ERR "realize_typed_root_schema" "retired operand")
+                operands
+              val _ = term (Thm.concl theorem)
+              val substitution = ListPair.mapEq (fn (hole,node) =>
+                {redex=hole,residue=G.representative graph node})
+                (holes,operands)
+              val _ = observe_schema graph 1 (IntInf.fromInt admitted_size)
+                1 true
+            in SOME (SmtReplayRuleObservation.INST substitution theorem) end
+          else NONE
+      | _ => NONE) handle LargeType => NONE
+    end
+    | realize_typed_root_schema _ _ _ _ = NONE
+
   fun graph_schema_source (GraphSchema {left,...}) = template_node left
   fun graph_schema_result (GraphSchema {right,...}) = template_node right
 
@@ -459,7 +499,7 @@ struct
     in (left,right) end
 
   fun graph_conversion_internal graph scope revisit propose
-      propose_closed propose_conversion observe source =
+      propose_closed propose_conversion observe pre_propose source =
     let
       val _ = G.validate_scope graph scope
       val _ = if G.scope_visible graph scope (G.node_scope graph source)
@@ -474,18 +514,23 @@ struct
             val _ = if Redblackset.member (!active,G.node_id node) then
                 raise ERR "graph_conversion" "cyclic checked rewrite expansion"
               else active := Redblackset.add (!active,G.node_id node)
-            val (current,children) = case G.view graph node of
+            val early = pre_propose node
+            val (current,children) = if Option.isSome early then (node,NONE)
+              else case G.view graph node of
                 G.Application (operator,operand) =>
                   let val left = normalize operator
                       val right = normalize operand
                   in (observe (); (G.application graph scope (left,right),
                       SOME (operator,operand))) end
               | _ => (node,NONE)
-            val closed = propose_closed current
-            val conversion = case closed of NONE => propose_conversion current
-              | SOME _ => NONE
-            val schema = case (closed,conversion) of
-                (NONE,NONE) => propose current | _ => NONE
+            val closed = if Option.isSome early then NONE
+              else propose_closed current
+            val conversion = if Option.isSome early then NONE else
+              case closed of NONE => propose_conversion current
+                | SOME _ => NONE
+            val schema = case early of SOME schema => SOME schema
+              | NONE => (case (closed,conversion) of
+                  (NONE,NONE) => propose current | _ => NONE)
             val next = case conversion of SOME (plan,limit) =>
                 (P.validate_conversion graph scope limit plan;
                  if P.conversion_source plan = current then
@@ -535,11 +580,19 @@ struct
 
   fun graph_conversion graph scope revisit propose source =
     graph_conversion_internal graph scope revisit propose (fn _ => NONE)
-      (fn _ => NONE) (fn () => ()) source
+      (fn _ => NONE) (fn () => ()) (fn _ => NONE) source
+
+  fun graph_conversion_with_schema_leaves graph scope
+      {revisit,template_limit,propose,pre_propose,local_conversion,observe} =
+    if template_limit <= 0 then
+      raise ERR "graph_conversion" "nonpositive original template cap"
+    else graph_conversion_internal graph scope revisit propose (fn _ => NONE)
+      (fn node => Option.map (fn plan => (plan,template_limit))
+        (local_conversion node)) observe pre_propose
 
   fun graph_conversion_with_schemas graph scope {revisit,propose,observe} =
     graph_conversion_internal graph scope revisit propose (fn _ => NONE)
-      (fn _ => NONE) observe
+      (fn _ => NONE) observe (fn _ => NONE)
 
   fun graph_conversion_with_closed graph scope
       {template_limit,revisit,propose,observe} source =
@@ -547,7 +600,7 @@ struct
       raise ERR "graph_conversion" "nonpositive original template cap"
     else graph_conversion_internal graph scope revisit (fn _ => NONE)
       (fn node => Option.map (fn fact => (fact,template_limit))
-        (propose node)) (fn _ => NONE) observe source
+        (propose node)) (fn _ => NONE) observe (fn _ => NONE) source
 
   fun graph_conversion_with_conversions graph scope
       {template_limit,revisit,propose,observe} source =
@@ -556,7 +609,7 @@ struct
     else graph_conversion_internal graph scope revisit (fn _ => NONE)
       (fn _ => NONE)
       (fn node => Option.map (fn plan => (plan,template_limit))
-        (propose node)) observe source
+        (propose node)) observe (fn _ => NONE) source
 
   fun legacy_graph_conversions (GraphConversion {steps,...}) =
     Redblackmap.foldl
@@ -1108,6 +1161,84 @@ struct
         (SmtReplayRuleObservation.SYM expansion) proof
         | _ => raise Fail "graph equality naming") [actual,proof] end
 
+  fun assemble_finite_named graph block
+      (converted as GraphConversion {source,equality,steps,...}) =
+    let
+      (* Reject owned blocks before ANY native rule. This is the existing
+         unowned checked-edge gate, not a second Work/native permission. *)
+      val _ = P.checked block boolTheory.TRUTH
+      val scope = P.scope block
+      val limit = P.template_limit block
+      val _ = List.app (P.validate_closed_fact graph scope limit)
+        (graph_closed_facts converted)
+      val _ = List.app (P.validate_conversion graph scope limit)
+        (graph_conversions converted)
+      val memo = ref (Redblackmap.mkDict Int.compare)
+      val definitions = ref (Redblackmap.mkDict Int.compare)
+      fun definition node =
+        case Redblackmap.peek (!definitions,G.node_id node) of
+          SOME theorem => theorem
+        | NONE =>
+            let val theorem = P.theorem block (P.definition block node)
+            in definitions := Redblackmap.insert
+              (!definitions,G.node_id node,theorem); theorem end
+      fun refl node = SmtReplayRuleObservation.REFL (P.name block node)
+      val trans = SmtReplayRuleObservation.TRANS
+      val sym = SmtReplayRuleObservation.SYM
+      val comb = SmtReplayRuleObservation.MK_COMB
+      fun expansion (Operand node) = refl node
+        | expansion (Literal (node,_)) = definition node
+        | expansion (Constructor (node,left,right)) =
+            trans (definition node) (comb (expansion left,expansion right))
+      fun schema_proof (GraphSchema
+          {left,right,holes,operands,theorem,admitted_size}) =
+        let
+          val substitution = ListPair.mapEq (fn (hole,node) =>
+            {redex=hole,residue=P.name block node}) (holes,operands)
+          val _ = SmtReplayTermBridge.prepare_schema_substitution
+            admitted_size theorem substitution
+          val _ = observe_schema graph 1 (IntInf.fromInt admitted_size) 1 true
+          val law = SmtReplayRuleObservation.INST substitution theorem
+        in trans (expansion left) (trans law (sym (expansion right))) end
+      fun assemble node =
+        case Redblackmap.peek (!memo,G.node_id node) of SOME theorem => theorem
+        | NONE =>
+          let
+            val GraphStep
+              {current,children,schema,closed,conversion,continuation,...} =
+              Redblackmap.find (steps,G.node_id node)
+            val initial = case children of NONE => refl node
+              | SOME (operator,operand) => if current=node then refl node else
+                  trans (definition node)
+                    (trans (comb (assemble operator,assemble operand))
+                      (sym (definition current)))
+            val oriented = case conversion of SOME plan =>
+                trans initial (P.theorem block (P.conversion block plan))
+              | NONE => (case closed of SOME fact =>
+                  trans initial (SmtReplayRuleObservation.EQ_MP
+                    (P.theorem block
+                      (P.constructor block (P.closed_node fact)))
+                    (P.theorem block (P.closed block fact)))
+                | NONE => (case schema of NONE => initial
+                  | SOME schema => trans initial (schema_proof schema)))
+            val result = case continuation of NONE => oriented
+              | SOME next => trans oriented (assemble next)
+            val _ = memo := Redblackmap.insert (!memo,G.node_id node,result)
+          in result end
+      val proof = assemble source
+      val (operator,right) = case G.view graph equality of
+          G.Application pair => pair | _ => raise Fail "word equality root"
+      val (head,left) = case G.view graph operator of
+          G.Application pair => pair | _ => raise Fail "word equality head"
+      val inner = trans (definition operator)
+        (SmtReplayRuleObservation.AP_THM (definition head) (P.name block left))
+      val actual = trans (definition equality)
+        (SmtReplayRuleObservation.AP_THM inner (P.name block right))
+    in P.checked block
+      (SmtReplayRuleObservation.EQ_MP (sym actual) proof) end
+    | assemble_finite_named _ _ _ =
+        raise ERR "graph_assemble_named" "not a finite named conversion"
+
   fun visible graph scope node =
     if G.scope_visible graph scope (G.node_scope graph node) then () else
       raise ERR "recipe" "node outside active Scope"
@@ -1167,7 +1298,7 @@ struct
 
   fun graph_identity graph scope {observe} node =
     graph_conversion_internal graph scope false (fn _ => NONE)
-      (fn _ => NONE) (fn _ => NONE) observe node
+      (fn _ => NONE) (fn _ => NONE) observe (fn _ => NONE) node
   fun graph_leaf graph scope {conversion,template_limit,observe} =
     let val _ = observe ()
         val _ = P.validate_conversion graph scope template_limit conversion
@@ -1509,6 +1640,30 @@ struct
               in named_equality converted (trans (P.definition block source)
                 (trans combined backwards)) end
     in assemble conversion end
+
+  fun graph_assemble_named graph block converted =
+    let
+      val seen = ref ([] : graph_conversion list)
+      fun inspect current =
+        if List.exists (fn old => Portable.pointer_eq (old,current)) (!seen)
+          then ()
+        else
+          (seen := current :: !seen;
+           case current of GraphConversion _ => ()
+           | ApplicationGraphConversion {left,right,...} =>
+               (inspect left;inspect right)
+           | SequenceGraphConversion {first,second,...} =>
+               (inspect first;inspect second)
+           | _ => raise ERR "graph_assemble_named"
+               "owned/realized conversion requires its policy assembler")
+      (* Reject nested policy/realized leaves before even an ordinary sibling
+         can execute a native rule. Shared suffixes are inspected once. *)
+      val _ = inspect converted
+    in case converted of GraphConversion _ =>
+        assemble_finite_named graph block converted
+      | _ => (ignore (P.checked block boolTheory.TRUTH);
+          graph_assemble graph block converted)
+    end
 
   (* A bounded constructor prefix is exposed on large nodes. All repeated
      holes denote the same semantic ID; small nodes may expose their complete

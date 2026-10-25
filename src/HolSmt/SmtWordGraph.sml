@@ -14,17 +14,40 @@ struct
   type indexed_proof_cache = (int, thm) Redblackmap.dict ref
   type context =
     {normalized : indexed_proof_cache, expanded : indexed_proof_cache,
+     proof_normalized : indexed_proof_cache,
+     proof_expanded : indexed_proof_cache,
      index : term -> int option, entries : int ref,
      word_schemas : proof_cache, bit_schemas : proof_cache,
-     schema_entries : int ref, sat_context : SmtSkeletonProve.sat_context}
+     proof_schemas : proof_cache,
+     schema_entries : int ref, local_law_reuse : bool,
+     sat_context : SmtSkeletonProve.sat_context}
 
-  fun new_context () : context =
+  fun new_context_with_local_laws local_law_reuse : context =
     {normalized = ref (Redblackmap.mkDict Int.compare),
      expanded = ref (Redblackmap.mkDict Int.compare), entries = ref 0,
+     proof_normalized = ref (Redblackmap.mkDict Int.compare),
+     proof_expanded = ref (Redblackmap.mkDict Int.compare),
      index = SmtResource.new_bounded_term_index maximum,
      word_schemas = ref (Redblackmap.mkDict Term.compare),
      bit_schemas = ref (Redblackmap.mkDict Term.compare),
-     schema_entries = ref 0, sat_context = SmtSkeletonProve.new_sat_context ()}
+     proof_schemas = ref (Redblackmap.mkDict Term.compare),
+     schema_entries = ref 0, local_law_reuse = local_law_reuse,
+     sat_context = SmtSkeletonProve.new_sat_context ()}
+
+  fun new_context () = new_context_with_local_laws false
+
+  (* Word normalization and proof-only reflexivity have distinct normal
+     forms. Share checked operator/SAT schemas, not callback-sensitive node
+     results; their aggregate entry limit is still the original bound. *)
+  fun proof_context (context : context) : context =
+    {normalized= #proof_normalized context,expanded= #proof_expanded context,
+     proof_normalized= #proof_normalized context,
+     proof_expanded= #proof_expanded context,index= #index context,
+     entries= #entries context,word_schemas= #word_schemas context,
+     bit_schemas= #bit_schemas context,proof_schemas= #proof_schemas context,
+     schema_entries= #schema_entries context,
+     local_law_reuse= #local_law_reuse context,
+     sat_context= #sat_context context}
 
   fun schema_lookup cache source =
     case Redblackmap.peek (!cache, source) of
@@ -426,8 +449,75 @@ struct
      | UnknownDimension => raise Conv.UNCHANGED
      | TooLarge => raise ERR "word_width" "admission invariant")
 
-  fun normalize_using_in (context : context) reuse
-      {word_conversion, bit_conversion, node_conversion} root =
+  fun unchanged_node _ = raise Conv.UNCHANGED
+
+  (* Native matching/simplification can inspect annotations as well as
+     terms. Bound their syntax WITHOUT evaluating word dimensions: a
+     projection may discard an inadmissibly wide, unused producer. *)
+  fun admit_callback_template (admission : type_admission) root =
+    let
+      val limit = SmtResource.max_bv_replay_term_nodes
+      val _ = SmtResource.check_resource_goal
+        "BitVector" "word-graph-schema" root
+      val seen = ref ([] : term list)
+      fun visit term =
+        if List.exists (fn old => Portable.pointer_eq (old,term)) (!seen)
+        then () else
+          let
+            val _ = seen := term :: !seen
+            val {tree_work,...} = #type_info admission (Term.type_of term)
+            val _ = SmtResource.check_dag_size_with_limit "BitVector"
+              "word-graph-primitive-type-tree" limit tree_work
+          in List.app visit (SmtResource.term_children term) end
+    in visit root end
+
+  fun admit_callback_dimensions (admission : type_admission) root =
+    let
+      val seen = ref ([] : term list)
+      fun visit term =
+        if List.exists (fn old => Portable.pointer_eq (old,term)) (!seen)
+        then () else let
+          val _ = seen := term :: !seen
+          val (head,args) = boolSyntax.strip_comb term
+          val selector = Term.is_const head andalso
+            let val {Thy,Name,...} = Term.dest_thy_const head
+            in Thy="pair" andalso (Name="FST" orelse Name="SND") end
+          val full_word_operator = Term.is_const head andalso
+            #Thy (Term.dest_thy_const head)="words" andalso
+            length args=length (#1
+              (boolSyntax.strip_fun (Term.type_of head)))
+          val relation = boolSyntax.is_eq term andalso
+            wordsSyntax.is_word_type (Term.type_of (boolSyntax.lhs term))
+          val projection = wordsSyntax.is_index term andalso
+            wordsSyntax.is_word_type
+              (Term.type_of (#1 (wordsSyntax.dest_index term)))
+          val _ = if full_word_operator orelse relation orelse projection then
+            #check_primitive_type admission (Term.type_of head) else ()
+        in
+          (* Fixed field projections retain first refusal. Their schema
+             keeps producer fields opaque and does not evaluate dimensions. *)
+          if selector then ()
+          else List.app visit (SmtResource.term_children term)
+        end
+    in visit root end
+
+  fun checked_node_callback admission callback term =
+    if Portable.pointer_eq (callback,unchanged_node) then callback term
+    else (admit_callback_dimensions admission term; callback term)
+
+  fun guarded_conversions {word_conversion,bit_conversion,node_conversion} =
+    {word_conversion=word_conversion,bit_conversion=bit_conversion,
+     node_conversion=fn admission =>
+       if Portable.pointer_eq (node_conversion,unchanged_node)
+       then unchanged_node
+       else checked_node_callback admission node_conversion}
+
+  (* Graph producers run this worker only on bounded operator templates:
+     their INST residues are schema holes, never actual graph operands.
+     The independent term-facing FP adapter below retains its old contract. *)
+  fun normalize_template_using_in (context : context) reuse type_admission
+      protect_callbacks {word_conversion, bit_conversion, node_conversion}
+      root =
     let
       val input_nodes = SmtResource.dag_nodes_up_to maximum root
       val _ = SmtResource.check_dag_size_for
@@ -504,7 +594,7 @@ struct
         Term.is_const term orelse numSyntax.is_numeral term orelse
         wordsSyntax.is_word_literal term
 
-      val type_admission = new_type_admission ()
+      val node_conversion = node_conversion type_admission
       val type_info = #type_info type_admission
       val bounded_word_width = #bounded_word_width type_admission
       val check_primitive_type = #check_primitive_type type_admission
@@ -690,23 +780,26 @@ struct
          caller's values.  Word simplification and bit projection have separate
          normal forms.  Cache saturation affects reuse only, never admission. *)
       fun schema_conversion cache conversion schematic =
-        if not reuse then Conv.QCONV conversion schematic
-        else
-          case schema_lookup cache schematic of
-            SOME (theorem, _) => theorem
-          | NONE =>
-              let
-                val theorem = Conv.QCONV conversion schematic
-                val _ = if !(#schema_entries context) >= maximum then ()
-                  else
-                    (if List.null (Thm.hyp theorem) then ()
-                     else raise ERR "schema_conversion"
-                       "operator schema has hypotheses";
-                     Library.check_oracle_tags "SmtWordGraph"
-                       "operator schema" theorem;
-                     cache := Redblackmap.insert (!cache, schematic, theorem);
-                     #schema_entries context := !(#schema_entries context) + 1)
-              in theorem end
+        let
+          val cache_laws = reuse orelse #local_law_reuse context
+          val cached = if cache_laws then schema_lookup cache schematic
+            else NONE
+          val theorem = case cached of SOME (theorem, _) =>
+              (memo_hits := !memo_hits + 1; theorem)
+            | NONE => Conv.QCONV conversion schematic
+          (* Validate EVERY callback result before INST, including disabled
+             reuse and saturated caches. Hyp is also an INST input. *)
+          val _ = if List.null (Thm.hyp theorem) then ()
+            else raise ERR "schema_conversion" "operator schema has hypotheses"
+          val _ = Library.check_oracle_tags "SmtWordGraph"
+            "operator schema" theorem
+          val theorem = SmtSkeletonProve.anchor_left schematic theorem
+          val _ = if not cache_laws orelse Option.isSome cached orelse
+              !(#schema_entries context) >= maximum then ()
+            else
+              (cache := Redblackmap.insert (!cache, schematic, theorem);
+               #schema_entries context := !(#schema_entries context) + 1)
+        in theorem end
 
       fun instantiate_changed term schematic substitutions reduced =
         let
@@ -778,8 +871,16 @@ struct
 
       fun external_conversion source =
         let
+          val _ = if protect_callbacks andalso not
+              (Portable.pointer_eq (node_conversion,unchanged_node)) then
+              admit_callback_template type_admission source else ()
           val theorem = Conv.QCONV node_conversion source
             handle Conv.UNCHANGED => Thm.REFL source
+          val _ = if List.null (Thm.hyp theorem) then () else
+            raise ERR "external_conversion" "operator schema has hypotheses"
+          val _ = Library.check_oracle_tags "SmtWordGraph"
+            "node schema" theorem
+          val theorem = SmtSkeletonProve.anchor_left source theorem
           val right = boolSyntax.rhs (Thm.concl theorem)
         in (theorem, not (Term.aconv source right)) end
 
@@ -1118,26 +1219,484 @@ struct
         memo_hits = !memo_hits})
     end
 
-  fun unchanged_node _ = raise Conv.UNCHANGED
+  structure G = SmtReplayGraph
+  structure C = SmtReplayCanonGraph
+  structure P = SmtReplayProof
+
+  (* A completed word schema keeps uninterpreted operands opaque, even
+     when one occurrence is nearer its root than another. In particular
+     never expose an arbitrary UF spine merely to prove x + 0 = x. *)
+  fun typed_frontier graph hole depth node =
+    let
+      val term = G.representative graph node
+      fun spine node args = case G.view graph node of
+          G.Application (f,x) => spine f (x::args)
+        | _ => (node,args)
+    in
+      if Term.is_const term orelse numSyntax.is_numeral term orelse
+          wordsSyntax.is_word_literal term then term
+      else if depth < 0 then hole node
+      else case G.view graph node of G.Application _ =>
+        let
+          val (head,args) = spine node []
+          val operator = G.representative graph head
+          val known = Term.is_const operator andalso
+            List.exists (fn thy => #Thy (Term.dest_thy_const operator)=thy)
+              ["words","bool","min","fcp","bitstring","pair",
+               "arithmetic","num"]
+        in if known then Term.list_mk_comb
+          (operator,List.map (typed_frontier graph hole (depth-1)) args)
+          else hole node end
+      | _ => hole node
+    end
+
+  (* Keep the existing operator prover/cache, but run it on typed named
+     frontiers. Successful proofs become graph recipes, not instantiated
+     facts about actual operands. Revisit discovers generated projections
+     and their successful dependencies BEFORE the one final freeze. *)
+  fun discover_using_in context reuse admission conversions graph scope
+      source =
+    let
+      val limit = SmtResource.max_bv_replay_term_nodes
+      val calls = ref 0 and hits = ref 0 and visits = ref 0
+      val projections = ref 0
+      val source_nodes = G.reachable graph [source]
+      val node_callback = #node_conversion conversions admission
+      val original = Redblackset.addList (Redblackset.empty Int.compare,
+        List.map G.node_id source_nodes)
+      fun observe () = visits := !visits + 1
+      fun spine node args = case G.view graph node of
+          G.Application (operator,argument) => spine operator (argument::args)
+        | _ => (node,args)
+      fun is_literal node =
+        let val term = G.representative graph node
+        in Term.is_const term orelse numSyntax.is_numeral term orelse
+          wordsSyntax.is_word_literal term end
+      fun propose node =
+        let
+          val holes = ref (Redblackmap.mkDict Int.compare)
+          fun hole node =
+            case Redblackmap.peek (!holes,G.node_id node) of
+              SOME (_,term) => term
+            | NONE =>
+                let val term = Term.genvar (G.type_of graph node)
+                in holes := Redblackmap.insert
+                  (!holes,G.node_id node,(node,term)); term end
+          (* Whole operator spines and literals are small. One further
+             operator layer exposes a word beneath FCP/word_bit and the
+             tuple selectors used by replay's projection callbacks. Equal
+             operands retain one typed hole, irrespective of occurrence. *)
+          fun frontier depth node =
+            if is_literal node then G.representative graph node
+            else if depth < 0 then hole node
+            else case G.view graph node of
+                G.Application _ =>
+                  let val (head,args) = spine node []
+                      val operator = case G.view graph head of
+                          G.Constant _ => G.representative graph head
+                        | _ => hole head
+                  in Term.list_mk_comb
+                    (operator,List.map (frontier (depth-1)) args) end
+              | _ => hole node
+          val shallow = frontier 0 node
+          val projection = wordsSyntax.is_index shallow
+          val template = if projection then frontier 1 node else shallow
+          val {word_conversion,bit_conversion,node_conversion} = conversions
+          (* The word child was normalized by graph postorder already.
+             Projection discovery must not repeat that primitive call. *)
+          val local_conversions =
+            {word_conversion=if projection then
+               (fn _ => raise Conv.UNCHANGED) else word_conversion,
+             bit_conversion=bit_conversion,node_conversion=node_conversion}
+          val outcome = Exn.capture
+            (normalize_template_using_in context reuse admission true
+              local_conversions) template
+        in case outcome of
+            Exn.Exn Conv.UNCHANGED => NONE
+          | Exn.Exn exn => raise exn
+          | Exn.Res (theorem,metrics) =>
+              let
+                val _ = calls := !calls + #operator_calls metrics
+                val _ = hits := !hits + #memo_hits metrics
+                val _ = projections :=
+                  !projections + #projection_states metrics
+                val pairs = List.map #2 (Redblackmap.listItems (!holes))
+                val schema = C.checked_graph_schema graph scope
+                  {theorem=theorem,holes=List.map #2 pairs,
+                   operands=List.map #1 pairs,template_limit=limit}
+                val _ = if C.graph_schema_source schema = node then () else
+                  raise ERR "discover" "wrong operator schema endpoint"
+              in SOME schema end
+        end
+      fun pre_propose node =
+        if Portable.pointer_eq (node_callback,unchanged_node)
+        then NONE else let
+          val holes = ref (Redblackmap.mkDict Int.compare)
+          fun hole node = case Redblackmap.peek (!holes,G.node_id node) of
+              SOME (_,term) => term
+            | NONE =>
+                let val term = Term.genvar (G.type_of graph node)
+                in holes := Redblackmap.insert
+                  (!holes,G.node_id node,(node,term)); term end
+          fun prefix depth node =
+            if is_literal node then G.representative graph node
+            else if depth < 0 then hole node
+            else case G.view graph node of G.Application _ =>
+              let
+                val (head,args) = spine node []
+                val operator = case G.view graph head of
+                    G.Constant _ => G.representative graph head
+                  | _ => hole head
+                val selector = if Term.is_const operator then
+                    let val {Thy,Name,...} = Term.dest_thy_const operator
+                    in Thy="pair" andalso (Name="FST" orelse Name="SND") end
+                  else false
+                val tuple = Term.is_const operator andalso
+                  let val {Thy,Name,...} = Term.dest_thy_const operator
+                  in Thy="pair" andalso Name="," end
+                val next = if selector then Int.max (1,depth-1)
+                  else if tuple then ~1 else depth-1
+              in Term.list_mk_comb (operator,List.map (prefix next) args) end
+              | _ => hole node
+          val shallow = prefix 0 node
+          val template = if wordsSyntax.is_index shallow then prefix 1 node
+            else shallow
+          val _ = admit_callback_template admission template
+          val theorem = node_callback template
+          val pairs = List.map #2 (Redblackmap.listItems (!holes))
+          val schema = C.checked_graph_schema graph scope
+            {theorem=theorem,holes=List.map #2 pairs,
+             operands=List.map #1 pairs,template_limit=limit}
+          val _ = if C.graph_schema_source schema=node then () else
+            raise ERR "discover" "wrong projection schema endpoint"
+        in if C.graph_schema_source schema=C.graph_schema_result schema then
+            NONE else SOME schema end
+        handle Conv.UNCHANGED => NONE
+
+      (* Binders are completed bounded local proofs, never schema templates.
+         Close their local word normalization before the native ABS; both
+         fully realized operands are admitted at the old binder boundary. *)
+      fun local_conversion node =
+        case G.view graph node of G.OpaqueRetained =>
+          let val term = G.representative graph node
+          in if not (Term.is_abs term) then NONE else
+            let
+              val _ = SmtResource.term_children term
+              val (binder,body) = Term.dest_abs term
+              val (proof,_) = normalize_using_in context reuse admission
+                conversions body
+              val _ = SmtResource.check_resource_goal
+                "BitVector" "word-graph-binder-body" body
+              val _ = SmtResource.check_resource_goal "BitVector"
+                "word-graph-binder-result" (boolSyntax.rhs (Thm.concl proof))
+              val theorem = SmtSkeletonProve.nodewise_exact_left term
+                (Thm.ABS binder proof)
+              val target = boolSyntax.rhs (Thm.concl theorem)
+              val target_node = #node (G.import graph scope limit target)
+              val theorem = SmtSkeletonProve.exact_equality term
+                (G.representative graph target_node) theorem
+              val source_view = G.record_opened_view graph scope limit node
+              val target_view =
+                G.record_opened_view graph scope limit target_node
+              val converted = P.record_typed_conversion graph scope
+                {source=node,source_view=source_view,target=target_node,
+                 target_view=target_view,theorem=theorem,template_limit=limit,
+                 check_type=fn _ => ()}
+            in SOME converted end
+            handle Conv.UNCHANGED => NONE
+          end
+        | _ => NONE
+      val plan = C.graph_conversion_with_schema_leaves graph scope
+        {revisit=true,template_limit=limit,propose=propose,
+         pre_propose=pre_propose,
+         local_conversion=local_conversion,observe=observe} source
+      val roots = C.graph_roots plan
+      val generated = List.filter (fn node => not
+        (Redblackset.member (original,G.node_id node)))
+        (G.reachable graph roots)
+      val edges = List.foldl (fn (node,total) =>
+        case G.view graph node of G.Application _ => total+2 | _ => total)
+        0 generated
+      val final_nodes = G.dag_nodes graph [C.graph_result plan]
+    in (plan,
+      {input_nodes=length source_nodes,visited_nodes= !visits,
+       generated_nodes=length generated,generated_edges=edges,
+       normalized_nodes= !visits,normalized_dag_nodes=final_nodes,
+       projection_states= !projections,boolean_nodes=final_nodes,
+       final_dag_nodes=final_nodes,type_nodes= !(#type_nodes admission),
+       type_tree_work= !(#type_tree_work admission),
+       operator_calls= !calls,memo_hits= !hits} : metrics) end
+
+  and normalize_using_in context reuse admission conversions root =
+    let
+      val input_nodes = SmtResource.dag_nodes_up_to maximum root
+      val _ = SmtResource.check_dag_size_for
+        "Skeleton" "word-graph-input" input_nodes
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val source = G.import graph scope maximum root
+      fun completed_frontier () =
+        let
+          val holes = ref (Redblackmap.mkDict Int.compare)
+          fun hole node = case Redblackmap.peek (!holes,G.node_id node) of
+              SOME (_,term) => term
+            | NONE =>
+                let val term = Term.genvar (G.type_of graph node)
+                in holes := Redblackmap.insert
+                  (!holes,G.node_id node,(node,term)); term end
+          val template = typed_frontier graph hole 1 (#node source)
+          val pairs = List.map #2 (Redblackmap.listItems (!holes))
+          fun atom (node,_) = case G.view graph node of
+              G.Variable _ => true | G.Constant _ => true | _ => false
+        in if not (List.all atom pairs) orelse not (Option.isSome
+            (SmtReplayImport.bounded_raw_size
+              SmtResource.max_bv_replay_term_nodes template)) then NONE else
+          let
+            (* Optional completed schemas cannot spend the mandatory
+               discovery's Type budget before first-refusal pruning. *)
+            val (theorem,metrics) = normalize_template_using_in context reuse
+              (new_type_admission ()) true conversions template
+            val schema = C.checked_graph_schema graph scope
+              {theorem=theorem,holes=List.map #2 pairs,
+               operands=List.map #1 pairs,
+               template_limit=SmtResource.max_bv_replay_term_nodes}
+            val _ = if C.graph_schema_source schema= #node source then () else
+              raise ERR "normalize" "wrong completed word schema endpoint"
+          in SOME (C.graph_schema_leaf graph scope
+            {schema=schema,observe=fn () => ()},metrics) end
+        end
+      val ready = completed_frontier ()
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then NONE
+          else raise Feedback.HOL_ERR error
+      val (plan,metrics) = case ready of SOME ready => ready
+        | NONE => discover_using_in context reuse admission conversions
+            graph scope (#node source)
+      val _ = if C.graph_source plan <> C.graph_result plan then ()
+        else raise Conv.UNCHANGED
+      val theorem = case C.realize_typed_root_schema graph scope
+          SmtResource.max_bv_replay_term_nodes plan of SOME theorem => theorem
+        | NONE =>
+            let val block = P.prepare_needed_sources_with_conversions graph
+              {scope=scope,roots=C.graph_roots plan,sources=[],closed_facts=[],
+               conversions=C.graph_conversions plan,
+               template_limit=SmtResource.max_bv_replay_term_nodes}
+            in P.realize block (C.graph_equality plan)
+              (C.graph_assemble_named graph block plan) end
+      (* Retain exact unchanged source occurrences in the public normal
+         form. This is a memoized syntax view, not an equality certificate;
+         the checked nodewise anchor below still proves every incidence. *)
+      val occurrences = ref (Redblackmap.mkDict Int.compare)
+      fun occurrence node =
+        case Redblackmap.peek (!occurrences,G.node_id node) of
+          SOME term => term
+        | NONE =>
+            let val term = case G.source_anchor graph node of
+                    SOME {original,...} => original
+                  | NONE => (case G.view graph node of
+                      G.Application (left,right) =>
+                        Term.mk_comb (occurrence left,occurrence right)
+                    | _ => G.representative graph node)
+                val _ = occurrences := Redblackmap.insert
+                  (!occurrences,G.node_id node,term)
+            in term end
+      val theorem = SmtSkeletonProve.exact_equality root
+        (occurrence (C.graph_result plan)) theorem
+      val _ = if null (Thm.hyp theorem) then () else
+        raise ERR "normalize" "normalization introduced hypotheses"
+      val _ = Library.check_oracle_tags "SmtWordGraph" "normalize" theorem
+    in (theorem,metrics) end
 
   fun normalize_using_with_metrics conversions root =
-    normalize_using_in (new_context ()) false conversions root
+    let val admission = new_type_admission ()
+    in normalize_using_in (new_context ()) false admission
+      (guarded_conversions conversions) root end
 
-  val normalize_with_metrics = normalize_using_with_metrics
-    {word_conversion = blastLib.WORD_SIMP_CONV,
-     bit_conversion = blastLib.BIT_BLAST_CONV,
-     node_conversion = unchanged_node}
+  (* Built-in operator laws are pure and reusable within this producer.
+     Custom conversion probes above retain their uncached contract. *)
+  fun normalize_with_metrics root =
+    normalize_using_in (new_context_with_local_laws true) false
+      (new_type_admission ())
+      (guarded_conversions
+        {word_conversion = blastLib.WORD_SIMP_CONV,
+         bit_conversion = blastLib.BIT_BLAST_CONV,
+         node_conversion = unchanged_node}) root
 
-  fun normalize_with_node_conversion_and_metrics node_conversion =
-    normalize_using_with_metrics
-      {word_conversion = blastLib.WORD_SIMP_CONV,
+  (* Independent term-facing FP field/LET/beta compatibility adapter.
+     Preserve its existing local-binder and projection-first contract;
+     graph word consumers retain the discovery recipe instead. *)
+  fun normalize_with_node_conversion_and_metrics node_conversion root =
+    normalize_template_using_in (new_context ()) false (new_type_admission ())
+      false {word_conversion = blastLib.WORD_SIMP_CONV,
        bit_conversion = blastLib.BIT_BLAST_CONV,
-       node_conversion = node_conversion}
+       node_conversion = fn _ => node_conversion} root
 
   fun normalize_with_node_conversion node_conversion =
     Lib.fst o normalize_with_node_conversion_and_metrics node_conversion
 
   val normalize = Lib.fst o normalize_with_metrics
+
+  fun graph_normalize_in context graph scope source =
+    discover_using_in context true (new_type_admission ())
+      (guarded_conversions {word_conversion=blastLib.WORD_SIMP_CONV,
+       bit_conversion=blastLib.BIT_BLAST_CONV,node_conversion=unchanged_node})
+      graph scope source
+
+  fun graph_normalize_using_with_metrics conversions graph scope source =
+    let val admission = new_type_admission ()
+    in discover_using_in (new_context ()) false admission
+      (guarded_conversions conversions) graph scope source end
+
+  (* SAT sees only Boolean constructors over compact block names. Word
+     operands, their definitions and any realized Hyp never enter a matcher,
+     simplifier or SAT-template substitution. Close SAT and word proofs
+     together, THEN realize the original statement once. *)
+  fun prove_discovered_in (context : context) graph scope plan =
+    let
+      val source = C.graph_source plan
+      val result = C.graph_result plan
+      fun spine node args = case G.view graph node of
+          G.Application (operator,argument) => spine operator (argument::args)
+        | _ => (node,args)
+      fun boolean node =
+        let val (head,args) = spine node []
+        in case G.view graph head of G.Constant _ =>
+            let val term = G.representative graph head
+                fun named constant n = length args=n andalso
+                  Term.same_const term constant
+            in named boolSyntax.T 0 orelse named boolSyntax.F 0 orelse
+              named boolSyntax.negation 1 orelse
+              named boolSyntax.conjunction 2 orelse
+              named boolSyntax.disjunction 2 orelse
+              named boolSyntax.implication 2 orelse
+              (named boolSyntax.equality 2 andalso
+               G.type_of graph (hd args)=Type.bool) orelse
+              (named boolSyntax.conditional 3 andalso
+               G.type_of graph node=Type.bool) end
+          | _ => false
+        end
+      val gates = List.filter boolean (G.reachable graph [result])
+      val block = P.prepare_needed_sources_with_conversions graph
+        {scope=scope,roots=C.graph_roots plan,sources=[],closed_facts=[],
+         conversions=C.graph_conversions plan,
+         template_limit=SmtResource.max_bv_replay_term_nodes}
+      val definitions = List.map (P.constructor block) gates
+      val equations = List.map (Thm.concl o P.theorem block) definitions
+      val antecedent = case equations of [] => boolSyntax.T
+        | _ => boolSyntax.list_mk_conj equations
+      val obligation = if null equations then P.name block result else
+        boolSyntax.mk_imp (antecedent,P.name block result)
+      val law = SmtSkeletonProve.propositional_prove_in
+        (#sat_context context) obligation
+      val proof = if null equations then P.checked block law else
+        P.compose block (fn proofs => Thm.MP law (Drule.LIST_CONJ proofs))
+          definitions
+      val conversion = P.compose block
+        (fn [named,constructor] => Thm.EQ_MP constructor named
+          | _ => raise Fail "word graph equality opening")
+        [C.graph_assemble_named graph block plan,
+         P.constructor block (C.graph_equality plan)]
+      val proof = P.compose block
+        (fn [conversion,proof] => Thm.EQ_MP (Thm.SYM conversion) proof
+          | _ => raise Fail "word graph SAT transport") [conversion,proof]
+    in P.realize block source proof end
+
+  fun prove_graph_using_in (context : context) node_conversion target =
+    let
+      val input = SmtResource.dag_nodes_up_to maximum target
+      val _ = SmtResource.check_dag_size_for
+        "BitVector" "word-circuit-replay" input
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val source = #node (G.import graph scope maximum target)
+      val admission = new_type_admission ()
+      fun reflexive admission =
+        let val callback = checked_node_callback admission node_conversion
+        in fn term => if boolSyntax.is_eq term then
+            (SmtReplayCanon.reflexive_equality_conv term
+             handle Conv.UNCHANGED => callback term)
+          else callback term end
+      val (plan,_) = discover_using_in context true admission
+        {word_conversion=blastLib.WORD_SIMP_CONV,
+         bit_conversion=blastLib.BIT_BLAST_CONV,node_conversion=reflexive}
+        graph scope source
+    in SmtSkeletonProve.exact_conclusion target
+      (prove_discovered_in context graph scope plan) end
+
+  (* Retain the cheap completed-schema route for shallow word identities.
+     The whole schema proof (word lowering AND SAT) closes on holes. Its
+     typed root law is itself the complete compact proof, so no unused
+     operand-interior definitions need to be assembled. *)
+  fun prove_using_in (context : context) node_conversion target =
+    let
+      val context = proof_context context
+      val input = SmtResource.dag_nodes_up_to maximum target
+      val _ = SmtResource.check_dag_size_for
+        "BitVector" "word-circuit-replay" input
+      exception WidePrefix
+      fun root_schema () =
+        let
+          val graph = G.new ()
+          val scope = G.root_scope graph
+          val source = #node (G.import graph scope maximum target)
+          val holes = ref ([] : (G.node * term) list)
+          fun hole node = case List.find (fn (old,_) => old=node) (!holes) of
+              SOME (_,term) => term
+            | NONE =>
+                let val term = Term.mk_var ("word_graph_proof_operand_" ^
+                      Int.toString (length (!holes)),G.type_of graph node)
+                in holes := !holes @ [(node,term)]; term end
+          val template = typed_frontier graph hole 1 source
+          val _ = case SmtReplayImport.bounded_raw_size
+              SmtResource.max_bv_replay_term_nodes template of
+              SOME _ => () | NONE => raise WidePrefix
+          val admission = new_type_admission ()
+          val _ = admit_callback_template admission template
+            handle Feedback.HOL_ERR error =>
+              if SmtResource.is_resource_gate error then raise WidePrefix
+              else raise Feedback.HOL_ERR error
+          val callback = checked_node_callback admission node_conversion
+          fun reflexive term =
+            if boolSyntax.is_eq term then
+              (SmtReplayCanon.reflexive_equality_conv term
+               handle Conv.UNCHANGED => callback term)
+            else callback term
+          val theorem = case Redblackmap.peek (!(#proof_schemas context),
+              template) of SOME theorem => theorem
+            | NONE =>
+                let
+                  val normalized = #1 (normalize_template_using_in context true
+                    admission true
+                    {word_conversion=blastLib.WORD_SIMP_CONV,
+                     bit_conversion=blastLib.BIT_BLAST_CONV,
+                     node_conversion=fn _ => reflexive} template)
+                    handle Conv.UNCHANGED => Thm.REFL template
+                  val residue = boolSyntax.rhs (Thm.concl normalized)
+                  val law = SmtSkeletonProve.propositional_prove_in
+                    (#sat_context context) residue
+                  val theorem = Thm.EQ_MP (Thm.SYM normalized) law
+                  val _ = if !(#schema_entries context) >= maximum then () else
+                    (#proof_schemas context := Redblackmap.insert
+                       (!(#proof_schemas context),template,theorem);
+                     #schema_entries context := !(#schema_entries context)+1)
+                in theorem end
+          val schema = C.checked_graph_schema graph scope
+            {theorem=Drule.EQT_INTRO theorem,holes=List.map #2 (!holes),
+             operands=List.map #1 (!holes),
+             template_limit=SmtResource.max_bv_replay_term_nodes}
+          val _ = if C.graph_schema_source schema=source then () else
+            raise ERR "prove" "wrong completed word schema endpoint"
+          val plan = C.graph_schema_leaf graph scope
+            {schema=schema,observe=fn () => ()}
+        in Option.map
+          (SmtSkeletonProve.exact_conclusion target o Drule.EQT_ELIM)
+          (C.realize_typed_root_schema graph scope
+            SmtResource.max_bv_replay_term_nodes plan) end
+        handle HolSatLib.SAT_cex _ => NONE
+             | HolSatLib.SAT_satisfiable _ => NONE
+             | WidePrefix => NONE
+    in case root_schema () of SOME theorem => theorem
+      | NONE => prove_graph_using_in context node_conversion target end
 
   (* Normalize a shared finite-word circuit once, retaining shared operator
      projection proofs, then replay a checked SAT certificate for its Boolean
@@ -1157,21 +1716,7 @@ struct
       (* Reflexivity belongs to this decision procedure, not to the word
          conversion's representation contract.  Check it both before word
          expansion and on reflexive equalities introduced by that expansion. *)
-      val reflexivity = SmtReplayCanon.dag_rewrite_conv
-        SmtReplayCanon.reflexive_equality_conv
-      val normalize = Lib.fst o normalize_using_in context true
-        {word_conversion = blastLib.WORD_SIMP_CONV,
-         bit_conversion = blastLib.BIT_BLAST_CONV,
-         node_conversion = unchanged_node}
-      fun full_circuit () =
-        let
-          val normalized = Conv.THENC
-            (reflexivity, Conv.THENC (normalize, reflexivity)) shared
-            handle Conv.UNCHANGED => Thm.REFL shared
-          val residue = boolSyntax.rhs (Thm.concl normalized)
-          val result = SmtSkeletonProve.propositional_prove_in
-            (#sat_context context) residue
-        in Thm.EQ_MP (Thm.SYM normalized) result end
+      fun full_circuit () = prove_using_in context unchanged_node shared
       val result =
         SmtResource.profile_phase "word-graph-Boolean-congruence"
           (SmtSkeletonProve.congruence_prove_in (#sat_context context)) shared
@@ -1184,6 +1729,13 @@ struct
     in
       Thm.EQ_MP (Thm.SYM share_thm) result
     end
+
+  fun prove_with_node_conversion node_conversion target =
+    let
+      val input = SmtResource.dag_nodes_up_to maximum target
+      val _ = SmtResource.check_dag_size_for
+        "Skeleton" "word-graph-input" input
+    in prove_using_in (new_context ()) node_conversion target end
 
   fun prove target = prove_in (new_context ()) target
 

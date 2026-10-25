@@ -257,6 +257,11 @@ sig
   val import_types : import_plan -> Type.hol_type list
   val execute_import : import_plan -> source
   val import : graph -> scope -> int -> Term.term -> source
+  (* Retain an actual uninterpreted operand without opening its syntax.
+     New leaves intern only the public result Type, with UNKNOWN size/FV.
+     Existing imports may retain their precise metadata. The exact native
+     REFLEXIVITY bridge supplies no rewrite authority. *)
+  val retain_source : graph -> scope -> Term.term -> source
   (* Raw-size admission precedes dest_abs and bounded alpha comparison.
      Nested binders are admitted under the same enclosing raw-size limit. *)
   val admit_binder : graph -> scope -> int -> Term.term -> source

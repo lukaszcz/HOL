@@ -48,6 +48,11 @@ sig
   (* A root-only Boolean schema is already a closed compact proof. Realize
      it with one INST, without unused operand-interior definitions. NONE
      retains the ordinary assembler for other recipes or annotations. *)
+  (* Completed binder-free typed root law. The entire compact theorem's
+     Type portfolio is bounded before its single final operand insertion.
+     Oversized Types decline to the ordinary compact block assembler. *)
+  val realize_typed_root_schema : SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> int -> graph_conversion -> Thm.thm option
   val realize_boolean_root_schema : SmtReplayGraph.graph ->
     SmtReplayGraph.scope -> graph_conversion -> Thm.thm option
 
@@ -58,6 +63,16 @@ sig
     (SmtReplayGraph.node -> graph_schema option) -> SmtReplayGraph.node ->
     graph_conversion
   (* Same memoized schema traversal with the caller's nominal Work hook. *)
+  (* Schemas and bounded local binder conversions share one discovery.
+     All successful leaves and their dependencies survive until freeze. *)
+  val graph_conversion_with_schema_leaves : SmtReplayGraph.graph ->
+    SmtReplayGraph.scope ->
+    {revisit : bool, template_limit : int,
+     propose : SmtReplayGraph.node -> graph_schema option,
+     pre_propose : SmtReplayGraph.node -> graph_schema option,
+     local_conversion : SmtReplayGraph.node ->
+       SmtReplayProof.closed_conversion option,
+     observe : unit -> unit} -> SmtReplayGraph.node -> graph_conversion
   val graph_conversion_with_schemas : SmtReplayGraph.graph ->
     SmtReplayGraph.scope ->
     {revisit : bool,propose : SmtReplayGraph.node -> graph_schema option,
@@ -148,6 +163,11 @@ sig
 
   (* Freeze all graph_roots before assembly. The result proves the compact
      named equality node, ready for the block's one closed realization. *)
+  (* Unowned word adapter: finite recipes validate the complete named Hyp
+     once; composed recipes reuse the existing named composer. Policy/realized
+     leaves, including nested ones, reject before any native rule. *)
+  val graph_assemble_named : SmtReplayGraph.graph -> SmtReplayProof.block ->
+    graph_conversion -> SmtReplayProof.edge
   val graph_assemble : SmtReplayGraph.graph -> SmtReplayProof.block ->
     graph_conversion -> SmtReplayProof.edge
 

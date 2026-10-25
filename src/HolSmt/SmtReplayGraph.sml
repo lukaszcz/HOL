@@ -1153,6 +1153,19 @@ struct
   fun import g scope maximum original =
     execute_import (plan_import g scope maximum original)
 
+  fun retain_source g scope original =
+    (check_scope g scope;
+     case memo_peek g scope original of SOME source => source
+     | NONE =>
+       let
+         val ty = Term.type_of original
+         val node = fresh g
+           {scope=scope,ty=ty,type_id=intern_type g ty,term=original,
+            view=OpaqueRetained,raw=NONE,inclusive=NONE,source=ref NONE}
+         val source = source_for g original node (Thm.REFL original)
+         val _ = memo_save g scope source
+       in source end)
+
   fun reachable_using descend_binders g roots =
     let
       fun children node = case view g node of

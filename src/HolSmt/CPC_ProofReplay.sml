@@ -4680,6 +4680,29 @@ local
         end
     | [] => raise ERR "bv-lshr-by-const-0" "expected a bit-vector argument"
 
+  (* Pure word producers can close their Boolean proof on graph names.
+     Mixed FP field/LET/beta producers retain their separate local adapter. *)
+  fun word_compatibility_target target =
+    let
+      fun fp_theory thy = String.isPrefix "smtfloat" thy orelse
+        thy="binary_ieee" orelse thy="machine_ieee"
+      fun mixed term =
+        Term.is_abs term orelse
+        let val ty = Term.type_of term in
+          (not (Type.is_vartype ty) andalso
+           fp_theory (#Thy (Type.dest_thy_type ty))) orelse
+          (Term.is_const term andalso
+            let val {Thy,Name,...} = Term.dest_thy_const term in
+              fp_theory Thy orelse Thy="pair" orelse
+              Thy="bool" andalso Name="LET" end)
+        end
+    in SmtResource.contains mixed target end
+
+  fun compact_word_target target =
+    not (word_compatibility_target target) andalso
+    SmtResource.contains (fn term =>
+      wordsSyntax.is_word_type (Term.type_of term)) target
+
   fun replay_bv_poly_norm args =
     let
       val target = expect_one_arg "bv_poly_norm" args
@@ -4922,22 +4945,14 @@ local
           val _ = SmtResource.check_dag_size_with_limit
             "BitVector" "word-constructor-schema" 256 template_nodes
           fun prove_template () =
-            let
-              val graph = SmtWordGraph.normalize template
-                handle Conv.UNCHANGED => Thm.REFL template
-              val graph_residue = boolSyntax.rhs (Thm.concl graph)
-              val simplified = simpLib.SIMP_CONV
+            SmtWordGraph.prove_with_node_conversion
+              (simpLib.SIMP_CONV
                 (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss))
-                [HolSmtTheory.xor_def, wordsTheory.word_compare_def]
-                graph_residue
-                handle Conv.UNCHANGED => Thm.REFL graph_residue
-              val normalized = Thm.TRANS graph simplified
-              val residue = boolSyntax.rhs (Thm.concl normalized)
-              val residue_theorem =
-                if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
-                else tautLib.TAUT_PROVE residue
-                  handle Feedback.HOL_ERR _ => blastLib.BBLAST_PROVE residue
-            in Thm.EQ_MP (Thm.SYM normalized) residue_theorem end
+                [HolSmtTheory.xor_def, wordsTheory.word_compare_def]) template
+            handle HolSatLib.SAT_cex _ =>
+              raise ERR "bv_poly_norm" "word-constructor schema is not valid"
+                 | HolSatLib.SAT_satisfiable _ =>
+              raise ERR "bv_poly_norm" "word-constructor schema is not valid"
           val template_theorem = prove_template ()
           val substitutions = ListPair.mapEq
             (fn (variable, bit) => {redex = variable, residue = bit})
@@ -4979,6 +4994,7 @@ local
                       if SmtResource.is_resource_gate holerr then
                         raise Feedback.HOL_ERR holerr
                       else raise Conv.UNCHANGED)
+          fun legacy () = let
           val first_blast =
             SmtWordGraph.normalize_with_node_conversion
               fp_projection_conversion boolean_template
@@ -5088,7 +5104,21 @@ local
             (0, instantiated_circuit) definitions
           val generalized_theorem = Thm.EQ_MP (Thm.SYM blasted)
             residue_theorem
-        in generalized_theorem end
+          in generalized_theorem end
+        in
+          if compact_word_target target then
+            SmtWordGraph.prove_with_node_conversion
+              (fn term => fp_projection_conversion term
+                handle Conv.UNCHANGED =>
+                  if is_holsmt_xor term then
+                    Conv.REWR_CONV HolSmtTheory.xor_def term
+                  else raise Conv.UNCHANGED) boolean_template
+            handle HolSatLib.SAT_cex _ =>
+              raise ERR "bv_poly_norm" "Boolean circuit is not valid"
+                 | HolSatLib.SAT_satisfiable _ =>
+              raise ERR "bv_poly_norm" "Boolean circuit is not valid"
+          else legacy ()
+        end
       fun schematic_bvite () =
         let
           val (left_word, _) = boolSyntax.dest_eq target
@@ -5200,24 +5230,13 @@ local
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "Boolean-normalized target is not valid"
       fun graph_normalization () =
-        let
-          val graph = SmtWordGraph.normalize target
-            handle Conv.UNCHANGED => Thm.REFL target
-          val graph_residue = boolSyntax.rhs (Thm.concl graph)
-          val simplified = simpLib.SIMP_CONV
+        SmtWordGraph.prove_with_node_conversion
+          (simpLib.SIMP_CONV
             (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss))
-            [wordsTheory.word_compare_def] graph_residue
-            handle Conv.UNCHANGED => Thm.REFL graph_residue
-          val normalized = Thm.TRANS graph simplified
-          val residue = boolSyntax.rhs (Thm.concl normalized)
-          val residue_theorem =
-            if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
-            else tautLib.TAUT_PROVE residue
-              handle Feedback.HOL_ERR _ => blastLib.BBLAST_PROVE residue
-        in
-          Thm.EQ_MP (Thm.SYM normalized) residue_theorem
-        end
+            [wordsTheory.word_compare_def]) target
         handle HolSatLib.SAT_cex _ =>
+          raise ERR "bv_poly_norm" "graph-normalized residue is not valid"
+             | HolSatLib.SAT_satisfiable _ =>
           raise ERR "bv_poly_norm" "graph-normalized residue is not valid"
       fun bitblast_equivalence () =
         let
@@ -5628,6 +5647,7 @@ local
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else raise Conv.UNCHANGED
+      fun legacy () = let
       fun normalize_all term =
         let
           fun loop 0 theorem = theorem
@@ -5675,7 +5695,17 @@ local
         if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
         else (trace_stage "sat begin"; prove_residue ())
       val _ = trace_stage "sat end"
-    in Thm.EQ_MP (Thm.SYM conversion) residue_theorem end
+      in Thm.EQ_MP (Thm.SYM conversion) residue_theorem end
+    in
+      if compact_word_target target then
+        SmtResource.with_bitblast_step_time (feature ^ "-normalize")
+          (SmtWordGraph.prove_with_node_conversion node_conversion) target
+        handle HolSatLib.SAT_cex _ =>
+          raise ERR "word_graph" "residue is not a Boolean tautology"
+             | HolSatLib.SAT_satisfiable _ =>
+          raise ERR "word_graph" "residue is not a Boolean tautology"
+      else legacy ()
+    end
 
   val word_graph_tautology_cache = ref
     ([] : (Term.term * Term.term * Thm.thm) list)
@@ -7378,6 +7408,51 @@ local
        [smtfloatTheory.smt_rounding_cases,
         smtfloatTheory.smt_rounding_distinctness])
 
+  fun word_circuit_leaf_rewrites () =
+    List.map Conv.REWR_CONV
+      [HolSmtTheory.xor_def,
+       fcpTheory.COND_COMPONENT,
+       smtfloatReplayRoundingTheory.word_and_index0,
+       smtfloatReplayRoundingTheory.word_or_index0,
+       smtfloatReplayRoundingTheory.word_xor_index0,
+       smtfloatReplayRoundingTheory.word_1comp_index0,
+       smtfloatReplayRoundingTheory.word_compare_index,
+       smtfloatReplayRoundingTheory.smtfp_pack_rounding_index,
+       smtfloatReplayRoundingTheory.word1_eq_index,
+       smtfloatReplayRoundingTheory.word1_cond_index,
+       smtfloatReplayRoundingTheory.word_add_one_index0,
+       smtfloatReplayRoundingTheory.word_add_one_twice_index0,
+       smtfloatReplayRoundingTheory.word1_minus_index,
+       smtfloatReplayRoundingTheory.word1_neg_minus_index]
+
+  (* The same leaf laws/ground rung, now on admitted typed frontiers rather
+     than on a realized word residue. No caller operand enters EVAL/matching. *)
+  fun word_circuit_node_conversion () =
+    let
+      val rewrites = word_circuit_leaf_rewrites ()
+      fun ground term =
+        if SmtResource.dag_nodes_up_to 33 term>32 orelse
+            not (null (Term.free_vars term)) then raise Conv.UNCHANGED
+        else
+          let
+            val sizes = Conv.QCONV (Conv.DEPTH_CONV wordsLib.SIZES_CONV) term
+            val sized = boolSyntax.rhs (Thm.concl sizes)
+            val evaluated = SmtResource.with_bitblast_step_time
+              "cpc-trust-fp-ground-leaf" (Conv.QCONV bossLib.EVAL) sized
+            val theorem = Thm.TRANS sizes evaluated
+          in if Term.aconv term (boolSyntax.rhs (Thm.concl theorem)) then
+              raise Conv.UNCHANGED else theorem end
+      fun convert term =
+        ((Conv.FIRST_CONV rewrites term
+          handle Conv.UNCHANGED => ground term
+               | Feedback.HOL_ERR error =>
+             if SmtResource.is_resource_gate error then
+               raise Feedback.HOL_ERR error else ground term)
+         handle Feedback.HOL_ERR error =>
+           if SmtResource.is_resource_gate error then
+             raise Feedback.HOL_ERR error else raise Conv.UNCHANGED)
+    in convert end
+
   fun prove_boolean_circuit_tautology goal =
     if boolSyntax.is_eq goal andalso
        Term.type_of (#1 (boolSyntax.dest_eq goal)) = Type.bool then
@@ -7486,22 +7561,7 @@ local
             in result end
       (* SMT Core XOR is a Boolean gate, not an opaque theory atom.  Both
          circuit paths use this checked definition before abstracting leaves. *)
-      val circuit_leaf_rewrites =
-        List.map Conv.REWR_CONV
-          [HolSmtTheory.xor_def,
-           fcpTheory.COND_COMPONENT,
-           smtfloatReplayRoundingTheory.word_and_index0,
-           smtfloatReplayRoundingTheory.word_or_index0,
-           smtfloatReplayRoundingTheory.word_xor_index0,
-           smtfloatReplayRoundingTheory.word_1comp_index0,
-           smtfloatReplayRoundingTheory.word_compare_index,
-           smtfloatReplayRoundingTheory.smtfp_pack_rounding_index,
-           smtfloatReplayRoundingTheory.word1_eq_index,
-           smtfloatReplayRoundingTheory.word1_cond_index,
-           smtfloatReplayRoundingTheory.word_add_one_index0,
-           smtfloatReplayRoundingTheory.word_add_one_twice_index0,
-           smtfloatReplayRoundingTheory.word1_minus_index,
-           smtfloatReplayRoundingTheory.word1_neg_minus_index]
+      val circuit_leaf_rewrites = word_circuit_leaf_rewrites ()
       fun ground_leaf_conversion term =
         if SmtResource.dag_nodes_up_to 33 term > 32 orelse
            not (List.null (Term.free_vars term)) then NONE
@@ -11183,6 +11243,131 @@ local
         end
     in Option.map (fn p => fn () => realize p) (recognize source) end
 
+  (* Resolution retains normalization recipes, not realized word residues.
+     Opaque native operands stay uninspected graph leaves. Each word literal
+     keeps its own original 8192-DAG admission; the Boolean caller has no new
+     whole-source gate. Cache keys below are graph IDs, never expanded terms. *)
+  local
+    structure G = SmtReplayGraph
+    structure C = SmtReplayCanonGraph
+  in
+  fun new_resolution_word_graph word_atom =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val context = SmtWordGraph.new_context ()
+      val buckets = 4093
+      val needed_cache = Array.array
+        (buckets,[] : (Term.term * bool * bool) list)
+      val node_cache = Array.array (buckets,[] : (Term.term * G.node) list)
+      val plan_cache = Array.array
+        (buckets,[] : (Term.term * C.graph_conversion) list)
+      fun bucket term = SmtBooleanGraph.hash 4 term mod buckets
+      fun peek cache term =
+        Option.map #2 (List.find (fn (old,_) =>
+          Portable.pointer_eq (old,term)) (Array.sub (cache,bucket term)))
+      fun save cache term value =
+        Array.update (cache,bucket term,
+          (term,value)::Array.sub (cache,bucket term))
+      fun xor term =
+        let val (head,args) = boolSyntax.strip_comb term
+            val {Thy,Name,...} = Term.dest_thy_const head
+        in Thy="HolSmt" andalso Name="xor" andalso length args=2 end
+        handle Feedback.HOL_ERR _ => false
+      fun word_operator term =
+        let val (head,args) = boolSyntax.strip_comb term
+            val {Thy,...} = Term.dest_thy_const head
+        in not (null args) andalso
+          (Thy="words" orelse Thy="bitstring" orelse Thy="fcp") end
+        handle Feedback.HOL_ERR _ => false
+      fun boolean term = Term.type_of term=Type.bool andalso
+        (boolSyntax.is_neg term orelse boolSyntax.is_conj term orelse
+         boolSyntax.is_disj term orelse boolSyntax.is_imp term orelse
+         boolSyntax.is_cond term orelse
+         boolSyntax.is_eq term andalso
+           Term.type_of (boolSyntax.lhs term)=Type.bool)
+      fun needed inside term =
+        case List.find (fn (old,mode,_) => mode=inside andalso
+            Portable.pointer_eq (old,term))
+            (Array.sub (needed_cache,bucket term)) of
+          SOME (_,_,answer) => answer
+        | NONE =>
+          let val answer = word_atom term orelse xor term orelse
+                inside andalso word_operator term orelse
+                (Term.is_comb term andalso
+                  (needed inside (Term.rator term) orelse
+                   needed inside (Term.rand term)))
+              val slot = bucket term
+              val _ = Array.update (needed_cache,slot,
+                (term,inside,answer)::Array.sub (needed_cache,slot))
+          in answer end
+      fun syntax term = case peek node_cache term of SOME node => node
+        | NONE =>
+          let
+            val node = if Term.is_var term orelse Term.is_const term then
+                #node (G.import graph scope 1 term)
+              else if Term.is_comb term andalso
+                  (boolean term orelse needed true term) then
+                G.application graph scope
+                  (syntax (Term.rator term),syntax (Term.rand term))
+              else #node (G.retain_source graph scope
+                (CPC_ProofParser.intern_cpc_term term))
+            val _ = save node_cache term node
+          in node end
+      fun xor_conversion term =
+        if xor term then Conv.REWR_CONV HolSmtTheory.xor_def term
+        else raise Conv.UNCHANGED
+      fun walk term = case peek plan_cache term of SOME plan => plan
+        | NONE =>
+          let
+            val plan =
+              if word_atom term then
+                let
+                  val maximum = SmtResource.max_skeleton_replay_dag_nodes
+                  val _ = SmtResource.check_dag_size_for
+                    "Skeleton" "word-graph-input"
+                    (SmtResource.dag_nodes_up_to maximum term)
+                in #1 (SmtWordGraph.graph_normalize_using_with_metrics
+                  {word_conversion=blastLib.WORD_SIMP_CONV,
+                   bit_conversion=blastLib.BIT_BLAST_CONV,
+                   node_conversion=xor_conversion}
+                  graph scope (syntax term)) end
+              else if Term.is_comb term andalso
+                  (boolean term orelse needed false term) then
+                let
+                  val left = walk (Term.rator term)
+                  val right = walk (Term.rand term)
+                  val source = G.application graph scope
+                    (C.graph_source left,C.graph_source right)
+                  val rebuilt = C.graph_application graph scope
+                    {source=source,left=left,right=right,observe=fn () => ()}
+                in if not (xor term) then rebuilt else
+                  let
+                    val (head,args) = boolSyntax.strip_comb term
+                    val holes = List.map (fn _ => Term.genvar Type.bool) args
+                    val theorem = xor_conversion (Term.list_mk_comb
+                      (head,holes))
+                    val result = C.graph_result rebuilt
+                    fun arguments node kept = case G.view graph node of
+                        G.Application (f,x) => arguments f (x::kept)
+                      | _ => kept
+                    val schema = C.checked_graph_schema graph scope
+                      {theorem=theorem,holes=holes,
+                       operands=arguments result [],template_limit=64}
+                    val step = C.graph_schema_leaf graph scope
+                      {schema=schema,observe=fn () => ()}
+                  in C.graph_sequence graph scope
+                    {first=rebuilt,second=step,observe=fn () => ()} end
+                end
+              else C.graph_identity graph scope
+                {observe=fn () => ()} (syntax term)
+            val _ = save plan_cache term plan
+          in plan end
+      fun prove goal = SmtSkeletonProve.exact_conclusion goal
+        (SmtWordGraph.prove_discovered_in context graph scope (walk goal))
+    in {key=fn term => G.node_id (C.graph_result (walk term)),prove=prove} end
+  end
+
   fun semantic_tseitin_law source destination =
     resolution_profile "tseitin/total" (fn () =>
     let
@@ -11275,8 +11460,38 @@ local
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else raise Conv.UNCHANGED
+      val compact_resolution_cache = ref (NONE : bool option)
+      fun compact_resolution () =
+        case !compact_resolution_cache of SOME answer => answer
+        | NONE =>
+          let
+            val terms = case conclusion of NONE => []
+              | SOME target => target :: List.map Thm.concl prems
+            val answer = not (null terms) andalso
+              List.all (not o word_compatibility_target) terms andalso
+              List.exists (SmtResource.contains (fn term =>
+                wordsSyntax.is_word_type (Term.type_of term))) terms
+            val _ = compact_resolution_cache := SOME answer
+          in answer end
+      val word_graph_cache = ref
+        (NONE : {key : Term.term -> int,prove : Term.term -> Thm.thm} option)
+      fun word_graph () = case !word_graph_cache of SOME graph => graph
+        | NONE => let val graph = new_resolution_word_graph word_bridge_literal
+                      val _ = word_graph_cache := SOME graph
+                  in graph end
+      fun compact_word_consequence destination theorem =
+        let val goal = boolSyntax.mk_imp (Thm.concl theorem,destination)
+            val law = #prove (word_graph ()) goal
+              handle HolSatLib.SAT_satisfiable _ =>
+                raise ERR "resolution"
+                  "abstract Boolean implication is not valid"
+        in Thm.MP law theorem end
+      (* This adapter is only used by the mixed FP/LET/beta engine below.
+         Pure word aliases use retained graph IDs and closed source laws. *)
       fun normalize_literal term =
-        case Redblackmap.peek (!resolution_literal_normalizations, term) of
+        if compact_resolution () then
+          raise ERR "resolution" "pure word aliases require a retained recipe"
+        else case Redblackmap.peek (!resolution_literal_normalizations, term) of
           SOME theorem => theorem
         | NONE =>
             let
@@ -11312,7 +11527,9 @@ local
                 1000003
             else literal_hash 0 term
       fun normalized_literal_equal left right =
-        let
+        if compact_resolution () then
+          #key (word_graph ()) left = #key (word_graph ()) right
+        else let
           val left_theorem = normalize_literal left
           val right_theorem = normalize_literal right
           val left_residue = boolSyntax.rhs (Thm.concl left_theorem)
@@ -11333,10 +11550,14 @@ local
         | NONE =>
             let
               val result =
-                SOME (Drule.EQT_ELIM (wordsLib.WORD_DECIDE
+                SOME (if compact_resolution () then
+                  #prove (word_graph ()) (boolSyntax.mk_eq (left,right))
+                else Drule.EQT_ELIM (wordsLib.WORD_DECIDE
                   (boolSyntax.mk_eq (left, right))))
                 handle Conv.UNCHANGED => NONE
                      | Feedback.HOL_ERR _ => NONE
+                     | HolSatLib.SAT_cex _ => NONE
+                     | HolSatLib.SAT_satisfiable _ => NONE
               val _ = literal_equivalences :=
                 (left, right, result) :: !literal_equivalences
             in result end
@@ -11385,7 +11606,9 @@ local
              not (word_bridge_literal left andalso
                   word_bridge_literal right) then NONE
           else if normalized_literal_equal left right then
-            let
+            if compact_resolution () then
+              decided_literal_equivalence left right
+            else let
               val left_conversion = normalize_literal left
               val right_conversion = normalize_literal right
             in SOME (Thm.TRANS left_conversion
@@ -12204,7 +12427,9 @@ local
               val instantiated = observed_inst (!substitutions) law
             in Thm.MP instantiated theorem end
           fun semantic_taut_reorder theorem =
-            let
+            if compact_resolution () then
+              compact_word_consequence target theorem
+            else let
               fun is_xor term =
                 let
                   val (head, arguments) = boolSyntax.strip_comb term
@@ -12541,7 +12766,9 @@ local
             in resolution_profile "tseitin/apply" (Thm.MP law) theorem end
           val semantic_tseitin_atom = semantic_tseitin_with "raw"
           fun semantic_word_tseitin destination theorem =
-            let
+            if compact_resolution () then
+              compact_word_consequence destination theorem
+            else let
               val memo = ref ([] : (Term.term * Thm.thm) list)
               fun convert term =
                 case List.find (fn (saved, _) =>
@@ -13123,6 +13350,7 @@ local
               val normalized_atoms = ref
                 (Redblackmap.mkDict Term.compare :
                   (Term.term, Term.term) Redblackmap.dict)
+              val word_atoms = ref (Redblackmap.mkDict Int.compare)
               val substitutions = ref
                 ([] : {redex : Term.term, residue : Term.term} list)
               val substitution_map = ref
@@ -13132,28 +13360,39 @@ local
                 let
                   val canonical = term
                   fun normalized_key () =
-                    if word_bridge_literal canonical then
+                    if word_bridge_literal canonical andalso
+                        not (compact_resolution ()) then
                       SOME (boolSyntax.rhs
                         (Thm.concl (normalize_literal canonical)))
                     else NONE
-                  fun remember variable normalized =
+                  fun remember variable normalized word_key =
                     (structural_atoms := Redblackmap.insert
                        (!structural_atoms, canonical, variable);
                      case normalized of
                        SOME key => normalized_atoms := Redblackmap.insert
                          (!normalized_atoms, key, variable)
                      | NONE => ();
+                     case word_key of SOME key => word_atoms :=
+                       Redblackmap.insert (!word_atoms,key,variable)
+                     | NONE => ();
                      variable)
                 in
                   case Redblackmap.peek (!structural_atoms, canonical) of
                     SOME variable => variable
                   | NONE =>
-                      let val normalized = normalized_key () in
-                        case (case normalized of
-                                SOME key =>
-                                  Redblackmap.peek (!normalized_atoms, key)
-                              | NONE => NONE) of
-                          SOME variable => remember variable normalized
+                      let
+                        val normalized = normalized_key ()
+                        val word_key = if word_bridge_literal canonical andalso
+                            compact_resolution () then
+                            SOME (#key (word_graph ()) canonical) else NONE
+                      in
+                        case (case word_key of SOME key =>
+                                Redblackmap.peek (!word_atoms,key)
+                              | NONE => case normalized of
+                                  SOME key =>
+                                    Redblackmap.peek (!normalized_atoms,key)
+                                | NONE => NONE) of
+                          SOME variable => remember variable normalized word_key
                         | NONE =>
                             let
                               val variable = Term.genvar Type.bool
@@ -13165,7 +13404,7 @@ local
                               val _ = substitution_map :=
                                 Redblackmap.insert
                                   (!substitution_map, variable, term)
-                            in remember variable normalized end
+                            in remember variable normalized word_key end
                       end
                 end
               fun substitutions_for terms =
@@ -13892,7 +14131,9 @@ local
             in SmtResource.with_bitblast_step_time
               "cpc-resolution-deep-disjunction-alignment" work () end
           fun schematic_supported_alignment () =
-            let
+            if compact_resolution () then
+              compact_word_consequence target supported_result
+            else let
               val _ = trace_chain "schematic supported alignment"
               val atoms = ref ([] : (Term.term * Term.term) list)
               val substitutions = ref
@@ -20018,6 +20259,9 @@ in
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology
   val sharing_aware_aconv = shared_aconv
+  val compact_word_target = compact_word_target
+  val word_circuit_node_conversion = word_circuit_node_conversion
+  val resolution_word_graph_for_test = new_resolution_word_graph
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
   val replay_rare_rewrite_for_test = replay_rare_rewrite
   val replay_factoring_for_test = replay_factoring

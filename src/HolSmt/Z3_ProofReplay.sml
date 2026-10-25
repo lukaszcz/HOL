@@ -3879,7 +3879,14 @@ local
       SmtResource.with_resource_step_time "BitVector"
         "z3-def-axiom-word-circuit"
         (fn target =>
-          let
+          if CPC_ProofReplay.compact_word_target target then
+            (SmtWordGraph.prove_with_node_conversion
+               (CPC_ProofReplay.word_circuit_node_conversion ()) target
+             handle HolSatLib.SAT_cex _ =>
+               raise ERR "def_axiom_word_circuit" "word circuit is not valid"
+                  | HolSatLib.SAT_satisfiable _ =>
+               raise ERR "def_axiom_word_circuit" "word circuit is not valid")
+          else let
             val normalized = SmtWordGraph.normalize target
             val residue = boolSyntax.rhs (Thm.concl normalized)
             val circuit =
