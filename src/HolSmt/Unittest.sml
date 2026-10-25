@@ -27282,14 +27282,17 @@ let
   val _ = check_oracle_tags "FP polymorphic helper" poly_proof
   (* Prospective RHS admission must still stop at a polymorphic prefix;
      the closed suffix is not visited by the native classification. *)
-  val hidden_poly = encode_exponent (Type.mk_type ("prod",
-    [Type.mk_vartype "'fp_hidden_poly", shared_type 21]))
-  val hidden_poly_proof = SmtFpGraph.convert_word_projection hidden_poly
-  val _ = assert (Portable.pointer_eq
-    (boolSyntax.lhs (Thm.concl hidden_poly_proof), hidden_poly),
-    "FP RHS type admission lost its polymorphic source")
-  val _ = assert_no_hyps ("FP hidden polymorphic RHS", hidden_poly_proof)
-  val _ = check_oracle_tags "FP hidden polymorphic RHS" hidden_poly_proof
+  val _ = List.app (fn depth =>
+    let
+      val input = encode_exponent (Type.mk_type ("prod",
+        [Type.mk_vartype "'fp_hidden_poly", shared_type depth]))
+      val proof = SmtFpGraph.convert_word_projection input
+    in
+      assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl proof), input),
+        "FP RHS type admission lost its polymorphic source");
+      assert_no_hyps ("FP hidden polymorphic RHS", proof);
+      check_oracle_tags "FP hidden polymorphic RHS" proof
+    end) [21,80]
   val huge_type = wordsSyntax.mk_int_word_type 8193
   val ignored = Term.mk_var ("fp_ignored", huge_type)
   val producer = wordsSyntax.mk_word_add (ignored, ignored)

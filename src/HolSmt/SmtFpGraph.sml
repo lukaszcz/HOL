@@ -423,11 +423,45 @@ struct
                   val _ = SmtResource.dag_nodes_up_to_with_inspector admit
                     SmtResource.max_bv_replay_term_nodes
                     (Thm.concl definition)
-                  val template = Term.list_mk_comb (head,variables)
                   val law = SmtResource.profile_phase
                     "fp-field/static-schema"
-                    (fn () => close_template
-                      (Conv.REWR_CONV definition template)) ()
+                    (fn () =>
+                      let
+                        val (domains, _) = boolSyntax.strip_fun
+                          (Term.type_of generic_head)
+                        val generic_variables = ListPair.mapEq
+                          (fn (variable, ty) =>
+                            Term.mk_var (#1 (Term.dest_var variable), ty))
+                          (variables, domains)
+                        val generic_template = Term.list_mk_comb
+                          (generic_head, generic_variables)
+                        (* Matching, LET/beta and term substitution also
+                           compare annotations. Finish them on generic
+                           Types, not on an inserted polymorphic suffix. *)
+                        val closed = close_template
+                          (Conv.REWR_CONV definition generic_template)
+                        val _ = SmtResource.dag_nodes_up_to_with_inspector
+                          admit SmtResource.max_bv_replay_term_nodes
+                          (Thm.concl closed)
+                        val typed = Thm.INST_TYPE types closed
+                        (* INST_TYPE rebuilds variable occurrences. Restore
+                           shared hole atoms with checked nodewise equality
+                           before INST: the experimental kernel's native
+                           substitution map otherwise compares independent
+                           equal variable Types all the way down. *)
+                        fun share term =
+                          if Term.is_var term then
+                            (case List.find (fn variable =>
+                                #1 (Term.dest_var variable) =
+                                #1 (Term.dest_var term)) variables of
+                               SOME variable => variable
+                             | NONE => term)
+                          else if Term.is_comb term then
+                            let val (f, x) = Term.dest_comb term
+                            in Term.mk_comb (share f, share x) end
+                          else term
+                      in SmtSkeletonProve.exact_conclusion
+                        (share (Thm.concl typed)) typed end) ()
                   val _ = SmtResource.check_resource_goal "BitVector"
                     "fp-field-schema" (Thm.concl law)
                   val _ = if Redblackmap.numItems (!schemas) <
