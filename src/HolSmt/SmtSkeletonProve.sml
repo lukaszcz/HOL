@@ -458,12 +458,19 @@ struct
         let
           fun native_admission () =
             let
-              val visited = ref 0
+              (* Metadata exhaustion must retain the first excessive
+                 subtree, not a preorder prefix's maximum+1 diagnostic.
+                 Stop at that subtree before visiting any further sibling. *)
               fun visit ty =
-                (visited := !visited + 1; check (!visited);
-                 if Type.is_vartype ty then ()
-                 else List.app visit (#Args (Type.dest_thy_typeid ty)))
-            in visit ty end
+                let
+                  fun children [] count = count
+                    | children (ty :: rest) count =
+                        let val work = add_work count (visit ty)
+                            val _ = check work
+                        in children rest work end
+                in if Type.is_vartype ty then 1
+                   else children (#Args (Type.dest_thy_typeid ty)) 1 end
+            in check (visit ty) end
           val _ =
             (let
                val AdmissionTypeNode {tree_nodes, ...} =
@@ -479,7 +486,8 @@ struct
       fun raw_size limit term =
         (ignore (full_type (Term.type_of term));
          SmtReplayImport.bounded_raw_size_with_type_check
-           (fn ty => ignore (intern (#2 (Type.dom_rng ty)))) limit term)
+           (fn ty => if Thm.kernelid = "expknl" then ()
+             else intern (#2 (Type.dom_rng ty))) limit term)
       fun admit_abstraction operation term =
         let
           val _ = case raw_size maximum term of
@@ -592,7 +600,10 @@ struct
   fun admitted_dest_abs term =
     let
       val admission = new_type_admission_context ()
-      fun before_open ty = #intern admission (#2 (Type.dom_rng ty))
+      (* Experimental count_body/dest_abs only returns the stored body;
+         it does not run standard's range-Type classification. *)
+      fun before_open ty = if Thm.kernelid = "expknl" then ()
+        else #intern admission (#2 (Type.dom_rng ty))
       val maximum = SmtResource.max_bv_replay_term_nodes
       val _ = case SmtReplayImport.bounded_raw_size_with_type_check
           before_open maximum term of SOME _ => ()

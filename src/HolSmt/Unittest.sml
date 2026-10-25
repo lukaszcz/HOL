@@ -21070,6 +21070,33 @@ let
   fun mono 0 = Type.bool
     | mono n = let val ty = mono (n - 1) in Type.--> (ty,ty) end
   val huge = mono 22
+  val _ = print "TASK28_BOUNDARY count-only-native-work\n"
+  val _ = if Thm.kernelid <> "expknl" then () else
+    let
+      val body = Term.mk_var ("count_only_body",huge)
+      val term = Term.mk_abs (Term.mk_var ("count_only_bound",Type.bool),body)
+      val _ = assert (SmtSkeletonProve.term_measure term =
+        SmtResource.term_measure term,
+        "experimental count-only opening admitted unused Type work")
+      val _ = SmtReplayTermBridge.admit_count_up_to "count-only" 2 term
+      val opened = SmtReplayTermBridge.count_body term
+    in assert (Portable.pointer_eq (opened,body),
+      "count-only bridge changed the stored experimental body") end
+  val _ = print "TASK28_BOUNDARY schema-binder-frontier\n"
+  val _ = Timeout.apply (Time.fromSeconds 1) (fn () =>
+    let
+      val graph = SmtReplayGraph.new ()
+      val scope = SmtReplayGraph.root_scope graph
+      val body = Term.mk_var ("unsupported_schema_body",mono 80)
+      val inner = Term.mk_abs (Term.mk_var ("schema_inner",Type.bool),body)
+      val outer = Term.mk_abs
+        (Term.mk_var ("schema_outer",Type.alpha),inner)
+      val theorem = Thm.REFL outer
+    in expect_hol_error_contains "schema binder frontier"
+      "binder schema requires a bounded local proof block" (fn () =>
+        ignore (SmtReplayCanonGraph.checked_graph_schema graph scope
+          {theorem = theorem,holes = [],operands = [],template_limit = 32}))
+    end) ()
   (* Pointer-summary misses must stay optional and linearly bounded.
      This annotation is genuinely unshared, not another repeated DAG. *)
   val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
@@ -21126,6 +21153,18 @@ let
     andalso !(#nodes context) = 4003 andalso
     !(#edges context) = 8002,
     "metadata exhaustion changed native admission, IDs or original metrics")
+  val _ = print "TASK28_BOUNDARY metadata-fallback-diagnostic\n"
+  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+    let
+      fun product 0 = Type.bool
+        | product n = let val ty = product (n - 1)
+                      in Type.mk_type ("prod",[ty,ty]) end
+      val x = Term.mk_var ("fallback_diagnostic",spine 4000 (product 21))
+      val term = Term.mk_abs (x,x)
+      val context = SmtSkeletonProve.new_type_admission_context ()
+    in expect_hol_error_contains "metadata fallback diagnostic"
+      "observed=2097151" (fn () => ignore (#raw_size context 16 term))
+    end) ()
 in () end
 
 fun circuit_graph_admission_success () =

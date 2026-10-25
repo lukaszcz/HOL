@@ -62,15 +62,19 @@ struct
 
   (* Count-only opening uses an atomic marker, not dest_abs's possible
      name-clash/free_vars path. Its only annotation traversal is REFL/Beta's
-     short-circuit classification of the range Type. Keep this separate
-     from admission for native opening, comparison and abstraction. *)
+     short-circuit classification of the range Type on standard. The
+     experimental opener only returns the body, without Type work. Keep
+     this separate from native opening, comparison and abstraction. *)
+  fun admit_count_type ty = if Thm.kernelid = "expknl" then ()
+    else admit_type (#2 (Type.dom_rng ty))
+
   fun count_body term =
-    (admit_type (#2 (Type.dom_rng (Term.type_of term)));
+    (admit_count_type (Term.type_of term);
      SmtReplayImport.count_body term)
 
   fun admit_count_up_to operation maximum term =
     case SmtReplayImport.bounded_raw_size_with_type_check
-        (fn ty => admit_type (#2 (Type.dom_rng ty))) maximum term of
+        admit_count_type maximum term of
       SOME _ => ()
     | NONE => SmtResource.check_term_size_for "BitVector" operation
         (SmtResource.max_bv_replay_term_nodes + 1)

@@ -116,9 +116,20 @@ struct
       {theorem,holes,operands,template_limit} =
     let
       val _ = G.validate_scope graph scope
-      val admitted_size = case SmtReplayImport.bounded_raw_size template_limit
-          (Thm.concl theorem) of SOME size => size
-        | NONE => raise ERR "checked_graph_schema" "expanded operator schema"
+      (* This grammar has no binders. Reject them on the syntax frontier,
+         before a count-only opener can execute native range-Type work. *)
+      fun size [] count = count
+        | size (term :: rest) count =
+            if count >= template_limit then
+              raise ERR "checked_graph_schema" "expanded operator schema"
+            else if Term.is_comb term then
+              let val (operator,operand) = Term.dest_comb term
+              in size (operator :: operand :: rest) (count + 1) end
+            else if Term.is_abs term then
+              raise ERR "checked_graph_schema"
+                "binder schema requires a bounded local proof block"
+            else size rest (count + 1)
+      val admitted_size = size [Thm.concl theorem] 0
       val _ = if List.null (Thm.hyp theorem) andalso clean_schema theorem then
           () else raise ERR "checked_graph_schema"
             "operator schema has assumptions or unexpected tags"
