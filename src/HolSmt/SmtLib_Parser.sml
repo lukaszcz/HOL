@@ -2409,6 +2409,28 @@ local
         parse token (List.map term_index indices) arguments
     in Redblackmap.map (fn (_, parses) => List.map adapt parses) dictionary end
 
+  (* Lexical bindings are nullary dictionary entries, not a separate
+     rejection path. On applied/indexed uses they decline so older entries
+     (including builtins and the literal catch-all) can still be tried.
+     Keep values as backend operands; no native projection is needed. *)
+  fun construction_scope_dictionary backend frame dictionary key value =
+    let
+      fun extend (key, value, dictionary) =
+        Library.extend_dict
+          ((key, fn _ => fn token => fn indices => fn arguments =>
+            if List.null indices andalso List.null arguments then value
+            else SmtLib_Theories.decline token "wrong number of arguments"),
+           dictionary)
+      val dictionary = case value of
+          SOME value => extend (key, value, dictionary)
+        | NONE => dictionary
+    in
+      if key = "_" then dictionary else
+        case B.lookup backend frame "_" of
+          SOME value => extend ("_", value, dictionary)
+        | NONE => dictionary
+    end
+
   fun parse_term_recorded_with_backend_and_indices
       (cfg : 'a construction_cfg) symbolic_index get_token
       (tydict, dictionary : 'a construction_dict) =
@@ -2431,9 +2453,12 @@ local
           case B.lookup backend frame key of
             SOME value => if List.null indices andalso List.null arguments then
               value
-            else SmtLib_Theories.decline token "wrong number of arguments"
-          | NONE => apply_construction_symbol cfg dictionary frame
-              token indices arguments
+            else apply_construction_symbol cfg
+              (construction_scope_dictionary backend frame dictionary key
+                (SOME value)) frame token indices arguments
+          | NONE => apply_construction_symbol cfg
+              (construction_scope_dictionary backend frame dictionary key NONE)
+              frame token indices arguments
         in occurrence value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
       fun bounded_index term =
@@ -2704,9 +2729,12 @@ local
           case B.lookup backend frame key of
             SOME value => if List.null indices andalso List.null arguments then
               value
-            else SmtLib_Theories.decline token "wrong number of arguments"
-          | NONE => apply_construction_symbol_with_policy cfg dictionary frame
-              token indices arguments
+            else apply_construction_symbol_with_policy cfg
+              (construction_scope_dictionary backend frame dictionary key
+                (SOME value)) frame token indices arguments
+          | NONE => apply_construction_symbol_with_policy cfg
+              (construction_scope_dictionary backend frame dictionary key NONE)
+              frame token indices arguments
         in occurrence value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
       fun bounded_index term =
