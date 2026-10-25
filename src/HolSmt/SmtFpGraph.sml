@@ -369,7 +369,59 @@ struct
         val theorem = Thm.TRANS (#bridge source) (evaluate (#node source))
       in theorem end
 
-  fun field_projection_conversion term =
+  (* Close producer-local binders before a field is inserted.  In particular
+     a LET in a definition must never beta-reduce a realized field graph. *)
+  fun close_template theorem = Conv.CONV_RULE
+    (Conv.RAND_CONV (simpLib.SIMP_CONV bossLib.pure_ss
+      [boolTheory.LET_THM, pairTheory.pair_CASE_def, pairTheory.UNCURRY,
+       pairTheory.FST, pairTheory.SND])) theorem
+    handle Conv.UNCHANGED => theorem
+
+  fun new_projection_conversion () =
+    let
+      val admission = SmtSkeletonProve.new_type_admission_context ()
+      fun compare_key ((left,lty),(right,rty)) =
+        case KernelSig.id_compare (left,right) of
+          EQUAL => Int.compare (lty,rty) | order => order
+      val schemas = ref (Redblackmap.mkDict compare_key)
+      fun helper term definition =
+        let
+          val (head, arguments) = boolSyntax.strip_comb term
+          val _ = ignore (#full_type admission (Term.type_of head))
+          val _ = List.app (fn argument =>
+            ignore (#full_type admission (Term.type_of argument))) arguments
+          (* The head fixes all types.  Literal/alias relationships need not
+             be guessed: instantiate the same checked law for every operand. *)
+          val key = (#Name (Term.dest_thy_constid head),
+                     #type_id admission (Term.type_of head))
+          val (variables,law) = case Redblackmap.peek (!schemas,key) of
+              SOME saved => saved
+            | NONE =>
+                let
+                  val variables = ListPair.mapEq (fn (i, argument) =>
+                    Term.mk_var ("fp_field_operand_" ^ Int.toString i,
+                      Term.type_of argument))
+                    (List.tabulate (length arguments, I), arguments)
+                  val template = Term.list_mk_comb (head,variables)
+                  val law = SmtResource.profile_phase
+                    "fp-field/static-schema"
+                    (fn () => close_template
+                      (Conv.REWR_CONV definition template)) ()
+                  val _ = SmtResource.check_resource_goal "BitVector"
+                    "fp-field-schema" (Thm.concl law)
+                  val _ = if Redblackmap.numItems (!schemas) <
+                      SmtResource.max_skeleton_replay_dag_nodes then
+                      schemas := Redblackmap.insert
+                        (!schemas,key,(variables,law))
+                    else ()
+                in (variables,law) end
+          (* Simultaneous insertion also handles source names equal to
+             template holes. No binder or type pass follows. *)
+          val inserted = Thm.INST (ListPair.mapEq
+            (fn (variable, argument) => variable |-> argument)
+            (variables, arguments)) law
+        in SmtSkeletonProve.nodewise_exact_left term inserted end
+      fun field_projection_conversion term =
     let
       fun direct theorem = Conv.REWR_CONV theorem term
       fun lift_source head theorem =
@@ -432,7 +484,7 @@ struct
       else
         case helper_definition term of
           SOME definition => SmtResource.profile_phase
-            "fp-field/helper" (fn () => direct definition) ()
+            "fp-field/helper" (fn () => helper term definition) ()
         | NONE =>
             if full_named "bool" "LET" 2 term then direct boolTheory.LET_THM
             else if full_named "pair" "pair_CASE" 2 term then
@@ -440,16 +492,36 @@ struct
             else if full_named "pair" "UNCURRY" 2 term then
               direct pairTheory.UNCURRY
             else if Term.is_abs head andalso not (List.null arguments) then
-              Conv.REDEPTH_CONV BETA_CONV term
+              if Term.is_abs (Term.rator term) then BETA_CONV term
+              else Conv.RATOR_CONV field_projection_conversion term
             else if rounding_case term then
               direct
                 smtfloatReplayRoundingTheory.smtfp_rounding_case_unpack
             else if rounding_test term then
-              simpLib.SIMP_CONV bossLib.pure_ss rounding_test_laws term
+              let
+                val rewrite = Conv.FIRST_CONV
+                  (List.map Conv.REWR_CONV rounding_test_laws)
+              in
+                rewrite term handle Feedback.HOL_ERR error =>
+                  if Feedback.top_structure_of error = "Conv" andalso
+                     Feedback.top_function_of error = "NO_CONV" then
+                    let val symmetry =
+                      Conv.REWR_CONV boolTheory.EQ_SYM_EQ term
+                    in Thm.TRANS symmetry
+                      (rewrite (boolSyntax.rhs (Thm.concl symmetry))
+                       handle Feedback.HOL_ERR error =>
+                         if Feedback.top_structure_of error = "Conv" andalso
+                            Feedback.top_function_of error = "NO_CONV" then
+                           raise Conv.UNCHANGED
+                         else raise Feedback.HOL_ERR error) end
+                  else raise Feedback.HOL_ERR error
+              end
             else raise Conv.UNCHANGED
     end
 
-  val convert_word_projection = field_projection_conversion
+    in field_projection_conversion end
+
+  fun convert_word_projection term = new_projection_conversion () term
 
   fun admitted_width admission ty =
     SmtWordGraph.word_width admission ty
@@ -599,6 +671,12 @@ struct
     else
       let
         val _ = ignore (#intern admission (Term.type_of term))
+        (* Representation changes (t,e) into sign/exponent/fraction fields.
+           That reorders polymorphic annotations: native classification of
+           an instantiated bits constructor can see a formerly hidden suffix.
+           Admit the active format fully before any representation schema. *)
+        val _ = if full_named "smtfloat" "smtfp_bits" 3 term then ()
+          else ignore (#full_type admission (Term.type_of term))
         val equality =
           case head_name term of
             SOME ("smtfloat", "smtfp_bits") => Thm.REFL term
@@ -885,12 +963,25 @@ struct
       val law2 = simpLib.SIMP_RULE bossLib.pure_ss
         [boolTheory.COND_CLAUSES] law1
       val (_, equation) = boolSyntax.dest_imp (Thm.concl law2)
+      (* Discharge and close the bounded observation over field holes, not
+         the already represented operands in [actual]. *)
+      val raw_mode = Term.genvar (word_type (Arbnum.fromInt 3))
+      val unpack = Term.mk_comb (Term.prim_mk_const
+        {Thy = "smtfloat", Name = "smtfp_unpack_rounding"}, raw_mode)
+      val schematic = Term.mk_comb (predicate,
+        Term.list_mk_comb (operator, [unpack, left_bits, right_bits]))
       val specialized = Drule.INST_TY_TERM
-        (Term.match_term (boolSyntax.lhs equation) actual) law2
+        (Term.match_term (boolSyntax.lhs equation) schematic) law2
       val (premise, _) = boolSyntax.dest_imp (Thm.concl specialized)
       val premise_theorem = Drule.EQT_ELIM (bossLib.EVAL premise)
-      val observation = Thm.MP specialized premise_theorem
-    in Thm.TRANS atom_equality observation end
+      val observation = close_schema (close_template
+        (Thm.MP specialized premise_theorem))
+      val _ = admit_schema admission observation
+      val instantiated = Drule.INST_TY_TERM
+        (Term.match_term (boolSyntax.lhs (Thm.concl observation)) actual)
+        observation
+    in Thm.TRANS (Thm.REFL term)
+      (Thm.TRANS atom_equality instantiated) end
 
   fun convert_atom_internal term =
     let
@@ -952,14 +1043,19 @@ struct
 
   val convert_atom = convert_atom_internal
 
+  (* The selected word worker discovers/caches operator schemas on holes.
+     Keep its term-facing FP binder/projection-first contract. In particular
+     CPC's projection consumers call this on bounded producer templates and
+     insert their large fields only after the complete word proof closes. *)
+  fun lower_words term = SmtWordGraph.normalize_with_node_conversion
+    (new_projection_conversion ()) term
+
   fun lower_atom term =
     SmtResource.with_bitblast_step_time "fp-graph-stage1"
       (fn term =>
         let
           val converted = convert_atom_internal term
           val right = boolSyntax.rhs (Thm.concl converted)
-          val lowered = Conv.QCONV
-            (SmtWordGraph.normalize_with_node_conversion
-              field_projection_conversion) right
+          val lowered = Conv.QCONV lower_words right
         in Thm.TRANS converted lowered end) term
 end

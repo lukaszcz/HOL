@@ -26937,6 +26937,8 @@ in
      ("FP graph zero", ``smtfp_is_zero ^x``),
      ("FP graph infinity", ``smtfp_is_infinite ^x``),
      ("FP graph NaN", ``smtfp_is_nan ^x``),
+     ("FP graph add NaN", ``smtfp_is_nan (smtfp_add RNE ^x ^y)``),
+     ("FP graph sub NaN", ``smtfp_is_nan (smtfp_sub RTN ^x ^y)``),
      ("FP graph positive", ``smtfp_is_positive ^x``),
      ("FP graph negative", ``smtfp_is_negative ^x``),
      ("FP graph finite", ``smtfp_is_finite ^x``),
@@ -27037,6 +27039,216 @@ in
       not (SmtFpGraph.lower_atom_domain
         ``(smtfp_is_nan ^x) \/ (smtfp_is_nan ^y)``),
     "FP graph domain accepted a non-FP Boolean/word circuit")
+end
+
+(* Producer LETs close on bounded holes, even when their fields cannot be
+   traversed as unfolded native beta operands.  Names resembling holes remain
+   ordinary fields, and each operator/source incidence must survive. *)
+fun smtfp_compact_field_templates_success () =
+let
+  val field = Term.mk_var ("fp_field_operand_1", ``:word12``)
+  val combine = ``fp_field_operand_0 : word12 -> word12 -> word12``
+  fun shared 0 = field
+    | shared n = let val child = shared (n - 1)
+      in Term.list_mk_comb (combine, [child, child]) end
+  val large = shared 40
+  val scale = ``fp_field_scale : word8``
+  val left_sign = ``fp_field_operand_3 : word1``
+  val right_sign = ``fp_field_operand_4 : word1``
+  val helper = Term.rator (Term.rator (Term.rator (Term.rator
+    (Term.rator ``smtfp_word_pair_trace (s:word8) (a:word12) (b:word12)
+      (sx:word1) (sy:word1)``))))
+  val input = Term.list_mk_comb
+    (helper, [scale, large, large, left_sign, right_sign])
+  val proof = SmtFpGraph.convert_word_projection input
+  val result = boolSyntax.rhs (Thm.concl proof)
+  val seen = ref Term.empty_tmset
+  fun inspect term =
+    if Portable.pointer_eq (term, large) orelse
+       HOLset.member (!seen, term) then () else
+      (seen := HOLset.add (!seen, term);
+       assert (not (Term.is_abs term), "FP helper retained a beta binder");
+       assert (not (boolSyntax.is_let term), "FP helper retained a LET");
+       if Term.is_comb term then
+         let val (f, x) = Term.dest_comb term in inspect f; inspect x end
+       else ())
+  val _ = inspect result
+  val _ = assert (Portable.pointer_eq
+    (boolSyntax.lhs (Thm.concl proof), input),
+    "FP helper lost its exact large-field source")
+  val _ = assert_no_hyps ("compact FP field", proof)
+  val _ = check_oracle_tags "compact FP field" proof
+  (* Check the same schema's complete semantics on small source fields. *)
+  val small = ``smtfp_word_pair_trace (s:word8) (a:word12) (b:word12)
+      (sx:word1) (sy:word1)``
+  val small_proof = SmtFpGraph.convert_word_projection small
+  val expected = simpLib.SIMP_CONV bossLib.pure_ss
+    [smtfloatReplayAddSubWordTheory.smtfp_word_pair_trace_def,
+     boolTheory.LET_THM] small
+  val _ = assert_concl_alpha ("FP bounded field schema", small_proof,
+    Thm.concl expected)
+  val (_,small_args) = boolSyntax.strip_comb small
+  val wrong_head = Term.mk_var
+    ("smtfp_word_pair_trace", Term.type_of helper)
+  val _ = assert
+    (((SmtFpGraph.convert_word_projection
+        (Term.list_mk_comb (wrong_head,small_args)); false)
+      handle Conv.UNCHANGED => true),
+     "FP helper admitted a source variable with a private operator spelling")
+  val second = ``smtfp_word_pair_trace (s2:word8) (a2:word12) (b2:word12)
+      (sx2:word1) (sy2:word1)``
+  val other_format = ``smtfp_word_pair_trace (s3:word4) (a3:word9) (b3:word9)
+      (sx3:word1) (sy3:word1)``
+  val _ = Profile.reset_all ()
+  val cached = SmtResource.with_e0_invocation_for_test SmtFpGraph.lower_words
+    (pairSyntax.mk_pair (small,pairSyntax.mk_pair (second,other_format)))
+  val _ = assert (profile_call_count "E0(fp-field/static-schema)_OK" = 2
+      andalso profile_call_count "E0(fp-field/helper)_OK" >= 3,
+    "FP field cache lost reuse or conflated distinct typed formats")
+  val _ = assert_no_hyps ("FP schema reuse", cached)
+  val _ = check_oracle_tags "FP schema reuse" cached
+  val _ = Profile.reset_all ()
+  (* Real graph discovery must retain the helper law and its generated nodes,
+     with no binder-bearing schema or expanded post-realization cleanup. *)
+  val graph = SmtReplayGraph.new ()
+  val scope = SmtReplayGraph.root_scope graph
+  val source = SmtReplayGraph.import graph scope 8192 small
+  val (plan, _) = SmtWordGraph.graph_normalize_using_with_metrics
+    {word_conversion = fn _ => raise Conv.UNCHANGED,
+     bit_conversion = fn _ => raise Conv.UNCHANGED,
+     node_conversion = SmtFpGraph.convert_word_projection}
+    graph scope (#node source)
+  val _ = assert
+    (SmtReplayCanonGraph.graph_source plan <>
+       SmtReplayCanonGraph.graph_result plan,
+     "FP helper did not enter checked graph discovery")
+  val block = SmtReplayProof.prepare_needed_sources_with_conversions graph
+    {scope=scope,roots=SmtReplayCanonGraph.graph_roots plan,sources=[],
+     closed_facts=[],conversions=SmtReplayCanonGraph.graph_conversions plan,
+     template_limit=SmtResource.max_bv_replay_term_nodes}
+  val edge = SmtReplayCanonGraph.graph_assemble_named graph block plan
+  val realized = Thm.TRANS (#bridge source)
+    (SmtReplayProof.realize block
+      (SmtReplayCanonGraph.graph_equality plan) edge)
+  val _ = assert (Portable.pointer_eq
+    (boolSyntax.lhs (Thm.concl realized), small),
+    "FP graph recipe lost its exact endpoint on realization")
+  val _ = assert_no_hyps ("FP graph recipe realization", realized)
+  val _ = check_oracle_tags "FP graph recipe realization" realized
+  fun compare (label, term, expected) =
+    let
+      val _ = testutils.tprint ("FP graph field " ^ label)
+      val fresh = SmtFpGraph.lower_words term
+      val right = boolSyntax.rhs (Thm.concl fresh)
+      val equation = boolSyntax.mk_eq (expected, right)
+      val check = wordsLib.WORD_DECIDE equation
+    in
+      assert_no_hyps ("FP rounding/count graph control", check);
+      check_oracle_tags "FP rounding/count graph control" check;
+      assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl fresh), term),
+        "FP rounding/count graph lost its source");
+      assert_no_hyps ("FP rounding/count graph", fresh);
+      check_oracle_tags "FP rounding/count graph" fresh;
+      testutils.OK ()
+    end
+  fun highest 0 = ``0w:word8``
+    | highest n = boolSyntax.mk_cond
+        (wordsSyntax.mk_index (``w:word8``, numSyntax.term_of_int (n-1)),
+         wordsSyntax.mk_wordii (n-1,8), highest (n-1))
+  val priority_expected = highest 8
+  val _ = List.app compare
+    [("dimension count",
+       ``(smtfp_word_priority (dimindex (:8)) (w:word8) : word8)``,
+       priority_expected),
+     ("computed count",
+       ``(smtfp_word_priority ((2 + 2) + (2 + 2)) (w:word8) : word8)``,
+       priority_expected),
+     ("rounding test", ``smtfp_unpack_rounding (r:word3) = RTZ``,
+       ``~((r:word3) = 0w) /\ ~(r = 1w) /\ ~(r = 2w) /\ ~(r = 3w)``),
+     ("reversed rounding test", ``RTN = smtfp_unpack_rounding (r:word3)``,
+       ``(r:word3) = 3w``),
+     ("rounding case", ``(case smtfp_unpack_rounding (r:word3) of
+          RNE => (a:word8) | RNA => b | RTP => c | RTN => d | RTZ => e)``,
+       ``if (r:word3) = 0w then (a:word8) else if r = 1w then b
+         else if r = 2w then c else if r = 3w then d else e``)]
+  fun count 0 = numSyntax.term_of_int 8
+    | count n = let val child = count (n - 1)
+      in Term.list_mk_comb (``MIN``, [child, child]) end
+  val priority = Term.rator (Term.rator
+    ``(smtfp_word_priority 8 (w:word8) : word8)``)
+  val count_source = Term.list_mk_comb (priority, [count 12, ``w:word8``])
+  val _ = compare ("shared count", count_source, priority_expected)
+  fun shared_type 0 = Type.bool
+    | shared_type n = let val child = shared_type (n - 1)
+      in Type.mk_type ("prod", [child, child]) end
+  val typed_head = Term.inst
+    [Type.mk_vartype "'e" |-> shared_type 21,
+     Type.mk_vartype "'c" |-> fcpLib.index_type (Arbnum.fromInt 8)]
+    (Term.prim_mk_const
+      {Thy = "smtfloatReplayAddSubWord", Name = "smtfp_word_addsub_exp"})
+  val typed_source = Term.mk_comb (typed_head, Term.mk_var
+    ("fp_field_typed", #1 (Type.dom_rng (Term.type_of typed_head))))
+  val mixed_head = Term.inst
+    [Type.mk_vartype "'c" |-> shared_type 21]
+    (Term.prim_mk_const
+      {Thy = "smtfloatReplayAddSubWord", Name = "smtfp_word_addsub_exp"})
+  val mixed_source = Term.mk_comb (mixed_head, Term.mk_var
+    ("fp_mixed_typed", #1 (Type.dom_rng (Term.type_of mixed_head))))
+  val mixed_fp = Term.inst
+    [Type.mk_vartype "'z" |-> shared_type 21]
+    ``fp_partial_format : ('a,'z) smtfp``
+  fun rejects_before_type_inst convert source =
+    let
+      val prior = #INST_TYPE (Count.thm_count ())
+      val rejected =
+        ((ignore (convert source); false)
+         handle Feedback.HOL_ERR error => SmtResource.is_resource_gate error)
+    in rejected andalso #INST_TYPE (Count.thm_count ()) = prior end
+  val _ = Count.counting_thms true
+  val admitted_first = List.map
+      (rejects_before_type_inst SmtFpGraph.convert_word_projection)
+      [typed_source,mixed_source] @
+    [rejects_before_type_inst SmtFpGraph.represent mixed_fp]
+  val _ = Count.counting_thms false
+  val _ = assert (List.all I admitted_first,
+    "FP helper entered native Type instantiation before full admission")
+  (* Already represented bits need only reflexivity, not full admission of
+     an unused polymorphic format suffix. Keep this formerly cheap path. *)
+  fun shared_poly_type 0 = Type.mk_vartype "'fp_bits_dimension"
+    | shared_poly_type n = let val child = shared_poly_type (n - 1)
+      in Type.mk_type ("prod", [child, child]) end
+  val bits = Term.inst
+    [Type.mk_vartype "'z" |-> shared_poly_type 21]
+    ``smtfp_bits (s:word1) (e:'a word) (f:'z word)``
+  val descriptor = SmtFpGraph.represent bits
+  val _ = assert (Portable.pointer_eq (#value descriptor, bits) andalso
+      Portable.pointer_eq
+        (boolSyntax.lhs (Thm.concl (#representation descriptor)), bits)
+      andalso Portable.pointer_eq
+        (boolSyntax.rhs (Thm.concl (#representation descriptor)), bits),
+    "FP bits reflexivity imposed a new format-admission refusal")
+  val _ = assert_no_hyps ("FP polymorphic bits", #representation descriptor)
+  val _ = check_oracle_tags "FP polymorphic bits" (#representation descriptor)
+  val huge_type = wordsSyntax.mk_int_word_type 8193
+  val ignored = Term.mk_var ("fp_ignored", huge_type)
+  val producer = wordsSyntax.mk_word_add (ignored, ignored)
+  val kept = ``fp_kept : word8``
+  val constant = Term.mk_abs (ignored, kept)
+  val _ = List.app (fn input =>
+    let val proof = SmtFpGraph.lower_words input in
+      assert_concl_alpha ("FP source island first refusal", proof,
+        boolSyntax.mk_eq (input, kept));
+      assert_no_hyps ("FP source island first refusal", proof);
+      check_oracle_tags "FP source island first refusal" proof
+    end) [Term.mk_comb (constant, producer),
+          boolSyntax.mk_let (constant, producer)]
+  val atom = ``smtfp_is_normal (smtfp_abs (q : (7,4) smtfp))``
+  val lowered = SmtFpGraph.lower_atom atom
+in
+  assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl lowered), atom),
+    "compact FP lowering lost the original-format endpoint");
+  assert_no_hyps ("compact FP lowering", lowered);
+  check_oracle_tags "compact FP lowering" lowered
 end
 
 fun smtfp_tier2_resource_diagnostic () =
@@ -31873,7 +32085,7 @@ let
   fun unchanged _ = raise Conv.UNCHANGED
   fun ptr left right = Portable.pointer_eq (left,right)
   fun check label action =
-    (tprint label; action (); OK ())
+    (testutils.tprint label; action (); testutils.OK ())
   fun fixture term =
     let val graph = G.new () val scope = G.root_scope graph
     in (graph,scope,#node (G.import graph scope cap term)) end
@@ -32349,7 +32561,9 @@ fun run_binder_resource_unittests () =
     ("binder_opening_resource_success", binder_opening_resource_success)
 
 fun run_fp_graph_unittests () =
-  run_test ("smtfp_graph_stage1_success", smtfp_graph_stage1_success)
+  (run_test ("smtfp_graph_stage1_success", smtfp_graph_stage1_success);
+   run_test ("smtfp_compact_field_templates_success",
+     smtfp_compact_field_templates_success))
 
 fun run_cnf_graph_unittests () =
   List.app run_test
@@ -33827,6 +34041,8 @@ let
     ("smtfp_tier2_atom_classes_success",
       smtfp_tier2_atom_classes_success),
     ("smtfp_graph_stage1_success", smtfp_graph_stage1_success),
+    ("smtfp_compact_field_templates_success",
+      smtfp_compact_field_templates_success),
     ("smtfp_tier2_resource_diagnostic",
       smtfp_tier2_resource_diagnostic),
     ("smtfp_bit_decomposition_rung_success",

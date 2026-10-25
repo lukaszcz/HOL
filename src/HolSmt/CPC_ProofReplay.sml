@@ -7873,8 +7873,7 @@ local
                   val law =
                     (SmtResource.with_bitblast_step_time
                        "cpc-trust-fp-word-projection-schema"
-                       (SmtWordGraph.normalize_with_node_conversion
-                         SmtFpGraph.convert_word_projection) schematic
+                       SmtFpGraph.lower_words schematic
                      handle Conv.UNCHANGED =>
                        SmtResource.with_resource_step_time
                          "BitVector" "fp-word-mul-projection-schema"
@@ -7925,8 +7924,7 @@ local
                     (index, Term.list_mk_comb (head, variables))
                   val law = SmtResource.with_bitblast_step_time
                     "cpc-trust-fp-word-bit-schema"
-                    (SmtWordGraph.normalize_with_node_conversion
-                      SmtFpGraph.convert_word_projection) schematic
+                    SmtFpGraph.lower_words schematic
                   val _ = word_bit_laws :=
                     (head, index, variables, law) :: !word_bit_laws
                 in (variables, law) end
