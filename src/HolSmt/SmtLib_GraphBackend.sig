@@ -19,6 +19,19 @@ sig
     {graph : SmtReplayGraph.graph, scope : SmtReplayGraph.scope,
      import_limit : int, literal_limit : int, binder_limit : int}
     -> SmtReplayGraph.node backend
+  (* Scoped source-index provenance. These are original small constructor
+     callbacks, never callbacks over graph operands. Capture is backend-local
+     and restored on success or failure; it retains no lexical frame. *)
+  type index_callback =
+    string * (string -> Term.term list -> Term.term list -> Term.term) *
+    Term.term option
+  val capture_index_callbacks : 'a backend -> (unit -> 'b) ->
+    'b * {last:index_callback option, callbacks:unit -> index_callback list}
+  val note_index_callback : 'a backend -> index_callback -> unit
+  exception IndexSyntaxError of exn
+  exception IndexBinderError of exn
+  val index_callback : 'a backend -> (unit -> 'b) -> 'b
+  val index_source_active : 'a backend -> bool
   val root : 'a backend -> 'a frame
   val type_of : 'a backend -> 'a -> Type.hol_type
   (* Shallow syntax observations, never native compound operands. Identity
@@ -31,6 +44,10 @@ sig
   val small_index_with_policy : 'a backend -> 'a frame ->
     SmtReplayResourcePolicy.limit -> 'a -> Term.term
   val lookup : 'a backend -> 'a frame -> string -> 'a option
+  (* Immutable lexical map snapshot; only admitted type metadata is read.
+     No live lexical frame or operand realization is retained. *)
+  val binding_type_lookup : 'a backend -> 'a frame ->
+    (string -> Type.hol_type option)
   (* Retained original source syntax is imported in the backend's source
      scope. Lexical references use lookup/variable rather than source
      bridges. *)

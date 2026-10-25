@@ -61,6 +61,11 @@ sig
   val natural_index_with_policy : context ->
     SmtReplayResourcePolicy.limit -> value -> natural_index
   val application : context -> SmtReplayGraph.scope -> value * value -> value
+  (* Literal-index grammar may recover from a source type error. All other
+     errors retain the ordinary application's expected-owner retirement. *)
+  exception IndexApplicationTypeError of exn
+  val index_application : context -> SmtReplayGraph.scope ->
+    value * value -> value
   val abstraction : context -> SmtReplayGraph.scope ->
     {binder:value,body:value,body_frame:SmtReplayGraph.scope} -> value
   val new_scope : context -> SmtReplayGraph.scope ->

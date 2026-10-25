@@ -291,15 +291,17 @@ struct
     let val _ = tick context (IntInf.fromInt (length left+length right))
     in Redblackset.listItems (Redblackset.addList
       (Redblackset.addList (Redblackset.empty Int.compare,left),right)) end
-  fun application context scope (function,argument) =
-    protected context (fn () =>
+  fun application_body on_type_error context scope (function,argument) =
     let
       val _ = tick context 1
       val _ = usable context scope function
       val _ = usable context scope argument
       val (domain,range) = Type.dom_rng (type_of context function)
+        handle error as Feedback.HOL_ERR _ =>
+          (on_type_error error;raise error)
       val _ = if Type.compare (domain,type_of context argument)=EQUAL then ()
-        else raise ERR "application" "application operand type mismatch"
+        else let val error=ERR "application" "application operand type mismatch"
+             in on_type_error error;raise error end
       val index = (G.scope_id scope,key context function,key context argument)
       val Context {applications,...} = context
     in case Redblackmap.peek (!applications,index) of
@@ -312,7 +314,15 @@ struct
               val _ = applications := Redblackmap.insert
                 (!applications,index,current)
           in current end
-    end)
+    end
+  fun application context scope operands =
+    protected context (fn () => application_body ignore context scope operands)
+  exception IndexApplicationTypeError of exn
+  fun index_application context scope operands =
+    application_body (fn error => raise IndexApplicationTypeError error)
+      context scope operands
+    handle typed as IndexApplicationTypeError _ => raise typed
+      | primary => protected context (fn () => raise primary)
   fun abstraction context scope {binder,body,body_frame} =
     protected context (fn () =>
       let

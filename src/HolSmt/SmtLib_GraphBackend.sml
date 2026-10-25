@@ -10,8 +10,12 @@ struct
   type 'a solver_variable =
     {node : 'a, lexical : Term.term, scope : G.scope option}
   datatype 'a view = Atom of Term.term | Apply of 'a * 'a | Opaque
+  type index_callback =
+    string * (string -> Term.term list -> Term.term list -> Term.term) *
+    Term.term option
   datatype 'a backend = Backend of
     {owner : unit ref, graph : G.graph option, initial : environment,
+     index_callbacks : {depth:int ref, history:index_callback list ref},
      validate_environment : environment -> unit,
      type_of : 'a -> Type.hol_type,
      view : environment -> 'a -> 'a view,
@@ -44,6 +48,34 @@ struct
      variables : 'a list,descriptors : (string * string * Type.hol_type) list,
      binders : bool,epoch : int,symbols : int}
 
+  fun new_index_callbacks () = {depth=ref 0,history=ref []}
+  fun capture_index_callbacks
+      (Backend {index_callbacks={depth,history},...}) action =
+    let
+      val saved = !history
+      val _ = depth := !depth + 1
+      val result = Exn.capture action ()
+      val after = !history
+      val _ = depth := !depth - 1
+      val _ = if !depth=0 then history := [] else ()
+      fun prefix pending accumulated =
+        if Portable.pointer_eq (saved,pending) then accumulated
+        else case pending of x::xs => prefix xs (x::accumulated)
+          | [] => raise ERR "index" "invalid callback history"
+      val last = if Portable.pointer_eq (saved,after) then NONE
+                 else SOME (hd after)
+    in (Exn.release result,{last=last,callbacks=fn () => prefix after []}) end
+  fun note_index_callback (Backend {index_callbacks={depth,history},...})
+      entry =
+    if !depth=0 then () else history := entry :: !history
+  fun index_source_active (Backend {index_callbacks={depth,...},...}) = !depth>0
+  exception IndexSyntaxError of exn
+  exception IndexBinderError of exn
+  fun index_callback backend action =
+    action () handle error as Feedback.HOL_ERR _ =>
+      if index_source_active backend then raise IndexSyntaxError error
+      else raise error
+
   fun type_of (Backend {type_of, ...}) value = type_of value
   fun variable_descriptor (Backend {variable_descriptor, ...}) value =
     variable_descriptor value
@@ -68,6 +100,10 @@ struct
     in close (); result end
   fun lookup backend frame key =
     Redblackmap.peek (#2 (checked_frame backend frame), key)
+  fun binding_type_lookup backend frame =
+    let val bindings = #2 (checked_frame backend frame)
+    in fn key => Option.map (type_of backend) (Redblackmap.peek (bindings,key))
+    end
   fun source (backend as Backend {source, ...}) frame term =
     source (#1 (checked_frame backend frame)) term
   fun literal (backend as Backend {literal, ...}) frame term =
@@ -82,8 +118,25 @@ struct
       (mk_bound_var descriptor)
   fun reference (backend as Backend {reference, ...}) frame declaration =
     reference (#1 (checked_frame backend frame)) declaration
-  fun application (backend as Backend {application, ...}) frame operands =
-    application (#1 (checked_frame backend frame)) operands
+  fun application (backend as Backend {application,view,...}) frame
+      (function,argument) =
+    let val environment = #1 (checked_frame backend frame)
+    in application environment (function,argument)
+      handle error as Feedback.HOL_ERR detail =>
+        if index_source_active backend andalso
+           Feedback.top_function_of detail = "application" andalso
+           Feedback.message_of detail = "application operand type mismatch"
+        then
+          let val binder = case view environment function of
+                Atom term => Term.is_const term andalso
+                  let val {Thy,Name,...} = Term.dest_thy_const term
+                  in Thy="bool" andalso List.exists (fn n => n=Name)
+                    ["!","?","@"] end
+              | _ => false
+          in if binder then raise IndexBinderError error
+             else raise IndexSyntaxError error end
+        else raise error
+    end
   fun view (backend as Backend {view, ...}) frame value =
     view (#1 (checked_frame backend frame)) value
   fun same_value (backend as Backend {same_value, ...}) (left,right) =
@@ -117,6 +170,7 @@ struct
 
   fun terms {mk_bound_var, mk_let} = Backend
     {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
+     index_callbacks = new_index_callbacks (),
      view = fn _ => term_view, same_value = Portable.pointer_eq,
      variable_descriptor = fn term =>
        if Term.is_var term then SOME term else NONE,
@@ -243,6 +297,7 @@ struct
            G.recorded_abstraction graph (construction environment) binder_limit
              {binder = binder,body = body,
               body_frame = construction body_environment},
+       index_callbacks = new_index_callbacks (),
        new_abstraction_scope = fn environment =>
          let val retained = G.new_construction_scope graph
                {lexical = lexical environment,
@@ -898,6 +953,7 @@ struct
              binder_limit
              {binder = binder,body = body,
               body_frame = construction body_environment},
+       index_callbacks = new_index_callbacks (),
        new_abstraction_scope = fn environment =>
          let val retained = G.new_construction_scope graph
                {lexical = lexical environment,
@@ -940,6 +996,7 @@ struct
         raise ERR "values" "nonpositive public import contract"
       val _ = PV.validate_for context graph scope
       val owner = ref ()
+      val index_callbacks = new_index_callbacks ()
       fun step () = PV.spend context 1
       fun protect action = PV.protect context action
       fun scopes (SOME fields) = fields
@@ -984,7 +1041,7 @@ struct
         in case PV.view context value of PV.Variable (G.SolverFlexible,_) =>
             record term value | _ => value end
       val backend = Backend
-        {owner=owner,graph=SOME graph,
+        {owner=owner,graph=SOME graph,index_callbacks=index_callbacks,
          initial=SOME {lexical=scope,construction=scope},
          validate_environment=fn environment =>
            (PV.spend context 0;
@@ -1019,8 +1076,11 @@ struct
            (lexical environment),
          bound_variable=fn environment => fn term => retain term
            (PV.fresh_bound context (construction environment) term),
-         application=fn environment =>
-           PV.application context (construction environment),
+         application=fn environment => fn operands =>
+           if !(#depth index_callbacks)=0 then
+             PV.application context (construction environment) operands
+           else (PV.index_application context (construction environment)
+             operands handle PV.IndexApplicationTypeError error => raise error),
          new_scope=fn environment => fn bindings =>
            let val child = PV.new_scope context (lexical environment) bindings
            in SOME {lexical=child,construction=child} end,

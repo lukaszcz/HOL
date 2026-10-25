@@ -116,6 +116,7 @@ struct
       "(abs (- 3))","((_ divisible 3) 9)","(< 1 2 3)",
       "(<= 1 2 3)","(> 3 2 1)","(>= 3 2 1)",
       "(let ((i 3)) ((_ divisible i) 9))",
+      "((_ divisible (let ((i 3)) i)) 9)",
       "(forall ((i Int)) ((_ divisible i) 9))"]),
      ("QF_LRA",["123","1.2500","(- 1.2)","(- 3.0 2.0 1.0)",
       "(+ 1.0 2.0 3.0)","(* 1.0 2.0 3.0)","(/ 3.0 2.0 1.0)",
@@ -127,6 +128,7 @@ struct
       "(concat #b01 #b100)","((_ extract 2 1) #b1010)",
       "((_ @bit_of 0) #b1)","((_ repeat 3) #b10)",
       "((_ zero_extend 2) #b10)","((_ sign_extend 2) #b10)",
+      "((_ zero_extend (! 2 :named width)) #b10)",
       "((_ rotate_left 2) #b101)","((_ rotate_right 2) #b101)",
       "(ubv_to_int #b101)","(sbv_to_int #b101)",
       "((_ int_to_bv 3) 5)",
@@ -169,6 +171,23 @@ struct
       "(forall ((x MissingSort)) true)"]),
      ("QF_BV",["#b","#b2","#xg","(_ bvbad 3)",
       "(let ((i 2)) ((_ zero_extend i) #b10))",
+      "((_ zero_extend (let ((i 2)) i)) #b10)",
+      "((_ zero_extend (forall ((p Bool)) p)) #b10)",
+      "((_ zero_extend (let ((i 2)) i) 3) #b10)",
+      "((_ zero_extend (let ((i 2)) i)))",
+      "((_ zero_extend (bvnot)) #b10)",
+      "((_ zero_extend (bvadd #b1 true)) #b10)",
+      "((_ zero_extend ((_ extract 1) #b10)) #b10)",
+      "((_ zero_extend (forall ((p MissingSort)) p)) #b10)",
+      "((_ zero_extend (exists ((p Bool)) p)) #b10)",
+      "((_ zero_extend (forall ((p Bool)) 2)) #b10)",
+      "((_ zero_extend (lambda ((i Int)) i)) #b10)",
+      "(let ((i 2)) ((_ zero_extend (let ((j i)) j)) #b10))",
+      "(let ((i 2)) ((_ zero_extend (+ i 1)) #b10))",
+      "((_ zero_extend (let ((|i i| 2)) |i i|)) #b10)",
+      "((_ zero_extend (+ (let ((i 2)) i) 1)) #b10)",
+      "((_ extract (let ((i 2)) i) 0) #b101)",
+      "((_ zero_extend (let ((i 2)) (let ((i 3)) i))) #b10)",
       "(let ((i 2) (j 1)) ((_ extract i j) #b1010))",
       "(bvnot)","(bvadd #b1)","((_ extract 1) #b00)",
       "((_ zero_extend 1 2) #b0)","(bvadd #b1 #b00)",
@@ -176,6 +195,11 @@ struct
       "(forall ((x (_ BitVec))) true)"]),
      ("QF_FP",["RoundingGarbage","(forall ((x (Float16 Int))) true)",
       "(let ((e 5) (s 11)) (_ +zero e s))",
+      "(_ +zero (let ((e 5)) e) 11)",
+      "(_ +zero (forall ((p Bool)) p) 11)",
+      "(_ +zero (let ((e 5)) e))",
+      "((_ to_fp (let ((e 5)) e) 11) #x0000)",
+      "((_ fp.to_ubv (let ((i 8)) i)) RTZ "^fp^")",
       "(_ +zero 1 11)","(_ NaN 5 1)","(fp.abs)",
       "((_ to_fp 5 11) #b0)","((_ to_fp_unsigned 5 11) RNE true)",
       "(fp.add true "^fp^" "^fp^")",
@@ -186,6 +210,87 @@ struct
       (Feedback.top_structure_of e,Feedback.top_function_of e,
        Feedback.message_of e)
     | exn => SOME (General.exnName exn,"",General.exnMessage exn)
+  fun dialect_indices () =
+    let
+      val registry_parsed = parsed
+      fun second _ [] [_,y] = y
+        | second token _ _ = SmtLib_Theories.decline token "two operands"
+      (* The CPC @bvsize recipe is type-directed, not an application head. *)
+      fun width _ [] [word] = intSyntax.mk_injected (numSyntax.mk_numeral
+            (fcpLib.index_to_num (wordsSyntax.dim_of word)))
+        | width token _ _ = SmtLib_Theories.decline token "one word"
+      val extras = [("@bvsize",width),("@second",second)]
+      val (sorts,dict) = SmtLib_Logics.parsedicts_of_solver_logic "cvc5" "QF_BV"
+      val dict = List.foldl Library.extend_dict dict extras
+      fun ordinary text = P.parse_term_with_cfg cfg (tokens text) (sorts,dict)
+      fun parsed backend exact text =
+        let
+          val selected = if exact then
+              #2 (#dictionaries (R.select_with_policy_no_override backend
+                policy {logic="QF_BV",solver=SOME "cvc5"}))
+            else #2 (#dictionaries (R.select backend limits
+                {logic="QF_BV",solver=SOME "cvc5"}))
+          val dict = List.foldl (fn ((name,parse),dict) =>
+            Library.extend_dict ((name,if exact then
+              R.recipe_parsefn_with_policy backend policy parse
+              else R.recipe_parsefn backend limits parse),dict)) selected extras
+        in if exact then P.parse_term_with_policy
+             (policy_options backend (B.root backend)) (tokens text)
+             (sorts,dict)
+           else P.parse_term_with_backend
+             (options backend (B.root backend)) (tokens text) (sorts,dict)
+        end
+      fun word 0 = "w"
+        | word n = "(let ((w (bvadd w w))) "^word (n-1)^")"
+      fun indexed 0 = "#b1"
+        | indexed n = "((_ zero_extend (@bvsize "^indexed (n-1)^")) #b1)"
+      val good =
+        ["((_ zero_extend (@bvsize "^indexed 160^")) #b10)",
+         "((_ zero_extend (@bvsize (let ((w #b10)) "^word 80^"))) #b10)",
+         "((_ zero_extend (forall () (@bvsize #b10))) #b10)",
+         "((_ zero_extend (@bvsize #b10)) #b10)",
+         "((_ zero_extend (@bvsize (let ((w #b10)) w))) #b10)",
+         "((_ zero_extend (@second (let ((i 2)) i) 2)) #b10)"]
+      val bad =
+        ["((_ zero_extend (let () (@bvsize #b10))) #b10)",
+         "((_ zero_extend (@bvsize (let () #b10))) #b10)",
+         "((_ zero_extend (let ((w #b10)) (@bvsize w))) #b10)",
+         "((_ zero_extend (@second 2 (let ((i 2)) i))) #b10)"]
+      val huge = "#b" ^ String.implode (List.tabulate (300,fn _ => #"1"))
+      fun resource backend exact =
+        let
+          val direct = failure (fn () => registry_parsed backend exact "ALL"
+            ("(_ divisible "^huge^")"))
+          val nested = failure (fn () => registry_parsed backend exact "ALL"
+            ("((_ zero_extend (_ divisible "^huge^")) #b10)"))
+        in ensure "compound index swallowed admission failure"
+          (direct = SOME ("SmtLib_Parser","parse_indexed_term",
+             "index literal exceeds its bounded import contract") andalso
+           nested = direct)
+        end
+      fun check backend interpret exact =
+        (resource backend exact;
+         List.app (fn text =>
+           (print ("DIALECT "^SmtResource.bounded_text 200 text^"\n");
+            bridge (ordinary text) (interpret (parsed backend exact text))))
+           good;
+         List.app (fn text =>
+           let val expected=failure (fn () => ordinary text)
+               val actual=failure (fn () => parsed backend exact text)
+               fun show NONE="ACCEPTED"
+                 | show (SOME (s,f,m))=s^"."^f^": "^m
+               val _=print ("DIALECT_NEGATIVE "^text^"\n"^
+                 show expected^"\n"^show actual^"\n")
+           in ensure "dialect index classification changed"
+             (expected=actual) end) bad)
+      val _=tprint "Compound indices retain exact dialect callback provenance"
+      val _=List.app (fn exact =>
+        (with_graph (fn graph => fn backend =>
+           check backend (G.representative graph) exact);
+         with_values (fn _ => fn _ => fn backend =>
+           check backend (small backend) exact))) [false,true]
+    in OK () end
+
   fun identities () =
     let
       val width=Arbnum.fromInt 2
@@ -301,6 +406,21 @@ struct
              (#node_creations stats<100) end)))
         [("QF_LIA","+","1"),("QF_BV","bvadd","#b01"),
          ("QF_FP","fp.add",fp)]
+      fun nest 0 = "x"
+        | nest n = "(let ((x (+ x x))) "^nest (n-1)^")"
+      val text = "((_ divisible (let ((x 1)) "^nest 80^")) 3)"
+      val _=List.app (fn exact =>
+        (with_graph (fn graph => fn backend =>
+           let val value=parsed backend exact "QF_LIA" text
+           in ensure "compound semantic index was expanded"
+             (G.dag_nodes graph [value]<500 andalso
+              G.unfolded_nodes graph G.RawNodes 200000 value=SOME 200001)
+           end);
+         with_values (fn graph => fn _ => fn backend =>
+           let val (_,stats)=G.with_node_statistics graph (G.root_scope graph)
+                 (fn () => parsed backend exact "QF_LIA" text)
+           in ensure "compound value index was realized"
+             (#node_creations stats<100) end))) [false,true]
       val _=OK ()
     in () end
   fun uncapped () =
@@ -334,6 +454,7 @@ struct
     in () end
   fun run () =
     let
+      val _=dialect_indices ()
       fun positive logic text =
         let val _=print ("SCALAR "^logic^" "^text^"\n")
             val original=ordinary logic text

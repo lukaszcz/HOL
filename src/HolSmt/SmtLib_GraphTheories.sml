@@ -33,16 +33,114 @@ struct
        (IntInf.fromInt operand_limit),
      token_limit=SmtReplayResourcePolicy.AtMost (IntInf.fromInt token_limit)}
 
+  (* Literal indices retain source LET/binder syntax independently of the
+     semantic value. Only admitted small operands reach ordinary callbacks;
+     semantic indices never enter this re-elaboration path. *)
+  fun source_index backend frame maximum dictionary
+      ({tokens,binding_type,heads,callbacks,sorts,symbol_key,type_symbol_key,
+        parse_choice,parse_lambda,binder_lists,fixed,literal}
+        : 'a P.index_source) =
+    let
+      val _ = B.frame_scope backend frame
+      exception IndexLimit
+      fun limit_error () = Feedback.mk_HOL_ERR "SmtLib_GraphBackend"
+        "index" "expanded literal index"
+      fun admit term =
+        case SmtReplayImport.raw_size_with_policy maximum term of
+          SOME _ => term
+        | NONE => raise IndexLimit
+      fun elaborate () =
+        let
+          val tokens = tokens ()
+          val callbacks = callbacks ()
+          val heads = heads ()
+          val binder_lists = binder_lists ()
+          fun external (token,value,arity) =
+            let
+              fun strip 0 value = value
+                | strip n value = case B.view backend frame value of
+                    B.Apply (f,_) => strip (n-1) f
+                  | _ => raise ERR "index" "invalid source index head"
+              val term = B.small_index_with_policy backend frame maximum
+                (strip arity value)
+            in fn _ => fn indices => fn arguments =>
+              if null indices then Term.list_mk_comb (term,arguments)
+              else T.decline token "source value does not take indices"
+            end
+          (* Exact callbacks cover dialect recipes that compute literals
+             (e.g. @bvsize); their results do not identify their heads. *)
+          val dictionary = List.foldl (fn ((token,parse,_),dict) =>
+            Library.extend_dict ((symbol_key token,parse),dict))
+            dictionary callbacks
+          (* External declarations contribute only their small original
+             head, never operands. Bound names are handled by the grammar. *)
+          fun head ((token,value,arity),dict) =
+            let val key = symbol_key token in
+              if Redblackmap.inDomain (dictionary,key) then dict
+              else Library.extend_dict ((key,external (token,value,arity)),dict)
+            end
+          val dictionary = List.foldl head dictionary heads
+          fun binding (token,dict) =
+            let val key = symbol_key token in
+              case binding_type key of NONE => dict
+              | SOME ty =>
+                let val term = Term.mk_var (P.proof_symbol_text token,ty)
+                in Library.extend_dict ((key,fn token => fn indices =>
+                  fn arguments =>
+                    if null indices andalso null arguments then term
+                    else T.decline token "wrong number of arguments"),dict)
+                end
+            end
+          val dictionary = List.foldl binding dictionary tokens
+          fun bounded parse token indices arguments =
+            admit (parse token (List.map admit indices)
+              (List.map admit arguments))
+          val dictionary = Redblackmap.map
+            (fn (_,parses) => List.map bounded parses) dictionary
+          val pending = ref tokens
+          fun get_token () = case !pending of
+              token::rest => (pending := rest; token)
+            | [] => raise ERR "index" "incomplete source index"
+          val variables = ref (0 : IntInf.int)
+          fun variable pair =
+            (variables := !variables + 1;
+             if SmtReplayResourcePolicy.allows maximum (!variables) then
+               Term.mk_var pair
+             else raise IndexLimit)
+          val cfg : P.parser_cfg =
+            {mk_let_bindings=P.smtlib_mk_let_bindings,
+             mk_let=fn (bindings,body) => admit (P.smtlib_mk_let
+               (List.map (fn (key,var,rhs) => (key,admit var,admit rhs))
+                  bindings,admit body)),
+             mk_bound_var=variable,lookup_binder_list=fn token =>
+               Option.map #2
+                 (List.find (fn (name,_) => name=token) binder_lists),
+             record_binder_block=fn _ => (),symbol_key=symbol_key,
+             type_symbol_key=type_symbol_key,parse_choice=parse_choice,
+             parse_lambda=parse_lambda}
+          val term = admit
+            (P.parse_term_with_cfg cfg get_token (sorts,dictionary)
+             handle Feedback.HOL_ERR _ =>
+               Term.mk_var ("(",Type.mk_vartype "'smtlib_index"))
+          val _ = literal := SOME term
+        in term end
+    in (case fixed of SOME term => admit term | NONE => elaborate ())
+       handle IndexLimit => raise limit_error ()
+    end
+
   (* Legacy LET indices see the lexical variable, not its substituted RHS.
      Keep that distinction (and its malformed-index diagnostic). External
      literal indices are observed only under the explicit small contract.
      Divisibility accepts a semantic Int index directly as an ID. *)
-  fun prepare_indices backend frame maximum token indices =
+  fun prepare_indices backend frame maximum dictionary token indices =
     if token = "divisible" then
       List.map (fn P.LexicalIndex pair => P.ValueIndex pair
+        | P.SourceIndex (value,_) => P.ValueIndex (value,"(")
         | index => index) indices
     else List.map
-      (fn P.LexicalIndex (value,name) => P.LiteralIndex
+      (fn P.SourceIndex (_,source) => P.LiteralIndex
+          (source_index backend frame maximum dictionary source)
+        | P.LexicalIndex (value,name) => P.LiteralIndex
           (Term.mk_var (P.proof_symbol_text name,B.type_of backend value))
         | P.ValueIndex (value,_) => P.LiteralIndex
             (B.small_index_with_policy backend frame maximum value)
@@ -174,6 +272,20 @@ struct
     in B.compile_recipe {template = template, holes = holes,
       template_limit = #template_limit limits} end
 
+  fun observed_schema backend build parse token request =
+    if not (B.index_source_active backend) then build parse token request
+    else let
+      val fixed = ref NONE
+      fun native token indices arguments =
+        let val term = B.index_callback backend
+              (fn () => parse token indices arguments)
+            val _ = if B.index_source_active backend andalso
+                null (Term.free_vars term) then fixed := SOME term else ()
+        in term end
+      val result = build native token request
+      val _ = B.note_index_callback backend (token,parse,!fixed)
+    in result end
+
   fun deferred ({theory, name, support, ...} : entry) _ _ _ _ =
     let val reason = case support of
         Scoped reason => reason | Shape reason => reason
@@ -204,9 +316,11 @@ struct
                   andalso name = "@bbterm" then
                 SmtLib_GraphWordBuilders.bbterm backend (finite_policy limits)
               else (fn frame => fn token => fn indices =>
-                P.construction_recipe_parsefn backend (schema limits parse)
+                P.construction_recipe_parsefn backend
+                  (observed_schema backend (schema limits) parse)
                   frame token (prepare_indices backend frame
-                    (#index_limit (finite_policy limits)) token indices))
+                    (#index_limit (finite_policy limits)) dictionary
+                    token indices))
             | _ => deferred description
         end
       val dictionary = Redblackmap.map (fn (name, callbacks) =>
@@ -216,9 +330,11 @@ struct
   fun recipe_parsefn backend limits parse =
     (checked_limits limits;
      fn frame => fn token => fn indices =>
-       P.construction_recipe_parsefn backend (schema limits parse)
+       P.construction_recipe_parsefn backend
+         (observed_schema backend (schema limits) parse)
          frame token (prepare_indices backend frame
-           (#index_limit (finite_policy limits)) token indices))
+           (#index_limit (finite_policy limits))
+           (#2 (L.parsedicts_of_logic "ALL")) token indices))
   fun select backend limits options =
     select_with backend limits (fn _ => NONE) options
 
@@ -281,7 +397,9 @@ struct
   fun construction_recipe_parsefn_with_policy backend build frame
       token indices arguments =
     let
-      fun index (LexicalIndex pair,state) = index (ValueIndex pair,state)
+      fun index (SourceIndex (value,_),state) =
+            index (ValueIndex (value,"("),state)
+        | index (LexicalIndex pair,state) = index (ValueIndex pair,state)
         | index (LiteralIndex term, (descriptions, values, next)) =
             (RecipeLiteral term :: descriptions, values, next)
         | index (SymbolIndex name, (descriptions, values, next)) =
@@ -322,9 +440,10 @@ struct
                 SmtLib_GraphWordBuilders.bbterm backend limits
               else (fn frame => fn token => fn indices =>
                 construction_recipe_parsefn_with_policy backend
-                  (schema_with_policy limits parse) frame token
+                  (observed_schema backend (schema_with_policy limits)
+                    parse) frame token
                   (prepare_indices backend frame (#index_limit limits)
-                    token indices))
+                    dictionary token indices))
             | _ => deferred description
         end
       val dictionary = Redblackmap.map (fn (name, callbacks) =>
@@ -335,8 +454,10 @@ struct
     (checked_policy_limits limits;
      fn frame => fn token => fn indices =>
        construction_recipe_parsefn_with_policy backend
-         (schema_with_policy limits parse) frame token
-         (prepare_indices backend frame (#index_limit limits) token indices))
+         (observed_schema backend (schema_with_policy limits) parse)
+         frame token
+         (prepare_indices backend frame (#index_limit limits)
+           (#2 (L.parsedicts_of_logic "ALL")) token indices))
   fun select_with_policy_no_override backend limits options =
     select_with_policy backend limits (fn _ => NONE) options
 

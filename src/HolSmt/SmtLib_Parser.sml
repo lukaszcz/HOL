@@ -178,10 +178,20 @@ struct
      so retain those as backend values instead of forcing a HOL expansion.
      Lexical indices additionally preserve the legacy pre-LET variable role;
      ordinary recipes must not confuse them with external literal aliases. *)
+  type 'a index_source =
+    {tokens : unit -> string list,
+     binding_type : string -> Type.hol_type option,
+     heads : unit -> (string * 'a * int) list, sorts : Type.hol_type dict,
+     callbacks : unit -> SmtLib_GraphBackend.index_callback list,
+     symbol_key : string -> string, type_symbol_key : string -> string,
+     parse_choice : bool, parse_lambda : bool,
+     binder_lists : unit -> (string * Term.term list) list,
+     fixed : Term.term option, literal : Term.term option ref}
   datatype 'a construction_index =
       LiteralIndex of Term.term
     | ValueIndex of 'a * string
     | LexicalIndex of 'a * string
+    | SourceIndex of 'a * 'a index_source
     | SymbolIndex of string
   type 'a construction_parse_fn =
     'a SmtLib_GraphBackend.frame -> string ->
@@ -2352,11 +2362,15 @@ local
   in
 
   fun construction_index_text (LiteralIndex term) = Hol_pp.term_to_string term
-    | construction_index_text (SymbolIndex name) = name
+    | construction_index_text (SymbolIndex name) = Hol_pp.term_to_string
+        (Term.mk_var (name,Type.mk_vartype "'smtlib_index"))
     | construction_index_text (ValueIndex (_, token)) =
         "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
     | construction_index_text (LexicalIndex (_, token)) =
         "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
+    | construction_index_text (SourceIndex (_, {literal,...})) =
+        (case !literal of SOME term => Hol_pp.term_to_string term
+         | NONE => "<term index (>")
 
   fun apply_construction_symbol (cfg : 'a construction_cfg) dictionary frame
       token indices arguments =
@@ -2378,7 +2392,9 @@ local
      Semantic indices are extra typed operand holes, never expanded terms. *)
   fun construction_recipe_parsefn backend build frame token indices arguments =
     let
-      fun index (LexicalIndex pair, state) = index (ValueIndex pair,state)
+      fun index (SourceIndex (value,_), state) =
+            index (ValueIndex (value,"("),state)
+        | index (LexicalIndex pair, state) = index (ValueIndex pair,state)
         | index (LiteralIndex term, (descriptions, values, next)) =
             (RecipeLiteral term :: descriptions, values, next)
         | index (SymbolIndex name, (descriptions, values, next)) =
@@ -2410,6 +2426,7 @@ local
       fun term_index (LiteralIndex term) = term
         | term_index (ValueIndex (term, _)) = term
         | term_index (LexicalIndex (term, _)) = term
+        | term_index (SourceIndex (term, _)) = term
         | term_index (SymbolIndex name) =
             Term.mk_var (name, Type.mk_vartype "'smtlib_index")
       fun adapt parse _ token indices arguments =
@@ -2438,20 +2455,138 @@ local
         | NONE => dictionary
     end
 
+  (* Record source tokens, not substituted backend syntax. Only compound
+     indices need this side channel. Lookahead is recorded on its first
+     read, never when it is replayed from the local pending-token queue.
+     Persistent tails let nested captures share the token/head histories. *)
+  fun construction_binder_lookup lookup
+      {backend,frame,symbol_key,type_symbol_key,index_limit,parse_choice,
+       parse_lambda,lookup_binder_list,record_binder_block,binder_reference,
+       ascribed_symbol,coerce_arguments} =
+    {backend=backend,frame=frame,symbol_key=symbol_key,
+     type_symbol_key=type_symbol_key,index_limit=index_limit,
+     parse_choice=parse_choice,parse_lambda=parse_lambda,
+     lookup_binder_list=lookup,record_binder_block=record_binder_block,
+     binder_reference=binder_reference,ascribed_symbol=ascribed_symbol,
+     coerce_arguments=coerce_arguments}
+
+  fun index_source_reader backend symbol_key type_symbol_key sorts
+      parse_choice parse_lambda lookup_binder_list original_token =
+    let
+      val depth = ref 0
+      val history = ref []
+      val heads = ref []
+      val binder_lists = ref []
+      fun prefix tail pending =
+        if Portable.pointer_eq (tail,pending) then []
+        else case pending of x::xs => x :: prefix tail xs
+          | [] => raise Fail "index source history"
+      fun get_token () =
+        let val token = original_token ()
+        in if !depth = 0 then () else history := token :: !history;
+           token
+        end
+      fun record frame token indices arguments value =
+        if !depth = 0 orelse not (null indices) orelse
+           Option.isSome (B.lookup backend frame (symbol_key token)) then ()
+        else heads := (token,value,List.length arguments) :: !heads
+      fun lookup token =
+        let val result = lookup_binder_list token in
+          if !depth = 0 then () else
+            Option.app (fn entries => binder_lists :=
+              (token,List.map (fn (_,name,ty) => Term.mk_var (name,ty)) entries)
+                :: !binder_lists) result;
+          result
+        end
+      fun source frame token parse =
+        let
+          val binding_type = B.binding_type_lookup backend frame
+          val before_tokens = !history
+          val before_heads = !heads
+          val before_lists = !binder_lists
+          val _ = depth := !depth + 1
+          val result = Exn.capture
+            (fn () => B.capture_index_callbacks backend parse) ()
+          val after_tokens = !history
+          val after_heads = !heads
+          val after_lists = !binder_lists
+          fun tokens () = token :: List.rev (prefix before_tokens after_tokens)
+          val _ = depth := !depth - 1
+          val _ = if !depth = 0 then
+            (history := []; heads := []; binder_lists := []) else ()
+          val (parsed,{last,callbacks}) = Exn.release result
+          fun root (ConstructionOccurrence {role,token,children,...}) =
+            case (role,children) of
+              (ConstructionAnnotation,[child]) => root child
+            | (ConstructionBinder {variables=[],...},[child]) => root child
+            | _ => (case role of ConstructionLet _ => NONE
+               | ConstructionBinder _ => NONE
+               | ConstructionAscribed _ => NONE
+               | _ => case last of
+                   SOME (name,_,fixed) => if token=name then fixed else NONE
+                 | NONE => NONE)
+          val fixed = root parsed
+          val source =
+            {tokens=tokens,binding_type=binding_type,
+             heads=fn () => prefix before_heads after_heads,
+             callbacks=callbacks,sorts=sorts,
+             symbol_key=symbol_key,
+             type_symbol_key=type_symbol_key,parse_choice=parse_choice,
+             parse_lambda=parse_lambda,
+             binder_lists=fn () => prefix before_lists after_lists,
+             fixed=fixed,literal=ref fixed}
+        in (SourceIndex (construction_value parsed,source),SOME parsed,token)
+        end handle B.IndexBinderError _ =>
+          (* Native binders check the body type after reading their close. *)
+          (ignore (get_token ());
+           (SymbolIndex (proof_symbol_text token),NONE,token))
+        | B.IndexSyntaxError _ =>
+          (SymbolIndex (proof_symbol_text token),NONE,token)
+        | Feedback.HOL_ERR error =>
+          if Feedback.top_function_of error = "parse_indexed_term" andalso
+             Feedback.message_of error =
+               "index literal exceeds its bounded import contract" then
+            raise Feedback.HOL_ERR error
+          else if not (Option.isSome (B.frame_scope backend frame)) orelse
+             (Feedback.top_structure_of error = "Type" andalso
+              Feedback.top_function_of error = "dom_rng") orelse
+             List.exists (fn name => name=Feedback.top_structure_of error)
+               ["SmtLib_Parser","SmtLib_Theories","Library"] then
+            (SymbolIndex (proof_symbol_text token),NONE,token)
+          else raise Feedback.HOL_ERR error
+      fun occurrence value role token children =
+        let
+          (* Reject at the same cursor as native mk_anylet: AFTER the LET's
+             closing token, not inside the backend's alias construction. *)
+          val _ = case role of ConstructionLet [] =>
+              if !depth>0 andalso Option.isSome
+                  (B.frame_scope backend (B.root backend)) then
+                B.index_callback backend
+                  (fn () => ignore (pairSyntax.mk_anylet ([],boolSyntax.T)))
+              else ()
+            | _ => ()
+        in ConstructionOccurrence
+          {value=value,role=role,token=token,children=children} end
+    in {get_token=get_token,source=source,record=record,
+        lookup_binder_list=lookup,occurrence=occurrence} end
+
   fun parse_term_recorded_with_backend_and_indices
       (cfg : 'a construction_cfg) symbolic_index get_token
       (tydict, dictionary : 'a construction_dict) =
     let
       val backend = #backend cfg
-      val original_token = get_token
+      val reader = index_source_reader backend (#symbol_key cfg)
+        (#type_symbol_key cfg) tydict (#parse_choice cfg)
+        (#parse_lambda cfg) (#lookup_binder_list cfg) get_token
+      val cfg = construction_binder_lookup (#lookup_binder_list reader) cfg
+      val original_token = #get_token reader
       val pending_tokens = ref ([] : string list)
       fun get_token () = case !pending_tokens of
           token :: rest => (pending_tokens := rest; token)
         | [] => original_token ()
       fun unread tokens = pending_tokens := tokens @ !pending_tokens
       fun expect token = Library.expect_token token (get_token ())
-      fun occurrence value role token children = ConstructionOccurrence
-        {value = value, role = role, token = token, children = children}
+      val occurrence = #occurrence reader
       fun apply frame token indices arguments role children =
         let
           val key = (#symbol_key cfg) token
@@ -2466,6 +2601,7 @@ local
           | NONE => apply_construction_symbol cfg
               (construction_scope_dictionary backend frame dictionary key NONE)
               frame token indices arguments
+          val _ = (#record reader) frame token indices arguments value
         in occurrence value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
       fun bounded_index term =
@@ -2473,7 +2609,9 @@ local
           SOME _ => LiteralIndex term
         | NONE => raise ERR "parse_indexed_term"
             "index literal exceeds its bounded import contract"
-      fun index frame head token =
+      fun index frame head "(" =
+            (#source reader) frame "(" (fn () => term_aux frame "(" [])
+        | index frame head token =
         case symbolic_index head token of
           SOME name => (SymbolIndex name, NONE, token)
         | NONE => case Lib.total index_numeral_term token of
@@ -2723,15 +2861,18 @@ local
       (tydict, dictionary : 'a construction_dict) =
     let
       val backend = #backend cfg
-      val original_token = get_token
+      val reader = index_source_reader backend (#symbol_key cfg)
+        (#type_symbol_key cfg) tydict (#parse_choice cfg)
+        (#parse_lambda cfg) (#lookup_binder_list cfg) get_token
+      val cfg = construction_binder_lookup (#lookup_binder_list reader) cfg
+      val original_token = #get_token reader
       val pending_tokens = ref ([] : string list)
       fun get_token () = case !pending_tokens of
           token :: rest => (pending_tokens := rest; token)
         | [] => original_token ()
       fun unread tokens = pending_tokens := tokens @ !pending_tokens
       fun expect token = Library.expect_token token (get_token ())
-      fun occurrence value role token children = ConstructionOccurrence
-        {value = value, role = role, token = token, children = children}
+      val occurrence = #occurrence reader
       fun apply frame token indices arguments role children =
         let
           val key = (#symbol_key cfg) token
@@ -2746,6 +2887,7 @@ local
           | NONE => apply_construction_symbol_with_policy cfg
               (construction_scope_dictionary backend frame dictionary key NONE)
               frame token indices arguments
+          val _ = (#record reader) frame token indices arguments value
         in occurrence value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
       fun bounded_index term =
@@ -2753,7 +2895,9 @@ local
           SOME _ => LiteralIndex term
         | NONE => raise ERR "parse_indexed_term"
             "index literal exceeds its bounded import contract"
-      fun index frame head token =
+      fun index frame head "(" =
+            (#source reader) frame "(" (fn () => term_aux frame "(" [])
+        | index frame head token =
         case symbolic_index head token of
           SOME name => (SymbolIndex name, NONE, token)
         | NONE => case Lib.total index_numeral_term token of
