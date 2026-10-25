@@ -27197,17 +27197,45 @@ let
   val mixed_fp = Term.inst
     [Type.mk_vartype "'z" |-> shared_type 21]
     ``fp_partial_format : ('a,'z) smtfp``
+  (* Input classification stops at 't in the format, whereas the RHS
+     dimword (:'e) exposes the hidden closed dimension to INST_TYPE. *)
+  fun encode_exponent dimension =
+    let
+      val head = Term.inst
+        [Type.mk_vartype "'e" |-> dimension,
+         Type.mk_vartype "'c" |-> fcpLib.index_type (Arbnum.fromInt 8),
+         Type.mk_vartype "'d" |-> fcpLib.index_type (Arbnum.fromInt 12)]
+        (Term.prim_mk_const
+          {Thy = "smtfloatReplayEncodeWord",
+           Name = "smtfp_word_encode_exponent"})
+      val format = Term.mk_var
+        ("fp_hidden_format", #1 (Type.dom_rng (Term.type_of head)))
+    in Term.list_mk_comb
+      (head, [format, ``fp_hidden_scale:word8``, ``fp_hidden_data:word12``])
+    end
+  val hidden_sources = List.map (encode_exponent o shared_type) [21,80]
+  val prefix_admission = SmtSkeletonProve.new_type_admission_context ()
+  val _ = List.app (fn source =>
+    let val (head, arguments) = boolSyntax.strip_comb source in
+      #intern prefix_admission (Term.type_of head);
+      List.app (fn term => #intern prefix_admission (Term.type_of term))
+        arguments;
+      #intern prefix_admission (Term.type_of source)
+    end) hidden_sources
   fun rejects_before_type_inst convert source =
     let
       val prior = #INST_TYPE (Count.thm_count ())
       val rejected =
         ((ignore (convert source); false)
-         handle Feedback.HOL_ERR error => SmtResource.is_resource_gate error)
+         handle Feedback.HOL_ERR error =>
+           SmtResource.is_resource_gate error andalso
+           Feedback.message_of error = SmtResource.term_size_diagnostic_for
+             "BitVector" "skeleton-type-work" 2097151)
     in rejected andalso #INST_TYPE (Count.thm_count ()) = prior end
   val _ = Count.counting_thms true
   val admitted_first = List.map
       (rejects_before_type_inst SmtFpGraph.convert_word_projection)
-      [typed_source,mixed_source] @
+      (typed_source :: mixed_source :: hidden_sources) @
     [rejects_before_type_inst SmtFpGraph.represent mixed_fp]
   val _ = Count.counting_thms false
   val _ = assert (List.all I admitted_first,
@@ -27252,6 +27280,16 @@ let
   val poly_proof = SmtFpGraph.convert_word_projection poly_helper
   val _ = assert_no_hyps ("FP polymorphic helper", poly_proof)
   val _ = check_oracle_tags "FP polymorphic helper" poly_proof
+  (* Prospective RHS admission must still stop at a polymorphic prefix;
+     the closed suffix is not visited by the native classification. *)
+  val hidden_poly = encode_exponent (Type.mk_type ("prod",
+    [Type.mk_vartype "'fp_hidden_poly", shared_type 21]))
+  val hidden_poly_proof = SmtFpGraph.convert_word_projection hidden_poly
+  val _ = assert (Portable.pointer_eq
+    (boolSyntax.lhs (Thm.concl hidden_poly_proof), hidden_poly),
+    "FP RHS type admission lost its polymorphic source")
+  val _ = assert_no_hyps ("FP hidden polymorphic RHS", hidden_poly_proof)
+  val _ = check_oracle_tags "FP hidden polymorphic RHS" hidden_poly_proof
   val huge_type = wordsSyntax.mk_int_word_type 8193
   val ignored = Term.mk_var ("fp_ignored", huge_type)
   val producer = wordsSyntax.mk_word_add (ignored, ignored)

@@ -403,6 +403,26 @@ struct
                     Term.mk_var ("fp_field_operand_" ^ Int.toString i,
                       Term.type_of argument))
                     (List.tabulate (length arguments, I), arguments)
+                  (* INST_TYPE classifies every changed constant in the
+                     definition, not just its head. A format's polymorphic
+                     first parameter can hide a closed shared dimension
+                     which an RHS dimword/itself annotation exposes. Admit
+                     those native classification prefixes prospectively.
+                     Substitute only in the small generic annotations:
+                     Type.type_subst does not traverse inserted Types. Do
+                     not instantiate the theorem to discover this work, or
+                     impose a full-Type bound on unused polymorphic suffixes. *)
+                  val (_, equation) = boolSyntax.strip_forall
+                    (Thm.concl definition)
+                  val (generic_head, _) = boolSyntax.strip_comb
+                    (boolSyntax.lhs equation)
+                  val types = Type.match_type (Term.type_of generic_head)
+                    (Term.type_of head)
+                  fun admit node = #intern admission
+                    (Type.type_subst types (Term.type_of node))
+                  val _ = SmtResource.dag_nodes_up_to_with_inspector admit
+                    SmtResource.max_bv_replay_term_nodes
+                    (Thm.concl definition)
                   val template = Term.list_mk_comb (head,variables)
                   val law = SmtResource.profile_phase
                     "fp-field/static-schema"
