@@ -399,6 +399,27 @@ struct
       List.all (fn text => String.isSubstring text message) required andalso
       List.all (fn text => not (String.isSubstring text message)) forbidden)
       label body
+  (* Compare the actual native first exception, not only a message fragment.
+     In particular speculative lambda routing must not diagnose a later RHS. *)
+  fun native_first_error label body =
+    let
+      val text = wrap body
+      fun diagnostic action =
+        let val error = (action ();NONE)
+              handle Feedback.HOL_ERR detail => SOME
+                (Feedback.top_structure_of detail,
+                 Feedback.top_function_of detail,Feedback.message_of detail)
+        in case error of SOME detail => detail
+          | NONE => raise Fail "first-error fixture unexpectedly accepted" end
+      val expected = diagnostic (fn () => ignore (legacy text))
+    in List.app (fn route => test (label ^ " / " ^ route_name route)
+      (fn () => owned (fn e =>
+        let val actual = diagnostic (fn () => case route of
+                Value => VP.close (value_packet e text)
+              | _ => Packet.close (native_packet route e text))
+            val _ = G.validate_scope (#graph e) (#scope e)
+        in require "native first HOL_ERR triple changed" (actual=expected)
+        end))) routes end
   (* Identity/occurrence checks from group433 supplement semantic bridges.
      Closing variables before ALPHA must not mask reused Bound identities. *)
   fun alias_rule (proof:'a Z.constructed_proof) id =
@@ -466,6 +487,48 @@ struct
     | _ => with_native route (wrap body) (fn e => fn proof =>
         check_shadow mode (fn node => case G.view (#graph e) node of
           G.Variable (G.Bound,_) => true | _ => false) proof))) routes
+  fun annotated_occurrences () =
+    let
+      val text = wrap
+        "(let ((a (! (or task34_compound (not task34_compound)) :qid k)))\
+        \ (asserted (! a :qid a)))"
+      fun source (e:env) node = case G.source_anchor (#graph e) node of
+          SOME {original,...} => Portable.pointer_eq (original,compound)
+        | NONE => false
+      fun check clauses source (proof:''a Z.constructed_proof) =
+        let
+          val term = #conclusion (alias_rule proof (#root proof))
+          val outer = #node term
+          fun annotation (SmtLib_Parser.ConstructionOccurrence
+              {value,role=SmtLib_Parser.ConstructionAnnotation,
+               token="!",children=[child]}) =
+                (require "annotation changed its node" (value=outer);child)
+            | annotation _ = raise Fail "annotation occurrence lost"
+          val inner = annotation (annotation (#occurrence term))
+          val _ = require "annotated alias lost OR syntax" (case inner of
+              SmtLib_Parser.ConstructionOccurrence
+                {token="or",children=[_,_],...} => true | _ => false)
+          val (left,right) = case clauses term of [a,b] => (a,b)
+            | _ => raise Fail "annotated alias lost two clause leaves"
+          val original = SmtLib_Parser.construction_value left
+          val _ = require "compound Source was opened or replaced"
+            (source original andalso atom original left)
+        in require "negated Source occurrence changed" (case right of
+            SmtLib_Parser.ConstructionOccurrence
+              {token="not",children=[child],...} => atom original child
+          | _ => false) end
+    in List.app (fn route => test
+      ("annotated alias retains Source/clause occurrences / " ^
+       route_name route) (fn () => case route of
+          Value => with_value text (fn e => fn context => fn proof =>
+            check F.value_clause_occurrences (fn value =>
+              case PV.proof_graph_reference context
+                  (PV.proof_term context value) of
+                SOME {graph,node,...} =>
+                  Portable.pointer_eq (graph,#graph e) andalso source e node
+              | NONE => false) proof)
+        | _ => with_native route text (fn e => fn proof =>
+            check F.clause_occurrences (source e) proof))) routes end
   (* Unlike parser-only positives, every inference here is valid. Replay
      the original packet, not an observation rebuilt as a synthetic proof.
      Value projection remains semantic-only; no projection is replayed. *)
@@ -494,6 +557,7 @@ struct
     let
       val _ = bridges := 0
       val _ = failures := []
+      val _ = annotated_occurrences ()
       val _ = replay_positive "valid refl with term let"
         "(let ((a (or true false))) (refl (= a a)))"
         ``(T \/ F) = (T \/ F)``
@@ -503,7 +567,17 @@ struct
       val _ = replay_positive "valid quoted local @x term let"
         "(symm (let ((|@x7| true)) (refl (= @x7 @x7))) (= true true))"
         ``T = T``
+      val _ = replay_positive "annotated refl replays as a proof"
+        "(! (refl (= true true)) :qid k)" ``T = T``
+      val _ = replay_positive "annotation preserves a proof alias"
+        "(let ((p (refl (= true true)))) (! p :pattern ((p)) :qid p))"
+        ``T = T``
       val tt = asserted boolSyntax.T val ff = asserted boolSyntax.F
+      val _ = positive "nested annotations retain proof kind"
+        "(! (! (refl (= true true)) :qid k) :named k)"
+        (rule "refl" ``T = T`` [])
+      val _ = positive "annotated proof alias is not an annotated term"
+        "(let ((p (asserted true))) (! p :pattern ((p)) :qid p))" tt
       fun ur terms result = rule "unit-resolution" result terms
       val _ = positive "plain proof grammar" "(asserted true)" tt
       val _ = positive "term alias keeps OR semantics"
@@ -598,6 +672,9 @@ struct
         \ (asserted false) false)"
         (ur [asserted (boolSyntax.mk_eq (nested_term,nested_term)),ff]
           boolSyntax.F)
+      val _ = positive "annotated term alias keeps compound Source boundary"
+        "(let ((a (! task34_compound :qid k))) (asserted (! a :qid a)))"
+        (asserted compound)
       (* Use actual term arguments for quant-inst, not proof-typed terms.
          The last index re-shadows an incoming proof alias within the index. *)
       val _ = simultaneous "atomic and compound term indices keep their types"
@@ -612,6 +689,13 @@ struct
         \ (let ((_ (asserted true))) (asserted ((_ divisible 3) n))))\
         \ (asserted false) false)"
         (ur [asserted divides,ff] boolSyntax.F)
+      val _ = List.app (fn token =>
+        List.app (fn rhs => positive
+          ("numeral index precedes lexical binding " ^ token ^ " " ^ rhs)
+          ("(let ((|" ^ token ^ "| " ^ rhs ^ ")) " ^
+           "(asserted ((_ divisible " ^ token ^ ") 6)))")
+          (asserted divides)) ["(asserted true)","9"])
+        ["3","#x3","#b11"]
       val _ = positive "frontend atomic index resolves a local term alias"
         "(let ((n 3)) (asserted ((_ divisible n) 6)))"
         (asserted divides)
@@ -653,6 +737,16 @@ struct
           [Bind ([``:int``],
             Lemma ({theory="arith",subkind=NONE,indices=[]},
               ``\x:int. T``,[]))])
+      val _ = List.app (fn body => positive
+        "annotation preserves proof lambda classification" body
+        (rule "quant-intro" boolSyntax.F
+          [Bind ([``:int``],rule "refl" ``\x:int. x = x`` [])]))
+        ["(quant-intro (proof-bind (lambda ((x Int))" ^
+         " (! (refl (= x x)) :qid k))) false)",
+         "(quant-intro (proof-bind (! (lambda ((x Int))" ^
+         " (refl (= x x))) :qid k)) false)",
+         "(let ((p (! (lambda ((x Int)) (refl (= x x))) :qid k)))" ^
+         " (quant-intro (proof-bind (! p :qid p)) false))"]
       val _ = positive "lambda let lambda composes proof bindings"
         "(quant-intro (proof-bind (lambda ((x Int))\
         \ (let ((a true)) (lambda ((y Int)) (asserted (= x y)))))) false)"
@@ -711,6 +805,19 @@ struct
       val _ = negative "local proof not is still not an atomic term"
         "(unit-resolution (let ((not (asserted true))) (asserted not))\
         \ (asserted false) false)"
+      val _ = List.app (fn suffix => native_first_error
+        "unknown RHS before later malformed lambda (native triple)"
+        ("(proof-bind (lambda ((x Int)) (let ((a missing)" ^
+         " (b (lambda bad (asserted true)))) (asserted true))))" ^ suffix))
+        ["",")"]
+      val _ = first_error "bad name precedes later malformed lambda"
+        ("(proof-bind (lambda ((x Int)) (let ((\"bad\" true)" ^
+         " (b (lambda bad (asserted true)))) (asserted true))))")
+        ["string literal used as a let binding name"] ["lambda_binders"]
+      val _ = native_first_error
+        "earlier RHS inside term lambda precedes later malformed lambda"
+        ("(let ((p (lambda ((x Int)) (let ((a missing)" ^
+         " (b (lambda bad true))) x)))) (asserted true))")
       val bad_name = "string literal used as a let binding name"
       val _ = first_error "earlier unknown RHS precedes later bad let name"
         "(unit-resolution (let ((a missing) (\"bad\" true))\

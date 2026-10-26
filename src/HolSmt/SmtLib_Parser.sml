@@ -2840,14 +2840,16 @@ local
             construction_source_index backend (#source reader) frame "("
               (fn () => term_aux frame "(" [])
         | index frame head token =
-        case construction_symbolic_index backend frame (#symbol_key cfg)
-            symbolic_index head token of
-          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
-        | NONE => case Lib.total index_numeral_term token of
+        (* Native indices recognize numerals before consulting any lexical
+           binding, including proof blockers with the same decoded name. *)
+        case Lib.total index_numeral_term token of
           SOME term =>
             let val index = bounded_index term
                 val _ = B.syntax_spend backend 1
             in (index, NONE, token, C.native term) end
+        | NONE => case construction_symbolic_index backend frame
+            (#symbol_key cfg) symbolic_index head token of
+          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
         | NONE =>
             (let val parsed = term_aux frame token []
                  val index = resolved_index (construction_value parsed) token
@@ -3184,14 +3186,15 @@ local
             construction_source_index backend (#source reader) frame "("
               (fn () => term_aux frame "(" [])
         | index frame head token =
-        case construction_symbolic_index backend frame (#symbol_key cfg)
-            symbolic_index head token of
-          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
-        | NONE => case Lib.total index_numeral_term token of
+        (* Keep the same numeral-first rule on policy and Value carriers. *)
+        case Lib.total index_numeral_term token of
           SOME term =>
             let val index = bounded_index term
                 val _ = B.syntax_spend backend 1
             in (index, NONE, token, C.native term) end
+        | NONE => case construction_symbolic_index backend frame
+            (#symbol_key cfg) symbolic_index head token of
+          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
         | NONE =>
             (let val parsed = term_aux frame token []
                  val index = resolved_index (construction_value parsed) token

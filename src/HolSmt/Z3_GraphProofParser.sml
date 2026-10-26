@@ -187,7 +187,9 @@ struct
       (* Classify only the result spine before opening a proof lambda.
          Ordinary term lambdas go straight to the frontend: no speculative
          graph construction, binder opening or extra admission is needed.
-         This is syntax routing, never a semantic equality decision. *)
+         This is syntax routing, never a semantic equality decision. It must
+         be total even on malformed syntax: normal left-to-right parsing,
+         not this lookahead, owns every diagnostic. *)
       fun proof_lambda aliases raw =
         let
           fun kind local_names (Atom name) =
@@ -207,13 +209,16 @@ struct
                 in kind (List.foldl (fn ((name, value), names) =>
                   Redblackmap.insert (names, name, value))
                   local_names values) body end
+            | kind local_names (List (Atom "!" :: body :: _)) =
+                kind local_names body
             | kind local_names (List [Atom "lambda", binders, body]) =
                 let fun shadow (List [Atom name, _], names) =
                           Redblackmap.insert
                             (names, P.proof_symbol_text name, false)
                       | shadow (_, names) = names
                 in kind (List.foldl shadow local_names
-                  (list "lambda_binders" binders)) body end
+                  (case binders of List entries => entries | _ => []))
+                  body end
             | kind local_names (List (head :: _)) =
                 let val name = case head of Atom name => name
                       | List (Atom "_" :: Atom name :: _) => name
@@ -280,6 +285,18 @@ struct
             | NONE => Term (term session aliases raw))
         | List [Atom "let", bindings, body] =>
             parse_let session aliases bindings body
+        | List (Atom "!" :: body :: _) =>
+            (* Attributes are inert S-expressions, including proof names.
+               Preserve the body's value kind; term occurrences still keep
+               the annotation boundary used by clause/literal consumers. *)
+            (case parse_value session aliases body of
+               Term value => Term
+                 {node = #node value, scope = #scope value,
+                  binder_blocks = #binder_blocks value, source_syntax = NONE,
+                  occurrence = P.ConstructionOccurrence
+                    {value = #node value, role = P.ConstructionAnnotation,
+                     token = "!", children = [#occurrence value]}}
+             | value => value)
         | List [Atom "lambda", _, _] =>
             if proof_lambda aliases raw then parse_lambda session aliases raw
             else Term (term session aliases raw)
