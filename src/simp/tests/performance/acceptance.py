@@ -231,7 +231,7 @@ def archive_protocol(manifest, receipt):
 
 
 def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
-            seconds, iterations=None, policy=POLICY):
+            seconds, iterations=None, policy=POLICY, layout_seed=None):
     """Revalidate complete protocol and source binding before statistics."""
     folder = Path(folder)
     manifest = load(folder / "manifest.json")
@@ -245,6 +245,8 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
     require(options.get("outliers") == "none removed", "changed outlier rule")
     require(options.get("batch_iterations") == iterations,
             "wrong predeclared batch iterations")
+    require(options.get("layout_seed") == layout_seed,
+            "wrong layout randomization seed")
     for side, pin in (("baseline", baseline), ("candidate", candidate)):
         require(manifest["selections"][side]["revision"] == pin,
                 "wrong selected revision")
@@ -649,6 +651,10 @@ def run(args):
     if iterations is not None:
         from performance_schema import batch_iterations
         batch_iterations(iterations)
+    seed = getattr(args, "layout_seed", None)
+    if seed is not None:
+        from performance_schema import layout_seed
+        layout_seed(seed)
     exact_pin(args.baseline)
     exact_pin(args.candidate)
     require(args.authorize_measurements,
@@ -706,6 +712,8 @@ def run(args):
                                    "--output", str(folder)]
                         if iterations is not None:
                             command += ["--batch-iterations", str(iterations)]
+                        if seed is not None:
+                            command += ["--layout-seed", seed]
                         command_result = run_logged(
                             command, output / (tag + ".log"), fds, None)
                         report["commands"].append(command_result)
@@ -719,7 +727,8 @@ def run(args):
                             baseline=args.baseline,
                             candidate=candidate, pairs=args.pairs,
                             samples=args.samples, seconds=args.batch_seconds,
-                            iterations=iterations, policy=EQUIVALENCE_POLICY)
+                            iterations=iterations, policy=EQUIVALENCE_POLICY,
+                            layout_seed=seed)
                     # Controls are never subtracted as a noise budget.
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():

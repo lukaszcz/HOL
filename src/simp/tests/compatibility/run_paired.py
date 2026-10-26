@@ -391,6 +391,8 @@ def main():
     p.add_argument("--batch-seconds", type=float, default=0.2)
     p.add_argument("--batch-iterations", type=int,
                    help="predeclared common matrix calibration/batch count")
+    p.add_argument("--layout-seed",
+                   help="randomize matrix code layout per fresh process")
     args = p.parse_args()
     if (args.performance_pairs < 0 or args.samples < 3 or
             not 0.1 <= args.batch_seconds <= 60):
@@ -434,6 +436,13 @@ def main():
             performance.batch_iterations(args.batch_iterations)
         except ValueError as error:
             p.error(str(error))
+    if args.layout_seed is not None:
+        if not args.matrix_performance:
+            p.error("--layout-seed requires --matrix-performance")
+        try:
+            performance.layout_seed(args.layout_seed)
+        except ValueError as error:
+            p.error(str(error))
     repo, output = args.repo.resolve(), args.output.resolve()
     # Never overwrite historical/user evidence, even on a failed invocation.
     output.mkdir(parents=True, exist_ok=False)
@@ -473,6 +482,10 @@ def main():
             if args.batch_iterations is not None:
                 manifest["performance"]["batch_iterations"] = \
                     args.batch_iterations
+            if args.layout_seed is not None:
+                manifest["performance"]["layout_seed"] = args.layout_seed
+                manifest["performance"]["layout_units"] = \
+                    performance.LAYOUT_UNITS
     try:
         for name in ("bin/hol", "bin/hol.state0", "bin/hol.state.min",
                      "bin/Holmake", "holproject.toml"):
@@ -784,6 +797,10 @@ def main():
                             if args.batch_iterations is not None:
                                 runenv["PERF_ITERATIONS"] = \
                                     str(args.batch_iterations)
+                            if args.layout_seed is not None:
+                                runenv["PERF_LAYOUT"] = str(
+                                    performance.layout_units(
+                                        args.layout_seed, pair, selection))
                         receipt = execute([str(dst / "paired.exe")], dst,
                                           runenv, args.timeout)
                         receipt.update(

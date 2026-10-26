@@ -20,7 +20,7 @@ sys.dont_write_bytecode = True
 import acceptance as a
 import evidence_bundle as bundle
 import task29_gate as gate
-from performance_schema import batch_iterations
+from performance_schema import batch_iterations, layout_seed
 
 # The protocol minimum is ten pairs and three samples. On a shared host the
 # per-pair spread needs more of both to resolve a 3% margin; the chosen
@@ -30,10 +30,15 @@ PAIRS, SAMPLES = 10, 3
 # count keeps a quieter rerun above the driver's own wall-time floor.
 HEADROOM = 2
 COUNTS = a.HERE / "evidence/task29a/iterations.json"
-# Earlier drivers whose runs still replay. 6f62229c0 differs from this one
-# only by comparing analyses as stored (canonical) and by replay --partial.
+# Earlier drivers whose runs still replay: 6f62229c0 (before canonical
+# comparison and replay --partial) and 224219893 (before --layout-seed).
 DRIVERS = [dict(bytes=12534, sha256="234da42ca599122645b9f578b1ddd37c"
-                                    "6ffb70d83764d6e91e045ac4ffc4bd97")]
+                                    "6ffb70d83764d6e91e045ac4ffc4bd97"),
+           dict(bytes=13917, sha256="664c632deb187a1ea9c3b59445676253"
+                                    "c0872627884b2f664b0626da43d817ee")]
+# acceptance.py before --layout-seed; runs without a seed analyze the same.
+ACCEPTANCE = [dict(bytes=37287, sha256="343dfc5d009e8851f0db990bc484bdb2"
+                                       "ed1dce3e85efac2416b1335854080b97")]
 
 
 def predeclare(grid):
@@ -83,7 +88,7 @@ def canonical(value):
 
 
 def check_report(folder, report, baseline, candidate, seconds, case, size,
-                 iterations, pairs=PAIRS, samples=SAMPLES):
+                 iterations, pairs=PAIRS, samples=SAMPLES, layout_seed=None):
     """Recompute a report under the policy it recorded."""
     if not report["success"]:
         a.require(report.get("failure") or report.get("blocked"),
@@ -98,7 +103,7 @@ def check_report(folder, report, baseline, candidate, seconds, case, size,
             case=case, size=size, baseline=baseline,
             candidate=baseline if selection == "control" else candidate,
             pairs=pairs, samples=samples, seconds=seconds,
-            iterations=iterations, policy=policy)
+            iterations=iterations, policy=policy, layout_seed=layout_seed)
     for name, value in results["candidate"]["metrics"].items():
         a.apply_control(value, results["control"]["metrics"][name])
     a.require(canonical([results]) == canonical(report["workloads"]),
@@ -144,6 +149,8 @@ def run(args):
                      policy=a.EQUIVALENCE_POLICY, iterations=counts,
                      iterations_seal=a.seal(args.iterations), runs=[],
                      driver=a.seal(__file__), acceptance=a.seal(a.__file__))
+    if args.layout_seed is not None:
+        inventory["layout_seed"] = layout_seed(args.layout_seed)
     reports = {}
     keys = gate.keys()
     if args.only:
@@ -168,7 +175,8 @@ def run(args):
                         baseline=args.baseline, candidate=args.candidate,
                         authorize_measurements=True, case=[case],
                         size=[size], output=folder, mode="isolated",
-                        repo=args.repo, build_manifest=None)
+                        repo=args.repo, build_manifest=None,
+                        layout_seed=args.layout_seed)
                     report = a.run(options)
                     archive = root / (name + ".json.xz")
                     files = bundle.pack(folder, archive)
@@ -189,7 +197,8 @@ def run(args):
                     checkpoint(root / "inventory.json", inventory)
                     check_report(folder, report, args.baseline,
                                  args.candidate, args.batch_seconds,
-                                 case, size, count, args.pairs, args.samples)
+                                 case, size, count, args.pairs, args.samples,
+                                 args.layout_seed)
                     print("END %s exit=%d protocol=%s" % (
                         name, a.report_exit_status(report),
                         report["success"]), flush=True)
@@ -211,8 +220,11 @@ def replay(args):
     inventory = a.load(root / "inventory.json")
     a.require(inventory["driver"] in [a.seal(__file__)] + DRIVERS,
               "changed driver")
-    a.require(inventory["acceptance"] == a.seal(a.__file__),
+    a.require(inventory["acceptance"] in [a.seal(a.__file__)] + ACCEPTANCE,
               "changed acceptance")
+    seed = inventory.get("layout_seed")
+    a.require(seed is None or inventory["acceptance"] == a.seal(a.__file__),
+              "layout seed needs the current acceptance")
     a.require(inventory["policy"] == a.EQUIVALENCE_POLICY, "changed policy")
     a.require(inventory["iterations"] == a.load(COUNTS),
               "changed predeclared counts")
@@ -237,7 +249,7 @@ def replay(args):
             check_report(folder, report, inventory["baseline"],
                          inventory["candidate"], inventory["seconds"], *key,
                          row["iterations"], inventory["pairs"],
-                         inventory["samples"])
+                         inventory["samples"], seed)
             reports[key] = report
         print("REPLAY %s %d" % key, flush=True)
     if args.partial:
@@ -271,6 +283,8 @@ def main(argv=None):
     execute.add_argument("--pairs", type=int, default=PAIRS)
     execute.add_argument("--samples", type=int, default=SAMPLES)
     execute.add_argument("--timeout", type=int, default=1800)
+    execute.add_argument("--layout-seed",
+                         help="randomize code layout per fresh process")
     execute.add_argument("--only", action="append",
                          help="diagnostic subset; never a grid decision")
     execute.add_argument("--authorize-measurements", action="store_true")

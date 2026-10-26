@@ -21,12 +21,40 @@ fun tracedUse path =
     Meta.qquse path;
     Paired.emit ["used", path]
   end
+(* Layout randomization (performance runs only): compile PERF_LAYOUT
+   padding functions before any dependency, shifting every later code
+   address. Both sides draw independent counts; no events are emitted. *)
+fun layoutPadding () =
+  case OS.Process.getEnv "PERF_LAYOUT" of
+      NONE => ()
+    | SOME s =>
+      let
+        val units = case Int.fromString s of
+                        SOME n => if n >= 0 andalso Int.toString n = s then n
+                                  else raise Fail ("bad PERF_LAYOUT: " ^ s)
+                      | NONE => raise Fail ("bad PERF_LAYOUT: " ^ s)
+        fun unit i = "fun layout_pad" ^ Int.toString i ^ " (x : int) = x + " ^
+                     Int.toString i ^ ";\n"
+        val rest = ref (String.explode
+                          (String.concat (List.tabulate (units, unit))))
+        fun next () = case !rest of
+                          [] => NONE
+                        | c :: cs => (rest := cs; SOME c)
+        fun loop () =
+          if null (!rest) then ()
+          else (PolyML.compiler (next, [PolyML.Compiler.CPOutStream ignore])
+                  ();
+                loop ())
+      in
+        loop ()
+      end
 fun files () =
   List.app (fn (file, dir) =>
     Paired.emit ["loaded", OS.Path.concat (dir, file)])
     (Binarymap.listItems (Meta.fileDirMap ()))
 val result =
-  (Meta.loadPlan tracedUse "CheckSupport";
+  (layoutPadding ();
+   Meta.loadPlan tracedUse "CheckSupport";
    Meta.loadPlan tracedUse (Paired.env "PAIR_TARGET"); "pass")
   handle e => (Paired.emit ["exception", General.exnName e,
                             String.toString (General.exnMessage e)];

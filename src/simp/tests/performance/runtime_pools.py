@@ -499,10 +499,8 @@ def replay(output, repo, *, control=False):
                     {k: source[k] for k in ("sha256", "bytes")},
                     "selected source differs from Git")
         fixture = selection["fixture_products"]
-        runner = repo / "src/simp/tests/compatibility/paired/runner.sml"
-        raw = instrument_runner(runner.read_text()).encode()
-        require(fixture["runner.sml"] ==
-                dict(sha256=paired.digest(raw), bytes=len(raw)),
+        require(fixture["runner.sml"] in
+                old.runner_seals(repo, manifest, instrument_runner),
                 "wrong post-workload loader")
         require(fixture["RuntimePools.sml"] == seal(HERE / "RuntimePools.sml"),
                 "wrong pool postlude")

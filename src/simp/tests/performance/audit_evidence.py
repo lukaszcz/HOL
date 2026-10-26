@@ -14,7 +14,8 @@ from pathlib import Path
 import re
 import shlex
 
-from performance_schema import graphs, require, suite_options, validate
+from performance_schema import (graphs, layout_units, require,
+                                suite_options, validate)
 
 
 def archived_path(raw, *, relative=False):
@@ -193,6 +194,11 @@ def audit(manifest, receipt):
                 str(options["batch_iterations"])
                 if "batch_iterations" in options else None),
             "wrong fixed iteration environment")
+    require(env.get("PERF_LAYOUT") == (
+                str(layout_units(options["layout_seed"], receipt["pair"],
+                                 selection))
+                if "layout_seed" in options else None),
+            "wrong layout randomization environment")
     result = receipt["result"]
     events = result["events"]
     require(events[:2] == [["begin", selection, "performance", "none"],

@@ -25,6 +25,7 @@ COMPAT = HERE.parent / "compatibility"
 sys.path.insert(0, str(COMPAT))
 import run_paired as paired
 from acceptance import serial_lock
+import runtime_layout as layout
 
 SPEC = importlib.util.spec_from_file_location("caller_assembly",
     HERE.parent / "fragments/assembly/run_assembly.py")
@@ -336,10 +337,9 @@ def replay_report(output, repo):
                     "selected source differs from Git")
         tests = repo / "src/simp/tests"
         helper = (tests / "performance/CallerCodegen.sml").read_text()
-        original = (tests / "compatibility/paired/runner.sml").read_text()
-        raw = instrument_runner(original, helper).encode()
-        require(selected["fixture_products"]["runner.sml"] ==
-                dict(sha256=paired.digest(raw), bytes=len(raw)),
+        require(selected["fixture_products"]["runner.sml"] in
+                layout.runner_seals(repo, manifest,
+                                    lambda t: instrument_runner(t, helper)),
                 "wrong diagnostic loader binding")
     checked = deepcopy(manifest)
     checked["performance"]["suite"] = "matrix"

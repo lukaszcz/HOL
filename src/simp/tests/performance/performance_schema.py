@@ -1,5 +1,7 @@
 """Complete performance protocol; process/path checks live in run_paired."""
+import hashlib
 import math
+import re
 
 LABELS = (
     "rewrites_1000", "merge_frags_1000", "compile_1000",
@@ -73,12 +75,43 @@ def batch_iterations(value):
     return value
 
 
+# Code-layout randomization: each fresh process compiles a seed-derived
+# number of padding functions (about 200 code bytes each) before loading
+# any selected source, so 0..LAYOUT_UNITS-1 units span ~25 KiB of shifts.
+LAYOUT_UNITS = 128
+
+
+def layout_seed(value):
+    """A predeclared seed string; None keeps historical fixed layouts."""
+    require(isinstance(value, str) and
+            re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) is not None,
+            "layout seed must match [A-Za-z0-9._-]{1,64}")
+    return value
+
+
+def layout_units(seed, pair, selection):
+    """Independent, replayable padding count for one fresh process."""
+    layout_seed(seed)
+    require(type(pair) is int and pair >= 0 and
+            selection in ("baseline", "candidate"), "invalid layout key")
+    key = "%s:%d:%s" % (seed, pair, selection)
+    digest = hashlib.sha256(key.encode()).digest()
+    return int.from_bytes(digest[:8], "big") % LAYOUT_UNITS
+
+
 def suite_options(options):
     suite = options.get("suite", "simplifier")
     fixed = options.get("batch_iterations")
     if "batch_iterations" in options:
         batch_iterations(fixed)
         require(suite == "matrix", "fixed batches require matrix suite")
+    if "layout_seed" in options:
+        layout_seed(options["layout_seed"])
+        require(options.get("layout_units") == LAYOUT_UNITS,
+                "wrong layout padding range")
+        require(suite == "matrix", "layout seed requires matrix suite")
+    else:
+        require("layout_units" not in options, "layout units without seed")
     require(suite in ("simplifier", "traversal", "conditional", "matrix"),
             "unknown performance suite")
     if suite == "matrix":

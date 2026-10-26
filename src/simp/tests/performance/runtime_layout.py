@@ -15,6 +15,7 @@ from pathlib import Path
 import platform
 import re
 import signal
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -56,6 +57,23 @@ def save(path, value):
 
 def load(path):
     return json.loads(gzip.decompress(path.read_bytes()))
+
+
+RUNNER = "src/simp/tests/compatibility/paired/runner.sml"
+
+
+def runner_seals(repo, manifest, instrument):
+    """Instrumented live runner, and the one committed at the experiment's
+    recorded HEAD: archives predating a later runner change still replay."""
+    texts = [(repo / RUNNER).read_text()]
+    if manifest.get("head"):
+        try:
+            texts.append(paired.git(repo, "show", manifest["head"] + ":" +
+                                    RUNNER).decode())
+        except subprocess.CalledProcessError:
+            pass
+    return [dict(sha256=paired.digest(raw), bytes=len(raw))
+            for raw in (instrument(text).encode() for text in texts)]
 
 
 def instrument_runner(original):
@@ -471,10 +489,8 @@ def replay(output, repo, *, control=False):
                     {k: source[k] for k in ("sha256", "bytes")},
                     "selected source differs from Git")
         fixture = selection["fixture_products"]
-        runner = repo / "src/simp/tests/compatibility/paired/runner.sml"
-        raw = instrument_runner(runner.read_text()).encode()
-        require(fixture["runner.sml"] ==
-                dict(sha256=paired.digest(raw), bytes=len(raw)),
+        require(fixture["runner.sml"] in
+                runner_seals(repo, manifest, instrument_runner),
                 "wrong post-workload loader")
         require(fixture["RuntimeLayout.sml"] ==
                 seal(repo / "src/simp/tests/performance/RuntimeLayout.sml"),
