@@ -7,7 +7,7 @@ This is an experimental patch derived from the local Isabelle2025-2
 reviewed by inspection of the allocator, ARM64 trap/entry mechanisms, native
 allocation emitters, interpreter allocator, code allocator, and relevant
 GC/image paths. A second source review checked native pointer conventions and
-ordinary FFI paths. Private runtime controls now execute 122 brackets across
+ordinary FFI paths. Private runtime controls now execute 138 brackets across
 four Holmake/testutils launchers (original, ML workers, hybrid bytecode, native
 failures). This is not independent maintainer approval or executed proof of
 completeness. Static and runtime receipts are kept distinct. Nothing here
@@ -153,6 +153,22 @@ saves interpreter roots, calls `FindAllocationSpace(..., true)`, restores state,
 and checks for null; only success counts, with the same rounding as the RTS.
 Do not count in both `allocateMemory` and `FindAllocationSpace`.
 
+The two success hooks now call `RecordManagedInterpreterAllocation` with an
+explicit fast/slow selector. Under one lock it updates the original total and
+interpreter words AND a separate diagnostic success-count/word pair. It
+replaces the previous hook, not adding another allocation increment. Diagnostic
+count/word saturation has four independent sticky bits; its separate snapshot
+ABI leaves the original eight-word ABI unchanged. Sequential snapshots are not
+atomic together; only a quiescent single-controller process reconciles them.
+Both exported snapshot symbols must resolve into the same DSO instance.
+
+**Branch distinction:** bytecode.cpp:175 requires one MORE available word than
+processes.cpp:958's within-segment test. Consequently a bytecode slow success
+can still be satisfied within the current segment. A large-array request alone
+also does not prove which bytecode branch ran. New diagnostics observe actual
+success branches, not request-size guesses, and do NOT claim refill/GC-retry
+coverage of the lower-level allocator.
+
 `libpolyml/interpreter.cpp` is the separate machine-dependent interpreter-only
 backend, not selected in the supported build. The shared `bytecode.cpp` allocator
 is still required because the native backend can execute interpreted code,
@@ -268,8 +284,8 @@ The extended receipt in `../evidence/task29/managed-coverage/` adds:
   declaration-result packaging costs 31 words and remains visible. Exact
   additional interpreter words are 5*n for retained ref/cons lists and n for
   arrays, including their separate one-word header. Repeated full GC does not
-  recount retained interpreted objects. No branch diagnostics prove coverage
-  of both interpreter allocation branches; these are not slow-path closure.
+  recount retained interpreted objects. That historical run has no branch
+  diagnostics and cannot prove coverage of both interpreter branches.
 - Actual native allocation failures in a separate process. `--maxheap=96`
   alone is NOT a hard limit: memmgr.cpp explicitly allows a large object to
   exceed the target. The final fixture additionally sets/rechecks a one-shot
@@ -288,9 +304,21 @@ success. They are not admitted allocation controls. Using native-bracketed
 precompiled bytecode entries avoids the unsupported hybrid-FFI path without
 changing the runtime or production HOL.
 
-Coverage is still incomplete: interpreter fast/slow branch closure,
-RTS/interpreter/code failures, foreign-thread attachment, remaining slow
-paths, compact32 and prebuilt compiler/image lineage are not established.
+The separate `../evidence/task29/managed-branches/` receipt adds 16 brackets
+without replacing those 31 small bytecode brackets. Both retained-ref and array
+series at 65536/131072 elements execute BOTH successful bytecode branches.
+Every diagnostic endpoint reconciles with the original interpreter category;
+all original raw vectors repeat exactly, despite different branch schedules.
+Ref storage is exactly 5*n interpreter words, arrays n+1; 31 native entry-result
+words remain counted. No-op and empty/live GC controls have zero interpreter
+increments. Large retained results are consumed before and after GC. Synthetic
+C tests separately cover diagnostic coherence/concurrency, all saturation bits,
+independence from original overflow, and both snapshots' buffer/no-allocation
+contracts. Those synthetic increments are not allocated HOL words.
+
+Coverage is still incomplete: RTS/interpreter/code failures, foreign-thread
+attachment, lower-level refill/GC-retry and remaining slow paths, compact32
+and prebuilt compiler/image lineage are not established.
 These remain explicit prerequisite checks before full matrix acceptance,
 not claims inferred from successful narrower controls.
 

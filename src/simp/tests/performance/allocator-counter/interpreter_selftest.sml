@@ -22,6 +22,7 @@ fun required name =
 val sourcePath = required "TASK29_ALLOC_SOURCE"
 val bodyPath = required "TASK29_ALLOC_BODY"
 val hostPath = required "TASK29_ALLOC_HOST"
+val branchPath = required "TASK29_ALLOC_BRANCH_HOST"
 val _ = required "TASK29_ALLOC_SHIM"
 val oldDirectory = OS.FileSys.getDir ()
 (* Capture the HOST compiler before loading the compiler sources. Names Make,
@@ -61,6 +62,7 @@ val _ =
      * Do not compile this file into Task29InterpreterTable.
      *)
     hostUse hostPath;
+    hostUse branchPath;
     OS.FileSys.chDir oldDirectory)
    handle ex => (OS.FileSys.chDir oldDirectory; raise ex))
 val _ = testutils.tprint

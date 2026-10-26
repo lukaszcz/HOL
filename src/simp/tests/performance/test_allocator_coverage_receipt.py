@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 
 HERE = Path(__file__).resolve().parent
@@ -28,21 +29,26 @@ class CoverageReceiptTests(unittest.TestCase):
         self.assertFalse(r["task29_complete"])
         self.assertTrue(all(c["exit"] == 0 and not c["timed_out"]
                             for c in r["commands"]))
-        for path in (HERE / "allocator-counter").iterdir():
-            if not path.is_file():
+        # Historical evidence binds ORIGINAL bytes at its containing commit,
+        # not the current branch-diagnostic instrument or newly added inputs.
+        # Every recorded local input is still required, without rebasing seals.
+        revision = "90e528c41"
+        names = {"worker_schema.py", "interpreter_schema.py",
+                 "failure_schema.py", "acceptance.py", "loading.py"}
+        found = set()
+        for path, seal in r["inputs"].items():
+            if "/allocator-counter/" in path:
+                relative = "allocator-counter/" + path.rsplit("/", 1)[1]
+            elif "/performance/" in path and Path(path).name in names:
+                relative = Path(path).name
+                found.add(relative)
+            else:
                 continue
-            matches = [v for p, v in r["inputs"].items()
-                       if p.endswith("/allocator-counter/" + path.name)]
-            self.assertEqual(len(matches), 1, path.name)
-            self.assertEqual(matches[0], dict(bytes=path.stat().st_size,
-                sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
-        for name in ("worker_schema.py", "interpreter_schema.py",
-                     "failure_schema.py", "acceptance.py", "loading.py"):
-            matches = [v for p, v in r["inputs"].items()
-                       if p.endswith("/performance/" + name)]
-            self.assertEqual(len(matches), 1, name)
-            digest = hashlib.sha256((HERE / name).read_bytes()).hexdigest()
-            self.assertEqual(matches[0]["sha256"], digest)
+            raw = subprocess.check_output(["git", "show", revision +
+                ":src/simp/tests/performance/" + relative], cwd=HERE)
+            self.assertEqual(seal, dict(bytes=len(raw),
+                sha256=hashlib.sha256(raw).hexdigest()))
+        self.assertEqual(found, names)
 
     def test_real_protocols_recompute_without_private_builds(self):
         r = self.receipt

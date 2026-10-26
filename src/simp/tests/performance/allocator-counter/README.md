@@ -1,8 +1,9 @@
 # Experimental Poly/ML managed allocation counter
 
 **Experimental runtime, not TASK29B acceptance.** Four private Holmake/testutils
-launchers now execute 122 brackets: 34 original native/RTS/code/GC, 22 allocating
-ML worker/retirement, 31 hybrid bytecode, and 35 native failure/recovery controls.
+launchers now execute 138 brackets: 34 original native/RTS/code/GC, 22 allocating
+ML worker/retirement, 47 hybrid bytecode (31 original plus 16 branch controls),
+and 35 native failure/recovery controls.
 Exact native and interpreter storage slopes pass. Steady native no-op brackets
 cost four words; native-bracketed interpreted declaration entries cost 31 native
 words. Neither is zero or subtracted from workloads. The full paired allocation
@@ -38,6 +39,12 @@ the installed runtime or changes production HOL.
   closures, and bracket their execution with native FFI. Compilation and
   declaration installation are outside brackets; fixed native result packaging
   remains counted. No interpreted generic FFI or unsafe bridge/cast is used.
+- `interpreter_branch_host.sml`, `../interpreter_branch_schema.py`: additional
+  retained large-array/ref controls with separately observed successful fast
+  and slow bytecode allocations. Their words sum exactly to the original
+  interpreter category, including at cumulative endpoints. Branch schedules
+  may vary; total allocations must repeat exactly. No workers execute here.
+  Slow-bytecode success is NOT proof of lower-level refill or GC retry.
 - `failure_selftest.sml`, `failure_limit.c`: separate capped process, real
   OS-address-space exhaustion, prebuilt-interrupt comparison and allocation
   recovery. `--maxheap` alone permits oversized objects, so a one-shot verified
@@ -94,11 +101,12 @@ Poly/ML distribution: supply an identical, sealed copy under `/tmp` via
 never writes to the supplied pristine source. Do not run alongside benchmarks.
 
 Durable results are in `../evidence/task29/managed-counter/` (original) and
-`../evidence/task29/managed-coverage/` (extended). Read the actual receipt
-outcome; a completed run is **not** TASK29B matrix acceptance. Eight-byte-word
-controls do not validate compact32, foreign-created-thread callbacks, all
-interpreter fast/slow paths, RTS/interpreter/code failures or prebuilt image
-lineage. The original ordinary-runtime timing failures remain unchanged.
+`../evidence/task29/managed-coverage/` (extended), and
+`../evidence/task29/managed-branches/` (successful bytecode branches). Read the
+actual receipt outcome; a completed run is **not** TASK29B matrix acceptance.
+Eight-byte-word controls do not validate compact32, foreign-created-thread
+callbacks, all lower-level slow paths, RTS/interpreter/code failures or prebuilt
+image lineage. The original ordinary-runtime timing failures remain unchanged.
 
 The development interpreted-FFI attempt crashed in the hybrid interpreter;
 its receipt is retained, not admitted. The replacement uses typed
@@ -125,8 +133,18 @@ remain distinct from the final source-bound run.
 5. Execute the controls and path coverage in the design review before using
    any deltas. Only then undertake the full TASK29B baseline/candidate matrix.
 
-The API writes a coherent eight-uint64 snapshot into preallocated **C** memory.
-It is not a Poly/ML RTS-call ABI and must not be invoked via unsafe ML closure
+The original API still writes the same eight-uint64 snapshot into preallocated
+**C** memory. A separate diagnostic ABI exposes fast/slow success counts/words
+with independent saturating overflow bits under the same mutex. Each bytecode
+success updates both original counters and diagnostics in one critical section;
+this replaces its former original hook, never double-counting it. Each snapshot
+is coherent, but two sequential ABI calls are not atomic together. The new
+single-controller fixture reconciles them with no concurrent mutator. Both
+snapshot symbols must bind to the same runtime DSO instance; direct C buffer
+and no-allocation checks cover both. Synthetic concurrency/overflow tests are
+executed separately and are not actual allocated HOL words.
+
+Neither is a Poly/ML RTS-call ABI; never invoke them via unsafe ML closure
 casts. Executed controls distinguish the allocation-free direct C snapshot
 from the allocating generic ML FFI bracket. Never subtract four words from
 arbitrary workloads or assume a warmup-free measurement from these controls.

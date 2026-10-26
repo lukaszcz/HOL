@@ -2,6 +2,56 @@
 
 ## Status: BLOCKED, not complete
 
+### Executed successful bytecode branch coverage after `6e34739cc`
+
+The private counter now distinguishes successful fast/slow bytecode branches,
+not just their combined interpreter words. Both hooks update the original
+counters AND diagnostic count/words in one mutex extent. Diagnostics saturate
+independently; the original eight-word ABI and allocation semantics are
+unchanged. Direct C ABI/no-allocation checks cover both snapshots, and both
+symbols must bind to the same DSO instance. Synthetic concurrency/overflow
+controls run separately from actual HOL allocations.
+
+The final source-bound run executes **138 brackets / 25 successful commands**:
+all previous 122 controls plus 16 native-bracketed, precompiled bytecode-entry
+controls. Retained refs/arrays at 65536/131072 elements execute **both bytecode
+success branches** in each complete kind-series. Actual branch schedules vary;
+all original raw allocation vectors repeat exactly. Interpreter storage is
+**5*n words for refs/cons**, **n+1 for arrays**; every endpoint's diagnostic
+words reconcile with its original interpreter category. No-op/empty/live-GC
+brackets have zero interpreter words and **31 native entry-result words**,
+never subtracted. Retained results are consumed after work and after full GC.
+
+This closes only successful bytecode fast/slow branch coverage. Source review
+finds different boundary tests in bytecode.cpp:175 versus processes.cpp:958:
+a bytecode slow success can still use the current segment. Thus **refill,
+GC retry and RTS/interpreter/code failures are NOT established**. Native
+compiler/image lineage, remaining slow paths and the **entire 162-cell paired
+allocation matrix** remain missing. Compact32 and foreign-created threads
+remain unsupported/unmeasured. No ordinary-runtime timing or task completion
+is inferred from these instrumented controls.
+
+Evidence: `evidence/task29/managed-branches/RESULTS.md`, final
+`controls.json.gz`, all separate development receipts, `check-results.json.xz`
+and `validation.json`. **345 performance tests** pass (three optional skips
+outside W/four inside W), **196 compatibility tests**, normal `Holmake check`
+(13 runner tests, 36 staging assertions, 306 fragment/336 client semantic
+checks), routine selftest-enabled build, full line-length pedant and whitespace
+checks pass. The routine build initially caught one 82-column test line;
+the complete retry passes. A subsequent instrument build rejected the missing
+Overlay.ui left by the interrupted routine build; after that build completed,
+the complete final controls and discovery pass. Earlier failures remain
+explicit, not admitted. Fresh routine API receipt:
+`../api-audit/evidence/20261024T084244Z-6fb7e670/receipt.json`.
+
+No production simplifier, extension, shared public control, numerical rule or
+ordinary matrix fixture changed. The original **43 failed / 119 inconclusive**
+grid and post-driver fragment failure/collector uncertainty are **unchanged
+historical evidence**, not a newly rerun grid. Full affected-grid timing and
+the zero-GC/B/B policy review remain open. Task-created input/runtime/build,
+fixture/check and unpack trees are removed; caller-owned files are untouched.
+TASK29/TASK29A/TASK29B stay incomplete, with no completion-log line.
+
 ### Repair: precompile calibration and samples in one driver
 
 Starting/selected candidate: `40f2189c3`. Both matrix fixtures now compile

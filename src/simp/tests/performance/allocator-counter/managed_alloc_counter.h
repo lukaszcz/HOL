@@ -10,6 +10,8 @@
 
 #define POLY_MANAGED_ALLOC_SNAPSHOT_WORDS_V1 8
 #define POLY_MANAGED_ALLOC_SNAPSHOT_BYTES_V1 64
+#define POLY_MANAGED_INTERPRETER_ALLOC_SNAPSHOT_WORDS_V1 8
+#define POLY_MANAGED_INTERPRETER_ALLOC_SNAPSHOT_BYTES_V1 64
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +36,19 @@ extern "C" {
  */
 int PolyManagedAllocSnapshotV1(void *out, size_t bytes);
 
+/* Private interpreter branch diagnostics; NOT a coverage guarantee.
+ * Same buffer, lifetime, locking and saturation rules as above, but an
+ * independent overflow mask and no change to the original snapshot ABI:
+ *   [0] version (1), [1] bytes per PolyWord, [2] sticky overflow mask
+ *   [3] fast success count, [4] fast committed words
+ *   [5] slow success count, [6] slow committed words, [7] reserved (0)
+ * Overflow bits 0..3 correspond to fields 3..6 respectively.
+ * Only the two instrumented bytecode success branches contribute here.
+ * Each snapshot is coherent; two different snapshot calls are not atomic
+ * together. In particular, concurrent updates can separate their views.
+ */
+int PolyManagedInterpreterAllocSnapshotV1(void *out, size_t bytes);
+
 #ifdef __cplusplus
 }
 
@@ -48,6 +63,13 @@ enum ManagedAllocKind {
     ManagedAllocCode = 4
 };
 void RecordManagedAllocation(ManagedAllocKind kind, uint64_t words);
+
+/* Successful bytecode allocation only: atomically add the original total
+ * and interpreter words plus this branch's diagnostic count and words.
+ * slow selects the successful FindAllocationSpace path. Zero words is a
+ * no-op, just as for RecordManagedAllocation. Never call both for one event.
+ */
+void RecordManagedInterpreterAllocation(bool slow, uint64_t words);
 
 /* FindAllocationSpace rounds heap reservations to even PolyWords in
  * compact32 mode. Native traps already report that rounded distance.

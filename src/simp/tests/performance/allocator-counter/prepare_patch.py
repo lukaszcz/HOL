@@ -80,14 +80,14 @@ def transformations(originals):
                 text,
                 "        taskData->allocPointer -= words;\n",
                 "        taskData->allocPointer -= words;\n"
-                "        RecordManagedAllocation(ManagedAllocInterpreter, words);\n",
+                "        RecordManagedInterpreterAllocation(false, words);\n",
             )
             text = replace_once(
                 text,
                 "    if (space == 0) return 0;\n"
                 "    return (PolyObject*)(space + 1);",
                 "    if (space == 0) return 0;\n"
-                "    RecordManagedAllocation(ManagedAllocInterpreter,\n"
+                "    RecordManagedInterpreterAllocation(true,\n"
                 "        ManagedHeapReservationWords(words));\n"
                 "    return (PolyObject*)(space + 1);",
             )

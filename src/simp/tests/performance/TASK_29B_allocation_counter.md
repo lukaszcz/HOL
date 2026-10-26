@@ -52,9 +52,20 @@ FFI or casts. Failed requests use an actual OS address-space cap because
 Poly/ML's maxheap alone permits oversized objects. Development failures are
 preserved and explicitly not admitted.
 
-This is not a supported full-matrix instrument yet. Both interpreter allocator
-branches, RTS/interpreter/code failure paths, remaining slow-path coverage and
-prebuilt native compiler/image lineage still need validation. Foreign-created
+The later source-bound run at
+`evidence/task29/managed-branches/controls.json.gz` executes **138 brackets**,
+including 16 new retained-ref/array bytecode controls at 65536/131072 elements.
+Separate fast/slow success diagnostics prove BOTH successful bytecode branches
+execute in each kind-series, with exact original allocation vectors and
+endpoint word reconciliation. Diagnostic overflow/concurrency/ABI controls
+execute separately. No-op/live-GC controls do not recount retained objects.
+The original eight-word ABI and word semantics are preserved.
+
+This is not a supported full-matrix instrument yet. A bytecode slow success
+can still satisfy the different within-segment boundary test in the lower-level
+allocator; refill/GC-retry coverage is not inferred. RTS/interpreter/code
+failure paths, remaining slow-path coverage and prebuilt native compiler/image
+lineage still need validation. Foreign-created
 thread callbacks are expressly excluded after source review found pre-existing
 initialization defects; compact32 is untested. The entire 27-case/six-size
 paired allocation matrix is still missing. No TASK29B completion or ordinary

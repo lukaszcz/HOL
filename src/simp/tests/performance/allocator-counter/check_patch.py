@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Static checks only: replay patch hunks in memory, without building Poly/ML.
 
-Run with python3 -B. This is NOT a counter correctness/runtime regression test.
+Run with python3 -B. --source-only checks current transformations without
+requiring regenerated patch artifacts. NOT a runtime correctness/coverage test.
 """
 import argparse
 import hashlib
@@ -66,6 +67,10 @@ def read_patch():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument(
+        "--source-only", action="store_true",
+        help="check transformations in memory, ignoring generated artifacts",
+    )
     args = parser.parse_args()
     seal = json.loads((HERE / "SOURCE_SHA256.json").read_text())
     originals = {
@@ -74,16 +79,20 @@ def main():
     for name, raw in originals.items():
         assert hashlib.sha256(raw).hexdigest() == seal["files"][name]
     expected = transformations(originals)
-    actual = replay(read_patch(), originals)
-    assert actual == expected
-    after_seal = json.loads((HERE / "PATCHED_SHA256.json").read_text())
-    assert {p: hashlib.sha256(b).hexdigest() for p, b in actual.items()} == (
-        after_seal
-    )
-    # Four paths, five success hooks (interpreter has fast and slow returns).
+    if args.source_only:
+        actual = expected
+    else:
+        actual = replay(read_patch(), originals)
+        assert actual == expected
+        after_seal = json.loads((HERE / "PATCHED_SHA256.json").read_text())
+        assert {p: hashlib.sha256(b).hexdigest() for p, b in actual.items()} == (
+            after_seal
+        )
+    # Four paths, five success hooks. Branch diagnostics replace, rather
+    # than supplement, the interpreter's two original accounting calls.
     hooks = {
         "arm64.cpp": 1, "run_time.cpp": 1,
-        "bytecode.cpp": 2, "memmgr.cpp": 1,
+        "bytecode.cpp": 0, "memmgr.cpp": 1,
     }
     for name, count in hooks.items():
         text = actual["libpolyml/" + name].decode()
@@ -92,13 +101,31 @@ def main():
             r"RecordManagedAllocation\("
             r"ManagedAlloc(?:Native|RTS|Interpreter|Code),", text,
         )) == count
-    patch_bytes = read_patch()
-    assert b"processes.cpp" not in patch_bytes
+    bytecode = actual["libpolyml/bytecode.cpp"].decode()
+    assert bytecode.count("RecordManagedInterpreterAllocation(") == 2
+    assert (
+        "taskData->allocPointer -= words;\n"
+        "        RecordManagedInterpreterAllocation(false, words);"
+    ) in bytecode
+    assert (
+        "if (space == 0) return 0;\n"
+        "    RecordManagedInterpreterAllocation(true,\n"
+        "        ManagedHeapReservationWords(words));\n"
+        "    return (PolyObject*)(space + 1);"
+    ) in bytecode
+    assert "libpolyml/processes.cpp" not in actual
+    if not args.source_only:
+        assert b"processes.cpp" not in read_patch()
     assert actual["libpolyml/arm64.cpp"].count(b"\r\n") == (
         actual["libpolyml/arm64.cpp"].count(b"\n")
     )
-    print("PASS: seven targets replay byte-exactly; source/output hashes match")
-    print("five success hooks; original ARM64 CRLF preserved. STATIC ONLY.")
+    if args.source_only:
+        print("PASS: pinned source hashes; seven in-memory transformations")
+        print("Generated artifacts NOT checked or updated.")
+    else:
+        print("PASS: seven targets replay byte-exactly; input/output hashes match")
+    print("Five success hooks, including fast/slow interpreter diagnostics;")
+    print("original ARM64 CRLF preserved. STATIC ONLY; not complete coverage.")
 
 
 if __name__ == "__main__":

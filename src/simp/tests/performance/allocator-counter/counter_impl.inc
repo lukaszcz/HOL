@@ -17,6 +17,9 @@ namespace {
 pthread_mutex_t managedAllocMutex = PTHREAD_MUTEX_INITIALIZER;
 uint64_t managedAllocCounts[5] = { 0, 0, 0, 0, 0 };
 uint64_t managedAllocOverflow = 0;
+// Fast count/words, slow count/words. Independent saturation and flags.
+uint64_t managedInterpreterAllocCounts[4] = { 0, 0, 0, 0 };
+uint64_t managedInterpreterAllocOverflow = 0;
 
 void LockManagedAllocation()
 {
@@ -28,15 +31,21 @@ void UnlockManagedAllocation()
     if (pthread_mutex_unlock(&managedAllocMutex) != 0) abort();
 }
 
-void AddManagedAllocation(unsigned index, uint64_t words)
+void AddSaturating(uint64_t *counts, uint64_t &overflow,
+                   unsigned index, uint64_t increment)
 {
     const uint64_t maximum = (uint64_t)-1;
-    if (words > maximum - managedAllocCounts[index])
+    if (increment > maximum - counts[index])
     {
-        managedAllocCounts[index] = maximum;
-        managedAllocOverflow |= (uint64_t)1 << index;
+        counts[index] = maximum;
+        overflow |= (uint64_t)1 << index;
     }
-    else managedAllocCounts[index] += words;
+    else counts[index] += increment;
+}
+
+void AddManagedAllocation(unsigned index, uint64_t words)
+{
+    AddSaturating(managedAllocCounts, managedAllocOverflow, index, words);
 }
 }
 
@@ -47,6 +56,20 @@ void RecordManagedAllocation(ManagedAllocKind kind, uint64_t words)
     LockManagedAllocation();
     AddManagedAllocation(0, words);
     AddManagedAllocation((unsigned)kind, words);
+    UnlockManagedAllocation();
+}
+
+void RecordManagedInterpreterAllocation(bool slow, uint64_t words)
+{
+    if (words == 0) return;
+    const unsigned index = slow ? 2 : 0;
+    LockManagedAllocation();
+    AddManagedAllocation(0, words);
+    AddManagedAllocation(ManagedAllocInterpreter, words);
+    AddSaturating(managedInterpreterAllocCounts,
+                  managedInterpreterAllocOverflow, index, 1);
+    AddSaturating(managedInterpreterAllocCounts,
+                  managedInterpreterAllocOverflow, index + 1, words);
     UnlockManagedAllocation();
 }
 
@@ -62,6 +85,24 @@ int PolyManagedAllocSnapshotV1(void *out, size_t bytes)
     for (unsigned i = 0; i < 5; i++) snapshot[i + 3] = managedAllocCounts[i];
     UnlockManagedAllocation();
     // memcpy permits unaligned C buffers. No managed allocation or callback.
+    memcpy(out, snapshot, sizeof(snapshot));
+    return 0;
+}
+
+extern "C" __attribute__((visibility("default")))
+int PolyManagedInterpreterAllocSnapshotV1(void *out, size_t bytes)
+{
+    if (out == 0 || bytes < POLY_MANAGED_INTERPRETER_ALLOC_SNAPSHOT_BYTES_V1)
+        return -1;
+    uint64_t snapshot[POLY_MANAGED_INTERPRETER_ALLOC_SNAPSHOT_WORDS_V1];
+    LockManagedAllocation();
+    snapshot[0] = 1;
+    snapshot[1] = sizeof(PolyWord);
+    snapshot[2] = managedInterpreterAllocOverflow;
+    for (unsigned i = 0; i < 4; i++)
+        snapshot[i + 3] = managedInterpreterAllocCounts[i];
+    snapshot[7] = 0;
+    UnlockManagedAllocation();
     memcpy(out, snapshot, sizeof(snapshot));
     return 0;
 }

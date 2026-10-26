@@ -23,6 +23,7 @@ from check_patch import replay, read_patch
 from control_schema import observations
 import worker_schema
 import interpreter_schema
+import interpreter_branch_schema
 import failure_schema
 
 
@@ -78,7 +79,7 @@ def main(argv=None):
     repo = args.repo.resolve(strict=True)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    report = dict(schema="task29-managed-counter-controls-v2", success=False,
+    report = dict(schema="task29-managed-counter-controls-v3", success=False,
                   task29_complete=False, commands=[], inputs={},
                   scope="experimental runtime controls; NOT allocation gate",
                   command=[sys.executable, *sys.argv])
@@ -89,7 +90,8 @@ def main(argv=None):
             inputs = [p for p in HERE.iterdir() if p.is_file()]
             inputs += [HERE.parent / name for name in (
                 "acceptance.py", "loading.py", "worker_schema.py",
-                "interpreter_schema.py", "failure_schema.py")]
+                "interpreter_schema.py", "interpreter_branch_schema.py",
+                "failure_schema.py")]
             inputs += [repo / p for p in (
                 "bin/hol", "bin/hol.state0", "bin/Holmake")]
             report["inputs"] = {str(p): a.seal(p) for p in inputs}
@@ -165,8 +167,9 @@ def main(argv=None):
                     lib = source / "libpolyml/.libs/libpolyml.so.16.0.0"
                     report["runtime"] = a.seal(lib)
                     symbols = run(["nm", "-D", str(lib)])["stdout"]
-                    a.require(" T PolyManagedAllocSnapshotV1\n" in symbols,
-                              "counter symbol not exported")
+                    a.require(" T PolyManagedAllocSnapshotV1\n" in symbols and
+                              " T PolyManagedInterpreterAllocSnapshotV1\n"
+                              in symbols, "counter symbols not exported")
                     run_env = dict(env, LD_LIBRARY_PATH=str(lib.parent))
                     libraries = loading.library_inputs(run(
                         ["ldd", str(repo / "bin/hol")], runtime_env=run_env))
@@ -183,6 +186,7 @@ def main(argv=None):
                     for name in ("selftest.sml", "worker_selftest.sml",
                                  "interpreter_selftest.sml",
                                  "interpreter_body.sml", "interpreter_host.sml",
+                                 "interpreter_branch_host.sml",
                                  "failure_selftest.sml", "failure_limit.c",
                                  "Holmakefile", "bracket.c",
                                  "managed_alloc_counter.h"):
@@ -254,11 +258,20 @@ def main(argv=None):
                         fixture / "interpreter_body.sml")
                     run_env["TASK29_ALLOC_HOST"] = str(
                         fixture / "interpreter_host.sml")
+                    run_env["TASK29_ALLOC_BRANCH_HOST"] = str(
+                        fixture / "interpreter_branch_host.sml")
                     result = run([str(interpreter_launcher), "--gcthreads=1"],
                                  fixture, run_env)
                     report["interpreter_output"] = result["stdout"]
+                    # Keep the full original stdout. The strict new parser
+                    # admits every branch record before separating protocols.
+                    report["interpreter_branch_observations"] = (
+                        interpreter_branch_schema.observations(result["stdout"]))
+                    original = "\n".join(line for line in
+                        result["stdout"].splitlines() if not
+                        line.startswith("@@TASK29_IBRANCH"))
                     report["interpreter_observations"] = (
-                        interpreter_schema.observations(result["stdout"]))
+                        interpreter_schema.observations(original))
                     report["interpreter_process_identity"] = runtime_identity(
                         result["stdout"].replace("@@TASK29_INTERPRETER_",
                                                  "@@TASK29_ALLOC_"), lib)

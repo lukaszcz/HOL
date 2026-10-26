@@ -22,8 +22,9 @@ fun work () = (!action) ()
 fun prepare n = count := n
 fun prepareRefs n = (prepare n; action := refsWork)
 fun prepareWords n = (prepare n; action := wordsWork)
+val resultPrefix = ref "@@TASK29_INTERPRETER_RESULT_V1"
 fun emitResult label kind n checksum =
-  print ("@@TASK29_INTERPRETER_RESULT_V1\t" ^ label ^ "\t" ^ kind ^
+  print (!resultPrefix ^ "\t" ^ label ^ "\t" ^ kind ^
          "\t" ^ Int.toString n ^ "\t" ^ Int.toString checksum ^ "\n")
 fun verifyRefs label n = let
   fun consume [] next acc =
