@@ -19,7 +19,9 @@ implicit normal selftest or independent-build measurement.
 (version 2, `PROTOCOL.md`): 3% margin on CPU/wall, B/B validity window, GC
 reported. Every process of a cell uses one predeclared count from
 `evidence/task29a/iterations.json`; pairs and samples are run options.
-`task29a_grid.py replay --output DIR` recomputes every decision offline.
+`task29a_grid.py replay --output DIR` recomputes every decision offline;
+`--partial` replays the finished cells of an interrupted run without a grid
+decision (`evidence/task29a/grid-partial/`).
 Results: `evidence/task29a/` and
 [`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
 

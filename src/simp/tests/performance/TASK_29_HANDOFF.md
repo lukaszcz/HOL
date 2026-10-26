@@ -757,10 +757,34 @@ roundtrip scratch trees were removed after sealing. Caller-owned TASK28
 `review/`, `review-v2/`, pre-existing caches and dirty nested planning files
 were preserved. No ordinary or extension suite was disabled.
 
+## TASK29A equivalence-policy grid (2026-10-26) — interrupted, FAIL
+
+The 162-cell rerun under the equivalence policy (3% CPU/wall margin, B/B
+validity window, GC reported; `PROTOCOL.md` version 2) ran at `6f62229c0`
+with 20 pairs and 5 samples. The host's shared root filesystem filled
+after 20 complete cells. Those cells replay exactly from
+`evidence/task29a/grid-partial/`. Of them, 11 pass, 5 are inconclusive
+(the B/B control is outside the window on a loaded host) and 4 fail:
+
+- `frag_create/10000`: CPU [1.094, 1.110].
+- `frag_named/10000`: [1.069, 1.096]; it also failed historically.
+- `frag_named_rules/1`: [1.053, 1.064], valid control.
+- `frag_named_rules/10`: [1.066, 1.092], valid control.
+
+The run is therefore a fail. The per-cell table and the attribution
+evidence are in
+[TASK29A](TASK_29A_numerical_attribution_closure.md#equivalence-policy-grid-at-6f62229c0--interrupted-fail-not-closure).
+Offline replay also found and fixed a driver defect: archived pair keys
+are strings, and with more than ten pairs they sort differently from
+integer keys.
+
 ## Exact blockers and next step
 
-- [TASK29A](TASK_29A_numerical_attribution_closure.md): resolve the exact failed
-  and inconclusive timing cells and unstable controls enumerated above, with
+- [TASK29A](TASK_29A_numerical_attribution_closure.md): the equivalence-policy
+  grid fails in four cells (above); first test whether the two
+  `frag_named_rules` fails depend on the doubled predeclared count. Then
+  resolve the exact failed and inconclusive timing cells and unstable
+  controls enumerated above, with
   fresh local generated-work/layout attribution and complete affected-grid
   reruns after any fix. Source equality or smaller retained graphs cannot close
   these findings. A sufficiently stable exclusive environment plus a verified

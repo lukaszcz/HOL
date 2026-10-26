@@ -29,6 +29,11 @@ PAIRS, SAMPLES = 10, 3
 # Calibration targets 0.3 s on a loaded host. Doubling the largest develop
 # count keeps a quieter rerun above the driver's own wall-time floor.
 HEADROOM = 2
+COUNTS = a.HERE / "evidence/task29a/iterations.json"
+# Earlier drivers whose runs still replay. 6f62229c0 differs from this one
+# only by comparing analyses as stored (canonical) and by replay --partial.
+DRIVERS = [dict(bytes=12534, sha256="234da42ca599122645b9f578b1ddd37c"
+                                    "6ffb70d83764d6e91e045ac4ffc4bd97")]
 
 
 def predeclare(grid):
@@ -69,6 +74,14 @@ def checkpoint(path, value):
     partial.replace(path)
 
 
+def canonical(value):
+    """Compare as stored. Analyses key rows by integer pair, an archived
+    report by string; with more than ten pairs sort_keys orders them
+    differently ("10" < "2")."""
+    return json.dumps(json.loads(json.dumps(value, allow_nan=False)),
+                      sort_keys=True)
+
+
 def check_report(folder, report, baseline, candidate, seconds, case, size,
                  iterations, pairs=PAIRS, samples=SAMPLES):
     """Recompute a report under the policy it recorded."""
@@ -88,11 +101,11 @@ def check_report(folder, report, baseline, candidate, seconds, case, size,
             iterations=iterations, policy=policy)
     for name, value in results["candidate"]["metrics"].items():
         a.apply_control(value, results["control"]["metrics"][name])
-    a.require(json.dumps([results], sort_keys=True) ==
-              json.dumps(report["workloads"], sort_keys=True),
+    a.require(canonical([results]) == canonical(report["workloads"]),
               "changed point analysis")
     scaling = a.retained_scaling([results]) if case == "storage_graph" else None
-    a.require(scaling == report["retained_scaling"], "changed slope analysis")
+    a.require(canonical(scaling) == canonical(report["retained_scaling"]),
+              "changed slope analysis")
 
 
 def summary(reports):
@@ -196,8 +209,13 @@ def run(args):
 def replay(args):
     root = args.output.resolve()
     inventory = a.load(root / "inventory.json")
-    a.require(inventory["driver"] == a.seal(__file__), "changed driver")
+    a.require(inventory["driver"] in [a.seal(__file__)] + DRIVERS,
+              "changed driver")
+    a.require(inventory["acceptance"] == a.seal(a.__file__),
+              "changed acceptance")
     a.require(inventory["policy"] == a.EQUIVALENCE_POLICY, "changed policy")
+    a.require(inventory["iterations"] == a.load(COUNTS),
+              "changed predeclared counts")
     reports = {}
     for row in inventory["runs"]:
         key = row["case"], row["size"]
@@ -222,6 +240,14 @@ def replay(args):
                          inventory["samples"])
             reports[key] = report
         print("REPLAY %s %d" % key, flush=True)
+    if args.partial:
+        # An interrupted run has no grid decision; each finished cell
+        # still replays exactly.
+        a.require(not (root / "decisions.json").exists(),
+                  "complete run replayed as partial")
+        print("TASK29A partial run: %d of %d cells replayed; no grid "
+              "decision" % (len(reports), len(gate.keys())))
+        return 2
     decisions = summary(reports)
     a.require(decisions == a.load(root / "decisions.json"),
               "changed TASK29A decisions")
@@ -250,6 +276,8 @@ def main(argv=None):
     execute.add_argument("--authorize-measurements", action="store_true")
     check = sub.add_parser("replay")
     check.add_argument("--output", type=Path, required=True)
+    check.add_argument("--partial", action="store_true",
+                       help="interrupted run: replay cells, no decision")
     args = parser.parse_args(argv)
     if args.action == "predeclare":
         a.require(not args.output.exists(), "refusing to overwrite counts")

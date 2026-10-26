@@ -21,3 +21,5 @@ the margin; 20 pairs and 5 samples resolve it. Durations: 658 s and 1558 s.
 
 The 10-pair inventory's driver seal predates the `--pairs/--samples`
 options; both inventories, archives and logs are kept unchanged.
+`task29a_grid.py replay --partial --output pairs20-samples5` recomputes both
+20-pair cells; the 10-pair run is rejected as "changed driver".

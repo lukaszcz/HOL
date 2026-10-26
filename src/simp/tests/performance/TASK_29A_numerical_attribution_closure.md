@@ -236,6 +236,100 @@ within-margin 1.4%; GC 1.16, reported). These pilots are design evidence
 only (`evidence/task29a/pilot/`); the grid is rerun in full at 20 pairs and
 5 samples.
 
+## Equivalence-policy grid at `6f62229c0` — interrupted, FAIL, not closure
+
+`task29a_grid.py run --candidate 6f62229c0 --pairs 20 --samples 5` started
+2026-10-26 08:25 UTC. It died at 12:31 in cell 21 of 162
+(`frag_record/10`). The host's shared root filesystem filled up (726 GB,
+almost all of it other projects' build trees), and `OSError: [Errno 28]`
+was raised while the driver round-tripped that cell's archive. The 20
+completed cells are in `evidence/task29a/grid-partial/`. That directory
+holds their sealed archives, the inventory, `run.log.gz` (including the
+failing cell's traceback) and `replay.log`. Every one of the 20 cells was
+protocol-complete, and `task29a_grid.py replay --partial --output
+evidence/task29a/grid-partial` recomputes each decision exactly; it exits
+2 because there is no grid decision. The truncated `frag_record/10`
+archive was never verified and is not retained. Disk pressure did not
+reach a completed cell: each one passed the in-run recomputation and the
+offline replay.
+
+Offline replay first found a driver defect. Analyses key pair rows by
+integer, while an archived report stores them as strings. With more than
+ten pairs, `json.dumps(sort_keys=True)` orders the two differently
+(`"10" < "2"`), so `replay` rejected every 20-pair archive with "changed
+point analysis". The in-run check compared in-memory objects and so did
+not notice; ten-pair historical archives are unaffected. `check_report`
+now compares both sides as stored (`canonical`). A regression test using
+real string keys fails on the `6f62229c0` driver. `replay` accepts that
+driver's seal (`DRIVERS`), because only the comparison and `--partial`
+changed.
+
+| Cell | N | CPU 95% CI | Wall 95% CI | B/B CPU CI | GC median | Decision |
+|---|---:|---|---|---|---:|---|
+| frag_create-0 | 67108864 | 0.753-0.899 | 0.753-0.899 | 0.943-1.039 | 0.93 | inconclusive (B/B outside window) |
+| frag_create-1 | 33554432 | 0.985-0.998 | 0.987-0.998 | 0.995-1.014 | 1.01 | pass |
+| frag_create-10 | 4194304 | 0.979-1.009 | 0.979-1.010 | 0.988-1.012 | 0.94 | pass |
+| frag_create-100 | 1048576 | 0.951-1.027 | 0.951-1.027 | 0.945-1.005 | 1.01 | inconclusive (B/B outside window) |
+| frag_create-1000 | 131072 | 0.992-1.022 | 0.992-1.022 | 0.980-1.007 | 1.01 | pass |
+| frag_create-10000 | 16384 | 1.094-1.110 | 1.093-1.110 | 1.007-1.045 | 1.00 | **fail** |
+| frag_named-0 | 67108864 | 0.884-1.081 | 0.885-1.081 | 0.909-1.018 | 1.06 | inconclusive (B/B outside window) |
+| frag_named-1 | 33554432 | 0.990-1.011 | 0.990-1.012 | 0.991-1.014 | 0.99 | pass |
+| frag_named-10 | 8388608 | 0.970-1.010 | 0.970-1.008 | 0.996-1.023 | 0.99 | pass |
+| frag_named-100 | 1048576 | 0.985-1.061 | 0.987-1.061 | 0.985-1.048 | 1.00 | inconclusive (B/B outside window) |
+| frag_named-1000 | 131072 | 0.995-1.027 | 0.995-1.027 | 0.974-1.013 | 1.00 | pass |
+| frag_named-10000 | 16384 | 1.069-1.096 | 1.069-1.097 | 0.985-1.037 | 1.00 | **fail** |
+| frag_named_rules-0 | 33554432 | 1.014-1.024 | 1.014-1.024 | 0.993-1.011 | 1.07 | pass |
+| frag_named_rules-1 | 8388608 | 1.053-1.064 | 1.051-1.064 | 0.994-1.002 | 0.63 | **fail** |
+| frag_named_rules-10 | 2097152 | 1.066-1.092 | 1.066-1.092 | 0.994-1.007 | 2.11 | **fail** |
+| frag_named_rules-100 | 131072 | 0.973-1.002 | 0.973-1.002 | 0.995-1.009 | 1.11 | pass |
+| frag_named_rules-1000 | 16384 | 0.995-1.000 | 0.993-1.000 | 0.996-1.002 | 0.93 | pass |
+| frag_named_rules-10000 | 1024 | 0.995-1.005 | 0.995-1.005 | 0.994-1.005 | 1.19 | pass |
+| frag_record-0 | 33554432 | 1.000-1.016 | 1.001-1.014 | 0.987-1.001 | 0.95 | pass |
+| frag_record-1 | 33554432 | 0.990-1.009 | 0.990-1.008 | 0.986-1.008 | 1.01 | pass |
+
+Ratios are candidate/develop per operation; GC is reported, not gated.
+Of the 20 cells, 11 pass, 4 fail and 5 are inconclusive. A fail is final
+for the run, so this grid is a **FAIL** whatever the remaining 142 cells
+would show. `frag_named_rules/0` (+1.4–2.4%) and `frag_record/0`
+(+0–1.6%) pass with real, within-margin slowdowns.
+
+What the archives show about each class. Production `src/simp` at
+`6f62229c0` is byte-identical to the historical candidate `18e4a1ecb`.
+The harness differences are the predeclared count and the driver body
+moved into `experiment()`.
+
+- **Inconclusive cells.** In every one, the cell's own develop/develop
+  control lies outside the window. In `frag_create/0` each fresh process
+  settles at about 20, 24 or 28 ns/op, with 5–15% spread inside a process.
+  The historical grid measured the same cell at 16.0–16.9 ns with 1–4%
+  spread. The host load during this run was 10–27. The candidate's 0.84 in
+  that cell is the same noise (historically it was 1.015), not a speedup.
+- **`frag_create/10000`.** Per-op cost rises about 25% over the five
+  batches inside every process, on both sides. 19 of 20 candidate-selection
+  candidate processes start about 12% slower. They began their batches with
+  a 16 MB heap after 31 full GCs, against the baselines' 16 MB after 30.
+  The one candidate process at develop speed began with a 22 MB heap.
+  Historically (N = 8192, self-selected) this cell was [0.949, 0.993].
+  This is the startup-GC-history class seen in `compile_collector/10000`,
+  but it is unproven. The B/B control is outside the window too, which
+  never excuses a fail.
+- **`frag_named/10000`.** It also failed historically ([1.038, 1.065],
+  valid control). This is consistent across runs and is the most likely
+  genuine candidate cost.
+- **`frag_named_rules/1` and `/10`.** These are clean fails with tight
+  valid controls. Every candidate process runs about 67 ns/op against
+  develop's 63 ns in `/1`, and both sides start from an identical heap
+  state (10 MB, 39 full GCs). The historical runs at half the present
+  count were neutral ([0.983, 1.013] and [0.985, 1.008]). Whether the
+  doubled count exposes a real cost or a count-dependent artefact has not
+  been tested.
+
+Next experiment, before any further full grid: `frag_named_rules/1` and
+`/10` on the same two commits, at both the historical and the
+predeclared count, as one predeclared diagnostic run. A full grid needs a
+host with enough free disk for its duration (about 35 hours). No
+favourable subset is rerun.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant
