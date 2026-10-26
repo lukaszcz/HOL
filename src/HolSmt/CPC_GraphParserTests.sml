@@ -1401,12 +1401,15 @@ struct
                       List.concat (List.map flatten entries)
                   | flatten argument = [argument]
                 fun compare (located:Old.located_term,argument) =
-                  case argument of
-                    C.GraphTerm term => bridge (#term located)
-                      (raw (#node term))
-                  | C.GraphSort ty => require "Set metadata type changed"
+                  case (#provenance located,argument) of
+                    (Old.UnavailableProvenance "CPC Set sort metadata",
+                     C.GraphSort ty) => require "Set metadata type changed"
                       (Type.compare (Term.type_of (#term located),ty)=EQUAL)
-                  | _ => raise Fail "unexpected Set argument role"
+                  | (Old.UnavailableProvenance "CPC Set sort metadata",_) =>
+                      raise Fail "Set metadata lost its packet role"
+                  | (_,C.GraphTerm term) => bridge (#term located)
+                      (raw (#node term))
+                  | _ => raise Fail "object argument changed packet role"
               in ListPair.appEq compare
                 (old,List.concat (List.map flatten args)) end
           in case route of
@@ -1424,6 +1427,33 @@ struct
         in
           matching (rule ^ " matching sort") (text (set ^ "(Set Int)"));
           matching (rule ^ " matching term marker") (text (set ^ set));
+          matching (rule ^ " list-expanded matching sort")
+            (text ("(@list " ^ set ^ ") (Set Int)"));
+          matching (rule ^ " empty list preserves sort position")
+            (text (set ^ "(@list) (Set Int)"));
+          matching (rule ^ " list alias preserves sort position")
+            ("((define @sets () (@list " ^ set ^ ")) " ^
+             "(step @p :rule " ^ rule ^ " :args (" ^ prefix ^
+             "@sets (Set Int))))");
+          negative (rule ^ " sort in object position")
+            (text ("(Set Int) " ^ set));
+          negative (rule ^ " sort after metadata position")
+            (text (set ^ set ^ "(Set Int)"));
+          negative (rule ^ " sort inside object list")
+            (text ("(@list (Set Int)) " ^ set));
+          negative (rule ^ " sort inside metadata-position list")
+            (text (set ^ "(@list (Set Int))"));
+          negative (rule ^ " invalid sort metadata wrapper")
+            (text (set ^ "(Set task35_missing_sort)"));
+          negative (rule ^ " malformed sort metadata wrapper")
+            (text (set ^ "(Set)"));
+          negative (rule ^ " invalid sort follows flattened list")
+            (text ("(@list " ^ set ^ ") (Set task35_missing_sort)"));
+          negative (rule ^ " invalid sort precedes later object failure")
+            (text (set ^ "(Set task35_missing_sort) task35_missing_arg"));
+          negative (rule ^ " invalid sort precedes later syntax failure")
+            ("((step @p :rule " ^ rule ^ " :args (" ^ prefix ^ set ^
+             "(Set task35_missing_sort) (");
           negative (rule ^ " mismatched sort") (text bad);
           negative (rule ^ " mismatched term marker")
             (text (set ^ "(as set.empty (Set Bool))"));
@@ -1441,9 +1471,44 @@ struct
             ("((step @p task35_missing_conclusion :rule " ^ rule ^
              " :args (" ^ prefix ^ bad ^ ")))")
         end
-    in List.app fixtures
-      ["sets-minus-self","sets-card-emp","sets-is-empty-elim",
-       "sets-member-emp"] end
+    in
+      List.app fixtures
+        ["sets-minus-self","sets-card-emp","sets-is-empty-elim",
+         "sets-member-emp"];
+      negative "sort in ordinary rule argument"
+        "((step @p :rule refl :args ((Set Int))))";
+      negative "nested argument lists are object syntax"
+        "((step @p :rule refl :args ((@list (@list true)))))";
+      negative "object-list type diagnostic remains native"
+        "((step @p :rule refl :args ((@list (@var x (-> Int))))))";
+      negative "ordinary argument precedes later premise failure"
+        "((step @p :rule refl :args (task35_missing_arg) \
+        \:premises (@missing)))";
+      negative "ordinary conclusion precedes earlier premise failure"
+        "((step @p task35_missing_conclusion :rule refl \
+        \:premises (@missing) :args (task35_missing_arg)))";
+      List.app (fn rule =>
+        let val tail = if rule="resolution" then " false" else " 0"
+        in
+          negative (rule ^ " list is not an object operand")
+            ("((step @p :rule " ^ rule ^ " :args ((@list true)" ^
+             tail ^ "))) ");
+          negative (rule ^ " list alias is not an object operand")
+            ("((define @xs () (@list true)) (step @p :rule " ^ rule ^
+             " :args (@xs" ^ tail ^ "))) ")
+        end) ["cnf_and_pos","cnf_or_neg","resolution"];
+      (* Native unparenthesized @list bookkeeping skips to the end of the
+         definition and does not define an object/list alias. *)
+      positive "opaque list bookkeeping is syntax-only"
+        "((define @xs () @list (task35_missing_term)) \
+        \(step @p true :rule refl :args (true)))";
+      negative "opaque list bookkeeping is not an argument alias"
+        "((define @xs () @list (true)) \
+        \(step @p :rule refl :args (@xs)))";
+      negative "opaque list bookkeeping is not a binder alias"
+        "((define @xs () @list (true)) \
+        \(step @p :rule refl :args ((forall (@list @xs) true)))))"
+    end
 
   fun run () =
     let

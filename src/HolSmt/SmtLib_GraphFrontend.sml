@@ -124,6 +124,7 @@ struct
      declare : string * Type.hol_type -> unit,
      private_variable : string * Type.hol_type -> 'a constructed_term,
      define : string * 'a constructed_term -> unit,
+     define_opaque : string -> unit,
      define_variable : string * string * Type.hol_type -> 'a constructed_term,
      define_list : string * 'a constructed_term list -> unit,
      lookup_list : string -> 'a constructed_term list option,
@@ -475,6 +476,9 @@ struct
          occurrence = P.ConstructionOccurrence
            {value = node, role = P.ConstructionAtom,
             token = "@declaration", children = []}}
+      fun define_opaque token =
+        let val key = fresh_term token
+        in proof_terms := HOLset.add (!proof_terms, key) end
       fun define (token, value : term) =
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
@@ -541,11 +545,14 @@ struct
          parse_choice = false, parse_lambda = true,
          lookup_binder_list = fn token =>
            Redblackmap.peek (!binder_lists_ref, symbol_key token),
-         binder_reference = fn _ => fn token =>
+         binder_reference = fn frame => fn token =>
            case Redblackmap.peek (!variables_ref, symbol_key token) of
              SOME variable => variable
-           | NONE => raise ERR "binder_reference"
-               "binder-list reference is not a declared variable",
+           | NONE =>
+               (ignore (P.apply_construction_symbol
+                  (configuration frame) dictionary frame token [] []);
+                raise ERR "binder_reference"
+                  "binder-list reference is not a declared variable"),
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
          coerce_arguments = R.coerce_arguments backend}
       and ascribed frame
@@ -708,6 +715,7 @@ struct
            descriptors = descriptors, parent_scope = scope,
            scope = inner_scope, close = #close opened,origin = SOME origin} end
     in {reader = reader, open_mixed_bindings = open_mixed_bindings,
+        define_opaque = define_opaque,
         symbol_key = symbol_key,
         namespace = fn () =>
           {reserved = reserved, source_terms = !source_terms,
@@ -1054,6 +1062,9 @@ struct
          occurrence = P.ConstructionOccurrence
            {value = node, role = P.ConstructionAtom,
             token = "@declaration", children = []}}
+      fun define_opaque token =
+        let val key = fresh_term token
+        in proof_terms := HOLset.add (!proof_terms, key) end
       fun define (token, value : 'a constructed_term) =
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
@@ -1120,11 +1131,14 @@ struct
          parse_choice = false, parse_lambda = true,
          lookup_binder_list = fn token =>
            Redblackmap.peek (!binder_lists_ref, symbol_key token),
-         binder_reference = fn _ => fn token =>
+         binder_reference = fn frame => fn token =>
            case Redblackmap.peek (!variables_ref, symbol_key token) of
              SOME variable => variable
-           | NONE => raise ERR "binder_reference"
-               "binder-list reference is not a declared variable",
+           | NONE =>
+               (ignore (P.apply_construction_symbol_with_policy
+                  (configuration frame) dictionary frame token [] []);
+                raise ERR "binder_reference"
+                  "binder-list reference is not a declared variable"),
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
          coerce_arguments = R.coerce_arguments backend}
       and ascribed frame
@@ -1288,6 +1302,7 @@ struct
            descriptors = descriptors, parent_scope = scope,
            scope = inner_scope, close = #close opened,origin = SOME origin} end
     in {reader = reader, open_mixed_bindings = open_mixed_bindings,
+        define_opaque = define_opaque,
         symbol_key = fn token => (guard_observation check;symbol_key token),
         namespace = fn () =>
           (guard_observation check;

@@ -1339,6 +1339,15 @@ local
     | NONE => cpc_skolem_error "cpc_parameterized_skolem_for_test"
         ("unknown parameterized skolem " ^ name)
 
+  fun cpc_function_sort token indices args =
+    if token = "->" andalso List.null indices andalso
+       List.length args >= 2 then
+      let val (domains, range) = Lib.front_last args in
+        boolSyntax.list_mk_fun (domains, range)
+      end
+    else raise ERR "function_sort"
+      "expected a function sort with a domain and range"
+
   fun with_cpc_literals (tydict, tmdict) =
     let
       (* cvc5 writes [Bag Bool] in qualified bag literals.  A proof sort is
@@ -1370,14 +1379,6 @@ local
             then term
             else raise ERR "as_sort_marker" "qualification sort mismatch"
         | _ => raise ERR "as_sort_marker" "expected a qualified term"
-      fun function_sort token indices args =
-        if token = "->" andalso List.null indices andalso
-           List.length args >= 2 then
-          let val (domains, range) = Lib.front_last args in
-            boolSyntax.list_mk_fun (domains, range)
-          end
-        else raise ERR "function_sort"
-          "expected a function sort with a domain and range"
       (* The source translation dictionary is deliberately as narrow as its
          declared logic.  CPC arithmetic lemmas may nevertheless contain
          rationals and their Real coercions, so add the mixed arithmetic
@@ -1394,7 +1395,7 @@ local
       val tmdict = Library.extend_dict (("=", cpc_equality_parsefn),
         Library.extend_dict (("distinct", cpc_distinct_parsefn), tmdict))
     in
-    (Library.extend_dict (("->", function_sort), tydict),
+    (Library.extend_dict (("->", cpc_function_sort), tydict),
       Library.extend_dict (("str.++",
         cpc_concat_parsefn "smtstr_concat"),
       Library.extend_dict (("re.++",
@@ -2951,6 +2952,14 @@ local
     else raise ERR "parse_step"
       ("unknown premise ID '" ^ premise ^ "' in CPC step " ^ id)
 
+  fun is_set_sort_metadata rule_name position =
+    case rule_name of
+      "sets-card-emp" => position = 2
+    | "sets-is-empty-elim" => position = 2
+    | "sets-member-emp" => position = 3
+    | "sets-minus-self" => position = 2
+    | _ => false
+
   fun parse_step dicts_ref version known_ids record_unsupported get_token =
     let
       val id = cpc_id_key "parse_step" "command ID" (get_token ())
@@ -3303,11 +3312,6 @@ local
                     parse_cpc_type
                       (Library.undo_look_ahead tokens get_token) tydict)
                 end
-              fun is_set_sort_metadata position =
-                (rule_name = "sets-card-emp" andalso position = 2) orelse
-                (rule_name = "sets-is-empty-elim" andalso position = 2) orelse
-                (rule_name = "sets-member-emp" andalso position = 3) orelse
-                (rule_name = "sets-minus-self" andalso position = 2)
               fun terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
@@ -3322,7 +3326,8 @@ local
                             "expanded CPC argument-list syntax")
                             (list_terms []), acc))
                       else if head = "Set" andalso
-                              is_set_sort_metadata (List.length acc + 1) then
+                              is_set_sort_metadata rule_name
+                                (List.length acc + 1) then
                         let
                           val tm = sort_marker ["(", head]
                             handle Feedback.HOL_ERR holerr =>
@@ -4549,10 +4554,87 @@ in
         ("could not parse :args for CPC step " ^ id ^
          " (rule " ^ rule_name ^ "): " ^ Feedback.message_of holerr)
 
-  fun graph_set_sort_metadata_rule name =
-    List.exists (fn rule => rule = name)
-      ["sets-card-emp", "sets-is-empty-elim", "sets-member-emp",
-       "sets-minus-self"]
+  (* List entries are object terms, not nested argument packets or sort
+     metadata. Like native list_terms, they have no outer :args wrapper. *)
+  fun graph_object_argument parse_term parse_list lookup_list raw =
+    case raw of
+      RawList (RawAtom "@list" :: entries) =>
+        GraphList (List.map (GraphTerm o parse_list) entries)
+    | RawAtom name => (case lookup_list name of
+        SOME entries => GraphList (List.map GraphTerm entries)
+      | NONE => GraphTerm (parse_term raw))
+    | _ => GraphTerm (parse_term raw)
+
+  fun graph_argument_count (GraphList entries) = List.length entries
+    | graph_argument_count _ = 1
+
+  fun graph_step_argument_at backend id rule_name parse sort lookup_list
+      position raw =
+    let
+      val ordinary = graph_object_argument
+        (graph_step_argument backend id rule_name parse) parse lookup_list
+      fun metadata raw =
+        GraphSort (sort raw)
+        handle error as Feedback.HOL_ERR holerr =>
+          if B.failure_requires_propagation backend then raise error
+          else raise ERR "parse_step"
+            ("could not parse Set sort metadata for CPC step " ^ id ^
+             " (rule " ^ rule_name ^ "): " ^ Feedback.message_of holerr)
+    in case raw of
+        RawList (RawAtom "Set" :: _) =>
+          if is_set_sort_metadata rule_name position then metadata raw
+          else ordinary raw
+      | _ => ordinary raw
+    end
+
+  fun graph_step_arguments backend id rule_name parse sort lookup_list raws =
+    let
+      val argument = graph_step_argument_at backend id rule_name
+        parse sort lookup_list
+      fun arguments position [] = []
+        | arguments position (raw :: rest) =
+            let val arg = argument position raw
+            in arg :: arguments (position + graph_argument_count arg) rest end
+    in arguments 1 raws end
+
+  (* Consume ordinary arguments once, elaborating each before reading the
+     next. In particular, a bad Set marker precedes any later syntax error.
+     Packet lengths still determine the native flattened metadata position. *)
+  fun graph_read_step_arguments next argument =
+    let
+      val _ = Library.expect_token "(" (next ())
+      fun arguments position raws args =
+        case next () of
+          ")" => (List.rev raws, List.rev args)
+        | first =>
+            let
+              val raw = read_raw_term
+                (Library.undo_look_ahead [first] next)
+              val arg = argument position raw
+            in arguments (position + graph_argument_count arg)
+              (raw :: raws) (arg :: args) end
+    in arguments 1 [] [] end
+
+  fun graph_ordinary_rule_arguments (rule : proof_rule) =
+    not (List.exists (Lib.equal (#replay_handler rule))
+      ["and_elim", "not_or_elim", "resolution", "exists_elim",
+       "quant_rewrite", "rare_inventory"] orelse
+      List.exists (Lib.equal (#name rule))
+        ["cnf_and_pos", "cnf_or_neg", "arith-mod-over-mod",
+         "arith-mod-over-mod-mult"])
+
+  (* Only type parsing may be replayed for native diagnostics. Keep current
+     declared sorts, replacing the frontend's -> entry by the native one.
+     Resource/poison failures remain primary, as does a graph failure when
+     native type parsing succeeds. *)
+  fun graph_parse_sort backend tokens parse_sort sort_dictionary raw =
+    tokens raw parse_sort handle error as Feedback.HOL_ERR _ =>
+      if B.failure_requires_propagation backend then raise error
+      else
+        (ignore (tokens raw (fn next => parse_cpc_type next
+           (Library.extend_dict (("->", cpc_function_sort),
+             sort_dictionary ()))));
+         raise error)
 
   (* Ordinary native :args validates the set against its sort marker only
      after all arguments parse. Read admitted type metadata, never realize
@@ -4673,7 +4755,8 @@ in
             val _ = if null (!remaining) then () else
               error "buffered term has trailing syntax"
         in result end
-      fun sort raw = tokens raw (#parse_sort terms)
+      fun sort raw = graph_parse_sort (#backend (#reader terms)) tokens
+        (#parse_sort terms) (#sort_dictionary terms) raw
       fun graph_application raw = case raw of
           RawList (RawAtom "_" :: RawAtom name :: indices) =>
             if name = "BitVec" orelse name = "FloatingPoint" then
@@ -4765,30 +4848,26 @@ in
           val start = token ()
           val first = if start = "(" then
               (Library.expect_token ")" (token ()); token ()) else start
-          val raw = if first = "@list" then
-              RawList (RawAtom "@list" :: raw_list "CPC list"
-                (read_raw_term token))
-            else read_raw_term (Library.undo_look_ahead [first] token)
-          val _ = Library.expect_token ")" (token ())
-        in case raw of
-            RawList (RawAtom "@list" :: entries) =>
-              (#define_list terms) (name, List.map parse entries)
-          | RawList [RawAtom "@var", RawAtom variable, ty] =>
-              ignore ((#define_variable terms)
-                (name, cpc_var_name variable, sort ty))
-          | RawList [RawAtom "@purify", payload] =>
-              define_term (name, parse payload)
-          | _ => define_term (name, parse raw)
+        in
+          if first = "@list" then
+            (skip_sexp token; (#define_opaque terms) name)
+          else
+            let
+              val raw = read_raw_term
+                (Library.undo_look_ahead [first] token)
+              val _ = Library.expect_token ")" (token ())
+            in case raw of
+                RawList (RawAtom "@list" :: entries) =>
+                  (#define_list terms) (name, List.map parse entries)
+              | RawList [RawAtom "@var", RawAtom variable, ty] =>
+                  ignore ((#define_variable terms)
+                    (name, cpc_var_name variable, sort ty))
+              | RawList [RawAtom "@purify", payload] =>
+                  define_term (name, parse payload)
+              | _ => define_term (name, parse raw)
+            end
         end
-      fun argument parse_term raw = case raw of
-          RawList (RawAtom "@list" :: entries) =>
-            (* Native list_terms deliberately has no outer :args wrapper. *)
-            GraphList (List.map (argument parse) entries)
-        | RawAtom name => (case (#lookup_list terms) name of
-            SOME entries => GraphList (List.map GraphTerm entries)
-          | NONE => GraphTerm (parse_term raw))
-        | RawList (RawAtom "Set" :: _) => GraphSort (sort raw)
-        | _ => GraphTerm (parse_term raw)
+      val argument = graph_object_argument parse parse (#lookup_list terms)
       fun index raw =
         let val text = atom "CPC index" raw
         in case Int.fromString text of
@@ -4796,34 +4875,35 @@ in
               error "negative CPC index"
           | NONE => error "non-numeral CPC index" end
       fun rule_arguments name rule_name (rule : proof_rule) raws =
-        let
-          val ordinary = argument (graph_step_argument
-            (#backend (#reader terms)) name rule_name parse)
-          val argument = argument parse
-        in
         if #replay_handler rule = "and_elim" orelse
            #replay_handler rule = "not_or_elim" then
           (case raws of [raw] => [index raw]
            | _ => error "elimination rule expects one index")
         else if #name rule = "cnf_and_pos" orelse
                 #name rule = "cnf_or_neg" then
-          (case raws of [object, number] => [argument object, index number]
+          (case raws of [object, number] =>
+              [GraphTerm (parse object), index number]
            | _ => error "CNF rule expects an object and index")
         else if #name rule = "resolution" then
           (case raws of polarity :: pivot :: hints =>
-              argument polarity :: argument pivot :: List.map GraphHint hints
+              GraphTerm (parse polarity) :: GraphTerm (parse pivot) ::
+                List.map GraphHint hints
            | [] => []
            | _ => error "resolution requires polarity and pivot")
-        else if #replay_handler rule = "resolution" orelse
-                #replay_handler rule = "exists_elim" orelse
+        else if #replay_handler rule = "resolution" then
+          (case raws of [] => []
+           | target :: rest => GraphTerm (parse target) ::
+               List.map argument rest)
+        else if #replay_handler rule = "exists_elim" orelse
                 #replay_handler rule = "quant_rewrite" orelse
                 #replay_handler rule = "rare_inventory" orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map argument raws
         else graph_validate_set_sort_metadata
-          (#backend (#reader terms)) name rule_name (List.map ordinary raws)
-        end
+          (#backend (#reader terms)) name rule_name
+          (graph_step_arguments (#backend (#reader terms)) name rule_name
+            parse sort (#lookup_list terms) raws)
       fun step kind =
         let
           val consumed = ref ([] : string list)
@@ -4841,9 +4921,10 @@ in
               SOME rule => rule
             | NONE => raise ERR "graph_step"
                 (registry_lookup_failure version rule_name)
-          (* These rules validate inside native :args, before later
-             attributes. Cache typed results once, in native source order. *)
-          val eager = graph_set_sort_metadata_rule rule_name
+          (* Supported conclusions precede all attributes. Unsupported
+             inventory entries must remain entirely syntax-only. *)
+          val eager = not (Option.isSome
+            (rare_unsupported_diagnostic rule_name))
           val parsed_conclusion = if eager then
               SOME (Option.map parse conclusion) else NONE
           val parsed_args = ref NONE
@@ -4861,9 +4942,24 @@ in
                   in attrs true saw_args premises args end
             | ":args" => if saw_args then error "duplicate :args" else
                 let
-                  val raws = raw_list "arguments" (read_raw_term next)
-                  val _ = if eager then parsed_args :=
-                    SOME (rule_arguments name rule_name rule raws) else ()
+                  val raws =
+                    if eager andalso graph_ordinary_rule_arguments rule then
+                      let
+                        val backend = #backend (#reader terms)
+                        val (raws, args) = graph_read_step_arguments next
+                          (graph_step_argument_at backend name rule_name
+                            parse sort (#lookup_list terms))
+                        val _ = parsed_args := SOME
+                          (graph_validate_set_sort_metadata backend name
+                            rule_name args)
+                      in raws end
+                    else
+                      let
+                        val raws = raw_list "arguments" (read_raw_term next)
+                        val _ = if eager then parsed_args :=
+                          SOME (rule_arguments name rule_name rule raws)
+                          else ()
+                      in raws end
                 in attrs saw_premises true premises raws end
             | attribute => error ("unknown CPC step attribute " ^ attribute)
           val (premises, args) = attrs false false [] []
@@ -5211,7 +5307,8 @@ in
             val _ = if null (!remaining) then () else
               error "buffered term has trailing syntax"
         in result end
-      fun sort raw = tokens raw (#parse_sort terms)
+      fun sort raw = graph_parse_sort (#backend (#reader terms)) tokens
+        (#parse_sort terms) (#sort_dictionary terms) raw
       fun graph_application raw = case raw of
           RawList (RawAtom "_" :: RawAtom name :: indices) =>
             if name = "BitVec" orelse name = "FloatingPoint" then
@@ -5303,30 +5400,26 @@ in
           val start = token ()
           val first = if start = "(" then
               (Library.expect_token ")" (token ()); token ()) else start
-          val raw = if first = "@list" then
-              RawList (RawAtom "@list" :: raw_list "CPC list"
-                (read_raw_term token))
-            else read_raw_term (Library.undo_look_ahead [first] token)
-          val _ = Library.expect_token ")" (token ())
-        in case raw of
-            RawList (RawAtom "@list" :: entries) =>
-              (#define_list terms) (name, List.map parse entries)
-          | RawList [RawAtom "@var", RawAtom variable, ty] =>
-              ignore ((#define_variable terms)
-                (name, cpc_var_name variable, sort ty))
-          | RawList [RawAtom "@purify", payload] =>
-              define_term (name, parse payload)
-          | _ => define_term (name, parse raw)
+        in
+          if first = "@list" then
+            (skip_sexp token; (#define_opaque terms) name)
+          else
+            let
+              val raw = read_raw_term
+                (Library.undo_look_ahead [first] token)
+              val _ = Library.expect_token ")" (token ())
+            in case raw of
+                RawList (RawAtom "@list" :: entries) =>
+                  (#define_list terms) (name, List.map parse entries)
+              | RawList [RawAtom "@var", RawAtom variable, ty] =>
+                  ignore ((#define_variable terms)
+                    (name, cpc_var_name variable, sort ty))
+              | RawList [RawAtom "@purify", payload] =>
+                  define_term (name, parse payload)
+              | _ => define_term (name, parse raw)
+            end
         end
-      fun argument parse_term raw = case raw of
-          RawList (RawAtom "@list" :: entries) =>
-            (* Native list_terms deliberately has no outer :args wrapper. *)
-            GraphList (List.map (argument parse) entries)
-        | RawAtom name => (case (#lookup_list terms) name of
-            SOME entries => GraphList (List.map GraphTerm entries)
-          | NONE => GraphTerm (parse_term raw))
-        | RawList (RawAtom "Set" :: _) => GraphSort (sort raw)
-        | _ => GraphTerm (parse_term raw)
+      val argument = graph_object_argument parse parse (#lookup_list terms)
       fun index raw =
         let val text = atom "CPC index" raw
         in case Int.fromString text of
@@ -5334,34 +5427,35 @@ in
               error "negative CPC index"
           | NONE => error "non-numeral CPC index" end
       fun rule_arguments name rule_name (rule : proof_rule) raws =
-        let
-          val ordinary = argument (graph_step_argument
-            (#backend (#reader terms)) name rule_name parse)
-          val argument = argument parse
-        in
         if #replay_handler rule = "and_elim" orelse
            #replay_handler rule = "not_or_elim" then
           (case raws of [raw] => [index raw]
            | _ => error "elimination rule expects one index")
         else if #name rule = "cnf_and_pos" orelse
                 #name rule = "cnf_or_neg" then
-          (case raws of [object, number] => [argument object, index number]
+          (case raws of [object, number] =>
+              [GraphTerm (parse object), index number]
            | _ => error "CNF rule expects an object and index")
         else if #name rule = "resolution" then
           (case raws of polarity :: pivot :: hints =>
-              argument polarity :: argument pivot :: List.map GraphHint hints
+              GraphTerm (parse polarity) :: GraphTerm (parse pivot) ::
+                List.map GraphHint hints
            | [] => []
            | _ => error "resolution requires polarity and pivot")
-        else if #replay_handler rule = "resolution" orelse
-                #replay_handler rule = "exists_elim" orelse
+        else if #replay_handler rule = "resolution" then
+          (case raws of [] => []
+           | target :: rest => GraphTerm (parse target) ::
+               List.map argument rest)
+        else if #replay_handler rule = "exists_elim" orelse
                 #replay_handler rule = "quant_rewrite" orelse
                 #replay_handler rule = "rare_inventory" orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map argument raws
         else graph_validate_set_sort_metadata
-          (#backend (#reader terms)) name rule_name (List.map ordinary raws)
-        end
+          (#backend (#reader terms)) name rule_name
+          (graph_step_arguments (#backend (#reader terms)) name rule_name
+            parse sort (#lookup_list terms) raws)
       fun step kind =
         let
           val consumed = ref ([] : string list)
@@ -5379,9 +5473,10 @@ in
               SOME rule => rule
             | NONE => raise ERR "graph_step"
                 (registry_lookup_failure version rule_name)
-          (* These rules validate inside native :args, before later
-             attributes. Cache typed results once, in native source order. *)
-          val eager = graph_set_sort_metadata_rule rule_name
+          (* Supported conclusions precede all attributes. Unsupported
+             inventory entries must remain entirely syntax-only. *)
+          val eager = not (Option.isSome
+            (rare_unsupported_diagnostic rule_name))
           val parsed_conclusion = if eager then
               SOME (Option.map parse conclusion) else NONE
           val parsed_args = ref NONE
@@ -5399,9 +5494,24 @@ in
                   in attrs true saw_args premises args end
             | ":args" => if saw_args then error "duplicate :args" else
                 let
-                  val raws = raw_list "arguments" (read_raw_term next)
-                  val _ = if eager then parsed_args :=
-                    SOME (rule_arguments name rule_name rule raws) else ()
+                  val raws =
+                    if eager andalso graph_ordinary_rule_arguments rule then
+                      let
+                        val backend = #backend (#reader terms)
+                        val (raws, args) = graph_read_step_arguments next
+                          (graph_step_argument_at backend name rule_name
+                            parse sort (#lookup_list terms))
+                        val _ = parsed_args := SOME
+                          (graph_validate_set_sort_metadata backend name
+                            rule_name args)
+                      in raws end
+                    else
+                      let
+                        val raws = raw_list "arguments" (read_raw_term next)
+                        val _ = if eager then parsed_args :=
+                          SOME (rule_arguments name rule_name rule raws)
+                          else ()
+                      in raws end
                 in attrs saw_premises true premises raws end
             | attribute => error ("unknown CPC step attribute " ^ attribute)
           val (premises, args) = attrs false false [] []
