@@ -2360,6 +2360,7 @@ local
   local
     open SmtLib_GraphBackend
     structure B = SmtLib_GraphBackend
+    structure C = SmtLib_ConstructorSyntax
   in
 
   fun construction_index_text (LiteralIndex term) = Hol_pp.term_to_string term
@@ -2592,7 +2593,94 @@ local
         lexical=fn () => !lexical,
         lookup_binder_list=lookup,occurrence=occurrence} end
 
-  fun parse_term_recorded_with_backend_and_indices
+  (* Qualified builtins check the source constructor before looking up its
+     arguments, just as parse_ascribed_term does for ordinary clients. *)
+  fun construction_symbolic_index backend frame symbol_key symbolic head
+      token =
+    if Option.isSome (B.lookup backend frame (symbol_key token)) orelse
+       Option.isSome (B.lookup backend frame "_") then NONE
+    else symbolic head token
+
+  fun construction_qualified_sort name constructor =
+    let val expected = case name of
+          "const" => SOME ("Array","Z3 const")
+        | "union" => SOME ("Array","Z3 union")
+        | "seq.empty" => SOME ("Seq",name)
+        | "set.empty" => SOME ("Set",name)
+        | "set.universe" => SOME ("Set",name)
+        | "bag.empty" => SOME ("Bag",name)
+        | _ => NONE
+    in case expected of NONE => ()
+      | SOME (head,label) => if constructor = SOME head then () else
+          raise ERR "parse_ascribed_term"
+            (label ^ " expects a " ^ head ^ " sort")
+    end
+
+  (* Source syntax belongs to a parse occurrence, not to its backend value:
+     in particular two lexical aliases of one value remain two variables.
+     Only the public tree is handed to the index callback machinery. *)
+  fun construction_source_occurrence backend make frame supplied value role
+      token (children : ('a construction_occurrence * C.syntax) list) =
+    let
+      val public = make value role token (List.map #1 children)
+      val _ = B.syntax_spend backend 1
+      fun binder kind ((_, name, ty), body) =
+        let
+          val _ = B.syntax_spend backend 1
+          val abstraction = C.abstraction (Term.mk_var (name, ty), body)
+        in if kind = "lambda" then abstraction else
+          let
+            val _ = B.syntax_spend backend 2
+            val operator = if kind = "forall" then boolSyntax.universal
+              else if kind = "exists" then boolSyntax.existential
+              else boolSyntax.select
+            val operator = Term.inst
+              [{redex = Type.alpha, residue = ty}] operator
+          in C.application (C.native operator, abstraction) end
+        end
+      val source = case supplied of
+          SOME source => source
+        | NONE => case (role, children) of
+            (* Native mk_anylet rejects this before reaching metadata, and
+               the index reader retains its own rejection cursor. Outside
+               indices the graph backend accepts it as a body alias; there
+               is no ordinary LET source to reconstruct in that case. *)
+            (ConstructionLet [], [(_, body)]) => body
+          | (ConstructionLet bindings, _) =>
+              let
+                val body = #2 (List.last children)
+                val rhs = List.take (children, List.length bindings)
+                val bindings = ListPair.map
+                  (fn ((_, name), (_, source)) =>
+                    (B.syntax_spend backend 4;
+                     (Term.mk_var (name, C.type_of source), source)))
+                  (bindings, rhs)
+              in C.let_expression (bindings, body) end
+          | (ConstructionBinder {kind, variables}, [(_, body)]) =>
+              List.foldr (binder kind) body variables
+          | (ConstructionAnnotation, [(_, source)]) => source
+          | _ => B.source_syntax backend frame value
+    in (public, source) end
+
+  (* #source consumes/returns public occurrences. Keep the paired source
+     across that call without changing its callback or recovery protocol. *)
+  fun construction_source_index backend source frame token parse =
+    let
+      val parsed_source = ref NONE
+      val (index, parsed, token) = source frame token (fn () =>
+        let val (public, syntax) = parse ()
+        in parsed_source := SOME syntax; public end)
+    in case parsed of
+        SOME public =>
+          let val syntax = valOf (!parsed_source)
+          in (index, SOME (public, syntax), token, syntax) end
+      | NONE =>
+          (B.syntax_spend backend 1;
+           (index, NONE, token, C.variable (Term.mk_var
+             (proof_symbol_text token, Type.mk_vartype "'smtlib_index"))))
+    end
+
+  fun parse_term_sourced_with_backend_and_indices
       (cfg : 'a construction_cfg) symbolic_index get_token
       (tydict, dictionary : 'a construction_dict) =
     let
@@ -2608,24 +2696,38 @@ local
         | [] => original_token ()
       fun unread tokens = pending_tokens := tokens @ !pending_tokens
       fun expect token = Library.expect_token token (get_token ())
-      val occurrence = #occurrence reader
+      val construction_value = fn (public, _ : C.syntax) =>
+        construction_value public
+      val occurrence = construction_source_occurrence backend
+        (#occurrence reader)
       fun apply frame token indices arguments role children =
         let
           val key = (#symbol_key cfg) token
+          val sources =
+            {indices = List.map (fn (_,_,_,source) => source) indices,
+             arguments = List.map #2 arguments}
+          val indices = List.map #1 indices
           val arguments = List.map construction_value arguments
           val selected = ref NONE
-          val value =
-          case B.lookup backend frame key of
-            SOME value => if List.null indices andalso List.null arguments then
-              (selected := SOME token; value)
-            else apply_construction_symbol cfg
-              (construction_scope_dictionary backend frame dictionary key
-                (SOME value) selected) frame token indices arguments
-          | NONE => apply_construction_symbol cfg
-              (construction_scope_dictionary backend frame dictionary key NONE
-                selected) frame token indices arguments
+          val (value, source) = B.with_constructor_sources backend sources
+            (fn () => case B.lookup backend frame key of
+              SOME value =>
+                if List.null indices andalso List.null arguments then
+                  (selected := SOME token; value)
+                else apply_construction_symbol cfg
+                  (construction_scope_dictionary backend frame dictionary key
+                    (SOME value) selected) frame token indices arguments
+            | NONE => apply_construction_symbol cfg
+                (construction_scope_dictionary backend frame dictionary key
+                  NONE selected) frame token indices arguments)
           val _ = (#record reader) token indices arguments value (!selected)
-        in occurrence value role token children end
+          val source = case !selected of
+              SOME name =>
+                (B.syntax_spend backend 1;
+                 SOME (C.variable (Term.mk_var
+                   (proof_symbol_text name, B.type_of backend value))))
+            | NONE => source
+        in occurrence frame source value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
       fun resolved_index value token =
         case (#lexical reader) () of
@@ -2636,21 +2738,30 @@ local
           SOME _ => LiteralIndex term
         | NONE => raise ERR "parse_indexed_term"
             "index literal exceeds its bounded import contract"
+      fun symbolic_source name =
+        (B.syntax_spend backend 1;
+         C.variable (Term.mk_var (name, Type.mk_vartype "'smtlib_index")))
       fun index frame head "(" =
-            (#source reader) frame "(" (fn () => term_aux frame "(" [])
+            construction_source_index backend (#source reader) frame "("
+              (fn () => term_aux frame "(" [])
         | index frame head token =
-        case symbolic_index head token of
-          SOME name => (SymbolIndex name, NONE, token)
+        case construction_symbolic_index backend frame (#symbol_key cfg)
+            symbolic_index head token of
+          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
         | NONE => case Lib.total index_numeral_term token of
-          SOME term => (bounded_index term, NONE, token)
+          SOME term =>
+            let val index = bounded_index term
+                val _ = B.syntax_spend backend 1
+            in (index, NONE, token, C.native term) end
         | NONE =>
             (let val parsed = term_aux frame token []
                  val index = resolved_index (construction_value parsed) token
-             in (index,SOME parsed,token)
+             in (index,SOME parsed,token,#2 parsed)
              end handle Feedback.HOL_ERR error =>
                if Feedback.top_structure_of error = "SmtLib_Parser" andalso
                   Feedback.top_function_of error = unknown_symbol_origin then
-                 (SymbolIndex (proof_symbol_text token), NONE, token)
+                 let val name = proof_symbol_text token
+                 in (SymbolIndex name, NONE, token, symbolic_source name) end
                else raise Feedback.HOL_ERR error)
       and indices frame head accumulated =
         let val token = get_token () in
@@ -2671,8 +2782,7 @@ local
           if head = "_" then
             let val name = get_token ()
                 val indices = indices frame name []
-            in fn arguments => apply frame name
-              (List.map #1 indices) arguments
+            in fn arguments => apply frame name indices arguments
               (ConstructionIndexed (List.map #3 indices))
               (List.mapPartial #2 indices @ arguments) end
           else if head = "as" then
@@ -2683,14 +2793,21 @@ local
                   let val constructor = get_token ()
                   in (SOME constructor, [first, constructor]) end
                 else (NONE, [first])
+              val _ = construction_qualified_sort name constructor
               val sort = parse_type_with_key (#type_symbol_key cfg)
                 (Library.undo_look_ahead prefix get_token) tydict
               val _ = expect ")"
-            in fn arguments => occurrence ((#ascribed_symbol cfg) frame
-              {name = name, constructor = constructor,
-               sort = sort, arguments = List.map construction_value arguments})
-              (ConstructionAscribed {constructor = constructor, sort = sort})
-              name arguments end
+            in fn arguments =>
+              let
+                val (value, source) = B.with_constructor_sources backend
+                  {indices = [], arguments = List.map #2 arguments}
+                  (fn () => (#ascribed_symbol cfg) frame
+                    {name = name, constructor = constructor, sort = sort,
+                     arguments = List.map construction_value arguments})
+              in occurrence frame source value
+                (ConstructionAscribed {constructor = constructor, sort = sort})
+                name arguments end
+            end
           else if head = "@var" then
             let
               val token = get_token ()
@@ -2702,7 +2819,8 @@ local
               val value = B.variable backend frame
                 SmtReplayGraph.SolverFlexible (name, ty)
             in fn arguments => no_arguments arguments
-              (occurrence value ConstructionAtom "@var" []) end
+              (occurrence frame (SOME (C.variable (Term.mk_var (name, ty))))
+                value ConstructionAtom "@var" []) end
           else if head = "let" then
             let val value = let_term frame
             in fn arguments => no_arguments arguments value end
@@ -2747,14 +2865,15 @@ local
                   value) :: accumulated) end
             end
           val entries = bindings []
-          val parsed_body = ref (NONE : 'a construction_occurrence option)
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
           val result = B.let_expression backend frame
             (List.map (fn (key, name, parsed) =>
               (key, name, fn _ => construction_value parsed)) entries)
             (fn child => let val parsed = term child in
               parsed_body := SOME parsed; construction_value parsed end)
           val _ = expect ")"
-        in occurrence result
+        in occurrence frame NONE result
           (ConstructionLet
             (List.map (fn (key, name, _) => (key, name)) entries))
           "let" (List.map #3 entries @ [valOf (!parsed_body)]) end
@@ -2810,7 +2929,8 @@ local
       and binder_term frame name =
         let
           val (variables, cpc_names) = binder_variables frame
-          val parsed_body = ref (NONE : 'a construction_occurrence option)
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
           fun bind [] frame =
                 let val parsed = term frame in
                   parsed_body := SOME parsed; construction_value parsed
@@ -2838,7 +2958,7 @@ local
           val _ = expect ")"
           val _ = (#record_binder_block cfg)
             (name, List.length variables, result)
-        in occurrence result
+        in occurrence frame NONE result
           (ConstructionBinder {kind = name, variables = variables}) name
           [valOf (!parsed_body)] end
       and annotated_term frame =
@@ -2851,9 +2971,18 @@ local
               else skip depth
             end
           val _ = skip 0
-        in occurrence (construction_value value) ConstructionAnnotation
-          "!" [value] end
+        in occurrence frame NONE (construction_value value)
+          ConstructionAnnotation "!" [value] end
     in term (#frame cfg) end
+
+  fun parse_term_recorded_with_backend_and_indices cfg symbolic_index
+      get_token dictionaries =
+    #1 (parse_term_sourced_with_backend_and_indices cfg symbolic_index
+      get_token dictionaries)
+
+  fun parse_term_sourced_with_backend cfg get_token dictionaries =
+    parse_term_sourced_with_backend_and_indices cfg
+      (fn _ => fn _ => NONE) get_token dictionaries
 
   fun parse_term_recorded_with_backend cfg get_token dictionaries =
     parse_term_recorded_with_backend_and_indices cfg
@@ -2879,7 +3008,7 @@ local
     in result end
     handle SmtLib_Theories.ParseDecline exn => raise exn
 
-  fun parse_term_recorded_with_policy_and_indices
+  fun parse_term_sourced_with_policy_and_indices
       (cfg : 'a policy_construction_cfg) symbolic_index get_token
       (tydict, dictionary : 'a construction_dict) =
     let
@@ -2895,24 +3024,38 @@ local
         | [] => original_token ()
       fun unread tokens = pending_tokens := tokens @ !pending_tokens
       fun expect token = Library.expect_token token (get_token ())
-      val occurrence = #occurrence reader
+      val construction_value = fn (public, _ : C.syntax) =>
+        construction_value public
+      val occurrence = construction_source_occurrence backend
+        (#occurrence reader)
       fun apply frame token indices arguments role children =
         let
           val key = (#symbol_key cfg) token
+          val sources =
+            {indices = List.map (fn (_,_,_,source) => source) indices,
+             arguments = List.map #2 arguments}
+          val indices = List.map #1 indices
           val arguments = List.map construction_value arguments
           val selected = ref NONE
-          val value =
-          case B.lookup backend frame key of
-            SOME value => if List.null indices andalso List.null arguments then
-              (selected := SOME token; value)
-            else apply_construction_symbol_with_policy cfg
-              (construction_scope_dictionary backend frame dictionary key
-                (SOME value) selected) frame token indices arguments
-          | NONE => apply_construction_symbol_with_policy cfg
-              (construction_scope_dictionary backend frame dictionary key NONE
-                selected) frame token indices arguments
+          val (value, source) = B.with_constructor_sources backend sources
+            (fn () => case B.lookup backend frame key of
+              SOME value =>
+                if List.null indices andalso List.null arguments then
+                  (selected := SOME token; value)
+                else apply_construction_symbol_with_policy cfg
+                  (construction_scope_dictionary backend frame dictionary key
+                    (SOME value) selected) frame token indices arguments
+            | NONE => apply_construction_symbol_with_policy cfg
+                (construction_scope_dictionary backend frame dictionary key
+                  NONE selected) frame token indices arguments)
           val _ = (#record reader) token indices arguments value (!selected)
-        in occurrence value role token children end
+          val source = case !selected of
+              SOME name =>
+                (B.syntax_spend backend 1;
+                 SOME (C.variable (Term.mk_var
+                   (proof_symbol_text name, B.type_of backend value))))
+            | NONE => source
+        in occurrence frame source value role token children end
         handle SmtLib_Theories.ParseDecline error => raise error
       fun resolved_index value token =
         case (#lexical reader) () of
@@ -2923,21 +3066,30 @@ local
           SOME _ => LiteralIndex term
         | NONE => raise ERR "parse_indexed_term"
             "index literal exceeds its bounded import contract"
+      fun symbolic_source name =
+        (B.syntax_spend backend 1;
+         C.variable (Term.mk_var (name, Type.mk_vartype "'smtlib_index")))
       fun index frame head "(" =
-            (#source reader) frame "(" (fn () => term_aux frame "(" [])
+            construction_source_index backend (#source reader) frame "("
+              (fn () => term_aux frame "(" [])
         | index frame head token =
-        case symbolic_index head token of
-          SOME name => (SymbolIndex name, NONE, token)
+        case construction_symbolic_index backend frame (#symbol_key cfg)
+            symbolic_index head token of
+          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
         | NONE => case Lib.total index_numeral_term token of
-          SOME term => (bounded_index term, NONE, token)
+          SOME term =>
+            let val index = bounded_index term
+                val _ = B.syntax_spend backend 1
+            in (index, NONE, token, C.native term) end
         | NONE =>
             (let val parsed = term_aux frame token []
                  val index = resolved_index (construction_value parsed) token
-             in (index,SOME parsed,token)
+             in (index,SOME parsed,token,#2 parsed)
              end handle Feedback.HOL_ERR error =>
                if Feedback.top_structure_of error = "SmtLib_Parser" andalso
                   Feedback.top_function_of error = unknown_symbol_origin then
-                 (SymbolIndex (proof_symbol_text token), NONE, token)
+                 let val name = proof_symbol_text token
+                 in (SymbolIndex name, NONE, token, symbolic_source name) end
                else raise Feedback.HOL_ERR error)
       and indices frame head accumulated =
         let val token = get_token () in
@@ -2958,8 +3110,7 @@ local
           if head = "_" then
             let val name = get_token ()
                 val indices = indices frame name []
-            in fn arguments => apply frame name
-              (List.map #1 indices) arguments
+            in fn arguments => apply frame name indices arguments
               (ConstructionIndexed (List.map #3 indices))
               (List.mapPartial #2 indices @ arguments) end
           else if head = "as" then
@@ -2970,14 +3121,21 @@ local
                   let val constructor = get_token ()
                   in (SOME constructor, [first, constructor]) end
                 else (NONE, [first])
+              val _ = construction_qualified_sort name constructor
               val sort = parse_type_with_key (#type_symbol_key cfg)
                 (Library.undo_look_ahead prefix get_token) tydict
               val _ = expect ")"
-            in fn arguments => occurrence ((#ascribed_symbol cfg) frame
-              {name = name, constructor = constructor,
-               sort = sort, arguments = List.map construction_value arguments})
-              (ConstructionAscribed {constructor = constructor, sort = sort})
-              name arguments end
+            in fn arguments =>
+              let
+                val (value, source) = B.with_constructor_sources backend
+                  {indices = [], arguments = List.map #2 arguments}
+                  (fn () => (#ascribed_symbol cfg) frame
+                    {name = name, constructor = constructor, sort = sort,
+                     arguments = List.map construction_value arguments})
+              in occurrence frame source value
+                (ConstructionAscribed {constructor = constructor, sort = sort})
+                name arguments end
+            end
           else if head = "@var" then
             let
               val token = get_token ()
@@ -2989,7 +3147,8 @@ local
               val value = B.variable backend frame
                 SmtReplayGraph.SolverFlexible (name, ty)
             in fn arguments => no_arguments arguments
-              (occurrence value ConstructionAtom "@var" []) end
+              (occurrence frame (SOME (C.variable (Term.mk_var (name, ty))))
+                value ConstructionAtom "@var" []) end
           else if head = "let" then
             let val value = let_term frame
             in fn arguments => no_arguments arguments value end
@@ -3034,14 +3193,15 @@ local
                   value) :: accumulated) end
             end
           val entries = bindings []
-          val parsed_body = ref (NONE : 'a construction_occurrence option)
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
           val result = B.let_expression backend frame
             (List.map (fn (key, name, parsed) =>
               (key, name, fn _ => construction_value parsed)) entries)
             (fn child => let val parsed = term child in
               parsed_body := SOME parsed; construction_value parsed end)
           val _ = expect ")"
-        in occurrence result
+        in occurrence frame NONE result
           (ConstructionLet
             (List.map (fn (key, name, _) => (key, name)) entries))
           "let" (List.map #3 entries @ [valOf (!parsed_body)]) end
@@ -3097,7 +3257,8 @@ local
       and binder_term frame name =
         let
           val (variables, cpc_names) = binder_variables frame
-          val parsed_body = ref (NONE : 'a construction_occurrence option)
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
           fun bind [] frame =
                 let val parsed = term frame in
                   parsed_body := SOME parsed; construction_value parsed
@@ -3125,7 +3286,7 @@ local
           val _ = expect ")"
           val _ = (#record_binder_block cfg)
             (name, List.length variables, result)
-        in occurrence result
+        in occurrence frame NONE result
           (ConstructionBinder {kind = name, variables = variables}) name
           [valOf (!parsed_body)] end
       and annotated_term frame =
@@ -3138,9 +3299,18 @@ local
               else skip depth
             end
           val _ = skip 0
-        in occurrence (construction_value value) ConstructionAnnotation
-          "!" [value] end
+        in occurrence frame NONE (construction_value value)
+          ConstructionAnnotation "!" [value] end
     in term (#frame cfg) end
+
+  fun parse_term_recorded_with_policy_and_indices cfg symbolic_index
+      get_token dictionaries =
+    #1 (parse_term_sourced_with_policy_and_indices cfg symbolic_index
+      get_token dictionaries)
+
+  fun parse_term_sourced_with_policy cfg get_token dictionaries =
+    parse_term_sourced_with_policy_and_indices cfg
+      (fn _ => fn _ => NONE) get_token dictionaries
 
   fun parse_term_recorded_with_policy cfg get_token dictionaries =
     parse_term_recorded_with_policy_and_indices cfg
@@ -7613,6 +7783,9 @@ in
   val parse_term_list = parse_term_list
   val parse_term_with_backend = parse_term_with_backend
   val parse_term_recorded_with_backend = parse_term_recorded_with_backend
+  val parse_term_sourced_with_backend = parse_term_sourced_with_backend
+  val parse_term_sourced_with_backend_and_indices =
+    parse_term_sourced_with_backend_and_indices
   val parse_term_recorded_with_backend_and_indices =
     parse_term_recorded_with_backend_and_indices
   val apply_construction_symbol = apply_construction_symbol
@@ -7621,6 +7794,9 @@ in
   val parse_term_recorded_with_policy_and_indices =
     parse_term_recorded_with_policy_and_indices
   val parse_term_recorded_with_policy = parse_term_recorded_with_policy
+  val parse_term_sourced_with_policy = parse_term_sourced_with_policy
+  val parse_term_sourced_with_policy_and_indices =
+    parse_term_sourced_with_policy_and_indices
   val parse_term_with_policy = parse_term_with_policy
   val construction_recipe_parsefn = construction_recipe_parsefn
   val construction_value_parsefn = construction_value_parsefn

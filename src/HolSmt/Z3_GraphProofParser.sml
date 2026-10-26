@@ -209,7 +209,7 @@ struct
                      | _ => literal entry)
                   val _ = clause (#occurrence retained)
                 in Term {node = #node actual,scope = #scope actual,
-                  binder_blocks = #binder_blocks actual,
+                  binder_blocks = #binder_blocks actual, source_syntax = NONE,
                   occurrence = #occurrence retained} end
             | NONE => Term (term session raw))
         | List [Atom "let", bindings, body] =>
@@ -291,7 +291,7 @@ struct
             ProofId _ => parsed
           | Term value => Term
               {node = #node value, scope = #scope value,
-               binder_blocks = #binder_blocks value,
+               binder_blocks = #binder_blocks value, source_syntax = NONE,
                occurrence = P.ConstructionOccurrence
                  {value = #node value,
                   role = P.ConstructionLet (List.map (fn (name, _) =>
@@ -565,7 +565,7 @@ struct
                      | _ => literal entry)
                   val _ = clause (#occurrence retained)
                 in Term {node = #node actual,scope = #scope actual,
-                  binder_blocks = #binder_blocks actual,
+                  binder_blocks = #binder_blocks actual, source_syntax = NONE,
                   occurrence = #occurrence retained} end
             | NONE => Term (term session raw))
         | List [Atom "let", bindings, body] =>
@@ -647,7 +647,7 @@ struct
             ProofId _ => parsed
           | Term value => Term
               {node = #node value, scope = #scope value,
-               binder_blocks = #binder_blocks value,
+               binder_blocks = #binder_blocks value, source_syntax = NONE,
                occurrence = P.ConstructionOccurrence
                  {value = #node value,
                   role = P.ConstructionLet (List.map (fn (name, _) =>

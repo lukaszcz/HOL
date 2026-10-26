@@ -5,6 +5,14 @@ struct
   open SmtReplayGraph
   structure G = SmtReplayGraph
   structure R = ReplayRedblackPrivateWork
+  structure C = SmtLib_ConstructorSyntax
+  structure PV = SmtLib_GraphParserValue
+  type constructor_inputs =
+    {indices:C.syntax list,arguments:C.syntax list}
+  type constructor_state =
+    {inputs:constructor_inputs option ref,result:C.syntax option ref}
+  fun new_constructor_state () : constructor_state =
+    {inputs=ref NONE,result=ref NONE}
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphBackend"
   type environment = {lexical : G.scope, construction : G.scope} option
   type 'a solver_variable =
@@ -16,6 +24,9 @@ struct
   datatype 'a backend = Backend of
     {owner : unit ref, graph : G.graph option, initial : environment,
      index_callbacks : {depth:int ref, history:index_callback list ref},
+     constructor_state : constructor_state,
+     syntax_spend : IntInf.int -> unit,
+     source_syntax : environment -> 'a -> C.syntax,
      failure_requires_propagation : unit -> bool,
      validate_environment : environment -> unit,
      type_of : 'a -> Type.hol_type,
@@ -82,6 +93,27 @@ struct
         raise IndexSyntaxError error
       else raise error
 
+  fun with_constructor_sources
+      (Backend {constructor_state={inputs,result},...}) sources action =
+    let
+      val saved_inputs = !inputs
+      val saved_result = !result
+      val _ = inputs := SOME sources
+      val _ = result := NONE
+      val outcome = Exn.capture action ()
+      val annotation = !result
+      val _ = inputs := saved_inputs
+      val _ = result := saved_result
+    in (Exn.release outcome,annotation) end
+  fun constructor_sources (Backend {constructor_state={inputs,...},...}) =
+    !inputs
+  fun constructor_source (Backend {constructor_state={result,...},...}) =
+    !result
+  fun note_constructor_source
+      (Backend {constructor_state={inputs,result},...}) syntax =
+    case !inputs of NONE => () | SOME _ => result := SOME syntax
+  fun syntax_spend (Backend {syntax_spend,...}) amount = syntax_spend amount
+
   fun type_of (Backend {type_of, ...}) value = type_of value
   fun variable_descriptor (Backend {variable_descriptor, ...}) value =
     variable_descriptor value
@@ -113,6 +145,8 @@ struct
     end
   fun source (backend as Backend {source, ...}) frame term =
     source (#1 (checked_frame backend frame)) term
+  fun source_syntax (backend as Backend {source_syntax,...}) frame value =
+    source_syntax (#1 (checked_frame backend frame)) value
   fun literal (backend as Backend {literal, ...}) frame term =
     literal (#1 (checked_frame backend frame)) term
   fun variable (backend as Backend {variable, mk_bound_var, ...}) frame kind
@@ -176,9 +210,92 @@ struct
     | G.Application pair => Apply pair
     | _ => Opaque
 
+  (* Query-local sharing only. Keys authenticate before memo lookup; a
+     cached syntax result grants neither lifetime nor proof authority.
+     Variable descriptors travel with syntax so binder and body visits use
+     the same lexical spelling without visiting a shared binder twice. *)
+  fun source_syntax_walk (spend : IntInf.int -> unit)
+      compare key expand original =
+    let
+      val memo = ref (Redblackmap.mkDict
+        (fn pair => (spend 1;compare pair)))
+      fun visit current =
+        let
+          val _ = spend 1
+          val id = key current
+        in case Redblackmap.peek (!memo,id) of
+            SOME result => result
+          | NONE =>
+              let val result = expand visit current
+                  val _ = spend 1
+                  val _ = memo := Redblackmap.insert (!memo,id,result)
+              in result end
+        end
+    in case visit original of (syntax,_) => syntax end
+
+  fun graph_source_syntax graph descriptor original =
+    let
+      fun key node = (ignore (G.type_of graph node);G.node_id node)
+      fun expand (visit : G.node -> C.syntax * Term.term option) node =
+        case G.view graph node of
+          G.Variable (_,term) =>
+            let val lexical = case descriptor node of
+                    SOME lexical => lexical | NONE => term
+            in (C.variable lexical,SOME lexical) end
+        | G.Constant _ => (C.native (G.representative graph node),NONE)
+        | G.Application (f,x) =>
+            (C.application (#1 (visit f),#1 (visit x)),NONE)
+        | G.AdmittedBinder {binder,body,frame} =>
+            let val _ = G.validate_scope graph frame
+                val (_,variable) = visit binder
+                val lexical = case variable of SOME term => term
+                  | NONE => raise ERR "source_syntax" "nonvariable binder"
+            in (C.abstraction (lexical,#1 (visit body)),NONE) end
+        | G.OpaqueRetained =>
+            (* The existing original only, not constructed graph syntax. *)
+            (C.native (G.representative graph node),NONE)
+    in source_syntax_walk (fn _ => ()) Int.compare key expand original end
+
+  fun value_source_syntax context descriptor original =
+    PV.protect context (fn () =>
+      let
+        fun compare ((lk,li),(rk,ri)) =
+          case Int.compare (lk,rk) of EQUAL => Int.compare (li,ri)
+            | order => order
+        fun expand
+            (visit : PV.proof_term -> C.syntax * Term.term option) current =
+          case PV.proof_view context current of
+            PV.ProofVariable (_,term) =>
+              let val lexical = case descriptor
+                        (PV.proof_key context current) of
+                      SOME lexical => lexical | NONE => term
+              in (C.variable lexical,SOME lexical) end
+          | PV.ProofConstant term => (C.native term,NONE)
+          | PV.ProofApplication (f,x) =>
+              (C.application (#1 (visit f),#1 (visit x)),NONE)
+          | PV.ProofAbstraction {binder,body,...} =>
+              let val (_,variable) = visit binder
+                  val lexical = case variable of SOME term => term
+                    | NONE => raise ERR "source_syntax" "nonvariable binder"
+              in (C.abstraction (lexical,#1 (visit body)),NONE) end
+          | PV.ProofOpaque =>
+              (case PV.proof_graph_reference context current of
+                 SOME {graph,node,...} =>
+                   (case G.view graph node of
+                      G.OpaqueRetained =>
+                        (PV.spend context 1;
+                         (C.native (G.representative graph node),NONE))
+                    | _ => raise ERR "source_syntax" "not original syntax")
+               | NONE => raise ERR "source_syntax" "missing original syntax")
+      in source_syntax_walk (PV.spend context) compare
+        (PV.proof_key context) expand (PV.proof_term context original) end)
+
   fun terms {mk_bound_var, mk_let} = Backend
     {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
      index_callbacks = new_index_callbacks (),
+     constructor_state = new_constructor_state (),
+     syntax_spend = fn _ => (),
+     source_syntax = fn _ => C.native,
      failure_requires_propagation = fn () => false,
      view = fn _ => term_view, same_value = Portable.pointer_eq,
      variable_descriptor = fn term =>
@@ -301,6 +418,10 @@ struct
                construction = construction environment},
        close_scope = fn environment => G.close_scope graph
          (lexical environment),
+       constructor_state = new_constructor_state (),
+       syntax_spend = fn _ => (),
+       source_syntax = fn _ => graph_source_syntax graph
+         (fn node => Redblackmap.peek (!lexical_descriptors,G.node_id node)),
        abstraction = fn environment => fn body_environment =>
          fn (binder,body) =>
            G.recorded_abstraction graph (construction environment) binder_limit
@@ -958,6 +1079,10 @@ struct
                construction = construction environment},
        close_scope = fn environment => G.close_scope graph
          (lexical environment),
+       constructor_state = new_constructor_state (),
+       syntax_spend = fn _ => (),
+       source_syntax = fn _ => graph_source_syntax graph
+         (fn node => Redblackmap.peek (!lexical_descriptors,G.node_id node)),
        abstraction = fn environment => fn body_environment =>
          fn (binder,body) =>
            G.recorded_abstraction_with_policy graph (construction environment)
@@ -989,7 +1114,6 @@ struct
            literal_limit=literals,binder_limit=binders}
       | _ => exact_graphs_with_policy request
 
-  structure PV = SmtLib_GraphParserValue
   datatype value_factory_token = ValueFactoryToken of
     {backend:PV.value backend,context:PV.context}
   type value_backend =
@@ -1016,9 +1140,19 @@ struct
       fun lexical environment = #lexical (scopes environment)
       fun construction environment = #construction (scopes environment)
       val descriptors = ref (Redblackmap.mkDict Int.compare)
-      fun retain lexical value =
+      fun proof_compare ((lk,li),(rk,ri)) =
+        (step ();
+         case Int.compare (lk,rk) of EQUAL => Int.compare (li,ri)
+           | order => order)
+      val proof_descriptors = ref (Redblackmap.mkDict proof_compare)
+      fun retain lexical value = protect (fn () =>
         (descriptors := Redblackmap.insert
-           (!descriptors,PV.key context value,lexical);value)
+           (!descriptors,PV.key context value,lexical);
+         step ();
+         proof_descriptors := Redblackmap.insert
+           (!proof_descriptors,
+            PV.proof_key context (PV.proof_term context value),lexical);
+         value))
       fun descriptor value =
         case Redblackmap.peek (!descriptors,PV.key context value) of
           SOME term => SOME term
@@ -1054,6 +1188,10 @@ struct
             record term value | _ => value end
       val backend = Backend
         {owner=owner,graph=SOME graph,index_callbacks=index_callbacks,
+         constructor_state=new_constructor_state (),
+         syntax_spend=PV.spend context,
+         source_syntax=fn _ => value_source_syntax context
+           (fn key => (step ();Redblackmap.peek (!proof_descriptors,key))),
          initial=SOME {lexical=scope,construction=scope},
          failure_requires_propagation=fn () =>
            PV.failure_requires_propagation context,

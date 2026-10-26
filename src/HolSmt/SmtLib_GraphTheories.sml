@@ -6,6 +6,7 @@ struct
   structure P = SmtLib_Parser
   structure T = SmtLib_Theories
   structure L = SmtLib_Logics
+  structure C = SmtLib_ConstructorSyntax
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphTheories"
   datatype support = Recipe | Scoped of string | Shape of string
                    | Unregistered
@@ -268,7 +269,40 @@ struct
        operand_limit > 0 andalso token_limit > 0 then ()
     else raise ERR "limits" "nonpositive graph constructor contract"
 
-  fun schema (limits : limits) (parse : callback) token
+  fun source_operands backend holes indices offset =
+    case B.constructor_sources backend of NONE => List.map C.native holes
+    | SOME {arguments,indices=sources} =>
+      let
+        fun semantic ([],[]) = []
+          | semantic (P.RecipeOperand _ :: rest,source::tail) =
+              source :: semantic (rest,tail)
+          | semantic (_::rest,_::tail) = semantic (rest,tail)
+          | semantic _ = []
+        val operands = semantic (indices,sources) @ arguments
+        fun coerce (hole,source) =
+          if Term.type_of hole = C.type_of source then source
+          else if Term.type_of hole = realSyntax.real_ty andalso
+              C.type_of source = intSyntax.int_ty then
+            C.application (C.native (Term.rator
+              (intrealSyntax.mk_real_of_int
+                (Term.mk_var ("__smt_coercion",intSyntax.int_ty)))),source)
+          else C.native hole
+      in if List.length operands = List.length holes then
+          ListPair.map coerce (holes,operands)
+        else List.map C.native holes end
+
+  fun note_source backend template holes operands =
+    (B.syntax_spend backend
+       (3+4*IntInf.fromInt (List.length holes));
+     B.note_constructor_source backend (C.from_template
+       {template=template,holes=holes,operands=operands}))
+  fun note_schema backend template holes indices offset =
+    case (B.constructor_sources backend,B.constructor_source backend) of
+      (SOME _,NONE) => note_source backend template holes
+        (source_operands backend holes indices offset)
+    | _ => ()
+
+  fun schema backend (limits : limits) (parse : callback) token
       {indices, operand_types, argument_offset} =
     let
       val _ = if String.size token <= #token_limit limits then () else
@@ -290,6 +324,7 @@ struct
          actual graph operands are plugged. Declaration IDs stay intact. *)
       val template = parse token (List.map index indices)
         (List.drop (holes,argument_offset))
+      val _ = note_schema backend template holes indices argument_offset
     in B.compile_recipe {template = template, holes = holes,
       template_limit = #template_limit limits} end
 
@@ -306,6 +341,114 @@ struct
       val result = build native token request
       val _ = B.note_index_callback backend (token,parse,!fixed)
     in result end
+
+  (* Lambda-lift only bounded constructor syntax. Actual operands are
+     applied OUTSIDE every native binder, without projection or FV scans. *)
+  fun ordinary_binders backend sources template =
+    let
+      val variables = C.all_variables (B.syntax_spend backend) sources
+      val generated = ["bag_literal_x","bag_difference_remove_x",
+        "bag_some_x","bag_partition_x","bag_partition_y",
+        "set_filter_x","set_all_x","set_some_x","set_comprehension_x"]
+      fun rename variables term =
+        if Term.is_abs term then
+          let
+            val (binder,body) = Term.dest_abs term
+            val (name,_) = Term.dest_var binder
+            val fresh = if List.exists (fn base => base=name) generated then
+                Term.variant variables binder else binder
+            val body = if Term.aconv binder fresh then body
+              else Term.subst [{redex=binder,residue=fresh}] body
+          in Term.mk_abs (fresh,rename (fresh::variables) body) end
+        else if Term.is_comb term then
+          let val (f,x) = Term.dest_comb term
+          in Term.mk_comb (rename variables f,rename variables x) end
+        else term
+    in rename variables template end
+
+  fun ordinary_comprehension backend sources template =
+    let
+      val variables = C.all_variables (B.syntax_spend backend) sources
+      val renamed = ref false
+      fun walk term =
+        if !renamed then term
+        else if Term.is_abs term then
+          let
+            val (old,body) = Term.dest_abs term
+            val fresh = Term.variant variables
+              (Term.mk_var ("set_comprehension_x",Term.type_of old))
+            val _ = renamed := true
+          in Term.mk_abs (fresh,Term.subst [{redex=old,residue=fresh}] body) end
+        else if Term.is_comb term then
+          let val (f,x) = Term.dest_comb term
+          in Term.mk_comb (walk f,walk x) end
+        else term
+    in walk template end
+
+  fun lifted backend parse token indices holes =
+    let
+      val template = parse token indices holes
+      val _ = case (B.constructor_sources backend,
+                    B.constructor_source backend) of
+          (SOME {arguments,...},NONE) => note_source backend
+            (ordinary_binders backend arguments template) holes arguments
+        | _ => ()
+    in Term.list_mk_comb (Term.list_mk_abs (holes,template),holes) end
+
+  fun structured backend frame (description : entry) parse arguments =
+    let
+      fun sources () = case B.constructor_sources backend of
+          SOME {arguments,...} => arguments
+        | NONE => List.map (B.source_syntax backend frame) arguments
+    in case #support description of
+      Scoped _ => lifted backend parse
+    | Shape _ =>
+        if #theory description = "Seq_Extensions" then
+          if List.exists (C.contains_constant (B.syntax_spend backend)
+              {Thy="smtstringz3",Name="seq_nth_i"}) (sources ()) then
+            T.K_zero_one (fn x => T.smtstring_app "smtstr_char" [x])
+          else parse
+        else
+          let
+            fun comprehension token indices holes = T.K_zero_two
+              (fn (predicate,value) =>
+                let
+                  val originals = sources ()
+                  val [(left,pbody),(right,vbody)] = List.map
+                    (C.strip_abs (B.syntax_spend backend)) originals
+                  val _ = if List.length left = List.length right andalso
+                      ListPair.allEq (Lib.uncurry Term.aconv) (left,right)
+                    then () else T.decline "<set.comprehension>"
+                      "predicate and value must bind the same variables"
+                  (* Publish ordinary bodies, not the graph adapter's beta
+                     applications. Native binder names see source variables. *)
+                  val phole = Term.genvar (C.type_of pbody)
+                  val vhole = Term.genvar (C.type_of vbody)
+                  val original = parse token []
+                    [Term.list_mk_abs (left,phole),
+                     Term.list_mk_abs (right,vhole)]
+                  val _ = note_source backend
+                    (ordinary_comprehension backend originals original)
+                    [phole,vhole] [pbody,vbody]
+                  (* Native binders identify equal typed HOL variables,
+                     even when CPC dictionary keys distinguish their quoted
+                     spellings. Preserve that collapse when applying the
+                     ID-valued functions; distinct graph binder IDs are not
+                     a proof of distinct ordinary binding occurrences. *)
+                  fun bind [] _ = []
+                    | bind (variable::rest) saved =
+                      let val fresh = case List.find
+                            (fn (old,_) => Term.aconv old variable) saved of
+                            SOME (_,fresh) => fresh
+                          | NONE => Term.genvar (Term.type_of variable)
+                      in fresh :: bind rest ((variable,fresh)::saved) end
+                  val fresh = bind left []
+                  fun operand hole = Term.list_mk_abs (fresh,
+                    Term.list_mk_comb (hole,fresh))
+                in parse token [] [operand predicate,operand value] end)
+              token indices holes
+          in lifted backend comprehension end
+    | _ => parse end
 
   fun deferred ({theory, name, support, ...} : entry) _ _ _ _ =
     let val reason = case support of
@@ -333,16 +476,17 @@ struct
         let val description = describe name overload parse in
           case special description of SOME parse => parse
           | NONE => case #support description of
-              Recipe => if #theory description = "Fixed_Size_BitVectors"
+              Unregistered => deferred description
+            | _ => if #theory description = "Fixed_Size_BitVectors"
                   andalso name = "@bbterm" then
                 SmtLib_GraphWordBuilders.bbterm backend (finite_policy limits)
-              else (fn frame => fn token => fn indices =>
+              else (fn frame => fn token => fn indices => fn arguments =>
                 P.construction_recipe_parsefn backend
-                  (observed_schema backend (schema limits) parse)
+                  (observed_schema backend (schema backend limits)
+                    (structured backend frame description parse arguments))
                   frame token (prepare_indices backend frame
                     (#index_limit (finite_policy limits)) dictionary
-                    token indices))
-            | _ => deferred description
+                    token indices) arguments)
         end
       val dictionary = Redblackmap.map (fn (name, callbacks) =>
         Lib.mapi (fn overload => adapt name overload) callbacks) dictionary
@@ -352,7 +496,7 @@ struct
     (checked_limits limits;
      fn frame => fn token => fn indices =>
        P.construction_recipe_parsefn backend
-         (observed_schema backend (schema limits) parse)
+         (observed_schema backend (schema backend limits) parse)
          frame token (prepare_indices backend frame
            (#index_limit (finite_policy limits))
            (#2 (L.parsedicts_of_logic "ALL")) token indices))
@@ -387,7 +531,8 @@ struct
     if List.all SmtReplayResourcePolicy.positive
         [template_limit,index_limit,operand_limit,token_limit] then ()
     else raise ERR "limits" "nonpositive graph constructor contract"
-  fun schema_with_policy (limits : policy_limits) (parse : callback) token
+  fun schema_with_policy backend (limits : policy_limits)
+      (parse : callback) token
       {indices, operand_types, argument_offset} =
     let
       val _ = if SmtReplayResourcePolicy.allows (#token_limit limits)
@@ -412,6 +557,7 @@ struct
          actual graph operands are plugged. Declaration IDs stay intact. *)
       val template = parse token (List.map index indices)
         (List.drop (holes,argument_offset))
+      val _ = note_schema backend template holes indices argument_offset
     in B.compile_recipe_with_policy {template = template, holes = holes,
       template_limit = #template_limit limits} end
 
@@ -456,16 +602,17 @@ struct
         let val description = describe name overload parse in
           case special description of SOME parse => parse
           | NONE => case #support description of
-              Recipe => if #theory description = "Fixed_Size_BitVectors"
+              Unregistered => deferred description
+            | _ => if #theory description = "Fixed_Size_BitVectors"
                   andalso name = "@bbterm" then
                 SmtLib_GraphWordBuilders.bbterm backend limits
-              else (fn frame => fn token => fn indices =>
+              else (fn frame => fn token => fn indices => fn arguments =>
                 construction_recipe_parsefn_with_policy backend
-                  (observed_schema backend (schema_with_policy limits)
-                    parse) frame token
+                  (observed_schema backend (schema_with_policy backend limits)
+                    (structured backend frame description parse arguments))
+                  frame token
                   (prepare_indices backend frame (#index_limit limits)
-                    dictionary token indices))
-            | _ => deferred description
+                    dictionary token indices) arguments)
         end
       val dictionary = Redblackmap.map (fn (name, callbacks) =>
         Lib.mapi (fn overload => adapt name overload) callbacks) dictionary
@@ -475,12 +622,100 @@ struct
     (checked_policy_limits limits;
      fn frame => fn token => fn indices =>
        construction_recipe_parsefn_with_policy backend
-         (observed_schema backend (schema_with_policy limits) parse)
+         (observed_schema backend (schema_with_policy backend limits) parse)
          frame token
          (prepare_indices backend frame (#index_limit limits)
            (#2 (L.parsedicts_of_logic "ALL")) token indices))
   fun select_with_policy_no_override backend limits options =
     select_with_policy backend limits (fn _ => NONE) options
 
+  (* Qualified polymorphic literals retain the SMT sort constructor, not
+     merely its HOL encoding (Set/Array and Bag/Array can coincide). *)
+  fun ascribed_with_policy backend frame (limits : policy_limits)
+      {name,constructor,sort,arguments} =
+    let
+      fun expect head label = if constructor = SOME head then () else
+        raise Feedback.mk_HOL_ERR "SmtLib_Parser" "parse_ascribed_term"
+          (label ^ " expects a " ^ head ^ " sort")
+      fun invalid head = raise Feedback.mk_HOL_ERR "SmtLib_Parser"
+        "parse_ascribed_term" (name ^ " expects a " ^ head ^ " sort")
+      fun qualified () =
+        if name = "const" then
+          let val _ = expect "Array" "Z3 const"
+              val (domain,range) = Type.dom_rng sort
+              val payload = Term.mk_var ("array_const_value",range)
+              val index = Term.variant [payload]
+                (Term.mk_var ("array_const_index",domain))
+          in SOME (Term.mk_abs (payload,Term.mk_abs (index,payload))) end
+        else if name = "union" then
+          let val _ = expect "Array" "Z3 union"
+              val (_,range) = Type.dom_rng sort
+              val _ = if range = Type.bool then () else
+                raise Feedback.mk_HOL_ERR "SmtLib_Parser"
+                  "parse_ascribed_term"
+                  "Z3 union expects an Array with Bool range"
+              val left = Term.mk_var ("array_union_left",sort)
+              val right = Term.mk_var ("array_union_right",sort)
+          in SOME (Term.list_mk_abs ([left,right],
+            pred_setSyntax.mk_union (left,right))) end
+        else if name = "seq.empty" then
+          let val _ = expect "Seq" name
+          in SOME (if listSyntax.is_list_type sort then
+              listSyntax.mk_nil (listSyntax.dest_list_type sort)
+            else if sort = T.UnicodeStrings.string_ty then
+              SmtLib_String_Literal.mk_string_term ""
+            else invalid "Seq") end
+        else if name = "set.empty" orelse name = "set.universe" then
+          let val _ = expect "Set" name
+              val _ = if pred_setSyntax.is_set_type sort then ()
+                else invalid "Set"
+              val element = pred_setSyntax.dest_set_type sort
+          in SOME (if name = "set.empty" then
+            pred_setSyntax.mk_empty element
+            else pred_setSyntax.mk_univ element) end
+        else if name = "bag.empty" then
+          let val _ = expect "Bag" name
+              val _ = if bagSyntax.is_bag_ty sort then () else invalid "Bag"
+              val (element,_) = Type.dom_rng sort
+          in SOME (Term.inst [{redex=Type.alpha,residue=element}]
+            bagSyntax.EMPTY_BAG_tm) end
+        else NONE
+    in case qualified () of NONE => NONE | SOME operator =>
+      let
+        val holes = List.map (Term.genvar o B.type_of backend) arguments
+        (* Replay the native qualified-head application on typed atoms first.
+           This preserves Term.subst's malformed-sort classification and
+           records ordinary beta-reduced syntax, not transport plumbing. *)
+        fun apply (argument,function) =
+          case Lib.total Term.dest_abs function of
+            SOME (variable,body) =>
+              Term.subst [{redex=variable,residue=argument}] body
+          | NONE => Term.mk_comb (function,argument)
+        val ordinary = List.foldl apply operator holes
+        val _ = case B.constructor_sources backend of NONE => ()
+          | SOME {arguments=sources,...} =>
+            let
+              val spend = B.syntax_spend backend
+              val literal = case (name,sources) of
+                  ("const",[source]) =>
+                    if C.is_constant spend boolSyntax.T source then
+                      SOME (pred_setSyntax.mk_univ (#1 (Type.dom_rng sort)))
+                    else if C.is_constant spend boolSyntax.F source then
+                      SOME (pred_setSyntax.mk_empty (#1 (Type.dom_rng sort)))
+                    else NONE
+                | _ => NONE
+              val _ = spend (3+4*IntInf.fromInt (List.length holes))
+              val syntax = case literal of SOME term => C.native term
+                | NONE => C.from_substitution spend
+                    {template=ordinary,holes=holes,operands=sources}
+            in B.note_constructor_source backend syntax end
+        val template = Term.list_mk_comb (operator,holes)
+        val recipe = B.compile_recipe_with_policy
+          {template=template,holes=holes,
+           template_limit= #template_limit limits}
+      in SOME (B.construct_with_policy backend frame recipe arguments) end
+    end
+  fun ascribed backend frame limits description =
+    ascribed_with_policy backend frame (finite_policy limits) description
 
 end

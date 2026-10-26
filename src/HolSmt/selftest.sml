@@ -67933,7 +67933,7 @@ local
               end
     in walk [root] [] end
   fun atomic (e:env) value : F.value_term =
-    {node=value,scope= #scope e,binder_blocks=[],
+    {node=value,scope= #scope e,binder_blocks=[],source_syntax=NONE,
      occurrence=SmtLib_Parser.ConstructionOccurrence
        {value=value,role=SmtLib_Parser.ConstructionAtom,
         token="@Value-fixture",children=[]}}
@@ -68855,7 +68855,7 @@ local
               end
     in walk [root] [] end
   fun atomic (e:env) value : F.value_term =
-    {node=value,scope= #scope e,binder_blocks=[],
+    {node=value,scope= #scope e,binder_blocks=[],source_syntax=NONE,
      occurrence=SmtLib_Parser.ConstructionOccurrence
        {value=value,role=SmtLib_Parser.ConstructionAtom,
         token="@Value-fixture",children=[]}}
@@ -70220,7 +70220,7 @@ local
               end
     in walk [root] [] end
   fun atomic (e:env) value : F.value_term =
-    {node=value,scope= #scope e,binder_blocks=[],
+    {node=value,scope= #scope e,binder_blocks=[],source_syntax=NONE,
      occurrence=SmtLib_Parser.ConstructionOccurrence
        {value=value,role=SmtLib_Parser.ConstructionAtom,
         token="@Value-fixture",children=[]}}
@@ -71305,7 +71305,7 @@ local
               end
     in walk [root] [] end
   fun atomic (e:env) value : F.value_term =
-    {node=value,scope= #scope e,binder_blocks=[],
+    {node=value,scope= #scope e,binder_blocks=[],source_syntax=NONE,
      occurrence=SmtLib_Parser.ConstructionOccurrence
        {value=value,role=SmtLib_Parser.ConstructionAtom,
         token="@Value-fixture",children=[]}}
@@ -71559,7 +71559,7 @@ local
     in fixture_sources_after [p,p] p observe action end
   fun fixture action = fixture_after (fn _ => Exn.release) action
   fun located (e:env) node:F.term =
-    {node=node,scope= #scope e,binder_blocks=[],
+    {node=node,scope= #scope e,binder_blocks=[],source_syntax=NONE,
      occurrence=SmtLib_Parser.ConstructionOccurrence
        {value=node,role=SmtLib_Parser.ConstructionAtom,
         token="@bounded-fixture",children=[]}}
@@ -71716,6 +71716,7 @@ in
                   (G.application graph scope (conjunction,r),q)
                 val selected_term:F.term =
                   {node=selected,scope=scope,binder_blocks=[],
+                   source_syntax=NONE,
                    occurrence=SmtLib_Parser.ConstructionOccurrence
                      {value=selected,
                       role=SmtLib_Parser.ConstructionApplication,token="and",
@@ -72917,7 +72918,7 @@ local
     in case outcome of Exn.Exn primary => raise primary
       | Exn.Res value => (Exn.release cleanup;value) end
   fun located (e:env) node:F.term =
-    {node=node,scope= #scope e,binder_blocks=[],
+    {node=node,scope= #scope e,binder_blocks=[],source_syntax=NONE,
      occurrence=SmtLib_Parser.ConstructionOccurrence
        {value=node,role=SmtLib_Parser.ConstructionAtom,
         token="@forced-small",children=[]}}
@@ -73846,7 +73847,7 @@ local
                G.constant graph scope boolSyntax.T)
             else target
           fun located node:F.term =
-            {node=node,scope=scope,binder_blocks=[],
+            {node=node,scope=scope,binder_blocks=[],source_syntax=NONE,
              occurrence=SmtLib_Parser.ConstructionOccurrence
                {value=node,role=SmtLib_Parser.ConstructionAtom,
                 token="@actual-dependency",children=[]}}
@@ -82537,6 +82538,7 @@ local
                 val partial=PV.application context child(head,local_bound)
                 val node=PV.application context child(partial,local_bound)
                 val changed:F.value_term={node=node,scope=child,
+                  source_syntax=NONE,
                   occurrence= #occurrence conclusion,binder_blocks=[]}
                 val step=Z.Rule{rule=rule,premises=premises,
                   conclusion=changed,arguments=arguments,metadata=metadata,

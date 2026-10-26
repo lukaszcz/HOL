@@ -2,6 +2,8 @@
 
 signature SmtLib_GraphBackend =
 sig
+  structure C : SmtLib_ConstructorSyntax
+    where type syntax = SmtLib_ConstructorSyntax.syntax
   type 'a backend
   type 'a frame
   type 'a binding_origin
@@ -28,6 +30,21 @@ sig
   val capture_index_callbacks : 'a backend -> (unit -> 'b) ->
     'b * {last:index_callback option, callbacks:unit -> index_callback list}
   val note_index_callback : 'a backend -> index_callback -> unit
+  (* Occurrence syntax supplied by the parser, not semantic/proof evidence.
+     Each callback starts with no result annotation. Nested calls restore
+     both fields on success or failure; failed results never escape. *)
+  val with_constructor_sources : 'a backend ->
+    {indices:C.syntax list,arguments:C.syntax list} -> (unit -> 'b) ->
+    'b * C.syntax option
+  val constructor_sources : 'a backend ->
+    {indices:C.syntax list,arguments:C.syntax list} option
+  val constructor_source : 'a backend -> SmtLib_ConstructorSyntax.syntax option
+  val note_constructor_source : 'a backend -> C.syntax -> unit
+  val syntax_spend : 'a backend -> IntInf.int -> unit
+  (* Authentic value-syntax fallback when no callback annotation is supplied.
+     Aliases/occurrences belong to the parser. Graph/value IDs are memoized
+     per traversal; no constructed graph operand is projected to a term. *)
+  val source_syntax : 'a backend -> 'a frame -> 'a -> C.syntax
   exception IndexSyntaxError of exn
   exception IndexBinderError of exn
   val index_callback : 'a backend -> (unit -> 'b) -> 'b

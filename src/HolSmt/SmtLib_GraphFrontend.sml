@@ -22,6 +22,7 @@ struct
   type solver_variable = G.node constructed_solver_variable
   type 'a constructed_term =
     {node : 'a, scope : G.scope,
+     source_syntax : C.syntax option,
      occurrence : 'a P.construction_occurrence,
      binder_blocks : (string * int * 'a) list}
   type term = G.node constructed_term
@@ -86,6 +87,8 @@ struct
      add_constructor_parser : string * 'a P.construction_parse_fn
        -> unit,
      add_source_parser : string * Type.hol_type *
+       'a P.construction_parse_fn -> unit,
+     replace_source_parser : string * Type.hol_type *
        'a P.construction_parse_fn -> unit,
      add_symbolic_index : string * string -> unit,
      private_symbol : 'a B.frame ->
@@ -431,14 +434,32 @@ struct
                   (!variables_ref, key, (key, name, ty)) end
           | NONE => () end
       fun atomic node : term =
-        {node = node, scope = scope, binder_blocks = [],
+        {node = node, scope = scope, source_syntax = NONE, binder_blocks = [],
          occurrence = P.ConstructionOccurrence
            {value = node, role = P.ConstructionAtom,
             token = "@declaration", children = []}}
       fun define (token, value : term) =
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
-        in install key (#node value) NONE;
+            fun parse frame name indices arguments =
+              let val result = P.construction_value_parsefn backend
+                    (#node value) frame name indices arguments
+                  val _ = case B.constructor_sources backend of
+                      NONE => ()
+                    | SOME {arguments,...} =>
+                      let
+                        val source = case #source_syntax value of
+                            SOME source => source
+                          | NONE => B.source_syntax backend frame (#node value)
+                        fun apply (argument,function) =
+                          (B.syntax_spend backend 1;
+                           C.application (function,argument))
+                      in B.note_constructor_source backend
+                        (List.foldl apply source arguments) end
+              in result end
+        in dictionary_ref := Library.extend_dict
+             ((key, parse), !dictionary_ref);
+           proof_terms := HOLset.add (!proof_terms, key);
            aliases_ref := Redblackmap.insert (!aliases_ref, key, value) end
       fun private_variable (name, ty) =
         let val node = B.variable backend root G.SolverFlexible (name, ty)
@@ -485,20 +506,13 @@ struct
          coerce_arguments = R.coerce_arguments backend}
       and ascribed frame
           (description as {name, constructor, sort, arguments}) =
-        let val value = case (#ascribed options) backend frame description of
+        let val builtin = ref false
+            val value = case (#ascribed options) backend frame description of
           SOME node => node
         | NONE =>
-            if name = "const" andalso constructor = SOME "Array" then
-              let
-                val (domain, range) = Type.dom_rng sort
-                val payload = case arguments of [payload] => payload
-                  | _ => raise ERR "ascribed" "constant array arity"
-                val _ = if Type.compare
-                    (B.type_of backend payload, range) = EQUAL then () else
-                  raise ERR "ascribed" "constant array range"
-              in B.abstraction backend frame
-                ("array_index", "array_index", domain) (fn _ => payload) end
-            else if null arguments then
+          (case R.ascribed backend frame (#recipe_limits options)
+              description of SOME value => (builtin := true;value)
+           | NONE => if null arguments then
               let
                 val value = case B.lookup backend frame (symbol_key name) of
                     SOME value => value
@@ -508,8 +522,9 @@ struct
                 then value else raise ERR "ascribed" "qualified sort mismatch"
               end
             else raise ERR "ascribed"
-              "qualified constructor requires a scoped graph adapter"
-        in if Type.compare (B.type_of backend value, sort) = EQUAL then value
+              "qualified constructor requires a scoped graph adapter")
+        in if !builtin orelse
+              Type.compare (B.type_of backend value, sort) = EQUAL then value
           else raise ERR "ascribed" "graph adapter qualified sort mismatch"
         end
       fun define_list (token, values) =
@@ -576,10 +591,12 @@ struct
         end
       fun parse_from tokens =
         let val _ = check ()
-            val occurrence = P.parse_term_recorded_with_backend_and_indices
-              (configuration root) symbolic_index tokens
-              (!sorts_ref, !dictionary_ref)
+            val (occurrence, source) =
+              P.parse_term_sourced_with_backend_and_indices
+                (configuration root) symbolic_index tokens
+                (!sorts_ref, !dictionary_ref)
         in {node = P.construction_value occurrence, scope = scope,
+            source_syntax = SOME source,
             occurrence = occurrence, binder_blocks = blocks occurrence} end
       val reader : reader =
         {graph = graph, scope = scope, backend = backend, solver = solver,
@@ -646,6 +663,11 @@ struct
         add_recipe_parser = add_recipe_parser,
         add_constructor_parser = add_constructor_parser,
         add_source_parser = add_source_parser,
+        replace_source_parser = fn entry as (name,_,_) =>
+          (check ();check_reserved "term" name;
+           dictionary_ref := Redblackmap.insert
+             (!dictionary_ref,declaration_key "term" name,[]);
+           add_source_parser entry),
         add_symbolic_index = add_symbolic_index,
         private_symbol = private_symbol,
         parse_sort = parse_sort, declare = declare, define = define,
@@ -971,14 +993,32 @@ struct
                   (!variables_ref, key, (key, name, ty)) end
           | NONE => () end
       fun atomic node : 'a constructed_term =
-        {node = node, scope = scope, binder_blocks = [],
+        {node = node, scope = scope, source_syntax = NONE, binder_blocks = [],
          occurrence = P.ConstructionOccurrence
            {value = node, role = P.ConstructionAtom,
             token = "@declaration", children = []}}
       fun define (token, value : 'a constructed_term) =
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
-        in install key (#node value) NONE;
+            fun parse frame name indices arguments =
+              let val result = P.construction_value_parsefn backend
+                    (#node value) frame name indices arguments
+                  val _ = case B.constructor_sources backend of
+                      NONE => ()
+                    | SOME {arguments,...} =>
+                      let
+                        val source = case #source_syntax value of
+                            SOME source => source
+                          | NONE => B.source_syntax backend frame (#node value)
+                        fun apply (argument,function) =
+                          (B.syntax_spend backend 1;
+                           C.application (function,argument))
+                      in B.note_constructor_source backend
+                        (List.foldl apply source arguments) end
+              in result end
+        in dictionary_ref := Library.extend_dict
+             ((key, parse), !dictionary_ref);
+           proof_terms := HOLset.add (!proof_terms, key);
            aliases_ref := Redblackmap.insert (!aliases_ref, key, value) end
       fun private_variable (name, ty) =
         let val node = B.variable backend root G.SolverFlexible (name, ty)
@@ -1025,20 +1065,13 @@ struct
          coerce_arguments = R.coerce_arguments backend}
       and ascribed frame
           (description as {name, constructor, sort, arguments}) =
-        let val value = case (#ascribed options) backend frame description of
+        let val builtin = ref false
+            val value = case (#ascribed options) backend frame description of
           SOME node => node
         | NONE =>
-            if name = "const" andalso constructor = SOME "Array" then
-              let
-                val (domain, range) = Type.dom_rng sort
-                val payload = case arguments of [payload] => payload
-                  | _ => raise ERR "ascribed" "constant array arity"
-                val _ = if Type.compare
-                    (B.type_of backend payload, range) = EQUAL then () else
-                  raise ERR "ascribed" "constant array range"
-              in B.abstraction backend frame
-                ("array_index", "array_index", domain) (fn _ => payload) end
-            else if null arguments then
+          (case R.ascribed_with_policy backend frame (#recipe_limits options)
+              description of SOME value => (builtin := true;value)
+           | NONE => if null arguments then
               let
                 val value = case B.lookup backend frame (symbol_key name) of
                     SOME value => value
@@ -1048,8 +1081,9 @@ struct
                 then value else raise ERR "ascribed" "qualified sort mismatch"
               end
             else raise ERR "ascribed"
-              "qualified constructor requires a scoped graph adapter"
-        in if Type.compare (B.type_of backend value, sort) = EQUAL then value
+              "qualified constructor requires a scoped graph adapter")
+        in if !builtin orelse
+              Type.compare (B.type_of backend value, sort) = EQUAL then value
           else raise ERR "ascribed" "graph adapter qualified sort mismatch"
         end
       fun define_list (token, values) =
@@ -1116,10 +1150,12 @@ struct
         end
       fun parse_from tokens =
         let val _ = check ()
-            val occurrence = P.parse_term_recorded_with_policy_and_indices
-              (configuration root) symbolic_index tokens
-              (!sorts_ref, !dictionary_ref)
+            val (occurrence, source) =
+              P.parse_term_sourced_with_policy_and_indices
+                (configuration root) symbolic_index tokens
+                (!sorts_ref, !dictionary_ref)
         in {node = P.construction_value occurrence, scope = scope,
+            source_syntax = SOME source,
             occurrence = occurrence, binder_blocks = blocks occurrence} end
       val reader : 'a constructed_reader =
         {graph = graph, scope = scope, backend = backend, solver = solver,
@@ -1189,6 +1225,11 @@ struct
         add_recipe_parser = add_recipe_parser,
         add_constructor_parser = add_constructor_parser,
         add_source_parser = add_source_parser,
+        replace_source_parser = fn entry as (name,_,_) =>
+          (guard_observation check;check_reserved "term" name;
+           dictionary_ref := Redblackmap.insert
+             (!dictionary_ref,declaration_key "term" name,[]);
+           add_source_parser entry),
         add_symbolic_index = add_symbolic_index,
         private_symbol = private_symbol,
         parse_sort = parse_sort, declare = declare, define = define,
