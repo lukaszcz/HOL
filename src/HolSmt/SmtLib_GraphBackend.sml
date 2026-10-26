@@ -52,7 +52,7 @@ struct
      finish_let : (string * Term.term * 'a) list * 'a -> 'a}
   datatype 'a frame = Frame of
     {owner : unit ref, active : bool ref, environment : environment,
-     bindings : (string, 'a) Redblackmap.dict}
+     bindings : (string, 'a) Redblackmap.dict, blocked : string HOLset.set}
 
   datatype 'a binding_origin = BindingOrigin of
     {backend : 'a backend,parent : 'a frame,child : 'a frame,
@@ -120,9 +120,10 @@ struct
   fun solver_variables (Backend {solver_variables, ...}) = solver_variables ()
   fun root (Backend {owner, initial, ...}) =
     Frame {owner = owner, active = ref true, environment = initial,
-           bindings = Redblackmap.mkDict String.compare}
+           bindings = Redblackmap.mkDict String.compare,
+           blocked = HOLset.empty String.compare}
   fun checked_frame (Backend {owner, validate_environment, ...})
-      (Frame {owner = frame_owner, active, environment, bindings}) =
+      (Frame {owner = frame_owner, active, environment, bindings, ...}) =
     if owner <> frame_owner then
       raise ERR "frame" "lexical frame belongs to another backend"
     else if not (!active) then raise ERR "frame" "lexical frame is closed"
@@ -137,11 +138,24 @@ struct
       val result = action () handle error =>
         ((close () handle _ => ()); raise error)
     in close (); result end
+  fun frame_blockers (Frame {blocked, ...}) = blocked
+  fun is_blocked backend frame key =
+    (ignore (checked_frame backend frame);
+     HOLset.member (frame_blockers frame, key))
+  fun check_blocked blocked key =
+    if HOLset.member (blocked, key) then
+      raise ERR "lookup" "proof binding is not a term"
+    else ()
   fun lookup backend frame key =
-    Redblackmap.peek (#2 (checked_frame backend frame), key)
+    let val bindings = #2 (checked_frame backend frame)
+        val _ = check_blocked (frame_blockers frame) key
+    in Redblackmap.peek (bindings, key) end
   fun binding_type_lookup backend frame =
     let val bindings = #2 (checked_frame backend frame)
-    in fn key => Option.map (type_of backend) (Redblackmap.peek (bindings,key))
+        val blocked = frame_blockers frame
+    in fn key =>
+      (check_blocked blocked key;
+       Option.map (type_of backend) (Redblackmap.peek (bindings,key)))
     end
   fun source (backend as Backend {source, ...}) frame term =
     source (#1 (checked_frame backend frame)) term
@@ -442,13 +456,36 @@ struct
        let_binding = #2, finish_let = #2}
     end
 
+  fun unique_key (key, seen) =
+    if HOLset.member (seen, key) then
+      raise ERR "let_expression" "duplicate simultaneous binding key"
+    else HOLset.add (seen, key)
   fun unique_keys entries =
-    let
-      fun insert ((key, _, _), seen) =
-        if HOLset.member (seen, key) then
-          raise ERR "let_expression" "duplicate simultaneous binding key"
-        else HOLset.add (seen, key)
-    in ignore (List.foldl insert (HOLset.empty String.compare) entries) end
+    ignore (List.foldl (fn ((key, _, _), seen) => unique_key (key, seen))
+      (HOLset.empty String.compare) entries)
+
+  (* No entry traversal or set rebuilding on the ordinary blocker-free
+     path. Blockers are lexical metadata, never graph operands or sources. *)
+  fun shadow_blockers parent entries =
+    let val blocked = frame_blockers parent
+    in if HOLset.isEmpty blocked then blocked else
+      List.foldl (fn ((key, _, _), blocked) =>
+        if HOLset.member (blocked, key) then HOLset.delete (blocked, key)
+        else blocked) blocked entries
+    end
+  fun mixed_blockers parent entries keys =
+    let val inherited = shadow_blockers parent entries
+    in case keys of [] => inherited
+      | _ =>
+        let
+          val added = List.foldl unique_key
+            (HOLset.empty String.compare) keys
+          val _ = List.app (fn (key, _, _) =>
+            if HOLset.member (added, key) then
+              raise ERR "let_expression" "duplicate simultaneous binding key"
+            else ()) entries
+        in HOLset.union (inherited, added) end
+    end
 
   fun let_expression
       (backend as Backend {owner, mk_bound_var, new_let_scope, close_scope,
@@ -469,7 +506,8 @@ struct
         Redblackmap.insert (dictionary, key, value)) dictionary bindings
       val child = Frame {owner = owner, active = ref true,
                          environment = environment,
-                         bindings = dictionary}
+                         bindings = dictionary,
+                         blocked = shadow_blockers parent entries}
     in finish_scopes close_scope [environment] (fn () =>
       let
         val result = scoped_body child body
@@ -498,7 +536,8 @@ struct
           val _ = environments := body_environment :: !environments
           val child = Frame {owner = owner, active = ref true,
             environment = body_environment,
-            bindings = Redblackmap.insert (dictionary,key,binder)}
+            bindings = Redblackmap.insert (dictionary,key,binder),
+            blocked = shadow_blockers parent [(key, name, ty)]}
           val result = scoped_body child body
         in abstraction environment body_environment (binder,result) end
       val result = construct () handle primary => abort primary
@@ -662,12 +701,13 @@ struct
       val _ = guard ()
     in () end
 
-  fun open_bindings (backend as Backend
+  fun open_mixed_bindings (backend as Backend
       {owner, mk_bound_var, new_let_scope, close_scope, let_binding, ...})
-      parent entries =
+      parent entries blocked_keys =
     let
       val _ = unique_keys entries
       val (environment, dictionary) = checked_frame backend parent
+      val blocked = mixed_blockers parent entries blocked_keys
       val bindings = List.map (fn (key, name, value) =>
         let val variable = mk_bound_var (name, type_of backend value)
         in (key, variable, let_binding (variable, value)) end) entries
@@ -677,7 +717,8 @@ struct
         Redblackmap.insert (dictionary, key, value)) dictionary bindings
       val active = ref true
       val frame = Frame {owner = owner, active = active,
-                         environment = environment, bindings = dictionary}
+                         environment = environment, bindings = dictionary,
+                         blocked = blocked}
       fun close () = if not (!active) then () else
         (active := false; close_scope environment)
       val origin = (case backend of Backend {graph = NONE,...} => NONE
@@ -688,6 +729,9 @@ struct
         handle primary => ((close () handle _ => ());raise primary)
     in {frame = frame, scope = frame_scope backend frame, close = close,
       origin = origin} end
+
+  fun open_bindings backend parent entries =
+    open_mixed_bindings backend parent entries []
 
   fun open_binders (backend as Backend
       {owner, mk_bound_var, bound_variable, new_scope, new_let_scope,
@@ -717,7 +761,8 @@ struct
           ((close_environments () handle _ => ()); raise error)
       val active = ref true
       val frame = Frame {owner = owner, active = active,
-                         environment = environment, bindings = dictionary}
+                         environment = environment, bindings = dictionary,
+                         blocked = shadow_blockers parent descriptors}
       fun close () = if !closed then () else
         (closed := true; active := false; close_environments ())
       val origin = opened_origin backend parent frame variables descriptors true

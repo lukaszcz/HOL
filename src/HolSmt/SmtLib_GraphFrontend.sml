@@ -105,7 +105,9 @@ struct
      open_binders : (string * string * Type.hol_type) list ->
        'a constructed_scoped_session,
      open_bindings : (string * 'a constructed_term) list ->
-       'a constructed_scoped_session}
+       'a constructed_scoped_session,
+     open_mixed_bindings : (string * 'a constructed_term) list ->
+       string list -> 'a constructed_scoped_session}
   in
   type 'a constructed_origin = 'a constructed_origin_private
   type 'a constructed_session = 'a constructed_session
@@ -609,13 +611,14 @@ struct
         (ref (!sorts_ref)) (ref (!binder_lists_ref))
         (ref (!lists_ref)) (ref (!proof_terms)) (ref (!proof_sorts))
         (ref (!aliases_ref))
-      fun open_bindings values =
+      fun open_mixed_bindings values blocked_keys =
         let
           val entries = List.map (fn (name, value : term) =>
             (symbol_key name, P.proof_symbol_text name, #node value)) values
           val descriptors = List.map (fn (key, name, node) =>
             (key, name, B.type_of backend node)) entries
-          val opened = B.open_bindings backend root entries
+          val opened = B.open_mixed_bindings backend root entries
+            (List.map symbol_key blocked_keys)
           val inner_scope = valOf (#scope opened)
           val child = child_context (#frame opened) inner_scope
             handle error => ((#close opened) (); raise error)
@@ -632,6 +635,7 @@ struct
           {session = child, variables = [], descriptors = descriptors,
            parent_scope = scope, scope = inner_scope,
            close = #close opened,origin = SOME origin} end
+      fun open_bindings values = open_mixed_bindings values []
       fun open_binders descriptors =
         let
           val opened = B.open_binders backend root descriptors
@@ -652,7 +656,8 @@ struct
           {session = child, variables = #variables opened,
            descriptors = descriptors, parent_scope = scope,
            scope = inner_scope, close = #close opened,origin = SOME origin} end
-    in {reader = reader, symbol_key = symbol_key,
+    in {reader = reader, open_mixed_bindings = open_mixed_bindings,
+        symbol_key = symbol_key,
         namespace = fn () =>
           {reserved = reserved, source_terms = !source_terms,
            source_sorts = source_sorts, proof_terms = !proof_terms,
@@ -1169,13 +1174,14 @@ struct
         (ref (!sorts_ref)) (ref (!binder_lists_ref))
         (ref (!lists_ref)) (ref (!proof_terms)) (ref (!proof_sorts))
         (ref (!aliases_ref))
-      fun open_bindings values =
+      fun open_mixed_bindings values blocked_keys =
         let
           val entries = List.map (fn (name, value : 'a constructed_term) =>
             (symbol_key name, P.proof_symbol_text name, #node value)) values
           val descriptors = List.map (fn (key, name, node) =>
             (key, name, B.type_of backend node)) entries
-          val opened = B.open_bindings backend root entries
+          val opened = B.open_mixed_bindings backend root entries
+            (List.map symbol_key blocked_keys)
           val inner_scope = valOf (#scope opened)
           val child = child_context (#frame opened) inner_scope
             handle error => ((#close opened) (); raise error)
@@ -1192,6 +1198,7 @@ struct
           {session = child, variables = [], descriptors = descriptors,
            parent_scope = scope, scope = inner_scope,
            close = #close opened,origin = SOME origin} end
+      fun open_bindings values = open_mixed_bindings values []
       fun open_binders descriptors =
         let
           val opened = B.open_binders backend root descriptors
@@ -1212,7 +1219,7 @@ struct
           {session = child, variables = #variables opened,
            descriptors = descriptors, parent_scope = scope,
            scope = inner_scope, close = #close opened,origin = SOME origin} end
-    in {reader = reader,
+    in {reader = reader, open_mixed_bindings = open_mixed_bindings,
         symbol_key = fn token => (guard_observation check;symbol_key token),
         namespace = fn () =>
           (guard_observation check;

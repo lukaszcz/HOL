@@ -33137,6 +33137,7 @@ let
   val tests = [
     ("smtlib_graph_scalar_recipes_success", SmtLib_GraphScalarTests.run),
     ("smtlib_graph_structured_recipes", SmtLib_GraphStructuredTests.run),
+    ("z3_graph_scoped_let_parser", Z3_GraphParserTests.run),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",

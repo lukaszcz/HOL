@@ -2460,7 +2460,17 @@ local
         | NONE => dictionary
     in
       if key = "_" then dictionary else
-        case B.lookup backend frame "_" of
+        if B.is_blocked backend frame "_" then
+          (* Like a native nullary proof alias, block atomic fallback but
+             let applied/indexed uses try the original dictionary parsers. *)
+          case Redblackmap.peek (dictionary, "_") of NONE => dictionary
+          | SOME callbacks => Redblackmap.insert (dictionary, "_",
+              List.map (fn parse => fn frame => fn token => fn indices =>
+                fn arguments =>
+                  if null indices andalso null arguments then
+                    raise ERR "parse_term" "proof binding is not a term"
+                  else parse frame token indices arguments) callbacks)
+        else case B.lookup backend frame "_" of
           SOME value => extend ("_", value, dictionary)
         | NONE => dictionary
     end
@@ -2598,8 +2608,14 @@ local
   fun construction_symbolic_index backend frame symbol_key symbolic head
       token =
     if Option.isSome (B.lookup backend frame (symbol_key token)) orelse
-       Option.isSome (B.lookup backend frame "_") then NONE
+       (not (B.is_blocked backend frame "_") andalso
+        Option.isSome (B.lookup backend frame "_")) then NONE
     else symbolic head token
+
+  fun construction_lookup backend frame key indices arguments =
+    if (not (null indices) orelse not (null arguments)) andalso
+        B.is_blocked backend frame key then NONE
+    else B.lookup backend frame key
 
   fun construction_qualified_constructor name = case name of
       "const" => SOME ("Array","Z3 const")
@@ -2788,7 +2804,8 @@ local
           val arguments = List.map construction_value arguments
           val selected = ref NONE
           val (value, source) = B.with_constructor_sources backend sources
-            (fn () => case B.lookup backend frame key of
+            (fn () => case
+                construction_lookup backend frame key indices arguments of
               SOME value =>
                 if List.null indices andalso List.null arguments then
                   (selected := SOME token; value)
@@ -3131,7 +3148,8 @@ local
           val arguments = List.map construction_value arguments
           val selected = ref NONE
           val (value, source) = B.with_constructor_sources backend sources
-            (fn () => case B.lookup backend frame key of
+            (fn () => case
+                construction_lookup backend frame key indices arguments of
               SOME value =>
                 if List.null indices andalso List.null arguments then
                   (selected := SOME token; value)

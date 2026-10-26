@@ -63,6 +63,7 @@ sig
   val small_index_with_policy : 'a backend -> 'a frame ->
     SmtReplayResourcePolicy.limit -> 'a -> Term.term
   val lookup : 'a backend -> 'a frame -> string -> 'a option
+  val is_blocked : 'a backend -> 'a frame -> string -> bool
   (* Immutable lexical map snapshot; only admitted type metadata is read.
      No live lexical frame or operand realization is retained. *)
   val binding_type_lookup : 'a backend -> 'a frame ->
@@ -106,6 +107,13 @@ sig
     SmtReplayGraph.scope option
   val open_bindings : 'a backend -> 'a frame ->
     (string * string * 'a) list ->
+    {frame : 'a frame, scope : SmtReplayGraph.scope option,
+     close : unit -> unit,origin : 'a binding_origin option}
+  (* Proof-only lexical blockers hide both prior aliases and dictionary
+     entries. Ordinary aliases/binders in nested scopes shadow blockers.
+     All simultaneous keys (including blocked keys) must be distinct. *)
+  val open_mixed_bindings : 'a backend -> 'a frame ->
+    (string * string * 'a) list -> string list ->
     {frame : 'a frame, scope : SmtReplayGraph.scope option,
      close : unit -> unit,origin : 'a binding_origin option}
   val open_binders : 'a backend -> 'a frame ->
