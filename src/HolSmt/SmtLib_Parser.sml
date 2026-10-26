@@ -2616,6 +2616,32 @@ local
             (label ^ " expects a " ^ head ^ " sort")
     end
 
+  (* These checks precede the head's closing token and operand lookup, as
+     in parse_ascribed_term. Construction callbacks run after the operands
+     and therefore cannot own qualified-sort validation. *)
+  fun construction_qualified_type name sort =
+    let
+      fun invalid head = raise ERR "parse_ascribed_term"
+        (name ^ " expects a " ^ head ^ " sort")
+    in
+      if name = "const" then ignore (Type.dom_rng sort)
+      else if name = "union" then
+        let val (_,range) = Type.dom_rng sort
+        in if range = Type.bool then () else
+          raise ERR "parse_ascribed_term"
+            "Z3 union expects an Array with Bool range" end
+      else if name = "seq.empty" then
+        if listSyntax.is_list_type sort orelse
+           sort = Type.mk_thy_type
+             {Thy="smtstring",Tyop="smtstr",Args=[]} then ()
+        else invalid "Seq"
+      else if name = "set.empty" orelse name = "set.universe" then
+        if pred_setSyntax.is_set_type sort then () else invalid "Set"
+      else if name = "bag.empty" then
+        if bagSyntax.is_bag_ty sort then () else invalid "Bag"
+      else ()
+    end
+
   (* Source syntax belongs to a parse occurrence, not to its backend value:
      in particular two lexical aliases of one value remain two variables.
      Only the public tree is handed to the index callback machinery. *)
@@ -2796,6 +2822,7 @@ local
               val _ = construction_qualified_sort name constructor
               val sort = parse_type_with_key (#type_symbol_key cfg)
                 (Library.undo_look_ahead prefix get_token) tydict
+              val _ = construction_qualified_type name sort
               val _ = expect ")"
             in fn arguments =>
               let
@@ -3124,6 +3151,7 @@ local
               val _ = construction_qualified_sort name constructor
               val sort = parse_type_with_key (#type_symbol_key cfg)
                 (Library.undo_look_ahead prefix get_token) tydict
+              val _ = construction_qualified_type name sort
               val _ = expect ")"
             in fn arguments =>
               let

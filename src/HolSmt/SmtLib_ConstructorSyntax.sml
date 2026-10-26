@@ -18,6 +18,18 @@ struct
   val ERR = Feedback.mk_HOL_ERR "SmtLib_ConstructorSyntax"
   val serial = ref (0 : IntInf.int)
 
+  (* Select the public opening convention, not a kernel/configuration name.
+     Some kernels freshen even a differently typed free namesake; others
+     expose the stored binder unchanged. Retain only the probe's boolean,
+     never its tiny native terms. No source operand is used by this probe. *)
+  val opening_freshens_names =
+    let
+      val binder = Term.mk_var ("smt_constructor_open_probe", Type.bool)
+      val namesake = Term.mk_var ("smt_constructor_open_probe",
+                                 Type.--> (Type.bool, Type.bool))
+      val (opened, _) = Term.dest_abs (Term.mk_abs (binder, namesake))
+    in not (Term.aconv binder opened) end
+
   datatype syntax = Syntax of
     {id : IntInf.int, ty : Type.hol_type, node : node}
   and node =
@@ -333,10 +345,95 @@ struct
     in List.foldr (fn (root, rest) =>
          (observe 1; union (variables root, rest))) [] roots end
 
-  (* Ordinary substitution does not capture free source operands. Keep
-     stored binder names separate from fresh bound-occurrence markers. *)
+  (* Qualified-head replay supplies fresh, distinct holes. On an opening-
+     freshening kernel substitution preserves stored binder names; on a
+     name-carrying kernel it must rename them to avoid introduced FREE
+     names, even at a different type. Do not confuse these native names
+     with the private markers used to represent binding in our metadata.
+     Only the admitted template is rebuilt as metadata; operands stay
+     shared and are inspected through charged variable queries only. *)
   fun from_substitution observe (source as {template,holes,operands}) =
-    from_template_mode (SOME (holes @ all_variables observe operands)) source
+    if opening_freshens_names then
+      from_template_mode
+        (SOME (holes @ all_variables observe (native template :: operands)))
+        source
+    else
+      let
+        val entries = observations observe
+        fun free syntax = free_variables observe (entries syntax)
+        val equal = same_variable observe
+        (* The last field distinguishes actual substitutions (including
+           outer binder renamings) from unchanged lexical bindings. Only
+           actual substitutions introduce names at an inner abstraction. *)
+        fun bindings ([], []) = (observe 1; [])
+          | bindings (hole :: hs, operand :: os) =
+              (observe 1;
+               if Term.is_var hole then
+                 (hole, operand, free operand, true) :: bindings (hs, os)
+               else raise ERR "from_template" "hole is not a variable")
+          | bindings _ = raise ERR "from_template" "hole/operand arity"
+        val environment = bindings (holes, operands)
+        val markers = ref
+          (holes @ all_variables observe (native template :: operands))
+        fun fresh avoids variable =
+          let
+            val bytes = List.foldl (fn (avoid, total) =>
+              (observe 1; total + 1 + IntInf.fromInt
+                (String.size (#1 (Term.dest_var avoid))))) 0 avoids
+            (* Native substitution varies names without consulting the
+               theory's constant names, unlike Term.variant. *)
+            val result = Term.prim_variant avoids variable
+            val size = IntInf.fromInt
+              (String.size (#1 (Term.dest_var result)))
+            val original = IntInf.fromInt
+              (String.size (#1 (Term.dest_var variable)))
+            val _ = observe ((size-original+1)*(bytes+size+1))
+          in result end
+        fun lookup variable [] = (observe 1; native variable)
+          | lookup variable ((old, value, _, _) :: rest) =
+              if equal (variable, old) then value else lookup variable rest
+        fun walk environment term =
+          (observe 1;
+           if Term.is_var term then lookup term environment
+           else if Term.is_comb term then
+             let val (operator, operand) = Term.dest_comb term
+             in application (walk environment operator,
+                             walk environment operand) end
+           else if Term.is_abs term then
+             let
+               val (stored, body) = Term.dest_abs term
+               val environment = List.filter
+                 (fn (old, _, _, _) => not (equal (stored, old))) environment
+               val current = free (native term)
+               val introduced = List.foldl
+                 (fn ((old, _, variables, active), rest) =>
+                   (observe 1;
+                    if active andalso member equal old current then
+                      (observe (IntInf.fromInt (List.length variables));
+                       variables @ rest)
+                    else rest)) [] environment
+               val name = #1 (Term.dest_var stored)
+               fun clashes variable =
+                 let val other = #1 (Term.dest_var variable)
+                     val _ = observe (1 + IntInf.fromInt
+                       (String.size name + String.size other))
+                 in name = other end
+               val changed = List.exists clashes introduced
+               (* Native substitution avoids the ORIGINAL body free names
+                  as well, including holes and the old bound variable.
+                  Bound names inside operands do not participate. *)
+               val binder = if changed then
+                   (observe (IntInf.fromInt (List.length introduced));
+                    fresh (introduced @ free (native body)) stored)
+                 else stored
+               val marker = fresh (!markers) stored
+               val _ = markers := marker :: !markers
+               val environment =
+                 (stored, native marker, [binder], changed) :: environment
+             in make (Term.type_of term)
+                  (Abstraction (binder, marker, walk environment body)) end
+           else native term)
+      in walk environment template end
 
   fun is_constant observe constant root =
     let
@@ -403,13 +500,15 @@ struct
                    else
                      let
                        val stored = stored_binder observe term
-                       val marker = fresh (stored :: free syntax) stored
                        val _ = native_work term
-                       (* A private fresh marker avoids dest_abs's native
-                          clash/retry/free_vars path. The stored name is
-                          restored by peel, using the source free names. *)
-                       val opened_term = Term.rename_bvar
-                         (#1 (Term.dest_var marker)) term
+                       (* Only the freshening convention needs a private
+                          marker to avoid dest_abs's clash/retry path.
+                          On a name-carrying kernel rename_bvar can itself
+                          rename inner binders: open directly instead. *)
+                       val opened_term = if opening_freshens_names then
+                           Term.rename_bvar (#1 (Term.dest_var
+                             (fresh (stored :: free syntax) stored))) term
+                         else term
                        val (opened, body) = Term.dest_abs opened_term
                        val _ = observe 1
                      in SOME (stored, opened, native body) end
@@ -446,7 +545,8 @@ struct
                    val _ = observe (1 + IntInf.fromInt
                      (String.size name + String.size other))
                in name = other end
-             val binder = if List.exists clashes avoids
+             val binder = if opening_freshens_names andalso
+                             List.exists clashes avoids
                           then fresh avoids stored else stored
              val body = if same_variable observe (marker, binder) then body
                         else renamed (body, [(marker, binder)])

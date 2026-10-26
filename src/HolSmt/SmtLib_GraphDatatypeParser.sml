@@ -34,7 +34,7 @@ struct
          reach the same native builder: it is not an overload decline.
          Only fresh, typed atoms reach that builder, never query operands.
          If the native case builder accepts the types, retain its result. *)
-      fun apply recipe expected native frame arguments =
+      fun apply recipe expected native native_parse frame token arguments =
         let
           val _ = guard ()
           val recipe =
@@ -46,7 +46,9 @@ struct
                 val holes = Lib.mapi (fn index => fn argument =>
                   Term.mk_var ("__smt_datatype_operand_" ^ Int.toString index,
                     B.type_of backend argument)) arguments
-              in compile holes (native holes) end
+                val template = B.index_callback backend
+                  (fn () => native holes)
+              in compile holes template end
           val (recipe,holes,template) = recipe
           val _ = case B.constructor_sources backend of NONE => ()
             | SOME {arguments,...} =>
@@ -59,6 +61,15 @@ struct
             recipe arguments
           val _ = record (#branches built)
           val _ = guard ()
+          (* As in GraphTheories.observed_schema, only successful index
+             callbacks are observed. Replay uses the full native callback,
+             not this typed-hole adapter or any captured graph operands. *)
+          val _ = if B.index_source_active backend then
+              B.note_index_callback backend
+                (token,native_parse,
+                 if List.null (Term.free_vars template) then SOME template
+                 else NONE)
+            else ()
         in #value built end
       (* Tester dispatch observes only atom identity/name. A compound stand-in
          deliberately reaches the ordinary Term.dest_thy_const failure; no
@@ -129,12 +140,18 @@ struct
                 (Term.list_mk_comb (constructor, holes))
               fun constructor_native arguments =
                 Term.list_mk_comb (constructor, arguments)
+              fun constructor_callback name indices arguments =
+                if List.null indices andalso
+                   List.length arguments = List.length domains then
+                  constructor_native arguments
+                else SmtLib_Theories.decline ("<" ^ name ^ ">")
+                  "wrong number of arguments"
               fun constructor_parse frame name indices arguments =
                 (guard ();
                  if List.null indices andalso
                     List.length arguments = List.length domains then
                    apply constructor_recipe domains constructor_native
-                     frame arguments
+                     constructor_callback frame name arguments
                  else SmtLib_Theories.decline ("<" ^ name ^ ">")
                    "wrong number of arguments")
               (* A declared datatype token is authoritative. Retrying an
@@ -146,19 +163,38 @@ struct
                       constructor arg
                 | tester_native _ = raise Match
               val tester = compile [scrutinee] (tester_native [scrutinee])
+              fun tester_matches index =
+                let
+                  val matches = Term.same_const index constructor
+                    handle Feedback.HOL_ERR _ => false
+                  val index_name = Lib.fst (Term.dest_var index)
+                    handle Feedback.HOL_ERR _ =>
+                      #Name (Term.dest_thy_const index)
+                in index_name = token orelse matches end
+              (* Preserve add_datatype_parser_entries semantics on actual
+                 native indices and arguments, including destructor errors
+                 and overload declines. No source/graph adapter is replayed. *)
+              fun tester_callback name indices arguments =
+                case (indices, arguments) of
+                  ([index], [arg]) =>
+                    if tester_matches index then tester_native [arg]
+                    else SmtLib_Theories.decline
+                      ("<" ^ name ^ " " ^ token ^ ">")
+                      "tester constructor mismatch"
+                | _ => SmtLib_Theories.decline
+                    ("<" ^ name ^ " " ^ token ^ ">")
+                    "one constructor index and one argument expected"
               fun tester_parse frame name indices arguments =
                 (guard ();case (indices, arguments) of
                   ([index], [_]) =>
                     let
                       val index = tester_index frame index
-                      val matches = Term.same_const index constructor
-                        handle Feedback.HOL_ERR _ => false
-                      val index_name = Lib.fst (Term.dest_var index)
-                        handle Feedback.HOL_ERR _ =>
-                          #Name (Term.dest_thy_const index)
+                      val matches = B.index_callback backend
+                        (fn () => tester_matches index)
                     in
-                      if index_name = token orelse matches then
-                        apply tester [hol_type] tester_native frame arguments
+                      if matches then
+                        apply tester [hol_type] tester_native
+                          tester_callback frame name arguments
                       else tester_decline last_tester frame name token
                         indices arguments "tester constructor mismatch"
                     end
@@ -175,10 +211,15 @@ struct
                           constructor index arg
                     | native _ = raise Match
                   val recipe = compile [scrutinee] (native [scrutinee])
+                  fun callback token indices arguments =
+                    case (indices, arguments) of
+                      ([], [arg]) => native [arg]
+                    | _ => SmtLib_Theories.decline ("<" ^ token ^ ">")
+                        "one argument expected"
                   fun parse frame token indices arguments =
                     (guard ();case (indices, arguments) of
-                      ([], [_]) => apply recipe [hol_type] native
-                        frame arguments
+                      ([], [_]) => apply recipe [hol_type] native callback
+                        frame token arguments
                     | _ => SmtLib_Theories.decline ("<" ^ token ^ ">")
                         "one argument expected")
                 in (#replace_source_parser session)

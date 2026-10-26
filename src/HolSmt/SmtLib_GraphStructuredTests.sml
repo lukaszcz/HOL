@@ -282,6 +282,13 @@ struct
           List.map (fn exact => with_values
             (fn _ => fn _ => fn backend => failure (fn () =>
               parsed backend exact solver text))) [false,true]
+        fun describe NONE = "ACCEPTED"
+          | describe (SOME (origin,where_,message)) =
+              origin^"."^where_^": "^message
+        val _=if List.all (fn actual => actual=expected) outcomes then ()
+          else print ("\nordinary="^describe expected^"\n"^
+            String.concat (List.map
+              (fn actual => "constructed="^describe actual^"\n") outcomes))
     in ensure ("malformed classification: "^solver^" "^text)
       (Option.isSome expected andalso
        List.all (fn actual => actual=expected) outcomes) end
@@ -292,6 +299,367 @@ struct
     case failure (fn () => ordinary solver text) of
         NONE => positive solver text
       | SOME _ => negative solver text
+
+  (* The same admitted lexical body, including intentional binder capture,
+     represented without relying on a kernel's printed lambda names. *)
+  fun binder_representations binders body =
+    let
+      val raw=Term.list_mk_abs (binders,body)
+      val hole=Term.genvar (Term.type_of body)
+    in
+      [("native",C.native raw),
+       ("abstraction",List.foldr C.abstraction (C.native body) binders),
+       ("template/native",C.from_template
+         {template=raw,holes=[],operands=[]}),
+       ("template/body",C.from_template
+         {template=Term.list_mk_abs (binders,hole),holes=[hole],
+          operands=[C.native body]})]
+    end
+
+  (* Term.strip_abs uses simultaneous naming on some kernels. The contract
+     here is REPEATED public dest_abs, just like native comprehension. *)
+  fun opened_native term =
+    if Term.is_abs term then
+      let val (binder,body)=Term.dest_abs term
+          val (binders,body)=opened_native body
+      in (binder::binders,body) end
+    else ([],term)
+
+  fun binder_invariants () =
+    let
+      val x=Term.mk_var ("task33_x",Type.bool)
+      val xi=Term.mk_var ("task33_x",intSyntax.int_ty)
+      val y=Term.mk_var ("task33_y",Type.bool)
+      val prime=Term.mk_var ("task33_x'",Type.bool)
+      val same=boolSyntax.mk_eq (xi,xi)
+      val cases=[([x],same),([x],xi),([x],boolSyntax.T),([x],x),
+        ([x,y],same),([x,x],x),([x,xi],same),([x,x],same),
+        ([x,prime],boolSyntax.mk_conj (x,prime)),
+        ([x,prime],boolSyntax.mk_conj (x,same)),
+        ([x,prime],same),
+        ([x,y],boolSyntax.mk_conj (x,y)),
+        ([x],boolSyntax.mk_eq
+          (Term.mk_abs (prime,x),Term.mk_abs (prime,prime)))]
+      fun check (binders,body) =
+        let
+          val raw=Term.list_mk_abs (binders,body)
+          val (expected,tail)=opened_native raw
+          fun representation (label,source) =
+            let
+              val spent=ref (0:IntInf.int)
+              fun observe n=(ensure "negative syntax debit" (n>=0);
+                             spent := !spent+n)
+              val (actual,rest)=C.strip_abs observe source
+              val _=ensure (label^": public binder opening convention")
+                (length actual=length expected andalso
+                 ListPair.allEq (Lib.uncurry Term.aconv) (actual,expected))
+              val _=ensure (label^": stored source variable names/order")
+                (ListPair.allEq (Lib.uncurry Term.aconv)
+                  (C.all_variables observe [source],Term.all_varsl [raw]))
+              val _=ensure (label^": opened body variable names/order")
+                (ListPair.allEq (Lib.uncurry Term.aconv)
+                  (C.all_variables observe [rest],Term.all_varsl [tail]))
+              val _=ensure (label^": abstraction/body types")
+                (Type.compare (C.type_of source,Term.type_of raw)=EQUAL
+                 andalso Type.compare
+                   (C.type_of rest,Term.type_of tail)=EQUAL)
+              val _=List.app (fn constant => ensure
+                (label^": opened constant body")
+                (C.is_constant observe constant rest =
+                 (Term.is_const tail andalso Term.same_const tail constant)))
+                [boolSyntax.T,boolSyntax.F]
+            in ensure (label^": uncharged binder observation") (!spent>0)
+            end
+        in List.app representation (binder_representations binders body) end
+
+      (* Qualified-head replay substitutes fresh, distinct typed holes, not
+         lexical bodies (whose intentional capture is tested above). Keep
+         the native oracle tiny BEFORE calling subst: even its conservative
+         template-size times operand-size expansion bound is at most 512. *)
+      val h=Term.genvar Type.bool
+      val k=Term.genvar Type.bool
+      val hi=Term.genvar intSyntax.int_ty
+      val hf=Term.genvar (Type.--> (Type.bool,Type.bool))
+      val yi=Term.mk_var ("task33_y",intSyntax.int_ty)
+      fun abs bs body=Term.list_mk_abs (bs,body)
+      fun plain term=([],term)
+      val substitutions=
+        [("same-type capture",abs [x] h,[(h,plain x)]),
+         ("different-type namesake",abs [x] h,[(h,plain same)]),
+         ("occupied fresh name",abs [x] h,
+           [(h,plain (boolSyntax.mk_conj (x,prime)))]),
+         ("retained template free name",abs [x]
+           (boolSyntax.mk_conj (prime,h)),[(h,plain x)]),
+         ("nested collisions",abs [x,prime] h,
+           [(h,plain (boolSyntax.mk_conj (x,prime)))]),
+         ("duplicate binders",abs [x,x] h,[(h,plain x)]),
+         ("mixed-type binders",abs [x,xi] h,
+           [(h,plain (boolSyntax.mk_conj (x,same)))]),
+         ("bound and introduced occurrence",abs [x]
+           (boolSyntax.mk_conj (x,h)),[(h,plain x)]),
+         ("outer rename collides with inner binder",abs [x,prime]
+           (boolSyntax.mk_conj (x,h)),[(h,plain x)]),
+         ("unchanged nested binders",abs [x,prime]
+           (boolSyntax.mk_conj (x,h)),[(h,plain y)]),
+         ("operand bound names only",abs [x] hf,[(hf,([x],x))]),
+         ("operand bound name does not block freshening",abs [x] hf,
+           [(hf,([prime],x))]),
+         ("operand free and bound occurrences",abs [x] hf,
+           [(hf,([prime],boolSyntax.mk_conj (x,prime)))]),
+         ("unused colliding hole",abs [x] y,[(h,plain x)]),
+         ("used and unused holes",abs [x] h,
+           [(h,plain y),(k,plain x)]),
+         ("unused operand bound names",abs [x] h,
+           [(h,plain x),(hf,([prime],prime))]),
+         ("non-Boolean hole",abs [x]
+           (boolSyntax.mk_eq (hi,hi)),[(hi,plain xi)]),
+         ("different-type noncollision",abs [x]
+           (boolSyntax.mk_eq (hi,xi)),[(hi,plain yi)]),
+         ("repeated occurrences",boolSyntax.mk_conj (y,
+           boolSyntax.mk_conj (h,y)),
+           [(h,plain (boolSyntax.mk_conj (x,prime)))]),
+         ("simultaneous occurrence order",boolSyntax.mk_conj (k,
+           boolSyntax.mk_conj (h,k)),[(h,plain x),(k,plain y)]),
+         ("true hole",h,[(h,plain boolSyntax.T)]),
+         ("false hole",h,[(h,plain boolSyntax.F)]),
+         ("unused hole constant",boolSyntax.T,[(h,plain boolSyntax.F)]),
+         ("constant opened body",abs [x] h,[(h,plain boolSyntax.T)]),
+         ("constant application is not constant",boolSyntax.mk_neg h,
+           [(h,plain boolSyntax.T)]),
+         ("constant abstraction is not constant",abs [x] h,
+           [(h,plain boolSyntax.F)])]
+      fun bounded term =
+        case SmtReplayImport.bounded_raw_size 64 term of
+            SOME size => size
+          | NONE => raise Fail "substitution invariant fixture bound"
+      fun variables_equal (left,right) =
+        length left=length right andalso
+        ListPair.allEq (Lib.uncurry Term.aconv) (left,right)
+      fun binder_free term =
+        if Term.is_abs term then false
+        else if Term.is_comb term then
+          let val (f,a)=Term.dest_comb term
+          in binder_free f andalso binder_free a end
+        else true
+      fun substitution (name,template,bindings) =
+        let
+          val holes=List.map #1 bindings
+          val bodies=List.map #2 bindings
+          val operands=List.map (fn (bs,b) => abs bs b) bodies
+          val template_size=bounded template
+          val operand_size=List.foldl
+            (fn (term,n) => bounded term+n) 0 operands
+          val _=ensure (name^": native substitution expansion bound")
+            (template_size*(1+operand_size)<=512)
+          val _=ensure (name^": qualified holes are fresh and distinct")
+            (List.all Term.is_var holes andalso
+             length (Lib.op_mk_set Term.aconv holes)=length holes andalso
+             not (List.exists (fn hole => List.exists
+               (fn variable => Term.aconv hole variable)
+               (Term.all_varsl operands)) holes))
+          val raw=Term.subst (ListPair.mapEq
+            (fn (hole,operand) => {redex=hole,residue=operand})
+            (holes,operands)) template
+          val _=ensure (name^": substituted fixture bound")
+            (Option.isSome (SmtReplayImport.bounded_raw_size 512 raw))
+          fun representation index =
+            let
+              val sources=List.map (fn (bs,b) => #2 (List.nth
+                (binder_representations bs b,index))) bodies
+              val label=name^"/"^Int.toString index
+              val spent=ref (0:IntInf.int)
+              fun observe n=(ensure (label^": negative syntax debit")
+                (n>=0);spent := !spent+n)
+              val source=C.from_substitution observe
+                {template=template,holes=holes,operands=sources}
+              fun compare suffix native syntax =
+                let
+                  val label=label^suffix
+                  val (expected,tail)=opened_native native
+                  val (actual,rest)=C.strip_abs observe syntax
+                  val _=ensure (label^": stored binder names/all-vars order")
+                    (variables_equal (C.all_variables observe [syntax],
+                      Term.all_varsl [native]))
+                  val _=ensure (label^": repeated public binder opening")
+                    (variables_equal (actual,expected))
+                  val _=ensure (label^": opened all-vars occurrence order")
+                    (variables_equal (C.all_variables observe [rest],
+                      Term.all_varsl [tail]))
+                  val _=ensure (label^": multi-root occurrence order")
+                    (variables_equal
+                      (C.all_variables observe [rest,syntax,rest],
+                       Term.all_varsl [tail,native,tail]))
+                  (* There is no public free-vars query. On binder-free
+                     opened tails all-vars IS free-vars, including order;
+                     the wrappers below also exercise private free/bound
+                     tagging when the operands retain inner binders. *)
+                  val _=if binder_free tail then
+                    ensure (label^": opened free-vars occurrence order")
+                      (variables_equal (C.all_variables observe [rest],
+                        Term.free_varsl [tail]))
+                    else ()
+                  val _=ensure (label^": substitution/opening types")
+                    (Type.compare (C.type_of syntax,
+                       Term.type_of native)=EQUAL andalso
+                     Type.compare (C.type_of rest,Term.type_of tail)=EQUAL)
+                  fun constant_shape (term,value) constant =
+                    ensure (label^": exact constant shape")
+                      (C.is_constant observe constant value =
+                       (Term.is_const term andalso
+                        Term.same_const term constant))
+                  val _=List.app (fn constant =>
+                    (constant_shape (native,syntax) constant;
+                     constant_shape (tail,rest) constant))
+                    [boolSyntax.T,boolSyntax.F]
+                in () end
+              val _=compare "" raw source
+              val _=List.app (fn variable => compare
+                ("/capture-probe-"^ #1 (Term.dest_var variable))
+                (Term.mk_abs (variable,raw))
+                (C.abstraction (variable,source))) [x,prime]
+            in ensure (label^": uncharged substitution observation")
+                 (!spent>0) end
+        in List.app representation [0,1,2,3] end
+    in List.app check cases; List.app substitution substitutions end
+
+  (* Admit tiny raw native callbacks before publishing their source shape.
+     In particular, no substitution may silently freshen the value binder
+     before the descriptor comparison. Run every representation through all
+     four parser routes; accepted outcomes need a clean checked bridge. *)
+  fun raw_comprehensions () =
+    let
+      val x=Term.mk_var ("task33_x",Type.bool)
+      val xi=Term.mk_var ("task33_x",intSyntax.int_ty)
+      val y=Term.mk_var ("task33_y",Type.bool)
+      val prime=Term.mk_var ("task33_x'",Type.bool)
+      val same=boolSyntax.mk_eq (xi,xi)
+      val cases=
+        [(([x],boolSyntax.T),([x],xi)),
+         (([x],boolSyntax.T),([x],same)),
+         (([x,x],boolSyntax.T),([x,x],xi)),
+         (([x],x),([x],x)),
+         (([x,xi],same),([x,xi],xi)),
+         (([x,prime],boolSyntax.mk_conj (x,prime)),([x,prime],x)),
+         (([x,prime],boolSyntax.mk_conj (x,same)),([x,prime],xi)),
+         (([x],x),([y],y))]
+      val text="(set.comprehension structured_raw_p structured_raw_v)"
+      (* Like the small opaque-constructor oracle, measure the retained
+         native term with a hard visitor. Recording an opening does not
+         replace the original opaque IDs in the result. This oracle is
+         local to these prebounded raw callbacks, never shared-DAG tests. *)
+      fun raw_graph graph node =
+        let val raw=G.representative graph node
+        in ensure "raw comprehension output bound"
+             (Option.isSome
+               (SmtReplayImport.bounded_raw_size maximum raw));
+           raw
+        end
+      fun raw_value context value =
+        let
+          val root=PV.proof_term context value
+          val left=ref maximum
+          fun opaque term =
+            case PV.proof_graph_reference context term of
+                SOME {graph,node,...} => G.representative graph node
+              | NONE => raise Fail "raw callback lacks retained backing"
+          fun bound term =
+            case PV.proof_view context term of
+                PV.ProofOpaque =>
+                  (case SmtReplayImport.bounded_raw_size (!left)
+                          (opaque term) of
+                       SOME size => left := !left-size
+                     | NONE => raise Fail "raw callback output bound")
+              | view =>
+                  (left := !left-1;
+                   ensure "raw value output bound" (!left>=0);
+                   case view of
+                       PV.ProofApplication (f,x) => (bound f;bound x)
+                     | PV.ProofAbstraction {binder,body,...} =>
+                         (bound binder;bound body)
+                     | _ => ())
+          val _=bound root
+          fun lookup key [] = NONE
+            | lookup key ((held,term)::rest) =
+                if key=held then SOME term else lookup key rest
+          fun walk environment term =
+            case PV.proof_view context term of
+                PV.ProofVariable (_,lexical) =>
+                  (case lookup (PV.proof_key context term) environment of
+                       SOME bound => bound | NONE => lexical)
+              | PV.ProofConstant atom => atom
+              | PV.ProofApplication (f,x) =>
+                  Term.mk_comb (walk environment f,walk environment x)
+              | PV.ProofAbstraction {binder,body,...} =>
+                  let val variable=Term.genvar
+                        (PV.proof_type_of context binder)
+                  in Term.mk_abs (variable,walk
+                    ((PV.proof_key context binder,variable)::environment)
+                    body) end
+              | PV.ProofOpaque => opaque term
+        in walk [] root end
+      fun check ((pb,pbody),(vb,vbody)) =
+        let
+          val p=Term.list_mk_abs (pb,pbody)
+          val v=Term.list_mk_abs (vb,vbody)
+          val _=List.app (fn term => ensure "raw callback admission bound"
+            (Option.isSome (SmtReplayImport.bounded_raw_size maximum term)))
+            [p,v]
+          val (sorts,dictionary)=SmtLib_Logics.parsedicts_of_solver_logic
+            "cvc5" (logic "cvc5")
+          val dictionary=List.foldl Library.extend_dict dictionary
+            [("structured_raw_p",SmtLib_Theories.K_zero_zero p),
+             ("structured_raw_v",SmtLib_Theories.K_zero_zero v),
+             ("_",native_literal)]
+          val expected=Exn.capture (fn () => P.parse_term_with_cfg cfg
+            (tokens text) (sorts,dictionary)) ()
+          fun representation ((label,ps),(_,vs)) =
+            let
+              fun parse backend exact observe_source =
+                let
+                  val frame=B.root backend
+                  val (sorts,dictionary)= #dictionaries
+                    (if exact then R.select_with_policy_no_override
+                       backend policy
+                       {logic=logic "cvc5",solver=SOME "cvc5"}
+                     else R.select backend limits
+                       {logic=logic "cvc5",solver=SOME "cvc5"})
+                  fun callback (term,source) frame token indices arguments =
+                    let
+                      val raw=SmtLib_Theories.K_zero_zero term
+                        token indices arguments
+                      val value=B.source backend frame raw
+                      (* B.source retains native lambdas opaquely. Record
+                         this already bounded fixture's opening explicitly;
+                         no output or shared operand is opened here. *)
+                      val _=observe_source value
+                      val _=B.note_constructor_source backend source
+                    in value end
+                  val dictionary=List.foldl Library.extend_dict dictionary
+                    [("structured_raw_p",callback (p,ps)),
+                     ("structured_raw_v",callback (v,vs))]
+                  val dictionaries=literals backend (sorts,dictionary)
+                in if exact then P.parse_term_with_policy
+                    (policy_options backend frame) (tokens text) dictionaries
+                  else P.parse_term_with_backend
+                    (options backend frame) (tokens text) dictionaries end
+              fun compare project action = case expected of
+                  Exn.Res original => bridge original (project (action ()))
+                | Exn.Exn error => ensure
+                    (label^": raw comprehension diagnostic/acceptance")
+                    (failure action=failure (fn () => raise error))
+            in List.app (fn exact =>
+              (with_graph exact (fn graph => fn backend =>
+                 compare (raw_graph graph) (fn () => parse backend exact
+                   (fn node => ignore (G.record_opened_view graph
+                     (G.root_scope graph) maximum node))));
+               with_values (fn _ => fn context => fn backend =>
+                 compare (raw_value context)
+                   (fn () => parse backend exact (fn _ => ())))))
+              [false,true] end
+        in List.app representation (ListPair.zip
+          (binder_representations pb pbody,binder_representations vb vbody))
+        end
+    in List.app check cases end
 
   fun app name args = "("^name^" "^String.concatWith " " args^")"
   fun unary names x = List.map (fn name => app name [x]) names
@@ -823,12 +1191,20 @@ struct
        "(as union MissingSort)","(as set.universe MissingSort)",
        "((as const (Array Int Int)) true)",
        "((as union (Array Int Bool)) true)",
+       "((_ re.^ (bag true 1)) re.allchar)",
        "((_ seq.unit 0) 1)",
        "((_ set.comprehension 0) (lambda ((x Bool)) x) "^
          "(lambda ((y Bool)) y))"]),
      ("Z3",["(seq.update "^sequence^" 0 "^sequence^")",
        "(seq.rev "^sequence^")","(seq.foldl true 0 "^sequence^")",
-       "(seq.nth true 0)","(set.singleton 1)","(bag 1 2)"])]
+       "(seq.nth true 0)","(set.singleton 1)","(bag 1 2)",
+       (* The sort refusal precedes operand lookup/arity/type diagnostics.
+          These and the bag-valued regex index above are review regressions. *)
+       "((as union (Array Int Int)) missing)",
+       "((as union (Array Int Int)) true)",
+       "((as union (Array Int Int)))",
+       "((as union MissingSort) missing)",
+       "((as union (Array MissingSort Bool)) missing)"])]
 
   val session_cases =
     [("cvc5",[array,empty_sequence,"(as set.empty (Set Int))",
@@ -870,6 +1246,9 @@ struct
        "(lambda ((array_const_index Int)) (set.comprehension "^
          "((as const (Array Int Bool)) (= array_const_index 1)) "^
          "((as const (Array Int Int)) array_const_index)))",
+       "(lambda ((array_const_index Int)) (set.comprehension "^
+         "((as const (Array Bool Bool)) (= 1 1)) "^
+         "((as const (Array Bool Int)) array_const_index)))",
        "(lambda ((bag_literal_x Bool)) (set.comprehension "^
          "(lambda ((|bag_literal_x'| Bool)) |bag_literal_x'|) "^
          "(bag bag_literal_x 1)))"])]
@@ -907,6 +1286,12 @@ struct
          "(bag (structured_alias2 true) 1))")
       val _=alias_positive "Z3" "(seq.nth \"ab\" 0)"
         "(seq.unit structured_alias2)"
+      val _=OK ()
+      val _=tprint "Structured public binder/native/abstraction/template laws"
+      val _=binder_invariants ()
+      val _=OK ()
+      val _=tprint "Structured admitted raw callback comprehensions"
+      val _=raw_comprehensions ()
       val _=OK ()
       val _=tprint "Structured shadowed/duplicate descriptor differential"
       val _=List.app (differential "cvc5") descriptor_cases

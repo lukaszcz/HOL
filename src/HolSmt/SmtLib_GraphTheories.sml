@@ -328,7 +328,11 @@ struct
     in B.compile_recipe {template = template, holes = holes,
       template_limit = #template_limit limits} end
 
-  fun observed_schema backend build parse token request =
+  (* Build with the graph adapter, but replay admitted source indices with
+     the original native callback. Structured adapters consume schematic
+     variables and may retain graph sources; neither belongs in native
+     reconstruction over actual terms. *)
+  fun observed_schema backend build native_parse parse token request =
     if not (B.index_source_active backend) then build parse token request
     else let
       val fixed = ref NONE
@@ -339,7 +343,7 @@ struct
                 null (Term.free_vars term) then fixed := SOME term else ()
         in term end
       val result = build native token request
-      val _ = B.note_index_callback backend (token,parse,!fixed)
+      val _ = B.note_index_callback backend (token,native_parse,!fixed)
     in result end
 
   (* Lambda-lift only bounded constructor syntax. Actual operands are
@@ -482,7 +486,7 @@ struct
                 SmtLib_GraphWordBuilders.bbterm backend (finite_policy limits)
               else (fn frame => fn token => fn indices => fn arguments =>
                 P.construction_recipe_parsefn backend
-                  (observed_schema backend (schema backend limits)
+                  (observed_schema backend (schema backend limits) parse
                     (structured backend frame description parse arguments))
                   frame token (prepare_indices backend frame
                     (#index_limit (finite_policy limits)) dictionary
@@ -496,7 +500,7 @@ struct
     (checked_limits limits;
      fn frame => fn token => fn indices =>
        P.construction_recipe_parsefn backend
-         (observed_schema backend (schema backend limits) parse)
+         (observed_schema backend (schema backend limits) parse parse)
          frame token (prepare_indices backend frame
            (#index_limit (finite_policy limits))
            (#2 (L.parsedicts_of_logic "ALL")) token indices))
@@ -609,6 +613,7 @@ struct
               else (fn frame => fn token => fn indices => fn arguments =>
                 construction_recipe_parsefn_with_policy backend
                   (observed_schema backend (schema_with_policy backend limits)
+                    parse
                     (structured backend frame description parse arguments))
                   frame token
                   (prepare_indices backend frame (#index_limit limits)
@@ -622,7 +627,8 @@ struct
     (checked_policy_limits limits;
      fn frame => fn token => fn indices =>
        construction_recipe_parsefn_with_policy backend
-         (observed_schema backend (schema_with_policy backend limits) parse)
+         (observed_schema backend (schema_with_policy backend limits)
+           parse parse)
          frame token
          (prepare_indices backend frame (#index_limit limits)
            (#2 (L.parsedicts_of_logic "ALL")) token indices))
