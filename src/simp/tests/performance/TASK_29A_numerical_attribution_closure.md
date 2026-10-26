@@ -324,11 +324,54 @@ moved into `experiment()`.
   doubled count exposes a real cost or a count-dependent artefact has not
   been tested.
 
-Next experiment, before any further full grid: `frag_named_rules/1` and
-`/10` on the same two commits, at both the historical and the
-predeclared count, as one predeclared diagnostic run. A full grid needs a
-host with enough free disk for its duration (about 35 hours). No
-favourable subset is rerun.
+The predeclared diagnostics that followed are in the next section.
+
+## Fail attribution: code layout (2026-10-26) — diagnostic, not closure
+
+Four predeclared runs on the four failing cells, at 20 pairs and 5
+samples (`evidence/task29a/attribution/`, with `PLAN.md` and a README):
+
+- **R1** (same candidate, fixed layout) reproduces all four fails.
+- **R2** uses probe `8d4a84417`, which restores develop's `Cond_rewr.sml`
+  byte for byte. `frag_named_rules/1` and `/10` pass, while
+  `frag_create/10000` (1.17–1.20) and `frag_named/10000` (1.23–1.26) fail
+  by a larger margin. Those two cells execute an ordinary path identical
+  to develop's: `simpLib` is byte-identical and the fragment constructors
+  never reach `Cond_rewr`. Their user time per operation still differs by
+  36%, with equal system and GC time.
+- **R3** (historical half count) still fails `frag_named_rules/10`, so the
+  doubled count is not the cause.
+- **R4** randomizes each process's code layout (seed `task29a-r4`).
+  `frag_named_rules/1` [1.004, 1.016] and `/10` [0.985, 1.015] pass, as
+  does the sanity cell `frag_record/0` [0.993, 1.013].
+  `frag_create/10000` [0.956, 1.052] and `frag_named/10000` [0.952, 1.069]
+  are inconclusive: under randomization their B/B controls (0.977–1.060
+  and 0.965–1.071) are outside the window at 20 pairs.
+
+The code-area size at batch start tracks speed. One develop process in R1
+had a different code size from the other develop processes, and it is an
+outlier too. Under randomization, develop processes that get the same
+padding count mostly run within 1–2% of each other, while different counts
+spread them by about 8%. The fixed-layout fails are therefore layout
+artefacts: any source change that moves later code shifts these cells by
+several percent either way. They are not an ordinary-path cost of the
+candidate.
+
+**Method change.** This amends the measurement method, not the policy:
+seeded per-process layout randomization, plus a predeclared second stage
+that adds pairs where the develop-only control is too wide (`PROTOCOL.md`,
+"Code-layout randomization and second stage"). The policy owner should
+confirm the amendment. The work list below asks for "the unchanged
+fail-closed protocol", and an unchanged fixed-layout protocol cannot
+separate a candidate from its layout on this host.
+
+**Full rerun (predeclared before it starts).** The first stage is
+`task29a_grid.py run --candidate 6f62229c0 --pairs 20 --samples 5
+--layout-seed task29a-grid-1` over all 162 cells. The second stage is
+`task29a_grid.py extend` on that grid (seed `task29a-grid-1-ext`). Both
+use `--resume` only after an infrastructure failure. The final decision
+is the second stage's `decisions.json`, whatever it shows. Results are
+added below when the run completes.
 
 ## Work and acceptance
 

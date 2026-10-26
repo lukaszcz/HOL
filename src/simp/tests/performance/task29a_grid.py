@@ -12,6 +12,8 @@ candidate observation, so neither side can select its own count.
 """
 import argparse
 import json
+import math
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -31,11 +33,14 @@ PAIRS, SAMPLES = 10, 3
 HEADROOM = 2
 COUNTS = a.HERE / "evidence/task29a/iterations.json"
 # Earlier drivers whose runs still replay: 6f62229c0 (before canonical
-# comparison and replay --partial) and 224219893 (before --layout-seed).
+# comparison and replay --partial), 224219893 (before --layout-seed) and
+# 3ef5b380b (before --resume and the second stage).
 DRIVERS = [dict(bytes=12534, sha256="234da42ca599122645b9f578b1ddd37c"
                                     "6ffb70d83764d6e91e045ac4ffc4bd97"),
            dict(bytes=13917, sha256="664c632deb187a1ea9c3b59445676253"
-                                    "c0872627884b2f664b0626da43d817ee")]
+                                    "c0872627884b2f664b0626da43d817ee"),
+           dict(bytes=14854, sha256="ad4c81fb5b22fc8a5878bebcc5081dee"
+                                    "c28a2b67d0b350b9cb34a857d13a787c")]
 # acceptance.py before --layout-seed; runs without a seed analyze the same.
 ACCEPTANCE = [dict(bytes=37287, sha256="343dfc5d009e8851f0db990bc484bdb2"
                                        "ed1dce3e85efac2416b1335854080b97")]
@@ -136,47 +141,85 @@ def status_code(decisions):
     return {"pass": 0, "fail": 1}.get(decisions["status"], 2)
 
 
-def run(args):
-    root = args.output.resolve()
-    root.mkdir(parents=True, exist_ok=False)
-    counts = a.load(args.iterations)
-    a.require(counts["schema"] == "task29a-iterations-v1",
-              "wrong predeclared counts")
-    inventory = dict(schema="task29a-experiment-v1", baseline=args.baseline,
-                     candidate=args.candidate, seconds=args.batch_seconds,
-                     pairs=args.pairs, samples=args.samples,
-                     outliers="none removed",
-                     policy=a.EQUIVALENCE_POLICY, iterations=counts,
-                     iterations_seal=a.seal(args.iterations), runs=[],
-                     driver=a.seal(__file__), acceptance=a.seal(a.__file__))
-    if args.layout_seed is not None:
-        inventory["layout_seed"] = layout_seed(args.layout_seed)
+def unpack_report(root, row, scratch):
+    archive = a.safe_child(root, row["archive"])
+    a.require(a.seal(archive) == row["seal"], "changed archive")
+    folder = Path(scratch) / "unpacked"
+    a.require(bundle.unpack(archive, folder) == row["files"],
+              "changed archive file count")
+    report = a.load(folder / "acceptance.json")
+    a.require(row["exit"] == a.report_exit_status(report) and
+              row["protocol"] == report["success"],
+              "changed experiment outcome")
+    return folder, report
+
+
+def replay_rows(root, inventory):
+    """Recompute every archived cell of one inventory."""
     reports = {}
-    keys = gate.keys()
-    if args.only:
-        keys = [k for k in keys if "%s-%d" % k in args.only]
-        a.require(len(keys) == len(args.only), "unknown --only cell")
+    for row in inventory["runs"]:
+        key = row["case"], row["size"]
+        a.require(key in gate.keys() and key not in reports,
+                  "wrong/duplicate case")
+        a.require(row["iterations"] ==
+                  inventory["iterations"]["iterations"]["%s-%d" % key],
+                  "count differs from predeclaration")
+        with tempfile.TemporaryDirectory(prefix="task29a-replay-") as scratch:
+            folder, report = unpack_report(root, row, scratch)
+            check_report(folder, report, inventory["baseline"],
+                         inventory["candidate"], inventory["seconds"], *key,
+                         row["iterations"],
+                         row.get("pairs", inventory["pairs"]),
+                         inventory["samples"], inventory.get("layout_seed"))
+            reports[key] = report
+        print("REPLAY %s %d" % key, flush=True)
+    return reports
+
+
+def begin(root, inventory, resume):
+    """A fresh output, or the same experiment after an infrastructure
+    failure: identical settings, finished cells replayed and kept, an
+    unrecorded cell measured again from scratch."""
+    if not resume:
+        root.mkdir(parents=True, exist_ok=False)
+        return {}
+    old = a.load(root / "inventory.json")
+    a.require(not (root / "decisions.json").exists(), "run already complete")
+    a.require({k: v for k, v in old.items() if k != "runs"} ==
+              {k: v for k, v in inventory.items() if k != "runs"},
+              "resume with different settings")
+    inventory["runs"] = old["runs"]
+    return replay_rows(root, old)
+
+
+def measure(root, inventory, cells, args, reports):
+    """Measure (case, size, pairs) cells in order; checkpoint every row."""
+    seed = inventory.get("layout_seed")
+    counts = inventory["iterations"]["iterations"]
     with a.serial_lock(args.repo) as fds:
-        import os
         old = os.environ.get("HOL4_PERF_LOCK_FDS")
         os.environ["HOL4_PERF_LOCK_FDS"] = ",".join(map(str, fds))
         try:
-            for case, size in keys:
+            for case, size, pairs in cells:
+                if (case, size) in reports:
+                    continue
                 gate.get_case(case, size)
                 name = "%s-%d" % (case, size)
-                count = counts["iterations"][name]
-                print("START %s N=%d" % (name, count), flush=True)
+                count = counts[name]
+                print("START %s N=%d pairs=%d" % (name, count, pairs),
+                      flush=True)
                 with tempfile.TemporaryDirectory(prefix="task29a-") as scratch:
                     folder = Path(scratch) / name
                     options = argparse.Namespace(
-                        pairs=args.pairs, samples=args.samples,
-                        batch_seconds=args.batch_seconds,
+                        pairs=pairs, samples=inventory["samples"],
+                        batch_seconds=inventory["seconds"],
                         batch_iterations=count, timeout=args.timeout,
-                        baseline=args.baseline, candidate=args.candidate,
+                        baseline=inventory["baseline"],
+                        candidate=inventory["candidate"],
                         authorize_measurements=True, case=[case],
                         size=[size], output=folder, mode="isolated",
                         repo=args.repo, build_manifest=None,
-                        layout_seed=args.layout_seed)
+                        layout_seed=seed)
                     report = a.run(options)
                     archive = root / (name + ".json.xz")
                     files = bundle.pack(folder, archive)
@@ -189,16 +232,18 @@ def run(args):
                                 restored / path.relative_to(folder)),
                                 "transport changed original bytes")
                     reports[case, size] = report
-                    inventory["runs"].append(dict(
-                        case=case, size=size, iterations=count,
-                        archive=archive.name, seal=a.seal(archive),
-                        files=files, exit=a.report_exit_status(report),
-                        protocol=report["success"]))
+                    row = dict(case=case, size=size, iterations=count,
+                               archive=archive.name, seal=a.seal(archive),
+                               files=files, exit=a.report_exit_status(report),
+                               protocol=report["success"])
+                    if pairs != inventory["pairs"]:
+                        row["pairs"] = pairs
+                    inventory["runs"].append(row)
                     checkpoint(root / "inventory.json", inventory)
-                    check_report(folder, report, args.baseline,
-                                 args.candidate, args.batch_seconds,
-                                 case, size, count, args.pairs, args.samples,
-                                 args.layout_seed)
+                    check_report(folder, report, inventory["baseline"],
+                                 inventory["candidate"], inventory["seconds"],
+                                 case, size, count, pairs,
+                                 inventory["samples"], seed)
                     print("END %s exit=%d protocol=%s" % (
                         name, a.report_exit_status(report),
                         report["success"]), flush=True)
@@ -208,6 +253,30 @@ def run(args):
             else:
                 os.environ["HOL4_PERF_LOCK_FDS"] = old
             checkpoint(root / "inventory.json", inventory)
+    return reports
+
+
+def run(args):
+    root = args.output.resolve()
+    counts = a.load(args.iterations)
+    a.require(counts["schema"] == "task29a-iterations-v1",
+              "wrong predeclared counts")
+    inventory = dict(schema="task29a-experiment-v1", baseline=args.baseline,
+                     candidate=args.candidate, seconds=args.batch_seconds,
+                     pairs=args.pairs, samples=args.samples,
+                     outliers="none removed",
+                     policy=a.EQUIVALENCE_POLICY, iterations=counts,
+                     iterations_seal=a.seal(args.iterations), runs=[],
+                     driver=a.seal(__file__), acceptance=a.seal(a.__file__))
+    if args.layout_seed is not None:
+        inventory["layout_seed"] = layout_seed(args.layout_seed)
+    keys = gate.keys()
+    if args.only:
+        keys = [k for k in keys if "%s-%d" % k in args.only]
+        a.require(len(keys) == len(args.only), "unknown --only cell")
+    reports = begin(root, inventory, args.resume)
+    measure(root, inventory, [k + (args.pairs,) for k in keys], args,
+            reports)
     if args.only:
         return 2
     decisions = summary(reports)
@@ -215,43 +284,149 @@ def run(args):
     return status_code(decisions)
 
 
-def replay(args):
-    root = args.output.resolve()
-    inventory = a.load(root / "inventory.json")
+# Second stage, predeclared before the first-stage grid. Under randomized
+# layout a cell's develop/develop control may be too wide to resolve the
+# margin. Such a cell is measured again, with a pair count computed from
+# its control interval alone (never the candidate's), aiming at a half
+# width of half the margin. A first-stage fail stays final whatever its
+# control, so the candidate can only add fails. Each remeasurement is a
+# fresh experiment with its own seed and replaces the first-stage cell.
+TARGET = 0.015
+MAX_PAIRS = 120
+
+
+def extension_pairs(report, pairs):
+    """Pairs for a cell's remeasurement, or None when the cell is final."""
+    if not report["success"]:
+        return None
+    result, = report["workloads"]
+    metrics = result["candidate"]["metrics"]
+    gated = a.EQUIVALENCE_POLICY["gated_timing"]
+    if any(metrics[m]["decision"] == "fail" for m in gated):
+        return None
+    if all(metrics[m].get("control_valid") for m in gated):
+        return None
+    width = 0.0
+    for m in gated:
+        ci = result["control"]["metrics"][m][
+            "paired_ratio_bootstrap_95_percent"]
+        width = max(width, math.log(ci[1] / ci[0]) / 2 if ci and ci[0] > 0
+                    else math.inf)
+    wanted = pairs * (width / TARGET) ** 2
+    if not math.isfinite(wanted):
+        return MAX_PAIRS
+    return min(MAX_PAIRS, max(2 * pairs, 10 * math.ceil(wanted / 10)))
+
+
+def extension_plan(reports, pairs):
+    plan = []
+    for key in gate.keys():
+        extra = extension_pairs(reports[key], pairs)
+        if extra is not None:
+            plan.append([*key, extra])
+    return plan
+
+
+def check_header(inventory):
     a.require(inventory["driver"] in [a.seal(__file__)] + DRIVERS,
               "changed driver")
     a.require(inventory["acceptance"] in [a.seal(a.__file__)] + ACCEPTANCE,
               "changed acceptance")
-    seed = inventory.get("layout_seed")
-    a.require(seed is None or inventory["acceptance"] == a.seal(a.__file__),
+    a.require(inventory.get("layout_seed") is None or
+              inventory["acceptance"] == a.seal(a.__file__),
               "layout seed needs the current acceptance")
     a.require(inventory["policy"] == a.EQUIVALENCE_POLICY, "changed policy")
     a.require(inventory["iterations"] == a.load(COUNTS),
               "changed predeclared counts")
-    reports = {}
-    for row in inventory["runs"]:
-        key = row["case"], row["size"]
-        a.require(key in gate.keys() and key not in reports,
-                  "wrong/duplicate case")
-        a.require(row["iterations"] ==
-                  inventory["iterations"]["iterations"]["%s-%d" % key],
-                  "count differs from predeclaration")
-        archive = a.safe_child(root, row["archive"])
-        a.require(a.seal(archive) == row["seal"], "changed archive")
-        with tempfile.TemporaryDirectory(prefix="task29a-replay-") as scratch:
-            folder = Path(scratch) / "unpacked"
-            a.require(bundle.unpack(archive, folder) == row["files"],
-                      "changed archive file count")
-            report = a.load(folder / "acceptance.json")
-            a.require(row["exit"] == a.report_exit_status(report) and
-                      row["protocol"] == report["success"],
-                      "changed experiment outcome")
-            check_report(folder, report, inventory["baseline"],
-                         inventory["candidate"], inventory["seconds"], *key,
-                         row["iterations"], inventory["pairs"],
-                         inventory["samples"], seed)
-            reports[key] = report
-        print("REPLAY %s %d" % key, flush=True)
+
+
+def replay_grid(root):
+    """A complete first-stage grid and its recorded decisions."""
+    inventory = a.load(root / "inventory.json")
+    a.require(inventory["schema"] == "task29a-experiment-v1",
+              "not a first-stage grid")
+    check_header(inventory)
+    reports = replay_rows(root, inventory)
+    decisions = summary(reports)
+    a.require(decisions == a.load(root / "decisions.json"),
+              "changed TASK29A decisions")
+    return inventory, reports, decisions
+
+
+def extension_inventory(grid, root, inventory):
+    seed = inventory.get("layout_seed")
+    a.require(seed is not None, "extension needs a layout-randomized grid")
+    header = {k: inventory[k] for k in (
+        "baseline", "candidate", "seconds", "pairs", "samples", "outliers",
+        "policy", "iterations", "iterations_seal")}
+    return dict(header, schema="task29a-extension-v1",
+                grid=os.path.relpath(grid, root),
+                grid_inventory=a.seal(grid / "inventory.json"),
+                grid_decisions=a.seal(grid / "decisions.json"),
+                layout_seed=layout_seed(seed + "-ext"),
+                target=TARGET, max_pairs=MAX_PAIRS, runs=[],
+                driver=a.seal(__file__), acceptance=a.seal(a.__file__))
+
+
+def combined(stage1, stage2, plan, inventory):
+    a.require(set(stage2) == {(c, s) for c, s, _ in plan},
+              "incomplete remeasurement")
+    decisions = summary({**stage1, **stage2})
+    decisions["remeasured"] = dict(
+        plan=plan, target=inventory["target"],
+        max_pairs=inventory["max_pairs"], seed=inventory["layout_seed"],
+        rule="B/B control outside the window and no first-stage fail")
+    return decisions
+
+
+def extend(args):
+    grid, root = args.grid.resolve(), args.output.resolve()
+    first, stage1, _ = replay_grid(grid)
+    inventory = extension_inventory(grid, root, first)
+    plan = extension_plan(stage1, first["pairs"])
+    inventory["plan"] = plan
+    print("PLAN %d cells: %s" % (len(plan), json.dumps(plan)), flush=True)
+    reports = begin(root, inventory, args.resume)
+    measure(root, inventory, [tuple(p) for p in plan], args, reports)
+    decisions = combined(stage1, reports, plan, inventory)
+    a.save(root / "decisions.json", decisions)
+    return status_code(decisions)
+
+
+def replay(args):
+    root = args.output.resolve()
+    inventory = a.load(root / "inventory.json")
+    check_header(inventory)
+    if inventory["schema"] == "task29a-extension-v1":
+        grid = (root / inventory["grid"]).resolve()
+        a.require(a.seal(grid / "inventory.json") ==
+                  inventory["grid_inventory"] and
+                  a.seal(grid / "decisions.json") ==
+                  inventory["grid_decisions"], "changed first-stage grid")
+        first, stage1, _ = replay_grid(grid)
+        a.require(inventory == dict(
+            extension_inventory(grid, root, first),
+            plan=extension_plan(stage1, first["pairs"]),
+            runs=inventory["runs"], driver=inventory["driver"],
+            acceptance=inventory["acceptance"]), "changed extension plan")
+        reports = replay_rows(root, inventory)
+        a.require([[r["case"], r["size"], r.get("pairs", inventory["pairs"])]
+                   for r in inventory["runs"]] ==
+                  inventory["plan"][:len(inventory["runs"])],
+                  "remeasurement differs from plan")
+        if args.partial:
+            a.require(not (root / "decisions.json").exists(),
+                      "complete run replayed as partial")
+            print("TASK29A partial remeasurement: %d of %d cells replayed"
+                  % (len(reports), len(inventory["plan"])))
+            return 2
+        decisions = combined(stage1, reports, inventory["plan"], inventory)
+        a.require(decisions == a.load(root / "decisions.json"),
+                  "changed TASK29A decisions")
+        print("TASK29A two-stage archives and decisions replayed: " +
+              decisions["status"])
+        return status_code(decisions)
+    reports = replay_rows(root, inventory)
     if args.partial:
         # An interrupted run has no grid decision; each finished cell
         # still replays exactly.
@@ -287,7 +462,17 @@ def main(argv=None):
                          help="randomize code layout per fresh process")
     execute.add_argument("--only", action="append",
                          help="diagnostic subset; never a grid decision")
+    execute.add_argument("--resume", action="store_true",
+                         help="continue after an infrastructure failure")
     execute.add_argument("--authorize-measurements", action="store_true")
+    more = sub.add_parser("extend")
+    more.add_argument("--grid", type=Path, required=True)
+    more.add_argument("--output", type=Path, required=True)
+    more.add_argument("--repo", type=Path, default=a.HERE.parents[3])
+    more.add_argument("--timeout", type=int, default=1800)
+    more.add_argument("--resume", action="store_true",
+                      help="continue after an infrastructure failure")
+    more.add_argument("--authorize-measurements", action="store_true")
     check = sub.add_parser("replay")
     check.add_argument("--output", type=Path, required=True)
     check.add_argument("--partial", action="store_true",
@@ -302,6 +487,9 @@ def main(argv=None):
         a.exact_pin(args.baseline)
         a.exact_pin(args.candidate)
         return run(args)
+    if args.action == "extend":
+        a.require(args.authorize_measurements, "exclusive window required")
+        return extend(args)
     return replay(args)
 
 

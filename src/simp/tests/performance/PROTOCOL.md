@@ -211,6 +211,39 @@ offline replay uses the policy a report recorded. Rules 1–4 and 6 are unchange
   are run options (minimum ten and three), fixed before the run and recorded
   in its inventory.
 
+#### Code-layout randomization and second stage (TASK29A)
+
+Every fresh process compiles its selected sources at startup, so the address
+of all later code depends on everything compiled before it. On the measured
+host (Linux/aarch64, Neoverse-V2, Poly/ML 5.9.2) this alone moves the
+per-operation cost of the large fragment cells by up to ±10%. Develop
+processes with the same code-area size run alike, and both B/B sides share
+one layout. A source change elsewhere that moves the layout therefore looks
+like a slowdown or speedup at a fixed layout (`evidence/task29a/attribution/`).
+
+- `--layout-seed S` (`run_paired.py`, `acceptance.py run`,
+  `task29a_grid.py run`) sets `PERF_LAYOUT` for every matrix process to
+  `sha256("S:pair:selection") mod 128`. `runner.sml` compiles that many
+  one-line padding functions (about 200 code bytes each) before loading any
+  dependency, and emits no event. Baseline and candidate draw independently.
+  The manifest records the seed and range, and the audit re-derives every
+  receipt's value. Without a seed nothing changes, and older archives replay
+  as before.
+- **Second stage** (`task29a_grid.py extend --grid G`), predeclared with the
+  first-stage grid. A cell is measured again when its B/B control misses the
+  window for CPU or wall and its candidate did not fail. The pair count is
+  `20·(w/0.015)²` rounded up to tens, between twice the first-stage pairs
+  and 120, where `w` is half the log-width of the widest such control
+  interval. Only develop/develop data choose the cells and counts; a fail is
+  final, so the candidate can only add fails. Each remeasurement is a fresh
+  experiment with seed `S-ext`. It replaces the first-stage cell, whatever
+  its own outcome. `replay` re-derives the plan from the first-stage
+  archives and replays both stages.
+- `--resume` continues a run or second stage interrupted by an
+  infrastructure failure (for example a full disk), with identical settings.
+  Recorded cells are replayed and kept; an unrecorded cell is measured
+  again from scratch.
+
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived
 results are revalidated through the existing schema and source-binding auditor,

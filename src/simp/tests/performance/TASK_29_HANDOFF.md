@@ -780,15 +780,14 @@ integer keys.
 
 ## Exact blockers and next step
 
-- [TASK29A](TASK_29A_numerical_attribution_closure.md): the equivalence-policy
-  grid fails in four cells (above); first test whether the two
-  `frag_named_rules` fails depend on the doubled predeclared count. Then
-  resolve the exact failed and inconclusive timing cells and unstable
-  controls enumerated above, with
-  fresh local generated-work/layout attribution and complete affected-grid
-  reruns after any fix. Source equality or smaller retained graphs cannot close
-  these findings. A sufficiently stable exclusive environment plus a verified
-  attribution/repair is required; host noise is not an accepted explanation.
+- [TASK29A](TASK_29A_numerical_attribution_closure.md): the four
+  fixed-layout fails of the equivalence-policy grid are attributed to code
+  layout, not to an ordinary-path cost (predeclared diagnostics R1–R4,
+  `evidence/task29a/attribution/`). With seeded layout randomization the
+  two `frag_named_rules` cells pass, and the two size-10000 cells need more
+  pairs. The decision now rests on the full layout-randomized two-stage
+  rerun predeclared in TASK29A ("Fail attribution: code layout"), and the
+  policy owner should confirm that method amendment.
 - [TASK29B](TASK_29B_allocation_counter.md): supply/review a supported cumulative
   HOL allocator instrument and measure the full increasing-rule allocation
   matrix; current snapshot fields cannot satisfy it.

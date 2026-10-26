@@ -21,7 +21,10 @@ reported. Every process of a cell uses one predeclared count from
 `evidence/task29a/iterations.json`; pairs and samples are run options.
 `task29a_grid.py replay --output DIR` recomputes every decision offline;
 `--partial` replays the finished cells of an interrupted run without a grid
-decision (`evidence/task29a/grid-partial/`).
+decision (`evidence/task29a/grid-partial/`). `--layout-seed` randomizes
+each process's code layout, `extend --grid DIR` runs the predeclared,
+candidate-blind second stage, and `--resume` continues after an
+infrastructure failure (`PROTOCOL.md`, "Code-layout randomization").
 Results: `evidence/task29a/` and
 [`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
 
