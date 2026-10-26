@@ -30,4 +30,12 @@ sig
   val strip_abs : (IntInf.int -> unit) -> syntax -> Term.term list * syntax
   val all_variables : (IntInf.int -> unit) -> syntax list -> Term.term list
   val type_of : syntax -> Type.hol_type
+
+  (* Ordinary qualified application observes one abstraction, then performs
+     capture-avoiding source substitution. Operands remain shared syntax,
+     never native terms. These are observations, not proof authority. *)
+  val dest_abs : (IntInf.int -> unit) -> syntax ->
+    (Term.term * syntax) option
+  val substitute : (IntInf.int -> unit) ->
+    (Term.term * syntax) list -> syntax -> syntax
 end

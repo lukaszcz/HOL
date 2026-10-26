@@ -2601,16 +2601,17 @@ local
        Option.isSome (B.lookup backend frame "_") then NONE
     else symbolic head token
 
+  fun construction_qualified_constructor name = case name of
+      "const" => SOME ("Array","Z3 const")
+    | "union" => SOME ("Array","Z3 union")
+    | "seq.empty" => SOME ("Seq",name)
+    | "set.empty" => SOME ("Set",name)
+    | "set.universe" => SOME ("Set",name)
+    | "bag.empty" => SOME ("Bag",name)
+    | _ => NONE
+
   fun construction_qualified_sort get_token name constructor =
-    let val expected = case name of
-          "const" => SOME ("Array","Z3 const")
-        | "union" => SOME ("Array","Z3 union")
-        | "seq.empty" => SOME ("Seq",name)
-        | "set.empty" => SOME ("Set",name)
-        | "set.universe" => SOME ("Set",name)
-        | "bag.empty" => SOME ("Bag",name)
-        | _ => NONE
-    in case expected of NONE => ()
+    case construction_qualified_constructor name of NONE => ()
       | SOME (head,label) => if constructor = SOME head then () else
           (* parse_qualified_type reads both the opening token and head,
              even when the opening token is not "(". Preserve that cursor
@@ -2618,7 +2619,54 @@ local
           (if Option.isSome constructor then () else ignore (get_token ());
            raise ERR "parse_ascribed_term"
              (label ^ " expects a " ^ head ^ " sort"))
-    end
+
+  (* Native qualification applies an abstraction by substitution, otherwise
+     by mk_comb. Validate on typed atoms before applying shared backend values
+     so malformed applications keep that first native error on either route. *)
+  fun construction_apply_qualified backend frame occurrence function [] =
+        function
+    | construction_apply_qualified backend frame occurrence function arguments =
+    let
+      val spend = B.syntax_spend backend
+      val single = case arguments of [_] => true | _ => false
+      fun apply (argument,function) =
+        let
+          val _ = spend 4
+          val hole = Term.genvar
+            (B.type_of backend (construction_value (#1 argument)))
+          val function_type =
+            B.type_of backend (construction_value (#1 function))
+          val abstraction = C.dest_abs spend (#2 function)
+          val _ = B.index_callback backend (fn () =>
+            case abstraction of SOME (variable,_) =>
+              ignore (Term.subst [{redex=variable,residue=hole}] variable)
+            | NONE => ignore (Term.mk_comb (Term.genvar function_type,hole)))
+          (* The ordinary parser recognizes constant arrays by their exposed
+             binder shape, even when a dictionary supplied the function. *)
+          val literal = case abstraction of SOME (variable,body) =>
+              if single andalso #1 (Term.dest_var variable) =
+                  "array_const_value" andalso Term.type_of variable = Type.bool
+              then (case C.dest_abs spend body of NONE => NONE
+                | SOME (index,_) =>
+                  if C.is_constant spend boolSyntax.F (#2 argument) then
+                    SOME (pred_setSyntax.mk_empty (Term.type_of index))
+                  else if C.is_constant spend boolSyntax.T (#2 argument) then
+                    SOME (pred_setSyntax.mk_univ (Term.type_of index))
+                  else NONE)
+              else NONE
+            | NONE => NONE
+          val (value,source) = case literal of SOME term =>
+              (B.literal backend frame term,C.native term)
+            | NONE =>
+              (B.application backend frame
+                (construction_value (#1 function),
+                 construction_value (#1 argument)),
+               case abstraction of SOME (variable,body) =>
+                   C.substitute spend [(variable,#2 argument)] body
+                 | NONE => C.application (#2 function,#2 argument))
+        in occurrence frame (SOME source) value
+          ConstructionApplication "as" [function,argument] end
+    in List.foldl apply function arguments end
 
   (* These checks precede the head's closing token and operand lookup, as
      in parse_ascribed_term. Construction callbacks run after the operands
@@ -2818,26 +2866,40 @@ local
           else if head = "as" then
             let
               val name = get_token ()
-              val first = get_token ()
-              val (constructor, prefix) = if first = "(" then
-                  let val constructor = get_token ()
-                  in (SOME constructor, [first, constructor]) end
-                else (NONE, [first])
-              val _ = construction_qualified_sort get_token name constructor
-              val sort = parse_type_with_key (#type_symbol_key cfg)
-                (Library.undo_look_ahead prefix get_token) tydict
-              val _ = construction_qualified_type name sort
-              val _ = expect ")"
-            in fn arguments =>
+            in if Option.isSome (construction_qualified_constructor name) then
               let
-                val (value, source) = B.with_constructor_sources backend
-                  {indices = [], arguments = List.map #2 arguments}
-                  (fn () => (#ascribed_symbol cfg) frame
-                    {name = name, constructor = constructor, sort = sort,
-                     arguments = List.map construction_value arguments})
-              in occurrence frame source value
-                (ConstructionAscribed {constructor = constructor, sort = sort})
-                name arguments end
+                val first = get_token ()
+                val (constructor, prefix) = if first = "(" then
+                    let val constructor = get_token ()
+                    in (SOME constructor, [first, constructor]) end
+                  else (NONE, [first])
+                val _ = construction_qualified_sort get_token name constructor
+                val sort = parse_type_with_key (#type_symbol_key cfg)
+                  (Library.undo_look_ahead prefix get_token) tydict
+                val _ = construction_qualified_type name sort
+                val _ = expect ")"
+              in fn arguments =>
+                let
+                  val (value, source) = B.with_constructor_sources backend
+                    {indices = [], arguments = List.map #2 arguments}
+                    (fn () => (#ascribed_symbol cfg) frame
+                      {name = name, constructor = constructor, sort = sort,
+                       arguments = List.map construction_value arguments})
+                in occurrence frame source value
+                  (ConstructionAscribed {constructor = constructor, sort = sort})
+                  name arguments end
+              end
+            else
+              let
+                (* Generic qualification follows ordinary compound parsing:
+                   the identifier and sort spelling are TERM operands of the
+                   dictionary's "as" entry, in that order. *)
+                val _ = unread [name]
+                val children = operands frame []
+                val function = apply frame "as" [] children
+                  ConstructionApplication children
+              in construction_apply_qualified backend frame occurrence function
+              end
             end
           else if head = "@var" then
             let
@@ -3147,26 +3209,40 @@ local
           else if head = "as" then
             let
               val name = get_token ()
-              val first = get_token ()
-              val (constructor, prefix) = if first = "(" then
-                  let val constructor = get_token ()
-                  in (SOME constructor, [first, constructor]) end
-                else (NONE, [first])
-              val _ = construction_qualified_sort get_token name constructor
-              val sort = parse_type_with_key (#type_symbol_key cfg)
-                (Library.undo_look_ahead prefix get_token) tydict
-              val _ = construction_qualified_type name sort
-              val _ = expect ")"
-            in fn arguments =>
+            in if Option.isSome (construction_qualified_constructor name) then
               let
-                val (value, source) = B.with_constructor_sources backend
-                  {indices = [], arguments = List.map #2 arguments}
-                  (fn () => (#ascribed_symbol cfg) frame
-                    {name = name, constructor = constructor, sort = sort,
-                     arguments = List.map construction_value arguments})
-              in occurrence frame source value
-                (ConstructionAscribed {constructor = constructor, sort = sort})
-                name arguments end
+                val first = get_token ()
+                val (constructor, prefix) = if first = "(" then
+                    let val constructor = get_token ()
+                    in (SOME constructor, [first, constructor]) end
+                  else (NONE, [first])
+                val _ = construction_qualified_sort get_token name constructor
+                val sort = parse_type_with_key (#type_symbol_key cfg)
+                  (Library.undo_look_ahead prefix get_token) tydict
+                val _ = construction_qualified_type name sort
+                val _ = expect ")"
+              in fn arguments =>
+                let
+                  val (value, source) = B.with_constructor_sources backend
+                    {indices = [], arguments = List.map #2 arguments}
+                    (fn () => (#ascribed_symbol cfg) frame
+                      {name = name, constructor = constructor, sort = sort,
+                       arguments = List.map construction_value arguments})
+                in occurrence frame source value
+                  (ConstructionAscribed {constructor = constructor, sort = sort})
+                  name arguments end
+              end
+            else
+              let
+                (* Generic qualification follows ordinary compound parsing:
+                   the identifier and sort spelling are TERM operands of the
+                   dictionary's "as" entry, in that order. *)
+                val _ = unread [name]
+                val children = operands frame []
+                val function = apply frame "as" [] children
+                  ConstructionApplication children
+              in construction_apply_qualified backend frame occurrence function
+              end
             end
           else if head = "@var" then
             let

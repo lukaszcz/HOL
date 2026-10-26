@@ -3748,6 +3748,41 @@ in
 
   (* Explicitly audited CPC constructors receive only bounded typed holes.
      Shape-dependent BV/FP and skolem builders remain separate adapters. *)
+  (* Qualification in the ordinary proof grammar uses term-valued sort
+     markers. Reuse its actual callbacks as bounded recipes, rather than
+     silently substituting generic sort-directed ascription semantics. *)
+  fun graph_qualification_entries () =
+    let val (_,dictionary) = with_cpc_literals
+          (Redblackmap.mkDict String.compare,
+           Redblackmap.mkDict String.compare)
+    in List.concat (List.map (fn name =>
+      List.map (fn parse => (name,parse))
+        (valOf (Redblackmap.peek (dictionary,name))))
+      ["Bool","String","Set","Bag","as"]) end
+
+  fun install_graph_qualifications backend add_recipe add_constructor
+      private_symbol =
+    let
+      fun install (name,parse) =
+        if name = "Bool" orelse name = "as" then add_recipe (name,parse)
+        else add_constructor (name,fn frame => fn token => fn indices =>
+          fn arguments =>
+          let
+            (* Only schematic atoms reach the native marker callback. Its
+               result is a single typed marker, never an operand expansion. *)
+            val holes = List.map (Term.genvar o B.type_of backend) arguments
+            val marker = B.index_callback backend (fn () =>
+              parse token (List.map (fn _ => boolSyntax.T) indices) holes)
+            val _ = B.note_index_callback backend (token,parse,SOME marker)
+            val _ = B.syntax_spend backend
+              (1 + 4 * IntInf.fromInt (List.length arguments))
+            val _ = B.note_constructor_source backend
+              (SmtLib_ConstructorSyntax.native marker)
+          in private_symbol frame
+            {kind = #1 (Term.dest_var marker), hol_type = Term.type_of marker,
+             source = NONE, stable = true} end)
+    in List.app install (graph_qualification_entries ()) end
+
   fun install_graph_recipes (options : SmtLib_GraphFrontend.options)
       (terms : SmtLib_GraphFrontend.session) =
     let
@@ -3777,6 +3812,9 @@ in
          "@mod_by_zero", "@div_by_zero", "**_total"]
       val backend = #backend (#reader terms)
       val graph = #graph options
+      val _ = install_graph_qualifications backend
+        (#add_recipe_parser terms) (#add_constructor_parser terms)
+        (#private_symbol terms)
       val limits = #recipe_limits options
       val width_limit = #index_limit limits
       fun admitted term =
@@ -4303,6 +4341,9 @@ in
         ["div_total", "mod_total", "/_total", "@int_div_by_zero",
          "@mod_by_zero", "@div_by_zero", "**_total"]
       val backend = #backend (#reader terms)
+      val _ = install_graph_qualifications backend
+        (#add_recipe_parser terms) (#add_constructor_parser terms)
+        (#private_symbol terms)
       val limits = #recipe_limits options
       val width_limit = #index_limit limits
       fun admitted term =

@@ -446,7 +446,7 @@ struct
          | _ => false)
     in head root end
 
-  fun strip_abs observe root =
+  fun abstraction_reader observe =
     let
       val entries = observations observe
       val heads = ref (dictionary observe)
@@ -532,10 +532,10 @@ struct
              val _ = observe 1
              val _ = heads := Redblackmap.insert (!heads, id, result)
            in result end)
-      fun peel syntax prefix =
+      fun expose syntax =
         (observe 1;
          case head syntax of
-           NONE => (List.rev prefix, syntax)
+           NONE => NONE
          | SOME (stored, marker, body) =>
            let
              val avoids = without marker (free body)
@@ -550,6 +550,124 @@ struct
                           then fresh avoids stored else stored
              val body = if same_variable observe (marker, binder) then body
                         else renamed (body, [(marker, binder)])
-           in peel body (binder :: prefix) end)
+           in SOME (binder,body) end)
+    in expose end
+
+  fun dest_abs observe root = abstraction_reader observe root
+  fun strip_abs observe root =
+    let val expose = abstraction_reader observe
+        fun peel syntax prefix = case expose syntax of
+            NONE => (List.rev prefix,syntax)
+          | SOME (binder,body) => peel body (binder::prefix)
     in peel root [] end
+
+  (* Substitute into source syntax, not into a realized graph. Memoize by
+     syntax AND lexical environment: shared operands stay shared, including
+     underneath binders. Only admitted native fragments reach the existing
+     native-template substitution observer. *)
+  fun substitute observe replacements root =
+    let
+      val entries = observations observe
+      val equal = same_variable observe
+      fun free syntax = free_variables observe (entries syntax)
+      val serial = ref (0 : IntInf.int)
+      fun environment bindings =
+        (observe 1; serial := !serial+1; (!serial,bindings))
+      val memo = ref (Redblackmap.mkDict
+        (fn ((a,b),(c,d)) => (observe 1;
+          case IntInf.compare (a,c) of EQUAL => IntInf.compare (b,d) | x => x)))
+      fun lookup variable [] = (observe 1; NONE)
+        | lookup variable ((old,value,variables,active,lexical)::rest) =
+            if equal (variable,old) then SOME (value,variables,active,lexical)
+            else lookup variable rest
+      fun extend bindings rest = bindings @ List.filter
+        (fn (old,_,_,_,_) => not (Option.isSome (lookup old bindings))) rest
+      fun source_variable (Syntax {node,...}) =
+        (observe 1; case node of
+           Native term => if Term.is_var term then SOME term else NONE
+         | Template source => source_variable (expand_template observe source)
+         | Renaming (body,renamed) => Option.map
+             (replace observe renamed) (source_variable body)
+         | _ => NONE)
+      fun fresh avoids variable =
+        let
+          val bytes = List.foldl (fn (avoid,total) =>
+            (observe 1; total+1+IntInf.fromInt
+              (String.size (#1 (Term.dest_var avoid))))) 0 avoids
+          val result = Term.prim_variant avoids variable
+          val size = IntInf.fromInt (String.size (#1 (Term.dest_var result)))
+          val original = IntInf.fromInt
+            (String.size (#1 (Term.dest_var variable)))
+          val _ = observe ((size-original+1)*(bytes+size+1))
+        in result end
+      fun walk (_,[]) syntax = syntax
+        | walk (env as (epoch,bindings)) (syntax as Syntax {id,ty,node}) =
+        (observe 1;
+         case Redblackmap.peek (!memo,(epoch,id)) of SOME result => result
+         | NONE =>
+           let
+             val result = case node of
+                 Native term => if Term.is_var term then
+                   (case lookup term bindings of SOME (value,_,_,_) => value
+                    | NONE => syntax)
+                 else if Term.is_abs term orelse Term.is_comb term then
+                   walk env (expand_template observe
+                     {template=term,holes=[],operands=[],avoids=NONE})
+                 else syntax
+               | Template source => walk env (expand_template observe source)
+               | Application (operator,operand) =>
+                   application (walk env operator,walk env operand)
+               | Renaming (body,renamed) =>
+                   let val changed = List.map (fn (old,value) =>
+                         (observe 1; case lookup value bindings of
+                           SOME (source,variables,active,lexical) =>
+                             (old,source,variables,active,lexical)
+                         | NONE => (old,native value,[value],false,true))) renamed
+                   in walk (environment (extend changed bindings)) body end
+               | Abstraction (stored,marker,body) =>
+                   let
+                     val bindings = List.filter
+                       (fn (old,_,_,_,_) => not (equal (old,marker))) bindings
+                     val current = free syntax
+                     val introduced = List.foldl
+                       (fn ((old,_,variables,active,_),rest) =>
+                         (observe 1;
+                          if active andalso member equal old current then
+                            (observe (IntInf.fromInt (List.length variables));
+                             variables @ rest)
+                          else rest)) [] bindings
+                     val name = #1 (Term.dest_var stored)
+                     fun clashes variable =
+                       let val other = #1 (Term.dest_var variable)
+                           val _ = observe (1+IntInf.fromInt
+                             (String.size name+String.size other))
+                       in name=other end
+                     (* Private occurrence markers are not native free
+                        names. Enclosing lexical bindings supply the public
+                        binder names which native freshening must avoid. *)
+                     val original_free = List.concat (List.map (fn variable =>
+                       if equal (variable,marker) then [stored]
+                       else case lookup variable bindings of
+                         SOME (_,variables,_,true) => variables
+                       | _ => [variable]) (free body))
+                     val changed = not opening_freshens_names andalso
+                       List.exists clashes introduced
+                     val binder = if changed then
+                         fresh (introduced @ original_free) stored else stored
+                     val avoids = all_variables observe
+                       (body :: List.map (fn (_,value,_,_,_) => value) bindings)
+                     val new_marker = fresh (marker::binder::avoids) marker
+                     val env = environment
+                       ((marker,native new_marker,[binder],changed,true)::bindings)
+                   in make ty (Abstraction (binder,new_marker,walk env body)) end
+             val _ = observe 1
+             val _ = memo := Redblackmap.insert (!memo,(epoch,id),result)
+           in result end)
+      (* Native substitution removes identities before visiting binders. *)
+      val bindings = List.mapPartial (fn (old,value) =>
+        (observe 1; case source_variable value of
+           SOME variable => if equal (old,variable) then NONE
+             else SOME (old,value,free value,true,false)
+         | NONE => SOME (old,value,free value,true,false))) replacements
+    in walk (environment bindings) root end
 end

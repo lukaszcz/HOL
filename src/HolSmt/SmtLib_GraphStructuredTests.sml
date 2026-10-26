@@ -293,6 +293,68 @@ struct
       (Option.isSome expected andalso
        List.all (fn actual => actual=expected) outcomes) end
 
+  (* Proof dialects may provide an ordinary "as" dictionary entry and
+     term-valued sort markers. Its successful semantics must not be replaced
+     by a type lookup or an ascribed_symbol callback. *)
+  fun generic_qualifications () =
+    let
+      val (sorts,native) = SmtLib_Logics.parsedicts_of_solver_logic
+        "cvc5" "HO_ALL"
+      fun qualify token = SmtLib_Theories.K_zero_two Lib.fst token
+      val native = Library.extend_dict (("as",qualify),native)
+      fun dictionaries backend exact =
+        let
+          val (_,dictionary) = if exact then #dictionaries
+              (R.select_with_policy_no_override backend policy
+                {logic="HO_ALL",solver=SOME "cvc5"})
+            else #dictionaries (R.select backend limits
+              {logic="HO_ALL",solver=SOME "cvc5"})
+        in (sorts,Library.extend_dict
+          (("as",R.recipe_parsefn backend limits qualify),dictionary)) end
+      fun check text =
+        let
+          fun ordinary () =
+            P.parse_term_with_cfg cfg (tokens text) (sorts,native)
+          val error = failure ordinary
+          fun compare action = case error of
+              NONE => bridge (ordinary ()) (action ())
+            | SOME error => ensure ("generic qualification: " ^ text)
+                (failure action = SOME error)
+          fun parse backend exact = if exact then P.parse_term_with_policy
+              (policy_options backend (B.root backend)) (tokens text)
+              (dictionaries backend exact)
+            else P.parse_term_with_backend
+              (options backend (B.root backend)) (tokens text)
+              (dictionaries backend exact)
+          val _ = List.app (fn exact => with_graph exact
+            (fn graph => fn backend => compare (fn () =>
+              small_graph graph (parse backend exact)))) [false,true]
+        in List.app (fn exact => with_values
+          (fn _ => fn context => fn backend => compare (fn () =>
+            small_value context (parse backend exact)))) [false,true] end
+    in List.app check
+      ["(as (set.singleton 1) true)",
+       "(as (! (set.singleton 1) :named generic) true)",
+       "((as (lambda ((s (Set Int))) s) true) (set.singleton 1))",
+       "(let ((s (set.singleton 1))) (as s true))",
+       "((as (lambda ((f (Array Bool Bool))) f) true) " ^
+         "(lambda ((b Bool)) b) true)",
+       "((as (lambda ((f (Array Bool Bool))) f) true) " ^
+         "(lambda ((b Bool)) b) 0)",
+       "((_ re.^ ((as (lambda ((f (Array Bool Bool))) f) true) " ^
+         "(lambda ((b Bool)) b) 0)) re.allchar)",
+       "((as ((as (lambda ((f (Array Bool Bool))) f) true) " ^
+         "(lambda ((b Bool)) b)) true) 0)",
+       "((as (lambda ((array_const_value Bool) (i Bool)) true) true) false)",
+       "((as (lambda ((array_const_value Bool) (i Bool)) false) true) true)",
+       "(set.comprehension ((as (lambda ((z Bool)) " ^
+         "(lambda ((x Bool)) x)) true) true) (lambda ((y Bool)) y))",
+       "((as true true) true)",
+       "((as (lambda ((s (Set Int))) s) true) false)",
+       "((_ re.^ ((as true true) true)) re.allchar)",
+       "((_ re.^ ((as (lambda ((s (Set Int))) s) true) false)) re.allchar)"]
+    end
+
   (* Let the native strip_abs/name convention decide acceptance. In
      particular, duplicate lexical names are not an a priori refusal. *)
   fun differential solver text =
@@ -513,6 +575,16 @@ struct
                     [boolSyntax.T,boolSyntax.F]
                 in () end
               val _=compare "" raw source
+              val bindings=ListPair.zip (holes,sources)
+              val generic=C.substitute observe bindings
+                (C.from_template {template=template,holes=[],operands=[]})
+              val _=compare "/generic-source-substitution" raw generic
+              val _=compare "/generic-native-substitution" raw
+                (C.substitute observe bindings (C.native template))
+              val _=List.app (fn variable => compare
+                ("/generic-capture-"^ #1 (Term.dest_var variable))
+                (Term.mk_abs (variable,raw))
+                (C.abstraction (variable,generic))) [x,prime]
               val _=List.app (fn variable => compare
                 ("/capture-probe-"^ #1 (Term.dest_var variable))
                 (Term.mk_abs (variable,raw))
@@ -520,7 +592,35 @@ struct
             in ensure (label^": uncharged substitution observation")
                  (!spent>0) end
         in List.app representation [0,1,2,3] end
-    in List.app check cases; List.app substitution substitutions end
+      fun generic_extra (template,bindings) =
+        let
+          val _=ensure "generic extra native bound" (bounded template<=64)
+          val raw=Term.subst (List.map (fn (old,value) =>
+            {redex=old,residue=value}) bindings) template
+          fun observe n=ensure "negative generic substitution debit" (n>=0)
+          val replacements=List.map (Lib.apsnd C.native) bindings
+          fun compare source =
+            let
+              val result=C.substitute observe replacements source
+              val (actual,body)=C.strip_abs observe result
+              val (expected,tail)=opened_native raw
+            in ensure "generic identity/private-marker substitution law"
+              (variables_equal (C.all_variables observe [result],
+                  Term.all_varsl [raw]) andalso
+               variables_equal (actual,expected) andalso
+               variables_equal (C.all_variables observe [body],
+                  Term.all_varsl [tail])) end
+        in List.app compare
+          [C.native template,
+           C.from_template {template=template,holes=[],operands=[]},
+           C.from_substitution observe
+             {template=template,holes=[],operands=[]}] end
+    in
+      List.app check cases; List.app substitution substitutions;
+      List.app generic_extra
+        [(abs [x] xi,[(xi,xi)]),
+         (abs [prime,x] (boolSyntax.mk_conj (prime,h)),[(h,x)])]
+    end
 
   (* Admit tiny raw native callbacks before publishing their source shape.
      In particular, no substitution may silently freshen the value binder
@@ -1189,6 +1289,16 @@ struct
        "(as set.empty MissingSort)","(as bag.empty MissingSort)",
        "(as seq.empty MissingSort)","(as const MissingSort)",
        "(as union MissingSort)","(as set.universe MissingSort)",
+       (* Generic qualification parses term operands, not a qualified sort.
+          Retain both first errors and the cursor seen by index recovery. *)
+       "(as set.member MissingSort)","(as task33_missing MissingSort)",
+       "(as true true)","(as true Int)",
+       "((_ re.^ (as set.member MissingSort)) re.allchar)",
+       "((_ re.^ (as task33_missing MissingSort)) re.allchar)",
+       "((_ re.^ (as true true)) re.allchar)",
+       "((_ re.^ (as true Int)) re.allchar)",
+       "(as (set.singleton 1) MissingSort)",
+       "((_ re.^ (as (set.singleton 1) MissingSort)) re.allchar)",
        "((as const (Array Int Int)) true)",
        "((as union (Array Int Bool)) true)",
        "((_ re.^ (bag true 1)) re.allchar)",
@@ -1280,6 +1390,9 @@ struct
          ("strings","cvc5",strings),("regular languages","cvc5",regexps),
          ("scoped sets","cvc5",sets),("Z3 sets","Z3",z3_sets),
          ("scoped bags","cvc5",bags)]
+      val _=tprint "Structured generic qualification dictionary semantics"
+      val _=generic_qualifications ()
+      val _=OK ()
       val _=tprint "Structured ordinary source-shape/lexical differentials"
       val _=source_shapes ()
       val _=OK ()
