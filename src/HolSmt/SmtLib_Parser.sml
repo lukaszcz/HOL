@@ -2601,7 +2601,7 @@ local
        Option.isSome (B.lookup backend frame "_") then NONE
     else symbolic head token
 
-  fun construction_qualified_sort name constructor =
+  fun construction_qualified_sort get_token name constructor =
     let val expected = case name of
           "const" => SOME ("Array","Z3 const")
         | "union" => SOME ("Array","Z3 union")
@@ -2612,8 +2612,12 @@ local
         | _ => NONE
     in case expected of NONE => ()
       | SOME (head,label) => if constructor = SOME head then () else
-          raise ERR "parse_ascribed_term"
-            (label ^ " expects a " ^ head ^ " sort")
+          (* parse_qualified_type reads both the opening token and head,
+             even when the opening token is not "(". Preserve that cursor
+             before index recovery resumes after this rejection. *)
+          (if Option.isSome constructor then () else ignore (get_token ());
+           raise ERR "parse_ascribed_term"
+             (label ^ " expects a " ^ head ^ " sort"))
     end
 
   (* These checks precede the head's closing token and operand lookup, as
@@ -2819,7 +2823,7 @@ local
                   let val constructor = get_token ()
                   in (SOME constructor, [first, constructor]) end
                 else (NONE, [first])
-              val _ = construction_qualified_sort name constructor
+              val _ = construction_qualified_sort get_token name constructor
               val sort = parse_type_with_key (#type_symbol_key cfg)
                 (Library.undo_look_ahead prefix get_token) tydict
               val _ = construction_qualified_type name sort
@@ -3148,7 +3152,7 @@ local
                   let val constructor = get_token ()
                   in (SOME constructor, [first, constructor]) end
                 else (NONE, [first])
-              val _ = construction_qualified_sort name constructor
+              val _ = construction_qualified_sort get_token name constructor
               val sort = parse_type_with_key (#type_symbol_key cfg)
                 (Library.undo_look_ahead prefix get_token) tydict
               val _ = construction_qualified_type name sort

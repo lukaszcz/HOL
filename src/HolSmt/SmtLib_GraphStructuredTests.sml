@@ -1192,6 +1192,14 @@ struct
        "((as const (Array Int Int)) true)",
        "((as union (Array Int Bool)) true)",
        "((_ re.^ (bag true 1)) re.allchar)",
+       (* Non-parenthesized qualified sorts must consume the same two
+          tokens before index recovery as ordinary parse_qualified_type. *)
+       "((_ re.^ (as set.empty Int)) re.allchar)",
+       "((_ re.^ (as set.universe Int)) re.allchar)",
+       "((_ re.^ (as seq.empty Int)) re.allchar)",
+       "((_ re.^ (as bag.empty Int)) re.allchar)",
+       "((_ re.^ (as union Int)) re.allchar)",
+       "((_ re.^ (as const Int)) re.allchar)",
        "((_ seq.unit 0) 1)",
        "((_ set.comprehension 0) (lambda ((x Bool)) x) "^
          "(lambda ((y Bool)) y))"]),
