@@ -1510,9 +1510,227 @@ struct
         \(step @p :rule refl :args ((forall (@list @xs) true)))))"
     end
 
+  (* review-9f6e78c99: packet roles, proof-local freshness and variable
+     aliases are independent invariants. Do not send GraphList through the
+     ordinary positive helper: native structured lists are HOL wrappers,
+     whereas ordinary lists flatten into separate native arguments. *)
+  fun missing_invariants () =
+    let
+      fun packet label structured widths text = List.app (fn route =>
+        test (label ^ " / " ^ route_name route) (fn () =>
+          let
+            fun check e raw (proof:'a C.constructed_graph_proof) =
+              let
+                val old = legacy e text
+                val (a,b) = case (#commands old,#commands proof) of
+                    ([Old.STEP a],[C.GraphStep {step=b,...}]) => (a,b)
+                  | _ => raise Fail "expected one list-bearing step"
+                val _ = require "list packet step header changed"
+                  (#cvc_version old= #cvc_version proof andalso
+                   #id a= #id b andalso #rule a= #rule b andalso
+                   #premises a= #premises b)
+                fun term (located:Old.located_term,argument) =
+                  case argument of
+                    C.GraphTerm value => bridge (#term located)
+                      (raw (#node value))
+                  | _ => raise Fail "expected an object argument"
+                val _ = same_option (fn (x,y) =>
+                  term (x,C.GraphTerm y)) (#conclusion a,#conclusion b)
+                fun boundary (NONE,C.GraphTerm _) = ()
+                  | boundary (SOME count,C.GraphList entries) =
+                      require "list boundary/length changed"
+                        (length entries=count)
+                  | boundary _ = raise Fail "list argument role changed"
+                val _ = ListPair.appEq boundary (widths,#args b)
+                fun structured_arg (located:Old.located_term,argument) =
+                  case argument of
+                    C.GraphList entries =>
+                      let val (elements,_) = listSyntax.dest_list
+                            (#term located)
+                          fun element (native,C.GraphTerm value) =
+                                bridge native (raw (#node value))
+                            | element _ = raise Fail "nested list element"
+                      in ListPair.appEq element (elements,entries) end
+                  | _ => term (located,argument)
+                fun flatten (C.GraphList entries) = entries
+                  | flatten argument = [argument]
+              in if structured then
+                   ListPair.appEq structured_arg (#args a,#args b)
+                 else ListPair.appEq term
+                   (#args a,List.concat (List.map flatten (#args b))) end
+          in case route of
+              Value => with_value text (fn e => fn current =>
+                check e (small_value e (#context current)) (#proof current))
+            | _ => with_native route text (fn e => check e (small_graph e))
+          end)) routes
+      val structured_rules =
+        ["arith-mod-over-mod","arith-mod-over-mod-mult",
+         "str-contains-refl"]
+      val _ = List.app (fn rule =>
+        let
+          fun step args = "(step @p :rule " ^ rule ^ " :args (" ^
+            args ^ "))"
+        in
+          negative (rule ^ " mixed inline structured list")
+            ("(" ^ step "(@list 0 true)" ^ ")");
+          negative (rule ^ " mixed structured list alias")
+            ("((define @mixed () (@list true 0)) " ^ step "@mixed" ^ ")");
+          negative (rule ^ " mixed list precedes later object failure")
+            ("(" ^ step "(@list true 0) task35_missing_arg" ^ ")");
+          negative (rule ^ " mixed list precedes later syntax failure")
+            ("((step @p :rule " ^ rule ^ " :args ((@list true 0) (");
+          negative (rule ^ " list element precedes later syntax failure")
+            ("((step @p :rule " ^ rule ^
+             " :args ((@list task35_missing_arg (");
+          negative (rule ^ " list element precedes later object failure")
+            ("(" ^ step "(@list task35_missing_arg task35_missing_arg2)" ^
+             ")");
+          negative (rule ^ " mixed alias precedes later syntax failure")
+            ("((define @mixed () (@list true 0)) (step @p :rule " ^
+             rule ^ " :args (@mixed (");
+          packet (rule ^ " separate homogeneous/empty inline lists") true
+            [SOME 2,NONE,SOME 0,SOME 1]
+            ("(" ^ step "(@list 0 1) 2 (@list) (@list true)" ^ ")");
+          packet (rule ^ " separate homogeneous/empty list aliases") true
+            [SOME 2,NONE,SOME 0,SOME 1]
+            ("((define @ints () (@list 0 1)) " ^
+             "(define @empty () (@list)) " ^
+             "(define @bools () (@list true)) " ^
+             step "@ints 2 @empty @bools" ^ ")")
+        end) structured_rules
+      val _ = packet "ordinary heterogeneous inline lists still flatten"
+        false [SOME 3,NONE,SOME 0,SOME 2]
+        "((step @p :rule refl :args \
+        \((@list true 0 #b1) false (@list) (@list 1 true))))"
+      val _ = packet "ordinary heterogeneous list aliases still flatten"
+        false [SOME 3,NONE,SOME 0,SOME 2]
+        ("((define @mixed () (@list true 0 #b1)) " ^
+         "(define @empty () (@list)) (define @tail () (@list 1 true)) " ^
+         "(step @p :rule refl :args (@mixed false @empty @tail)))")
+
+      val _ = positive "unused heterogeneous list definition is legal"
+        "((define @mixed () (@list true 0)) (assume @a true))"
+      val opaque = "(define @fresh () @list (true))"
+      val definitions =
+        [("term","(define @fresh () true)"),
+         ("list","(define @fresh () (@list true))"),
+         ("opaque",opaque),
+         ("variable","(define @fresh () (@var \"x\" Bool))"),
+         ("const","(declare-const @fresh Bool)"),
+         ("fun","(declare-fun @fresh (Bool) Bool)")]
+      val _ = List.app (fn (kind,command) =>
+        (negative ("opaque name cannot become " ^ kind)
+           ("(" ^ opaque ^ " " ^ command ^ ")");
+         negative (kind ^ " name cannot become opaque")
+           ("(" ^ command ^ " " ^ opaque ^ ")");
+         (* Pin the native duplicate diagnostic independently of the broken
+            body; otherwise equal body errors could conceal late checking. *)
+         test (kind ^ " duplicate precedes malformed body / native")
+           (fn () => owned (fn e =>
+             let val expected = failure (fn () => ignore (legacy e
+                       ("(" ^ command ^ " " ^ opaque ^ ")")))
+                 val actual = failure (fn () => ignore (legacy e
+                       ("(" ^ command ^ " (define @fresh (")))
+             in require "native duplicate did not win first-error order"
+               (Option.isSome expected andalso expected=actual) end));
+         negative (kind ^ " duplicate precedes malformed body")
+           ("(" ^ command ^ " (define @fresh ("))) definitions
+
+      val variable = "(define @x () (@var \"x\" Bool)) "
+      val _ = List.app (fn (label,definitions,body) => positive label
+        ("(" ^ variable ^ definitions ^ "(assume @a " ^ body ^ "))"))
+        [("variable binder alias chain",
+          "(define @y () @x) (define @z () @y) ",
+          "(forall (@list @z) (or @x @y @z))"),
+         ("quoted variable binder alias",
+          "(define |binder alias| () @x) ",
+          "(forall (@list |binder alias|) @x)"),
+         ("annotated variable binder alias",
+          "(define @y () (! @x :named alias_tag)) ",
+          "(forall (@list @y) @x)"),
+         ("LET-normalized variable binder alias",
+          "(define @y () (let ((copy @x)) copy)) ",
+          "(forall (@list @y) @x)"),
+         ("variable aliases in a recorded binder list",
+          "(define @y () @x) (define @z () (@var \"z\" Bool)) " ^
+          "(define @vars () (@list @y @z)) ",
+          "(forall @vars (or @x @y @z))"),
+         ("variable binder alias captures a compound definition",
+          "(define @y () @x) (define @body () (or @x false)) ",
+          "(forall (@list @y) @body)")]
+      val _ = differential "variable alias under an enclosing lexical LET"
+        ("(" ^ variable ^ "(define @y () @x) " ^
+         "(assume @a (let ((x true)) " ^
+         "(forall (@list @y) (or @x @y)))))")
+      val _ = positive "sorted lexical binder shadows variable alias type"
+        ("(" ^ variable ^ "(define @y () @x) " ^
+         "(assume @a (forall ((@y Int)) " ^
+         "(forall (@list @y) (= @y 0)))))")
+      val _ = positive "sorted lexical binder is an inline binder reference"
+        "((assume @a (forall ((q Bool)) (forall (@list q) q))))"
+      val _ = positive "lexical LET name shadows retained binder alias"
+        ("(" ^ variable ^ "(define @y () @x) " ^
+         "(assume @a (let ((@y true)) (forall (@list @y) true))))")
+      (* Nested binders use the shared native binder parser, including its
+         exact non-variable diagnostic, rather than top-level term builders. *)
+      val _ = List.app (fn (label,definitions,binder) => negative label
+        ("(" ^ variable ^ definitions ^
+         "(assume @a (= (forall " ^ binder ^ " true) true)))"))
+        [("non-variable term alias is not a binder",
+          "(define @bad () (not @x)) ","(@list @bad)"),
+         ("non-variable annotated alias is not a binder",
+          "(define @bad () (! true :named bad_tag)) ","(@list @bad)")]
+
+      (* Exercise the copied frontend tables without inventing a packet or
+         a Value factory. Both public native frontend constructors suffice
+         to catch a child mutating its parent's opaque-name set/list table. *)
+      val _ = List.app (fn route => test
+        ("opaque child-context isolation / " ^ route_name route) (fn () =>
+          owned (fn e =>
+            let
+              val description = {solver="cvc5",version=version,
+                policy=F.CPC,reserved_names=[]}
+              fun tokens text = P.make_cpc_proof_tokenizer_from_input
+                (input text)
+              val parent = case route of
+                  Finite => F.create_session (finite_options e)
+                    description (tokens "")
+                | _ => F.create_session_with_policy (policy_options e)
+                    description (tokens "")
+              val _ = (#define_opaque parent) "@parent"
+              fun child opened =
+                let val F.ScopedSession {session,close,...} = opened
+                in finally (fn () =>
+                  let
+                    val inherited = failure (fn () =>
+                      (#define_opaque session) "@parent")
+                    val expected = SOME ("CPC_ProofParser","parse_define",
+                      "duplicate CPC declaration or definition of symbol " ^
+                      "@parent")
+                    val _ = require "child lost inherited opaque name"
+                      (inherited=expected)
+                    val _ = (#define_opaque session) "@child"
+                    val value = (#parse_from session) (tokens "true")
+                    val _ = (#define_list session) ("@child_list",[value])
+                    val namespace = (#namespace parent) ()
+                  in require "child declarations leaked into parent"
+                    (not (HOLset.member (#proof_terms namespace,
+                       (#symbol_key parent) "@child")) andalso
+                     not (Option.isSome
+                       ((#lookup_list parent) "@child_list"))) end) close end
+              val _ = child ((#open_bindings parent) [])
+              (* A sibling must also be able to introduce the same names. *)
+              val _ = child ((#open_binders parent)
+                [("local","local",Type.bool)])
+              val _ = (#define_opaque parent) "@child"
+              val _ = (#define_list parent) ("@child_list",[])
+            in () end))) [Finite,Policy]
+    in () end
+
   fun run () =
     let
       val _ = failures := [] val _ = bridges := 0
+      val _ = missing_invariants ()
       val _ = set_sort_metadata ()
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)

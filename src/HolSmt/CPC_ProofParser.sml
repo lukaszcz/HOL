@@ -4565,6 +4565,72 @@ in
       | NONE => GraphTerm (parse_term raw))
     | _ => GraphTerm (parse_term raw)
 
+  (* Check freshness before consuming a definition body, as native does. *)
+  fun graph_definition_name (namespace : F.namespace) key token =
+    if set_member (#proof_terms namespace) (key token) then
+      raise ERR "parse_define"
+        ("duplicate CPC declaration or definition of symbol " ^
+         SmtLib_Parser.proof_symbol_text token)
+    else token
+
+  (* Only structured rule formals are homogeneous lists. Ordinary argument
+     packets flatten @list and deliberately allow heterogeneous objects. *)
+  fun graph_check_structured_argument backend id rule_name argument =
+    let
+      fun element_type (GraphTerm term) = B.type_of backend (#node term)
+        | element_type _ = raise ERR "parse_step"
+            "non-object element in CPC structured list"
+      val _ = case argument of
+          GraphList (first :: rest) =>
+            let val ty = element_type first
+            in if List.all (fn entry =>
+                Type.compare (element_type entry, ty) = EQUAL) rest then ()
+              else raise ERR "parse_step"
+                ("CPC structured list has mixed element types in step " ^
+                 id ^ " (rule " ^ rule_name ^ ")") end
+        | _ => ()
+    in argument end
+
+  fun graph_structured_argument backend id rule_name parse lookup_list raw =
+    graph_check_structured_argument backend id rule_name
+      (graph_object_argument parse parse lookup_list raw)
+
+  (* Native structured lists elaborate each element before reading the
+     next. Buffer only the individual object, never the entire list. *)
+  fun graph_read_structured_step_arguments next backend id rule_name
+      parse lookup_list =
+    let
+      val _ = Library.expect_token "(" (next ())
+      val check = graph_check_structured_argument backend id rule_name
+      val argument = graph_structured_argument backend id rule_name
+        parse lookup_list
+      fun object first = read_raw_term
+        (Library.undo_look_ahead [first] next)
+      fun list raws terms =
+        case next () of
+          ")" => (RawList (RawAtom "@list" :: List.rev raws),
+            check (GraphList (List.rev terms)))
+        | first =>
+            let val raw = object first
+                val term = parse raw
+            in list (raw :: raws) (GraphTerm term :: terms) end
+      fun arguments raws args =
+        case next () of
+          ")" => (List.rev raws, List.rev args)
+        | first =>
+            let
+              val (raw,arg) = if first = "(" then
+                let val head = next () in
+                  if head = "@list" then list [] [] else
+                    let val raw = read_raw_term
+                          (Library.undo_look_ahead [first,head] next)
+                    in (raw,argument raw) end
+                end
+              else let val raw = RawAtom first
+                   in (raw,argument raw) end
+            in arguments (raw :: raws) (arg :: args) end
+    in arguments [] [] end
+
   fun graph_argument_count (GraphList entries) = List.length entries
     | graph_argument_count _ = 1
 
@@ -4614,6 +4680,11 @@ in
             in arguments (position + graph_argument_count arg)
               (raw :: raws) (arg :: args) end
     in arguments 1 [] [] end
+
+  fun graph_structured_rule_arguments (rule : proof_rule) =
+    #replay_handler rule = "rare_inventory" orelse
+    #name rule = "arith-mod-over-mod" orelse
+    #name rule = "arith-mod-over-mod-mult"
 
   fun graph_ordinary_rule_arguments (rule : proof_rule) =
     not (List.exists (Lib.equal (#replay_handler rule))
@@ -4844,7 +4915,8 @@ in
         ((#define terms) pair;(#define locations) pair)
       fun define () =
         let
-          val name = token ()
+          val name = graph_definition_name ((#namespace terms) ())
+            (#symbol_key terms) (token ())
           val start = token ()
           val first = if start = "(" then
               (Library.expect_token ")" (token ()); token ()) else start
@@ -4895,11 +4967,13 @@ in
            | target :: rest => GraphTerm (parse target) ::
                List.map argument rest)
         else if #replay_handler rule = "exists_elim" orelse
-                #replay_handler rule = "quant_rewrite" orelse
-                #replay_handler rule = "rare_inventory" orelse
+                #replay_handler rule = "quant_rewrite" then
+          List.map argument raws
+        else if #replay_handler rule = "rare_inventory" orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
-          List.map argument raws
+          List.map (graph_structured_argument (#backend (#reader terms))
+            name rule_name parse (#lookup_list terms)) raws
         else graph_validate_set_sort_metadata
           (#backend (#reader terms)) name rule_name
           (graph_step_arguments (#backend (#reader terms)) name rule_name
@@ -4943,12 +5017,17 @@ in
             | ":args" => if saw_args then error "duplicate :args" else
                 let
                   val raws =
-                    if eager andalso graph_ordinary_rule_arguments rule then
+                    if eager andalso (graph_ordinary_rule_arguments rule
+                        orelse graph_structured_rule_arguments rule) then
                       let
                         val backend = #backend (#reader terms)
-                        val (raws, args) = graph_read_step_arguments next
-                          (graph_step_argument_at backend name rule_name
-                            parse sort (#lookup_list terms))
+                        val (raws, args) =
+                          if graph_structured_rule_arguments rule then
+                            graph_read_structured_step_arguments next backend
+                              name rule_name parse (#lookup_list terms)
+                          else graph_read_step_arguments next
+                            (graph_step_argument_at backend name rule_name
+                              parse sort (#lookup_list terms))
                         val _ = parsed_args := SOME
                           (graph_validate_set_sort_metadata backend name
                             rule_name args)
@@ -5396,7 +5475,8 @@ in
         ((#define terms) pair;(#define locations) pair)
       fun define () =
         let
-          val name = token ()
+          val name = graph_definition_name ((#namespace terms) ())
+            (#symbol_key terms) (token ())
           val start = token ()
           val first = if start = "(" then
               (Library.expect_token ")" (token ()); token ()) else start
@@ -5447,11 +5527,13 @@ in
            | target :: rest => GraphTerm (parse target) ::
                List.map argument rest)
         else if #replay_handler rule = "exists_elim" orelse
-                #replay_handler rule = "quant_rewrite" orelse
-                #replay_handler rule = "rare_inventory" orelse
+                #replay_handler rule = "quant_rewrite" then
+          List.map argument raws
+        else if #replay_handler rule = "rare_inventory" orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
-          List.map argument raws
+          List.map (graph_structured_argument (#backend (#reader terms))
+            name rule_name parse (#lookup_list terms)) raws
         else graph_validate_set_sort_metadata
           (#backend (#reader terms)) name rule_name
           (graph_step_arguments (#backend (#reader terms)) name rule_name
@@ -5495,12 +5577,17 @@ in
             | ":args" => if saw_args then error "duplicate :args" else
                 let
                   val raws =
-                    if eager andalso graph_ordinary_rule_arguments rule then
+                    if eager andalso (graph_ordinary_rule_arguments rule
+                        orelse graph_structured_rule_arguments rule) then
                       let
                         val backend = #backend (#reader terms)
-                        val (raws, args) = graph_read_step_arguments next
-                          (graph_step_argument_at backend name rule_name
-                            parse sort (#lookup_list terms))
+                        val (raws, args) =
+                          if graph_structured_rule_arguments rule then
+                            graph_read_structured_step_arguments next backend
+                              name rule_name parse (#lookup_list terms)
+                          else graph_read_step_arguments next
+                            (graph_step_argument_at backend name rule_name
+                              parse sort (#lookup_list terms))
                         val _ = parsed_args := SOME
                           (graph_validate_set_sort_metadata backend name
                             rule_name args)

@@ -9,6 +9,17 @@ struct
   structure PV = SmtLib_GraphParserValue
   structure M = SmtLib_GraphParserMapping
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphFrontend"
+  (* Inspect retained lexical metadata only; generated private markers and
+     compound operands are not variable binders. *)
+  fun binder_variable backend key node =
+    case B.variable_descriptor backend node of
+      SOME variable =>
+        let val (name, ty) = Term.dest_var variable
+        in (key, name, ty) end
+    | NONE => raise (Feedback.mk_HOL_ERR "SmtLib_Parser"
+        "parse_binder_term"
+        "CPC @list binder contains a non-variable term")
+
   datatype lexical_policy = CPC | Z3
   datatype source_arity = Exact of int | AtMost of int
   type source_declaration =
@@ -390,7 +401,15 @@ struct
         let val _ = check ()
             val key = declaration_key "term" token
             val _ = check_reserved "term" token
-        in unique "term" (!dictionary_ref) key;
+        in if HOLset.member (!proof_terms, key) then
+             raise (case policy of CPC => Feedback.mk_HOL_ERR
+                 "CPC_ProofParser" "parse_define"
+                 ("duplicate CPC declaration or definition of symbol " ^
+                  P.proof_symbol_text token)
+               | Z3 => ERR "create"
+                   ("duplicate term declaration " ^ key))
+           else ();
+           unique "term" (!dictionary_ref) key;
            if Redblackmap.inDomain (!lists_ref, key) then
              raise ERR "define" "duplicate list declaration" else ();
            key end
@@ -482,6 +501,14 @@ struct
       fun define (token, value : term) =
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
+            (* Binder references name the original variable, not its value
+               after capture by a later lexical LET. Retain metadata only. *)
+            val _ = case B.variable_descriptor backend (#node value) of
+                SOME variable =>
+                  let val (name, ty) = Term.dest_var variable
+                  in variables_ref := Redblackmap.insert
+                    (!variables_ref, key, (key, name, ty)) end
+              | NONE => ()
             fun parse frame name indices arguments =
               let val original = (#node value,#binder_blocks value)
                   val (node,blocks) = if policy=CPC then
@@ -522,7 +549,12 @@ struct
         let val _ = check ()
             val key = declaration_key "term" token
             val _ = check_reserved "term" token
-        in case Redblackmap.peek (!source_types, key) of
+        in if policy = CPC andalso HOLset.member (!proof_terms, key) then
+             raise (Feedback.mk_HOL_ERR "CPC_ProofParser" "parse_declaration"
+               ("duplicate CPC declaration of symbol " ^
+                P.proof_symbol_text token))
+           else ();
+           case Redblackmap.peek (!source_types, key) of
             SOME actual =>
               if List.exists (fn expected =>
                   Type.compare (expected, ty) = EQUAL) actual then () else
@@ -546,13 +578,19 @@ struct
          lookup_binder_list = fn token =>
            Redblackmap.peek (!binder_lists_ref, symbol_key token),
          binder_reference = fn frame => fn token =>
-           case Redblackmap.peek (!variables_ref, symbol_key token) of
-             SOME variable => variable
-           | NONE =>
-               (ignore (P.apply_construction_symbol
-                  (configuration frame) dictionary frame token [] []);
-                raise ERR "binder_reference"
-                  "binder-list reference is not a declared variable"),
+           let val key = symbol_key token in
+             case B.lookup backend frame key of
+               (* A lexical LET binds a variable even when its eliminated
+                  graph value is compound. Bind its declared name/type, not
+                  the descriptor (if any) of the substituted operand. *)
+               SOME node => (key, P.proof_symbol_text token,
+                 B.type_of backend node)
+             | NONE => case Redblackmap.peek (!variables_ref, key) of
+                 SOME variable => variable
+               | NONE => binder_variable backend key
+                   (P.apply_construction_symbol
+                     (configuration frame) (!dictionary_ref) frame token [] [])
+           end,
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
          coerce_arguments = R.coerce_arguments backend}
       and ascribed frame
@@ -966,7 +1004,15 @@ struct
         let val _ = check ()
             val key = declaration_key "term" token
             val _ = check_reserved "term" token
-        in unique "term" (!dictionary_ref) key;
+        in if HOLset.member (!proof_terms, key) then
+             raise (case policy of CPC => Feedback.mk_HOL_ERR
+                 "CPC_ProofParser" "parse_define"
+                 ("duplicate CPC declaration or definition of symbol " ^
+                  P.proof_symbol_text token)
+               | Z3 => ERR "create"
+                   ("duplicate term declaration " ^ key))
+           else ();
+           unique "term" (!dictionary_ref) key;
            if Redblackmap.inDomain (!lists_ref, key) then
              raise ERR "define" "duplicate list declaration" else ();
            key end
@@ -1068,6 +1114,14 @@ struct
       fun define (token, value : 'a constructed_term) =
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
+            (* Binder references name the original variable, not its value
+               after capture by a later lexical LET. Retain metadata only. *)
+            val _ = case B.variable_descriptor backend (#node value) of
+                SOME variable =>
+                  let val (name, ty) = Term.dest_var variable
+                  in variables_ref := Redblackmap.insert
+                    (!variables_ref, key, (key, name, ty)) end
+              | NONE => ()
             fun parse frame name indices arguments =
               let val original = (#node value,#binder_blocks value)
                   val (node,blocks) = if policy=CPC then
@@ -1108,7 +1162,12 @@ struct
         let val _ = check ()
             val key = declaration_key "term" token
             val _ = check_reserved "term" token
-        in case Redblackmap.peek (!source_types, key) of
+        in if policy = CPC andalso HOLset.member (!proof_terms, key) then
+             raise (Feedback.mk_HOL_ERR "CPC_ProofParser" "parse_declaration"
+               ("duplicate CPC declaration of symbol " ^
+                P.proof_symbol_text token))
+           else ();
+           case Redblackmap.peek (!source_types, key) of
             SOME actual =>
               if List.exists (fn expected =>
                   Type.compare (expected, ty) = EQUAL) actual then () else
@@ -1132,13 +1191,19 @@ struct
          lookup_binder_list = fn token =>
            Redblackmap.peek (!binder_lists_ref, symbol_key token),
          binder_reference = fn frame => fn token =>
-           case Redblackmap.peek (!variables_ref, symbol_key token) of
-             SOME variable => variable
-           | NONE =>
-               (ignore (P.apply_construction_symbol_with_policy
-                  (configuration frame) dictionary frame token [] []);
-                raise ERR "binder_reference"
-                  "binder-list reference is not a declared variable"),
+           let val key = symbol_key token in
+             case B.lookup backend frame key of
+               (* A lexical LET binds a variable even when its eliminated
+                  graph value is compound. Bind its declared name/type, not
+                  the descriptor (if any) of the substituted operand. *)
+               SOME node => (key, P.proof_symbol_text token,
+                 B.type_of backend node)
+             | NONE => case Redblackmap.peek (!variables_ref, key) of
+                 SOME variable => variable
+               | NONE => binder_variable backend key
+                   (P.apply_construction_symbol_with_policy
+                     (configuration frame) (!dictionary_ref) frame token [] [])
+           end,
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
          coerce_arguments = R.coerce_arguments backend}
       and ascribed frame
