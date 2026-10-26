@@ -16,10 +16,15 @@ exit 2 while the allocation/gate prerequisites remain blocked. Neither is an
 implicit normal selftest or independent-build measurement.
 
 Fresh post-workload actual object/code/pool diagnostics are documented in
-[`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md), with raw B/B and B/C observations in
-`evidence/task29/runtime-layout/`. They are explicitly **not timing acceptance**
-or TASK29A closure: split pools, measurement-boundary attribution, passing
-full-grid gates and the policy/exclusive-environment prerequisites remain open.
+[`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md). The subsequent
+[`RUNTIME_POOLS.md`](RUNTIME_POOLS.md) supplies all previously omitted split
+pool slots, retaining raw B/B and B/C captures in
+`evidence/task29/runtime-pools/` without modifying old evidence. Both are
+explicitly **not timing acceptance** or TASK29A closure: measurement-boundary,
+executed-target/causal attribution, passing full-grid gates and explicit
+policy/exclusive-environment prerequisites remain open. The read-only
+environment diagnostic cannot certify exclusivity and observes concurrent
+work on this host.
 
 ## Maintained TASK28 integration
 

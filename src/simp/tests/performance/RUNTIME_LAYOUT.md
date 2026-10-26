@@ -96,3 +96,8 @@ remaining blockers. Bundles use the existing lossless `evidence_bundle.py`
 transport; its unpack command produces a new directory for direct inspection.
 No production or ordinary fixture change was made, and no earlier observation
 is discarded or promoted to a pass.
+
+A separate subsequent diagnostic, [`RUNTIME_POOLS.md`](RUNTIME_POOLS.md),
+supplies all actual split-pool slots with a sealed native interposer. It leaves
+this v1 tool/archives unchanged and still does not establish measurement-boundary
+layout, executed targets, causation or TASK29A completion.

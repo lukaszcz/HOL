@@ -1,0 +1,2295 @@
+{
+  "record": {
+    "baseline-control": {
+      "scope": "static pool/correspondence diagnostic, NOT parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.fragwork(4)(1)",
+          "candidate_name": "MatrixSupport.fragwork(4)(1)",
+          "baseline_words": 15,
+          "candidate_words": 15,
+          "baseline_address_mod64": 16,
+          "candidate_address_mod64": 16,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [],
+            "candidate": []
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 48,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 254331726295040,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 254331726298208,
+                "pool_slot": 4,
+                "target": {
+                  "address": 254329487168072,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 254331726224144,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 254331726295040,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 254331726298192,
+                "pool_slot": 2,
+                "target": {
+                  "address": 254331726224144,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 254331726295040,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 254331726298200,
+                "pool_slot": 3,
+                "target": {
+                  "address": 254329486552560,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 254331726295040,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 254331726298200,
+                "pool_slot": 3,
+                "target": {
+                  "address": 254329486552560,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 254331726295040,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 254331726298216,
+                "pool_slot": 5,
+                "target": {
+                  "address": 203171241872512,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 268998842478592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 268998842481760,
+                "pool_slot": 4,
+                "target": {
+                  "address": 268996604085000,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 268998842407696,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 268998842478592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 268998842481744,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268998842407696,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 268998842478592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 268998842481752,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268996603469296,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 268998842478592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 268998842481752,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268996603469296,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 268998842478592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 268998842481768,
+                "pool_slot": 5,
+                "target": {
+                  "address": 208948055264384,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 56,
+          "candidate_address_mod64": 56,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 254331726618624,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 254331726622456,
+                "pool_slot": 2,
+                "target": {
+                  "address": 254331725905928,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 268998842802176,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 268998842806008,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268998842089480,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 8,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 254331725950976,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 254331725954768,
+                "pool_slot": 3,
+                "target": {
+                  "address": 254331725906448,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 254331725950976,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 254331725954760,
+                "pool_slot": 2,
+                "target": {
+                  "address": 254331725983528,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 254331725950976,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 254331725954776,
+                "pool_slot": 4,
+                "target": {
+                  "address": 254331725907424,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 268998842134528,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 268998842138320,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268998842090000,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 268998842134528,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 268998842138312,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268998842167080,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 268998842134528,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 268998842138328,
+                "pool_slot": 4,
+                "target": {
+                  "address": 268998842090976,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        },
+        "build": {
+          "baseline_name": "MatrixSupport.workload(2)(1)",
+          "candidate_name": "MatrixSupport.workload(2)(1)",
+          "baseline_words": 34,
+          "candidate_words": 34,
+          "baseline_address_mod64": 40,
+          "candidate_address_mod64": 40,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 254331725955072,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182143504,
+                "load_address": 254331725958368,
+                "pool_slot": 3,
+                "target": {
+                  "address": 254331726256896,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 254331725955072,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182142480,
+                "load_address": 254331725958360,
+                "pool_slot": 2,
+                "target": {
+                  "address": 254331726261856,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 254331725955072,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182144528,
+                "load_address": 254331725958376,
+                "pool_slot": 4,
+                "target": {
+                  "address": 254331726269928,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 268998842138624,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182143504,
+                "load_address": 268998842141920,
+                "pool_slot": 3,
+                "target": {
+                  "address": 268998842440448,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 268998842138624,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182142480,
+                "load_address": 268998842141912,
+                "pool_slot": 2,
+                "target": {
+                  "address": 268998842445408,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 268998842138624,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182144528,
+                "load_address": 268998842141928,
+                "pool_slot": 4,
+                "target": {
+                  "address": 268998842453480,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 412600,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2566,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 412600,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2566,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "static_references": {
+        "baseline": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        },
+        "candidate": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 33827,
+        "matched_pools": 2297,
+        "differences": 1401,
+        "categories": {
+          "bytes": 59,
+          "mutable": 7,
+          "words": 40,
+          "slot count differs": 22,
+          "different or unresolved slot": 8,
+          "kind": 13,
+          "alias correspondence differs": 1219,
+          "name": 24,
+          "pool_status": 9
+        },
+        "native_word_differences": 30,
+        "first_twelve_bfs_mismatches": [
+          {
+            "baseline": 203171257607760,
+            "candidate": 208948070999632,
+            "path": "roots.measured.slot[0].pool[2].pool[12].pool[2]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "bytes",
+            "baseline_value": "50911c3950e70000506f6c7946756c6c4743000000000000",
+            "candidate_value": "5091692da7f40000506f6c7946756c6c4743000000000000"
+          },
+          {
+            "baseline": 254329577652088,
+            "candidate": 268996692019336,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[10]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "mutable",
+            "baseline_value": true,
+            "candidate_value": false
+          },
+          {
+            "baseline": 254329577652088,
+            "candidate": 268996692019336,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[10]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "words",
+            "baseline_value": 1,
+            "candidate_value": 3
+          },
+          {
+            "baseline": 254329577652088,
+            "candidate": 268996692019336,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[10]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "reason": "slot count differs",
+            "baseline_slots": 1,
+            "candidate_slots": 3
+          },
+          {
+            "baseline": 254329577652088,
+            "candidate": 268996692019336,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[10]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "slot": 0,
+            "edge_path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[10].slot[0]",
+            "baseline_target": {
+              "immediate": 1
+            },
+            "candidate_target": {
+              "address": 268998851375768,
+              "kind": "CODE",
+              "name": "Conv.TOP_DEPTH_CONV(2)"
+            },
+            "reason": "different or unresolved slot"
+          },
+          {
+            "baseline": 254329495741576,
+            "candidate": 268996690567976,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[12]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "kind",
+            "baseline_value": "WORDS",
+            "candidate_value": "CLOSURE"
+          },
+          {
+            "baseline": 254329495741576,
+            "candidate": 268996690567976,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[12]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "words",
+            "baseline_value": 3,
+            "candidate_value": 1
+          },
+          {
+            "baseline": 254329495741224,
+            "candidate": 268996689608456,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[13]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "kind",
+            "baseline_value": "CLOSURE",
+            "candidate_value": "WORDS"
+          },
+          {
+            "baseline": 254329495741224,
+            "candidate": 268996689608456,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[13]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "words",
+            "baseline_value": 1,
+            "candidate_value": 3
+          },
+          {
+            "baseline": 254329494781704,
+            "candidate": 268996689549896,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[14]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "slot": 0,
+            "edge_path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[14].slot[0]",
+            "baseline_target": {
+              "address": 254329494781736,
+              "kind": "WORDS",
+              "name": null
+            },
+            "candidate_target": {
+              "immediate": 7
+            },
+            "reason": "different or unresolved slot"
+          },
+          {
+            "baseline": 254329494723144,
+            "candidate": 268996688729800,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[15]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "words",
+            "baseline_value": 3,
+            "candidate_value": 2
+          },
+          {
+            "baseline": 254329494723144,
+            "candidate": 268996688729800,
+            "path": "roots.run.slot[1].slot[0].pool[4].pool[2].pool[15]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "reason": "slot count differs",
+            "baseline_slots": 3,
+            "candidate_slots": 2
+          }
+        ]
+      }
+    },
+    "baseline-candidate": {
+      "scope": "static pool/correspondence diagnostic, NOT parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.fragwork(4)(1)",
+          "candidate_name": "MatrixSupport.fragwork(4)(1)",
+          "baseline_words": 15,
+          "candidate_words": 15,
+          "baseline_address_mod64": 16,
+          "candidate_address_mod64": 40,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [],
+            "candidate": []
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 0,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 278813920686080,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 278813920689248,
+                "pool_slot": 4,
+                "target": {
+                  "address": 278811683721800,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 278813920615184,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 278813920686080,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 278813920689232,
+                "pool_slot": 2,
+                "target": {
+                  "address": 278813920615184,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 278813920686080,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 278813920689240,
+                "pool_slot": 3,
+                "target": {
+                  "address": 278811683106288,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 278813920686080,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 278813920689240,
+                "pool_slot": 3,
+                "target": {
+                  "address": 278811683106288,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 278813920686080,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 278813920689256,
+                "pool_slot": 5,
+                "target": {
+                  "address": 191812844932224,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 247161448472576,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181809416,
+                "load_address": 247161448473264,
+                "pool_slot": 4,
+                "target": {
+                  "address": 247159278753008,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 247161447960232,
+                  "entry_code_name": "MatrixSupport.fragwork(4)(1)",
+                  "capture_words": 2
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 247161448472576,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181807632,
+                "load_address": 247161448473248,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247161447960232,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.fragwork(4)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 247161448472576,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808425,
+                "load_address": 247161448473256,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247159277682000,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 247161448472576,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808458,
+                "load_address": 247161448473256,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247159277682000,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 247161448472576,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181810176,
+                "load_address": 247161448473272,
+                "pool_slot": 5,
+                "target": {
+                  "address": 191871170399360,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 56,
+          "candidate_address_mod64": 40,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 278813921009664,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 278813921013496,
+                "pool_slot": 2,
+                "target": {
+                  "address": 278813920296968,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 247161448443904,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182062410,
+                "load_address": 247161448446568,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247161447871000,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 8,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 278813920342016,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 278813920345808,
+                "pool_slot": 3,
+                "target": {
+                  "address": 278813920297488,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 278813920342016,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 278813920345800,
+                "pool_slot": 2,
+                "target": {
+                  "address": 278813920374568,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 278813920342016,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 278813920345816,
+                "pool_slot": 4,
+                "target": {
+                  "address": 278813920298464,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 247161447870464,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182231568,
+                "load_address": 247161447874448,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247161447871520,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 247161447870464,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182230544,
+                "load_address": 247161447874440,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247161447872720,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 247161447870464,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182232592,
+                "load_address": 247161447874456,
+                "pool_slot": 4,
+                "target": {
+                  "address": 247161447872944,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        },
+        "build": {
+          "baseline_name": "MatrixSupport.workload(2)(1)",
+          "candidate_name": "MatrixSupport.workload(2)(1)",
+          "baseline_words": 34,
+          "candidate_words": 34,
+          "baseline_address_mod64": 40,
+          "candidate_address_mod64": 24,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 278813920346112,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182143504,
+                "load_address": 278813920349408,
+                "pool_slot": 3,
+                "target": {
+                  "address": 278813920647936,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 278813920346112,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182142480,
+                "load_address": 278813920349400,
+                "pool_slot": 2,
+                "target": {
+                  "address": 278813920652896,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 278813920346112,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182144528,
+                "load_address": 278813920349416,
+                "pool_slot": 4,
+                "target": {
+                  "address": 278813920660968,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 247161447936000,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182215184,
+                "load_address": 247161447939856,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247161447961680,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919120,
+                "page_address": 247161447936000,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182214160,
+                "load_address": 247161447939848,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247161447968432,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919120,
+                "page_address": 247161447936000,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182216208,
+                "load_address": 247161447939864,
+                "pool_slot": 4,
+                "target": {
+                  "address": 247161447968120,
+                  "kind": "CODE",
+                  "name": "List.map(2)()"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 412600,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2566,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 412599,
+          "objects": 34858,
+          "kinds": {
+            "WORDS": 24920,
+            "CLOSURE": 422,
+            "CODE": 2566,
+            "BYTES": 6950
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2566,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "static_references": {
+        "baseline": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        },
+        "candidate": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 32509,
+        "matched_pools": 2023,
+        "differences": 3268,
+        "categories": {
+          "words": 175,
+          "name": 95,
+          "slot count differs": 82,
+          "kind": 59,
+          "bytes": 114,
+          "alias correspondence differs": 2651,
+          "different or unresolved slot": 53,
+          "mutable": 5,
+          "pool_status": 34
+        },
+        "native_word_differences": 118,
+        "first_twelve_bfs_mismatches": [
+          {
+            "baseline": 278813920614520,
+            "candidate": 247161447960144,
+            "path": "roots.measured.slot[0].pool[2].pool[4]",
+            "baseline_name": "MatrixSupport.fragwork(4)verify(1)",
+            "candidate_name": "MatrixSupport.basic(3)(1)",
+            "field": "words",
+            "baseline_value": 82,
+            "candidate_value": 10
+          },
+          {
+            "baseline": 278813920614520,
+            "candidate": 247161447960144,
+            "path": "roots.measured.slot[0].pool[2].pool[4]",
+            "baseline_name": "MatrixSupport.fragwork(4)verify(1)",
+            "candidate_name": "MatrixSupport.basic(3)(1)",
+            "field": "name",
+            "baseline_value": "MatrixSupport.fragwork(4)verify(1)",
+            "candidate_value": "MatrixSupport.basic(3)(1)"
+          },
+          {
+            "baseline": 278813920614520,
+            "candidate": 247161447960144,
+            "path": "roots.measured.slot[0].pool[2].pool[4]",
+            "baseline_name": "MatrixSupport.fragwork(4)verify(1)",
+            "candidate_name": "MatrixSupport.basic(3)(1)",
+            "reason": "slot count differs",
+            "baseline_slots": 6,
+            "candidate_slots": 2
+          },
+          {
+            "baseline": 278813920614344,
+            "candidate": 247161447952392,
+            "path": "roots.measured.slot[0].pool[2].pool[6]",
+            "baseline_name": "MatrixSupport.basic(3)(1)",
+            "candidate_name": "MatrixSupport.fragwork(4)verify(1)",
+            "field": "words",
+            "baseline_value": 10,
+            "candidate_value": 82
+          },
+          {
+            "baseline": 278813920614344,
+            "candidate": 247161447952392,
+            "path": "roots.measured.slot[0].pool[2].pool[6]",
+            "baseline_name": "MatrixSupport.basic(3)(1)",
+            "candidate_name": "MatrixSupport.fragwork(4)verify(1)",
+            "field": "name",
+            "baseline_value": "MatrixSupport.basic(3)(1)",
+            "candidate_value": "MatrixSupport.fragwork(4)verify(1)"
+          },
+          {
+            "baseline": 278813920614344,
+            "candidate": 247161447952392,
+            "path": "roots.measured.slot[0].pool[2].pool[6]",
+            "baseline_name": "MatrixSupport.basic(3)(1)",
+            "candidate_name": "MatrixSupport.fragwork(4)verify(1)",
+            "reason": "slot count differs",
+            "baseline_slots": 2,
+            "candidate_slots": 6
+          },
+          {
+            "baseline": 278811683611312,
+            "candidate": 247159277887296,
+            "path": "roots.experiment.slot[0].pool[4].pool[15]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "kind",
+            "baseline_value": "BYTES",
+            "candidate_value": "WORDS"
+          },
+          {
+            "baseline": 278811683611312,
+            "candidate": 247159277887296,
+            "path": "roots.experiment.slot[0].pool[4].pool[15]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "bytes",
+            "baseline_value": "0500000000000000636865636b000000",
+            "candidate_value": null
+          },
+          {
+            "baseline": 278811683587312,
+            "candidate": 247159277794928,
+            "path": "roots.experiment.slot[0].pool[4].pool[17]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "kind",
+            "baseline_value": "WORDS",
+            "candidate_value": "BYTES"
+          },
+          {
+            "baseline": 278811683587312,
+            "candidate": 247159277794928,
+            "path": "roots.experiment.slot[0].pool[4].pool[17]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "field": "bytes",
+            "baseline_value": null,
+            "candidate_value": "0500000000000000636865636b000000"
+          },
+          {
+            "baseline": 278811683286400,
+            "candidate": 247159277695312,
+            "path": "roots.experiment.slot[0].pool[4].pool[18]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 278811683111248,
+            "candidate": 247159277695296,
+            "path": "roots.experiment.slot[0].pool[4].pool[19]",
+            "baseline_name": null,
+            "candidate_name": null,
+            "slot": 0,
+            "edge_path": "roots.experiment.slot[0].pool[4].pool[19].slot[0]",
+            "baseline_target": {
+              "address": 278811683766664,
+              "kind": "CLOSURE",
+              "name": null,
+              "entry_code_address": 278813921254176,
+              "entry_code_name": "_-(1)",
+              "capture_words": 0
+            },
+            "candidate_target": {
+              "immediate": 11
+            },
+            "reason": "different or unresolved slot"
+          }
+        ]
+      }
+    }
+  },
+  "collector": {
+    "baseline-control": {
+      "scope": "static pool/correspondence diagnostic, NOT parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.sswork(2)(1)",
+          "candidate_name": "MatrixSupport.sswork(2)(1)",
+          "baseline_words": 16,
+          "candidate_words": 16,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 8,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 273707919532032,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182113808,
+                "load_address": 273707919535096,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273707919600024,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 275438296424448,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182113808,
+                "load_address": 275438296427512,
+                "pool_slot": 2,
+                "target": {
+                  "address": 275438296492440,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ]
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 48,
+          "exact_native_words_equal": true,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 273707919699968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 273707919703136,
+                "pool_slot": 4,
+                "target": {
+                  "address": 273705634079840,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 273707919534984,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 273707919699968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 273707919703120,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273707919534984,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 273707919699968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 273707919703128,
+                "pool_slot": 3,
+                "target": {
+                  "address": 273705748405744,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 273707919699968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 273707919703128,
+                "pool_slot": 3,
+                "target": {
+                  "address": 273705748405744,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 273707919699968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 273707919703144,
+                "pool_slot": 5,
+                "target": {
+                  "address": 204487184370816,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 275438296592384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 275438296595552,
+                "pool_slot": 4,
+                "target": {
+                  "address": 275435999639000,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 275438296427400,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 275438296592384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 275438296595536,
+                "pool_slot": 2,
+                "target": {
+                  "address": 275438296427400,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 275438296592384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 275438296595544,
+                "pool_slot": 3,
+                "target": {
+                  "address": 275436126346736,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 275438296592384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 275438296595544,
+                "pool_slot": 3,
+                "target": {
+                  "address": 275436126346736,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 275438296592384,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 275438296595560,
+                "pool_slot": 5,
+                "target": {
+                  "address": 213358447316096,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 24,
+          "candidate_address_mod64": 56,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 273707920035840,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182240586,
+                "load_address": 273707920039896,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273707919310856,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 275438296915968,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182211914,
+                "load_address": 275438296919800,
+                "pool_slot": 2,
+                "target": {
+                  "address": 275438296203272,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 32,
+          "candidate_address_mod64": 8,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 273707919355904,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181775888,
+                "load_address": 273707919356328,
+                "pool_slot": 3,
+                "target": {
+                  "address": 273707919311408,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 273707919355904,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181774864,
+                "load_address": 273707919356320,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273707919388456,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 273707919355904,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181776912,
+                "load_address": 273707919356336,
+                "pool_slot": 4,
+                "target": {
+                  "address": 273707919312408,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 275438296248320,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182206992,
+                "load_address": 275438296252112,
+                "pool_slot": 3,
+                "target": {
+                  "address": 275438296203824,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 275438296248320,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182205968,
+                "load_address": 275438296252104,
+                "pool_slot": 2,
+                "target": {
+                  "address": 275438296280872,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 275438296248320,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182208016,
+                "load_address": 275438296252120,
+                "pool_slot": 4,
+                "target": {
+                  "address": 275438296204824,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 2780452,
+          "objects": 617010,
+          "kinds": {
+            "WORDS": 557170,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56887
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2533,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 2407845,
+          "objects": 506211,
+          "kinds": {
+            "WORDS": 446479,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56779
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2533,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "static_references": {
+        "baseline": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        },
+        "candidate": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 506053,
+        "matched_pools": 2500,
+        "differences": 90813,
+        "categories": {
+          "alias correspondence differs": 90750,
+          "kind": 3,
+          "mutable": 3,
+          "words": 4,
+          "bytes": 51,
+          "slot count differs": 1,
+          "different or unresolved slot": 1
+        },
+        "native_word_differences": 4,
+        "first_twelve_bfs_mismatches": [
+          {
+            "baseline": 273705634613024,
+            "candidate": 275436126526800,
+            "path": "roots.experiment.slot[0].pool[3].pool[9]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634080272,
+            "candidate": 275436037156216,
+            "path": "roots.experiment.slot[0].pool[3].pool[10]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634080320,
+            "candidate": 275435999789560,
+            "path": "roots.experiment.slot[0].pool[3].pool[11]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634080368,
+            "candidate": 275435999789704,
+            "path": "roots.experiment.slot[0].pool[3].pool[12]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705748585848,
+            "candidate": 275435999841536,
+            "path": "roots.experiment.slot[0].pool[3].pool[13]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705726601504,
+            "candidate": 275435999639040,
+            "path": "roots.experiment.slot[0].pool[3].pool[14]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705448605232,
+            "candidate": 275435999639088,
+            "path": "roots.experiment.slot[0].pool[3].pool[15]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705448605264,
+            "candidate": 275435999639136,
+            "path": "roots.experiment.slot[0].pool[3].pool[16]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634613024,
+            "candidate": 275436126852064,
+            "path": "roots.experiment.slot[0].pool[4].pool[10]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634080272,
+            "candidate": 275436126849960,
+            "path": "roots.experiment.slot[0].pool[4].pool[11]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634080320,
+            "candidate": 275436126827728,
+            "path": "roots.experiment.slot[0].pool[4].pool[12]",
+            "reason": "alias correspondence differs"
+          },
+          {
+            "baseline": 273705634080368,
+            "candidate": 275436126526800,
+            "path": "roots.experiment.slot[0].pool[4].pool[13]",
+            "reason": "alias correspondence differs"
+          }
+        ]
+      }
+    },
+    "baseline-candidate": {
+      "scope": "static pool/correspondence diagnostic, NOT parity",
+      "roots": {
+        "run": {
+          "baseline_name": "MatrixSupport.sswork(2)(1)",
+          "candidate_name": "MatrixSupport.sswork(2)(1)",
+          "baseline_words": 16,
+          "candidate_words": 16,
+          "baseline_address_mod64": 8,
+          "candidate_address_mod64": 16,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 273568289054720,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182113808,
+                "load_address": 273568289057784,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273568289122712,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 247258424426496,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182090256,
+                "load_address": 247258424429376,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247258424665720,
+                  "kind": "CODE",
+                  "name": "simpLib.++(2)"
+                }
+              }
+            ]
+          }
+        },
+        "step": {
+          "baseline_name": "step(1)",
+          "candidate_name": "step(1)",
+          "baseline_words": 25,
+          "candidate_words": 25,
+          "baseline_address_mod64": 48,
+          "candidate_address_mod64": 0,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 273568289222656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182126856,
+                "load_address": 273568289225824,
+                "pool_slot": 4,
+                "target": {
+                  "address": 273566002877536,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 273568289057672,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 273568289222656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125072,
+                "load_address": 273568289225808,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273568289057672,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 273568289222656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125865,
+                "load_address": 273568289225816,
+                "pool_slot": 3,
+                "target": {
+                  "address": 273566049545712,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 273568289222656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182125898,
+                "load_address": 273568289225816,
+                "pool_slot": 3,
+                "target": {
+                  "address": 273566049545712,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 273568289222656,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182127616,
+                "load_address": 273568289225832,
+                "pool_slot": 5,
+                "target": {
+                  "address": 216232943701120,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 36,
+                "adrp": 2415919112,
+                "page_address": 247258424975360,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181809416,
+                "load_address": 247258424976048,
+                "pool_slot": 4,
+                "target": {
+                  "address": 247255989333632,
+                  "kind": "WORDS",
+                  "name": null,
+                  "entry_code_address": 247258424429264,
+                  "entry_code_name": "MatrixSupport.sswork(2)(1)",
+                  "capture_words": 3
+                }
+              },
+              {
+                "instruction_offset": 48,
+                "adrp": 2415919120,
+                "page_address": 247258424975360,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181807632,
+                "load_address": 247258424976032,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247258424429264,
+                  "kind": "CODE",
+                  "name": "MatrixSupport.sswork(2)(1)"
+                }
+              },
+              {
+                "instruction_offset": 60,
+                "adrp": 2415919113,
+                "page_address": 247258424975360,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808425,
+                "load_address": 247258424976040,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247256253230416,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 80,
+                "adrp": 2415919114,
+                "page_address": 247258424975360,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181808458,
+                "load_address": 247258424976040,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247256253230416,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              },
+              {
+                "instruction_offset": 112,
+                "adrp": 2415919104,
+                "page_address": 247258424975360,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181810176,
+                "load_address": 247258424976056,
+                "pool_slot": 5,
+                "target": {
+                  "address": 199520867863680,
+                  "kind": "WORDS",
+                  "name": null
+                }
+              }
+            ]
+          }
+        },
+        "measured": {
+          "baseline_name": "measured(1)",
+          "candidate_name": "measured(1)",
+          "baseline_words": 18,
+          "candidate_words": 18,
+          "baseline_address_mod64": 24,
+          "candidate_address_mod64": 40,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 273568289558528,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182240586,
+                "load_address": 273568289562584,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273568288833544,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 76,
+                "adrp": 2415919114,
+                "page_address": 247258424946688,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182062410,
+                "load_address": 247258424949352,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247258424373784,
+                  "kind": "CODE",
+                  "name": "measured(1)(1)"
+                }
+              }
+            ]
+          }
+        },
+        "experiment": {
+          "baseline_name": "experiment(1)",
+          "candidate_name": "experiment(1)",
+          "baseline_words": 28,
+          "candidate_words": 28,
+          "baseline_address_mod64": 32,
+          "candidate_address_mod64": 32,
+          "exact_native_words_equal": false,
+          "immediate_masked_words_equal": true,
+          "operands": {
+            "baseline": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 273568288878592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181775888,
+                "load_address": 273568288879016,
+                "pool_slot": 3,
+                "target": {
+                  "address": 273568288834096,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 273568288878592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181774864,
+                "load_address": 273568288879008,
+                "pool_slot": 2,
+                "target": {
+                  "address": 273568288911144,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 273568288878592,
+                "status": "resolved inline pool load",
+                "following_instruction": 4181776912,
+                "load_address": 273568288879024,
+                "pool_slot": 4,
+                "target": {
+                  "address": 273568288835096,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ],
+            "candidate": [
+              {
+                "instruction_offset": 40,
+                "adrp": 2415919120,
+                "page_address": 247258424373248,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182242832,
+                "load_address": 247258424377320,
+                "pool_slot": 3,
+                "target": {
+                  "address": 247258424374336,
+                  "kind": "CODE",
+                  "name": "calibrate(1)"
+                }
+              },
+              {
+                "instruction_offset": 64,
+                "adrp": 2415919120,
+                "page_address": 247258424373248,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182241808,
+                "load_address": 247258424377312,
+                "pool_slot": 2,
+                "target": {
+                  "address": 247258424375560,
+                  "kind": "CODE",
+                  "name": "List.tabF(3)()"
+                }
+              },
+              {
+                "instruction_offset": 96,
+                "adrp": 2415919120,
+                "page_address": 247258424373248,
+                "status": "resolved inline pool load",
+                "following_instruction": 4182243856,
+                "load_address": 247258424377328,
+                "pool_slot": 4,
+                "target": {
+                  "address": 247258424375784,
+                  "kind": "CODE",
+                  "name": "experiment(1)sample(1)"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "graph": {
+        "baseline": {
+          "total_words": 2780452,
+          "objects": 617010,
+          "kinds": {
+            "WORDS": 557170,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56887
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2533,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        },
+        "candidate": {
+          "total_words": 2397860,
+          "objects": 506216,
+          "kinds": {
+            "WORDS": 446484,
+            "CLOSURE": 420,
+            "CODE": 2533,
+            "BYTES": 56779
+          },
+          "split_pools": 213,
+          "unique_split_pools": 213,
+          "split_pool_words_with_headers": 1326,
+          "split_pool_words_already_in_showSize": 0,
+          "pool_records": 2533,
+          "omitted_pools": 0,
+          "unresolved_slots": 0,
+          "bad_addresses": []
+        }
+      },
+      "static_references": {
+        "baseline": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        },
+        "candidate": {
+          "all_code_unresolved": 0,
+          "split_code_unresolved": 0,
+          "split_code_resolved": 1168
+        }
+      },
+      "raw_slot_correspondence": {
+        "matched": 493675,
+        "matched_pools": 1949,
+        "differences": 174026,
+        "categories": {
+          "words": 10243,
+          "slot count differs": 10120,
+          "name": 113,
+          "alias correspondence differs": 153228,
+          "different or unresolved slot": 36,
+          "kind": 80,
+          "bytes": 143,
+          "mutable": 29,
+          "pool_status": 34
+        },
+        "native_word_differences": 143,
+        "first_twelve_bfs_mismatches": [
+          {
+            "baseline": 273568289128232,
+            "candidate": 247258424671936,
+            "path": "roots.run.slot[0].pool[2].pool[4]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.map(2)()",
+            "field": "words",
+            "baseline_value": 27,
+            "candidate_value": 40
+          },
+          {
+            "baseline": 273568289128232,
+            "candidate": 247258424671936,
+            "path": "roots.run.slot[0].pool[2].pool[4]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.map(2)()",
+            "reason": "slot count differs",
+            "baseline_slots": 3,
+            "candidate_slots": 2
+          },
+          {
+            "baseline": 273568289127368,
+            "candidate": 247258424671240,
+            "path": "roots.run.slot[0].pool[2].pool[6]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.map(2)()",
+            "field": "words",
+            "baseline_value": 22,
+            "candidate_value": 27
+          },
+          {
+            "baseline": 273568289127368,
+            "candidate": 247258424671240,
+            "path": "roots.run.slot[0].pool[2].pool[6]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.map(2)()",
+            "reason": "slot count differs",
+            "baseline_slots": 2,
+            "candidate_slots": 3
+          },
+          {
+            "baseline": 273568289127056,
+            "candidate": 247258424670912,
+            "path": "roots.run.slot[0].pool[2].pool[7]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.@(2)app(1)",
+            "field": "words",
+            "baseline_value": 38,
+            "candidate_value": 22
+          },
+          {
+            "baseline": 273568289127056,
+            "candidate": 247258424670912,
+            "path": "roots.run.slot[0].pool[2].pool[7]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.@(2)app(1)",
+            "field": "name",
+            "baseline_value": "List.map(2)()",
+            "candidate_value": "List.@(2)app(1)"
+          },
+          {
+            "baseline": 273568289127056,
+            "candidate": 247258424670912,
+            "path": "roots.run.slot[0].pool[2].pool[7]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.@(2)app(1)",
+            "reason": "slot count differs",
+            "baseline_slots": 5,
+            "candidate_slots": 2
+          },
+          {
+            "baseline": 273568289126568,
+            "candidate": 247258424670064,
+            "path": "roots.run.slot[0].pool[2].pool[9]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.map(2)()",
+            "field": "words",
+            "baseline_value": 37,
+            "candidate_value": 38
+          },
+          {
+            "baseline": 273568289126568,
+            "candidate": 247258424670064,
+            "path": "roots.run.slot[0].pool[2].pool[9]",
+            "baseline_name": "List.map(2)()",
+            "candidate_name": "List.map(2)()",
+            "reason": "slot count differs",
+            "baseline_slots": 6,
+            "candidate_slots": 5
+          },
+          {
+            "baseline": 273568289126080,
+            "candidate": 247258424669880,
+            "path": "roots.run.slot[0].pool[2].pool[10]",
+            "baseline_name": "List.foldr(3)()",
+            "candidate_name": "List.map(2)()",
+            "field": "words",
+            "baseline_value": 60,
+            "candidate_value": 22
+          },
+          {
+            "baseline": 273568289126080,
+            "candidate": 247258424669880,
+            "path": "roots.run.slot[0].pool[2].pool[10]",
+            "baseline_name": "List.foldr(3)()",
+            "candidate_name": "List.map(2)()",
+            "field": "name",
+            "baseline_value": "List.foldr(3)()",
+            "candidate_value": "List.map(2)()"
+          },
+          {
+            "baseline": 273568289126080,
+            "candidate": 247258424669880,
+            "path": "roots.run.slot[0].pool[2].pool[10]",
+            "baseline_name": "List.foldr(3)()",
+            "candidate_name": "List.map(2)()",
+            "reason": "slot count differs",
+            "baseline_slots": 6,
+            "candidate_slots": 2
+          }
+        ]
+      }
+    }
+  }
+}

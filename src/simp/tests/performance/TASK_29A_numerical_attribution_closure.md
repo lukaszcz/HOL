@@ -156,6 +156,37 @@ full grid, complete attribution, verified exclusive measurement environment
 and explicit zero-GC/B/B policy-owner disposition are still required.
 TASK29A is NOT complete; TASK29B remains separate.
 
+## Complete post-workload pools — still not closure
+
+`RUNTIME_POOLS.md` and `evidence/task29/runtime-pools/RESULTS.md` extend the
+actual-object diagnostic without changing the sealed v1 tool or old archives.
+Eight final fresh B/B and B/C structural processes supply and validate every
+CODE object's actual inline/split pool. All 213 formerly omitted split pools
+per process now have concrete owner/address/count/raw-slot records; their
+1,326 words including headers are accounted separately from `showSize`.
+Dummy split trailers are excluded from native reference scanning. Root/slot
+paths retain object and pool alias mismatches rather than matching by name.
+
+Native preload is limited to diagnostic workload processes and enabled only
+around post-workload traversal. It changes layout; these are neither ordinary
+measurement-boundary snapshots nor executed-target traces. Fourteen tests
+including actual native controls and coherent archive mutations pass against
+each real experiment; 421 performance tests (seven opt-in skips) and 196
+compatibility tests pass. No timing observation is promoted or replaced.
+
+A reproducible read-only environment capture explicitly reports
+`exclusive_not_verified` and observes non-session concurrent CPU activity.
+The sandbox has no enforceable exclusive host reservation; advisory locks
+are not an exclusivity certificate. A quiet repetition would not certify one.
+The required zero-GC/B/B policy-owner disposition also remains absent; no
+contract change is authorized by these diagnostics.
+
+The complete fresh passing repaired-driver grid, ordinary boundary and
+executed-target/causal attribution, compatible repair if needed, verified
+exclusive measurements and explicit policy disposition remain required.
+`frag_record/0` still fails CPU/wall/GC; `compile_collector/10000` remains
+inconclusive. TASK29A is NOT complete; TASK29B remains separate.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant
