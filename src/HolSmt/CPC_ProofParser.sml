@@ -4549,6 +4549,40 @@ in
         ("could not parse :args for CPC step " ^ id ^
          " (rule " ^ rule_name ^ "): " ^ Feedback.message_of holerr)
 
+  fun graph_set_sort_metadata_rule name =
+    List.exists (fn rule => rule = name)
+      ["sets-card-emp", "sets-is-empty-elim", "sets-member-emp",
+       "sets-minus-self"]
+
+  (* Ordinary native :args validates the set against its sort marker only
+     after all arguments parse. Read admitted type metadata, never realize
+     a graph operand. Lists retain their packet role but count as the same
+     flattened argument sequence used by the native validator. *)
+  fun graph_validate_set_sort_metadata backend id rule_name args =
+    let
+      fun types (GraphTerm term) = [SOME (B.type_of backend (#node term))]
+        | types (GraphSort ty) = [SOME ty]
+        | types (GraphList entries) = List.concat (List.map types entries)
+        | types _ = [NONE]
+      fun check (SOME set, SOME marker) =
+            if Type.compare (set,marker) = EQUAL then ()
+            else raise ERR "parse_step"
+              ("CPC Set sort metadata does not match its set argument " ^
+               "in step " ^ id ^ " (rule " ^ rule_name ^ ")")
+        | check _ = ()
+      fun validate member =
+        case (member,List.concat (List.map types args)) of
+          (false,[set,marker]) => check (set,marker)
+        | (true,[_,set,marker]) => check (set,marker)
+        | _ => ()
+      val _ = case rule_name of
+          "sets-card-emp" => validate false
+        | "sets-is-empty-elim" => validate false
+        | "sets-member-emp" => validate true
+        | "sets-minus-self" => validate false
+        | _ => ()
+    in args end
+
   fun graph_locations (backend:'a B.backend) symbol_key =
     let
       val serial = ref 0
@@ -4787,7 +4821,8 @@ in
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map argument raws
-        else List.map ordinary raws
+        else graph_validate_set_sort_metadata
+          (#backend (#reader terms)) name rule_name (List.map ordinary raws)
         end
       fun step kind =
         let
@@ -4806,6 +4841,12 @@ in
               SOME rule => rule
             | NONE => raise ERR "graph_step"
                 (registry_lookup_failure version rule_name)
+          (* These rules validate inside native :args, before later
+             attributes. Cache typed results once, in native source order. *)
+          val eager = graph_set_sort_metadata_rule rule_name
+          val parsed_conclusion = if eager then
+              SOME (Option.map parse conclusion) else NONE
+          val parsed_args = ref NONE
           fun attrs saw_premises saw_args premises args =
             case next () of
               ")" => (premises, args)
@@ -4819,8 +4860,11 @@ in
                         (require_known_premise name known) premises
                   in attrs true saw_args premises args end
             | ":args" => if saw_args then error "duplicate :args" else
-                attrs saw_premises true premises
-                  (raw_list "arguments" (read_raw_term next))
+                let
+                  val raws = raw_list "arguments" (read_raw_term next)
+                  val _ = if eager then parsed_args :=
+                    SOME (rule_arguments name rule_name rule raws) else ()
+                in attrs saw_premises true premises raws end
             | attribute => error ("unknown CPC step attribute " ^ attribute)
           val (premises, args) = attrs false false [] []
           val _ = register_command_signature seen kind name
@@ -4838,8 +4882,11 @@ in
               in NONE end
           | NONE => SOME (GraphStep
               {step = {id = name, rule = rule, premises = premises,
-                 conclusion = Option.map parse conclusion,
-                 args = rule_arguments name rule_name rule args,
+                 conclusion = (case parsed_conclusion of
+                     SOME result => result
+                   | NONE => Option.map parse conclusion),
+                 args = (case !parsed_args of SOME result => result
+                   | NONE => rule_arguments name rule_name rule args),
                  raw_conclusion = conclusion, raw_args = args},
                pop = kind = "step-pop"})
         end
@@ -5312,7 +5359,8 @@ in
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map argument raws
-        else List.map ordinary raws
+        else graph_validate_set_sort_metadata
+          (#backend (#reader terms)) name rule_name (List.map ordinary raws)
         end
       fun step kind =
         let
@@ -5331,6 +5379,12 @@ in
               SOME rule => rule
             | NONE => raise ERR "graph_step"
                 (registry_lookup_failure version rule_name)
+          (* These rules validate inside native :args, before later
+             attributes. Cache typed results once, in native source order. *)
+          val eager = graph_set_sort_metadata_rule rule_name
+          val parsed_conclusion = if eager then
+              SOME (Option.map parse conclusion) else NONE
+          val parsed_args = ref NONE
           fun attrs saw_premises saw_args premises args =
             case next () of
               ")" => (premises, args)
@@ -5344,8 +5398,11 @@ in
                         (require_known_premise name known) premises
                   in attrs true saw_args premises args end
             | ":args" => if saw_args then error "duplicate :args" else
-                attrs saw_premises true premises
-                  (raw_list "arguments" (read_raw_term next))
+                let
+                  val raws = raw_list "arguments" (read_raw_term next)
+                  val _ = if eager then parsed_args :=
+                    SOME (rule_arguments name rule_name rule raws) else ()
+                in attrs saw_premises true premises raws end
             | attribute => error ("unknown CPC step attribute " ^ attribute)
           val (premises, args) = attrs false false [] []
           val _ = register_command_signature seen kind name
@@ -5363,8 +5420,11 @@ in
               in NONE end
           | NONE => SOME (GraphStep
               {step = {id = name, rule = rule, premises = premises,
-                 conclusion = Option.map parse conclusion,
-                 args = rule_arguments name rule_name rule args,
+                 conclusion = (case parsed_conclusion of
+                     SOME result => result
+                   | NONE => Option.map parse conclusion),
+                 args = (case !parsed_args of SOME result => result
+                   | NONE => rule_arguments name rule_name rule args),
                  raw_conclusion = conclusion, raw_args = args},
                pop = kind = "step-pop"})
         end

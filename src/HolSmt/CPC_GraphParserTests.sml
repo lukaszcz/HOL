@@ -1381,9 +1381,74 @@ struct
            ("((step @p :rule refl :args ((@re_unfold_pos_component " ^
             "\"abc\" " ^ regex ^ " 3))))") end) patterns end
 
+  (* Sort arguments are packet metadata, not counterfeit HOL variables.
+     Matching controls compare their types and kernel-check object terms;
+     negatives compare the complete native first-exception triple. *)
+  fun set_sort_metadata () =
+    let
+      fun matching label text = List.app (fn route =>
+        test (label ^ " / " ^ route_name route) (fn () =>
+          let
+            fun check e raw (proof:'a C.constructed_graph_proof) =
+              let
+                val old = case #commands (legacy e text) of
+                    [Old.STEP step] => #args step
+                  | _ => raise Fail "expected one native step"
+                val args = case #commands proof of
+                    [C.GraphStep {step,...}] => #args step
+                  | _ => raise Fail "expected one graph step"
+                fun flatten (C.GraphList entries) =
+                      List.concat (List.map flatten entries)
+                  | flatten argument = [argument]
+                fun compare (located:Old.located_term,argument) =
+                  case argument of
+                    C.GraphTerm term => bridge (#term located)
+                      (raw (#node term))
+                  | C.GraphSort ty => require "Set metadata type changed"
+                      (Type.compare (Term.type_of (#term located),ty)=EQUAL)
+                  | _ => raise Fail "unexpected Set argument role"
+              in ListPair.appEq compare
+                (old,List.concat (List.map flatten args)) end
+          in case route of
+              Value => with_value text (fn e => fn current =>
+                check e (small_value e (#context current)) (#proof current))
+            | _ => with_native route text (fn e => check e (small_graph e))
+          end)) routes
+      fun fixtures rule =
+        let
+          val prefix = if rule="sets-member-emp" then "0 " else ""
+          fun text args = "((step @p :rule " ^ rule ^ " :args (" ^
+            prefix ^ args ^ ")))"
+          val set = "(as set.empty (Set Int)) "
+          val bad = set ^ "(Set Bool)"
+        in
+          matching (rule ^ " matching sort") (text (set ^ "(Set Int)"));
+          matching (rule ^ " matching term marker") (text (set ^ set));
+          negative (rule ^ " mismatched sort") (text bad);
+          negative (rule ^ " mismatched term marker")
+            (text (set ^ "(as set.empty (Set Bool))"));
+          negative (rule ^ " list-expanded mismatched sort")
+            (text ("(@list " ^ set ^ ") (Set Bool)"));
+          negative (rule ^ " parse failure precedes metadata validation")
+            (text (bad ^ " task35_missing_argument"));
+          negative (rule ^ " metadata precedes later premise validation")
+            ("((step @p :rule " ^ rule ^ " :args (" ^ prefix ^ bad ^
+             ") :premises (@missing)))");
+          negative (rule ^ " earlier premise validation precedes metadata")
+            ("((step @p :rule " ^ rule ^ " :premises (@missing) :args (" ^
+             prefix ^ bad ^ ")))");
+          negative (rule ^ " conclusion precedes metadata validation")
+            ("((step @p task35_missing_conclusion :rule " ^ rule ^
+             " :args (" ^ prefix ^ bad ^ ")))")
+        end
+    in List.app fixtures
+      ["sets-minus-self","sets-card-emp","sets-is-empty-elim",
+       "sets-member-emp"] end
+
   fun run () =
     let
       val _ = failures := [] val _ = bridges := 0
+      val _ = set_sort_metadata ()
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)
       val indexed =
