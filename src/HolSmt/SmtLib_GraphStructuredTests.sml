@@ -622,6 +622,225 @@ struct
          (abs [prime,x] (boolSyntax.mk_conj (prime,h)),[(h,x)])]
     end
 
+  (* A source DAG shared below different binders must not be copied just
+     because the traversal has acquired unrelated lexical bindings. Test
+     both an absent substitution and a live one, with used outer binders.
+     The guard is test-local; no production admission limit is changed. *)
+  fun substitution_sharing () =
+    let
+      val a=Term.mk_var ("a",Type.bool)
+      val b=Term.mk_var ("b",Type.bool)
+      val z=Term.mk_var ("z",Type.bool)
+      val r=Term.mk_var ("r",Type.bool)
+      val eq=C.native (Term.rator (Term.rator (boolSyntax.mk_eq
+        (Term.mk_abs (a,boolSyntax.T),Term.mk_abs (b,boolSyntax.T)))))
+      val conjunction=C.native (Term.rator (Term.rator
+        (boolSyntax.mk_conj (a,b))))
+      fun shared live n =
+        let fun loop 0=C.native (if live then z else boolSyntax.T)
+              | loop n=
+                  let val child=loop (n-1)
+                      fun body variable=if live then C.application
+                        (C.application (conjunction,C.native variable),child)
+                        else child
+                  in C.application
+                    (C.application (eq,C.abstraction (a,body a)),
+                     C.abstraction (b,body b)) end
+        in loop n end
+      fun measure live n =
+        let val spent=ref (0:IntInf.int)
+            fun observe debit=
+              (ensure "negative shared substitution debit" (debit>=0);
+               spent := !spent+debit;
+               ensure "shared binder substitution expanded" (!spent<2000000))
+            val source=shared live n
+            val result=C.substitute observe [(z,C.native r)] source
+            val work= !spent
+            val variables=C.all_variables observe [result]
+        in ensure "shared substitution lost type or free-variable replacement"
+             (C.type_of result=Type.bool andalso
+              not (List.exists (fn v => Term.aconv v z) variables) andalso
+              (not live orelse List.exists (fn v => Term.aconv v r) variables));
+           print ("TASK33_SUBSTITUTION live="^Bool.toString live^
+             " depth="^Int.toString n^" work="^IntInf.toString work^"\n");
+           work
+        end
+      fun scaling live =
+        let val small=measure live 8
+            val large=measure live 16
+        in ensure "shared binder substitution has exponential scaling"
+             (large<6*small);
+           ignore (measure live 32) end
+      (* Separate public openings can produce equal simultaneous Renaming
+         wrappers over the same live child. Their translated bindings must
+         have stable identities as well. The differently typed namesake
+         forces freshening on kernels with that opening convention. *)
+      fun renamed_shared n =
+        let
+          val start=Term.mk_var ("rename",intSyntax.int_ty)
+          val hole=Term.genvar intSyntax.int_ty
+          val plus=C.native (Term.rator (Term.rator
+            (intSyntax.mk_plus (start,start))))
+          fun loop 0=(C.native start,start)
+            | loop n=
+              let val (child,variable)=loop (n-1)
+                  val namesake=Term.mk_var
+                    (#1 (Term.dest_var variable),Type.bool)
+                  val body=C.from_template
+                    {template=boolSyntax.mk_cond (namesake,hole,hole),
+                     holes=[hole],operands=[child]}
+                  fun expose ()=valOf (C.dest_abs (fn _ => ())
+                    (C.abstraction (variable,body)))
+                  val (left,a)=expose ()
+                  val (right,b)=expose ()
+                  val _=ensure "separate openings disagree"
+                    (Term.aconv left right)
+              in (C.application (C.application (plus,a),b),left) end
+        in loop n end
+      fun commuting_shared n =
+        let
+          val x=Term.mk_var ("commute_x",intSyntax.int_ty)
+          val y=Term.mk_var ("commute_y",intSyntax.int_ty)
+          val hole=Term.genvar intSyntax.int_ty
+          val plus=C.native (Term.rator (Term.rator
+            (intSyntax.mk_plus (x,y))))
+          fun add (a,b)=C.application (C.application (plus,a),b)
+          fun expose variable body=valOf (C.dest_abs (fn _ => ())
+            (C.abstraction (variable,body)))
+          fun loop 0=(add (C.native x,C.native y),x,y)
+            | loop n=
+              let val (child,x,y)=loop (n-1)
+                  fun namesake v=Term.mk_var (#1 (Term.dest_var v),Type.bool)
+                  val body=C.from_template
+                    {template=boolSyntax.mk_cond (namesake x,hole,
+                       boolSyntax.mk_cond (namesake y,hole,hole)),
+                     holes=[hole],operands=[child]}
+                  val (y',left)=expose y body
+                  val (x',left)=expose x left
+                  val (x'',right)=expose x body
+                  val (y'',right)=expose y right
+                  val _=ensure "commuting public openings disagree"
+                    (Term.aconv x' x'' andalso Term.aconv y' y'')
+              in (add (left,right),x',y') end
+          val (source,x,_)=loop n
+        in (source,x) end
+      fun measure_renamed family label n =
+        let val (source,variable)=family n
+            val spent=ref (0:IntInf.int)
+            fun observe debit=
+              (ensure "negative renamed syntax debit" (debit>=0);
+               spent := !spent+debit;
+               ensure "shared renaming substitution expanded" (!spent<2000000))
+            val result=C.substitute observe [(variable,C.native
+              (intSyntax.term_of_int (Arbint.fromInt 0)))] source
+            val work= !spent
+        in ensure "renaming substitution lost type or live replacement"
+             (C.type_of result=intSyntax.int_ty andalso
+              not (List.exists (fn v => Term.aconv v variable)
+                (C.all_variables observe [result])));
+           print ("TASK33_RENAMING family="^label^" depth="^Int.toString n^
+             " work="^IntInf.toString work^"\n");
+           work
+        end
+      val small=measure_renamed renamed_shared "repeated" 8
+      val large=measure_renamed renamed_shared "repeated" 16
+      val commuting_small=measure_renamed commuting_shared "commuting" 6
+      val commuting_large=measure_renamed commuting_shared "commuting" 12
+    in ensure "translated bindings have exponential scaling" (large<12*small);
+       ensure "commuting bindings have exponential scaling"
+         (commuting_large<20*commuting_small);
+       scaling false; scaling true end
+
+  (* Actual generic-qualified application reaches source substitution via
+     bounded native callbacks on schematic holes. Nested LETs make this a
+     linear-size parser input even though its retained binder DAG unfolds
+     exponentially. Only tiny cases use the ordinary checked oracle. *)
+  fun qualified_substitution_sharing () =
+    let
+      val a=Term.mk_var ("a",Type.bool)
+      val b=Term.mk_var ("b",Type.bool)
+      val z=Term.mk_var ("z",Type.bool)
+      fun bounded term=
+        (ensure "shared callback native operand/template expanded"
+           (Option.isSome (SmtReplayImport.bounded_raw_size 64 term));term)
+      fun duplicate token=SmtLib_Theories.K_zero_one
+        (fn x => bounded (boolSyntax.mk_eq
+          (Term.mk_abs (a,bounded x),Term.mk_abs (b,x)))) token
+      fun ascribe token=SmtLib_Theories.K_zero_two
+        (fn (x,y) => (ignore (bounded y);
+          bounded (Term.mk_abs (z,bounded x)))) token
+      fun adapt backend parse frame token indices arguments=
+        let
+          fun lifted token indices holes=
+            let val template=parse token indices holes
+                val sources=case B.constructor_sources backend of
+                    SOME {arguments,...} => arguments
+                  | NONE => raise Fail "missing shared callback sources"
+                val _=B.note_constructor_source backend (C.from_template
+                  {template=template,holes=holes,operands=sources})
+            in Term.list_mk_comb
+              (Term.list_mk_abs (holes,template),holes) end
+        in R.recipe_parsefn_with_policy backend policy lifted
+             frame token indices arguments end
+      fun nested 0="true"
+        | nested n="((as (dup (let ((s "^nested (n-1)^
+            ")) s)) true) false)"
+      fun body 0="true"
+        | body n="(dup "^body (n-1)^")"
+      fun flat n="((as "^body n^" true) false)"
+      val (sorts,native)=SmtLib_Logics.parsedicts_of_solver_logic
+        "cvc5" "HO_ALL"
+      val native=List.foldl Library.extend_dict native
+        [("dup",duplicate),("as",ascribe)]
+      fun measure family n =
+        let
+          val text=family n
+          val graph=G.new ()
+          val scope=G.root_scope graph
+          val spent=ref (0:IntInf.int)
+          fun observe debit=
+            (ensure "negative qualified syntax debit" (debit>=0);
+             spent := !spent+debit;
+             ensure "generic qualified substitution expanded" (!spent<2000000))
+          val context=PV.create {graph=graph,scope=scope,
+            validate=fn () => (),spend=observe,retire=fn () => ()}
+          val held=B.values_with_policy {context=context,graph=graph,
+            scope=scope,import_limit=policy_maximum,
+            literal_limit=policy_maximum,binder_limit=policy_maximum}
+          val backend= #backend held
+          val (_,dictionary)= #dictionaries
+            (R.select_with_policy_no_override backend policy
+              {logic="HO_ALL",solver=SOME "cvc5"})
+          val dictionary=List.foldl Library.extend_dict dictionary
+            [("dup",adapt backend duplicate),("as",adapt backend ascribe)]
+          fun check ()=
+            let val value=P.parse_term_with_policy
+                  (policy_options backend (B.root backend)) (tokens text)
+                  (sorts,dictionary)
+            in ensure "qualified substitution changed result type"
+                 (B.type_of backend value=Type.bool);
+               if n<=2 then bridge
+                 (P.parse_term_with_cfg cfg (tokens text) (sorts,native))
+                 (small_value context value)
+               else ignore (PV.proof_term context value)
+            end
+          val result=Exn.capture check ()
+          val _=(#close held) ()
+          val _=G.close_scope graph scope
+          val _=Exn.release result
+        in print ("TASK33_QUALIFIED bytes="^Int.toString (String.size text)^
+             " depth="^Int.toString n^" work="^IntInf.toString (!spent)^"\n");
+           !spent
+        end
+      fun scaling family=
+        let val _=measure family 2
+            val small=measure family 8
+            val large=measure family 16
+        in ensure "qualified source metadata has exponential scaling"
+             (large<6*small);
+           ignore (measure family 32) end
+    in scaling flat; scaling nested end
+
   (* Admit tiny raw native callbacks before publishing their source shape.
      In particular, no substitution may silently freshen the value binder
      before the descriptor comparison. Run every representation through all
@@ -1410,6 +1629,10 @@ struct
       val _=OK ()
       val _=tprint "Structured public binder/native/abstraction/template laws"
       val _=binder_invariants ()
+      val _=OK ()
+      val _=tprint "Structured shared binder substitution remains compact"
+      val _=substitution_sharing ()
+      val _=qualified_substitution_sharing ()
       val _=OK ()
       val _=tprint "Structured admitted raw callback comprehensions"
       val _=raw_comprehensions ()

@@ -562,26 +562,64 @@ struct
     in peel root [] end
 
   (* Substitute into source syntax, not into a realized graph. Memoize by
-     syntax AND lexical environment: shared operands stay shared, including
-     underneath binders. Only admitted native fragments reach the existing
-     native-template substitution observer. *)
+     syntax AND its relevant lexical bindings. Fresh bindings at unrelated
+     abstractions must not split the cache for a shared child. Only admitted
+     native fragments are opened; actual operands remain shared syntax. *)
   fun substitute observe replacements root =
     let
       val entries = observations observe
       val equal = same_variable observe
       fun free syntax = free_variables observe (entries syntax)
       val serial = ref (0 : IntInf.int)
-      fun environment bindings =
-        (observe 1; serial := !serial+1; (!serial,bindings))
+      fun compare_variable (left,right) =
+        let val (a,aty) = Term.dest_var left
+            val (b,bty) = Term.dest_var right
+            val _ = observe (1+IntInf.fromInt (String.size a+String.size b))
+            val _ = type_work observe aty
+            val _ = type_work observe bty
+        in Term.compare (left,right) end
+      val interned = ref (Redblackmap.mkDict compare_variable)
+      fun same_source (Syntax {id=a,node=left,...},
+                       Syntax {id=b,node=right,...}) =
+        (observe 1; a=b orelse
+         (case (left,right) of
+            (Native x,Native y) => Term.is_var x andalso Term.is_var y
+              andalso equal (x,y)
+          | _ => false))
+      (* A Renaming may reach the same shared child through distinct source
+         wrappers. Intern equivalent bindings, not wrapper/visit identities.
+         Native comparisons here are ONLY between atomic variables. *)
+      fun binding (old,value,variables,active,lexical) =
+        let
+          val _ = observe 1
+          val bucket = case Redblackmap.peek (!interned,old) of
+              NONE => [] | SOME bucket => bucket
+          fun matches (_,source,vars,act,lex,_) =
+            (observe 1; active=act andalso lexical=lex andalso
+             same_source (value,source) andalso
+             List.collate compare_variable (variables,vars)=EQUAL)
+        in case List.find matches bucket of
+            SOME entry => entry
+          | NONE =>
+            let val _ = serial := !serial+1
+                val entry = (old,value,variables,active,lexical,!serial)
+                val _ = observe 1
+                val _ = interned :=
+                  Redblackmap.insert (!interned,old,entry::bucket)
+            in entry end
+        end
+      fun compare_id (left,right) =
+        (observe 1; IntInf.compare (left,right))
       val memo = ref (Redblackmap.mkDict
         (fn ((a,b),(c,d)) => (observe 1;
-          case IntInf.compare (a,c) of EQUAL => IntInf.compare (b,d) | x => x)))
+          case List.collate compare_id (a,c) of
+            EQUAL => compare_id (b,d) | x => x)))
       fun lookup variable [] = (observe 1; NONE)
-        | lookup variable ((old,value,variables,active,lexical)::rest) =
+        | lookup variable ((old,value,variables,active,lexical,_)::rest) =
             if equal (variable,old) then SOME (value,variables,active,lexical)
             else lookup variable rest
       fun extend bindings rest = bindings @ List.filter
-        (fn (old,_,_,_,_) => not (Option.isSome (lookup old bindings))) rest
+        (fn (old,_,_,_,_,_) => not (Option.isSome (lookup old bindings))) rest
       fun source_variable (Syntax {node,...}) =
         (observe 1; case node of
            Native term => if Term.is_var term then SOME term else NONE
@@ -600,10 +638,28 @@ struct
             (String.size (#1 (Term.dest_var variable)))
           val _ = observe ((size-original+1)*(bytes+size+1))
         in result end
-      fun walk (_,[]) syntax = syntax
-        | walk (env as (epoch,bindings)) (syntax as Syntax {id,ty,node}) =
-        (observe 1;
-         case Redblackmap.peek (!memo,(epoch,id)) of SOME result => result
+      fun walk [] syntax = syntax
+        | walk bindings (syntax as Syntax {id,ty,node}) =
+        let
+          val _ = observe 1
+          val current = free syntax
+          (* Keep inactive lexical bindings too: capture avoidance needs
+             their public names, not just active replacement ranges. Order
+             and identities survive projection, preserving first lookup. *)
+          val bindings = List.filter (fn (old,_,_,_,_,_) =>
+            (observe 1; member equal old current)) bindings
+          (* Independent simultaneous renamings can commute. Their binding
+             order is irrelevant to lookup, but not to a raw list cache key.
+             Sort ONLY the key; stable sorting retains duplicate-domain
+             precedence, and the visitor keeps its original binding order. *)
+          val ordered = Listsort.sort
+            (fn ((left,_,_,_,_,_),(right,_,_,_,_,_)) =>
+              compare_variable (left,right)) bindings
+          val key = (List.map (fn (_,_,_,_,_,identity) =>
+            (observe 1; identity)) ordered,id)
+        in
+         if null bindings then syntax
+         else case Redblackmap.peek (!memo,key) of SOME result => result
          | NONE =>
            let
              val result = case node of
@@ -611,26 +667,27 @@ struct
                    (case lookup term bindings of SOME (value,_,_,_) => value
                     | NONE => syntax)
                  else if Term.is_abs term orelse Term.is_comb term then
-                   walk env (expand_template observe
+                   walk bindings (expand_template observe
                      {template=term,holes=[],operands=[],avoids=NONE})
                  else syntax
-               | Template source => walk env (expand_template observe source)
+               | Template source =>
+                   walk bindings (expand_template observe source)
                | Application (operator,operand) =>
-                   application (walk env operator,walk env operand)
+                   application (walk bindings operator,walk bindings operand)
                | Renaming (body,renamed) =>
                    let val changed = List.map (fn (old,value) =>
                          (observe 1; case lookup value bindings of
                            SOME (source,variables,active,lexical) =>
-                             (old,source,variables,active,lexical)
-                         | NONE => (old,native value,[value],false,true))) renamed
-                   in walk (environment (extend changed bindings)) body end
+                             binding (old,source,variables,active,lexical)
+                         | NONE => binding
+                             (old,native value,[value],false,true))) renamed
+                   in walk (extend changed bindings) body end
                | Abstraction (stored,marker,body) =>
                    let
                      val bindings = List.filter
-                       (fn (old,_,_,_,_) => not (equal (old,marker))) bindings
-                     val current = free syntax
+                       (fn (old,_,_,_,_,_) => not (equal (old,marker))) bindings
                      val introduced = List.foldl
-                       (fn ((old,_,variables,active,_),rest) =>
+                       (fn ((old,_,variables,active,_,_),rest) =>
                          (observe 1;
                           if active andalso member equal old current then
                             (observe (IntInf.fromInt (List.length variables));
@@ -654,20 +711,24 @@ struct
                        List.exists clashes introduced
                      val binder = if changed then
                          fresh (introduced @ original_free) stored else stored
-                     val avoids = all_variables observe
-                       (body :: List.map (fn (_,value,_,_,_) => value) bindings)
+                     val avoids = all_variables observe (body :: List.map
+                       (fn (_,value,_,_,_,_) => value) bindings)
                      val new_marker = fresh (marker::binder::avoids) marker
-                     val env = environment
-                       ((marker,native new_marker,[binder],changed,true)::bindings)
-                   in make ty (Abstraction (binder,new_marker,walk env body)) end
+                     val bindings =
+                       binding (marker,native new_marker,[binder],changed,true)
+                       :: bindings
+                   in make ty
+                     (Abstraction (binder,new_marker,walk bindings body)) end
              val _ = observe 1
-             val _ = memo := Redblackmap.insert (!memo,(epoch,id),result)
-           in result end)
+             val _ = memo := Redblackmap.insert (!memo,key,result)
+           in result end
+        end
       (* Native substitution removes identities before visiting binders. *)
       val bindings = List.mapPartial (fn (old,value) =>
         (observe 1; case source_variable value of
            SOME variable => if equal (old,variable) then NONE
-             else SOME (old,value,free value,true,false)
-         | NONE => SOME (old,value,free value,true,false))) replacements
-    in walk (environment bindings) root end
+             else SOME (binding (old,value,free value,true,false))
+         | NONE => SOME (binding (old,value,free value,true,false))))
+        replacements
+    in walk bindings root end
 end
