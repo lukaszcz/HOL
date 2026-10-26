@@ -26,6 +26,32 @@ struct
      occurrence : 'a P.construction_occurrence,
      binder_blocks : (string * int * 'a) list}
   type term = G.node constructed_term
+  fun capture_table (backend:'a B.backend) =
+    ref (Redblackmap.mkDict
+      (fn ((lk,li),(rk,ri)) =>
+        (B.syntax_spend backend
+           (1+IntInf.fromInt (String.size lk+String.size rk));
+         case String.compare (lk,rk) of
+           EQUAL => Int.compare (li,ri) | order => order))
+      : (string * int,(string * int * 'a) list) Redblackmap.dict)
+  (* Binder-block lookup records possible immediate sizes, not occurrence
+     multiplicity. Keep the latter in the occurrence DAG. Repeated aliases
+     of one binder must not double this lookup list at each definition. *)
+  fun unique_blocks backend identity blocks =
+    let
+      fun compare ((lk,lc,li),(rk,rc,ri)) =
+        (B.syntax_spend backend
+           (1+IntInf.fromInt (String.size lk+String.size rk));
+         case String.compare (lk,rk) of EQUAL =>
+           (case Int.compare (lc,rc) of EQUAL => Int.compare (li,ri)
+            | order => order) | order => order)
+      fun add ((entry as (kind,count,node)),(seen,result)) =
+        let val key = (kind,count,identity node)
+        in if Redblackset.member (seen,key) then (seen,result)
+           else (Redblackset.add (seen,key),entry::result) end
+    in List.rev (#2 (List.foldl add
+      (Redblackset.empty compare,[]) blocks)) end
+
   type 'rule step =
     {id : string, rule : 'rule, premises : string list,
      conclusion : term option, arguments : term list}
@@ -186,6 +212,14 @@ struct
     case disjunction_children occurrence of
       SOME children => children | NONE => [occurrence]
 
+  fun cpc_normalized_source backend policy occurrence source =
+    let fun has_let (P.ConstructionOccurrence {role,children,...}) =
+          (case role of P.ConstructionLet _ => true | _ => false) orelse
+          List.exists has_let children
+    in if policy=CPC andalso has_let occurrence then
+        C.normalize_lets (B.syntax_spend backend) source
+      else source end
+
   fun create_session_aux (options : options) source_declarations
       {solver, version, policy, reserved_names} get_token : session =
     let
@@ -341,6 +375,7 @@ struct
         (HOLset.empty String.compare) dictionary
       val source_terms = ref (HOLset.difference (keys dictionary, reserved))
       val source_sorts = HOLset.difference (keys sorts, reserved)
+      val captured_blocks = capture_table backend
       fun context root scope dictionary_ref variables_ref sorts_ref
           binder_lists_ref lists_ref proof_terms proof_sorts aliases_ref
           : session =
@@ -444,8 +479,15 @@ struct
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
             fun parse frame name indices arguments =
-              let val result = P.construction_value_parsefn backend
-                    (#node value) frame name indices arguments
+              let val original = (#node value,#binder_blocks value)
+                  val (node,blocks) = if policy=CPC then
+                    B.capture_alias backend frame original else original
+                  val _ = if policy<>CPC orelse null blocks then () else
+                    captured_blocks :=
+                    Redblackmap.insert (!captured_blocks,
+                      (key,G.node_id node),blocks)
+                  val result = P.construction_value_parsefn backend
+                    node frame name indices arguments
                   val _ = case B.constructor_sources backend of
                       NONE => ()
                     | SOME {arguments,...} =>
@@ -584,7 +626,11 @@ struct
           case role of P.ConstructionBinder {kind, variables} =>
             (kind, List.length variables, value) :: nested
           | P.ConstructionAtom =>
-              (case Redblackmap.peek (!aliases_ref, symbol_key token) of
+              (case (if policy=CPC then Redblackmap.peek
+                  (!captured_blocks,(symbol_key token,G.node_id value))
+                else NONE) of SOME captured => captured @ nested
+               | NONE => case Redblackmap.peek
+                   (!aliases_ref,symbol_key token) of
                  SOME (alias : term) =>
                    if G.node_id (#node alias) = G.node_id value then
                      #binder_blocks alias @ nested else nested
@@ -597,9 +643,14 @@ struct
               P.parse_term_sourced_with_backend_and_indices
                 (configuration root) symbolic_index tokens
                 (!sorts_ref, !dictionary_ref)
+            val source = cpc_normalized_source backend policy
+              occurrence source
+            val blocks = blocks occurrence
+            val blocks = if policy=CPC then
+              unique_blocks backend G.node_id blocks else blocks
         in {node = P.construction_value occurrence, scope = scope,
             source_syntax = SOME source,
-            occurrence = occurrence, binder_blocks = blocks occurrence} end
+            occurrence = occurrence, binder_blocks = blocks} end
       val reader : reader =
         {graph = graph, scope = scope, backend = backend, solver = solver,
          version = version, coverage = #entries selected,
@@ -893,6 +944,7 @@ struct
         (HOLset.empty String.compare) dictionary
       val source_terms = ref (HOLset.difference (keys dictionary, reserved))
       val source_sorts = HOLset.difference (keys sorts, reserved)
+      val captured_blocks = capture_table backend
       fun context root scope dictionary_ref variables_ref sorts_ref
           binder_lists_ref lists_ref proof_terms proof_sorts aliases_ref
           : 'a constructed_session =
@@ -1006,8 +1058,15 @@ struct
         let val key = fresh_term token
             val _ = B.type_of backend (#node value)
             fun parse frame name indices arguments =
-              let val result = P.construction_value_parsefn backend
-                    (#node value) frame name indices arguments
+              let val original = (#node value,#binder_blocks value)
+                  val (node,blocks) = if policy=CPC then
+                    B.capture_alias backend frame original else original
+                  val _ = if policy<>CPC orelse null blocks then () else
+                    captured_blocks :=
+                    Redblackmap.insert (!captured_blocks,
+                      (key,identity node),blocks)
+                  val result = P.construction_value_parsefn backend
+                    node frame name indices arguments
                   val _ = case B.constructor_sources backend of
                       NONE => ()
                     | SOME {arguments,...} =>
@@ -1146,7 +1205,11 @@ struct
           case role of P.ConstructionBinder {kind, variables} =>
             (kind, List.length variables, value) :: nested
           | P.ConstructionAtom =>
-              (case Redblackmap.peek (!aliases_ref, symbol_key token) of
+              (case (if policy=CPC then Redblackmap.peek
+                  (!captured_blocks,(symbol_key token,identity value))
+                else NONE) of SOME captured => captured @ nested
+               | NONE => case Redblackmap.peek
+                   (!aliases_ref,symbol_key token) of
                  SOME (alias : 'a constructed_term) =>
                    if same_identity (#node alias,value) then
                      #binder_blocks alias @ nested else nested
@@ -1159,9 +1222,14 @@ struct
               P.parse_term_sourced_with_policy_and_indices
                 (configuration root) symbolic_index tokens
                 (!sorts_ref, !dictionary_ref)
+            val source = cpc_normalized_source backend policy
+              occurrence source
+            val blocks = blocks occurrence
+            val blocks = if policy=CPC then
+              unique_blocks backend identity blocks else blocks
         in {node = P.construction_value occurrence, scope = scope,
             source_syntax = SOME source,
-            occurrence = occurrence, binder_blocks = blocks occurrence} end
+            occurrence = occurrence, binder_blocks = blocks} end
       val reader : 'a constructed_reader =
         {graph = graph, scope = scope, backend = backend, solver = solver,
          version = version, coverage = #entries selected,

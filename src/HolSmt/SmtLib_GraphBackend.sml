@@ -10,9 +10,10 @@ struct
   type constructor_inputs =
     {indices:C.syntax list,arguments:C.syntax list}
   type constructor_state =
-    {inputs:constructor_inputs option ref,result:C.syntax option ref}
+    {inputs:constructor_inputs option ref,result:C.syntax option ref,
+     forall_blocks:(C.syntax * int list) list option ref}
   fun new_constructor_state () : constructor_state =
-    {inputs=ref NONE,result=ref NONE}
+    {inputs=ref NONE,result=ref NONE,forall_blocks=ref NONE}
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphBackend"
   type environment = {lexical : G.scope, construction : G.scope} option
   type 'a solver_variable =
@@ -40,6 +41,8 @@ struct
      variable : environment -> G.variable_kind -> Term.term -> 'a,
      fresh_solver_variable : environment -> Term.term -> 'a,
      reference : environment -> Term.term * 'a -> 'a,
+     capture_alias : environment ->
+       'a * (string * int * 'a) list -> 'a * (string * int * 'a) list,
      bound_variable : environment -> Term.term -> 'a,
      application : environment -> 'a * 'a -> 'a,
      new_scope : environment -> (Term.term * 'a) list -> environment,
@@ -94,7 +97,7 @@ struct
       else raise error
 
   fun with_constructor_sources
-      (Backend {constructor_state={inputs,result},...}) sources action =
+      (Backend {constructor_state={inputs,result,...},...}) sources action =
     let
       val saved_inputs = !inputs
       val saved_result = !result
@@ -110,9 +113,42 @@ struct
   fun constructor_source (Backend {constructor_state={result,...},...}) =
     !result
   fun note_constructor_source
-      (Backend {constructor_state={inputs,result},...}) syntax =
+      (Backend {constructor_state={inputs,result,...},...}) syntax =
     case !inputs of NONE => () | SOME _ => result := SOME syntax
   fun syntax_spend (Backend {syntax_spend,...}) amount = syntax_spend amount
+  fun enable_forall_blocks
+      (Backend {constructor_state={forall_blocks,...},...}) =
+    forall_blocks := SOME []
+  fun record_source_binder
+      (backend as Backend {constructor_state={forall_blocks,...},...})
+      (kind,count,source) =
+    if kind<>"forall" then () else case !forall_blocks of NONE => ()
+    | SOME entries =>
+      (* Recording is constant-time even for exponentially shared binder
+         bodies. Defer ordinary alpha queries until a constructor needs the
+         block boundary; ordinary parsing must not compare every binder. *)
+      (syntax_spend backend 1;
+       forall_blocks := SOME ((source,[count])::entries))
+  fun forall_block
+      (backend as Backend {constructor_state={forall_blocks,...},...})
+      source =
+    let
+      val spend = syntax_spend backend
+      fun lookup [] found = found
+        | lookup ((candidate,counts)::rest) found =
+            if C.aconv spend (candidate,source) then
+              (case (counts,found) of
+                 ([count],NONE) => lookup rest (SOME (candidate,count))
+               | ([count],SOME (_,old)) =>
+                   if count=old then lookup rest found else ambiguous ()
+               | _ => ambiguous ())
+            else lookup rest found
+      and ambiguous () = raise Feedback.mk_HOL_ERR "CPC_ProofParser"
+        "cpc_quantifiers_skolemize_parsefn"
+        "source FORALL binder-block metadata is ambiguous"
+    in lookup (case !forall_blocks of NONE => []
+      | SOME entries => (spend (IntInf.fromInt (List.length entries));
+                         List.rev entries)) NONE end
 
   fun type_of (Backend {type_of, ...}) value = type_of value
   fun variable_descriptor (Backend {variable_descriptor, ...}) value =
@@ -171,6 +207,9 @@ struct
       frame descriptor =
     fresh_solver_variable (#1 (checked_frame backend frame))
       (mk_bound_var descriptor)
+  fun capture_alias (backend as Backend {capture_alias,...}) frame value =
+    capture_alias (#1 (checked_frame backend frame)) value
+
   fun reference (backend as Backend {reference, ...}) frame declaration =
     reference (#1 (checked_frame backend frame)) declaration
   fun application (backend as Backend {application,view,...}) frame
@@ -304,6 +343,127 @@ struct
       in source_syntax_walk (PV.spend context) compare
         (PV.proof_key context) expand (PV.proof_term context original) end)
 
+  datatype 'a alias_view = AliasAtom
+    | AliasApplication of 'a * 'a | AliasBinder of 'a * 'a
+  fun scoped_alias
+      {spend,key,free,resolve,visible,atom,view,apply,abstract}
+      base root =
+    let
+      fun compare ((ls,ln),(rs,rn)) =
+        (spend 1;case Int.compare (ls,rs) of
+           EQUAL => Int.compare (ln,rn) | order => order)
+      val memo = ref (Redblackmap.mkDict compare)
+      val translated = ref (Redblackmap.mkDict
+        (fn (a,b) => (spend 1;Int.compare (a,b))))
+      fun same (a,b) = (spend 1;key a=key b)
+      fun replacement bindings node =
+        case List.find (fn (old,_,_) => same (old,node)) bindings of
+          SOME (_,value,_) => value | NONE => resolve node
+      fun changed bindings node =
+        case free node of NONE => true
+        | SOME variables => List.exists (fn variable =>
+            not (same (variable,replacement bindings variable))) variables
+      fun visit caller bindings node =
+        let val _ = spend 1
+            (* Unrelated inner binders must not split shared-suffix caches.
+               Build in the outermost scope containing the actual captures,
+               not whichever irrelevant binder happened to visit first. *)
+            val (scope,bindings) = case free node of NONE => (caller,bindings)
+              | SOME variables =>
+                  let val relevant = List.filter (fn (old,_,_) =>
+                        List.exists (fn variable => same (old,variable))
+                          variables) bindings
+                  in (case relevant of [] => base | (_,_,scope)::_ => scope,
+                      relevant) end
+            val index = (G.scope_id scope,key node)
+        in case Redblackmap.peek (!memo,index) of SOME result => result
+         | NONE =>
+          let
+            val result = if not (changed bindings node) andalso
+                visible scope node then node else
+              case view node of AliasAtom =>
+                atom scope (replacement bindings node)
+              | AliasApplication (f,x) =>
+                  let val f' = visit scope bindings f
+                      val x' = visit scope bindings x
+                  in if same (f,f') andalso same (x,x') andalso
+                      visible scope node then node
+                     else apply scope (f',x') end
+              | AliasBinder (binder,body) =>
+                  abstract scope binder (fn child => fn variable =>
+                    visit child ((binder,variable,child)::bindings) body)
+            val _ = memo := Redblackmap.insert (!memo,index,result)
+            val previous = case Redblackmap.peek (!translated,key node) of
+                NONE => [] | SOME nodes => nodes
+            val next = if List.exists (fn saved => same (saved,result))
+                previous then previous else previous @ [result]
+            val _ = translated := Redblackmap.insert
+              (!translated,key node,next)
+          in result end
+        end
+      val value = visit base [] root
+      fun translate node =
+        case Redblackmap.peek (!translated,key node) of
+          SOME nodes => nodes | NONE => [node]
+    in {value=value,translate=translate} end
+
+  fun graph_lexical_alias graph variables descriptors node =
+    case Redblackmap.peek (!descriptors,G.node_id node) of NONE => NONE
+    | SOME term =>
+        (case Redblackmap.peek (!variables,
+            (G.scope_id (G.node_scope graph node),term)) of
+           SOME original => if original=node then SOME term else NONE
+         | NONE => NONE)
+  fun capture_blocks {value,translate} blocks =
+    (value,List.concat (List.map (fn (kind,count,node) =>
+      List.map (fn node => (kind,count,node)) (translate node)) blocks))
+  fun graph_capture_alias graph regular maximum literal_limit lexical scope
+      (root,blocks) =
+    capture_blocks (scoped_alias
+      {spend=fn _ => (),key=G.node_id,free=G.free_variable_nodes graph,
+       resolve=fn node => case regular node of NONE => node
+         | SOME term => G.resolve_reference graph lexical term node,
+       visible=fn scope => fn node =>
+         G.scope_visible graph scope (G.node_scope graph node),
+       atom=fn scope => fn node =>
+         case G.view graph node of
+           G.OpaqueRetained =>
+             (* Capture may carry a retained ORIGINAL below a new binder.
+                Admit its bounded public opening, never assume an unknown
+                FV set is empty and never open a constructed operand Term.
+                Ordinary source imports keep their lazy opaque contract. *)
+             (case G.source_anchor graph node of
+                SOME {original,...} =>
+                  (case SmtReplayImport.raw_size_with_policy maximum original
+                     of NONE => node
+                   | SOME _ => #node (G.record_opened_view_with_policy graph
+                       scope maximum node))
+              | NONE => node)
+         | _ => if G.scope_visible graph scope (G.node_scope graph node)
+             then node else case G.view graph node of
+               G.Constant _ => G.constant graph scope
+                 (G.representative graph node)
+             | _ => case G.source_anchor graph node of
+                 SOME {original,...} => #node (G.import_with_policy graph
+                   scope literal_limit original)
+               | NONE => node,
+       view=fn node => case G.view graph node of
+           G.Application pair => AliasApplication pair
+         | G.AdmittedBinder {binder,body,...} => AliasBinder (binder,body)
+         | _ => AliasAtom,
+       apply=G.application graph,
+       abstract=fn parent => fn old => fn body =>
+         let val child = G.new_construction_scope graph
+               {lexical=lexical,construction=parent}
+             fun build () =
+               let val binder = G.fresh_bound_variable graph child
+                     (G.representative graph old)
+               in G.recorded_abstraction_with_policy graph parent maximum
+                 {binder=binder,body=body child binder,body_frame=child} end
+         in build () handle primary =>
+           ((G.close_scope graph child handle _ => ());raise primary) end}
+      scope root) blocks
+
   fun terms {mk_bound_var, mk_let} = Backend
     {owner = ref (), graph = NONE, initial = NONE, type_of = Term.type_of,
      index_callbacks = new_index_callbacks (),
@@ -320,7 +480,7 @@ struct
      literal = fn _ => fn term => term,
      variable = fn _ => fn _ => fn term => term,
      fresh_solver_variable = fn _ => Term.genvar o Term.type_of,
-     reference = fn _ => #2,
+     reference = fn _ => #2, capture_alias = fn _ => Lib.I,
      bound_variable = fn _ => fn term => term,
      application = fn _ => Term.mk_comb,
      new_scope = fn _ => fn _ => NONE,
@@ -418,6 +578,11 @@ struct
          | _ => G.variable graph (construction environment) kind term,
        reference = fn environment => fn (term, value) =>
          G.resolve_reference graph (lexical environment) term value,
+       capture_alias = fn environment => graph_capture_alias graph
+         (graph_lexical_alias graph private_variables lexical_descriptors)
+         (SmtReplayResourcePolicy.AtMost (IntInf.fromInt binder_limit))
+         (SmtReplayResourcePolicy.AtMost (IntInf.fromInt literal_limit))
+         (lexical environment) (construction environment),
        bound_variable = fn environment => fn term => retain_variable term
          (G.fresh_bound_variable graph (construction environment) term),
        application = fn environment =>
@@ -1110,6 +1275,10 @@ struct
          | _ => G.variable graph (construction environment) kind term,
        reference = fn environment => fn (term, value) =>
          G.resolve_reference graph (lexical environment) term value,
+       capture_alias = fn environment => graph_capture_alias graph
+         (graph_lexical_alias graph private_variables lexical_descriptors)
+         binder_limit literal_limit
+         (lexical environment) (construction environment),
        bound_variable = fn environment => fn term => retain_variable term
          (G.fresh_bound_variable graph (construction environment) term),
        application = fn environment =>
@@ -1231,6 +1400,56 @@ struct
               (term,fallback)
         in case PV.view context value of PV.Variable (G.SolverFlexible,_) =>
             record term value | _ => value end
+      fun regular value =
+        case descriptor value of NONE => NONE
+        | SOME term =>
+            (case Redblackmap.peek (!private_variables,
+                (G.scope_id (PV.scope_of context value),term)) of
+               SOME original => if PV.key context original=
+                   PV.key context value then SOME term else NONE
+             | NONE => NONE)
+      fun capture environment (root,blocks) = capture_blocks (scoped_alias
+        {spend=PV.spend context,key=PV.key context,
+         free=fn value => SOME (PV.free_variables context value),
+         resolve=fn value => case regular value of NONE => value
+           | SOME term => PV.reference context (lexical environment)
+               (term,value),
+         visible=fn scope => fn value =>
+           G.scope_visible graph scope (PV.scope_of context value),
+         atom=fn scope => fn value =>
+           if G.scope_visible graph scope (PV.scope_of context value) then
+             value
+           else case PV.view context value of
+               PV.Constant term => PV.literal context scope literal_limit term
+             | _ => case PV.proof_graph_reference context
+                   (PV.proof_term context value) of
+                 SOME {graph,node,...} =>
+                   (case G.source_anchor graph node of
+                      SOME {original,...} =>
+                        PV.import context scope literal_limit original
+                    | NONE => value)
+               | NONE => value,
+         view=fn value => case PV.constructor_view context value of
+             PV.Application pair => AliasApplication pair
+           | PV.Abstraction {binder,body,...} => AliasBinder (binder,body)
+           | _ => AliasAtom,
+         apply=PV.application context,
+         abstract=fn parent => fn old => fn body =>
+           let val child = PV.new_construction_scope context
+                 {lexical=lexical environment,construction=parent}
+               fun build () =
+                 let val variable = case descriptor old of
+                         SOME variable => variable
+                       | NONE => Term.mk_var ("cpc_alias_binder",
+                           PV.type_of context old)
+                     val binder = retain variable
+                       (PV.fresh_bound context child variable)
+                 in PV.abstraction context parent
+                   {binder=binder,body=body child binder,body_frame=child} end
+           in build () handle primary =>
+             ((PV.close_scope context child handle _ => ());raise primary)
+           end}
+        (construction environment) root) blocks
       val backend = Backend
         {owner=owner,graph=SOME graph,index_callbacks=index_callbacks,
          constructor_state=new_constructor_state (),
@@ -1271,6 +1490,7 @@ struct
          fresh_solver_variable=fresh,
          reference=fn environment => PV.reference context
            (lexical environment),
+         capture_alias=capture,
          bound_variable=fn environment => fn term => retain term
            (PV.fresh_bound context (construction environment) term),
          application=fn environment => fn operands =>

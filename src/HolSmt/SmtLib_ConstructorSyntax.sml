@@ -1,5 +1,5 @@
 (* Ordinary-source observations only. No graph constants, materialisation,
-   equality decisions, or proof authority live here.
+   semantic graph equality decisions, or proof authority live here.
 
    Operands are shared, never copied into a native template. Constructors do
    only local work (from_template validates its hole/operand lists). Callers
@@ -34,6 +34,7 @@ struct
     {id : IntInf.int, ty : Type.hol_type, node : node}
   and node =
       Native of Term.term
+    | Private of Term.term
     | Template of {template : Term.term, holes : Term.term list,
                    operands : syntax list, avoids : Term.term list option}
     | Application of syntax * syntax
@@ -46,7 +47,13 @@ struct
   fun make ty node =
     let val id = !serial
     in serial := id + 1; Syntax {id = id, ty = ty, node = node} end
+  datatype view = Variable of Term.term | Atom of Term.term
+                | Apply of syntax * syntax
+                | Abstract of Term.term * syntax
+
+  fun identity (Syntax {id, ...}) = id
   fun type_of (Syntax {ty, ...}) = ty
+  fun private_atom term = make (Term.type_of term) (Private term)
   fun native term = make (Term.type_of term) (Native term)
   val variable = native
   fun application (operator, operand) =
@@ -141,7 +148,7 @@ struct
   (* Expand only an admitted native template, never actual operands.
      Expansion is query-local; the query's source-identity memo shares its
      result without retaining an expanded syntax tree between queries. *)
-  fun expand_template (observe : IntInf.int -> unit)
+  fun expand_template_mode lexical (observe : IntInf.int -> unit)
         {template, holes, operands, avoids} =
     let
       fun bindings ([], []) = (observe 1; [])
@@ -173,7 +180,7 @@ struct
          if Term.is_var term then
            (case lookup term environment of
               SOME operand => operand
-            | NONE => native term)
+            | NONE => if lexical then native term else private_atom term)
          else if Term.is_comb term then
            let val (operator, operand) = Term.dest_comb term
            in application (walk environment operator,
@@ -191,18 +198,26 @@ struct
                 (Abstraction (stored,marker,walk environment body)) end
          else native term)
     in walk (bindings (holes, operands)) template end
+  (* Ordinary template free variables remain lexical. Private provenance
+     must be supplied explicitly by private_atom operands at template holes. *)
+  fun expand_template observe source =
+    expand_template_mode true observe source
 
-  (* Entries retain the distinction between stored binders and free
-     occurrences. Removing a free variable from an untagged all-vars set
-     would incorrectly remove an equal variable stored by an inner binder.
+  (* Keep lexical free occurrences, stored binders, and private atom names
+     distinct. A binder or renaming acts only on lexical free occurrences;
+     private names still participate in all_variables freshness queries.
      First-occurrence order is retained so all_variables also reproduces
      the ordinary all_varsl list order, not just its set of variables. *)
   datatype occurrence = Free of Term.term | Bound of Term.term
+                      | Opaque of Term.term
   fun variable_of (Free variable) = variable
     | variable_of (Bound variable) = variable
+    | variable_of (Opaque variable) = variable
   fun same_occurrence observe (Free left, Free right) =
         same_variable observe (left, right)
     | same_occurrence observe (Bound left, Bound right) =
+        same_variable observe (left, right)
+    | same_occurrence observe (Opaque left, Opaque right) =
         same_variable observe (left, right)
     | same_occurrence observe _ = (observe 1; false)
 
@@ -219,10 +234,10 @@ struct
                         else entry :: result))
     in loop entries [] end
 
-  fun free_variables (observe : IntInf.int -> unit) entries =
+  fun free_occurrences (observe : IntInf.int -> unit) entries =
     List.foldr (fn (Free variable, rest) =>
                        (observe 1; variable :: rest)
-                 | (Bound _, rest) => (observe 1; rest)) [] entries
+                 | (_, rest) => (observe 1; rest)) [] entries
 
   fun replace observe replacements variable =
     let
@@ -256,7 +271,7 @@ struct
              val entries = List.filter
                (fn Free variable =>
                      not (same_variable observe (opened, variable))
-                 | Bound _ => (observe 1; true)) (native_variables body)
+                 | _ => (observe 1; true)) (native_variables body)
            in merge ([Bound stored], entries) end
          else [])
       fun visit (Syntax {id, node, ...}) =
@@ -268,6 +283,7 @@ struct
              val entries =
                case node of
                  Native term => native_variables term
+               | Private term => [Opaque term]
                | Template source => visit (expand_template observe source)
                | Application (operator, operand) =>
                    merge (visit operator, visit operand)
@@ -276,7 +292,7 @@ struct
                      val entries = List.filter
                        (fn Free variable =>
                              not (same_variable observe (binder, variable))
-                         | Bound _ => (observe 1; true)) (visit body)
+                         | _ => (observe 1; true)) (visit body)
                    in merge ([Bound stored], entries) end
                | Renaming (body, replacements) =>
                    unique observe (same_occurrence observe)
@@ -316,6 +332,7 @@ struct
              val result =
                case node of
                  Native term => native_contains term
+               | Private _ => false
                | Template source => visit (expand_template observe source)
                | Application (operator, operand) =>
                    visit operator orelse visit operand
@@ -345,11 +362,14 @@ struct
     in List.foldr (fn (root, rest) =>
          (observe 1; union (variables root, rest))) [] roots end
 
+  fun free_variables observe syntax =
+    free_occurrences observe (observations observe syntax)
+
   (* Qualified-head replay supplies fresh, distinct holes. On an opening-
      freshening kernel substitution preserves stored binder names; on a
      name-carrying kernel it must rename them to avoid introduced FREE
      names, even at a different type. Do not confuse these native names
-     with the private markers used to represent binding in our metadata.
+     with the internal lexical markers representing metadata binding.
      Only the admitted template is rebuilt as metadata; operands stay
      shared and are inspected through charged variable queries only. *)
   fun from_substitution observe (source as {template,holes,operands}) =
@@ -360,7 +380,7 @@ struct
     else
       let
         val entries = observations observe
-        fun free syntax = free_variables observe (entries syntax)
+        fun free syntax = free_occurrences observe (entries syntax)
         val equal = same_variable observe
         (* The last field distinguishes actual substitutions (including
            outer binder renamings) from unchanged lexical bindings. Only
@@ -435,6 +455,56 @@ struct
            else native term)
       in walk environment template end
 
+  fun retained_native observe root =
+    let
+      fun head (Syntax {node,...}) =
+        (observe 1;case node of
+           Native term => SOME (term,true)
+         | Private term => SOME (term,false)
+         | Template source => head (expand_template observe source)
+         | Renaming (body,replacements) =>
+             (case head body of SOME (term,lexical) =>
+                if Term.is_var term then
+                  SOME (if lexical then replace observe replacements term
+                        else term, lexical)
+                else if Term.is_const term then SOME (term,lexical)
+                else NONE
+              | NONE => NONE)
+         | _ => NONE)
+    in Option.map #1 (head root) end
+
+  fun is_numeric_literal observe root =
+    let
+      fun unfold (whole as Syntax {node,...}) =
+        (observe 1;case node of
+           Template source => unfold (expand_template observe source)
+         | Renaming (body,_) => unfold body
+         | Native term => if Term.is_comb term then
+             let val (f,x) = Term.dest_comb term
+             in application (native f,native x) end else whole
+         | _ => whole)
+      fun constant expected source =
+        case unfold source of Syntax {node=Native term,...} =>
+          Term.is_const term andalso Term.same_const term expected
+        | _ => false
+      fun unary expected source =
+        case unfold source of Syntax {node=Application (f,x),...} =>
+          if constant expected f then SOME x else NONE
+        | _ => NONE
+      fun bits source = constant numSyntax.alt_zero_tm source orelse
+        (case unary numSyntax.bit1_tm source of SOME rest => bits rest
+         | NONE => case unary numSyntax.bit2_tm source of
+             SOME rest => bits rest | NONE => false)
+      fun natural source = constant numSyntax.zero_tm source orelse
+        (case unary numSyntax.numeral_tm source of
+           SOME rest => bits rest | NONE => false)
+      fun integer source =
+        case unary intSyntax.negate_tm source of
+          SOME rest => integer rest
+        | NONE => case unary intSyntax.int_injection source of
+            SOME rest => natural rest | NONE => false
+    in natural root orelse integer root end
+
   fun is_constant observe constant root =
     let
       fun head (Syntax {node,...}) =
@@ -450,7 +520,7 @@ struct
     let
       val entries = observations observe
       val heads = ref (dictionary observe)
-      fun free body = free_variables observe (entries body)
+      fun free body = free_occurrences observe (entries body)
       fun without variable variables = List.filter
         (fn other => not (same_variable observe (variable, other))) variables
       fun renamed (body, replacements) =
@@ -492,6 +562,7 @@ struct
              val result =
                case node of
                  Application _ => NONE
+               | Private _ => NONE
                | Template source => head (expand_template observe source)
                | Abstraction (stored, marker, body) =>
                    SOME (stored, marker, body)
@@ -501,8 +572,8 @@ struct
                      let
                        val stored = stored_binder observe term
                        val _ = native_work term
-                       (* Only the freshening convention needs a private
-                          marker to avoid dest_abs's clash/retry path.
+                       (* Only the freshening convention needs an internal
+                          lexical marker to avoid dest_abs's clash/retry path.
                           On a name-carrying kernel rename_bvar can itself
                           rename inner binders: open directly instead. *)
                        val opened_term = if opening_freshens_names then
@@ -561,6 +632,127 @@ struct
           | SOME (binder,body) => peel body (binder::prefix)
     in peel root [] end
 
+  (* One observation-local reader retains expanded heads and children.
+     Native and template free variables remain lexical; only explicit
+     private atoms are opaque. Renaming preserves provenance at each leaf. *)
+  fun view_reader observe =
+    let
+      val memo = ref (dictionary observe)
+      val expose = abstraction_reader observe
+      fun abstract source = case expose source of
+          SOME pair => Abstract pair
+        | NONE => raise ERR "view" "missing abstraction"
+      fun visit (source as Syntax {id,node,...}) =
+        (observe 1;
+         case Redblackmap.peek (!memo,id) of SOME result => result
+         | NONE =>
+           let
+             val result = case node of
+                 Private term => Atom term
+               | Native term =>
+                   if Term.is_var term then Variable term
+                   else if Term.is_comb term then
+                     let val (f,x) = Term.dest_comb term
+                     in Apply (native f,native x) end
+                   else if Term.is_abs term then abstract source
+                   else Atom term
+               | Application pair => Apply pair
+               | Abstraction _ => abstract source
+               | Template template => visit (expand_template observe template)
+               | Renaming (body,replacements) =>
+                   (case visit body of
+                      Variable term =>
+                        Variable (replace observe replacements term)
+                    | Atom term => Atom term
+                    | Apply (f,x) =>
+                        (observe (2 * IntInf.fromInt
+                          (List.length replacements));
+                         Apply (renaming (f,replacements),
+                                renaming (x,replacements)))
+                    | Abstract _ => abstract source)
+             val _ = observe 1
+             val _ = memo := Redblackmap.insert (!memo,id,result)
+           in result end)
+    in visit end
+
+  fun view observe source = view_reader observe source
+  fun dest_comb observe source = case view observe source of
+      Apply pair => SOME pair | _ => NONE
+
+  (* Ordinary source alpha comparison, never semantic graph equality.
+     The memo includes only binders relevant to either shared child;
+     unrelated enclosing binders cannot duplicate a shared suffix walk. *)
+  fun aconv observe (left,right) =
+    let
+      val read = view_reader observe
+      val entries = observations observe
+      fun free source = free_occurrences observe (entries source)
+      val equal = same_variable observe
+      val serial = ref (0 : IntInf.int)
+      fun compare_id (a,b) = (observe 1; IntInf.compare (a,b))
+      val memo = ref (Redblackmap.mkDict
+        (fn ((a,b,xs),(c,d,ys)) =>
+          case compare_id (a,c) of EQUAL =>
+            (case compare_id (b,d) of EQUAL =>
+               List.collate compare_id (xs,ys) | order => order)
+          | order => order))
+      fun lookup select variable [] = (observe 1; NONE)
+        | lookup select variable ((a,b,id)::rest) =
+            if equal (variable,select (a,b)) then SOME id
+            else lookup select variable rest
+      fun variables environment (a,b) =
+        case (lookup #1 a environment,lookup #2 b environment) of
+          (NONE,NONE) => equal (a,b)
+        | (SOME x,SOME y) => (observe 1; x=y)
+        | _ => false
+      fun atom (a,b) =
+        if Term.is_var a andalso Term.is_var b then equal (a,b)
+        else if Term.is_const a andalso Term.is_const b then
+          let
+            val x = Term.dest_thy_const a
+            val y = Term.dest_thy_const b
+            val _ = observe (1 + IntInf.fromInt
+              (String.size (#Thy x) + String.size (#Name x) +
+               String.size (#Thy y) + String.size (#Name y)))
+            val _ = type_work observe (#Ty x)
+            val _ = type_work observe (#Ty y)
+          in #Thy x = #Thy y andalso #Name x = #Name y andalso
+             Type.compare (#Ty x,#Ty y) = EQUAL end
+        else (observe 1; false)
+      fun walk environment (left,right) =
+        let
+          val _ = observe 1
+          val lf = free left
+          val rf = free right
+          val environment = List.filter (fn (a,b,_) =>
+            (observe 1; member equal a lf orelse member equal b rf))
+            environment
+          val key = (identity left,identity right,
+            List.map (fn (_,_,id) => (observe 1; id)) environment)
+        in case Redblackmap.peek (!memo,key) of SOME result => result
+         | NONE =>
+           let
+             val result = case (read left,read right) of
+                 (Variable a,Variable b) => variables environment (a,b)
+               | (Atom a,Atom b) => atom (a,b)
+               | (Apply (f,x),Apply (g,y)) =>
+                   walk environment (f,g) andalso walk environment (x,y)
+               | (Abstract (a,x),Abstract (b,y)) =>
+                   let
+                     val aty = Term.type_of a
+                     val bty = Term.type_of b
+                     val _ = type_work observe aty
+                     val _ = type_work observe bty
+                     val _ = serial := !serial + 1
+                   in Type.compare (aty,bty) = EQUAL andalso
+                      walk ((a,b,!serial)::environment) (x,y) end
+               | _ => false
+             val _ = observe 1
+             val _ = memo := Redblackmap.insert (!memo,key,result)
+           in result end
+        end
+    in walk [] (left,right) end
+
   (* Substitute into source syntax, not into a realized graph. Memoize by
      syntax AND its relevant lexical bindings. Fresh bindings at unrelated
      abstractions must not split the cache for a shared child. Only admitted
@@ -569,7 +761,7 @@ struct
     let
       val entries = observations observe
       val equal = same_variable observe
-      fun free syntax = free_variables observe (entries syntax)
+      fun free syntax = free_occurrences observe (entries syntax)
       val serial = ref (0 : IntInf.int)
       fun compare_variable (left,right) =
         let val (a,aty) = Term.dest_var left
@@ -585,6 +777,7 @@ struct
          (case (left,right) of
             (Native x,Native y) => Term.is_var x andalso Term.is_var y
               andalso equal (x,y)
+          | (Private x,Private y) => equal (x,y)
           | _ => false))
       (* A Renaming may reach the same shared child through distinct source
          wrappers. Intern equivalent bindings, not wrapper/visit identities.
@@ -623,6 +816,7 @@ struct
       fun source_variable (Syntax {node,...}) =
         (observe 1; case node of
            Native term => if Term.is_var term then SOME term else NONE
+         | Private _ => NONE
          | Template source => source_variable (expand_template observe source)
          | Renaming (body,renamed) => Option.map
              (replace observe renamed) (source_variable body)
@@ -667,9 +861,10 @@ struct
                    (case lookup term bindings of SOME (value,_,_,_) => value
                     | NONE => syntax)
                  else if Term.is_abs term orelse Term.is_comb term then
-                   walk bindings (expand_template observe
+                   walk bindings (expand_template_mode true observe
                      {template=term,holes=[],operands=[],avoids=NONE})
                  else syntax
+               | Private _ => syntax
                | Template source =>
                    walk bindings (expand_template observe source)
                | Application (operator,operand) =>
@@ -699,7 +894,7 @@ struct
                            val _ = observe (1+IntInf.fromInt
                              (String.size name+String.size other))
                        in name=other end
-                     (* Private occurrence markers are not native free
+                     (* Internal lexical markers are not native free
                         names. Enclosing lexical bindings supply the public
                         binder names which native freshening must avoid. *)
                      val original_free = List.concat (List.map (fn variable =>
@@ -723,7 +918,8 @@ struct
              val _ = memo := Redblackmap.insert (!memo,key,result)
            in result end
         end
-      (* Native substitution removes identities before visiting binders. *)
+      (* Remove only lexical identities. An equal-spelled private atom is
+         still a replacement, not the original lexical variable. *)
       val bindings = List.mapPartial (fn (old,value) =>
         (observe 1; case source_variable value of
            SOME variable => if equal (old,variable) then NONE
@@ -731,4 +927,44 @@ struct
          | NONE => SOME (binding (old,value,free value,true,false))))
         replacements
     in walk bindings root end
+
+  fun normalize_lets observe root =
+    let
+      val memo = ref (dictionary observe)
+      fun walk (source as Syntax {id,ty,node}) =
+        (observe 1;case Redblackmap.peek (!memo,id) of
+           SOME result => result
+         | NONE =>
+           let val result = case node of
+                 Native _ => source
+               | Private _ => source
+               | Template template => walk (expand_template observe template)
+               | Renaming (body,replacements) => walk (substitute observe
+                   (List.map (fn (old,value) => (old,native value))
+                     replacements) body)
+               | Abstraction (stored,marker,body) =>
+                   make ty (Abstraction (stored,marker,walk body))
+               | Application (f,x) =>
+                   let val f = walk f val x = walk x
+                   in case f of
+                       Syntax {node=Application (head,function),...} =>
+                         if is_constant observe boolSyntax.let_tm head then
+                           (case dest_abs observe function of
+                              SOME (variable,body) =>
+                                (case view observe body of
+                                   Variable term =>
+                                     if Term.compare (term,variable)=EQUAL
+                                     then x
+                                     else walk (substitute observe
+                                       [(variable,x)] body)
+                                 | _ => walk (substitute observe
+                                     [(variable,x)] body))
+                            | NONE => application (f,x))
+                         else application (f,x)
+                     | _ => application (f,x)
+                   end
+               val _ = observe 1
+               val _ = memo := Redblackmap.insert (!memo,id,result)
+           in result end)
+    in walk root end
 end

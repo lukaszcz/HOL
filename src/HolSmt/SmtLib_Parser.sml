@@ -233,6 +233,9 @@ struct
     | ConstructionBinder of
         {kind : string, variables : (string * string * Type.hol_type) list}
     | ConstructionAnnotation
+    (* CPC occurrence aliases retain a shared boundary, not a copied tree.
+       The stamp is parse-local metadata, never semantic identity. *)
+    | ConstructionReference of int
   datatype 'a construction_occurrence = ConstructionOccurrence of
     {value : 'a, role : construction_role, token : string,
      children : 'a construction_occurrence list}
@@ -2754,6 +2757,9 @@ local
               List.foldr (binder kind) body variables
           | (ConstructionAnnotation, [(_, source)]) => source
           | _ => B.source_syntax backend frame value
+      val _ = case role of ConstructionBinder {kind,variables} =>
+          B.record_source_binder backend (kind,List.length variables,source)
+        | _ => ()
     in (public, source) end
 
   (* #source consumes/returns public occurrences. Keep the paired source

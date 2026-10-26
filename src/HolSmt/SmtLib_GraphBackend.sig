@@ -88,6 +88,19 @@ sig
   (* Resolve a lexical typed alias, retaining the supplied declaration's
      kind and ID when it is not shadowed. *)
   val reference : 'a backend -> 'a frame -> Term.term * 'a -> 'a
+  (* CPC definition aliases have native lexical capture semantics. Rebind
+     only declared lexical variables, never generated private markers.
+     Construction is nodewise, with shared-DAG memoization; no Term operand
+     is expanded or inserted beneath a native binder. *)
+  val capture_alias : 'a backend -> 'a frame ->
+    'a * (string * int * 'a) list -> 'a * (string * int * 'a) list
+  (* Parse-local CPC source block boundaries; disabled for other clients.
+     Lookup compares ordinary syntax, not semantic graph identities. *)
+  val enable_forall_blocks : 'a backend -> unit
+  val record_source_binder : 'a backend ->
+    string * int * SmtLib_ConstructorSyntax.syntax -> unit
+  val forall_block : 'a backend -> SmtLib_ConstructorSyntax.syntax ->
+    (SmtLib_ConstructorSyntax.syntax * int) option
   val application : 'a backend -> 'a frame -> 'a * 'a -> 'a
 
   (* Each RHS callback receives the original parent frame. Duplicate keys

@@ -382,30 +382,56 @@ struct
        | NONE => raise error "expected double negation")
     | NONE => raise error "expected double negation"
   structure S=SmtLib_Parser
-  fun occurrence_provenance_observed observe
-      (whole as S.ConstructionOccurrence {role,token,children,...}) =
-    let val _ = observe whole
-        val nested = List.map (occurrence_provenance_observed observe)
-          children in
-      case role of
-        S.ConstructionApplication =>
-          if token = "and" then ConjunctionProvenance
-            (ParsedConjunction,nested)
-          else if token = "=" andalso List.length nested = 2 then
-            EqualityProvenance (hd nested,List.last nested)
-          else ApplicationProvenance (token,nested)
-      | S.ConstructionBinder {kind,variables} =>
-          BinderBlockProvenance (kind,List.length variables,
-            case List.rev nested of body::_ => body
-              | [] => UnavailableProvenance "missing binder body")
-      | S.ConstructionLet _ =>
-          (case List.rev nested of body::_ => body
-            | [] => UnavailableProvenance "missing let body")
-      | S.ConstructionAnnotation =>
-          (case nested of [body] => body
-            | _ => UnavailableProvenance "invalid annotation boundary")
-      | _ => AtomicProvenance
-    end
+  fun occurrence_provenance_observed observe root =
+    let
+      val current = ref root
+      val saved = ref (Redblackmap.mkDict
+        (fn (a,b) => (observe (!current);Int.compare (a,b))))
+      fun visit (whole as S.ConstructionOccurrence
+          {role,token,children,...}) =
+        let
+          val _ = observe whole
+          fun nested () = List.map visit children
+          fun reference stamp =
+            let
+              (* Charge dictionary comparisons through the same observer;
+                 a shared proof let must not expand its occurrence DAG. *)
+              val _ = current := whole
+            in case Redblackmap.peek (!saved,stamp) of
+                SOME provenance => provenance
+              | NONE =>
+                  let val provenance = case nested () of
+                          [body] => body
+                        | _ => UnavailableProvenance
+                            "invalid occurrence reference"
+                      val _ = current := whole
+                      val _ = saved := Redblackmap.insert
+                        (!saved,stamp,provenance)
+                  in provenance end
+            end
+        in case role of
+            S.ConstructionReference stamp => reference stamp
+          | S.ConstructionApplication =>
+              let val nested = nested () in
+                if token = "and" then ConjunctionProvenance
+                  (ParsedConjunction,nested)
+                else if token = "=" andalso List.length nested = 2 then
+                  EqualityProvenance (hd nested,List.last nested)
+                else ApplicationProvenance (token,nested)
+              end
+          | S.ConstructionBinder {kind,variables} =>
+              BinderBlockProvenance (kind,List.length variables,
+                case List.rev (nested ()) of body::_ => body
+                  | [] => UnavailableProvenance "missing binder body")
+          | S.ConstructionLet _ =>
+              (case List.rev (nested ()) of body::_ => body
+                | [] => UnavailableProvenance "missing let body")
+          | S.ConstructionAnnotation =>
+              (case nested () of [body] => body
+                | _ => UnavailableProvenance "invalid annotation boundary")
+          | _ => AtomicProvenance
+        end
+    in visit root end
   fun occurrence_provenance occurrence=
     occurrence_provenance_observed(fn _=>())occurrence
   fun recorded_observed observe operands operator count root =
