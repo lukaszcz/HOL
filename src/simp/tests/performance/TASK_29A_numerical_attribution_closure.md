@@ -187,6 +187,55 @@ exclusive measurements and explicit policy disposition remain required.
 `frag_record/0` still fails CPU/wall/GC; `compile_collector/10000` remains
 inconclusive. TASK29A is NOT complete; TASK29B remains separate.
 
+## Why every attempt failed, and the policy-owner disposition
+
+The v1 rule (pass iff upper CI <= 1) tests whether the candidate is
+measurably *faster*. With the actual `summarize.interval`/`decision`, ten
+pairs of a candidate with no real difference (1% lognormal noise) give
+pass 2.8%, fail 2.7%, inconclusive 94.5%. The B/B control is itself such a
+comparison and must pass, and every cell needs CPU, wall and GC, so a
+performance-neutral change cannot pass 162 cells; all-zero GC never can.
+The historical grid agrees: B/B CPU passed in 9 of 162 cells. Every
+earlier session could only add diagnostics, because the requirement it was
+asked to meet was unreachable by construction and it could not change it.
+
+The two open questions of `TASK29A_POLICY_REVIEW.md` were answered by the
+policy owner on 2026-10-26: B/B is a control-validity window, not a
+directional test, and GC is reported but not gated. The resulting contract
+is `PROTOCOL.md`'s equivalence policy (version 2): δ = 3% on inclusive CPU
+and wall, B/B intervals within [1/1.03, 1.03]. The historical grid,
+replayed offline under it, would still show 8 CPU failures and about 47
+inconclusive cells, so the rule change alone does not close anything.
+
+The remaining historical failures were measurement artefacts of the
+harness, not candidate cost:
+
+- **Self-selected counts.** Each process calibrated its own batch count.
+  In `compile_collector/10000`, candidate processes chose 16 and baseline
+  processes 32, so fixed per-batch GC work was spread over half as many
+  operations: CPU 1.20, GC 1.58. `task29a_grid.py` now gives every process
+  of a cell one count, predeclared from develop/develop processes only.
+- **GC-phase bimodality.** With short batches, per-op cost is bimodal
+  (about 14.4 or 17 ms for the collector) depending on whether a major GC
+  falls inside a batch. Startup GC histories differ deterministically
+  between sides (15 vs 16 full GCs before the first batch) because the
+  candidate loads one extra module (`SimpTracking`); the candidate process
+  builds no extension module. Three samples per process let each median
+  land on either mode.
+- **Shared host.** Other HOL builds keep the load average at 17–25 on 32
+  cores. An exclusive window is not available. The B/B validity window is
+  the stability criterion: a cell is admitted only if its own develop/develop
+  control resolves the margin.
+
+A two-cell pilot with predeclared counts at the protocol minimum (10 pairs,
+3 samples) was inconclusive on noise alone (fragment CPU [0.969, 1.035]
+with a valid control; collector B/B [0.958, 1.089]). At 20 pairs and 5
+samples both cells pass with valid controls: `frag_record/0` CPU
+[0.984, 1.001], `compile_collector/10000` CPU [1.005, 1.022] (a real but
+within-margin 1.4%; GC 1.16, reported). These pilots are design evidence
+only (`evidence/task29a/pilot/`); the grid is rerun in full at 20 pairs and
+5 samples.
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

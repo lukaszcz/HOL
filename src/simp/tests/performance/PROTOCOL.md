@@ -185,6 +185,32 @@ Fixed before candidate results are observed:
 6. A zero denominator, including GC 0/0, means inconclusive with null ratio/CI;
    keep the pair and raw values. Do not turn undefined GC ratios into parity.
 
+Rule 5 is `POLICY` (version 1). It tests whether the candidate is *faster*:
+a candidate with no real difference passes one metric about 3% of the time,
+and its B/B control must pass the same way, so a performance-neutral change
+cannot pass a grid. Every archive before TASK29A's rerun used it and still
+replays under it.
+
+### Equivalence policy (version 2, TASK29A policy-owner disposition)
+
+Decided by the policy owner on 2026-10-26; `acceptance.EQUIVALENCE_POLICY`.
+`acceptance.py run` and `task29a_grid.py` record it in every new report, and
+offline replay uses the policy a report recorded. Rules 1–4 and 6 are unchanged.
+
+- **Margin** δ = 0.03 on inclusive CPU and wall. Lower bound > 1+δ: **fail**;
+  upper bound <= 1+δ: **pass**; otherwise **inconclusive**.
+- **Control validity.** The B/B interval for the same metric must lie within
+  [1/(1+δ), 1+δ]; otherwise the candidate cannot pass. An invalid control
+  never excuses a failure.
+- **GC** time is reported with its interval, not gated (decision
+  `reported`): inclusive CPU already contains it.
+- **Storage** graph words and retained slopes keep the zero-margin rule.
+- **Counts and size.** `task29a_grid.py` gives every process of a cell the
+  same predeclared batch count, derived only from develop/develop processes of
+  the historical grid (`evidence/task29a/iterations.json`). Pairs and samples
+  are run options (minimum ten and three), fixed before the run and recorded
+  in its inventory.
+
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived
 results are revalidated through the existing schema and source-binding auditor,

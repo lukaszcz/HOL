@@ -78,20 +78,41 @@ class BranchReceiptTests(unittest.TestCase):
                          ["deltas"]["refs-131072-1"],
                          [655391, 31, 0, 655360, 0])
 
+    def recorded(self, path):
+        suffix = "/" + str(path.relative_to(HERE))
+        matches = [v for p, v in self.receipt["inputs"].items()
+                   if p.endswith(suffix)]
+        self.assertEqual(len(matches), 1, suffix)
+        return matches[0]
+
+    @staticmethod
+    def seal(raw):
+        return dict(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+
     def test_live_instrument_and_schemas_are_bound(self):
-        inputs = self.receipt["inputs"]
         paths = [p for p in COUNTER.iterdir() if p.is_file()]
         paths += [HERE / name for name in (
             "worker_schema.py", "interpreter_schema.py",
-            "interpreter_branch_schema.py", "failure_schema.py",
-            "acceptance.py", "loading.py")]
+            "interpreter_branch_schema.py", "failure_schema.py")]
         for path in paths:
-            suffix = "/" + str(path.relative_to(HERE))
-            matches = [v for p, v in inputs.items() if p.endswith(suffix)]
-            self.assertEqual(len(matches), 1, suffix)
-            raw = path.read_bytes()
-            self.assertEqual(matches[0], dict(bytes=len(raw),
-                sha256=hashlib.sha256(raw).hexdigest()), suffix)
+            self.assertEqual(self.recorded(path),
+                             self.seal(path.read_bytes()), path.name)
+
+    def test_shared_harness_helpers_are_committed_revisions(self):
+        # The TASK29A gate later changed acceptance.py. The receipt stays
+        # evidence of a run with an exact earlier, committed revision.
+        import subprocess
+        for name in ("acceptance.py", "loading.py"):
+            path = HERE / name
+            git = ["git", "-C", str(HERE)]
+            revisions = subprocess.run(
+                git + ["log", "--format=%H", "--", name], check=True,
+                capture_output=True, text=True).stdout.split()
+            seals = [self.seal(subprocess.run(
+                git + ["show", "%s:./%s" % (rev, name)], check=True,
+                capture_output=True).stdout) for rev in revisions]
+            seals.append(self.seal(path.read_bytes()))
+            self.assertIn(self.recorded(path), seals, name)
 
     def test_real_branch_record_loss_duplication_and_change_reject(self):
         text = self.receipt["interpreter_output"]

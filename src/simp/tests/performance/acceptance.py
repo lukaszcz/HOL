@@ -33,6 +33,20 @@ POLICY = {
     "zero_denominator": "inconclusive, including 0/0; no pairs dropped",
     "budgets": None,
 }
+# TASK29A policy-owner disposition (2026-10-26). POLICY above is a test of
+# superiority: a candidate with no real cost difference passes it about 3%
+# of the time, and its B/B control must pass the same way. This contract
+# asks instead whether the candidate is within a margin of the baseline.
+# Archives record their policy; offline replays use the recorded one.
+EQUIVALENCE_POLICY = dict(
+    POLICY, version=2, margin=0.03, gated_timing=["cpu", "wall"],
+    decision="low > 1+margin: fail; high <= 1+margin: pass; "
+             "otherwise inconclusive",
+    control="B/B interval within [1/(1+margin), 1+margin], else no pass",
+    gc="reported, not gated; inclusive CPU already contains GC time",
+    storage="graph words and slopes keep the zero-margin decision",
+    zero_denominator="inconclusive, including 0/0; no pairs dropped",
+    budgets="3% equivalence margin on inclusive CPU and wall only")
 
 
 class Blocked(ValueError):
@@ -109,13 +123,23 @@ def serial_lock(repo):
             os.close(fd)
 
 
-def decision(low, high):
+def decision(low, high, margin=0.0):
     require(math.isfinite(low) and math.isfinite(high) and
             0 <= low <= high, "invalid confidence interval")
-    return "fail" if low > 1 else "pass" if high <= 1 else "inconclusive"
+    bound = 1 + margin
+    return ("fail" if low > bound else "pass" if high <= bound
+            else "inconclusive")
 
 
-def paired_statistics(observations):
+def timing_rule(policy, metric):
+    """(margin, gated) for an inclusive timing metric under `policy`."""
+    if policy.get("version", 1) == 1:
+        return 0.0, True
+    gated = metric in policy["gated_timing"]
+    return (policy["margin"] if gated else 0.0), gated
+
+
+def paired_statistics(observations, margin=0.0, gated=True):
     """One observation per fresh process pair; no sample/pair filtering."""
     require(len(observations) >= 10, "acceptance requires >=10 pairs")
     for row in observations:
@@ -127,14 +151,22 @@ def paired_statistics(observations):
     require(all(r is None or math.isfinite(r) for r in ratios),
             "nonfinite paired ratio")
     ci = interval(ratios) if None not in ratios else None
+    # Version-2 keys only: v1 archives must recompute byte-identically.
+    extra = {}
+    if margin:
+        extra["margin"] = margin
+    if not gated:
+        extra["gated"] = False
     return {
+        **extra,
         "observations": observations,
         "baseline_median": median(r["baseline"] for r in observations),
         "candidate_median": median(r["candidate"] for r in observations),
         "paired_ratios": ratios,
         "median_paired_ratio": median(ratios) if ci else None,
         "paired_ratio_bootstrap_95_percent": ci,
-        "decision": decision(*ci) if ci else "inconclusive",
+        "decision": ("reported" if not gated else
+                     decision(*ci, margin) if ci else "inconclusive"),
         "reason": "paired bootstrap" if ci else "zero baseline metric",
     }
 
@@ -199,7 +231,7 @@ def archive_protocol(manifest, receipt):
 
 
 def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
-            seconds, iterations=None):
+            seconds, iterations=None, policy=POLICY):
     """Revalidate complete protocol and source binding before statistics."""
     folder = Path(folder)
     manifest = load(folder / "manifest.json")
@@ -255,8 +287,9 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
     metrics = {}
     for metric in ("cpu", "wall", "gc"):
         rows = summary["workloads"][case][metric]
+        margin, gated = timing_rule(policy, metric)
         metrics[metric] = paired_statistics(
-            rows["seconds_per_operation_by_pair"])
+            rows["seconds_per_operation_by_pair"], margin, gated)
     for field in ("compiled_increment", "fragment_increment"):
         if case == "storage_graph":
             metrics[field + "_words"] = paired_statistics([
@@ -266,15 +299,29 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
     return {"mode": "isolated", "case": case, "size": size,
             "scope": "shared dependencies; NOT independent builds",
             "inputs": summary["inputs"], "options": options,
-            "policy": POLICY, "metrics": metrics,
+            "policy": policy, "metrics": metrics,
             "runtime_by_pair": runtime_rows,
             "allocation": "uncollected: runtime exposes no cumulative counter",
             "temporary_peaks": "uncollected: process HWM is not a batch peak"}
 
 
 def apply_control(data, control):
-    """A failed/uncertain control cannot establish parity; never excuse fail."""
+    """A failed/uncertain control cannot establish parity; never excuse fail.
+
+    Under a margin, the B/B control must show that the setup resolves that
+    margin: its whole interval lies within [1/(1+margin), 1+margin]."""
     data["control_decision"] = control["decision"]
+    if data.get("gated", True) is False:
+        return
+    margin = data.get("margin")
+    if margin:
+        ci = control["paired_ratio_bootstrap_95_percent"]
+        valid = bool(ci) and 1 / (1 + margin) <= ci[0] and ci[1] <= 1 + margin
+        data["control_valid"] = valid
+        if not valid and data["decision"] != "fail":
+            data["decision"] = "inconclusive"
+            data["reason"] = "baseline-control outside equivalence window"
+        return
     if control["decision"] != "pass" and data["decision"] != "fail":
         data["decision"] = "inconclusive"
         data["reason"] = "baseline-control " + control["decision"]
@@ -323,7 +370,8 @@ def report_exit_status(report):
     if not report["success"]:
         return 2
     decisions = [m["decision"] for r in report["workloads"]
-                 for m in r["candidate"]["metrics"].values()]
+                 for m in r["candidate"]["metrics"].values()
+                 if m.get("gated", True)]
     scaling = report.get("retained_scaling")
     if scaling is not None:
         if scaling["status"] != "measured":
@@ -402,7 +450,9 @@ def negative_controls(pairs=10):
                     kind if side == "candidate" else "baseline"))
             metric = "cpu" if kind == "slowdown" else "allocation_bytes"
             rows[kind].append({s: r[metric] for s, r in values.items()})
-    report = {k: paired_statistics(v) for k, v in rows.items()}
+    report = {"slowdown": paired_statistics(
+                  rows["slowdown"], EQUIVALENCE_POLICY["margin"]),
+              "allocation": paired_statistics(rows["allocation"])}
     for kind in rows:
         require(report[kind]["decision"] == "fail",
                 "negative control missed intended regression: " + kind)
@@ -416,7 +466,8 @@ def negative_controls(pairs=10):
         else:
             raise ValueError("negative control accepted: " + kind)
     return {"scope": "harness-only real subprocess controls, not HOL data",
-            "policy": POLICY, "controls": report, "processes": processes}
+            "policy": EQUIVALENCE_POLICY, "controls": report,
+            "processes": processes}
 
 
 def exact_pin(pin):
@@ -612,7 +663,8 @@ def run(args):
     with serial_lock(args.repo) as fds:
         output.mkdir(parents=True, exist_ok=False)
         report = {"schema": "task28-acceptance-v1", "mode": args.mode,
-                  "success": False, "policy": POLICY, "commands": [],
+                  "success": False, "policy": EQUIVALENCE_POLICY,
+                  "commands": [],
                   "workloads": [], "claims": "not final release acceptance"}
         try:
             if args.mode == "independent":
@@ -667,7 +719,7 @@ def run(args):
                             baseline=args.baseline,
                             candidate=candidate, pairs=args.pairs,
                             samples=args.samples, seconds=args.batch_seconds,
-                            iterations=iterations)
+                            iterations=iterations, policy=EQUIVALENCE_POLICY)
                     # Controls are never subtracted as a noise budget.
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():

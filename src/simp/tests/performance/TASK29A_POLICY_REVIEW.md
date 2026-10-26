@@ -1,5 +1,12 @@
 # TASK29A numerical-policy review
 
+> **Disposition received 2026-10-26.** The policy owner answered both
+> questions below: B/B is a control-validity window, not a directional
+> upper-CI<=1 test, and exact zero GC no longer blocks because GC is
+> reported rather than gated. The new contract is the equivalence policy
+> (version 2) in `PROTOCOL.md`. The review text below is the unchanged
+> record that led to it; v1 archives still replay under v1.
+
 **Disposition: policy-owner input required; TASK29A is NOT complete.**
 This review does not amend the acceptance contract. All existing failures and
 inconclusive decisions remain blockers. No tolerance, subtraction, special

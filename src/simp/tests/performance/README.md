@@ -15,6 +15,14 @@ and recomputes decisions without live private builds. Both commands deliberately
 exit 2 while the allocation/gate prerequisites remain blocked. Neither is an
 implicit normal selftest or independent-build measurement.
 
+`task29a_grid.py` reruns the same 162 cells under the equivalence policy
+(version 2, `PROTOCOL.md`): 3% margin on CPU/wall, B/B validity window, GC
+reported. Every process of a cell uses one predeclared count from
+`evidence/task29a/iterations.json`; pairs and samples are run options.
+`task29a_grid.py replay --output DIR` recomputes every decision offline.
+Results: `evidence/task29a/` and
+[`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
+
 Fresh post-workload actual object/code/pool diagnostics are documented in
 [`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md). The subsequent
 [`RUNTIME_POOLS.md`](RUNTIME_POOLS.md) supplies all previously omitted split
