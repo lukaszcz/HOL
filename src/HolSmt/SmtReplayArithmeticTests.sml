@@ -155,8 +155,15 @@ struct
       val plain = #node (G.admit_binder graph scope limit ``\u:bool. u``)
       val unknown = #node (G.retain_source graph scope
         ``\u:bool. (x:int) + 1 = x``)
+      val natural = import graph scope ``(x:num) = 0``
+      val natural_binder = #node (G.admit_binder graph scope limit
+        ``\u:bool. (x:num) + 0 = x``)
     in require "arithmetic hidden behind Boolean binders was missed"
-         (numeric hidden andalso not (numeric plain) andalso numeric unknown)
+         (numeric hidden andalso not (numeric plain) andalso numeric unknown);
+       require "natural operands bypassed naming"
+         (numeric natural andalso numeric natural_binder);
+       require "HOL numeric naming changed SMT canonicalization sorts"
+         (not (SmtReplayCanon.is_arith_type numSyntax.num))
     end)
 
   (* A tiny arithmetic term may have annotations larger than its local
@@ -479,6 +486,8 @@ struct
      (* The middle +0 forces the bounded fallback, not exact/alias trans. *)
      cpc ``(a:int) = b`` [``(a:int) = x + 0``,``(x:int) = b``]
        "trans" [] true;
+     cpc ``(a:num) = b`` [``(a:num) = x + 0``,``(x:num) = b``]
+       "trans" [] true;
      cpc ``(x:int) < z``
        [``(x:int) < y``,``(x:int) < y``,``(y:int) < z``]
        "arith" [] true;
@@ -510,6 +519,9 @@ struct
          A list-typed object is an operand, not another packet to flatten. *)
       val _ = cpc_arguments_using limit cpc_truth boolSyntax.T [] "evaluate"
         [Objects [``packet_p:bool``,``packet_xs:int list``,``packet_x:int``]]
+        true
+      val _ = cpc_arguments_using limit cpc_truth boolSyntax.T [] "evaluate"
+        [Objects [``packet_p:bool``,``packet_xs:num list``,``packet_x:num``]]
         true
       val elements = List.tabulate (31,fn _ => ``packet_x:int``)
       fun structured cap worker =
@@ -793,10 +805,11 @@ struct
      definition authority to arithmetic holes. Pair generic rejections with
      valid requests through BOTH local producers, so unsupported dispatch or
      resource refusal cannot masquerade as an identity check. *)
-  fun z3_generic_identities () = with_graph (fn graph => fn root =>
+  fun z3_generic_identity_type (native,zero_term) =
+    with_graph (fn graph => fn root =>
     let
       val scope = G.new_scope graph root []
-      val native = ``arithmetic_generic:int``
+      val ty = Term.type_of native
       val rigid = G.variable graph root G.RigidSource native
       val other = G.variable graph root G.Generated native
       val flexible = G.variable graph root G.SolverFlexible native
@@ -809,13 +822,14 @@ struct
       fun app operator operand = G.application graph scope (operator,operand)
       fun binary constant left right =
         app (app (G.constant graph scope constant) left) right
-      val int_eq = Term.rator (Term.rator ``(a:int) = b``)
+      val numeric_eq = Term.rator
+        (Term.rator (boolSyntax.mk_eq (native,native)))
       val bool_eq = Term.rator (Term.rator ``(p:bool) = q``)
-      val eq = binary int_eq
+      val eq = binary numeric_eq
       val iff = binary bool_eq
       val disj = binary boolSyntax.disjunction
       fun neg node = app (G.constant graph scope boolSyntax.negation) node
-      val zero = import graph scope ``0:int``
+      val zero = import graph scope zero_term
       val atom = eq rigid zero
       val different_atom = eq other zero
       fun located node:F.term =
@@ -872,14 +886,16 @@ struct
       (* The predicate stays uninterpreted: mismatched instantiation must
          not become valid just because an arithmetic universal is false. *)
       val predicate = import graph scope
-        ``arithmetic_predicate:int -> int -> bool``
+        (Term.mk_var ("arithmetic_predicate",
+          Type.mk_type ("fun",[ty,Type.mk_type ("fun",[ty,Type.bool])])))
       val instance_scope = G.new_scope graph scope []
-      val instance_bound =
-        G.fresh_bound_variable graph instance_scope ``u:int``
+      val instance_bound = G.fresh_bound_variable graph instance_scope
+        (Term.mk_var ("u",ty))
       val universal_body = G.application graph instance_scope
         (G.application graph instance_scope (predicate,instance_bound),rigid)
       val universal = app
-        (G.constant graph scope ``$! : (int -> bool) -> bool``)
+        (G.constant graph scope
+          (Term.rator (boolSyntax.mk_forall (native,boolSyntax.T))))
         (G.recorded_abstraction graph scope limit
           {binder=instance_bound,body=universal_body,
            body_frame=instance_scope})
@@ -953,6 +969,11 @@ struct
       val _ = G.close_scope graph binder_scope
       val _ = G.close_scope graph scope
     in () end)
+
+  fun z3_generic_identities () = List.app z3_generic_identity_type
+    [(``arithmetic_generic:num``,``0:num``),
+     (``arithmetic_generic:int``,``0:int``),
+     (``arithmetic_generic:real``,``0:real``)]
 
   fun run () =
     (operators ();negatives ();classification ();

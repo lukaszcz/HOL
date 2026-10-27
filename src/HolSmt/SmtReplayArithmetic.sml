@@ -23,7 +23,11 @@ struct
         (ignore (G.type_of graph node);tick ();
          if Redblackset.member (!seen,G.node_id node) then false else
            (seen := Redblackset.add (!seen,G.node_id node);
-            SmtReplayCanon.is_arith_type (G.type_of graph node) orelse
+            (* Canon's SMT-sort predicate deliberately excludes HOL num.
+               Naming also covers natural arithmetic and numeral exponents;
+               do not widen the unrelated canonicalization policy. *)
+            (G.type_of graph node = numSyntax.num orelse
+             SmtReplayCanon.is_arith_type (G.type_of graph node)) orelse
             (case G.view graph node of
                G.Application (f,x) => visit f orelse visit x
              | G.AdmittedBinder _ =>
