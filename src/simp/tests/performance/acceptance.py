@@ -82,14 +82,18 @@ def git(root, *args):
 
 @contextmanager
 def serial_lock(repo):
-    """Host-wide and existing-runner gitdir locks; never unlink lock inodes.
+    """Agent-file and existing-runner gitdir locks; never unlink lock inodes.
 
     This is advisory: the caller must also stop unrelated builds/runners.
     Children inherit these descriptors, so killing the parent cannot unlock a
     still-running benchmark. Do not independently relock them in children.
+    The first lock lives in the repository's ignored `.agent-files`, out of
+    reach of shared /tmp cleaners.
     """
     repo = Path(repo).resolve(strict=True)
-    paths = [Path("/tmp") / ("hol4-performance-%d.lock" % os.getuid())]
+    agent_files = repo / ".agent-files"
+    agent_files.mkdir(exist_ok=True)
+    paths = [agent_files / ("hol4-performance-%d.lock" % os.getuid())]
     for option in ("--absolute-git-dir", "--git-common-dir"):
         raw = Path(git(repo, "rev-parse", option))
         path = (repo / raw).resolve()

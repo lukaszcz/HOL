@@ -442,6 +442,13 @@ class OrchestrationTests(unittest.TestCase):
                                 stderr=subprocess.PIPE, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_user_lock_lives_in_agent_files(self):
+        lock = self.root / ".agent-files" / (
+            "hol4-performance-%d.lock" % os.getuid())
+        with a.serial_lock(self.root) as fds:
+            self.assertEqual(os.fstat(fds[0]).st_ino, lock.stat().st_ino)
+        self.assertTrue(lock.exists(), "lock inode was unlinked")
+
     def test_lock_stays_held_by_child_after_parent_closes(self):
         with a.serial_lock(self.root) as fds:
             child = subprocess.Popen(

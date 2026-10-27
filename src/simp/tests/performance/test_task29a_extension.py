@@ -80,8 +80,14 @@ class ExtensionRule(unittest.TestCase):
 
 
 class Resume(unittest.TestCase):
+    def setUp(self):
+        self.checked = patch.object(grid, "check_header")
+        self.check = self.checked.start()
+        self.addCleanup(patch.stopall)
+
     def test_fresh_and_resumed_outputs(self):
-        inventory = dict(schema="x", pairs=20, runs=[])
+        inventory = dict(schema="x", pairs=20, runs=[], driver="d",
+                         acceptance="a")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "out"
             self.assertEqual(grid.begin(root, copy.deepcopy(inventory),
@@ -101,6 +107,50 @@ class Resume(unittest.TestCase):
             a.save(root / "decisions.json", {})
             with self.assertRaisesRegex(ValueError, "already complete"):
                 grid.begin(root, copy.deepcopy(inventory), True)
+
+    def test_resume_records_changed_code(self):
+        old = dict(schema="x", pairs=20, driver="d0", acceptance="a0",
+                   runs=[dict(case="c")])
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(grid, "replay_rows", return_value={}):
+            root = Path(tmp)
+            a.save(root / "inventory.json", old)
+            new = dict(old, driver="d1", runs=[])
+            grid.begin(root, new, True)
+            self.check.assert_called_with(old)
+            self.assertEqual(new, dict(old, resumed=[
+                dict(driver="d1", acceptance="a0", after=1)]))
+            (root / "inventory.json").unlink()
+            a.save(root / "inventory.json", dict(new, runs=new["runs"] * 2))
+            again = dict(old, driver="d1", runs=[])
+            grid.begin(root, again, True)
+            self.assertEqual(again["resumed"], new["resumed"])
+            (root / "inventory.json").unlink()
+            a.save(root / "inventory.json", again)
+            last = dict(old, acceptance="a1", driver="d1", runs=[])
+            grid.begin(root, last, True)
+            self.assertEqual(last["resumed"][1],
+                             dict(driver="d1", acceptance="a1", after=2))
+            self.assertEqual((last["driver"], last["acceptance"]),
+                             ("d0", "a0"))
+
+    def test_header_checks_resumed_code(self):
+        self.checked.stop()
+        header = dict(driver=a.seal(grid.__file__),
+                      acceptance=grid.LAYOUT_ACCEPTANCE[0],
+                      layout_seed="s", policy=a.EQUIVALENCE_POLICY,
+                      iterations=a.load(grid.COUNTS))
+        grid.check_header(header)
+        grid.check_header(dict(header, resumed=[dict(
+            driver=grid.DRIVERS[-1], acceptance=a.seal(a.__file__),
+            after=3)]))
+        with self.assertRaisesRegex(ValueError, "layout-seeded acceptance"):
+            grid.check_header(dict(header, resumed=[dict(
+                driver=grid.DRIVERS[-1], acceptance=grid.ACCEPTANCE[0],
+                after=3)]))
+        with self.assertRaisesRegex(ValueError, "changed driver"):
+            grid.check_header(dict(header, resumed=[dict(
+                driver="x", acceptance=a.seal(a.__file__), after=3)]))
 
 
 class TwoStage(unittest.TestCase):

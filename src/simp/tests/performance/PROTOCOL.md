@@ -304,7 +304,9 @@ of HOL/PolyML allocation. Bootstrap confidence is not a universal hardware proof
 
 `run` and `controls` hold nonblocking `flock` locks for their entire experiment:
 
-- `/tmp/hol4-performance-UID.lock` (one per host user, across repositories);
+- `.agent-files/hol4-performance-UID.lock` in the repository (one per
+  user; ignored, and out of reach of shared `/tmp` cleaners, one of which
+  deleted the earlier `/tmp` lock during the TASK29A grid);
 - the repository gitdir inode (compatible with existing exclusions/tactics
   runners), and common gitdir inode (across worktrees).
 

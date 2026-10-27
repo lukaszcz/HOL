@@ -34,16 +34,25 @@ HEADROOM = 2
 COUNTS = a.HERE / "evidence/task29a/iterations.json"
 # Earlier drivers whose runs still replay: 6f62229c0 (before canonical
 # comparison and replay --partial), 224219893 (before --layout-seed) and
-# 3ef5b380b (before --resume and the second stage).
+# 3ef5b380b (before --resume and the second stage) and cb71be0ce (before
+# resume across a changed driver or acceptance).
 DRIVERS = [dict(bytes=12534, sha256="234da42ca599122645b9f578b1ddd37c"
                                     "6ffb70d83764d6e91e045ac4ffc4bd97"),
            dict(bytes=13917, sha256="664c632deb187a1ea9c3b59445676253"
                                     "c0872627884b2f664b0626da43d817ee"),
            dict(bytes=14854, sha256="ad4c81fb5b22fc8a5878bebcc5081dee"
-                                    "c28a2b67d0b350b9cb34a857d13a787c")]
+                                    "c28a2b67d0b350b9cb34a857d13a787c"),
+           dict(bytes=22914, sha256="dd16fa8da12bf1b9f9c3fe9f41037a9a"
+                                    "5f1eee263973a9ced20d0159a681c927")]
 # acceptance.py before --layout-seed; runs without a seed analyze the same.
 ACCEPTANCE = [dict(bytes=37287, sha256="343dfc5d009e8851f0db990bc484bdb2"
                                        "ed1dce3e85efac2416b1335854080b97")]
+# acceptance.py with --layout-seed but its lock still in /tmp (3ef5b380b).
+LAYOUT_ACCEPTANCE = [dict(bytes=37709,
+                          sha256="ad4a4392e24295fff3901b3540115f86"
+                                 "86e72d24f08826220a6f0811bc647807")]
+# Header fields naming the code; a resume may change them (see begin).
+CODE = ("driver", "acceptance")
 
 
 def predeclare(grid):
@@ -179,15 +188,26 @@ def replay_rows(root, inventory):
 def begin(root, inventory, resume):
     """A fresh output, or the same experiment after an infrastructure
     failure: identical settings, finished cells replayed and kept, an
-    unrecorded cell measured again from scratch."""
+    unrecorded cell measured again from scratch. The driver or acceptance
+    may differ only when check_header accepts both, as for the moved lock;
+    each such change is recorded with the number of rows before it."""
     if not resume:
         root.mkdir(parents=True, exist_ok=False)
         return {}
     old = a.load(root / "inventory.json")
     a.require(not (root / "decisions.json").exists(), "run already complete")
-    a.require({k: v for k, v in old.items() if k != "runs"} ==
-              {k: v for k, v in inventory.items() if k != "runs"},
+    check_header(old)
+    ignored = ("runs", "resumed") + CODE
+    a.require({k: v for k, v in old.items() if k not in ignored} ==
+              {k: v for k, v in inventory.items() if k not in ignored},
               "resume with different settings")
+    resumed = old.get("resumed", [])
+    code = {k: inventory[k] for k in CODE}
+    if code != {k: (resumed[-1] if resumed else old)[k] for k in CODE}:
+        resumed = resumed + [dict(code, after=len(old["runs"]))]
+    inventory.update({k: old[k] for k in CODE})
+    if resumed:
+        inventory["resumed"] = resumed
     inventory["runs"] = old["runs"]
     return replay_rows(root, old)
 
@@ -328,13 +348,15 @@ def extension_plan(reports, pairs):
 
 
 def check_header(inventory):
-    a.require(inventory["driver"] in [a.seal(__file__)] + DRIVERS,
-              "changed driver")
-    a.require(inventory["acceptance"] in [a.seal(a.__file__)] + ACCEPTANCE,
-              "changed acceptance")
-    a.require(inventory.get("layout_seed") is None or
-              inventory["acceptance"] == a.seal(a.__file__),
-              "layout seed needs the current acceptance")
+    layout = [a.seal(a.__file__)] + LAYOUT_ACCEPTANCE
+    for code in [inventory] + inventory.get("resumed", []):
+        a.require(code["driver"] in [a.seal(__file__)] + DRIVERS,
+                  "changed driver")
+        a.require(code["acceptance"] in layout + ACCEPTANCE,
+                  "changed acceptance")
+        a.require(inventory.get("layout_seed") is None or
+                  code["acceptance"] in layout,
+                  "layout seed needs a layout-seeded acceptance")
     a.require(inventory["policy"] == a.EQUIVALENCE_POLICY, "changed policy")
     a.require(inventory["iterations"] == a.load(COUNTS),
               "changed predeclared counts")
@@ -407,8 +429,9 @@ def replay(args):
         a.require(inventory == dict(
             extension_inventory(grid, root, first),
             plan=extension_plan(stage1, first["pairs"]),
-            runs=inventory["runs"], driver=inventory["driver"],
-            acceptance=inventory["acceptance"]), "changed extension plan")
+            runs=inventory["runs"],
+            **{k: inventory[k] for k in CODE + ("resumed",)
+               if k in inventory}), "changed extension plan")
         reports = replay_rows(root, inventory)
         a.require([[r["case"], r["size"], r.get("pairs", inventory["pairs"])]
                    for r in inventory["runs"]] ==
