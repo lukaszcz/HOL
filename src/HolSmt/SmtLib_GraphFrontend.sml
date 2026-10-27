@@ -29,6 +29,78 @@ struct
                 (#1 descriptor) value
           in (descriptor,identity) end) (descriptors,values)
 
+  (* A retained non-variable list is distinct from an unknown alias. Keep
+     its operand identities available without expanding the shared terms;
+     the parser decides when invalid operands must be rejected. *)
+  fun binder_list_lookup backend descriptors values =
+    case descriptors of
+      SOME descriptors =>
+        SOME (List.map SOME (binder_list backend descriptors values))
+    | NONE => Option.map (List.map (fn value =>
+        case B.variable_descriptor backend value of
+          NONE => NONE
+        | SOME variable => SOME (B.binder_reference backend
+            (#1 (Term.dest_var variable)) value))) values
+
+  (* Native private FP abbreviations retain their operand OUTSIDE the
+     surrounding term binder. Snapshot that lexical source at the proof
+     root, rather than moving a child-owned semantic value across a guard.
+     Construction is typed/nodewise; private leaves resolve only through
+     the authentic allocation inventory. Relevant lexical environments
+     keep shared suffixes shared even below unrelated source binders. *)
+  fun detached_private_source backend syntax =
+    let
+      val root = B.root backend
+      val spend = B.syntax_spend backend
+      fun compare ((li,le),(ri,re)) =
+        (spend 1;case IntInf.compare (li,ri) of EQUAL =>
+           Lib.list_compare Int.compare (le,re) | order => order)
+      val memo = ref (Redblackmap.mkDict compare)
+      val serial = ref 0
+      val variables = B.solver_variables backend
+      fun private variable =
+        case List.find (fn {lexical,...} =>
+            (spend 1;Term.compare (lexical,variable)=EQUAL)) variables of
+            SOME {node,...} => node
+          | NONE => raise ERR "private_source" "unknown private allocation"
+      fun walk frame environment syntax =
+        let
+          val free = if null environment then []
+            else C.free_variables spend syntax
+          val relevant = List.filter (fn (variable,_,_,_) =>
+            List.exists (fn current => Term.compare (variable,current)=EQUAL)
+              free) environment
+          val frame = case relevant of [] => root | (_,_,_,owner)::_ => owner
+          val key = (C.identity syntax,List.map #3 relevant)
+        in case Redblackmap.peek (!memo,key) of SOME value => value
+         | NONE =>
+          let
+            val value = case C.view spend syntax of
+                C.Variable variable =>
+                  (case List.find (fn (bound,_,_,_) =>
+                      Term.compare (bound,variable)=EQUAL) relevant of
+                       SOME (_,value,_,_) => value
+                     | NONE => B.source backend root variable)
+              | C.Atom atom => if Term.is_var atom then private atom
+                  else B.source backend root atom
+              | C.Apply (f,x) => B.application backend frame
+                  (walk frame relevant f,walk frame relevant x)
+              | C.Abstract (variable,body) =>
+                  let val (name,ty) = Term.dest_var variable
+                  in B.abstraction backend frame (name,name,ty) (fn child =>
+                    let
+                      val value = valOf (B.lookup backend child name)
+                      val id = !serial
+                      val _ = serial := id+1
+                      val outer = List.filter (fn (bound,_,_,_) =>
+                        Term.compare (bound,variable)<>EQUAL) relevant
+                    in walk child ((variable,value,id,child)::outer)
+                      body end) end
+            val _ = memo := Redblackmap.insert (!memo,key,value)
+          in value end
+        end
+    in walk root [] syntax end
+
   datatype lexical_policy = CPC | Z3
   datatype source_arity = Exact of int | AtMost of int
   type source_declaration =
@@ -261,34 +333,66 @@ struct
       fun compare_private ((ls, lk, lt, li), (rs, rk, rt, ri)) =
         case Int.compare (ls, rs) of EQUAL =>
           (case String.compare (lk, rk) of EQUAL =>
-             (case Type.compare (lt, rt) of EQUAL => Int.compare (li, ri)
+             (case Type.compare (lt, rt) of EQUAL => IntInf.compare (li, ri)
               | order => order)
            | order => order)
         | order => order
       val private_symbols = ref (Redblackmap.mkDict compare_private)
+      val sourced_symbols = ref []
       fun private_symbol frame {kind, hol_type, source, stable} =
         let
-          val scope = valOf (B.frame_scope backend frame)
-          val source_id = case source of NONE => ~1 | SOME node =>
+          val active = valOf (B.frame_scope backend frame)
+          val _ = Option.app (fn node =>
             (ignore (G.type_of graph node);
-             if G.scope_visible graph scope (G.node_scope graph node) then
-               G.node_id node else raise ERR "private_symbol"
-                 "private source escapes construction scope")
+             if G.scope_visible graph active (G.node_scope graph node) then
+               () else raise ERR "private_symbol"
+                 "private source escapes construction scope")) source
+          (* Private FP identity is native SOURCE alpha identity, not graph
+             equality (a graph LET may already have been substituted). *)
+          val syntax = Option.map (fn node =>
+            case B.constructor_sources backend of
+                SOME {arguments=[_,original],...} => original
+              | _ => B.source_syntax backend frame node) source
+          val source_id = case syntax of NONE => ~1
+            | SOME syntax => C.identity syntax
+          fun retained_source () =
+            case (source,syntax) of (SOME node,SOME syntax) =>
+                if G.scope_visible graph scope (G.node_scope graph node)
+                then source else SOME (detached_private_source backend syntax)
+            | _ => source
+          val owner = root
+          val scope = valOf (B.frame_scope backend owner)
+          fun same (saved_scope,saved_kind,saved_type,saved_source,_) =
+            (B.syntax_spend backend 1;
+             kind=saved_kind andalso Type.compare (hol_type,saved_type)=EQUAL
+             andalso G.scope_visible graph active saved_scope andalso
+             case syntax of SOME current => C.aconv
+               (B.syntax_spend backend) (current,saved_source)
+             | NONE => false)
           val key = (G.scope_id scope, kind, hol_type, source_id)
           fun allocate () =
             let
               val serial = !private_count
               val _ = private_count := serial + 1
-              val node = B.fresh_solver_variable backend frame
+              val node = B.fresh_solver_variable backend owner
                 (kind ^ "#" ^ Int.toString serial, hol_type)
               val _ = private_bindings :=
-                {scope = scope, marker = node, kind = kind, source = source}
-                :: !private_bindings
+                {scope = scope, marker = node, kind = kind,
+                 source = retained_source ()} :: !private_bindings
               val _ = if stable then private_symbols :=
                 Redblackmap.insert (!private_symbols, key, node) else ()
+              val _ = if stable then Option.app (fn syntax =>
+                sourced_symbols := (scope,kind,hol_type,syntax,node) ::
+                  !sourced_symbols) syntax else ()
             in node end
         in if stable then case Redblackmap.peek (!private_symbols, key) of
-            SOME node => node | NONE => allocate ()
+            SOME node => node
+          | NONE => (case source of NONE => allocate () | SOME _ =>
+              case List.find same (!sourced_symbols) of
+                SOME (_,_,_,_,node) =>
+                  (private_symbols := Redblackmap.insert
+                     (!private_symbols,key,node);node)
+              | NONE => allocate ())
           else allocate () end
       val selected = R.select_with backend (#recipe_limits options)
         ((#special options) backend)
@@ -584,11 +688,10 @@ struct
          type_symbol_key = case policy of CPC => symbol_key | Z3 => Lib.I,
          index_limit = #index_limit (#recipe_limits options),
          parse_choice = false, parse_lambda = true,
-         lookup_binder_list = fn token =>
-           Option.map (fn descriptors => binder_list backend descriptors
-             (Option.map (List.map #node)
-               (Redblackmap.peek (!lists_ref,symbol_key token))))
-             (Redblackmap.peek (!binder_lists_ref, symbol_key token)),
+         lookup_binder_list = fn token => binder_list_lookup backend
+           (Redblackmap.peek (!binder_lists_ref, symbol_key token))
+           (Option.map (List.map #node)
+             (Redblackmap.peek (!lists_ref, symbol_key token))),
          binder_reference = fn frame => fn token =>
            let val key = symbol_key token in
              case B.lookup backend frame key of
@@ -865,7 +968,8 @@ struct
      initializer consumes every durable Mapping declaration. *)
   fun create_policy_session_for_backend
       (options : 'a constructed_policy_options) backend
-      {identity,same_identity,guard_private,guard_observation,private_scope}
+      {identity,same_identity,guard_private,guard_observation,private_scope,
+       source_scope,private_label}
       source_declarations
       initialise_extra {solver,version,policy,reserved_names} get_token
       : 'a constructed_session =
@@ -883,31 +987,63 @@ struct
       fun compare_private ((ls, lk, lt, li), (rs, rk, rt, ri)) =
         case Int.compare (ls, rs) of EQUAL =>
           (case String.compare (lk, rk) of EQUAL =>
-             (case Type.compare (lt, rt) of EQUAL => Int.compare (li, ri)
+             (case Type.compare (lt, rt) of EQUAL => IntInf.compare (li, ri)
               | order => order)
            | order => order)
         | order => order
       val private_symbols = ref (Redblackmap.mkDict compare_private)
+      val sourced_symbols = ref []
       fun private_symbol frame {kind, hol_type, source, stable} =
         let
-          val scope = private_scope frame
-          val source_id = case source of NONE => ~1 | SOME node =>
-            (guard_private scope node;identity node)
+          val active = private_scope frame
+          val _ = Option.app (guard_private active) source
+          (* Use the actual operand syntax before semantic construction,
+             not a possibly substituted/lambda-lifted graph recipe. *)
+          val syntax = Option.map (fn node =>
+            case B.constructor_sources backend of
+                SOME {arguments=[_,original],...} => original
+              | _ => B.source_syntax backend frame node) source
+          val source_id = case syntax of NONE => ~1
+            | SOME syntax => C.identity syntax
+          fun retained_source () =
+            case (source,syntax) of (SOME node,SOME syntax) =>
+                if G.scope_visible graph scope (source_scope node)
+                then source else SOME (detached_private_source backend syntax)
+            | _ => source
+          val owner = root
+          val scope = private_scope owner
+          fun same (saved_scope,saved_kind,saved_type,saved_source,_) =
+            (B.syntax_spend backend 1;
+             kind=saved_kind andalso Type.compare (hol_type,saved_type)=EQUAL
+             andalso G.scope_visible graph active saved_scope andalso
+             case syntax of SOME current => C.aconv
+               (B.syntax_spend backend) (current,saved_source)
+             | NONE => false)
           val key = (G.scope_id scope, kind, hol_type, source_id)
           fun allocate () =
             let
               val serial = !private_count
               val _ = private_count := serial + 1
-              val node = B.fresh_solver_variable backend frame
+              val node = B.fresh_solver_variable backend owner
                 (kind ^ "#" ^ Int.toString serial, hol_type)
               val _ = private_bindings :=
-                {scope = scope, marker = node, kind = kind, source = source}
-                :: !private_bindings
+                {scope = private_label frame owner,
+                 marker = node, kind = kind,
+                 source = retained_source ()} :: !private_bindings
               val _ = if stable then private_symbols :=
                 Redblackmap.insert (!private_symbols, key, node) else ()
+              val _ = if stable then Option.app (fn syntax =>
+                sourced_symbols := (scope,kind,hol_type,syntax,node) ::
+                  !sourced_symbols) syntax else ()
             in node end
         in if stable then case Redblackmap.peek (!private_symbols, key) of
-            SOME node => node | NONE => allocate ()
+            SOME node => node
+          | NONE => (case source of NONE => allocate () | SOME _ =>
+              case List.find same (!sourced_symbols) of
+                SOME (_,_,_,_,node) =>
+                  (private_symbols := Redblackmap.insert
+                     (!private_symbols,key,node);node)
+              | NONE => allocate ())
           else allocate () end
       val selected = R.select_with_policy backend (#recipe_limits options)
         ((#special options) backend)
@@ -1202,11 +1338,10 @@ struct
          type_symbol_key = case policy of CPC => symbol_key | Z3 => Lib.I,
          index_limit = #index_limit (#recipe_limits options),
          parse_choice = false, parse_lambda = true,
-         lookup_binder_list = fn token =>
-           Option.map (fn descriptors => binder_list backend descriptors
-             (Option.map (List.map #node)
-               (Redblackmap.peek (!lists_ref,symbol_key token))))
-             (Redblackmap.peek (!binder_lists_ref, symbol_key token)),
+         lookup_binder_list = fn token => binder_list_lookup backend
+           (Redblackmap.peek (!binder_lists_ref, symbol_key token))
+           (Option.map (List.map #node)
+             (Redblackmap.peek (!lists_ref, symbol_key token))),
          binder_reference = fn frame => fn token =>
            let val key = symbol_key token in
              case B.lookup backend frame key of
@@ -1502,7 +1637,9 @@ struct
     in create_policy_session_for_backend options backend
       {identity=G.node_id,same_identity=op =,guard_private=guard_private,
        guard_observation=fn _ => (),
-       private_scope=fn frame => valOf (B.frame_scope backend frame)}
+       private_scope=fn frame => valOf (B.frame_scope backend frame),
+       source_scope=G.node_scope graph,
+       private_label=fn _ => fn owner => valOf (B.frame_scope backend owner)}
       source_declarations initialise_extra description get_token end
 
   (* Preserve the existing raw declaration route and evaluation order. *)
@@ -1608,6 +1745,9 @@ struct
          guard_private=PV.usable context,
          guard_observation=fn check => PV.protect context check,
          private_scope=fn frame => valOf
+           (B.frame_lexical_scope backend frame),
+         source_scope=PV.scope_of context,
+         private_label=fn frame => fn _ => valOf
            (B.frame_lexical_scope backend frame)}
         (List.map (fn (token,original) => (token,original,NONE))
           (#sources options)) initialise_extra description tokens) end

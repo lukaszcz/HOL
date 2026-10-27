@@ -213,6 +213,9 @@ struct
          guard_private=PV.usable context,
          guard_observation=fn check => PV.protect context check,
          private_scope=fn frame => valOf
+           (B.frame_lexical_scope backend frame),
+         source_scope=PV.scope_of context,
+         private_label=fn frame => fn _ => valOf
            (B.frame_lexical_scope backend frame)} []
         (fn {root,dictionary,variables,source_types,retain_descriptor,
              declaration_key} => (dictionary,variables))

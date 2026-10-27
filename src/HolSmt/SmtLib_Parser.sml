@@ -199,6 +199,9 @@ struct
     'a construction_index list -> 'a list -> 'a
   type 'a construction_dict =
     (string, 'a construction_parse_fn list) Redblackmap.dict
+  (* Binder-list lookup distinguishes a missing alias (outer NONE) from
+     retained non-variable operands (inner NONE). Recursive CPC grammar
+     validates those operands only after the body and closing token. *)
   type 'a construction_cfg = {
     backend : 'a SmtLib_GraphBackend.backend,
     frame : 'a SmtLib_GraphBackend.frame,
@@ -207,7 +210,8 @@ struct
     index_limit : int,
     parse_choice : bool,
     parse_lambda : bool,
-    lookup_binder_list : string -> 'a SmtLib_GraphBackend.binder list option,
+    lookup_binder_list : string ->
+      'a SmtLib_GraphBackend.binder option list option,
     binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
       'a SmtLib_GraphBackend.binder,
     record_binder_block : string * int * 'a -> unit,
@@ -280,7 +284,8 @@ struct
     index_limit : SmtReplayResourcePolicy.limit,
     parse_choice : bool,
     parse_lambda : bool,
-    lookup_binder_list : string -> 'a SmtLib_GraphBackend.binder list option,
+    lookup_binder_list : string ->
+      'a SmtLib_GraphBackend.binder option list option,
     binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
       'a SmtLib_GraphBackend.binder,
     record_binder_block : string * int * 'a -> unit,
@@ -528,6 +533,8 @@ local
      symbol grammar cannot produce a NUL in its decoded payload. *)
   val cpc_recursive_binders =
     proof_quoted_symbol_token_prefix ^ "\000cpc-recursive-binders"
+  val cpc_recursive_named_binders =
+    proof_quoted_symbol_token_prefix ^ "\000cpc-recursive-named-binders"
 
   fun proof_marker_collision text =
     String.isPrefix proof_string_token_prefix text orelse
@@ -2520,10 +2527,13 @@ local
       fun lookup token =
         let val result = lookup_binder_list token in
           if !depth = 0 then () else
-            Option.app (fn entries => binder_lists :=
-              (token,List.map
-                (fn ((_,name,ty),_) => Term.mk_var (name,ty)) entries)
-                :: !binder_lists) result;
+            Option.app (fn entries =>
+              (* Invalid lists cannot yield a captured index source. *)
+              if List.all Option.isSome entries then
+                binder_lists := (token,List.map
+                  (fn entry => let val ((_,name,ty),_) = valOf entry
+                    in Term.mk_var (name,ty) end) entries) :: !binder_lists
+              else ()) result;
           result
         end
       fun source frame token parse =
@@ -3082,9 +3092,19 @@ local
                   in variables (variable :: accumulated) end
               end
             in (variables [], true) end
+          else if first = cpc_recursive_named_binders then
+            (* The adapter resolves the alias before reading any body token.
+               Invalid operands remain deferred until after body/close. *)
+            (case (#lookup_binder_list cfg) second of
+               SOME variables => (variables, true)
+             | NONE => raise ERR "parse_binder_term"
+                 "unresolved recursive CPC binder-list alias")
           else case (#lookup_binder_list cfg) first of
             SOME variables =>
-              (unread [second]; (List.map SOME variables, true))
+              let val _ = List.all Option.isSome variables orelse
+                    raise ERR "parse_binder_term"
+                      "binder list contains a non-variable term"
+              in (unread [second]; (variables, true)) end
           | NONE =>
               (unread [first, second];
                (List.map SOME (sorted_variables ()), false))
@@ -3445,9 +3465,19 @@ local
                   in variables (variable :: accumulated) end
               end
             in (variables [], true) end
+          else if first = cpc_recursive_named_binders then
+            (* The adapter resolves the alias before reading any body token.
+               Invalid operands remain deferred until after body/close. *)
+            (case (#lookup_binder_list cfg) second of
+               SOME variables => (variables, true)
+             | NONE => raise ERR "parse_binder_term"
+                 "unresolved recursive CPC binder-list alias")
           else case (#lookup_binder_list cfg) first of
             SOME variables =>
-              (unread [second]; (List.map SOME variables, true))
+              let val _ = List.all Option.isSome variables orelse
+                    raise ERR "parse_binder_term"
+                      "binder list contains a non-variable term"
+              in (unread [second]; (variables, true)) end
           | NONE =>
               (unread [first, second];
                (List.map SOME (sorted_variables ()), false))
@@ -8016,6 +8046,7 @@ in
   val construction_term_dictionary = construction_term_dictionary
   val make_proof_stream_tokenizer = make_proof_stream_tokenizer
   val cpc_recursive_binders = cpc_recursive_binders
+  val cpc_recursive_named_binders = cpc_recursive_named_binders
   val make_cpc_proof_stream_tokenizer = make_cpc_proof_stream_tokenizer
   val make_cpc_proof_tokenizer_from_input =
     make_cpc_proof_tokenizer_from_input

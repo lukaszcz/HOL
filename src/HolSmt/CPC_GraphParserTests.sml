@@ -1741,6 +1741,34 @@ struct
           negative (kind ^ " recursive invalid suffix precedes body type error")
             (text "(@var \"x\" Bool) true" "0")
         end) ["forall","exists","lambda"]
+      (* review-1a5c19a32: named lists in recursive CPC grammar retain
+         missing/invalid alias distinctions and native body/close ordering. *)
+      val _ = List.app (fn kind =>
+        let
+          val prefix = "((define @bad () (@list true)) " ^
+            "(define @xs () (@list (" ^ kind ^ " @bad "
+          fun text body = prefix ^ body ^ "))) (assume @a true))"
+        in
+          negative (kind ^ " recursive named invalid binder follows body")
+            (text "task35_missing_body");
+          negative (kind ^ " recursive named invalid binder diagnostic")
+            (text "true");
+          negative (kind ^ " recursive named invalid binder follows close")
+            (prefix ^ "true wrong_close");
+          negative (kind ^ " recursive named invalid binder vs body type")
+            (text "0");
+          negative (kind ^ " recursive missing named binder diagnostic")
+            ("((define @xs () (@list (" ^ kind ^
+             " @task35_missing_binders true))) (assume @a true))");
+          negative (kind ^ " recursive missing alias lists known names")
+            ("((define @z () (@list true)) " ^
+             "(define @a () (@list false)) (define @xs () (@list (" ^
+             kind ^ " @task35_missing_binders true))) (assume @b true))");
+          positive (kind ^ " recursive valid named binder")
+            ("((define @x () (@var \"x\" Bool)) " ^
+             "(define @vars () (@list @x)) (define @xs () (@list (" ^
+             kind ^ " @vars @x))) (assume @a true))")
+        end) ["forall","exists","lambda"]
       val _ = positive "quoted CPC @var in a definition list"
         "((define @xs () (@list (|@var| \"x\" Bool))) (assume @a true))"
 
@@ -1877,8 +1905,14 @@ struct
         "(assume @d (@const 3 true)))"
       val _ = positive "stable private allocation first appears in child"
         child_first
-      val _ = List.app (fn route => test
-        ("child-first private identity across sibling/LET/root / " ^
+      val child_first_source =
+        let val eq = "(= (@fp.SIGN (_ BitVec 1) true) #b0)"
+        in "((assume @a (forall ((x Bool)) " ^ eq ^ ")) " ^
+          "(assume @b (exists ((y Bool)) " ^ eq ^ ")) " ^
+          "(assume @c (let ((z true)) " ^ eq ^ ")) " ^
+          "(assume @d " ^ eq ^ "))" end
+      val _ = List.app (fn (label,text,count) => List.app (fn route => test
+        (label ^ " child-first identity across sibling/LET/root / " ^
           route_name route) (fn () =>
           let
             fun check free (proof:''a C.constructed_graph_proof) =
@@ -1889,17 +1923,19 @@ struct
                    [a as [_],b,c,d] => a=b andalso b=c andalso c=d
                  | _ => false) end
           in case route of
-              Value => with_value child_first (fn _ => fn current =>
+              Value => with_value text (fn _ => fn current =>
                 let val context = #context current
                 in require "stable private allocation inventory grew"
-                     (length (#private_bindings current)=1);
+                     (length (#private_bindings current)=count);
                    check (List.map (PV.key context) o
                      PV.free_variables context) (#proof current) end)
-            | _ => with_native route child_first (fn e => check
+            | _ => with_native route text (fn e => check
                 (fn node => case G.free_variable_nodes (#graph e) node of
                    SOME nodes => nodes
                  | NONE => raise Fail "unknown child-first dependencies"))
-          end)) routes
+          end)) routes)
+        [("source-independent",child_first,1),
+         ("source-dependent",child_first_source,2)]
       (* Test-only source reconstruction, charged by expanded node count
          BEFORE visiting children. No source observation grants authority. *)
       fun source_term syntax =
@@ -1919,7 +1955,7 @@ struct
       (* review-30352f126: a repeated private constructor must resolve to
          the explicit binder, not allocate a free marker in its child scope.
          The small shape oracle checks operand identity before any bridge. *)
-      datatype private_shape = BoundEquality
+      datatype private_shape = BoundEquality | BoundDistinctEquality
         | Quantified of private_shape
         | Paired of private_shape * private_shape
       fun identities same application abstraction shape root =
@@ -1934,6 +1970,13 @@ struct
                 in require "private equality operands lost bound identity"
                   (same (left,binder) andalso same (right,binder) andalso
                    same (left,right)) end
+            | walk environment BoundDistinctEquality node =
+                let val (left,right) = operands node
+                    fun bound node = List.exists (fn binder =>
+                      same (node,binder)) environment
+                in require "distinct private sources were conflated"
+                  (not (same (left,right)) andalso bound left andalso
+                   bound right) end
             | walk environment (Quantified body_shape) node =
                 let val (_,closure) = application node
                     val (binder,body) = abstraction closure
@@ -1958,11 +2001,52 @@ struct
          ("sibling", "(and (forall (@list @k) " ^ equality ^
           ") (exists (@list @k) " ^ equality ^ "))",
           Paired (Quantified BoundEquality,Quantified BoundEquality))]
-      val _ = List.app (fn (label,body,shape) => List.app (fn route => test
+      val fp_prefix = "((define @s () (fp #b0 #b000 #b0000)) " ^
+        "(define @k () (@fp.SIGN (_ BitVec 1) @s)) "
+      val fp_equality = "(= @k (@fp.SIGN (_ BitVec 1) @s))"
+      val repeated = List.map (fn (label,body,shape) =>
+          (label,fixture "" body,shape)) repeated @
+        List.map (fn (label,definitions,body,shape) =>
+          (label,fp_prefix ^ definitions ^ "(assume @a " ^ body ^ "))",shape))
+        [("source-dependent direct","",
+          "(forall (@list @k) " ^ fp_equality ^ ")",
+          Quantified BoundEquality),
+         ("source-dependent nested","",
+          "(forall (@list @k) (exists (@list @k) " ^ fp_equality ^ "))",
+          Quantified (Quantified BoundEquality)),
+         ("source-dependent sibling","",
+          "(and (forall (@list @k) " ^ fp_equality ^
+          ") (exists (@list @k) " ^ fp_equality ^ "))",
+          Paired (Quantified BoundEquality,Quantified BoundEquality)),
+         ("source-dependent source alias","(define @copy () @s) ",
+          "(forall (@list @k) (= @k (@fp.SIGN (_ BitVec 1) @copy)))",
+          Quantified BoundEquality),
+         ("source-dependent equal independent source","",
+          "(forall (@list @k) (= @k " ^
+          "(@fp.SIGN (_ BitVec 1) (fp #b0 #b000 #b0000))))",
+          Quantified BoundEquality)] @
+        [("source alpha-equivalent lambdas",
+          "((define @k () (@fp.SIGN (_ BitVec 1) " ^
+          "(lambda ((x Bool)) x))) (assume @a (forall (@list @k) " ^
+          "(= @k (@fp.SIGN (_ BitVec 1) (lambda ((y Bool)) y))))))",
+          Quantified BoundEquality),
+         ("source unreduced LET differs from literal",
+          "((define @k () (@fp.SIGN (_ BitVec 1) " ^
+          "(let ((x true)) x))) " ^
+          "(define @j () (@fp.SIGN (_ BitVec 1) true)) " ^
+          "(assume @a (forall (@list @k @j) (= @k @j))))",
+          Quantified (Quantified BoundDistinctEquality)),
+         ("source genuinely fresh private atoms differ",
+          "((define @k () (@fp.SIGN (_ BitVec 1) " ^
+          "(@fp.NAN (_ FloatingPoint 3 5)))) " ^
+          "(define @j () (@fp.SIGN (_ BitVec 1) " ^
+          "(@fp.NAN (_ FloatingPoint 3 5)))) " ^
+          "(assume @a (forall (@list @k @j) (= @k @j))))",
+          Quantified (Quantified BoundDistinctEquality))]
+      val _ = List.app (fn (label,text,shape) => List.app (fn route => test
         (label ^ " private reoccurrence identity/FV/bridges / " ^
           route_name route) (fn () =>
           let
-            val text = fixture "" body
             fun native_identity term =
               (bounded term;
                identities (fn (a,b) => Term.compare (a,b)=EQUAL)
@@ -2015,6 +2099,88 @@ struct
                        SOME [] => true | _ => false)
                 in check e (small_graph e) proof end)
           end)) routes) repeated
+      (* A native abbreviation snapshots a lexical operand outside the
+         surrounding binder. Its metadata must not retain a Bound node or
+         lose internal source binders when constructed at the proof root. *)
+      val _ = List.app (fn (label,body) => List.app (fn route => test
+        ("local private source snapshot " ^ label ^ " / " ^ route_name route)
+        (fn () =>
+          let
+            val text = "((assume @a " ^ body ^ "))"
+            fun check e raw sources =
+              let
+                val _ = legacy e text
+                val expected = List.map #source
+                  (C.cpc_fp_private_bindings ())
+                val actual = List.map raw sources
+                val _ = require "local private snapshot changed cardinality"
+                  (length expected=length actual)
+              in List.app (fn source =>
+                case List.find (Term.aconv source) actual of
+                    SOME actual => bridge source actual
+                  | NONE => raise Fail "local private snapshot changed source")
+                expected end
+          in case route of
+              Value => with_value text (fn e => fn current =>
+                check e (small_value e (#context current))
+                  (List.mapPartial #source (#private_bindings current)))
+            | _ => owned (fn e =>
+                let val held = native_packet route e text
+                in finally (fn () =>
+                  (native_inventory e held;
+                   check e (small_graph e)
+                     (List.mapPartial #source (Packet.private_bindings held))))
+                  (fn () => Packet.close held) end)
+          end)) routes)
+        [("variable", "(forall ((x Bool)) " ^
+           "(= (@fp.SIGN (_ BitVec 1) x) #b0))"),
+         ("compound", "(forall ((x Bool)) " ^
+           "(= (@fp.SIGN (_ BitVec 1) (and x true)) #b0))"),
+         ("internal binder", "(forall ((x Bool)) " ^
+           "(= (@fp.SIGN (_ BitVec 1) " ^
+           "(lambda ((y Bool)) (and x y))) #b0))"),
+         ("lexical LET", "(forall ((x Bool)) " ^
+           "(= (@fp.SIGN (_ BitVec 1) (let ((y x)) (and y true))) #b0))"),
+         ("fresh FP leaf", "(forall ((x Bool)) " ^
+           "(= (@fp.NAN (_ BitVec 1)) (@fp.NAN (_ BitVec 1))))"),
+         ("distinct lexical siblings", "(and (forall ((x Bool)) " ^
+           "(= (@fp.SIGN (_ BitVec 1) x) #b0)) (forall ((y Bool)) " ^
+           "(= (@fp.SIGN (_ BitVec 1) y) #b0)))")]
+      val _ = List.app (fn depth => List.app (fn route => test
+        ("local private source shared" ^ Int.toString depth ^ " / " ^
+          route_name route) (fn () =>
+          let
+            fun name i = "@s" ^ Int.toString i
+            fun definition i = "(define " ^ name i ^ " () " ^
+              (if i=0 then "@x" else "(and " ^ name (i-1) ^ " " ^
+                 name (i-1) ^ ")") ^ ") "
+            val text = "((define @x () (@var \"x\" Bool)) " ^
+              String.concat (List.tabulate (depth+1,definition)) ^
+              "(assume @a (forall ((x Bool)) " ^
+              "(= (@fp.SIGN (_ BitVec 1) " ^ name depth ^ ") #b0))))"
+            fun size nodes = require "local private source expanded its DAG"
+              (length nodes<=4*depth+20)
+          in case route of
+              Value => with_value text (fn _ => fn current =>
+                let val context = #context current
+                    val source = valOf (#source (valOf (List.find
+                      (fn binding => #kind binding="@fp.SIGN")
+                      (#private_bindings current))))
+                in size (unique_value context source);
+                   require "detached source lost its lexical free variable"
+                     (length (PV.free_variables context source)=1) end)
+            | _ => owned (fn e =>
+                let val held = native_packet route e text
+                in finally (fn () =>
+                  let val source = valOf (#source (valOf (List.find
+                        (fn binding => #kind binding="@fp.SIGN")
+                        (Packet.private_bindings held))))
+                  in size (G.reachable (#graph e) [source]);
+                     require "detached source lost its lexical free variable"
+                       (case G.free_variable_nodes (#graph e) source of
+                          SOME [_] => true | _ => false) end)
+                  (fn () => Packet.close held) end)
+          end)) routes) [70,80]
       val _ = List.app (fn route => test
         ("explicit private binder source/semantic bridge / " ^
           route_name route) (fn () =>

@@ -3778,8 +3778,8 @@ in
   (* Stable source-independent CPC symbols denote one proof-local identity,
      not one identity per binder/LET. Allocate outside temporary binder
      construction scopes; retain the original lexical allocation label when
-     already at the root construction scope. Source-dependent and fresh FP
-     markers still use the frontend's guarded scoped allocation unchanged. *)
+     already at the root construction scope. Source-dependent/fresh FP
+     allocation and source snapshots belong to the guarded frontend. *)
   fun graph_private_allocator (terms:'a F.constructed_session) =
     let
       val backend = #backend (#reader terms)
@@ -4648,7 +4648,7 @@ in
           | char::rest => (chars := rest;SOME char)
     in P.make_cpc_proof_tokenizer_from_input input () end
 
-  fun graph_definition_tokens next =
+  fun graph_definition_tokens resolve_binder_list next =
     let
       fun finished () = raise ERR "graph_definition_tokens"
         "read beyond definition-list element"
@@ -4760,7 +4760,10 @@ in
       and binders continuation () =
         case next () of
           "(" => emit "(" (binder_head continuation)
-        | token => emit token (term (close continuation))
+        | token =>
+            (resolve_binder_list token;
+             emit P.cpc_recursive_named_binders
+               (literal token (term (close continuation))))
       and binder_head continuation () =
         let val token = next () in
           if token = "@list" then
@@ -4782,11 +4785,11 @@ in
      Top-level @var has no shared-parser callback: parse its sort and close
      before constructing it. Inline binder operands use the same recursive
      grammar, while binders below ordinary applications remain ordinary. *)
-  fun graph_read_definition_list next parse_from parse_sort
+  fun graph_read_definition_list resolve_binder_list next parse_from parse_sort
       private_variable locate =
     let
       fun ordinary prefix = parse_from (graph_definition_tokens
-        (Library.undo_look_ahead prefix next))
+        resolve_binder_list (Library.undo_look_ahead prefix next))
       fun object "(" =
             let val head = next () in
               if cpc_semantic_token head = "@var" then
@@ -4805,6 +4808,21 @@ in
             let val term = locate (object first)
             in entries (term :: acc) end
     in entries [] end
+
+  (* Keep only alias names here, never copied list syntax or operands. The
+     recursive parser resolves aliases before touching the body, unlike its
+     ordinary sorted-binder fallback. *)
+  fun graph_definition_lists lookup_list symbol_key define_list =
+    let
+      val names = ref []
+      fun resolve token =
+        if Option.isSome (lookup_list token) then () else
+          raise ERR "parse_term"
+            ("undefined CPC @list alias " ^ token ^ " (known aliases: " ^
+             String.concatWith ", " (List.rev (!names)) ^ ")")
+      fun define (name, entries) =
+        (define_list (name, entries); names := symbol_key name :: !names)
+    in (graph_read_definition_list resolve, define) end
 
   (* Only structured rule formals are homogeneous lists. Ordinary argument
      packets flatten @list and deliberately allow heterogeneous objects. *)
@@ -5037,6 +5055,8 @@ in
         {solver = "cvc5", version = version, policy = F.CPC,
          reserved_names = reserved_names} token
       val _ = install_graph_recipes options terms
+      val (graph_read_definition_list, define_list) = graph_definition_lists
+        (#lookup_list terms) (#symbol_key terms) (#define_list terms)
       val _ = (#add_literal_parser terms)
         (fn token => cpc_literal_parsefn token [] [])
       val locations = graph_locations (#backend (#reader terms))
@@ -5176,7 +5196,7 @@ in
                   val entries = graph_read_definition_list token
                     (#parse_from terms) (#parse_sort terms)
                     (#private_variable terms) (#locate locations)
-                  val _ = (#define_list terms) (name, entries)
+                  val _ = define_list (name, entries)
                 in Library.expect_token ")" (token ()) end
               else ordinary [first, head]
             end
@@ -5610,6 +5630,8 @@ in
       val token = make_token ()
       val terms = make_session options description token
       val _ = install_recipes options terms
+      val (graph_read_definition_list, define_list) = graph_definition_lists
+        (#lookup_list terms) (#symbol_key terms) (#define_list terms)
       val _ = (#add_literal_parser terms)
         (fn token => cpc_literal_parsefn token [] [])
       val locations = graph_locations (#backend (#reader terms))
@@ -5749,7 +5771,7 @@ in
                   val entries = graph_read_definition_list token
                     (#parse_from terms) (#parse_sort terms)
                     (#private_variable terms) (#locate locations)
-                  val _ = (#define_list terms) (name, entries)
+                  val _ = define_list (name, entries)
                 in Library.expect_token ")" (token ()) end
               else ordinary [first, head]
             end
