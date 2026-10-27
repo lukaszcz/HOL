@@ -9437,16 +9437,22 @@ in
       | _ => raise Conv.UNCHANGED
     end
 
-  fun graph_numeric_law observe graph scope rule inputs =
+  (* Numeric and structured laws share one checked variable-only naming
+     boundary, including generic rewrite/definition/quantifier handlers. *)
+  fun graph_named_law observe graph scope rule inputs =
     #replay_handler (rule : Z3_Proof.proof_rule) = "th_lemma[arith]" orelse
+    #replay_handler rule = "th_lemma[array]" orelse
+    #replay_handler rule = "th_lemma[datatype]" orelse
     SmtReplayArithmetic.has_numeric_operand graph scope
+      {inputs=inputs,observe=fn () => observe 1} orelse
+    SmtReplayStructured.has_operand graph scope
       {inputs=inputs,observe=fn () => observe 1}
 
   fun graph_bounded_local_law_using observe graph definitions
       (proof : Z3_GraphProofParser.proof)
       ({rule,metadata,target,premises,arguments,law}
         : Z3_GraphProofReplay.local_request) =
-    if graph_numeric_law observe graph (ReplayGraph.node_scope graph law)
+    if graph_named_law observe graph (ReplayGraph.node_scope graph law)
         rule (target :: premises @ List.map #node arguments) then
       let
         val limit = SmtResource.max_bitblast_term_nodes
@@ -9478,6 +9484,10 @@ in
                vars,[],#z3_version proof)
             val theorem = replay_root_with_definitions_for_test
               definitions ordinary
+            (* Check in the injective namespace BEFORE realization: native
+               source spellings can coincide for different graph IDs. *)
+            val theorem = Thm.EQ_MP
+              (Thm.ALPHA (Thm.concl theorem) conclusion) theorem
             val hypotheses = Thm.hypset theorem
             val retained = ref Term.empty_tmset
             val used = List.filter (fn (_,term) =>
@@ -9496,7 +9506,7 @@ in
           (ReplayGraph.node_scope graph law) (!selected) target
         val aligned = Thm.EQ_MP (Thm.ALPHA (Thm.concl (#theorem result))
           (ReplayGraph.representative graph selected_law)) (#theorem result)
-      in SOME aligned end
+      in if List.null (Thm.hyp aligned) then SOME aligned else NONE end
     else let
       val limit = SmtResource.max_bitblast_term_nodes
       fun admitted node =
@@ -9600,7 +9610,14 @@ in
           val ordinary = mk_proof
             (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),vars,[],
              #z3_version proof)
-        in replay_root_with_definition_occurrences definitions ordinary end
+            val produced =
+              replay_root_with_definition_occurrences definitions ordinary
+            val theorem = #theorem produced
+            val theorem = Thm.EQ_MP
+              (Thm.ALPHA (Thm.concl theorem) conclusion) theorem
+        in {theorem=theorem,definitions= #definitions produced,
+            asserted= #asserted produced,
+            translation_definitions= #translation_definitions produced} end
       (* Output definitions are admitted before graph import/type/ground
          operations, including arithmetic schema realization. The bounded
          handler has already run; unknown definitions are not pre-admitted. *)
@@ -9629,7 +9646,7 @@ in
             else raise Conv.UNCHANGED) recorded end
       val argument_nodes = List.map #node arguments
       val argument_arity = length argument_nodes
-      val arithmetic = graph_numeric_law (fn _ => ()) graph scope rule
+      val arithmetic = graph_named_law (fn _ => ()) graph scope rule
         (target :: premises @ argument_nodes)
       val (theorem,recorded,named_definitions) = if arithmetic then
         let

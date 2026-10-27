@@ -161,6 +161,51 @@ struct
          bounded variable-only schema. No compound graph operand is inserted
          under a binder. The full input/Hyp/result and their Types are audited
          before FV, matching, substitution, opening or generalization. *)
+      fun binder_result bindings theorem =
+        let
+          val _ = bounded (Thm.concl theorem)
+          val _ = List.app bounded (Thm.hyp theorem)
+          val _ = annotations (Thm.concl theorem)
+          val _ = if clean theorem then () else raise ERR "prove"
+            "arithmetic binder schema is not closed and clean"
+          val holes = HOLset.addList (Term.empty_tmset,List.map #2 bindings)
+          val _ = if HOLset.isSubset
+              (Term.FVL [Thm.concl theorem] Term.empty_tmset,holes) then ()
+            else raise ERR "prove" "unowned arithmetic binder schema variable"
+          val operands = List.foldl (fn ((node,hole),table) =>
+            Redblackmap.insert (table,hole,node))
+            (Redblackmap.mkDict variable_compare) bindings
+          fun tree frame bound term =
+            (tick ();
+             if Term.is_var term then
+               (case Redblackmap.peek (bound,term) of
+                  SOME node => node
+                | NONE => raise ERR "prove" "unowned binder recipe variable")
+             else if Term.is_const term then G.constant graph frame term
+             else if Term.is_comb term then
+               let val (f,x) = Term.dest_comb term
+               in G.application graph frame (tree frame bound f,
+                    tree frame bound x) end
+             else
+               let val (variable,body) =
+                     SmtReplayImport.dest_abs_preserving_names term
+                   val child = G.new_scope graph frame []
+                   val binder = G.fresh_bound_variable graph child variable
+                   val result = tree child
+                     (Redblackmap.insert (bound,variable,binder)) body
+                   val node = G.recorded_abstraction graph frame template_limit
+                     {binder=binder,body=result,body_frame=child}
+                   (* Recorded closure children share the owner's lifetime;
+                      later consumers must still be able to inspect them. *)
+               in node end)
+          (* Discover the entire successful result before its single native
+             INST. Substitute VARIABLES only, never expanded graph operands. *)
+          val node = tree scope operands (Thm.concl theorem)
+          val substitution = List.map (fn (actual,hole) =>
+            {redex=hole,residue=G.representative graph actual}) bindings
+          val _ = guard ()
+          val realized = SmtReplayRuleObservation.INST substitution theorem
+        in finish node realized end
       fun binder_schema () =
         let
           val originals = List.map (G.representative graph) inputs
@@ -237,50 +282,7 @@ struct
           val bindings = List.map #2 (Redblackmap.listItems (!named))
           val _ = List.app bounded templates
           val theorem = procedure templates
-          val _ = bounded (Thm.concl theorem)
-          val _ = List.app bounded (Thm.hyp theorem)
-          val _ = annotations (Thm.concl theorem)
-          val _ = if clean theorem then () else raise ERR "prove"
-            "arithmetic binder schema is not closed and clean"
-          val holes = HOLset.addList (Term.empty_tmset,List.map #2 bindings)
-          val _ = if HOLset.isSubset
-              (Term.FVL [Thm.concl theorem] Term.empty_tmset,holes) then ()
-            else raise ERR "prove" "unowned arithmetic binder schema variable"
-          val operands = List.foldl (fn ((node,hole),table) =>
-            Redblackmap.insert (table,hole,node))
-            (Redblackmap.mkDict variable_compare) bindings
-          fun tree frame bound term =
-            (tick ();
-             if Term.is_var term then
-               (case Redblackmap.peek (bound,term) of
-                  SOME node => node
-                | NONE => raise ERR "prove" "unowned binder recipe variable")
-             else if Term.is_const term then G.constant graph frame term
-             else if Term.is_comb term then
-               let val (f,x) = Term.dest_comb term
-               in G.application graph frame (tree frame bound f,
-                    tree frame bound x) end
-             else
-               let val (variable,body) =
-                     SmtReplayImport.dest_abs_preserving_names term
-                   val child = G.new_scope graph frame []
-                   val binder = G.fresh_bound_variable graph child variable
-                   val result = tree child
-                     (Redblackmap.insert (bound,variable,binder)) body
-                   val node = G.recorded_abstraction graph frame template_limit
-                     {binder=binder,body=result,body_frame=child}
-                   (* Recorded closure children share the owner's lifetime;
-                      later consumers must still be able to inspect them. *)
-               in node end)
-          (* Discover the entire successful result before its single native
-             INST. This is the bounded binder realization, and substitutes
-             VARIABLES only, never an expanded graph below a binder. *)
-          val node = tree scope operands (Thm.concl theorem)
-          val substitution = List.map (fn (actual,hole) =>
-            {redex=hole,residue=G.representative graph actual}) bindings
-          val _ = guard ()
-          val realized = SmtReplayRuleObservation.INST substitution theorem
-        in finish node realized end
+        in binder_result bindings theorem end
       fun operator_schema () =
         let
           (* One stable typed name for each distinct graph Variable node. *)
@@ -311,6 +313,13 @@ struct
           val _ = List.app bounded (Thm.hyp proof)
           val _ = List.app annotations (Thm.concl proof :: Thm.hyp proof)
           val pairs = List.map #2 (Redblackmap.listItems holes)
+        in
+          (* A checked datatype worker can introduce case lambdas even when
+             its only input was a scrutinee variable (omitted dt_split).
+             Reuse that SAME successful proof, never retry the procedure. *)
+          if SmtResource.contains Term.is_abs (Thm.concl proof) then
+            binder_result pairs proof
+          else let
           (* The four extra nodes are ONLY EQT_INTRO's fixed wrapper, not an
              increased input, result, skeleton, BV, binder or runtime cap. *)
           val schema = C.checked_graph_schema graph scope
@@ -327,7 +336,7 @@ struct
                        template_limit=template_limit+4}
                     val edge = C.graph_assemble graph block conversion
                 in P.realize block (C.graph_equality conversion) edge end
-        in finish node (Drule.EQT_ELIM equality) end
+        in finish node (Drule.EQT_ELIM equality) end end
     in if null (!opaque_nodes) then operator_schema ()
        else binder_schema () end
 end

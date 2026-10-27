@@ -395,15 +395,45 @@ struct
                    | SOME value => [#node value]),
                 observe=fn () => Option.app
                   (fn work => W.spend_guard_policy work 1) owned_work})
+          (* Keep constructor equations and UPDATE relationships intact.
+             Generic equality/evaluation rules must not merge same-native
+             graph variables either. TRUST retains its deferred fallback. *)
+          val structured_rule =
+            List.exists (fn handler => handler = #replay_handler (#rule step))
+              ["array","arrays_select_const","arrays_read_over_write",
+               "datatype","datatype_eq","dt_split"] orelse
+            String.isPrefix "array-" (#name (#rule step)) orelse
+            (List.exists (fn handler => handler = #replay_handler (#rule step))
+               ["eq_resolve","modus_ponens","evaluate","trans","eq_refl"]
+             andalso SmtReplayStructured.has_operand graph scope
+               {inputs=List.map node premises @
+                  List.map (#node : F.term -> G.node) object_arguments @
+                  (case #conclusion step of NONE => []
+                   | SOME value => [#node value]),
+                observe=fn () => Option.app
+                  (fn work => W.spend_guard_policy work 1) owned_work})
+          val named_rule = arithmetic_rule orelse structured_rule
           fun arithmetic_charge amount = Option.app
             (fn work => W.spend_guard_policy work amount) owned_work
           fun arithmetic_observe () = arithmetic_charge 1
           val arithmetic_type =
             SmtReplayArithmetic.new_type_check arithmetic_observe
-          val selected_type = if arithmetic_rule then arithmetic_type
+          val selected_type = if named_rule then arithmetic_type
             else admit_type_using arithmetic_observe
-          fun selected_raw node = if not arithmetic_rule then raw node else
+          fun selected_raw node = if not named_rule then raw node else
             let val term = G.representative graph node
+                (* Retain the old non-arithmetic root-Type/caller gate as
+                   well as auditing buried annotations. Naming must not
+                   increase an existing ordinary input allowance. *)
+                val _ = if structured_rule andalso not arithmetic_rule then
+                    (case SmtReplayImport.bounded_raw_size_with_type_check_observed
+                        {check_type=fn _ => (),observe=arithmetic_observe,
+                         limit=ordinary_limit} term of
+                       SOME _ => admit_type_using arithmetic_observe
+                         (G.type_of graph node)
+                     | NONE => admission_failure
+                         "ordinary input exceeds caller limit")
+                  else ()
                 val _ = case
                     SmtReplayImport.bounded_raw_size_with_type_check_observed
                     {check_type=selected_type,
@@ -455,6 +485,12 @@ struct
             (fn value : F.term => {term = selected_raw (#node value),
               provenance = occurrence_provenance (#occurrence value)})
             (#conclusion step)
+          (* Named arguments bypass ordinary_argument/raw below. Preserve
+             their original root admission too, not just premise/target caps. *)
+          val _ = if structured_rule andalso not arithmetic_rule then
+              List.app (fn (value:F.term) =>
+                ignore (selected_raw (#node value))) object_arguments
+            else ()
           fun ordinary local_step inputs =
             case (owned_work,clause_worker) of
               (SOME work,SOME fixed) =>
@@ -513,6 +549,12 @@ struct
                   val (theorem,result,_) = ordinary local_step
                     (ListPair.mapEq (fn (old,term) => located old term)
                       (inputs,pts))
+                  (* Compare endpoints while names still distinguish graph
+                     IDs, not after their native representatives coincide. *)
+                  val theorem = case targets of [] => theorem
+                    | [target] => Thm.EQ_MP
+                        (Thm.ALPHA (Thm.concl theorem) target) theorem
+                    | _ => raise ERR "bounded_rule" "changed target arity"
                   val hypotheses = Thm.hypset theorem
                   val seen = ref Term.empty_tmset
                   val used = List.filter (fn (_,term) =>
@@ -550,7 +592,7 @@ struct
              premises = #premises step,conclusion = conclusion,
              args = List.concat (List.map ordinary_argument (#args step))}
           val (worker_theorem,worker_located,held_clause) =
-            if arithmetic_rule then arithmetic () else
+            if named_rule then arithmetic () else
               ordinary (ordinary_step ()) inputs
           val _ = work_checkpoint "bounded.after-worker" (fn () =>
             " step=" ^ #id step ^ " rule=" ^ #name (#rule step))
@@ -577,7 +619,7 @@ struct
                   | _ => NONE) else NONE
           val (theorem,current) = case retained of NONE => ordinary_import ()
             | SOME value =>
-                if arithmetic_rule then
+                if named_rule then
                   let val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem)
                         (G.representative graph (#node value))) theorem
                   in (exact,graph_fact graph scope (#node value)
@@ -685,7 +727,7 @@ struct
                    checked endpoint and supplies its original ordered clause
                    boundary, just as clause_from_located did in the worker.
                    It does not recover erased conjunction provenance. *)
-                if arithmetic_rule then case #conclusion step of
+                if named_rule then case #conclusion step of
                   SOME value =>
                     let val recorded = located_fact graph scope value
                     in {node = #node current,provenance = #provenance current,

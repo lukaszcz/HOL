@@ -75,6 +75,11 @@ struct
      tester is its canonical TypeBase case expression. *)
   fun datatype_tester_term ty constructor scrutinee =
     let
+      val constructors = constructors_of ty
+      val _ = if Term.type_of scrutinee = ty andalso
+          List.exists (Term.aconv constructor) constructors then () else
+        raise ERR "datatype_tester_term"
+          "tester constructor/scrutinee does not belong to datatype instance"
       fun clause constructor' =
         let
           val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
@@ -88,7 +93,7 @@ struct
         end
     in
       TypeBase.mk_case
-        (scrutinee, List.map clause (constructors_of ty))
+        (scrutinee, List.map clause constructors)
     end
 
   fun datatype_types t =
