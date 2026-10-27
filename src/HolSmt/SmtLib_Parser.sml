@@ -524,6 +524,10 @@ local
      raw terms; the Z3 proof tokenizer deliberately retains its old policy. *)
   val proof_string_token_prefix = "\001HolSmtString:"
   val proof_quoted_symbol_token_prefix = "\001HolSmtQuoted:"
+  (* Adapter-only: raw marker prefixes are rejected below, and the quoted
+     symbol grammar cannot produce a NUL in its decoded payload. *)
+  val cpc_recursive_binders =
+    proof_quoted_symbol_token_prefix ^ "\000cpc-recursive-binders"
 
   fun proof_marker_collision text =
     String.isPrefix proof_string_token_prefix text orelse
@@ -2712,6 +2716,34 @@ local
       else ()
     end
 
+  (* Recursive CPC binders validate only after all operands and the body.
+     Defer exactly this identity failure, never parsing or resource errors. *)
+  fun cpc_binder_option operand =
+    SOME (operand ())
+    handle error as Feedback.HOL_ERR detail =>
+      if Feedback.top_structure_of detail = "SmtLib_Parser" andalso
+         Feedback.top_function_of detail = "parse_binder_term" andalso
+         Feedback.message_of detail =
+           "CPC @list binder contains a non-variable term" then NONE
+      else raise error
+
+  (* A bounded native probe preserves kernel-specific validation order.
+     A valid suffix needs only its rightmost type to expose body-type errors;
+     no actual operand or body is realized. *)
+  fun cpc_invalid_binder name rightmost_type body_type =
+    let
+      val variables = case rightmost_type of
+          NONE => [boolSyntax.T]
+        | SOME ty => [boolSyntax.T, Term.genvar ty]
+      val body = Term.genvar body_type
+      val _ = if name = "forall" then
+          boolSyntax.list_mk_forall (variables, body)
+        else if name = "exists" then
+          boolSyntax.list_mk_exists (variables, body)
+        else Term.list_mk_abs (variables, body)
+    in raise ERR "parse_binder_term"
+      "CPC @list binder contains a non-variable term" end
+
   (* Private binder identities close only private source atoms, never an
      ordinary lexical variable with the same printed name and type. *)
   fun construction_binder_source backend kind binders body =
@@ -3029,34 +3061,48 @@ local
         let val first = get_token ()
             val second = get_token ()
         in
-          if first = "(" andalso second = "@list" then
-            let fun variables accumulated =
+          if first = "(" andalso
+             (second = "@list" orelse second = cpc_recursive_binders) then
+            let
+              val recursive = second = cpc_recursive_binders
+              fun variables accumulated =
               let val token = get_token () in
                 if token = ")" then List.rev accumulated
-                else if token = "(" then
+                else if not recursive andalso token <> "(" then variables
+                  (SOME ((#binder_reference cfg) frame token) :: accumulated)
+                else
                   let
-                    val _ = expect "@var"
-                    val token = get_token ()
-                    val name = case proof_string_token token of
-                        SOME name => name | NONE => proof_symbol_text token
-                    val ty = parse_type_with_key (#type_symbol_key cfg)
-                      get_token tydict
-                    val _ = expect ")"
-                  in variables
-                    (((name, name, ty), NONE) :: accumulated) end
-                else variables
-                  ((#binder_reference cfg) frame token :: accumulated)
+                    (* Elaborate compound operands before checking identity.
+                       Atomic names retain lexical LET binder semantics. *)
+                    val parsed = term_aux frame token []
+                    fun operand () = B.binder_operand backend frame
+                      (#2 parsed) (construction_value parsed)
+                    val variable = if recursive then cpc_binder_option operand
+                      else SOME (operand ())
+                  in variables (variable :: accumulated) end
               end
             in (variables [], true) end
           else case (#lookup_binder_list cfg) first of
             SOME variables =>
-              (unread [second]; (variables, true))
+              (unread [second]; (List.map SOME variables, true))
           | NONE =>
-              (unread [first, second]; (sorted_variables (), false))
+              (unread [first, second];
+               (List.map SOME (sorted_variables ()), false))
         end
       and binder_term frame name =
         let
           val (variables, cpc_names) = binder_variables frame
+          val _ = if List.exists (not o Option.isSome) variables then
+              let
+                (* Native recursive parsing has not bound any operand yet. *)
+                val body = term frame
+                val _ = expect ")"
+                val rightmost_type = Option.map
+                  (fn ((_, _, ty), _) => ty) (List.last variables)
+              in cpc_invalid_binder name rightmost_type
+                (B.type_of backend (construction_value body)) end
+            else ()
+          val variables = List.map valOf variables
           val parsed_body = ref
             (NONE : ('a construction_occurrence * C.syntax) option)
           fun bind [] frame =
@@ -3378,34 +3424,48 @@ local
         let val first = get_token ()
             val second = get_token ()
         in
-          if first = "(" andalso second = "@list" then
-            let fun variables accumulated =
+          if first = "(" andalso
+             (second = "@list" orelse second = cpc_recursive_binders) then
+            let
+              val recursive = second = cpc_recursive_binders
+              fun variables accumulated =
               let val token = get_token () in
                 if token = ")" then List.rev accumulated
-                else if token = "(" then
+                else if not recursive andalso token <> "(" then variables
+                  (SOME ((#binder_reference cfg) frame token) :: accumulated)
+                else
                   let
-                    val _ = expect "@var"
-                    val token = get_token ()
-                    val name = case proof_string_token token of
-                        SOME name => name | NONE => proof_symbol_text token
-                    val ty = parse_type_with_key (#type_symbol_key cfg)
-                      get_token tydict
-                    val _ = expect ")"
-                  in variables
-                    (((name, name, ty), NONE) :: accumulated) end
-                else variables
-                  ((#binder_reference cfg) frame token :: accumulated)
+                    (* Elaborate compound operands before checking identity.
+                       Atomic names retain lexical LET binder semantics. *)
+                    val parsed = term_aux frame token []
+                    fun operand () = B.binder_operand backend frame
+                      (#2 parsed) (construction_value parsed)
+                    val variable = if recursive then cpc_binder_option operand
+                      else SOME (operand ())
+                  in variables (variable :: accumulated) end
               end
             in (variables [], true) end
           else case (#lookup_binder_list cfg) first of
             SOME variables =>
-              (unread [second]; (variables, true))
+              (unread [second]; (List.map SOME variables, true))
           | NONE =>
-              (unread [first, second]; (sorted_variables (), false))
+              (unread [first, second];
+               (List.map SOME (sorted_variables ()), false))
         end
       and binder_term frame name =
         let
           val (variables, cpc_names) = binder_variables frame
+          val _ = if List.exists (not o Option.isSome) variables then
+              let
+                (* Native recursive parsing has not bound any operand yet. *)
+                val body = term frame
+                val _ = expect ")"
+                val rightmost_type = Option.map
+                  (fn ((_, _, ty), _) => ty) (List.last variables)
+              in cpc_invalid_binder name rightmost_type
+                (B.type_of backend (construction_value body)) end
+            else ()
+          val variables = List.map valOf variables
           val parsed_body = ref
             (NONE : ('a construction_occurrence * C.syntax) option)
           fun bind [] frame =
@@ -7955,6 +8015,7 @@ in
   val construction_value_parsefn = construction_value_parsefn
   val construction_term_dictionary = construction_term_dictionary
   val make_proof_stream_tokenizer = make_proof_stream_tokenizer
+  val cpc_recursive_binders = cpc_recursive_binders
   val make_cpc_proof_stream_tokenizer = make_cpc_proof_stream_tokenizer
   val make_cpc_proof_tokenizer_from_input =
     make_cpc_proof_tokenizer_from_input

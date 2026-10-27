@@ -1690,6 +1690,60 @@ struct
         ("((define x () true) (assume @a " ^
          "(forall (@list (@var \"x\" Bool)) x)))")
 
+      (* review-30352f126: recursive CPC operands and ordinary subterms
+         have different binder grammars; quotation selects semantic heads. *)
+      val _ = positive "recursive CPC binder elaborates annotated variable"
+        ("((define @x () (@var \"x\" Bool)) " ^
+         "(define @xs () (@list " ^
+         "(forall (@list (! @x :named bound_x)) @x))) " ^
+         "(assume @a true))")
+      val _ = negative "ordinary nested binder does not admit CPC @var"
+        ("((define @xs () (@list " ^
+         "(or (forall (@list (@var \"x\" Bool)) true) false))) " ^
+         "(assume @a true))")
+      val _ = negative "empty ordinary binder keeps ordinary body grammar"
+        ("((define @xs () (@list " ^
+         "(or (forall () (@var \"x\" Bool)) false))) (assume @a true))")
+      val _ = positive "annotated lexical LET binder retains source variable"
+        ("((define @xs () (@list (let ((q true)) " ^
+         "(forall (@list (! q :named b)) q)))) (assume @a true))")
+      val _ = negative "inline LET is not a native variable binder operand"
+        ("((define @x () (@var \"x\" Bool)) " ^
+         "(define @xs () (@list (or " ^
+         "(forall (@list (let ((z @x)) z)) @x) false))) " ^
+         "(assume @a true))")
+      val recursive_failure =
+        "((define @xs () (@list (forall (@list (or task35_missing_arg ("
+      val _ = test "recursive binder operand precedes later syntax / native"
+        (fn () => owned (fn e => require
+          "native recursive operand first-error diagnostic changed"
+          (failure (fn () => ignore (legacy e recursive_failure))=
+           SOME ("SmtLib_Parser","t_with_args_unknown_symbol",
+             "failed to parse 'task35_missing_arg' (with indices [] and " ^
+             "0 argument(s)): unknown symbol (no dictionary entry)"))))
+      val _ = negative "recursive binder operand precedes later syntax"
+        recursive_failure
+      val _ = List.app (fn kind =>
+        let fun text binders body = "((define @xs () (@list (" ^ kind ^
+              " (@list " ^ binders ^ ") " ^ body ^ "))) (assume @a true))"
+        in
+          negative (kind ^ " recursive invalid binder native diagnostic")
+            (text "(! true :named bad)" "true");
+          negative (kind ^ " recursive invalid binder follows body error")
+            (text "(! true :named bad)" "task35_missing_arg");
+          negative (kind ^ " recursive invalid binder follows later operand")
+            (text "(! true :named bad) task35_missing_arg" "true");
+          negative (kind ^ " recursive invalid binder follows later syntax")
+            ("((define @xs () (@list (" ^ kind ^
+             " (@list (! true :named bad) (");
+          negative (kind ^ " recursive valid suffix preserves body type error")
+            (text "true (@var \"x\" Bool)" "0");
+          negative (kind ^ " recursive invalid suffix precedes body type error")
+            (text "(@var \"x\" Bool) true" "0")
+        end) ["forall","exists","lambda"]
+      val _ = positive "quoted CPC @var in a definition list"
+        "((define @xs () (@list (|@var| \"x\" Bool))) (assume @a true))"
+
       val variable = "(define @x () (@var \"x\" Bool)) "
       val _ = List.app (fn (label,definitions,body) => positive label
         ("(" ^ variable ^ definitions ^ "(assume @a " ^ body ^ "))"))
@@ -1816,6 +1870,36 @@ struct
           "(= (lambda (@list @k) @k) (lambda ((x Bool)) x))")]
       val _ = positive "private binder captures compound aliased body"
         compound
+      val child_first =
+        "((assume @a (forall ((x Bool)) (@const 3 true))) " ^
+        "(assume @b (exists ((y Bool)) (@const 3 true))) " ^
+        "(assume @c (let ((z true)) (@const 3 true))) " ^
+        "(assume @d (@const 3 true)))"
+      val _ = positive "stable private allocation first appears in child"
+        child_first
+      val _ = List.app (fn route => test
+        ("child-first private identity across sibling/LET/root / " ^
+          route_name route) (fn () =>
+          let
+            fun check free (proof:''a C.constructed_graph_proof) =
+              let val terms = assumptions proof
+                  val dependencies = List.map (free o #node) terms
+              in require "stable private allocation split across scopes"
+                (length terms=4 andalso case dependencies of
+                   [a as [_],b,c,d] => a=b andalso b=c andalso c=d
+                 | _ => false) end
+          in case route of
+              Value => with_value child_first (fn _ => fn current =>
+                let val context = #context current
+                in require "stable private allocation inventory grew"
+                     (length (#private_bindings current)=1);
+                   check (List.map (PV.key context) o
+                     PV.free_variables context) (#proof current) end)
+            | _ => with_native route child_first (fn e => check
+                (fn node => case G.free_variable_nodes (#graph e) node of
+                   SOME nodes => nodes
+                 | NONE => raise Fail "unknown child-first dependencies"))
+          end)) routes
       (* Test-only source reconstruction, charged by expanded node count
          BEFORE visiting children. No source observation grants authority. *)
       fun source_term syntax =
@@ -1832,6 +1916,105 @@ struct
                  | CS.Abstract (binder,body) =>
                      Term.mk_abs (binder,walk body))
         in walk syntax end
+      (* review-30352f126: a repeated private constructor must resolve to
+         the explicit binder, not allocate a free marker in its child scope.
+         The small shape oracle checks operand identity before any bridge. *)
+      datatype private_shape = BoundEquality
+        | Quantified of private_shape
+        | Paired of private_shape * private_shape
+      fun identities same application abstraction shape root =
+        let
+          fun operands node =
+            let val (operator,right) = application node
+                val (_,left) = application operator
+            in (left,right) end
+          fun walk environment BoundEquality node =
+                let val binder = hd environment
+                    val (left,right) = operands node
+                in require "private equality operands lost bound identity"
+                  (same (left,binder) andalso same (right,binder) andalso
+                   same (left,right)) end
+            | walk environment (Quantified body_shape) node =
+                let val (_,closure) = application node
+                    val (binder,body) = abstraction closure
+                in walk (binder::environment) body_shape body end
+            | walk environment (Paired (a,b)) node =
+                let val (left,right) = operands node
+                in walk environment a left;walk environment b right end
+        in walk [] shape root end
+      val equality = "(= @k (@const 3 true))"
+      val repeated =
+        [("direct", "(forall (@list @k) " ^ equality ^ ")",
+          Quantified BoundEquality),
+         ("nested", "(forall (@list @k) (and " ^ equality ^
+          " (exists (@list @k) " ^ equality ^ ")))",
+          Quantified (Paired (BoundEquality,Quantified BoundEquality))),
+         ("nested constructor binder",
+          "(forall (@list @k) (exists (@list (@const 3 true)) " ^
+          equality ^ "))",Quantified (Quantified BoundEquality)),
+         ("nested annotated binder",
+          "(forall (@list @k) (exists (@list (! @k :named inner)) " ^
+          equality ^ "))",Quantified (Quantified BoundEquality)),
+         ("sibling", "(and (forall (@list @k) " ^ equality ^
+          ") (exists (@list @k) " ^ equality ^ "))",
+          Paired (Quantified BoundEquality,Quantified BoundEquality))]
+      val _ = List.app (fn (label,body,shape) => List.app (fn route => test
+        (label ^ " private reoccurrence identity/FV/bridges / " ^
+          route_name route) (fn () =>
+          let
+            val text = fixture "" body
+            fun native_identity term =
+              (bounded term;
+               identities (fn (a,b) => Term.compare (a,b)=EQUAL)
+                 Term.dest_comb Term.dest_abs shape term;
+               require "private reoccurrence has native/source free variables"
+                 (null (Term.free_vars term)))
+            fun check e raw (proof:'a C.constructed_graph_proof) =
+              let
+                val old = legacy e text
+                val native = case #commands old of
+                    [Old.ASSUME ("@a",term)] => #term term
+                  | _ => raise Fail "expected one native private assumption"
+                val term = hd (assumptions proof)
+                val source = source_term (valOf (#source_syntax term))
+                val actual = raw (#node term)
+              in native_identity native;native_identity source;
+                 native_identity actual;
+                 bridge native actual;bridge source actual end
+          in case route of
+              Value => with_value text (fn e => fn current =>
+                let
+                  val context = #context current
+                  val root = #node (hd (assumptions (#proof current)))
+                  fun application node = case PV.view context node of
+                      PV.Application pair => pair
+                    | _ => raise Fail "expected private Value application"
+                  fun abstraction node = case PV.view context node of
+                      PV.Abstraction {binder,body,...} => (binder,body)
+                    | _ => raise Fail "expected private Value binder"
+                  val _ = identities (fn (a,b) =>
+                    PV.key context a=PV.key context b)
+                    application abstraction shape root
+                  val _ = require "private Value FV is not exactly empty"
+                    (null (PV.free_variables context root))
+                in check e (small_value e context) (#proof current) end)
+            | _ => with_native route text (fn e => fn proof =>
+                let
+                  val graph = #graph e
+                  val root = #node (hd (assumptions proof))
+                  fun application node = case G.view graph node of
+                      G.Application pair => pair
+                    | _ => raise Fail "expected private graph application"
+                  fun abstraction node = case G.view graph node of
+                      G.AdmittedBinder {binder,body,...} => (binder,body)
+                    | _ => raise Fail "expected private graph binder"
+                  val _ = identities (op =) application abstraction
+                    shape root
+                  val _ = require "private graph FV is not exactly empty"
+                    (case G.free_variable_nodes graph root of
+                       SOME [] => true | _ => false)
+                in check e (small_graph e) proof end)
+          end)) routes) repeated
       val _ = List.app (fn route => test
         ("explicit private binder source/semantic bridge / " ^
           route_name route) (fn () =>

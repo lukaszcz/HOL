@@ -3775,10 +3775,47 @@ in
       | NONE => raise ERR "graph_cpc_source"
           "private marker has no variable descriptor"
 
-  fun graph_private_atom backend value =
+  (* Stable source-independent CPC symbols denote one proof-local identity,
+     not one identity per binder/LET. Allocate outside temporary binder
+     construction scopes; retain the original lexical allocation label when
+     already at the root construction scope. Source-dependent and fresh FP
+     markers still use the frontend's guarded scoped allocation unchanged. *)
+  fun graph_private_allocator (terms:'a F.constructed_session) =
+    let
+      val backend = #backend (#reader terms)
+      val root = B.root backend
+      val root_scope = B.frame_scope backend root
+      fun compare ((lk,lt),(rk,rt)) =
+        (B.syntax_spend backend 1;
+         case String.compare (lk,rk) of
+             EQUAL => Type.compare (lt,rt) | order => order)
+      val symbols = ref (Redblackmap.mkDict compare)
+      fun allocate frame
+          (specification as {kind,hol_type,source,stable}) =
+        if stable andalso not (Option.isSome source) then
+          let val key = (kind,hol_type)
+          in case Redblackmap.peek (!symbols,key) of SOME marker => marker
+           | NONE =>
+               let
+                 val owner = if B.frame_scope backend frame=root_scope then
+                     frame else root
+                 val marker = (#private_symbol terms) owner specification
+                 val _ = symbols := Redblackmap.insert (!symbols,key,marker)
+               in marker end
+          end
+        else (#private_symbol terms) frame specification
+    in allocate end
+
+  (* Keep source provenance canonical even when the occurrence is captured
+     by an explicit private binder. capture_alias resolves allocation IDs,
+     never a private marker's printed lexical descriptor. *)
+  fun graph_private_reference backend frame marker =
+    #1 (B.capture_alias backend frame (marker,[]))
+
+  fun graph_private_atom backend frame marker =
     (B.note_constructor_source backend
-       (C.private_atom (graph_private_descriptor backend value));
-     value)
+       (C.private_atom (graph_private_descriptor backend marker));
+     graph_private_reference backend frame marker)
 
   fun install_graph_qualifications backend add_recipe add_constructor
       private_symbol =
@@ -3796,7 +3833,7 @@ in
             val _ = B.note_index_callback backend (token,parse,SOME marker)
             val _ = B.syntax_spend backend
               (1 + 4 * IntInf.fromInt (List.length arguments))
-          in graph_private_atom backend (private_symbol frame
+          in graph_private_atom backend frame (private_symbol frame
             {kind = #1 (Term.dest_var marker), hol_type = Term.type_of marker,
              source = NONE, stable = true}) end)
     in List.app install (graph_qualification_entries ()) end
@@ -3915,7 +3952,7 @@ in
      only bounded type holes and admitted source indices, never operands. *)
   fun install_graph_cpc_constructors (backend:'a B.backend)
       (limits:SmtReplayResourcePolicy.recipe_policy)
-      (terms:'a F.constructed_session) =
+      (terms:'a F.constructed_session) private_symbol =
     let
       val spend = B.syntax_spend backend
       val _ = B.enable_forall_blocks backend
@@ -3959,7 +3996,7 @@ in
           {template=template,holes=variables,operands=originals}) end
       fun symbol frame term =
         let val (name,ty) = Term.dest_var term in
-          (#private_symbol terms) frame
+          private_symbol frame
             {kind=name,hol_type=ty,source=NONE,stable=true}
         end
       fun source_index originals frame position actual =
@@ -3991,7 +4028,8 @@ in
           val transport = Term.list_mk_comb (head_hole,variables)
           val marker = symbol frame head
           val value = B.construct_with_policy backend frame
-            (compile transport (head_hole::variables)) (marker::arguments)
+            (compile transport (head_hole::variables))
+            (graph_private_reference backend frame marker::arguments)
           val _ = note transport (head_hole::variables)
             (C.private_atom (graph_private_descriptor backend marker) ::
              sources frame arguments)
@@ -4024,7 +4062,7 @@ in
           val _ = if SmtReplayResourcePolicy.allows
               (#index_limit limits) magnitude then () else
             raise ERR "graph_index" "private numeric index exceeds contract"
-          val value = graph_private_atom backend (symbol frame native)
+          val value = graph_private_atom backend frame (symbol frame native)
           val _ = B.note_index_callback backend
             (token,cpc_private_const_parsefn,SOME native)
         in value end
@@ -4146,7 +4184,8 @@ in
                             on a descriptor collision with a source binder.
                             Missing provenance must not allocate a new ID. *)
                          (spend 1;case Redblackmap.peek (markers,term) of
-                            SOME marker => marker
+                            SOME marker =>
+                              graph_private_reference backend frame marker
                           | NONE => raise ERR "graph_cpc_source"
                               "unknown private marker descriptor")
                        else if Term.is_const term then
@@ -4364,9 +4403,10 @@ in
          "@mod_by_zero", "@div_by_zero", "**_total"]
       val backend = #backend (#reader terms)
       val graph = #graph options
+      val private_symbol = graph_private_allocator terms
       val _ = install_graph_qualifications backend
         (#add_recipe_parser terms) (#add_constructor_parser terms)
-        (#private_symbol terms)
+        private_symbol
       val limits = #recipe_limits options
       fun finite n = SmtReplayResourcePolicy.AtMost (IntInf.fromInt n)
       val _ = install_graph_indexed backend
@@ -4408,19 +4448,19 @@ in
                      B.type_of backend range) end
             | _ => raise ERR "cpc_sort_marker_parsefn"
                 ("malformed CPC sort marker " ^ token)
-        in graph_private_atom backend ((#private_symbol terms) frame
+        in graph_private_atom backend frame (private_symbol frame
           {kind = "@cpc." ^ token, hol_type = ty,
            source = NONE, stable = true}) end
       fun private_fp frame token indices args =
         if not (null indices) then raise ERR "cpc_fp_private_parsefn"
           "unexpected indices"
         else case args of
-            [sort_marker] => graph_private_atom backend
-              ((#private_symbol terms) frame
+            [sort_marker] => graph_private_atom backend frame
+              (private_symbol frame
                 {kind = token, hol_type = B.type_of
                    backend sort_marker, source = NONE, stable = false})
-          | [sort_marker, source] => graph_private_atom backend
-              ((#private_symbol terms) frame
+          | [sort_marker, source] => graph_private_atom backend frame
+              (private_symbol frame
                 {kind = token, hol_type = B.type_of
                    backend sort_marker, source = SOME source, stable = true})
           | _ => raise ERR "cpc_fp_private_parsefn"
@@ -4432,7 +4472,7 @@ in
         else
           let val types = List.map (B.type_of backend) args
               val ty = boolSyntax.list_mk_fun (types, hd types)
-              val head = (#private_symbol terms) frame
+              val head = private_symbol frame
                 {kind = token, hol_type = ty, source = NONE, stable = true}
               val originals = case B.constructor_sources backend of
                   SOME {arguments,...} => arguments
@@ -4444,12 +4484,12 @@ in
               val _ = B.note_constructor_source backend source
           in List.foldl (fn (arg, head) =>
             B.application backend frame (head, arg))
-            head args end
+            (graph_private_reference backend frame head) args end
       fun arithmetic frame token indices args =
         if null indices andalso null args andalso
             List.exists (Lib.equal token)
               ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
-          graph_private_atom backend ((#private_symbol terms) frame
+          graph_private_atom backend frame (private_symbol frame
             {kind = token, hol_type = if token = "@div_by_zero"
                then realSyntax.real_ty else intSyntax.int_ty,
              source = NONE, stable = true})
@@ -4477,7 +4517,7 @@ in
         {template_limit=finite (#template_limit limits),
          index_limit=finite (#index_limit limits),
          operand_limit=finite (#operand_limit limits),
-         token_limit=finite (#token_limit limits)} terms
+         token_limit=finite (#token_limit limits)} terms private_symbol
     in () end
 
   (* Additive direct-ID frontend. This reads terms for graph proof records;
@@ -4600,7 +4640,7 @@ in
      nested CPC testers that native rejects. Only ordinary term-head @var
      is quoted to bypass the graph parser's CPC branch. Its operands still
      parse first, preserving native unknown-symbol error order. Sorts,
-     binder declarations and annotation attributes remain data. Do not
+     sorted binder declarations and annotation attributes remain data. Do not
      normalize AND/OR arity at this boundary either. *)
   val graph_ordinary_var_head =
     let val chars = ref (String.explode "|@var|")
@@ -4645,8 +4685,7 @@ in
           emit token (ordinary_let continuation)
         else if token = "forall" orelse token = "exists" orelse
                 token = "lambda" then
-          emit token (fn () => data_from (next ())
-            (ordinary_term (close continuation)))
+          emit token (ordinary_binders continuation)
         else if token = "!" then
           emit token (ordinary_term (data_tail continuation))
         else if token = "_" then
@@ -4654,6 +4693,19 @@ in
         else if token = "as" then
           emit token (ordinary_as continuation)
         else ordinary_from token (ordinary_terms continuation)
+      and ordinary_binders continuation () =
+        case next () of
+          "(" => emit "(" (fn () =>
+            let val head = next () in
+              if head = "@list" then
+                emit head (ordinary_terms
+                  (ordinary_term (close continuation)))
+              else if head = ")" then
+                emit head (ordinary_term (close continuation))
+              else data_from head
+                (data_tail (ordinary_term (close continuation)))
+            end)
+        | token => emit token (ordinary_term (close continuation))
       and ordinary_as continuation () =
         let val name = next () in
           if List.exists (Lib.equal name)
@@ -4678,10 +4730,12 @@ in
           ")" => emit ")" continuation
         | token => term_from token (terms continuation)
       and head continuation () =
-        case next () of
+        let val marked = next () in
+        case cpc_semantic_token marked of
           "_" =>
             let val name = next () in
-              if name = "BitVec" orelse name = "FloatingPoint" then
+              if marked = "_" andalso
+                 (name = "BitVec" orelse name = "FloatingPoint") then
                 emit "_" (literal name (data_tail continuation))
               else emit "@" (fn () =>
                 term_from name (terms continuation))
@@ -4694,7 +4748,8 @@ in
               emit token (binders continuation)
             else if token = "@var" then
               emit token (data_tail continuation)
-            else ordinary_head_from token continuation
+            else ordinary_head_from marked continuation
+        end
       and tester continuation () =
         let val constructor = next ()
             val _ = if constructor = "(" orelse constructor = ")" then
@@ -4709,7 +4764,7 @@ in
       and binder_head continuation () =
         let val token = next () in
           if token = "@list" then
-            emit token (data_tail (term (close continuation)))
+            emit P.cpc_recursive_binders (terms (term (close continuation)))
           else if token = ")" then
             emit token (ordinary_term (close continuation))
           else
@@ -4725,7 +4780,8 @@ in
      native list definitions elaborate recursive parse_term operands before
      reading the following syntax, including inside each list element.
      Top-level @var has no shared-parser callback: parse its sort and close
-     before constructing it. Inline binder @var remains shared-parser data. *)
+     before constructing it. Inline binder operands use the same recursive
+     grammar, while binders below ordinary applications remain ordinary. *)
   fun graph_read_definition_list next parse_from parse_sort
       private_variable locate =
     let
@@ -4733,7 +4789,7 @@ in
         (Library.undo_look_ahead prefix next))
       fun object "(" =
             let val head = next () in
-              if head = "@var" then
+              if cpc_semantic_token head = "@var" then
                 let
                   val name = cpc_var_name (next ())
                   val ty = parse_sort next
@@ -5298,7 +5354,8 @@ in
         in SOME (if push then GraphAssumePush (name, value)
           else GraphAssume (name, value)) end
       fun checked_next () = next () handle P.CPCProofEOF =>
-        error "unexpected end of CPC proof wrapper"
+        raise ERR "parse_stream_with_version"
+          "unexpected end of CPC proof wrapper"
     in {next = checked_next, terms = terms, cvc_version = version} end
 
   fun graph_command_reader_with_version options declaration_dicts version input =
@@ -5384,9 +5441,10 @@ in
         ["div_total", "mod_total", "/_total", "@int_div_by_zero",
          "@mod_by_zero", "@div_by_zero", "**_total"]
       val backend = #backend (#reader terms)
+      val private_symbol = graph_private_allocator terms
       val _ = install_graph_qualifications backend
         (#add_recipe_parser terms) (#add_constructor_parser terms)
-        (#private_symbol terms)
+        private_symbol
       val limits = #recipe_limits options
       val _ = install_graph_indexed backend limits terms
       val width_limit = #index_limit limits
@@ -5417,19 +5475,19 @@ in
                      B.type_of backend range) end
             | _ => raise ERR "cpc_sort_marker_parsefn"
                 ("malformed CPC sort marker " ^ token)
-        in graph_private_atom backend ((#private_symbol terms) frame
+        in graph_private_atom backend frame (private_symbol frame
           {kind = "@cpc." ^ token, hol_type = ty,
            source = NONE, stable = true}) end
       fun private_fp frame token indices args =
         if not (null indices) then raise ERR "cpc_fp_private_parsefn"
           "unexpected indices"
         else case args of
-            [sort_marker] => graph_private_atom backend
-              ((#private_symbol terms) frame
+            [sort_marker] => graph_private_atom backend frame
+              (private_symbol frame
                 {kind = token, hol_type = B.type_of
                    backend sort_marker, source = NONE, stable = false})
-          | [sort_marker, source] => graph_private_atom backend
-              ((#private_symbol terms) frame
+          | [sort_marker, source] => graph_private_atom backend frame
+              (private_symbol frame
                 {kind = token, hol_type = B.type_of
                    backend sort_marker, source = SOME source, stable = true})
           | _ => raise ERR "cpc_fp_private_parsefn"
@@ -5441,7 +5499,7 @@ in
         else
           let val types = List.map (B.type_of backend) args
               val ty = boolSyntax.list_mk_fun (types, hd types)
-              val head = (#private_symbol terms) frame
+              val head = private_symbol frame
                 {kind = token, hol_type = ty, source = NONE, stable = true}
               val originals = case B.constructor_sources backend of
                   SOME {arguments,...} => arguments
@@ -5453,12 +5511,12 @@ in
               val _ = B.note_constructor_source backend source
           in List.foldl (fn (arg, head) =>
             B.application backend frame (head, arg))
-            head args end
+            (graph_private_reference backend frame head) args end
       fun arithmetic frame token indices args =
         if null indices andalso null args andalso
             List.exists (Lib.equal token)
               ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
-          graph_private_atom backend ((#private_symbol terms) frame
+          graph_private_atom backend frame (private_symbol frame
             {kind = token, hol_type = if token = "@div_by_zero"
                then realSyntax.real_ty else intSyntax.int_ty,
              source = NONE, stable = true})
@@ -5483,6 +5541,7 @@ in
          ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
          ("@bvsize", cpc_bv_parsefn)]
       val _ = install_graph_cpc_constructors backend limits terms
+        private_symbol
     in () end
 
 
@@ -5868,7 +5927,8 @@ in
         in SOME (if push then GraphAssumePush (name, value)
           else GraphAssume (name, value)) end
       fun checked_next () = next () handle P.CPCProofEOF =>
-        error "unexpected end of CPC proof wrapper"
+        raise ERR "parse_stream_with_version"
+          "unexpected end of CPC proof wrapper"
     in {next = checked_next, terms = terms, cvc_version = version} end
 
 

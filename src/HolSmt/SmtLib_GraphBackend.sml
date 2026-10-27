@@ -191,6 +191,29 @@ struct
   fun is_blocked backend frame key =
     (ignore (checked_frame backend frame);
      HOLset.member (frame_blockers frame, key))
+  fun binder_operand (backend as Backend {same_value,...})
+      frame source node =
+    let
+      val _ = checked_frame backend frame
+      val spend = syntax_spend backend
+      fun lexical variable =
+        let val (name,ty) = Term.dest_var variable
+        in ((name,name,ty),NONE) end
+      fun original [] = node
+        | original ((old,bound)::rest) =
+            (spend 1;
+             if same_value (bound,node) then old else original rest)
+    in case C.view spend source of
+        C.Variable variable => lexical variable
+      | C.Atom atom =>
+          if Term.is_var atom then
+            binder_reference backend (#1 (Term.dest_var atom))
+              (original (frame_identities frame))
+          else raise Feedback.mk_HOL_ERR "SmtLib_Parser" "parse_binder_term"
+            "CPC @list binder contains a non-variable term"
+      | _ => raise Feedback.mk_HOL_ERR "SmtLib_Parser" "parse_binder_term"
+          "CPC @list binder contains a non-variable term"
+    end
   fun check_blocked blocked key =
     if HOLset.member (blocked, key) then
       raise ERR "lookup" "proof binding is not a term"

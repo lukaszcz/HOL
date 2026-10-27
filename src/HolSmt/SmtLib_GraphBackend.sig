@@ -92,6 +92,10 @@ sig
      NONE denotes an ordinary lexical binder. *)
   type 'a binder = (string * string * Type.hol_type) * 'a option
   val binder_reference : 'a backend -> string -> 'a -> 'a binder
+  (* Inline binder operands are checked against unnormalized source syntax.
+     Preserve lexical LET names and recover captured private allocation IDs. *)
+  val binder_operand : 'a backend -> 'a frame ->
+    SmtLib_ConstructorSyntax.syntax -> 'a -> 'a binder
   val abstraction_with_identity : 'a backend -> 'a frame ->
     {dictionary_binding:bool,binder:'a binder} -> ('a frame -> 'a) -> 'a
   (* CPC definition aliases have native lexical capture semantics. Rebind
