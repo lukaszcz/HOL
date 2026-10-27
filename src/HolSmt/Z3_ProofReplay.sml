@@ -9375,6 +9375,10 @@ in
     let
       val _ = List.app (fn node =>
         ignore (ReplayGraph.type_of graph node)) variables
+      val variables = List.filter (fn node =>
+        (observe 1;case ReplayGraph.view graph node of
+           ReplayGraph.Variable (ReplayGraph.SolverFlexible,_) => true
+         | _ => false)) variables
       fun compare pair = (observe 1;Int.compare pair)
       fun dependency event = observe (case event of
           ReplayGraph.DependencyExcluded items =>
@@ -9398,18 +9402,52 @@ in
            Redblackset.member (free,ReplayGraph.node_id node))) variables
     end
 
+  (* All generic handlers see the SAME named target, premise, argument and
+     declaration namespace. Handler spelling must not bypass graph identity.
+     In particular an operand hole grants no solver-definition authority. *)
+  fun graph_local_proofterm rule metadata conclusion premise_terms arguments =
+    let
+      val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
+      fun one constructor = case pts of
+          [premise] => constructor (premise,conclusion)
+        | _ => raise ERR "graph_bounded_local_law" "wrong premise arity"
+      fun indexed constructor = constructor
+        (case metadata of SOME value => value
+          | NONE => raise ERR "graph_bounded_local_law"
+              "missing theory lemma metadata",pts,conclusion)
+    in case #replay_handler (rule : Z3_Proof.proof_rule) of
+        "apply_def" => one APPLY_DEF
+      | "commutativity" => COMMUTATIVITY conclusion
+      | "def_axiom" => DEF_AXIOM conclusion
+      | "elim_unused" => ELIM_UNUSED conclusion
+      | "intro_def" => INTRO_DEF conclusion
+      | "nnf_neg" => NNF_NEG (pts,conclusion)
+      | "nnf_pos" => NNF_POS (pts,conclusion)
+      | "quant_inst" => QUANT_INST (arguments,conclusion)
+      | "rewrite" => REWRITE conclusion
+      | "skolem" => SKOLEM conclusion
+      | "th_lemma[arith]" => indexed TH_LEMMA_ARITH
+      | "th_lemma[array]" => indexed TH_LEMMA_ARRAY
+      | "th_lemma[basic]" => indexed TH_LEMMA_BASIC
+      | "th_lemma[bv]" => indexed TH_LEMMA_BV
+      | "th_lemma[datatype]" => indexed TH_LEMMA_DATATYPE
+      | "th_lemma[seq]" => indexed TH_LEMMA_SEQ
+      | "th_lemma[char]" => indexed TH_LEMMA_CHAR
+      | "th_lemma[advanced]" => indexed TH_LEMMA_ADVANCED
+      | _ => raise Conv.UNCHANGED
+    end
+
+  fun graph_numeric_law observe graph scope rule inputs =
+    #replay_handler (rule : Z3_Proof.proof_rule) = "th_lemma[arith]" orelse
+    SmtReplayArithmetic.has_numeric_operand graph scope
+      {inputs=inputs,observe=fn () => observe 1}
+
   fun graph_bounded_local_law_using observe graph definitions
       (proof : Z3_GraphProofParser.proof)
       ({rule,metadata,target,premises,arguments,law}
         : Z3_GraphProofReplay.local_request) =
-    if #replay_handler rule = "th_lemma[arith]" orelse
-        ((#replay_handler rule = "rewrite" orelse
-          #replay_handler rule = "th_lemma[basic]") andalso
-         (* Generic procedures prove the premise implication, not just the
-            target: e.g. numeric contradictions can conclude Boolean F. *)
-         SmtReplayArithmetic.has_numeric_operand graph
-           (ReplayGraph.node_scope graph law)
-           {inputs=target :: premises,observe=fn () => observe 1}) then
+    if graph_numeric_law observe graph (ReplayGraph.node_scope graph law)
+        rule (target :: premises @ List.map #node arguments) then
       let
         val limit = SmtResource.max_bitblast_term_nodes
         val _ = List.app (fn node =>
@@ -9421,22 +9459,20 @@ in
           (law :: List.map #node arguments)
         val selected = ref ([] : ReplayGraph.node list)
         val arity = 1 + length premises
+        val argument_nodes = List.map #node arguments
+        val argument_arity = length argument_nodes
         val variables = graph_arithmetic_variables observe graph
-          (target :: premises) (#vars proof)
+          (target :: premises @ argument_nodes) (#vars proof)
         fun procedure terms =
           let
             val conclusion = hd terms
             val premise_terms = List.take (tl terms,length premises)
-            val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
-            val pt = if #replay_handler rule = "rewrite" then
-                REWRITE conclusion
-              else (if #replay_handler rule = "th_lemma[basic]" then
-                  TH_LEMMA_BASIC else TH_LEMMA_ARITH)
-                (case metadata of SOME value => value
-                   | NONE => raise ERR "graph_bounded_local_law"
-                       "missing theory lemma metadata",pts,conclusion)
+            val argument_terms = List.take
+              (List.drop (terms,arity),argument_arity)
+            val pt = graph_local_proofterm rule metadata conclusion
+              premise_terms argument_terms
             val vars = HOLset.addList
-              (Term.empty_tmset,List.drop (terms,arity))
+              (Term.empty_tmset,List.drop (terms,arity+argument_arity))
             val ordinary = mk_proof
               (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),
                vars,[],#z3_version proof)
@@ -9454,7 +9490,7 @@ in
                theorem used end
         val result = SmtReplayArithmetic.prove graph
           (ReplayGraph.node_scope graph law)
-          {inputs = target :: premises @ variables,
+          {inputs = target :: premises @ argument_nodes @ variables,
            template_limit = limit,observe = observe,procedure = procedure}
         val selected_law = SmtReplayRules.implication graph
           (ReplayGraph.node_scope graph law) (!selected) target
@@ -9476,36 +9512,8 @@ in
         (ReplayGraph.block_reachable graph nodes)
       val conclusion = ReplayGraph.representative graph target
       val premise_terms = List.map (ReplayGraph.representative graph) premises
-      val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
-      fun one constructor = case pts of
-          [premise] => constructor (premise,conclusion)
-        | _ => raise ERR "graph_bounded_local_law" "wrong premise arity"
-      fun indexed constructor = constructor
-        (case metadata of SOME value => value
-          | NONE => raise ERR "graph_bounded_local_law"
-              "missing theory lemma metadata",pts,conclusion)
-      val pt = case #replay_handler rule of
-          "apply_def" => one APPLY_DEF
-        | "commutativity" => COMMUTATIVITY conclusion
-        | "def_axiom" => DEF_AXIOM conclusion
-        | "elim_unused" => ELIM_UNUSED conclusion
-        | "intro_def" => INTRO_DEF conclusion
-        | "nnf_neg" => NNF_NEG (pts,conclusion)
-        | "nnf_pos" => NNF_POS (pts,conclusion)
-        | "quant_inst" => QUANT_INST
-            (List.map (ReplayGraph.representative graph o #node)
-              arguments,conclusion)
-        | "rewrite" => REWRITE conclusion
-        | "skolem" => SKOLEM conclusion
-        | "th_lemma[arith]" => indexed TH_LEMMA_ARITH
-        | "th_lemma[array]" => indexed TH_LEMMA_ARRAY
-        | "th_lemma[basic]" => indexed TH_LEMMA_BASIC
-        | "th_lemma[bv]" => indexed TH_LEMMA_BV
-        | "th_lemma[datatype]" => indexed TH_LEMMA_DATATYPE
-        | "th_lemma[seq]" => indexed TH_LEMMA_SEQ
-        | "th_lemma[char]" => indexed TH_LEMMA_CHAR
-        | "th_lemma[advanced]" => indexed TH_LEMMA_ADVANCED
-        | _ => raise Conv.UNCHANGED
+      val pt = graph_local_proofterm rule metadata conclusion premise_terms
+        (List.map (ReplayGraph.representative graph o #node) arguments)
       val vars = HOLset.addList (Term.empty_tmset,
         List.map (ReplayGraph.representative graph) (#vars proof))
       val ordinary = mk_proof
@@ -9584,38 +9592,10 @@ in
         List.map (ReplayGraph.representative graph) (#vars proof)
       (* Both routes use the same ordinary handler and state_define recorder.
          Arithmetic supplies named operands, never a second proof procedure. *)
-      fun replay conclusion premise_terms variable_terms =
+      fun replay conclusion premise_terms argument_terms variable_terms =
         let
-          val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
-          fun one constructor = case pts of
-              [premise] => constructor (premise,conclusion)
-            | _ => raise ERR "graph_bounded_local_law" "wrong premise arity"
-          fun indexed constructor = constructor
-            (case metadata of SOME value => value
-              | NONE => raise ERR "graph_bounded_local_law"
-                  "missing theory lemma metadata",pts,conclusion)
-          val pt = case #replay_handler rule of
-              "apply_def" => one APPLY_DEF
-            | "commutativity" => COMMUTATIVITY conclusion
-            | "def_axiom" => DEF_AXIOM conclusion
-            | "elim_unused" => ELIM_UNUSED conclusion
-            | "intro_def" => INTRO_DEF conclusion
-            | "nnf_neg" => NNF_NEG (pts,conclusion)
-            | "nnf_pos" => NNF_POS (pts,conclusion)
-            | "quant_inst" => QUANT_INST
-                (List.map (ReplayGraph.representative graph o #node)
-                  arguments,conclusion)
-            | "rewrite" => REWRITE conclusion
-            | "skolem" => SKOLEM conclusion
-            | "th_lemma[arith]" => indexed TH_LEMMA_ARITH
-            | "th_lemma[array]" => indexed TH_LEMMA_ARRAY
-            | "th_lemma[basic]" => indexed TH_LEMMA_BASIC
-            | "th_lemma[bv]" => indexed TH_LEMMA_BV
-            | "th_lemma[datatype]" => indexed TH_LEMMA_DATATYPE
-            | "th_lemma[seq]" => indexed TH_LEMMA_SEQ
-            | "th_lemma[char]" => indexed TH_LEMMA_CHAR
-            | "th_lemma[advanced]" => indexed TH_LEMMA_ADVANCED
-            | _ => raise Conv.UNCHANGED
+          val pt = graph_local_proofterm rule metadata conclusion
+            premise_terms argument_terms
           val vars = HOLset.addList (Term.empty_tmset,variable_terms)
           val ordinary = mk_proof
             (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),vars,[],
@@ -9647,23 +9627,23 @@ in
         in List.app (fn term => if HOLset.isSubset
             (Term.FVL [term] Term.empty_tmset,known) then ()
             else raise Conv.UNCHANGED) recorded end
-      val arithmetic = #replay_handler rule = "th_lemma[arith]" orelse
-        ((#replay_handler rule = "rewrite" orelse
-          #replay_handler rule = "th_lemma[basic]") andalso
-         SmtReplayArithmetic.has_numeric_operand graph scope
-           {inputs=target :: premises,observe=fn () => ()})
+      val argument_nodes = List.map #node arguments
+      val argument_arity = length argument_nodes
+      val arithmetic = graph_numeric_law (fn _ => ()) graph scope rule
+        (target :: premises @ argument_nodes)
       val (theorem,recorded,named_definitions) = if arithmetic then
         let
           val count = ref 0
           val arity = 1 + List.length premises
           val variables = graph_arithmetic_variables (fn _ => ()) graph
-            (target :: premises) (#vars proof)
+            (target :: premises @ argument_nodes) (#vars proof)
           fun procedure terms =
             let
               val operands = List.take (terms,arity)
               val premise_terms = tl operands
               val produced = replay (hd operands) premise_terms
-                (List.drop (terms,arity))
+                (List.take (List.drop (terms,arity),argument_arity))
+                (List.drop (terms,arity+argument_arity))
               val theorem = #theorem produced
               val recorded = #definitions produced
               val _ = admitted_result theorem recorded premise_terms terms
@@ -9682,7 +9662,7 @@ in
             in List.foldr (fn (term,result) => Thm.DISCH term result)
                  theorem (recorded @ premise_terms) end
           val result = SmtReplayArithmetic.prove graph scope
-            {inputs = target :: premises @ variables,
+            {inputs = target :: premises @ argument_nodes @ variables,
              template_limit = limit,observe = fn _ => (),
              procedure = procedure}
           (* Read transported definition nodes from the checked result, not
@@ -9710,7 +9690,9 @@ in
               (recorded @ premise_terms)
         in (theorem,recorded,SOME nodes) end
       else
-        let val produced = replay conclusion premise_terms variable_terms
+        let val produced = replay conclusion premise_terms
+              (List.map (ReplayGraph.representative graph) argument_nodes)
+              variable_terms
         in (#theorem produced,#definitions produced,NONE) end
       val _ = admitted_result theorem recorded premise_terms
         (conclusion :: premise_terms @ variable_terms)

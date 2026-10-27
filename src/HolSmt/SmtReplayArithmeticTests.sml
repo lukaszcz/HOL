@@ -789,6 +789,171 @@ struct
                arguments=[],law=law}))) end
     in check (equation zero);check (equation other) end)
 
+  (* Generic rule names must not restore native-name equality or grant
+     definition authority to arithmetic holes. Pair generic rejections with
+     valid requests through BOTH local producers, so unsupported dispatch or
+     resource refusal cannot masquerade as an identity check. *)
+  fun z3_generic_identities () = with_graph (fn graph => fn root =>
+    let
+      val scope = G.new_scope graph root []
+      val native = ``arithmetic_generic:int``
+      val rigid = G.variable graph root G.RigidSource native
+      val other = G.variable graph root G.Generated native
+      val flexible = G.variable graph root G.SolverFlexible native
+      val unused = G.variable graph scope G.SolverFlexible native
+      val _ = require "generic controls need distinct same-native IDs"
+        (rigid <> other andalso rigid <> flexible andalso
+         flexible <> unused andalso List.all (fn node =>
+           G.representative graph node ~~ native)
+             [rigid,other,flexible,unused])
+      fun app operator operand = G.application graph scope (operator,operand)
+      fun binary constant left right =
+        app (app (G.constant graph scope constant) left) right
+      val int_eq = Term.rator (Term.rator ``(a:int) = b``)
+      val bool_eq = Term.rator (Term.rator ``(p:bool) = q``)
+      val eq = binary int_eq
+      val iff = binary bool_eq
+      val disj = binary boolSyntax.disjunction
+      fun neg node = app (G.constant graph scope boolSyntax.negation) node
+      val zero = import graph scope ``0:int``
+      val atom = eq rigid zero
+      val different_atom = eq other zero
+      fun located node:F.term =
+        {node=node,scope=scope,binder_blocks=[],source_syntax=NONE,
+         occurrence=SmtLib_Parser.ConstructionOccurrence
+           {value=node,role=SmtLib_Parser.ConstructionAtom,
+            token="generic-arithmetic",children=[]}}
+      fun proof variables : Z3_GraphProofParser.proof =
+        {steps=Redblackmap.mkDict Z3_GraphProofParser.compare_id,
+         root=Z3_GraphProofParser.Anonymous 0,vars=variables,
+         z3_version="4.15.3",close=fn () => ()}
+      fun request name target premises arguments : ZR.local_request =
+        {rule=valOf (Z3_Proof.lookup_rule "4.15.3"
+           (String.translate (fn #"_" => "-" | c => String.str c) name)),
+         metadata=NONE,
+         target=target,premises=premises,arguments=List.map located arguments,
+         law=R.implication graph scope premises target}
+      fun compatibility variables request = Option.map
+        (fn theorem => {definitions=[],theorem=theorem})
+        (Z3_ProofReplay.graph_bounded_local_law graph []
+          (proof variables) request)
+      fun recorded variables request =
+        Z3_ProofReplay.graph_bounded_recorded_local_law graph scope limit []
+          (proof variables) request
+      fun declines action =
+        (case action () of NONE => true | SOME _ => false)
+        handle Conv.UNCHANGED => true
+          | HolSatLib.SAT_cex _ => true
+          | Feedback.HOL_ERR detail =>
+              if SmtResource.is_resource_gate detail then
+                raise Feedback.HOL_ERR detail
+              else true
+      fun positive label produce (request:ZR.local_request) =
+        (case produce request of
+          NONE => raise Fail (label ^ " declined valid generic arithmetic")
+        | SOME {definitions,theorem} =>
+            (require (label ^ " invented generic definitions")
+               (null definitions);
+             exact (G.representative graph (#law request)) [] theorem))
+        handle error => raise Fail (label ^ " positive " ^
+          #replay_handler (#rule request) ^ ": " ^
+          General.exnMessage error)
+      fun paired label produce name good bad premises arguments =
+        (positive label produce (request name good premises arguments);
+         require (label ^ " accepted mismatched graph IDs for " ^ name)
+           (declines (fn () => produce
+             (request name bad premises arguments))))
+      val binder_scope = G.new_scope graph scope []
+      val bound = G.fresh_bound_variable graph binder_scope ``u:bool``
+      val abstraction = G.recorded_abstraction graph scope limit
+        {binder=bound,body=atom,body_frame=binder_scope}
+      val quantified = app
+        (G.constant graph scope ``$! : (bool -> bool) -> bool``) abstraction
+      (* The predicate stays uninterpreted: mismatched instantiation must
+         not become valid just because an arithmetic universal is false. *)
+      val predicate = import graph scope
+        ``arithmetic_predicate:int -> int -> bool``
+      val instance_scope = G.new_scope graph scope []
+      val instance_bound =
+        G.fresh_bound_variable graph instance_scope ``u:int``
+      val universal_body = G.application graph instance_scope
+        (G.application graph instance_scope (predicate,instance_bound),rigid)
+      val universal = app
+        (G.constant graph scope ``$! : (int -> bool) -> bool``)
+        (G.recorded_abstraction graph scope limit
+          {binder=instance_bound,body=universal_body,
+           body_frame=instance_scope})
+      val instance = app (app predicate other) rigid
+      val instantiation = disj (neg universal) instance
+      fun check (label,produce) =
+        (paired label produce "commutativity"
+           (iff (eq rigid other) (eq other rigid))
+           (iff (eq rigid other) (eq rigid rigid)) [] [];
+         paired label produce "apply_def"
+           (eq zero rigid) (eq zero other) [atom] [];
+         paired label produce "def_axiom"
+           (disj (neg atom) atom) (disj (neg atom) different_atom) [] [];
+         paired label produce "elim_unused"
+           (iff quantified atom) (iff quantified different_atom) [] [];
+         positive label produce
+           (request "quant_inst" instantiation [] [other]);
+         positive label produce (request "quant_inst"
+           (disj (neg universal) (app (app predicate rigid) rigid))
+           [] [rigid]);
+         (* quant-inst's documented Metis repair can prove a different
+            valid instance regardless of its argument. Use a mismatched
+            FREE parameter, not just another valid bound substitution. *)
+         require (label ^ " merged quant-inst target/argument graph names")
+           (declines (fn () => produce (request "quant_inst"
+             (disj (neg universal) (app (app predicate other) other))
+             [] [other])));
+         require (label ^ " merged quant-inst bound and free argument IDs")
+           (declines (fn () => produce (request "quant_inst"
+             (disj (neg universal) (app (app predicate rigid) other))
+             [] [rigid]))))
+      val _ = List.app check
+        [("compatibility",compatibility []),("recorded",recorded [])]
+      (* Only the actual visible SolverFlexible declaration may authorize
+         state_define. An unused same-native declaration must not replace it
+         in either list order; a listed rigid node is still rigid. *)
+      fun introduction node = request "intro_def" (eq node zero) [] []
+      fun rejects_definition message variables node =
+        require message (declines (fn () =>
+          recorded variables (introduction node)))
+      val _ = rejects_definition
+        "rigid intro-def borrowed same-native flexible authority"
+        [flexible,unused] rigid
+      val _ = rejects_definition "listing rigid vars granted authority"
+        [rigid] rigid
+      val _ = rejects_definition "listing generated vars granted authority"
+        [other] other
+      val _ = rejects_definition "unlisted flexible target gained authority"
+        [unused] flexible
+      fun defines variables node =
+        let val request = introduction node
+            val target = #target request
+        in case recorded variables request of
+          NONE => raise Fail "actual flexible intro-def was refused"
+        | SOME {definitions,theorem} =>
+            (require "intro-def recorded another declaration's graph ID"
+               (definitions = [target]);
+             require "intro-def lost its actual flexible endpoint"
+               (case R.operands graph boolSyntax.equality 2
+                   (hd definitions) of
+                  SOME [left,right] => left=node andalso right=zero
+                | _ => false);
+             exact (G.representative graph
+               (R.implication graph scope [target] target)) [] theorem)
+        end
+      val _ = defines [flexible] flexible
+      val _ = List.app (fn variables =>
+        (defines variables flexible;defines variables unused))
+        [[flexible,unused],[unused,flexible]]
+      val _ = G.close_scope graph instance_scope
+      val _ = G.close_scope graph binder_scope
+      val _ = G.close_scope graph scope
+    in () end)
+
   fun run () =
     (operators ();negatives ();classification ();
      annotation_allowance ();annotation_frontier ();
@@ -797,5 +962,6 @@ struct
      cpc_cases ();cpc_packet_boundaries ();cpc_annotations ();
      structured_cases ();parsed_clause ();
      (* The fixed selected Z3 worker is exercised by its parsed fixture. *)
-     z3_cases ();z3_false_target ();z3_rigidity ())
+     z3_cases ();z3_false_target ();z3_rigidity ();
+     z3_generic_identities ())
 end
