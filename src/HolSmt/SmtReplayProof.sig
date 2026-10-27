@@ -101,6 +101,10 @@ sig
     realization_tables_plan -> IntInf.int
   val freeze_owned_realization_tables_plan :
     SmtReplayInvocationWork.portfolio -> realization_tables_plan -> block
+  (* Same authenticated tables, with actual-Hyp sparse Source realization.
+     Does not repeat discovery, frontier admission or table preparation. *)
+  val freeze_owned_needed_realization_tables_plan :
+    SmtReplayInvocationWork.portfolio -> realization_tables_plan -> block
   val record_conversion : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     {source : SmtReplayGraph.node,source_view : SmtReplayGraph.source,
      target : SmtReplayGraph.node,target_view : SmtReplayGraph.source,

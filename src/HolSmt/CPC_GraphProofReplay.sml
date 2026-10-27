@@ -94,7 +94,8 @@ struct
     {node : G.node, provenance : term_provenance,
      clause : C.occurrences option}
   datatype step = Step of
-    {serial : int, fact : fact, premises : step list, recipe : recipe}
+    {serial : int, fact : fact, premises : step list, recipe : recipe,
+     pruned : bool}
   and recipe = Assumption | PreprocessedSource | Equality of string
     | Transitivity | Boolean
     | BooleanSchemas of K.graph_conversion list
@@ -113,8 +114,19 @@ struct
   fun fact (Step {fact,...}) = fact
   fun serial (Step {serial,...}) = serial
   fun node step = #node (fact step)
-  fun premise_list (Step {premises,...}) = premises
-  fun recipe (Step {recipe,...}) = recipe
+  fun premise_list (Step {recipe=ClosedLaw (_,_,SOME (_,_,selected)),...}) =
+        selected
+    | premise_list (Step {recipe=ObligationLaw
+        {selected=SOME (_,_,selected),...},...}) = selected
+    | premise_list (Step {premises,...}) = premises
+  fun pruned (Step {pruned,...}) = pruned
+  fun recorded_recipe (Step {recipe,...}) = recipe
+  fun recipe step = case recorded_recipe step of
+      ClosedLaw (_,_,SOME (law,proof,_)) => ClosedLaw (law,proof,NONE)
+    | ObligationLaw {obligation,selected=SOME (law,proof,_),...} =>
+        ObligationLaw {obligation=obligation,law=law,theorem=proof,
+          selected=NONE}
+    | original => original
   fun pair_compare ((a,b),(c,d)) = case Int.compare (a,c) of
       EQUAL => if b = d then EQUAL else if b then GREATER else LESS
     | order => order
@@ -292,8 +304,21 @@ struct
       fun make id current premises recipe =
         let val index = !counter
             val _ = counter := index+1
+            (* Scheduling metadata only. Propagate through Scope without
+               importing its local inventory into the enclosing block. *)
+            val selected = action (fn () =>
+              let fun tick () = Option.app
+                    (fn work => W.spend work 1) owned_work
+                  fun any [] = (tick ();false)
+                    | any (step::rest) =
+                        (tick ();pruned step orelse any rest)
+              in tick ();case recipe of
+                  ClosedLaw (_,_,SOME _) => true
+                | ObligationLaw {selected=SOME _,...} => true
+                | Scope {body,...} => pruned body
+                | _ => any premises end)
         in save id (Step {serial = index,fact = current,
-                         premises = premises,recipe = recipe}) end
+              premises = premises,recipe = recipe,pruned = selected}) end
       fun find id = case Redblackmap.peek (!known,id) of SOME step => step
         | NONE => raise ERR "discover" ("unknown/scoped-out premise " ^ id)
       fun graph_terms arguments = List.mapPartial
@@ -1977,9 +2002,12 @@ struct
                              SOME clause => C.to_target (clause_of step) clause
                            | NONE => raise ERR "assemble"
                                "recorded clause alignment failed")
-                    | ClosedLaw (law,_,_) => apply_law
-                        {law = (law,source law),target = target,
-                         premises = premises ()}
+                    | ClosedLaw (law,_,_) =>
+                        if law=target andalso null (premise_list step) then
+                          source law
+                        else apply_law
+                          {law = (law,source law),target = target,
+                           premises = premises ()}
                     | ObligationLaw {obligation,law,...} => apply_law
                         {law = (law,source law),target = target,
                           premises = premises () @
@@ -2001,22 +2029,6 @@ struct
         let
           val _ = validate_owned work
           val frame = SmtReplayOwnedScopeReceipt.root work
-          (* Ordinary fitting assembly keeps its original law/programme.
-             Only bounded chunks use the retained actual-Hyp law. Both
-             versions were checked before either can be lifted. *)
-          val recorded_recipe = recipe
-          fun recipe step = case recorded_recipe step of
-              ClosedLaw (_,_,SOME (law,proof,_)) =>
-                ClosedLaw (law,proof,NONE)
-            | ObligationLaw {obligation,selected=SOME (law,proof,_),...} =>
-                ObligationLaw {obligation=obligation,law=law,theorem=proof,
-                  selected=NONE}
-            | original => original
-          val recorded_premises = premise_list
-          fun premise_list step = case recorded_recipe step of
-              ClosedLaw (_,_,SOME (_,_,premises)) => premises
-            | ObligationLaw {selected=SOME (_,_,premises),...} => premises
-            | _ => recorded_premises step
           val cap = IntInf.fromInt template_limit
           fun meta operation = W.with_step work operation
           fun tick amount = W.spend work amount
@@ -2437,7 +2449,8 @@ struct
                     else (fn _ => NONE)
                   fun selected_step (step as Step {serial,fact,...}) =
                     (tick 1;Step {serial=serial,fact=fact,
-                      premises=premise_list step,recipe=recipe step})
+                      premises=premise_list step,recipe=recipe step,
+                      pruned=pruned step})
                   fun law_source target = case List.find
                       (fn (saved,_) => (tick 1;saved=target))
                         obligation_edges of
@@ -3310,6 +3323,16 @@ struct
             " serial=" ^ Int.toString (serial root) ^ " locals=" ^
             Int.toString (List.length local_assumptions))
           val _ = complete_phase "complete.enter"
+          fun bounded_result work =
+            let
+              val receipt = bounded_complete work root
+                local_assumptions ancestors
+              val receipt = List.foldr (fn (hypothesis,receipt) =>
+                P.discharge_source_receipt_with_work work receipt
+                  hypothesis) receipt local_assumptions
+              val theorem = P.source_realization_theorem_for work receipt
+            in raise BoundedResult theorem end
+          val pruned_law = pruned root
           val seen = ref (Redblackset.empty Int.compare)
           val witnesses = ref (Redblackmap.mkDict Int.compare)
           val deferred = ref ([] : (step * G.node) list)
@@ -3390,6 +3413,15 @@ struct
                | _ => (law_nodes := law step @ !law_nodes;
                        List.app laws (premise_list step)))
           val _ = laws root
+          (* Deferred/scope witnesses can retain original Source Hyp. The
+             literal sparse finalizer admits only closed supplied laws;
+             use genuine Source-cut receipts for these open imports. *)
+          val _ = case owned_work of SOME work =>
+              if pruned_law andalso
+                  (not (null local_assumptions) orelse
+                   not (null (!obligations)) orelse not (null (!deferred)))
+                then bounded_result work else ()
+            | NONE => ()
           val _ = List.app (fn obligation =>
             witnesses := Redblackmap.insert
               (!witnesses,G.node_id obligation,
@@ -3407,16 +3439,6 @@ struct
                     | NONE => raise ERR "owned_replay" "missing preprocessing"
                   val extras = local_assumptions @ !law_nodes @ !obligations @
                     List.map #2 (!deferred)
-                  fun bounded_result () =
-                    let
-                      val receipt = bounded_complete work root
-                        local_assumptions ancestors
-                      val receipt = List.foldr (fn (hypothesis,receipt) =>
-                        P.discharge_source_receipt_with_work work receipt
-                          hypothesis) receipt local_assumptions
-                      val theorem =
-                        P.source_realization_theorem_for work receipt
-                    in raise BoundedResult theorem end
                   (* The original frontier retains every ordered Source
                      slot, including equal endpoints. source_nodes is
                      exactly its original prefix followed by extras. Each
@@ -3433,7 +3455,7 @@ struct
                     " minimum=" ^ IntInf.toString source_minimum)
                   val _ = if source_minimum<=
                       IntInf.fromInt template_limit then () else
-                    bounded_result ()
+                    bounded_result work
                   val _ = complete_phase "frontier.before"
                   val frontier =
                     P.prepare_original_realization_frontier_with_extras work
@@ -3454,7 +3476,7 @@ struct
                   val _ = if #raw footprint<=IntInf.fromInt template_limit
                       andalso #inclusive footprint<=
                         IntInf.fromInt template_limit then () else
-                    bounded_result ()
+                    bounded_result work
               in action (fn () =>
                    let val _ = complete_phase "tables.before"
                        val tables = SmtResource.profile_phase
@@ -3462,9 +3484,15 @@ struct
                          (P.prepare_owned_realization_tables work) frontier
                        val _ = complete_phase "tables.after"
                        val _ = complete_phase "freeze.before"
+                       (* A common context restores discarded Sources.
+                          Select sparse realization of the SAME retained
+                          frontier, not another discovery or table pass. *)
+                       val freeze = if pruned_law then
+                           P.freeze_owned_needed_realization_tables_plan
+                         else P.freeze_owned_realization_tables_plan
                        val block =
                          SmtResource.profile_phase "cvc/graph-freeze"
-                           (P.freeze_owned_realization_tables_plan work) tables
+                           (freeze work) tables
                        val _ = complete_phase "freeze.after"
                    in block end)
               end
