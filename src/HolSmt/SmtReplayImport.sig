@@ -25,6 +25,10 @@ sig
      not just its domain (standard count_body uses REFL/Beta at the range). *)
   val bounded_raw_size_with_type_check :
     (Type.hol_type -> unit) -> int -> Term.term -> int option
+  (* Same visitor and metric, observing every actual public syntax visit. *)
+  val bounded_raw_size_with_type_check_observed :
+    {check_type:Type.hol_type -> unit,observe:unit -> unit,limit:int} ->
+    Term.term -> int option
 
   (* Sealed success from the SAME genuine bounded raw-size programme.
      This is a syntax upper bound, not a theorem, Scope or Source receipt. *)

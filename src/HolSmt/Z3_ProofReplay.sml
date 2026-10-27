@@ -9367,11 +9367,64 @@ in
      arguments. It proves a closed conditional lemma before graph assembly;
      it never receives an expanded large premise theorem. Larger inputs stay
      with their graph rule adapter. *)
-  fun graph_bounded_local_law graph definitions
+  fun graph_bounded_local_law_using observe graph definitions
       (proof : Z3_GraphProofParser.proof)
       ({rule,metadata,target,premises,arguments,law}
         : Z3_GraphProofReplay.local_request) =
-    let
+    if #replay_handler rule = "th_lemma[arith]" orelse
+        ((#replay_handler rule = "rewrite" orelse
+          #replay_handler rule = "th_lemma[basic]") andalso
+         SmtReplayArithmetic.has_numeric_operand graph
+           (ReplayGraph.node_scope graph law)
+           {inputs=[target],observe=fn () => observe 1}) then
+      let
+        val limit = SmtResource.max_bitblast_term_nodes
+        val _ = List.app (fn node =>
+          case ReplayGraph.unfolded_nodes_observed
+              (fn () => observe 1) graph
+              ReplayGraph.BinderInclusiveNodes limit node of
+            SOME count => if count <= limit then () else raise Conv.UNCHANGED
+          | NONE => raise Conv.UNCHANGED)
+          (law :: List.map #node arguments)
+        val selected = ref ([] : ReplayGraph.node list)
+        fun procedure terms =
+          let
+            val conclusion = hd terms
+            val premise_terms = tl terms
+            val pts = List.map (THEOREM o Thm.ASSUME) premise_terms
+            val pt = if #replay_handler rule = "rewrite" then
+                REWRITE conclusion
+              else (if #replay_handler rule = "th_lemma[basic]" then
+                  TH_LEMMA_BASIC else TH_LEMMA_ARITH)
+                (case metadata of SOME value => value
+                   | NONE => raise ERR "graph_bounded_local_law"
+                       "missing theory lemma metadata",pts,conclusion)
+            val vars = Term.FVL terms Term.empty_tmset
+            val ordinary = mk_proof
+              (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),
+               vars,[],#z3_version proof)
+            val theorem = replay_root_with_definitions_for_test
+              definitions ordinary
+            val hypotheses = Thm.hypset theorem
+            val retained = ref Term.empty_tmset
+            val used = List.filter (fn (_,term) =>
+              if HOLset.member (hypotheses,term) andalso
+                  not (HOLset.member (!retained,term)) then
+                (retained := HOLset.add (!retained,term);true)
+              else false) (ListPair.zip (premises,premise_terms))
+            val _ = selected := List.map #1 used
+          in List.foldr (fn ((_,term),result) => Thm.DISCH term result)
+               theorem used end
+        val result = SmtReplayArithmetic.prove graph
+          (ReplayGraph.node_scope graph law)
+          {inputs = target :: premises,
+           template_limit = limit,observe = observe,procedure = procedure}
+        val selected_law = SmtReplayRules.implication graph
+          (ReplayGraph.node_scope graph law) (!selected) target
+        val aligned = Thm.EQ_MP (Thm.ALPHA (Thm.concl (#theorem result))
+          (ReplayGraph.representative graph selected_law)) (#theorem result)
+      in SOME aligned end
+    else let
       val limit = SmtResource.max_bitblast_term_nodes
       fun admitted node =
         case ReplayGraph.unfolded_nodes graph
@@ -9441,6 +9494,8 @@ in
         (ReplayGraph.representative graph selected_law)) conditional
     in if List.null (Thm.hyp aligned) then SOME aligned else NONE end
     handle Conv.UNCHANGED => NONE
+
+  val graph_bounded_local_law = graph_bounded_local_law_using (fn _ => ())
 
   fun record_definition_occurrences (s : state) : state = {
     allowed_asserted_hyps = #allowed_asserted_hyps s,

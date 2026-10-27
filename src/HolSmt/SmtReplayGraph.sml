@@ -2103,6 +2103,12 @@ struct
   fun binder_closure g caller node =
     closure_child_binder g caller (closure_root g caller node)
 
+  fun recorded_binder_closure (g : graph) caller node =
+    (check_scope g caller;usable g caller node;
+     case Redblackmap.peek (!(#binder_closures g),node_id node) of
+       NONE => NONE
+     | SOME _ => SOME (binder_closure g caller node))
+
   fun checked_binder_closure g caller (BinderClosure {child,record}) =
     let val (_,node) = checked_closure_child g caller child
         val (held as ClosureRecord {node = captured,...}) =

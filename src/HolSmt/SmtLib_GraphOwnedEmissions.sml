@@ -72,8 +72,8 @@ struct
         val sources = W.original_sources expected
         val graph = SmtReplaySource.owning_graph sources
         val definitions = selected expected receipt
-        val local_fixed = Z3_ProofReplay.graph_bounded_local_law
-          graph definitions proof
+        val local_fixed = Z3_ProofReplay.graph_bounded_local_law_using
+          (W.spend_guard_policy expected) graph definitions proof
         val nnf_fixed = Z3_ProofReplay.graph_bounded_nnf graph
         fun protect producer request =
           ((validate_for expected receipt;

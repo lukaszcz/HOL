@@ -344,14 +344,15 @@ struct
       fun admit term = case SmtReplayImport.bounded_raw_size
           ordinary_limit term of SOME _ => ()
         | NONE => admission_failure "ordinary input exceeds caller limit"
-      fun admit_type ty =
+      fun admit_type_using observe ty =
         let fun visit [] _ = ()
               | visit (ty::rest) count =
-                  if count >= ordinary_limit then
+                  (observe ();if count >= ordinary_limit then
                     admission_failure "ordinary type exceeds caller limit"
                   else visit ((if Type.is_vartype ty then [] else
-                    #2 (Type.dest_type ty)) @ rest) (count+1)
+                    #2 (Type.dest_type ty)) @ rest) (count+1))
         in visit [ty] 0 end
+      val admit_type = admit_type_using (fn () => ())
       fun raw node = let val term = G.representative graph node in
         admit term;admit_type (Term.type_of term);term end
       fun legacy step : located_term =
@@ -368,16 +369,50 @@ struct
         let
           val _ = work_checkpoint "bounded.enter" (fn () =>
             " step=" ^ #id step ^ " rule=" ^ #name (#rule step))
-          val inputs = List.map legacy premises
-          val arguments = List.map argument (#args step)
+          val arithmetic_rule = String.isPrefix "arith"
+              (#replay_handler (#rule step)) orelse
+            String.isPrefix "arith-" (#name (#rule step)) orelse
+            String.isPrefix "int_tight_" (#replay_handler (#rule step)) orelse
+            (List.exists (fn handler =>
+               handler = #replay_handler (#rule step))
+               ["eq_resolve","modus_ponens","evaluate"] andalso
+             SmtReplayArithmetic.has_numeric_operand graph scope
+               {inputs=List.map node premises @ term_arguments (#args step) @
+                  (case #conclusion step of NONE => []
+                   | SOME value => [#node value]),
+                observe=fn () => Option.app
+                  (fn work => W.spend_guard_policy work 1) owned_work})
+          fun arithmetic_charge amount = Option.app
+            (fn work => W.spend_guard_policy work amount) owned_work
+          fun arithmetic_observe () = arithmetic_charge 1
+          fun selected_raw node = if not arithmetic_rule then raw node else
+            let val term = G.representative graph node
+                val _ = case
+                    SmtReplayImport.bounded_raw_size_with_type_check_observed
+                    {check_type=admit_type_using arithmetic_observe,
+                     observe=arithmetic_observe,limit=ordinary_limit} term of
+                    SOME _ => ()
+                  | NONE => admission_failure
+                      "ordinary input exceeds caller limit"
+                val _ = admit_type_using arithmetic_observe
+                  (G.type_of graph node)
+            in term end
+          val inputs = List.map (fn step =>
+            {term=selected_raw (node step),
+             provenance= #provenance (fact step)}) premises
+          val arguments = List.map (fn value => case value of
+              Q.GraphTerm term =>
+                {term=selected_raw (#node term),
+                 provenance=occurrence_provenance (#occurrence term)}
+            | _ => argument value) (#args step)
           val conclusion = Option.map
-            (fn value : F.term => {term = raw (#node value),
+            (fn value : F.term => {term = selected_raw (#node value),
               provenance = occurrence_provenance (#occurrence value)})
             (#conclusion step)
           val local_step : CPC_Proof.step =
             {id = #id step,rule = #rule step,premises = #premises step,
              conclusion = conclusion,args = arguments}
-          val (worker_theorem,worker_located,held_clause) =
+          fun ordinary local_step inputs =
             case (owned_work,clause_worker) of
               (SOME work,SOME fixed) =>
                 let val _ = validate_owned work
@@ -386,6 +421,69 @@ struct
                 in (theorem,located,clause) end
             | _ => let val (theorem,located) = worker (local_step,inputs)
                    in (theorem,located,NONE) end
+          val arithmetic_node = ref (NONE : G.node option)
+          fun arithmetic () =
+            let
+              val retained = ref (NONE : (int list * term_provenance) option)
+              val target_nodes = case #conclusion step of NONE => []
+                | SOME value => [#node value]
+              val premise_nodes = List.map node premises
+              val input_nodes = target_nodes @ premise_nodes @
+                term_arguments (#args step)
+              fun located old term : located_term =
+                {term = term,provenance = #provenance old}
+              fun procedure terms =
+                let
+                  val (targets,rest) =
+                    Lib.split_after (length target_nodes) terms
+                  val (pts,args) = Lib.split_after (length premises) rest
+                  val remaining = ref args
+                  fun argument (value,original) = case value of
+                      Q.GraphTerm _ =>
+                        (case !remaining of term::rest =>
+                           (remaining := rest;located original term)
+                         | [] => raise ERR "arithmetic" "missing argument")
+                    | _ => original
+                  val args = ListPair.mapEq argument (#args step,arguments)
+                  val local_step : CPC_Proof.step =
+                    {id = #id step,rule = #rule step,
+                     premises = #premises step,args = args,
+                     conclusion = case (targets,conclusion) of
+                       ([],NONE) => NONE
+                     | ([term],SOME original) => SOME (located original term)
+                     | _ => raise ERR "arithmetic" "changed target arity"}
+                  val (theorem,result,_) = ordinary local_step
+                    (ListPair.mapEq (fn (old,term) => located old term)
+                      (inputs,pts))
+                  val hypotheses = Thm.hypset theorem
+                  val seen = ref Term.empty_tmset
+                  val used = List.filter (fn (_,term) =>
+                    if HOLset.member (hypotheses,term) andalso
+                        not (HOLset.member (!seen,term)) then
+                      (seen := HOLset.add (!seen,term);true)
+                    else false) (Lib.enumerate 0 pts)
+                  val _ = retained := SOME
+                    (List.map #1 used,#provenance result)
+                in List.foldr (fn ((_,term),proof) => Thm.DISCH term proof)
+                     theorem used end
+              val result = SmtReplayArithmetic.prove graph scope
+                {inputs = input_nodes,template_limit = ordinary_limit,
+                 observe = arithmetic_charge,procedure = procedure}
+              val (used,provenance) = valOf (!retained)
+              val body = List.foldl (fn (_,body) =>
+                case R.operands graph boolSyntax.implication 2 body of
+                  SOME [_,result] => result
+                | _ => raise ERR "arithmetic" "changed conditional schema")
+                (#node result) used
+              val _ = arithmetic_node := SOME body
+              val theorem = List.foldl (fn (index,proof) =>
+                Thm.MP proof (Thm.ASSUME (#term (List.nth (inputs,index)))))
+                (#theorem result) used
+            in (theorem,{term = Thm.concl theorem,provenance = provenance},
+                NONE) end
+          val (worker_theorem,worker_located,held_clause) =
+            if arithmetic_rule then arithmetic () else
+              ordinary local_step inputs
           val _ = work_checkpoint "bounded.after-worker" (fn () =>
             " step=" ^ #id step ^ " rule=" ^ #name (#rule step))
           val theorem = worker_theorem
@@ -393,19 +491,30 @@ struct
           val _ = Library.check_oracle_tags "CPC_GraphProofReplay"
             "bounded_rule" theorem
           val _ = List.app admit (Thm.concl theorem :: Thm.hyp theorem)
-          fun ordinary_import () =
-            let val imported = G.import graph scope ordinary_limit
-                  (Thm.concl theorem)
-                val theorem = Thm.EQ_MP (#bridge imported) theorem
-            in (theorem,graph_fact graph scope (#node imported)
-                (#provenance located)) end
+          fun ordinary_import () = case !arithmetic_node of
+              SOME node =>
+                let val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem)
+                      (G.representative graph node)) theorem
+                in (exact,graph_fact graph scope node
+                    (#provenance located)) end
+            | NONE =>
+                let val imported = G.import graph scope ordinary_limit
+                      (Thm.concl theorem)
+                    val theorem = Thm.EQ_MP (#bridge imported) theorem
+                in (theorem,graph_fact graph scope (#node imported)
+                    (#provenance located)) end
           val retained = case #conclusion step of SOME value => SOME value
             | NONE => if #replay_handler (#rule step) = "trust" then
                 (case #args step of [Q.GraphTerm value] => SOME value
                   | _ => NONE) else NONE
           val (theorem,current) = case retained of NONE => ordinary_import ()
             | SOME value =>
-                if extended_mode andalso Portable.pointer_eq
+                if arithmetic_rule then
+                  let val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem)
+                        (G.representative graph (#node value))) theorem
+                  in (exact,graph_fact graph scope (#node value)
+                      (#provenance located)) end
+                else if extended_mode andalso Portable.pointer_eq
                     (#term located,G.representative graph (#node value)) then
                   let val (checked,located) = CPC_GraphOwnedResult.align
                         {graph = graph,scope = scope,
@@ -502,7 +611,19 @@ struct
                   val _ = validate_owned work
                 in {node = #node current,provenance = #provenance current,
                     clause = SOME layout} end)
-            | _ => current
+            | _ =>
+                (* Arithmetic schemas no longer retain an expanded native
+                   clause witness. The declared occurrence is the SAME
+                   checked endpoint and supplies its original ordered clause
+                   boundary, just as clause_from_located did in the worker.
+                   It does not recover erased conjunction provenance. *)
+                if arithmetic_rule then case #conclusion step of
+                  SOME value =>
+                    let val recorded = located_fact graph scope value
+                    in {node = #node current,provenance = #provenance current,
+                        clause = #clause recorded} end
+                | NONE => current
+                else current
           val (obligation,theorem) = case extra of
               [] => (NONE,theorem)
             | [hypothesis] => deferred hypothesis

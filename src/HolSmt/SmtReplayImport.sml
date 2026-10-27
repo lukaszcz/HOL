@@ -156,6 +156,10 @@ struct
   fun bounded_raw_size_with_type_check check_type limit root =
     bounded_size_observed_program (check_type o Term.type_of)
       (fn () => ()) false (fn () => ()) limit root
+  fun bounded_raw_size_with_type_check_observed
+      {check_type,observe,limit} root =
+    bounded_size_observed_program (check_type o Term.type_of)
+      observe false (fn () => ()) limit root
   val bounded_binder_size = bounded_size true
   datatype raw_bound = RawBound of
     {original:Term.term,raw_upper:IntInf.int,inc_upper:IntInf.int,

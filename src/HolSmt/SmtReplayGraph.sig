@@ -125,6 +125,9 @@ sig
     closure_child * closure_child
   val closure_child_binder : graph -> scope -> closure_child -> binder_closure
   val binder_closure : graph -> scope -> node -> binder_closure
+  (* Optional DATA lookup for bounded schema readers. NONE only means no
+     recorded constructor; present records retain every ordinary guard. *)
+  val recorded_binder_closure : graph -> scope -> node -> binder_closure option
   val binder_closure_data : graph -> scope -> binder_closure ->
     {node : node,node_frame : scope,creation_node : node,
      declaring_scope : scope,binder : node,binder_term : Term.term,
