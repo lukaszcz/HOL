@@ -1,6 +1,9 @@
 (* Bounded operator obligations for the existing checked arithmetic workers. *)
 signature SmtReplayArithmetic =
 sig
+  (* Invocation-local syntax admission with the original primitive-Type
+     allowance/diagnostic, without evaluating word dimensions. *)
+  val new_type_check : (unit -> unit) -> Type.hol_type -> unit
   val has_numeric_operand : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     {inputs:SmtReplayGraph.node list,observe:unit -> unit} -> bool
   (* The procedure receives complete, bounded operator syntax, with one typed

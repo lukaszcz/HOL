@@ -369,15 +369,28 @@ struct
         let
           val _ = work_checkpoint "bounded.enter" (fn () =>
             " step=" ^ #id step ^ " rule=" ^ #name (#rule step))
+          (* Lists are argument packets unless the rule records a structured
+             formal. All object elements participate in classification. *)
+          fun list_element (Q.GraphTerm value) = value
+            | list_element _ = raise ERR "bounded_rule"
+                "non-object element in argument list"
+          fun argument_terms (Q.GraphTerm value) = [value]
+            | argument_terms (Q.GraphList entries) =
+                List.map list_element entries
+            | argument_terms _ = []
+          val object_arguments =
+            List.concat (List.map argument_terms (#args step))
+          val structured = Q.graph_structured_rule_arguments (#rule step)
           val arithmetic_rule = String.isPrefix "arith"
               (#replay_handler (#rule step)) orelse
             String.isPrefix "arith-" (#name (#rule step)) orelse
             String.isPrefix "int_tight_" (#replay_handler (#rule step)) orelse
             (List.exists (fn handler =>
                handler = #replay_handler (#rule step))
-               ["eq_resolve","modus_ponens","evaluate"] andalso
+               ["eq_resolve","modus_ponens","evaluate","trans"] andalso
              SmtReplayArithmetic.has_numeric_operand graph scope
-               {inputs=List.map node premises @ term_arguments (#args step) @
+               {inputs=List.map node premises @
+                  List.map (#node : F.term -> G.node) object_arguments @
                   (case #conclusion step of NONE => []
                    | SOME value => [#node value]),
                 observe=fn () => Option.app
@@ -385,33 +398,63 @@ struct
           fun arithmetic_charge amount = Option.app
             (fn work => W.spend_guard_policy work amount) owned_work
           fun arithmetic_observe () = arithmetic_charge 1
+          val arithmetic_type =
+            SmtReplayArithmetic.new_type_check arithmetic_observe
+          val selected_type = if arithmetic_rule then arithmetic_type
+            else admit_type_using arithmetic_observe
           fun selected_raw node = if not arithmetic_rule then raw node else
             let val term = G.representative graph node
                 val _ = case
                     SmtReplayImport.bounded_raw_size_with_type_check_observed
-                    {check_type=admit_type_using arithmetic_observe,
+                    {check_type=selected_type,
                      observe=arithmetic_observe,limit=ordinary_limit} term of
                     SOME _ => ()
                   | NONE => admission_failure
                       "ordinary input exceeds caller limit"
-                val _ = admit_type_using arithmetic_observe
-                  (G.type_of graph node)
+                val _ = selected_type (G.type_of graph node)
             in term end
           val inputs = List.map (fn step =>
             {term=selected_raw (node step),
              provenance= #provenance (fact step)}) premises
-          val arguments = List.map (fn value => case value of
-              Q.GraphTerm term =>
-                {term=selected_raw (#node term),
-                 provenance=occurrence_provenance (#occurrence term)}
-            | _ => argument value) (#args step)
+          (* The parser admits flat GraphTerm packet entries, including
+             list-typed objects, not recursively nested GraphList packets. *)
+          fun structured_list terms : located_term =
+            let
+              (* Preflight the aggregate before mk_list, not just each
+                 independently admitted element. CONS adds three raw nodes. *)
+              val bounded_size =
+                SmtReplayImport.bounded_raw_size_with_type_check_observed
+              fun size (term,total) =
+                let val _ = arithmetic_observe ()
+                    val count = case bounded_size
+                        {check_type=selected_type,
+                         observe=arithmetic_observe,limit=ordinary_limit}
+                        term of SOME count => count
+                      | NONE => admission_failure
+                          "ordinary list element exceeds caller limit"
+                    val total = SmtResource.saturated_add total
+                      (SmtResource.saturated_add 3 count)
+                in if total <= ordinary_limit then total else
+                     admission_failure "ordinary list exceeds caller limit"
+                end
+              val _ = List.foldl size 1 terms
+              val ty = case terms of [] => Type.mk_vartype "'cpc_list"
+                | first::rest =>
+                    let val ty = Term.type_of first
+                        val _ = List.app (fn term =>
+                          (arithmetic_observe ();
+                           if Type.compare (Term.type_of term,ty) = EQUAL
+                           then () else raise ERR "arithmetic"
+                             "mixed element types in structured list")) rest
+                    in ty end
+              val _ = selected_type (listSyntax.mk_list_type ty)
+            in {term=listSyntax.mk_list (terms,ty),
+                provenance=UnavailableProvenance
+                  "CPC structured-list metadata"} end
           val conclusion = Option.map
             (fn value : F.term => {term = selected_raw (#node value),
               provenance = occurrence_provenance (#occurrence value)})
             (#conclusion step)
-          val local_step : CPC_Proof.step =
-            {id = #id step,rule = #rule step,premises = #premises step,
-             conclusion = conclusion,args = arguments}
           fun ordinary local_step inputs =
             case (owned_work,clause_worker) of
               (SOME work,SOME fixed) =>
@@ -429,7 +472,7 @@ struct
                 | SOME value => [#node value]
               val premise_nodes = List.map node premises
               val input_nodes = target_nodes @ premise_nodes @
-                term_arguments (#args step)
+                List.map (#node : F.term -> G.node) object_arguments
               fun located old term : located_term =
                 {term = term,provenance = #provenance old}
               fun procedure terms =
@@ -438,13 +481,28 @@ struct
                     Lib.split_after (length target_nodes) terms
                   val (pts,args) = Lib.split_after (length premises) rest
                   val remaining = ref args
-                  fun argument (value,original) = case value of
-                      Q.GraphTerm _ =>
-                        (case !remaining of term::rest =>
-                           (remaining := rest;located original term)
-                         | [] => raise ERR "arithmetic" "missing argument")
-                    | _ => original
-                  val args = ListPair.mapEq argument (#args step,arguments)
+                  fun next () = case !remaining of term::rest =>
+                        (remaining := rest;term)
+                    | [] => raise ERR "arithmetic" "missing argument"
+                  (* Build object arguments only from the naming boundary's
+                     terms. Never construct a native list of original graph
+                     operands before realization. *)
+                  fun realized_object (value:F.term) : located_term =
+                    {term=next (),provenance=
+                      occurrence_provenance (#occurrence value)}
+                  fun realized_argument (Q.GraphTerm value) =
+                        [realized_object value]
+                    | realized_argument (Q.GraphList entries) =
+                        let val values = List.map list_element entries
+                        in if structured then
+                             [structured_list
+                               (List.map (fn _ => next ()) values)]
+                           else List.map realized_object values end
+                    | realized_argument value = [argument value]
+                  val args =
+                    List.concat (List.map realized_argument (#args step))
+                  val _ = if null (!remaining) then () else
+                    raise ERR "arithmetic" "unused structured arguments"
                   val local_step : CPC_Proof.step =
                     {id = #id step,rule = #rule step,
                      premises = #premises step,args = args,
@@ -481,9 +539,19 @@ struct
                 (#theorem result) used
             in (theorem,{term = Thm.concl theorem,provenance = provenance},
                 NONE) end
+          fun ordinary_argument (Q.GraphList entries) =
+                if structured then
+                  [structured_list (List.map
+                    (raw o #node o list_element) entries)]
+                else List.map (argument o Q.GraphTerm o list_element) entries
+            | ordinary_argument value = [argument value]
+          fun ordinary_step () : CPC_Proof.step =
+            {id = #id step,rule = #rule step,
+             premises = #premises step,conclusion = conclusion,
+             args = List.concat (List.map ordinary_argument (#args step))}
           val (worker_theorem,worker_located,held_clause) =
             if arithmetic_rule then arithmetic () else
-              ordinary local_step inputs
+              ordinary (ordinary_step ()) inputs
           val _ = work_checkpoint "bounded.after-worker" (fn () =>
             " step=" ^ #id step ^ " rule=" ^ #name (#rule step))
           val theorem = worker_theorem
@@ -553,7 +621,7 @@ struct
                      List.null free orelse List.exists private free then ()
                   else if (case direct_deferred of NONE => false
                       | SOME checked => Option.isSome (checked
-                          {serial = !counter,step = local_step,
+                          {serial = !counter,step = ordinary_step (),
                            target = #node current,theorem = worker_theorem,
                            located = worker_located,hypothesis = hypothesis}))
                     then ()

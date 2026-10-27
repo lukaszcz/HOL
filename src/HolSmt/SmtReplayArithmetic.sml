@@ -38,6 +38,31 @@ struct
              | _ => false)))
     in List.exists visit inputs end
 
+  (* Syntax-only admission: word dimensions need not be evaluable when an
+     arithmetic procedure discards that operand. Retain a bounded physical
+     cache of successful checks, not a structural Type comparison. Repeated
+     annotations must not repeatedly unfold the same shared Type tree. *)
+  fun new_type_check observe =
+    let
+      val recent = ref ([] : Type.hol_type list)
+      val limit = SmtResource.max_bv_replay_term_nodes
+      fun hit _ [] = false
+        | hit ty (saved::rest) =
+            (observe ();Portable.pointer_eq (ty,saved) orelse hit ty rest)
+      fun walk [] _ = ()
+        | walk (ty::rest) count =
+            (observe ();
+             SmtResource.check_dag_size_with_limit "BitVector"
+               "word-graph-primitive-type-tree" limit (count+1);
+             walk ((if Type.is_vartype ty then [] else
+               #2 (Type.dest_type ty)) @ rest) (count+1))
+    in fn ty =>
+      (observe ();
+       if hit ty (!recent) then () else
+         (walk [ty] 0;
+          recent := ty :: List.take (!recent,Int.min (15,length (!recent)))))
+    end
+
   fun prove graph scope {inputs,template_limit,observe,procedure} =
     let
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
@@ -55,17 +80,10 @@ struct
       (* Authenticate ALL roots before any ID lookup, callback or debit. *)
       val _ = guard ()
       val _ = List.app authenticate inputs
-      (* Annotation syntax, not word semantics: arithmetic can legitimately
-         contain an opaque LENGTH over words of a polymorphic dimension. *)
-      fun check_type ty =
-        let fun walk [] _ = ()
-              | walk (ty::rest) count =
-                  (tick ();if count >= template_limit then
-                     raise ERR "prove"
-                       "arithmetic Type exceeds local admission"
-                   else walk ((if Type.is_vartype ty then [] else
-                     #2 (Type.dest_type ty)) @ rest) (count+1))
-        in walk [ty] 0 end
+      (* Type annotation work has the original primitive-Type allowance and
+         diagnostic, NOT the local term-template limit. Check syntax only:
+         arithmetic may discard a word with a polymorphic dimension. *)
+      val check_type = new_type_check tick
       val sizes = ref (Redblackmap.mkDict Int.compare)
       val opaque_nodes = ref ([] : G.node list)
       fun variable_compare (a,b) = (tick ();Term.compare (a,b))
@@ -184,24 +202,30 @@ struct
                     SOME term => term | NONE => hole node)
              | G.Application (f,x) =>
                  Term.mk_comb (expose bound native f,expose bound native x)
-             | G.AdmittedBinder _ =>
-                 (case G.recorded_binder_closure graph
-                     (G.node_scope graph node) node of
-                    NONE => literal native node
-                  | SOME closure =>
-                      let val {binder,binder_term,body,...} =
-                            G.binder_closure_data graph
-                              (G.node_scope graph node) closure
-                          val variable = Term.mk_var
-                            ("__smt_arith_bound_" ^
-                               Int.toString (G.node_id binder),
-                             G.type_of graph binder)
-                          val body = expose
-                            (Redblackmap.insert
-                              (bound,G.node_id binder,variable))
-                            (Redblackmap.insert (native,binder_term,variable))
-                            body
-                      in Term.mk_abs (variable,body) end)
+             | G.AdmittedBinder {binder,body,...} =>
+                 let
+                   (* Legacy constructors retain authentic child IDs too.
+                      Reading them grants no construction/rehome permission
+                      in an inferred body frame. Present closure records
+                      still pass their ordinary lifetime guards. *)
+                   val (binder,binder_term,body) =
+                     case G.recorded_binder_closure graph
+                         (G.node_scope graph node) node of
+                       NONE => (binder,G.representative graph binder,body)
+                     | SOME closure =>
+                         let val {binder,binder_term,body,...} =
+                               G.binder_closure_data graph
+                                 (G.node_scope graph node) closure
+                         in (binder,binder_term,body) end
+                   val variable = Term.mk_var
+                     ("__smt_arith_bound_" ^
+                        Int.toString (G.node_id binder),
+                      G.type_of graph binder)
+                   val body = expose
+                     (Redblackmap.insert
+                       (bound,G.node_id binder,variable))
+                     (Redblackmap.insert (native,binder_term,variable)) body
+                 in Term.mk_abs (variable,body) end
              | G.OpaqueRetained => literal native node)
           val templates = List.map
             (expose (Redblackmap.mkDict Int.compare)

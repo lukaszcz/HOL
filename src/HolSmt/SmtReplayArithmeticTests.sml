@@ -8,6 +8,7 @@ struct
   structure Q = CPC_ProofParser
   structure F = SmtLib_GraphFrontend
   structure W = SmtReplayInvocationWork
+  structure ZR = Z3_GraphProofReplay
   val limit = 4096
   fun require message yes = if yes then () else raise Fail message
   fun exact term hypotheses theorem =
@@ -158,6 +159,46 @@ struct
          (numeric hidden andalso not (numeric plain) andalso numeric unknown)
     end)
 
+  (* A tiny arithmetic term may have annotations larger than its local
+     template allowance, while still below the original Type allowance. *)
+  fun annotation_allowance () = with_graph (fn graph => fn scope =>
+    let
+      fun shared 0 = Type.bool
+        | shared n = let val ty = shared (n-1)
+                     in Type.mk_type ("fun",[ty,ty]) end
+      val ty = Type.mk_type ("list",[shared 17])
+      val length_head = Term.mk_thy_const
+        {Thy="list",Name="LENGTH",
+         Ty=Type.mk_type ("fun",[ty,numSyntax.num])}
+      fun operand i = intSyntax.mk_injected (Term.mk_comb
+        (length_head,Term.mk_var ("xs" ^ Int.toString i,ty)))
+      val original = List.foldl (fn (term,total) =>
+        intSyntax.mk_plus (total,term)) (operand 0)
+          (List.tabulate (37,fn i => operand (i+1)))
+      val node = import graph scope original
+      val admission = SmtWordGraph.new_type_admission ()
+      val _ = List.app (fn child => SmtWordGraph.admit_primitive_type
+        admission (G.type_of graph child)) (G.block_reachable graph [node])
+      val calls = ref 0
+      val paid = ref (0:IntInf.int)
+      fun observe amount =
+        (paid := !paid+amount;
+         require "repeated shared annotations exhausted original Work"
+           (!paid <= 10000000))
+      val result = A.prove graph scope
+        {inputs=[node,node],template_limit=limit,observe=observe,
+         procedure=fn [left,right] =>
+           (calls := !calls+1;
+            require "large annotations changed shared arithmetic operands"
+              (Portable.pointer_eq (left,right));
+            require "large-annotation source variable reached worker"
+              (disjoint [original] [left,right]);
+            Thm.REFL left)
+           | _ => raise Fail "arity"}
+      val _ = require "large-annotation worker was retried or bypassed"
+        (!calls=1)
+    in exact (boolSyntax.mk_eq (original,original)) [] (#theorem result) end)
+
   fun annotation_frontier () = with_graph (fn graph => fn scope =>
     let
       fun shared 0 = Type.bool
@@ -177,11 +218,25 @@ struct
         numSyntax.mk_plus (length (),length ()))
       val node = #node (G.retain_source graph scope term)
       val called = ref false
-      val _ = require "unadmitted binder annotations reached arithmetic"
-        (refuses (fn () => ignore (A.prove graph scope
-          {inputs=[node],template_limit=limit,observe=fn _ => (),
-           procedure=fn _ => (called := true;boolTheory.TRUTH)})) andalso
-         not (!called))
+      val expected =
+        ((SmtResource.check_dag_size_with_limit "BitVector"
+            "word-graph-primitive-type-tree"
+            SmtResource.max_bv_replay_term_nodes
+            (SmtResource.max_bv_replay_term_nodes+1);
+          raise Fail "original Type gate unexpectedly admitted overflow")
+         handle Feedback.HOL_ERR detail => detail)
+      val refused =
+        ((ignore (A.prove graph scope
+           {inputs=[node],template_limit=limit,observe=fn _ => (),
+            procedure=fn _ => (called := true;boolTheory.TRUTH)});false)
+         handle Feedback.HOL_ERR actual =>
+           Feedback.top_structure_of actual =
+             Feedback.top_structure_of expected andalso
+           Feedback.top_function_of actual =
+             Feedback.top_function_of expected andalso
+           Feedback.message_of actual = Feedback.message_of expected)
+      val _ = require "binder Type gate changed diagnostic or ran worker"
+        (refused andalso not (!called))
     in () end)
 
   fun identities () = with_graph (fn graph => fn scope =>
@@ -254,20 +309,44 @@ struct
         (G.application graph child (plus,rigid),generated)
       val binder = G.recorded_abstraction graph scope limit
         {binder=variable,body=body,body_frame=child}
-      val result = A.prove graph scope
-        {inputs=[binder],template_limit=limit,observe=fn _ => (),
-         procedure=fn [term] =>
-           (require "distinct identities INSIDE binder were merged"
-              (HOLset.numItems (Term.FVL [term] Term.empty_tmset)=2);
-            Thm.REFL term)
-           | _ => raise Fail "arity"}
-      val _ = case G.free_variable_nodes graph (#node result) of
-          SOME nodes => require "binder result changed declaration identities"
-            (length nodes=2 andalso List.exists (fn n => n=rigid) nodes andalso
-             List.exists (fn n => n=generated) nodes)
-        | NONE => raise Fail "binder result has unknown dependencies"
-      (* Legacy bounded literal binders remain supported without a closure
-         record. No new constructor permission is inferred from NONE. *)
+      fun check expected input =
+        let
+          val calls = ref 0
+          val result = A.prove graph scope
+            {inputs=[input],template_limit=limit,observe=fn _ => (),
+             procedure=fn [term] =>
+               (calls := !calls+1;
+                require "distinct identities INSIDE binder were merged"
+                  (HOLset.numItems (Term.FVL [term] Term.empty_tmset)=
+                   length expected);
+                Thm.REFL term)
+               | _ => raise Fail "arity"}
+          val _ = require "binder worker was retried or bypassed" (!calls=1)
+          val _ = case G.free_variable_nodes graph (#node result) of
+              SOME nodes => require "binder changed declaration IDs/kinds"
+                (length nodes=length expected andalso List.all
+                   (fn n => List.exists (fn other => n=other) nodes) expected)
+            | NONE => raise Fail "binder result has unknown dependencies"
+          val original = G.representative graph input
+        in exact (boolSyntax.mk_eq (original,original)) []
+             (#theorem result) end
+      val legacy = G.abstraction graph scope limit (variable,body)
+      val _ = require "legacy binder unexpectedly has a closure record"
+        (not (Option.isSome
+          (G.recorded_binder_closure graph scope legacy)))
+      val _ = List.app (check [rigid,generated]) [binder,legacy]
+      (* Generated-only control: no rigid declaration or lexical binding
+         with this native spelling has been allocated before adaptation. *)
+      val generated_only = G.variable graph scope G.Generated
+        ``only_generated:int``
+      val body = G.application graph child
+        (G.application graph child (plus,variable),generated_only)
+      val binder = G.recorded_abstraction graph scope limit
+        {binder=variable,body=body,body_frame=child}
+      val legacy = G.abstraction graph scope limit (variable,body)
+      val _ = List.app (check [generated_only]) [binder,legacy]
+      (* Legacy beta remains supported without a closure record. No new
+         constructor permission is inferred from NONE. *)
       val body = G.application graph child
         (G.application graph child (plus,variable),
          import graph scope ``1:int``)
@@ -285,9 +364,12 @@ struct
            | _ => raise Fail "arity"}
     in exact ``(\u:int. u + 1) x = x + 1`` [] (#theorem result) end)
 
-  fun cpc goal assumptions rule_name arguments declared =
+  datatype cpc_argument = Object of term | Objects of term list
+  fun cpc_arguments_using local_limit selected_worker
+      goal assumptions rule_name arguments declared =
     with_graph (fn graph => fn scope =>
     let
+      val limit = local_limit
       val sources = SmtReplaySource.new graph scope limit
         {goal=goal,assumptions=assumptions}
       val work = W.begin graph scope sources
@@ -298,11 +380,22 @@ struct
          occurrence=SmtLib_Parser.ConstructionOccurrence
            {value=node,role=SmtLib_Parser.ConstructionAtom,
             token="arithmetic",children=[]}}
+      fun argument (Object term) =
+            Q.GraphTerm (located (import graph scope term))
+        | argument (Objects terms) = Q.GraphList
+            (List.map (Q.GraphTerm o located o import graph scope) terms)
+      val originals = List.concat (List.map (fn Object term => [term]
+        | Objects terms => terms) arguments)
       val target = #node (SmtReplaySource.goal_source sources)
       val premise_nodes = SmtReplaySource.assumption_nodes sources
       val premise_ids = List.tabulate (length assumptions,fn i =>
         "@p" ^ Int.toString i)
       fun registered name = valOf (CPC_Proof.lookup_rule "1.3.4" name)
+      val structured = Q.graph_structured_rule_arguments
+        (registered rule_name)
+      val expected_arguments = if structured then arguments else
+        List.concat (List.map (fn Object term => [Object term]
+          | Objects terms => List.map Object terms) arguments)
       val proof:Q.graph_proof =
         {cvc_version="1.3.4",commands=
           ListPair.mapEq (fn (id,node) => Q.GraphAssume (id,located node))
@@ -312,8 +405,8 @@ struct
            Q.GraphStep {pop=false,step=
              {id="@arith",rule=registered rule_name,premises=premise_ids,
               conclusion=if declared then SOME (located target) else NONE,
-              args=List.map (Q.GraphTerm o located o import graph scope)
-                arguments,raw_conclusion=NONE,raw_args=[]}},
+              args=List.map argument arguments,
+              raw_conclusion=NONE,raw_args=[]}},
            Q.GraphStep {pop=false,step=
              {id="@done",rule=registered "resolution",
               premises=["@arith","@denied"],
@@ -322,12 +415,36 @@ struct
       val calls = ref 0
       fun worker (step:CPC_Proof.step,inputs) =
         (calls := !calls+1;
+         require "CPC changed omitted/declared result role"
+           (Option.isSome (#conclusion step) = declared);
+         require "CPC changed argument role count"
+           (length (#args step) = length expected_arguments);
+         ListPair.appEq (fn (expected,actual:CPC_Proof.located_term) =>
+           case expected of Object original =>
+               let val (substitution,types) =
+                     Term.match_term original (#term actual)
+               in require "CPC hid an object argument's operator or Type"
+                 (null types andalso List.all
+                   (fn {residue,...} => Term.is_var residue) substitution)
+               end
+           | Objects terms =>
+               let val (elements,ty) = listSyntax.dest_list (#term actual)
+               in require "CPC changed structured list arity"
+                    (length elements = length terms);
+                  require "CPC changed structured metadata provenance"
+                    (case #provenance actual of
+                       CPC_Proof.UnavailableProvenance _ => true | _ => false);
+                  require "CPC changed structured list Type"
+                    (ty = (case terms of
+                       [] => Type.mk_vartype "'cpc_list"
+                     | first::_ => Term.type_of first))
+               end) (expected_arguments,#args step);
          require "CPC source operands reached generic worker"
-           (disjoint (goal::assumptions @ arguments)
+           (disjoint (goal::assumptions @ originals)
              ((case #conclusion step of NONE => []
                | SOME value => [#term value]) @
               List.map #term (inputs @ #args step)));
-         CPC_ProofReplay.graph_bounded_worker [] (step,inputs))
+         selected_worker (step,inputs))
       val result = Exn.capture (fn () =>
         let val preprocessing = SmtLib_GraphPreprocess.discover_from_sources
               graph scope sources
@@ -342,8 +459,14 @@ struct
       val _ = require "arithmetic worker was retried or bypassed" (!calls=1)
       val _ = require "CPC arithmetic lost its original Goal object"
         (Portable.pointer_eq (Thm.concl theorem,goal))
-    in exact goal (if null assumptions then [] else List.take (assumptions,2))
-         theorem end)
+    in exact goal assumptions theorem end)
+
+  val cpc_arguments = cpc_arguments_using limit
+    (CPC_ProofReplay.graph_bounded_worker [])
+
+  fun cpc goal assumptions rule_name arguments declared =
+    cpc_arguments goal assumptions rule_name (List.map Object arguments)
+      declared
 
   fun cpc_cases () =
     (cpc ``(x:int) < z`` [``(x:int) < y``,``(y:int) < z``]
@@ -352,7 +475,149 @@ struct
        "arith_mult_pos" [``2i``,``(x:int) < y``] true;
      cpc ``(x:int) + 0 = x`` [] "arith_poly_norm"
        [``(x:int) + 0 = x``] false;
-     cpc ``(\u:int. u + 1) x = x + 1`` [] "arith" [] true)
+     cpc ``(\u:int. u + 1) x = x + 1`` [] "arith" [] true;
+     (* The middle +0 forces the bounded fallback, not exact/alias trans. *)
+     cpc ``(a:int) = b`` [``(a:int) = x + 0``,``(x:int) = b``]
+       "trans" [] true;
+     cpc ``(x:int) < z``
+       [``(x:int) < y``,``(x:int) < y``,``(y:int) < z``]
+       "arith" [] true;
+     require "duplicate CPC premises invented a missing inequality"
+       (refuses (fn () => cpc ``(x:int) < z``
+         [``(x:int) < y``,``(x:int) < y``] "arith" [] true));
+     (* Ordinary packets flatten, including empty and heterogeneous ones. *)
+     cpc_arguments ``(x:int) + 0 = x`` [] "arith_poly_norm"
+       [Objects [],Objects [``(x:int) + 0 = x``],Objects []] false;
+     cpc_arguments ``(2i > 0i /\ (x:int) < y) ==> 2i*x < 2i*y`` []
+       "arith_mult_pos" [Objects [``2i``,``(x:int) < y``]] true;
+     List.app (fn rule =>
+       cpc_arguments
+         ``smt_emod_total (smt_emod_total (r:int) 2) 2 =
+           smt_emod_total r 2`` [``~((2:int) = 0)``] rule
+         [Object ``2:int``,Objects [],Object ``r:int``,Objects []] false)
+       ["arith-mod-over-mod","arith-mod-over-mod-mult"])
+
+  (* These selected workers isolate boundary roles, not arithmetic solving.
+     The ordinary worker above separately exercises native packet consumers. *)
+  fun cpc_truth (_:CPC_Proof.step,_:CPC_Proof.located_term list) =
+    (boolTheory.TRUTH,
+     {term=boolSyntax.T,provenance=CPC_Proof.AtomicProvenance})
+
+  fun cpc_packet_boundaries () =
+    let
+      (* Numeric syntax occurs ONLY in the packet. The generic classifier
+         must select arithmetic naming even though the endpoint is Boolean.
+         A list-typed object is an operand, not another packet to flatten. *)
+      val _ = cpc_arguments_using limit cpc_truth boolSyntax.T [] "evaluate"
+        [Objects [``packet_p:bool``,``packet_xs:int list``,``packet_x:int``]]
+        true
+      val elements = List.tabulate (31,fn _ => ``packet_x:int``)
+      fun structured cap worker =
+        cpc_arguments_using cap worker boolSyntax.T [] "arith-mod-over-mod"
+          [Objects elements] true
+      (* NIL costs one node and each variable CONS costs four: exactly 125.
+         Ordinary packets must NOT pay for a synthetic native list. *)
+      val _ = structured 125 cpc_truth
+      val _ = require "structured aggregate exceeded its raw-node cap"
+        (refuses (fn () => structured 124
+          (fn _ => raise Fail "over-limit structured list reached worker")))
+      val _ = cpc_arguments_using 124 cpc_truth boolSyntax.T [] "arith"
+        [Objects elements] true
+      fun extra_hyp (step:CPC_Proof.step,inputs) =
+        let val (theorem,result) = cpc_truth (step,inputs)
+        in (Drule.ADD_ASSUM (#term (hd (#args step))) theorem,result) end
+      val _ = require "CPC retained an undischarged worker Hyp"
+        (refuses (fn () => cpc_arguments_using limit extra_hyp
+          boolSyntax.T [] "arith" [Object ``packet_p:bool``] true))
+      fun doubled 0 = ``packet_x:int``
+        | doubled n = let val term = doubled (n-1)
+                      in intSyntax.mk_plus (term,term) end
+      val large = doubled 5
+      val _ = require "CPC arithmetic lost its ordinary unfolded term cap"
+        (refuses (fn () => cpc_arguments_using 124
+          (fn _ => raise Fail "over-limit ordinary term reached worker")
+          (boolSyntax.mk_eq (large,large)) [] "arith" [] true))
+    in () end
+
+  fun cpc_annotations () =
+    let
+      fun shared 0 = Type.bool
+        | shared n = let val ty = shared (n-1)
+                     in Type.mk_type ("fun",[ty,ty]) end
+      fun goal depth =
+        let val ty = listSyntax.mk_list_type (shared depth)
+            val xs = Term.mk_var ("cpc_large_xs",ty)
+            val operator = Term.mk_thy_const
+              {Thy="list",Name="LENGTH",
+               Ty=Type.mk_type ("fun",[ty,numSyntax.num])}
+            val term = intSyntax.mk_injected (Term.mk_comb (operator,xs))
+        in boolSyntax.mk_eq (term,term) end
+      (* Its raw term fits 4096, but an annotation has over 8192 nodes. *)
+      val _ = cpc (goal 12) [] "arith" [] true
+      val expected =
+        ((SmtResource.check_dag_size_with_limit "BitVector"
+            "word-graph-primitive-type-tree"
+            SmtResource.max_bv_replay_term_nodes
+            (SmtResource.max_bv_replay_term_nodes+1);
+          raise Fail "original CPC Type gate admitted overflow")
+         handle Feedback.HOL_ERR detail => detail)
+      val refused =
+        ((cpc_arguments_using limit
+            (fn _ => raise Fail "over-limit CPC Type reached worker")
+            (goal 20) [] "arith" [] true;false)
+         handle Feedback.HOL_ERR actual =>
+           Feedback.top_structure_of actual =
+             Feedback.top_structure_of expected andalso
+           Feedback.top_function_of actual =
+             Feedback.top_function_of expected andalso
+           Feedback.message_of actual = Feedback.message_of expected)
+    in require "CPC Type quota changed its original primitive diagnostic"
+         refused end
+
+  (* Native mod_context folds ts @ [emod r c] @ ss LEFT, with + or *.
+     Its simplifier is not a general modular-ring prover. Taking r already
+     reduced makes arbitrary nonempty contexts native-valid for both rules,
+     rather than asking the adapter to extend the native proof fragment. *)
+  fun structured_cases () =
+    let
+      val reduced = ``smt_emod_total (r:int) 2``
+      val prefix = [``a:int``,``b:int``]
+      val suffix = [``d:int``,``e:int``]
+      fun arguments leading trailing =
+        [Object ``2:int``,Objects leading,Object reduced,Objects trailing]
+      val cases =
+        [("arith-mod-over-mod",
+          ``smt_emod_total
+              (((((a:int) + b) +
+                 smt_emod_total (smt_emod_total r 2) 2) + d) + e) 2 =
+            smt_emod_total
+              ((((a + b) + smt_emod_total r 2) + d) + e) 2``),
+         ("arith-mod-over-mod-mult",
+          ``smt_emod_total
+              (((((a:int) * b) *
+                 smt_emod_total (smt_emod_total r 2) 2) * d) * e) 2 =
+            smt_emod_total
+              ((((a * b) * smt_emod_total r 2) * d) * e) 2``)]
+      fun check (rule,goal) =
+        let
+          val native = CPC_ProofReplay.replay_rare_rewrite_for_test rule
+            [``2:int``,listSyntax.mk_list (prefix,intSyntax.int_ty),
+             reduced,listSyntax.mk_list (suffix,intSyntax.int_ty)]
+          val _ = exact goal [``~((2:int) = 0)``] native
+          val _ = List.app (fn declared =>
+            cpc_arguments goal [``~((2:int) = 0)``] rule
+              (arguments prefix suffix) declared) [false,true]
+          val _ = require "false structured arithmetic result accepted"
+            (refuses (fn () => cpc_arguments ``(0:int) = 1``
+              [``~((2:int) = 0)``] rule
+              (arguments prefix suffix) true))
+        in List.app (fn args =>
+          require "wrong-typed structured arithmetic list accepted"
+            (refuses (fn () => cpc_arguments goal
+              [``~((2:int) = 0)``] rule args false)))
+          [arguments [boolSyntax.T] suffix,
+           arguments prefix [boolSyntax.F]] end
+    in List.app check cases end
 
   fun parsed_clause () = with_graph (fn graph => fn scope =>
     let
@@ -420,11 +685,117 @@ struct
              proof limit (Z3_CompactReplayTests.fixed graph proof)))
     end
 
+  (* B3: a Boolean false target has numeric PREMISES. Count the classifier
+     AND the unfolded preflight separately: only a further observed debit
+     demonstrates that the arithmetic adapter, not just dispatch, was paid. *)
+  fun z3_false_target () =
+    let
+      val x = ``arithmetic_false_x:int``
+      val assumptions =
+        [``(arithmetic_false_x:int) = 0``,
+         ``(arithmetic_false_x:int) = 1``]
+      val metadata = Z3_Proof.mk_th_lemma_metadata
+        ("basic",SOME "eq-propagate",["0"])
+      val initial = Z3_Proof.update_proof_vars
+        (Z3_Proof.empty_proof "4.15.3")
+        (HOLset.add (Term.empty_tmset,x))
+      val ordinary = Z3_Proof.update_proof_steps initial
+        (Redblackmap.insert (Z3_Proof.proof_steps initial,0,
+          Z3_Proof.TH_LEMMA_BASIC (metadata,
+            List.map (Z3_Proof.THEOREM o Thm.ASSUME) assumptions,
+            boolSyntax.F)))
+      val _ = exact boolSyntax.F assumptions
+        (Z3_ProofReplay.replay_root_for_test ordinary)
+    in Z3_CompactReplayTests.with_proof [("x",x)]
+      "((proof ((_ th-lemma basic eq-propagate 0) \
+      \(asserted (= x 0)) (asserted (= x 1)) false)))"
+      (fn graph => fn scope => fn proof =>
+        let
+          val sources = SmtReplaySource.new graph scope limit
+            {goal=boolSyntax.F,assumptions=assumptions}
+          val work = W.begin graph scope sources
+            {limits={input_limit=limit,output_limit=limit,
+               template_limit=limit},work_limit=10000000}
+          val calls = ref 0
+          val debits = ref (0:IntInf.int)
+          val dispatch = ref (0:IntInf.int)
+          fun dispatch_tick () = dispatch := !dispatch+1
+          fun observe amount =
+            (debits := !debits+amount;W.spend_guard_policy work amount)
+          fun local_law (request:ZR.local_request) =
+            let
+              val _ = calls := !calls+1
+              val _ = require "B3 lost its Boolean false target"
+                (#target request = G.constant graph scope boolSyntax.F)
+              val _ = require "B3 lost its numeric premises"
+                (length (#premises request)=2 andalso
+                 A.has_numeric_operand graph
+                   (G.node_scope graph (#law request))
+                   {inputs= #target request :: #premises request,
+                    observe=dispatch_tick})
+              val _ = List.app (fn node =>
+                ignore (G.unfolded_nodes_observed dispatch_tick graph
+                  G.BinderInclusiveNodes SmtResource.max_bitblast_term_nodes
+                  node))
+                (#law request :: List.map #node (#arguments request))
+            in Z3_ProofReplay.graph_bounded_local_law_using observe
+              graph [] proof request end
+          val outcome = Exn.capture (fn () =>
+            let
+              val preprocessing =
+                SmtLib_GraphPreprocess.discover_from_sources
+                  graph scope sources
+                  {import_limit=limit,revisit=false,check_type=fn _ => (),
+                   conversion=fn _ => NONE}
+            in
+              ZR.check_proof_with_preprocessed_sources_with_work_using
+                  work graph scope
+                  {sources=sources,preprocessing=preprocessing,proof=proof,
+                   template_limit=limit,local_law=local_law,
+                   nnf=Z3_ProofReplay.graph_bounded_nnf graph}
+            end) ()
+          val _ = W.close work
+          val theorem = Exn.release outcome
+          val _ = exact boolSyntax.F assumptions theorem
+          val _ = SmtReplaySource.check_goal sources theorem
+          val _ = require "B3 bounded law was retried or bypassed" (!calls=1)
+        in require "B3 numeric premises bypassed paid arithmetic adaptation"
+             (!debits > !dispatch) end)
+    end
+
+  (* The compatibility producer has no recorded-definition ports. Neither a
+     Source assignment nor a same-native distinct declaration is a law. *)
+  fun z3_rigidity () = with_graph (fn graph => fn scope =>
+    let
+      val native = Term.mk_var ("arithmetic_rigid",``:int``)
+      val rigid = G.variable graph scope G.RigidSource native
+      val other = G.variable graph scope G.Generated native
+      val zero = import graph scope ``0:int``
+      val eq = G.constant graph scope
+        (Term.rator (Term.rator ``(a:int) = b``))
+      fun equation right = G.application graph scope
+        (G.application graph scope (eq,rigid),right)
+      val proof : Z3_GraphProofParser.proof =
+        {steps=Redblackmap.mkDict Z3_GraphProofParser.compare_id,
+         root=Z3_GraphProofParser.Anonymous 0,vars=[],
+         z3_version="4.15.3",close=fn () => ()}
+      val rule = valOf (Z3_Proof.lookup_rule "4.15.3" "rewrite")
+      fun check target =
+        let val law = SmtReplayRules.implication graph scope [] target
+        in require "non-recorded arithmetic accepted a rigid assignment"
+          (refuses (fn () => ignore
+            (Z3_ProofReplay.graph_bounded_local_law graph [] proof
+              {rule=rule,metadata=NONE,target=target,premises=[],
+               arguments=[],law=law}))) end
+    in check (equation zero);check (equation other) end)
+
   fun run () =
-    (operators ();negatives ();classification ();annotation_frontier ();
+    (operators ();negatives ();classification ();
+     annotation_allowance ();annotation_frontier ();
      identities ();
      binder_identities ();
-     cpc_cases ();parsed_clause ();
+     cpc_cases ();cpc_packet_boundaries ();cpc_annotations ();
+     structured_cases ();parsed_clause ();
      (* The fixed selected Z3 worker is exercised by its parsed fixture. *)
-     z3_cases ())
+     z3_cases ();z3_false_target ();z3_rigidity ())
 end
