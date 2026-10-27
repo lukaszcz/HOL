@@ -5,7 +5,8 @@ sig
   (* Native and template free variables are lexical Variable leaves.
      Only explicit private_atom operands introduce private Atom leaves.
      Private atoms are never bound, renamed, or substituted by a lexical
-     namesake, even at the same type. Constants are Atom leaves; compound
+     namesake, even at the same type. Only private_abstraction explicitly
+     binds their identities. Constants are Atom leaves; compound
      native fragments are opened only as source syntax, never assembled
      from synthetic operands. Atom descriptors confer no proof authority. *)
   datatype view = Variable of Term.term | Atom of Term.term
@@ -28,6 +29,21 @@ sig
   val private_atom : Term.term -> syntax
   val application : syntax * syntax -> syntax
   val abstraction : Term.term * syntax -> syntax
+  (* Explicitly binds matching private_atom variable descriptors, NOT
+     lexical Variable namesakes. The caller supplies a genuine allocation
+     descriptor, unique per private allocation in the session; this API
+     does not authenticate its origin. Other private atoms stay opaque.
+     Local, constant-work construction of a lazy private-binding node;
+     the charging callback is invoked locally and is NEVER retained.
+     Queries use fresh lexical binder names (observations are
+     alpha-equivalent), preserving lexical free variables even on
+     name-carrying kernels. Lowering batches adjacent private binders and
+     memoizes shared syntax with its relevant private binding environment.
+     Traversals and freshness work are charged to the querying callback.
+     Native fragments stay native; templates expand as source metadata,
+     never with native operands. *)
+  val private_abstraction : (IntInf.int -> unit) ->
+    Term.term * syntax -> syntax
   (* Retains the caller-admitted native template and shares operand syntax;
      validates only hole variables and list arity, not the template body.
      Source queries expand it locally, charging their observation callback.

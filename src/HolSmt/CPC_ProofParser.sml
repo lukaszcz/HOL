@@ -4565,13 +4565,190 @@ in
       | NONE => GraphTerm (parse_term raw))
     | _ => GraphTerm (parse_term raw)
 
-  (* Check freshness before consuming a definition body, as native does. *)
-  fun graph_definition_name (namespace : F.namespace) key token =
-    if set_member (#proof_terms namespace) (key token) then
-      raise ERR "parse_define"
-        ("duplicate CPC declaration or definition of symbol " ^
-         SmtLib_Parser.proof_symbol_text token)
-    else token
+  (* Match native's namespace order before consuming any definition body.
+     Source callbacks may also live in the supplied declaration dictionary. *)
+  fun graph_definition_name (namespace : F.namespace) dictionary key token =
+    let
+      val symbol = case P.proof_string_token token of
+          SOME _ => raise ERR "parse_define" "string literal used as a symbol"
+        | NONE => key token
+      val name = P.proof_symbol_text symbol
+      val _ =
+        if set_member (#reserved namespace) symbol orelse
+           set_member (#reserved namespace) name then
+          raise ERR "parse_define"
+            ("CPC definition may not shadow builtin symbol " ^ name)
+        else if set_member (#proof_terms namespace) symbol then
+          raise ERR "parse_define"
+            ("duplicate CPC declaration or definition of symbol " ^ name)
+        else if set_member (#source_terms namespace) symbol orelse
+                Option.isSome (Redblackmap.peek (dictionary, symbol)) then
+          raise ERR "parse_define"
+            ("CPC definition may not redefine source symbol " ^ name)
+        else ()
+    in token end
+
+  (* Lazy syntax adaptation at the native definition-list boundary only.
+     The shared typed parser owns recursion, scopes and elaboration. Yield
+     each operand before requesting its successor: an inner unknown symbol
+     must win over later EOF. No object is buffered or reparsed and no
+     semantic callback runs here.
+
+     Only native parse_term's recursive CPC branches adapt their operands.
+     Ordinary applications (including qualified heads, LET and annotations)
+     keep ordinary parsing below them: adapting their subtrees would admit
+     nested CPC testers that native rejects. Only ordinary term-head @var
+     is quoted to bypass the graph parser's CPC branch. Its operands still
+     parse first, preserving native unknown-symbol error order. Sorts,
+     binder declarations and annotation attributes remain data. Do not
+     normalize AND/OR arity at this boundary either. *)
+  val graph_ordinary_var_head =
+    let val chars = ref (String.explode "|@var|")
+        fun input () = case !chars of [] => NONE
+          | char::rest => (chars := rest;SOME char)
+    in P.make_cpc_proof_tokenizer_from_input input () end
+
+  fun graph_definition_tokens next =
+    let
+      fun finished () = raise ERR "graph_definition_tokens"
+        "read beyond definition-list element"
+      val resume = ref finished
+      fun emit token continuation = (resume := continuation; token)
+      fun literal token continuation () = emit token continuation
+      fun close continuation () =
+        let val token = next ()
+            val _ = Library.expect_token ")" token
+        in emit token continuation end
+      fun data_from "(" continuation =
+            emit "(" (data_tail continuation)
+        | data_from token continuation = emit token continuation
+      and data_tail continuation () =
+        case next () of
+          ")" => emit ")" continuation
+        | token => data_from token (data_tail continuation)
+      fun ordinary_term continuation () =
+            ordinary_from (next ()) continuation
+      and ordinary_from "(" continuation =
+            emit "(" (ordinary_head continuation)
+        | ordinary_from token continuation = emit token continuation
+      and ordinary_terms continuation () =
+        case next () of
+          ")" => emit ")" continuation
+        | token => ordinary_from token (ordinary_terms continuation)
+      and ordinary_head continuation () =
+        ordinary_head_from (next ()) continuation
+      and ordinary_head_from token continuation =
+        if token = "@var" then
+          emit graph_ordinary_var_head
+            (ordinary_terms continuation)
+        else if token = "let" then
+          emit token (ordinary_let continuation)
+        else if token = "forall" orelse token = "exists" orelse
+                token = "lambda" then
+          emit token (fn () => data_from (next ())
+            (ordinary_term (close continuation)))
+        else if token = "!" then
+          emit token (ordinary_term (data_tail continuation))
+        else if token = "_" then
+          emit token (fn () => emit (next ()) (ordinary_terms continuation))
+        else if token = "as" then
+          emit token (ordinary_as continuation)
+        else ordinary_from token (ordinary_terms continuation)
+      and ordinary_as continuation () =
+        let val name = next () in
+          if List.exists (Lib.equal name)
+              ["const", "seq.empty", "set.empty", "set.universe",
+               "bag.empty", "union"] then
+            emit name (fn () => data_from (next ()) (close continuation))
+          else ordinary_from name (ordinary_terms continuation)
+        end
+      and ordinary_let continuation () =
+        emit (next ()) (ordinary_bindings
+          (ordinary_term (close continuation)))
+      and ordinary_bindings continuation () =
+        case next () of
+          ")" => emit ")" continuation
+        | token => emit token (fn () => emit (next ())
+            (ordinary_term (close (ordinary_bindings continuation))))
+      fun term continuation () = term_from (next ()) continuation
+      and term_from "(" continuation = emit "(" (head continuation)
+        | term_from token continuation = emit token continuation
+      and terms continuation () =
+        case next () of
+          ")" => emit ")" continuation
+        | token => term_from token (terms continuation)
+      and head continuation () =
+        case next () of
+          "_" =>
+            let val name = next () in
+              if name = "BitVec" orelse name = "FloatingPoint" then
+                emit "_" (literal name (data_tail continuation))
+              else emit "@" (fn () =>
+                term_from name (terms continuation))
+            end
+        | "is" => emit "(" (literal "_" (literal "is"
+            (tester continuation)))
+        | token =>
+            if token = "forall" orelse token = "exists" orelse
+               token = "lambda" then
+              emit token (binders continuation)
+            else if token = "@var" then
+              emit token (data_tail continuation)
+            else ordinary_head_from token continuation
+      and tester continuation () =
+        let val constructor = next ()
+            val _ = if constructor = "(" orelse constructor = ")" then
+              raise ERR "parse_term"
+                "CPC datatype tester expects a constructor symbol"
+              else ()
+        in emit constructor (literal ")" (term (close continuation))) end
+      and binders continuation () =
+        case next () of
+          "(" => emit "(" (binder_head continuation)
+        | token => emit token (term (close continuation))
+      and binder_head continuation () =
+        let val token = next () in
+          if token = "@list" then
+            emit token (data_tail (term (close continuation)))
+          else if token = ")" then
+            emit token (ordinary_term (close continuation))
+          else
+            (* Native falls back to the ordinary shared parser for a
+               standard sorted-variable block, including its body. *)
+            data_from token
+              (data_tail (ordinary_term (close continuation)))
+        end
+      val _ = resume := term finished
+    in fn () => (!resume) () end
+
+  (* Heterogeneous metadata, not structured rule formals. Unlike parse(raw),
+     native list definitions elaborate recursive parse_term operands before
+     reading the following syntax, including inside each list element.
+     Top-level @var has no shared-parser callback: parse its sort and close
+     before constructing it. Inline binder @var remains shared-parser data. *)
+  fun graph_read_definition_list next parse_from parse_sort
+      private_variable locate =
+    let
+      fun ordinary prefix = parse_from (graph_definition_tokens
+        (Library.undo_look_ahead prefix next))
+      fun object "(" =
+            let val head = next () in
+              if head = "@var" then
+                let
+                  val name = cpc_var_name (next ())
+                  val ty = parse_sort next
+                  val _ = Library.expect_token ")" (next ())
+                in private_variable (name, ty) end
+              else ordinary ["(", head]
+            end
+        | object first = ordinary [first]
+      fun entries acc =
+        case next () of
+          ")" => List.rev acc
+        | first =>
+            let val term = locate (object first)
+            in entries (term :: acc) end
+    in entries [] end
 
   (* Only structured rule formals are homogeneous lists. Ordinary argument
      packets flatten @list and deliberately allow heterogeneous objects. *)
@@ -4916,28 +5093,38 @@ in
       fun define () =
         let
           val name = graph_definition_name ((#namespace terms) ())
-            (#symbol_key terms) (token ())
+            (#2 declaration_dicts) (#symbol_key terms) (token ())
           val start = token ()
           val first = if start = "(" then
               (Library.expect_token ")" (token ()); token ()) else start
-        in
-          if first = "@list" then
-            (skip_sexp token; (#define_opaque terms) name)
-          else
+          fun ordinary prefix =
             let
               val raw = read_raw_term
-                (Library.undo_look_ahead [first] token)
+                (Library.undo_look_ahead prefix token)
               val _ = Library.expect_token ")" (token ())
             in case raw of
-                RawList (RawAtom "@list" :: entries) =>
-                  (#define_list terms) (name, List.map parse entries)
-              | RawList [RawAtom "@var", RawAtom variable, ty] =>
+                RawList [RawAtom "@var", RawAtom variable, ty] =>
                   ignore ((#define_variable terms)
                     (name, cpc_var_name variable, sort ty))
               | RawList [RawAtom "@purify", payload] =>
                   define_term (name, parse payload)
               | _ => define_term (name, parse raw)
             end
+        in
+          if first = "@list" then
+            (skip_sexp token; (#define_opaque terms) name)
+          else if first = "(" then
+            let val head = token () in
+              if head = "@list" then
+                let
+                  val entries = graph_read_definition_list token
+                    (#parse_from terms) (#parse_sort terms)
+                    (#private_variable terms) (#locate locations)
+                  val _ = (#define_list terms) (name, entries)
+                in Library.expect_token ")" (token ()) end
+              else ordinary [first, head]
+            end
+          else ordinary [first]
         end
       val argument = graph_object_argument parse parse (#lookup_list terms)
       fun index raw =
@@ -5476,28 +5663,38 @@ in
       fun define () =
         let
           val name = graph_definition_name ((#namespace terms) ())
-            (#symbol_key terms) (token ())
+            (#2 declaration_dicts) (#symbol_key terms) (token ())
           val start = token ()
           val first = if start = "(" then
               (Library.expect_token ")" (token ()); token ()) else start
-        in
-          if first = "@list" then
-            (skip_sexp token; (#define_opaque terms) name)
-          else
+          fun ordinary prefix =
             let
               val raw = read_raw_term
-                (Library.undo_look_ahead [first] token)
+                (Library.undo_look_ahead prefix token)
               val _ = Library.expect_token ")" (token ())
             in case raw of
-                RawList (RawAtom "@list" :: entries) =>
-                  (#define_list terms) (name, List.map parse entries)
-              | RawList [RawAtom "@var", RawAtom variable, ty] =>
+                RawList [RawAtom "@var", RawAtom variable, ty] =>
                   ignore ((#define_variable terms)
                     (name, cpc_var_name variable, sort ty))
               | RawList [RawAtom "@purify", payload] =>
                   define_term (name, parse payload)
               | _ => define_term (name, parse raw)
             end
+        in
+          if first = "@list" then
+            (skip_sexp token; (#define_opaque terms) name)
+          else if first = "(" then
+            let val head = token () in
+              if head = "@list" then
+                let
+                  val entries = graph_read_definition_list token
+                    (#parse_from terms) (#parse_sort terms)
+                    (#private_variable terms) (#locate locations)
+                  val _ = (#define_list terms) (name, entries)
+                in Library.expect_token ")" (token ()) end
+              else ordinary [first, head]
+            end
+          else ordinary [first]
         end
       val argument = graph_object_argument parse parse (#lookup_list terms)
       fun index raw =

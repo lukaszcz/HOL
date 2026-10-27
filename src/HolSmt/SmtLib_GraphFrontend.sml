@@ -20,6 +20,15 @@ struct
         "parse_binder_term"
         "CPC @list binder contains a non-variable term")
 
+  fun binder_list backend descriptors values =
+    case values of
+      NONE => List.map (fn descriptor => (descriptor,NONE)) descriptors
+    | SOME values => ListPair.map
+        (fn (descriptor,value) =>
+          let val (_,identity) = B.binder_reference backend
+                (#1 descriptor) value
+          in (descriptor,identity) end) (descriptors,values)
+
   datatype lexical_policy = CPC | Z3
   datatype source_arity = Exact of int | AtMost of int
   type source_declaration =
@@ -576,20 +585,25 @@ struct
          index_limit = #index_limit (#recipe_limits options),
          parse_choice = false, parse_lambda = true,
          lookup_binder_list = fn token =>
-           Redblackmap.peek (!binder_lists_ref, symbol_key token),
+           Option.map (fn descriptors => binder_list backend descriptors
+             (Option.map (List.map #node)
+               (Redblackmap.peek (!lists_ref,symbol_key token))))
+             (Redblackmap.peek (!binder_lists_ref, symbol_key token)),
          binder_reference = fn frame => fn token =>
            let val key = symbol_key token in
              case B.lookup backend frame key of
                (* A lexical LET binds a variable even when its eliminated
                   graph value is compound. Bind its declared name/type, not
                   the descriptor (if any) of the substituted operand. *)
-               SOME node => (key, P.proof_symbol_text token,
-                 B.type_of backend node)
-             | NONE => case Redblackmap.peek (!variables_ref, key) of
-                 SOME variable => variable
-               | NONE => binder_variable backend key
-                   (P.apply_construction_symbol
-                     (configuration frame) (!dictionary_ref) frame token [] [])
+               SOME node => ((key, P.proof_symbol_text token,
+                 B.type_of backend node),NONE)
+             | NONE => case Redblackmap.peek (!aliases_ref,key) of
+                 SOME alias => B.binder_reference backend key (#node alias)
+               | NONE => case Redblackmap.peek (!variables_ref, key) of
+                   SOME variable => (variable,NONE)
+                 | NONE => B.binder_reference backend key
+                     (P.apply_construction_symbol
+                       (configuration frame) (!dictionary_ref) frame token [] [])
            end,
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
          coerce_arguments = R.coerce_arguments backend}
@@ -1189,20 +1203,25 @@ struct
          index_limit = #index_limit (#recipe_limits options),
          parse_choice = false, parse_lambda = true,
          lookup_binder_list = fn token =>
-           Redblackmap.peek (!binder_lists_ref, symbol_key token),
+           Option.map (fn descriptors => binder_list backend descriptors
+             (Option.map (List.map #node)
+               (Redblackmap.peek (!lists_ref,symbol_key token))))
+             (Redblackmap.peek (!binder_lists_ref, symbol_key token)),
          binder_reference = fn frame => fn token =>
            let val key = symbol_key token in
              case B.lookup backend frame key of
                (* A lexical LET binds a variable even when its eliminated
                   graph value is compound. Bind its declared name/type, not
                   the descriptor (if any) of the substituted operand. *)
-               SOME node => (key, P.proof_symbol_text token,
-                 B.type_of backend node)
-             | NONE => case Redblackmap.peek (!variables_ref, key) of
-                 SOME variable => variable
-               | NONE => binder_variable backend key
-                   (P.apply_construction_symbol_with_policy
-                     (configuration frame) (!dictionary_ref) frame token [] [])
+               SOME node => ((key, P.proof_symbol_text token,
+                 B.type_of backend node),NONE)
+             | NONE => case Redblackmap.peek (!aliases_ref,key) of
+                 SOME alias => B.binder_reference backend key (#node alias)
+               | NONE => case Redblackmap.peek (!variables_ref, key) of
+                   SOME variable => (variable,NONE)
+                 | NONE => B.binder_reference backend key
+                     (P.apply_construction_symbol_with_policy
+                       (configuration frame) (!dictionary_ref) frame token [] [])
            end,
          record_binder_block = fn _ => (), ascribed_symbol = ascribed,
          coerce_arguments = R.coerce_arguments backend}

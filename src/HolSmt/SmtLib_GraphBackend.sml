@@ -34,6 +34,7 @@ struct
      view : environment -> 'a -> 'a view,
      same_value : 'a * 'a -> bool,
      variable_descriptor : 'a -> Term.term option,
+     private_variable : 'a -> bool,
      solver_variables : unit -> 'a solver_variable list,
      mk_bound_var : string * Type.hol_type -> Term.term,
      source : environment -> Term.term -> 'a,
@@ -41,7 +42,7 @@ struct
      variable : environment -> G.variable_kind -> Term.term -> 'a,
      fresh_solver_variable : environment -> Term.term -> 'a,
      reference : environment -> Term.term * 'a -> 'a,
-     capture_alias : environment ->
+     capture_alias : environment -> ('a * 'a) list ->
        'a * (string * int * 'a) list -> 'a * (string * int * 'a) list,
      bound_variable : environment -> Term.term -> 'a,
      application : environment -> 'a * 'a -> 'a,
@@ -55,7 +56,9 @@ struct
      finish_let : (string * Term.term * 'a) list * 'a -> 'a}
   datatype 'a frame = Frame of
     {owner : unit ref, active : bool ref, environment : environment,
-     bindings : (string, 'a) Redblackmap.dict, blocked : string HOLset.set}
+     bindings : (string, 'a) Redblackmap.dict, blocked : string HOLset.set,
+     identities : ('a * 'a) list}
+  type 'a binder = (string * string * Type.hol_type) * 'a option
 
   datatype 'a binding_origin = BindingOrigin of
     {backend : 'a backend,parent : 'a frame,child : 'a frame,
@@ -153,11 +156,20 @@ struct
   fun type_of (Backend {type_of, ...}) value = type_of value
   fun variable_descriptor (Backend {variable_descriptor, ...}) value =
     variable_descriptor value
+  fun binder_reference
+      (backend as Backend {private_variable,...}) key node =
+    case variable_descriptor backend node of
+      SOME variable =>
+        let val (name,ty) = Term.dest_var variable
+        in ((key,name,ty),if private_variable node then SOME node else NONE)
+        end
+    | NONE => raise Feedback.mk_HOL_ERR "SmtLib_Parser" "parse_binder_term"
+        "CPC @list binder contains a non-variable term"
   fun solver_variables (Backend {solver_variables, ...}) = solver_variables ()
   fun root (Backend {owner, initial, ...}) =
     Frame {owner = owner, active = ref true, environment = initial,
            bindings = Redblackmap.mkDict String.compare,
-           blocked = HOLset.empty String.compare}
+           blocked = HOLset.empty String.compare, identities = []}
   fun checked_frame (Backend {owner, validate_environment, ...})
       (Frame {owner = frame_owner, active, environment, bindings, ...}) =
     if owner <> frame_owner then
@@ -175,6 +187,7 @@ struct
         ((close () handle _ => ()); raise error)
     in close (); result end
   fun frame_blockers (Frame {blocked, ...}) = blocked
+  fun frame_identities (Frame {identities,...}) = identities
   fun is_blocked backend frame key =
     (ignore (checked_frame backend frame);
      HOLset.member (frame_blockers frame, key))
@@ -208,7 +221,8 @@ struct
     fresh_solver_variable (#1 (checked_frame backend frame))
       (mk_bound_var descriptor)
   fun capture_alias (backend as Backend {capture_alias,...}) frame value =
-    capture_alias (#1 (checked_frame backend frame)) value
+    capture_alias (#1 (checked_frame backend frame))
+      (frame_identities frame) value
 
   fun reference (backend as Backend {reference, ...}) frame declaration =
     reference (#1 (checked_frame backend frame)) declaration
@@ -418,11 +432,14 @@ struct
     (value,List.concat (List.map (fn (kind,count,node) =>
       List.map (fn node => (kind,count,node)) (translate node)) blocks))
   fun graph_capture_alias graph regular maximum literal_limit lexical scope
-      (root,blocks) =
+      identities (root,blocks) =
     capture_blocks (scoped_alias
       {spend=fn _ => (),key=G.node_id,free=G.free_variable_nodes graph,
-       resolve=fn node => case regular node of NONE => node
-         | SOME term => G.resolve_reference graph lexical term node,
+       resolve=fn node =>
+         case List.find (fn (old,_) => old=node) identities of
+           SOME (_,bound) => bound
+         | NONE => case regular node of NONE => node
+           | SOME term => G.resolve_reference graph lexical term node,
        visible=fn scope => fn node =>
          G.scope_visible graph scope (G.node_scope graph node),
        atom=fn scope => fn node =>
@@ -474,13 +491,14 @@ struct
      view = fn _ => term_view, same_value = Portable.pointer_eq,
      variable_descriptor = fn term =>
        if Term.is_var term then SOME term else NONE,
+     private_variable = fn _ => false,
      solver_variables = fn () => [],
      validate_environment = fn _ => (),
      mk_bound_var = mk_bound_var, source = fn _ => fn term => term,
      literal = fn _ => fn term => term,
      variable = fn _ => fn _ => fn term => term,
      fresh_solver_variable = fn _ => Term.genvar o Term.type_of,
-     reference = fn _ => #2, capture_alias = fn _ => Lib.I,
+     reference = fn _ => #2, capture_alias = fn _ => fn _ => Lib.I,
      bound_variable = fn _ => fn term => term,
      application = fn _ => Term.mk_comb,
      new_scope = fn _ => fn _ => NONE,
@@ -583,6 +601,11 @@ struct
          (SmtReplayResourcePolicy.AtMost (IntInf.fromInt binder_limit))
          (SmtReplayResourcePolicy.AtMost (IntInf.fromInt literal_limit))
          (lexical environment) (construction environment),
+       private_variable = fn node =>
+         (case G.view graph node of G.Variable (G.SolverFlexible,_) =>
+            not (Option.isSome (graph_lexical_alias graph
+              private_variables lexical_descriptors node))
+          | _ => false),
        bound_variable = fn environment => fn term => retain_variable term
          (G.fresh_bound_variable graph (construction environment) term),
        application = fn environment =>
@@ -672,18 +695,19 @@ struct
       val child = Frame {owner = owner, active = ref true,
                          environment = environment,
                          bindings = dictionary,
-                         blocked = shadow_blockers parent entries}
+                         blocked = shadow_blockers parent entries,
+                         identities = frame_identities parent}
     in finish_scopes close_scope [environment] (fn () =>
       let
         val result = scoped_body child body
         val _ = ignore (type_of backend result)
       in finish_let (values, result) end) end
 
-  fun abstraction (backend as Backend
+  fun abstraction_with_identity (backend as Backend
       {owner, mk_bound_var, bound_variable, new_abstraction_scope,
        new_let_scope, close_scope, abstraction, abort_abstraction_scope, ...})
       parent
-      (key, name, ty) body =
+      {dictionary_binding,binder=((key, name, ty), original)} body =
     let
       val (environment, dictionary) = checked_frame backend parent
       val term = mk_bound_var (name, ty)
@@ -697,18 +721,36 @@ struct
       fun construct () =
         let
           val binder = bound_variable binder_frame term
-          val body_environment = new_let_scope binder_frame [(term,binder)]
+          val body_environment = new_let_scope binder_frame
+            (case original of NONE => [(term,binder)] | SOME _ => [])
           val _ = environments := body_environment :: !environments
+          (* Native CPC binders capture existing lexical variables, not
+             arbitrary proof-dictionary entries with the same spelling.
+             An inherited frame entry is a lexical LET/sorted binder. *)
+          val bind_dictionary = not (Option.isSome original) andalso
+            (dictionary_binding orelse
+             (case Redblackmap.peek (dictionary,key) of
+                SOME value => Type.compare (type_of backend value,ty)=EQUAL
+              | NONE => false))
           val child = Frame {owner = owner, active = ref true,
             environment = body_environment,
-            bindings = Redblackmap.insert (dictionary,key,binder),
-            blocked = shadow_blockers parent [(key, name, ty)]}
+            bindings = if bind_dictionary then
+                Redblackmap.insert (dictionary,key,binder) else dictionary,
+            blocked = if bind_dictionary then
+                shadow_blockers parent [(key, name, ty)]
+              else frame_blockers parent,
+            identities = case original of NONE => frame_identities parent
+              | SOME old => (old,binder)::frame_identities parent}
           val result = scoped_body child body
         in abstraction environment body_environment (binder,result) end
       val result = construct () handle primary => abort primary
       val _ = List.app close_scope (!environments)
         handle primary => abort primary
     in result end
+
+  fun abstraction backend parent descriptor body =
+    abstraction_with_identity backend parent
+      {dictionary_binding=true,binder=(descriptor,NONE)} body
 
   fun frame_scope backend frame =
     case #1 (checked_frame backend frame) of
@@ -883,7 +925,8 @@ struct
       val active = ref true
       val frame = Frame {owner = owner, active = active,
                          environment = environment, bindings = dictionary,
-                         blocked = blocked}
+                         blocked = blocked,
+                         identities = frame_identities parent}
       fun close () = if not (!active) then () else
         (active := false; close_scope environment)
       val origin = (case backend of Backend {graph = NONE,...} => NONE
@@ -927,7 +970,8 @@ struct
       val active = ref true
       val frame = Frame {owner = owner, active = active,
                          environment = environment, bindings = dictionary,
-                         blocked = shadow_blockers parent descriptors}
+                         blocked = shadow_blockers parent descriptors,
+                         identities = frame_identities parent}
       fun close () = if !closed then () else
         (closed := true; active := false; close_environments ())
       val origin = opened_origin backend parent frame variables descriptors true
@@ -1279,6 +1323,11 @@ struct
          (graph_lexical_alias graph private_variables lexical_descriptors)
          binder_limit literal_limit
          (lexical environment) (construction environment),
+       private_variable = fn node =>
+         (case G.view graph node of G.Variable (G.SolverFlexible,_) =>
+            not (Option.isSome (graph_lexical_alias graph
+              private_variables lexical_descriptors node))
+          | _ => false),
        bound_variable = fn environment => fn term => retain_variable term
          (G.fresh_bound_variable graph (construction environment) term),
        application = fn environment =>
@@ -1408,12 +1457,17 @@ struct
                SOME original => if PV.key context original=
                    PV.key context value then SOME term else NONE
              | NONE => NONE)
-      fun capture environment (root,blocks) = capture_blocks (scoped_alias
+      fun capture environment identities (root,blocks) =
+        capture_blocks (scoped_alias
         {spend=PV.spend context,key=PV.key context,
          free=fn value => SOME (PV.free_variables context value),
-         resolve=fn value => case regular value of NONE => value
-           | SOME term => PV.reference context (lexical environment)
-               (term,value),
+         resolve=fn value =>
+           case List.find (fn (old,_) =>
+               (step ();PV.key context old=PV.key context value)) identities of
+             SOME (_,bound) => bound
+           | NONE => case regular value of NONE => value
+             | SOME term => PV.reference context (lexical environment)
+                 (term,value),
          visible=fn scope => fn value =>
            G.scope_visible graph scope (PV.scope_of context value),
          atom=fn scope => fn value =>
@@ -1474,6 +1528,11 @@ struct
            PV.proof_key context (PV.proof_term context left) =
            PV.proof_key context (PV.proof_term context right),
          variable_descriptor=descriptor,
+         private_variable=fn value =>
+           (case PV.view context value of
+              PV.Variable (G.SolverFlexible,_) =>
+                not (Option.isSome (regular value))
+            | _ => false),
          solver_variables=fn () =>
            (PV.spend context 1;List.rev (!variables)),
          mk_bound_var=fn pair => (step ();Term.mk_var pair),

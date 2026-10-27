@@ -2,8 +2,9 @@
    semantic graph equality decisions, or proof authority live here.
 
    Operands are shared, never copied into a native template. Constructors do
-   only local work (from_template validates its hole/operand lists). Callers
-   admit the retained native templates and account for construction work;
+   only local work (from_template validates its hole/operand lists). Private
+   binding is lazy; queries lower it with charged, query-local DAG memos.
+   Callers admit retained native templates and account for construction work;
    observation callbacks account for expansion and query traversals.
    Template holes are variables. Binders must be fresh for actual source
    operands, not merely holes, EXCEPT when a hole models an original lexical
@@ -31,7 +32,8 @@ struct
     in not (Term.aconv binder opened) end
 
   datatype syntax = Syntax of
-    {id : IntInf.int, ty : Type.hol_type, node : node}
+    {id : IntInf.int, ty : Type.hol_type, node : node,
+     private_bindings : bool}
   and node =
       Native of Term.term
     | Private of Term.term
@@ -39,14 +41,29 @@ struct
                    operands : syntax list, avoids : Term.term list option}
     | Application of syntax * syntax
     | Abstraction of Term.term * Term.term * syntax
+    | PrivateBinding of Term.term * syntax
     (* Simultaneous FREE-variable renaming. Unlike rebuilding named lambdas,
        this preserves stored inner binder names even on a name collision.
        It describes the de Bruijn opening performed by ordinary dest_abs. *)
     | Renaming of syntax * (Term.term * Term.term) list
 
+  fun has_private_bindings (Syntax {private_bindings, ...}) =
+    private_bindings
   fun make ty node =
-    let val id = !serial
-    in serial := id + 1; Syntax {id = id, ty = ty, node = node} end
+    let
+      val id = !serial
+      val private_bindings = case node of
+          PrivateBinding _ => true
+        | Application (f,x) => has_private_bindings f orelse
+                               has_private_bindings x
+        | Abstraction (_,_,body) => has_private_bindings body
+        | Renaming (body,_) => has_private_bindings body
+        | Template {operands,...} => List.exists has_private_bindings operands
+        | _ => false
+    in
+      serial := id + 1;
+      Syntax {id=id, ty=ty, node=node, private_bindings=private_bindings}
+    end
   datatype view = Variable of Term.term | Atom of Term.term
                 | Apply of syntax * syntax
                 | Abstract of Term.term * syntax
@@ -247,6 +264,217 @@ struct
             else find rest
     in find replacements end
 
+  (* Lower explicit private binding only for an observation. Collect raw
+     names (including hidden lexical markers and renaming domains/ranges)
+     once, expanding each template once. Fresh names are indexed, not found
+     by repeatedly scanning a growing avoids list. No compound native term
+     is constructed. The second memo is indexed by source identity and ONLY
+     relevant private bindings, so unrelated scopes cannot unshare a DAG.
+
+     Adjacent private binders are lowered as one batch: neither freshness
+     nor replacement walks their common suffix once per binder. All caches,
+     expanded templates, and callbacks die with this reader. *)
+  fun private_reader observe =
+    let
+      val resolved = ref (dictionary observe)
+      fun lower root =
+        let
+          fun compare_name (a,b) =
+            (observe (1 + IntInf.fromInt (String.size a + String.size b));
+             String.compare (a,b))
+          fun compare_variable (a,b) =
+            let val (x,xty) = Term.dest_var a
+                val (y,yty) = Term.dest_var b
+                val _ = observe
+                  (1 + IntInf.fromInt (String.size x + String.size y))
+                val _ = type_work observe xty
+                val _ = type_work observe yty
+            in Term.compare (a,b) end
+          val empty = Redblackset.empty compare_variable
+          val names = ref (Redblackset.empty compare_name)
+          val dependencies = ref (dictionary observe)
+          val expansions = ref (dictionary observe)
+          val pending = ref []
+          val markers = ref (dictionary observe)
+          fun avoid variable =
+            (observe 1;
+             if Term.is_var variable then
+               names := Redblackset.add (!names,#1 (Term.dest_var variable))
+             else ())
+          fun native_names term =
+            (observe 1;
+             if Term.is_var term then avoid term
+             else if Term.is_comb term then
+               let val (f,x) = Term.dest_comb term
+               in native_names f; native_names x end
+             else if Term.is_abs term then
+               (avoid (stored_binder observe term);
+                native_names (#2 (Term.dest_abs term)))
+             else ())
+          fun union (left,right) = Redblackset.foldl
+            (fn (variable,rest) =>
+              (observe 1; Redblackset.add (rest,variable))) left right
+          fun collect (Syntax {id,node,...}) =
+            (observe 1;
+             case Redblackmap.peek (!dependencies,id) of
+               SOME result => result
+             | NONE =>
+               let
+                 val result = case node of
+                     Native term => (native_names term; empty)
+                   | Private term =>
+                       (avoid term;
+                        if Term.is_var term then Redblackset.add (empty,term)
+                        else empty)
+                   | Template template =>
+                       let val expanded = expand_template observe template
+                           val _ = observe 1
+                           val _ = expansions :=
+                             Redblackmap.insert (!expansions,id,expanded)
+                       in collect expanded end
+                   | Application (f,x) => union (collect f,collect x)
+                   | Abstraction (stored,marker,body) =>
+                       (avoid stored; avoid marker; collect body)
+                   | Renaming (body,replacements) =>
+                       (List.app (fn (old,value) =>
+                          (avoid old; avoid value)) replacements;
+                        collect body)
+                   | PrivateBinding (descriptor,body) =>
+                       let
+                         val _ = avoid descriptor
+                         val result = collect body
+                         val _ = pending := (id,descriptor) :: !pending
+                       in
+                         if Redblackset.member (result,descriptor) then
+                           Redblackset.delete (result,descriptor)
+                         else result
+                       end
+                 val _ = observe 1
+                 val _ = dependencies :=
+                   Redblackmap.insert (!dependencies,id,result)
+               in result end)
+          val _ = collect root
+          fun allocate (id,descriptor) =
+            let
+              (* Identity only selects a candidate. Even adversarial lexical
+                 names are checked; different types cannot evade freshness. *)
+              val base = "smt_private_" ^ IntInf.toString id
+              fun fresh name =
+                (observe (1 + IntInf.fromInt (String.size name));
+                 if Redblackset.member (!names,name) then fresh (name ^ "'")
+                 else name)
+              val name = fresh base
+              val _ = names := Redblackset.add (!names,name)
+              val marker = Term.mk_var (name,Term.type_of descriptor)
+              val _ = observe 1
+            in markers := Redblackmap.insert (!markers,id,marker) end
+          val _ = List.app allocate (!pending)
+          fun compare_id (a,b) = (observe 1; IntInf.compare (a,b))
+          val memo = ref (Redblackmap.mkDict
+            (fn ((a,xs),(b,ys)) => case compare_id (a,b) of
+                EQUAL => List.collate compare_id (xs,ys) | order => order))
+          fun marker id =
+            (observe 1; Redblackmap.find (!markers,id))
+          (* Batch suffixes retain persistent environments without eagerly
+             projecting every growing suffix dependency set. Compare only
+             when another incoming edge actually requests that suffix. *)
+          val batches = ref (dictionary observe)
+          fun same_environment relevant (left,right) =
+            Redblackset.foldl (fn (variable,result) =>
+              (observe 1;
+               result andalso
+               (case (Redblackmap.peek (left,variable),
+                      Redblackmap.peek (right,variable)) of
+                  (NONE,NONE) => true
+                | (SOME (a,_),SOME (b,_)) => compare_id (a,b)=EQUAL
+                | _ => false))) true relevant
+          fun finish prefix body = List.foldl
+            (fn ((id,ty,binder,environment),inner) =>
+              let
+                val _ = observe 1
+                val result = make ty (Abstraction (binder,binder,inner))
+                val bucket = case Redblackmap.peek (!batches,id) of
+                    NONE => [] | SOME bucket => bucket
+                val _ = observe 1
+                val _ = batches := Redblackmap.insert
+                  (!batches,id,(environment,result)::bucket)
+              in result end) body prefix
+          fun walk environment (source as Syntax {id,ty,node,...}) =
+            let
+              val _ = observe 1
+              val relevant = Redblackmap.find (!dependencies,id)
+              val (environment,ids) = Redblackset.foldl
+                (fn (variable,(bindings,ids)) =>
+                  (observe 1;
+                   case Redblackmap.peek (environment,variable) of
+                     NONE => (bindings,ids)
+                   | SOME (id,value) =>
+                       (Redblackmap.insert (bindings,variable,(id,value)),
+                        id::ids)))
+                (Redblackmap.mkDict compare_variable,[]) relevant
+              val key = (id,ids)
+            in
+              case Redblackmap.peek (!memo,key) of SOME result => result
+              | NONE =>
+                let
+                  fun batch bindings prefix
+                        (Syntax {id,ty,node=PrivateBinding (variable,body),
+                                 ...}) =
+                        let
+                          val _ = observe 1
+                          val bucket = case Redblackmap.peek (!batches,id) of
+                              NONE => [] | SOME bucket => bucket
+                          val cached = List.find (fn (other,_) =>
+                            (observe 1;
+                             same_environment
+                               (Redblackmap.find (!dependencies,id))
+                               (bindings,other))) bucket
+                        in case cached of
+                            SOME (_,result) => finish prefix result
+                          | NONE =>
+                            let
+                              val binder = marker id
+                              val extended = Redblackmap.insert
+                                (bindings,variable,(id,native binder))
+                            in batch extended
+                              ((id,ty,binder,bindings)::prefix) body end
+                        end
+                    | batch bindings prefix body =
+                        finish prefix (walk bindings body)
+                  val result = case node of
+                      Native _ => source
+                    | Private term =>
+                        if Term.is_var term then
+                          (case Redblackmap.peek (environment,term) of
+                             SOME (_,value) => value | NONE => source)
+                        else source
+                    | Template _ => walk environment
+                        (Redblackmap.find (!expansions,id))
+                    | Application (f,x) =>
+                        application (walk environment f,walk environment x)
+                    | Abstraction (stored,binder,body) => make ty
+                        (Abstraction (stored,binder,walk environment body))
+                    | Renaming (body,replacements) =>
+                        renaming (walk environment body,replacements)
+                    | PrivateBinding _ => batch environment [] source
+                  val _ = observe 1
+                  val _ = memo := Redblackmap.insert (!memo,key,result)
+                in result end
+            end
+        in walk (Redblackmap.mkDict compare_variable) root end
+      fun resolve (source as Syntax {id,...}) =
+        (observe 1;
+         if not (has_private_bindings source) then source
+         else case Redblackmap.peek (!resolved,id) of
+             SOME result => result
+           | NONE =>
+               let val result = lower source
+                   val _ = observe 1
+                   val _ = resolved :=
+                     Redblackmap.insert (!resolved,id,result)
+               in result end)
+    in resolve end
+
   (* Open only retained native source syntax with the public dest_abs.
      Its exposed binder may be freshened: remove its FREE occurrences, but
      retain all stored inner binders and record the original stored binder.
@@ -254,6 +482,7 @@ struct
      No native term is assembled from synthetic operands by this visitor. *)
   fun observations observe =
     let
+      val resolve = private_reader observe
       val memo = ref (dictionary observe)
       fun merge (left, right) =
         (observe (IntInf.fromInt (List.length left));
@@ -274,7 +503,7 @@ struct
                  | _ => (observe 1; true)) (native_variables body)
            in merge ([Bound stored], entries) end
          else [])
-      fun visit (Syntax {id, node, ...}) =
+      fun visit (source as Syntax {id, node, ...}) =
         (observe 1;
          case Redblackmap.peek (!memo, id) of
            SOME entries => entries
@@ -284,6 +513,7 @@ struct
                case node of
                  Native term => native_variables term
                | Private term => [Opaque term]
+               | PrivateBinding _ => visit (resolve source)
                | Template source => visit (expand_template observe source)
                | Application (operator, operand) =>
                    merge (visit operator, visit operand)
@@ -304,7 +534,15 @@ struct
              val _ = observe 1
              val _ = memo := Redblackmap.insert (!memo, id, entries)
            in entries end)
-    in visit end
+    in fn source => visit (resolve source) end
+
+  (* Construction never inspects the body or retains the charging callback. *)
+  fun private_abstraction observe (descriptor, body) =
+    (observe 1;
+     if Term.is_var descriptor then
+       make (Type.--> (Term.type_of descriptor, type_of body))
+         (PrivateBinding (descriptor,body))
+     else raise ERR "private_abstraction" "binder is not a variable")
 
   fun contains_constant observe {Thy, Name} root =
     let
@@ -337,6 +575,7 @@ struct
                | Application (operator, operand) =>
                    visit operator orelse visit operand
                | Abstraction (_, _, body) => visit body
+               | PrivateBinding (_,body) => visit body
                | Renaming (body, _) => visit body
              val _ = observe 1
              val _ = memo := Redblackmap.insert (!memo, id, result)
@@ -518,6 +757,7 @@ struct
 
   fun abstraction_reader observe =
     let
+      val resolve = private_reader observe
       val entries = observations observe
       val heads = ref (dictionary observe)
       fun free body = free_occurrences observe (entries body)
@@ -563,6 +803,7 @@ struct
                case node of
                  Application _ => NONE
                | Private _ => NONE
+               | PrivateBinding _ => head (resolve syntax)
                | Template source => head (expand_template observe source)
                | Abstraction (stored, marker, body) =>
                    SOME (stored, marker, body)
@@ -622,7 +863,7 @@ struct
              val body = if same_variable observe (marker, binder) then body
                         else renamed (body, [(marker, binder)])
            in SOME (binder,body) end)
-    in expose end
+    in fn source => expose (resolve source) end
 
   fun dest_abs observe root = abstraction_reader observe root
   fun strip_abs observe root =
@@ -637,6 +878,7 @@ struct
      private atoms are opaque. Renaming preserves provenance at each leaf. *)
   fun view_reader observe =
     let
+      val resolve = private_reader observe
       val memo = ref (dictionary observe)
       val expose = abstraction_reader observe
       fun abstract source = case expose source of
@@ -649,6 +891,7 @@ struct
            let
              val result = case node of
                  Private term => Atom term
+               | PrivateBinding _ => visit (resolve source)
                | Native term =>
                    if Term.is_var term then Variable term
                    else if Term.is_comb term then
@@ -673,7 +916,7 @@ struct
              val _ = observe 1
              val _ = memo := Redblackmap.insert (!memo,id,result)
            in result end)
-    in visit end
+    in fn source => visit (resolve source) end
 
   fun view observe source = view_reader observe source
   fun dest_comb observe source = case view observe source of
@@ -759,6 +1002,7 @@ struct
      native fragments are opened; actual operands remain shared syntax. *)
   fun substitute observe replacements root =
     let
+      val resolve = private_reader observe
       val entries = observations observe
       val equal = same_variable observe
       fun free syntax = free_occurrences observe (entries syntax)
@@ -833,7 +1077,7 @@ struct
           val _ = observe ((size-original+1)*(bytes+size+1))
         in result end
       fun walk [] syntax = syntax
-        | walk bindings (syntax as Syntax {id,ty,node}) =
+        | walk bindings (syntax as Syntax {id,ty,node,...}) =
         let
           val _ = observe 1
           val current = free syntax
@@ -865,6 +1109,7 @@ struct
                      {template=term,holes=[],operands=[],avoids=NONE})
                  else syntax
                | Private _ => syntax
+               | PrivateBinding _ => walk bindings (resolve syntax)
                | Template source =>
                    walk bindings (expand_template observe source)
                | Application (operator,operand) =>
@@ -926,18 +1171,20 @@ struct
              else SOME (binding (old,value,free value,true,false))
          | NONE => SOME (binding (old,value,free value,true,false))))
         replacements
-    in walk bindings root end
+    in if null bindings then root else walk bindings (resolve root) end
 
   fun normalize_lets observe root =
     let
+      val resolve = private_reader observe
       val memo = ref (dictionary observe)
-      fun walk (source as Syntax {id,ty,node}) =
+      fun walk (source as Syntax {id,ty,node,...}) =
         (observe 1;case Redblackmap.peek (!memo,id) of
            SOME result => result
          | NONE =>
            let val result = case node of
                  Native _ => source
                | Private _ => source
+               | PrivateBinding _ => walk (resolve source)
                | Template template => walk (expand_template observe template)
                | Renaming (body,replacements) => walk (substitute observe
                    (List.map (fn (old,value) => (old,native value))
@@ -966,5 +1213,5 @@ struct
                val _ = observe 1
                val _ = memo := Redblackmap.insert (!memo,id,result)
            in result end)
-    in walk root end
+    in walk (resolve root) end
 end

@@ -1636,6 +1636,60 @@ struct
          negative (kind ^ " duplicate precedes malformed body")
            ("(" ^ command ^ " (define @fresh ("))) definitions
 
+      (* Freshness must win before even reading a malformed binder/body,
+         including builtins and supplied source-dictionary entries. *)
+      val _ = List.app (fn (name,message) =>
+        let val text = "((define " ^ name ^ " ("
+        in
+          test (name ^ " freshness precedes malformed body / native")
+            (fn () => owned (fn e => require
+              "native freshness diagnostic changed"
+              (failure (fn () => ignore (legacy e text))=
+               SOME ("CPC_ProofParser","parse_define",message))));
+          negative (name ^ " freshness precedes malformed body") text
+        end)
+        [("true","CPC definition may not shadow builtin symbol true"),
+         ("task35_num","CPC definition may not redefine source symbol " ^
+           "task35_num")]
+      val list_failure =
+        "((define @xs () (@list task35_missing_arg ("
+      val _ = test "definition list element precedes later syntax / native"
+        (fn () => owned (fn e =>
+          let val expected = failure (fn () => ignore (legacy e
+                "((define @xs () (@list task35_missing_arg)))"))
+              val actual = failure (fn () => ignore (legacy e list_failure))
+          in require "native list element did not win first-error order"
+            (Option.isSome expected andalso expected=actual) end))
+      val _ = negative "definition list element precedes later syntax"
+        list_failure
+      val _ = negative "nested definition-list operand precedes later syntax"
+        "((define @xs () (@list (or task35_missing_arg ("
+      val _ = positive "definition-list inline variable retains binder identity"
+        ("((define @x () (@var \"x\" Bool)) " ^
+         "(define @vars () (@list (@var \"x\" Bool))) " ^
+         "(assume @a (forall @vars @x)))")
+      val _ = List.app (fn (label,term) => positive
+        ("streaming definition-list " ^ label)
+        ("((define @xs () (@list " ^ term ^ ")) " ^
+         "(assume @a true))"))
+        [("higher-order application","(_ task35_array task35_num)"),
+         ("indexed sort marker","(_ BitVec 3)"),
+         ("qualified empty","(as seq.empty (Seq Bool))"),
+         ("annotation","(! true :named list_tag)"),
+         ("LET","(let ((p true)) p)"),
+         ("sorted binder","(forall ((p Bool)) p)"),
+         ("CPC binder","(forall (@list (@var \"p\" Bool)) true)")]
+      val _ = negative "ordinary list subterm does not admit CPC @var"
+        "((define @xs () (@list (or (@var \"x\" Bool) false))))"
+      val _ = negative "CPC binder does not declare a new dictionary entry"
+        "((define @xs () (@list (forall (@list (@var \"x\" Bool)) x))))"
+      val _ = positive "CPC binder preserves a same-named proof constant"
+        ("((define x () true) (define @xs () (@list " ^
+         "(forall (@list (@var \"x\" Bool)) x))) (assume @a true))")
+      val _ = positive "CPC binder preserves proof constant semantics"
+        ("((define x () true) (assume @a " ^
+         "(forall (@list (@var \"x\" Bool)) x)))")
+
       val variable = "(define @x () (@var \"x\" Bool)) "
       val _ = List.app (fn (label,definitions,body) => positive label
         ("(" ^ variable ^ definitions ^ "(assume @a " ^ body ^ "))"))
@@ -1668,6 +1722,10 @@ struct
          "(forall (@list @y) (= @y 0)))))")
       val _ = positive "sorted lexical binder is an inline binder reference"
         "((assume @a (forall ((q Bool)) (forall (@list q) q))))"
+      val _ = positive "CPC binder keeps a differently typed lexical namesake"
+        ("((define @i () (@var \"x\" Int)) " ^
+         "(define @vars () (@list @i)) " ^
+         "(assume @a (forall ((x Bool)) (forall @vars x))))")
       val _ = positive "lexical LET name shadows retained binder alias"
         ("(" ^ variable ^ "(define @y () @x) " ^
          "(assume @a (let ((@y true)) (forall (@list @y) true))))")
@@ -1727,10 +1785,134 @@ struct
             in () end))) [Finite,Policy]
     in () end
 
+  (* review-dab9ea1bf: an explicit private-marker binder captures its
+     allocation identity, including retained aliases, not its spelling. *)
+  fun private_binder_aliases () =
+    let
+      val prefix = "((define @k () (@const 3 true)) "
+      fun fixture definitions body = prefix ^ definitions ^
+        "(assume @a " ^ body ^ "))"
+      val compound = fixture
+        "(define @alias () @k) (define @body () (or @k false)) "
+        "(forall (@list @alias) @body)"
+      val _ = List.app (fn (label,definitions,body) => positive label
+        (fixture definitions body))
+        [("private marker is an explicit FORALL binder","",
+          "(forall (@list @k) @k)"),
+         ("private binder alias chain",
+          "(define @alias () @k) (define @copy () @alias) ",
+          "(forall (@list @copy) (or @k @alias @copy))"),
+         ("private binder named list alias",
+          "(define @alias () @k) (define @vars () (@list @alias)) ",
+          "(forall @vars @k)"),
+         ("nested distinct private binders",
+          "(define @j () (@const 4 true)) ",
+          "(forall (@list @k) (exists (@list @j) (or @k @j)))"),
+         ("nested repeated private binder shadows by identity","",
+          "(forall (@list @k) (and @k (exists (@list @k) @k)))"),
+         ("private marker is an explicit EXISTS binder","",
+          "(exists (@list @k) @k)"),
+         ("private marker is an explicit LAMBDA binder","",
+          "(= (lambda (@list @k) @k) (lambda ((x Bool)) x))")]
+      val _ = positive "private binder captures compound aliased body"
+        compound
+      (* Test-only source reconstruction, charged by expanded node count
+         BEFORE visiting children. No source observation grants authority. *)
+      fun source_term syntax =
+        let val remaining = ref maximum
+            fun observe (_:IntInf.int) = ()
+            fun walk source =
+              (require "private binder source oracle exceeds4096"
+                 (!remaining>0);
+               remaining := !remaining-1;
+               case CS.view observe source of
+                   CS.Variable variable => variable
+                 | CS.Atom atom => (bounded atom;atom)
+                 | CS.Apply (f,x) => Term.mk_comb (walk f,walk x)
+                 | CS.Abstract (binder,body) =>
+                     Term.mk_abs (binder,walk body))
+        in walk syntax end
+      val _ = List.app (fn route => test
+        ("explicit private binder source/semantic bridge / " ^
+          route_name route) (fn () =>
+          let
+            fun check raw (proof:'a C.constructed_graph_proof) =
+              let val term = hd (assumptions proof)
+                  val syntax = valOf (#source_syntax term)
+                  val source = source_term syntax
+              in require "bound private marker remained free in source"
+                   (null (Term.free_vars source));
+                 bridge ``!x:bool. x \/ F`` source;
+                 bridge source (raw (#node term)) end
+          in case route of
+              Value => with_value compound (fn e => fn current =>
+                check (small_value e (#context current)) (#proof current))
+            | _ => with_native route compound
+                (fn e => check (small_graph e)) end)) routes
+      val _ = test "explicit private source binder preserves lexical namesake"
+        (fn () =>
+          let
+            val spent = ref (0:IntInf.int)
+            fun observe amount =
+              (spent := !spent+amount;
+               require "private namesake source observation exceeds budget"
+                 (!spent<=1000000))
+            val x = Term.mk_var ("task35_private_binder",Type.bool)
+            val y = Term.mk_var ("task35_private_bound",Type.bool)
+            val disjunction = CS.native (#1 (Term.dest_comb
+              (#1 (Term.dest_comb (boolSyntax.mk_disj (x,x))))))
+            val body = CS.application
+              (CS.application (disjunction,CS.private_atom x),CS.variable x)
+            val syntax = CS.private_abstraction observe (x,body)
+            val (binder,bound_body) = valOf (CS.dest_abs observe syntax)
+            val (operator,right) = valOf (CS.dest_comb observe bound_body)
+            val (_,left) = valOf (CS.dest_comb observe operator)
+            fun lexical expected source = case CS.view observe source of
+                CS.Variable actual => Term.compare (expected,actual)=EQUAL
+              | _ => false
+          in require "explicit binding captured its lexical namesake"
+               (Term.compare (binder,x)<>EQUAL andalso
+                lexical binder left andalso lexical x right andalso
+                (case CS.free_variables observe syntax of
+                   [free] => Term.compare (free,x)=EQUAL | _ => false));
+             bridge (Term.mk_abs (y,boolSyntax.mk_disj (y,x)))
+               (source_term syntax) end)
+    in () end
+
+  fun private_source_sharing () =
+    test "private source binder construction stays local/shared" (fn () =>
+      let
+        val spent = ref (0:IntInf.int)
+        fun observe n = spent := !spent+n
+        val variables = List.tabulate (80,fn i =>
+          Term.mk_var ("task35_vacuous_" ^ Int.toString i,Type.bool))
+        val body = List.foldl (fn (variable,body) =>
+          CS.private_abstraction observe (variable,body))
+          (CS.native boolSyntax.T) variables
+        val _ = require "private source construction scanned binder bodies"
+          (!spent<=80)
+        val ordinary = List.foldl CS.abstraction
+          (CS.native boolSyntax.T) variables
+        val baseline = ref (0:IntInf.int)
+        fun ordinary_observe n = baseline := !baseline+n
+        val _ = CS.strip_abs ordinary_observe ordinary
+        val _ = CS.free_variables ordinary_observe ordinary
+        val (binders,tail) = CS.strip_abs observe body
+        val free = CS.free_variables observe body
+      in require "lazy private source lost a binder or vacuous body"
+           (length binders=80 andalso
+            CS.is_constant observe boolSyntax.T tail andalso null free);
+         require ("private lowering exceeds ordinary source-query work: " ^
+             IntInf.toString (!spent) ^ " vs " ^ IntInf.toString (!baseline))
+           (!spent<=2 * !baseline+10000)
+      end)
+
   fun run () =
     let
       val _ = failures := [] val _ = bridges := 0
       val _ = missing_invariants ()
+      val _ = private_binder_aliases ()
+      val _ = private_source_sharing ()
       val _ = set_sort_metadata ()
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)

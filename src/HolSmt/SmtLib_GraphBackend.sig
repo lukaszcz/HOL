@@ -88,8 +88,15 @@ sig
   (* Resolve a lexical typed alias, retaining the supplied declaration's
      kind and ID when it is not shadowed. *)
   val reference : 'a backend -> 'a frame -> Term.term * 'a -> 'a
+  (* Explicit CPC variable references retain private allocation identity.
+     NONE denotes an ordinary lexical binder. *)
+  type 'a binder = (string * string * Type.hol_type) * 'a option
+  val binder_reference : 'a backend -> string -> 'a -> 'a binder
+  val abstraction_with_identity : 'a backend -> 'a frame ->
+    {dictionary_binding:bool,binder:'a binder} -> ('a frame -> 'a) -> 'a
   (* CPC definition aliases have native lexical capture semantics. Rebind
-     only declared lexical variables, never generated private markers.
+     declared lexical variables and explicitly bound private identities,
+     never private markers merely sharing a lexical spelling.
      Construction is nodewise, with shared-DAG memoization; no Term operand
      is expanded or inserted beneath a native binder. *)
   val capture_alias : 'a backend -> 'a frame ->

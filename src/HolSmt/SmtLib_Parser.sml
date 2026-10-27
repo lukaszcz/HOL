@@ -207,10 +207,9 @@ struct
     index_limit : int,
     parse_choice : bool,
     parse_lambda : bool,
-    lookup_binder_list : string ->
-      (string * string * Type.hol_type) list option,
+    lookup_binder_list : string -> 'a SmtLib_GraphBackend.binder list option,
     binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
-      string * string * Type.hol_type,
+      'a SmtLib_GraphBackend.binder,
     record_binder_block : string * int * 'a -> unit,
     ascribed_symbol : 'a SmtLib_GraphBackend.frame ->
       {name : string, constructor : string option, sort : Type.hol_type,
@@ -281,10 +280,9 @@ struct
     index_limit : SmtReplayResourcePolicy.limit,
     parse_choice : bool,
     parse_lambda : bool,
-    lookup_binder_list : string ->
-      (string * string * Type.hol_type) list option,
+    lookup_binder_list : string -> 'a SmtLib_GraphBackend.binder list option,
     binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
-      string * string * Type.hol_type,
+      'a SmtLib_GraphBackend.binder,
     record_binder_block : string * int * 'a -> unit,
     ascribed_symbol : 'a SmtLib_GraphBackend.frame ->
       {name : string, constructor : string option, sort : Type.hol_type,
@@ -2519,7 +2517,8 @@ local
         let val result = lookup_binder_list token in
           if !depth = 0 then () else
             Option.app (fn entries => binder_lists :=
-              (token,List.map (fn (_,name,ty) => Term.mk_var (name,ty)) entries)
+              (token,List.map
+                (fn ((_,name,ty),_) => Term.mk_var (name,ty)) entries)
                 :: !binder_lists) result;
           result
         end
@@ -2713,18 +2712,18 @@ local
       else ()
     end
 
-  (* Source syntax belongs to a parse occurrence, not to its backend value:
-     in particular two lexical aliases of one value remain two variables.
-     Only the public tree is handed to the index callback machinery. *)
-  fun construction_source_occurrence backend make frame supplied value role
-      token (children : ('a construction_occurrence * C.syntax) list) =
+  (* Private binder identities close only private source atoms, never an
+     ordinary lexical variable with the same printed name and type. *)
+  fun construction_binder_source backend kind binders body =
     let
-      val public = make value role token (List.map #1 children)
-      val _ = B.syntax_spend backend 1
-      fun binder kind ((_, name, ty), body) =
+      fun binder (((_, name, ty), original), body) =
         let
           val _ = B.syntax_spend backend 1
-          val abstraction = C.abstraction (Term.mk_var (name, ty), body)
+          val variable = Term.mk_var (name, ty)
+          val abstraction = case original of
+              SOME _ => C.private_abstraction (B.syntax_spend backend)
+                (variable, body)
+            | NONE => C.abstraction (variable, body)
         in if kind = "lambda" then abstraction else
           let
             val _ = B.syntax_spend backend 2
@@ -2735,6 +2734,16 @@ local
               [{redex = Type.alpha, residue = ty}] operator
           in C.application (C.native operator, abstraction) end
         end
+    in List.foldr binder body binders end
+
+  (* Source syntax belongs to a parse occurrence, not to its backend value:
+     in particular two lexical aliases of one value remain two variables.
+     Only the public tree is handed to the index callback machinery. *)
+  fun construction_source_occurrence backend make frame supplied value role
+      token (children : ('a construction_occurrence * C.syntax) list) =
+    let
+      val public = make value role token (List.map #1 children)
+      val _ = B.syntax_spend backend 1
       val source = case supplied of
           SOME source => source
         | NONE => case (role, children) of
@@ -2754,7 +2763,8 @@ local
                   (bindings, rhs)
               in C.let_expression (bindings, body) end
           | (ConstructionBinder {kind, variables}, [(_, body)]) =>
-              List.foldr (binder kind) body variables
+              construction_binder_source backend kind
+                (List.map (fn variable => (variable, NONE)) variables) body
           | (ConstructionAnnotation, [(_, source)]) => source
           | _ => B.source_syntax backend frame value
       val _ = case role of ConstructionBinder {kind,variables} =>
@@ -3011,8 +3021,8 @@ local
                   val ty = parse_type_with_key (#type_symbol_key cfg)
                     get_token tydict
                   val _ = expect ")"
-                in variables (((#symbol_key cfg) name,
-                  proof_symbol_text name, ty) :: accumulated) end
+                in variables ((((#symbol_key cfg) name,
+                  proof_symbol_text name, ty), NONE) :: accumulated) end
             end
         in variables [] end
       and binder_variables frame =
@@ -3033,7 +3043,7 @@ local
                       get_token tydict
                     val _ = expect ")"
                   in variables
-                    ((name, name, ty) :: accumulated) end
+                    (((name, name, ty), NONE) :: accumulated) end
                 else variables
                   ((#binder_reference cfg) frame token :: accumulated)
               end
@@ -3053,15 +3063,16 @@ local
                 let val parsed = term frame in
                   parsed_body := SOME parsed; construction_value parsed
                 end
-            | bind ((key, printed, ty) :: rest) frame =
+            | bind (((key, printed, ty), original) :: rest) frame =
                 let
                   (* CPC binder-list aliases bind the original lexical
                      variable name, while source metadata retains its proof
                      dictionary key. Sorted quoted binders keep marked keys. *)
                   val binding_key = if cpc_names then
                     (#symbol_key cfg) printed else key
-                  val abstraction = B.abstraction backend frame
-                    (binding_key, printed, ty) (bind rest)
+                  val abstraction = B.abstraction_with_identity backend frame
+                    {dictionary_binding = not cpc_names,
+                     binder = ((binding_key, printed, ty), original)} (bind rest)
                 in if name = "lambda" then abstraction else
                   let
                     val operator = if name = "forall" then boolSyntax.universal
@@ -3076,9 +3087,12 @@ local
           val _ = expect ")"
           val _ = (#record_binder_block cfg)
             (name, List.length variables, result)
-        in occurrence frame NONE result
-          (ConstructionBinder {kind = name, variables = variables}) name
-          [valOf (!parsed_body)] end
+          val body = valOf (!parsed_body)
+          val source = construction_binder_source backend name variables
+            (#2 body)
+        in occurrence frame (SOME source) result
+          (ConstructionBinder {kind = name, variables = List.map #1 variables})
+          name [body] end
       and annotated_term frame =
         let
           val value = term frame
@@ -3356,8 +3370,8 @@ local
                   val ty = parse_type_with_key (#type_symbol_key cfg)
                     get_token tydict
                   val _ = expect ")"
-                in variables (((#symbol_key cfg) name,
-                  proof_symbol_text name, ty) :: accumulated) end
+                in variables ((((#symbol_key cfg) name,
+                  proof_symbol_text name, ty), NONE) :: accumulated) end
             end
         in variables [] end
       and binder_variables frame =
@@ -3378,7 +3392,7 @@ local
                       get_token tydict
                     val _ = expect ")"
                   in variables
-                    ((name, name, ty) :: accumulated) end
+                    (((name, name, ty), NONE) :: accumulated) end
                 else variables
                   ((#binder_reference cfg) frame token :: accumulated)
               end
@@ -3398,15 +3412,16 @@ local
                 let val parsed = term frame in
                   parsed_body := SOME parsed; construction_value parsed
                 end
-            | bind ((key, printed, ty) :: rest) frame =
+            | bind (((key, printed, ty), original) :: rest) frame =
                 let
                   (* CPC binder-list aliases bind the original lexical
                      variable name, while source metadata retains its proof
                      dictionary key. Sorted quoted binders keep marked keys. *)
                   val binding_key = if cpc_names then
                     (#symbol_key cfg) printed else key
-                  val abstraction = B.abstraction backend frame
-                    (binding_key, printed, ty) (bind rest)
+                  val abstraction = B.abstraction_with_identity backend frame
+                    {dictionary_binding = not cpc_names,
+                     binder = ((binding_key, printed, ty), original)} (bind rest)
                 in if name = "lambda" then abstraction else
                   let
                     val operator = if name = "forall" then boolSyntax.universal
@@ -3421,9 +3436,12 @@ local
           val _ = expect ")"
           val _ = (#record_binder_block cfg)
             (name, List.length variables, result)
-        in occurrence frame NONE result
-          (ConstructionBinder {kind = name, variables = variables}) name
-          [valOf (!parsed_body)] end
+          val body = valOf (!parsed_body)
+          val source = construction_binder_source backend name variables
+            (#2 body)
+        in occurrence frame (SOME source) result
+          (ConstructionBinder {kind = name, variables = List.map #1 variables})
+          name [body] end
       and annotated_term frame =
         let
           val value = term frame
