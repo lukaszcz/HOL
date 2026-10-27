@@ -67,8 +67,28 @@ struct
           recent := ty :: List.take (!recent,Int.min (15,length (!recent)))))
     end
 
-  fun prove graph scope {inputs,template_limit,observe,procedure} =
+  fun new_term_check {limit,observe} =
     let
+      val check_type = new_type_check observe
+      fun annotations term =
+        (observe ();check_type (Term.type_of term);
+         if Term.is_comb term then
+           let val (f,x) = Term.dest_comb term
+           in annotations f;annotations x end
+         else if Term.is_abs term then
+           let val (v,b) = SmtReplayImport.dest_abs_preserving_names term
+           in annotations v;annotations b end else ())
+    in fn term =>
+      (case SmtReplayImport.bounded_raw_size_with_type_check_observed
+          {check_type=check_type,observe=observe,limit=limit} term of
+         SOME _ => annotations term
+       | NONE => raise ERR "prove"
+           "arithmetic operator schema exceeds local admission")
+    end
+
+  fun prove_admitted graph scope {inputs,template_limit,observe,procedure} =
+    let
+      exception AdmissionCallback of exn
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
       fun guard () =
         (G.validate_scope graph scope;
@@ -129,6 +149,16 @@ struct
             {check_type=check_type,observe=tick,limit=template_limit} term of
           SOME _ => () | NONE => raise ERR "prove"
             "arithmetic operator schema exceeds local admission"
+      val check_obligation = new_term_check
+        {limit=template_limit,observe=tick}
+      fun admit_obligation term = check_obligation term
+        handle primary as Feedback.HOL_ERR detail =>
+          if Feedback.top_structure_of detail = "SmtReplayArithmetic" andalso
+             Feedback.message_of detail =
+               "arithmetic operator schema exceeds local admission" then
+            raise primary
+          else raise AdmissionCallback primary
+        | primary => raise AdmissionCallback primary
       fun annotations term =
         (tick ();check_type (Term.type_of term);
          if Term.is_comb term then
@@ -281,7 +311,7 @@ struct
               (Redblackmap.mkDict variable_compare)) inputs
           val bindings = List.map #2 (Redblackmap.listItems (!named))
           val _ = List.app bounded templates
-          val theorem = procedure templates
+          val theorem = procedure admit_obligation templates
         in binder_result bindings theorem end
       fun operator_schema () =
         let
@@ -308,7 +338,7 @@ struct
                  in term end)
           val templates = List.map expose inputs
           val _ = List.app bounded templates
-          val proof = procedure templates
+          val proof = procedure admit_obligation templates
           val _ = bounded (Thm.concl proof)
           val _ = List.app bounded (Thm.hyp proof)
           val _ = List.app annotations (Thm.concl proof :: Thm.hyp proof)
@@ -337,6 +367,12 @@ struct
                     val edge = C.graph_assemble graph block conversion
                 in P.realize block (C.graph_equality conversion) edge end
         in finish node (Drule.EQT_ELIM equality) end end
-    in if null (!opaque_nodes) then operator_schema ()
-       else binder_schema () end
+    in (if null (!opaque_nodes) then operator_schema ()
+        else binder_schema ())
+       handle AdmissionCallback primary => raise primary end
+
+  fun prove graph scope {inputs,template_limit,observe,procedure} =
+    prove_admitted graph scope
+      {inputs=inputs,template_limit=template_limit,observe=observe,
+       procedure=fn _ => procedure}
 end

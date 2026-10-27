@@ -8,6 +8,26 @@ sig
   type clause_worker = CPC_Proof.step * CPC_Proof.located_term list ->
     {theorem:Thm.thm,located:CPC_Proof.located_term,
      clause:SmtClause.owned_witness option}
+  (* Explicit continuation for declaration-generated obligations/patterns;
+     no global policy or worker retry is installed. *)
+  val prove_admitted_using :
+    {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
+     sources:SmtReplaySource.sources,
+     preprocessing:SmtLib_GraphPreprocess.validation option,
+     work:SmtReplayInvocationWork.portfolio option,
+     proof:CPC_ProofParser.graph_proof,ordinary_limit:int,template_limit:int,
+     worker:(Term.term -> unit) -> worker,
+     clause_worker:((Term.term -> unit) -> clause_worker) option,
+     force_worker:worker option} -> Thm.thm
+  val check_contradiction_admitted_using :
+    {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
+     sources:SmtReplaySource.sources,
+     preprocessing:SmtLib_GraphPreprocess.validation option,
+     work:SmtReplayInvocationWork.portfolio option,
+     proof:CPC_ProofParser.graph_proof,ordinary_limit:int,template_limit:int,
+     worker:(Term.term -> unit) -> worker,
+     clause_worker:((Term.term -> unit) -> clause_worker) option,
+     force_worker:worker option} -> Thm.thm
   datatype producer_origin_gap = OriginTemplateQuota | OriginHypAlignment
   type producer_origin =
     {serial : int,target : SmtReplayGraph.node,

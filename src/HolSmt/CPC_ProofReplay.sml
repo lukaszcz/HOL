@@ -11039,33 +11039,29 @@ local
            "; underlying error=" ^ Feedback.message_of general_error)
     end
 
-  fun replay_datatype args =
+  fun replay_datatype admit args =
     case args of
       [left, right] =>
-        profile "CPC(rung:datatype/prove)" SmtDatatypeProve.datatype_prove
+        profile "CPC(rung:datatype/prove)"
+          (SmtDatatypeProve.datatype_prove_with_admission admit)
           (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)))
     | _ => raise ERR "datatype" "expected two constructor values"
 
-  fun replay_dt_split args =
+  fun replay_dt_split_with_admission admit args =
     case args of
       [scrutinee] =>
-        let
-          val ty = Term.type_of scrutinee
-          val constructors = SmtDatatypeProve.constructors_of ty
-          val testers = List.map
-            (fn constructor =>
-              SmtDatatypeProve.datatype_tester_term
-                ty constructor scrutinee)
-            constructors
-          val target = mk_disj_terms testers
-        in
-          profile "CPC(rung:datatype/split)"
-            SmtDatatypeProve.datatype_prove target
-        end
+        let val target =
+              SmtDatatypeProve.datatype_split_target admit scrutinee
+        in profile "CPC(rung:datatype/split)"
+          (SmtDatatypeProve.datatype_prove_with_admission admit) target end
     | _ => raise ERR "dt_split" "expected one datatype scrutinee"
 
-  fun replay_datatype_eq args =
-    profile "CPC(rung:datatype/prove_eq)" SmtDatatypeProve.datatype_prove
+  fun replay_dt_split args = replay_dt_split_with_admission
+    (SmtDatatypeProve.default_admission ()) args
+
+  fun replay_datatype_eq admit args =
+    profile "CPC(rung:datatype/prove_eq)"
+      (SmtDatatypeProve.datatype_prove_with_admission admit)
       (expect_one_arg "datatype_eq" args)
 
   val resolution_literal_normalizations = ref
@@ -18042,7 +18038,7 @@ local
          "; conclusion=" ^ conclusion_text)
     end
 
-  fun replay_step_with_scope_boundary record_scope strong_canon state
+  fun replay_step_admitted datatype_admit record_scope strong_canon state
       (step : step) =
     let
       val _ = observe_operation #steps
@@ -19799,11 +19795,12 @@ local
                      "rewrite provenance exceeds the compact metadata budget"
                      theorem
                end
-           | "datatype" => opaque ( replay_datatype args)
-           | "dt_split" => opaque ( replay_dt_split args)
+           | "datatype" => opaque ( replay_datatype datatype_admit args)
+           | "dt_split" => opaque
+               (replay_dt_split_with_admission datatype_admit args)
            | "datatype_eq" =>
                let
-                 val theorem = replay_datatype_eq args
+                 val theorem = replay_datatype_eq datatype_admit args
                  val provenance =
                    case located_args of
                      [located] => #provenance located
@@ -19883,6 +19880,10 @@ local
     end
 
   (* All legacy/default entries retain the original opaque scope result. *)
+  fun replay_step_with_scope_boundary record_scope strong_canon state step =
+    replay_step_admitted (SmtDatatypeProve.default_admission ())
+      record_scope strong_canon state step
+
   fun replay_step strong_canon state step =
     replay_step_with_scope_boundary NONE strong_canon state step
 
@@ -21305,7 +21306,7 @@ in
   (* Ordinary reconstruction is restricted to independently admitted local
      operands. The graph caller closes the resulting conditional law before
      freezing its enclosing compact proof block. *)
-  fun graph_bounded_worker definitions
+  fun graph_bounded_worker_with_admission admit definitions
       (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
     let
       val initial = initial_state definitions (List.map #term premises)
@@ -21313,15 +21314,19 @@ in
         (fn (id,{term,provenance},state) => cache_step state id
           "graph-local-premise" (exact_result provenance (Thm.ASSUME term)))
         initial (#premises step,premises)
-      val (state,theorem) = replay_step
+      val (state,theorem) = replay_step_admitted admit NONE
         (strong_cpc_canon_conv definitions) state step
     in (theorem,step_located (find_step "graph_bounded_worker" state (#id step)))
     end
 
+  fun graph_bounded_worker definitions args =
+    graph_bounded_worker_with_admission
+      (SmtDatatypeProve.default_admission ()) definitions args
+
   (* Additive fixed producer receipt. The actual replayed result owns the
      clause; no theorem/node or reconstructed literal table is supplied. *)
   val _ = SmtClause.retain_with_work
-  fun graph_bounded_worker_with_clause work definitions
+  fun graph_bounded_worker_with_clause_admitted admit work definitions
       (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
     (let
       val sources = SmtReplayInvocationWork.original_sources work
@@ -21335,7 +21340,7 @@ in
           "graph-local-premise" (exact_result provenance (Thm.ASSUME term)))
         initial (#premises step,premises)
       val produced_scope = ref (NONE : replay_result option)
-      val (state,theorem) = replay_step_with_scope_boundary
+      val (state,theorem) = replay_step_admitted admit
         (SOME produced_scope) (strong_cpc_canon_conv definitions) state step
       val saved = find_step "graph_bounded_worker_with_clause" state (#id step)
       val actual_result = case !produced_scope of NONE => #result saved
@@ -21354,6 +21359,10 @@ in
         clause = clause} end
      handle primary =>
        (SmtReplayInvocationWork.close work;raise primary))
+
+  fun graph_bounded_worker_with_clause work definitions args =
+    graph_bounded_worker_with_clause_admitted
+      (SmtDatatypeProve.default_admission ()) work definitions args
 
   fun graph_bounded_force_worker definitions
       (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
@@ -22022,21 +22031,25 @@ in
 
   fun check_graph_proof_with_definitions definitions
       {graph,scope,sources,proof} =
-    CPC_GraphProofReplay.check_contradiction_using
+    CPC_GraphProofReplay.check_contradiction_admitted_using
       {graph = graph,scope = scope,sources = sources,proof = proof,
+       preprocessing=NONE,work=NONE,clause_worker=NONE,
        ordinary_limit = SmtResource.max_bv_replay_term_nodes,
        template_limit = SmtResource.max_bv_replay_term_nodes,
-       worker = graph_bounded_worker definitions,
+       worker = fn admit => graph_bounded_worker_with_admission
+         admit definitions,
        force_worker = SOME (graph_bounded_force_worker definitions)}
   fun check_graph_proof input = check_graph_proof_with_definitions [] input
 
   fun prove_graph_proof_with_definitions definitions
       {graph,scope,sources,proof} =
-    CPC_GraphProofReplay.prove_using
+    CPC_GraphProofReplay.prove_admitted_using
       {graph = graph,scope = scope,sources = sources,proof = proof,
+       preprocessing=NONE,work=NONE,clause_worker=NONE,
        ordinary_limit = SmtResource.max_bv_replay_term_nodes,
        template_limit = SmtResource.max_bv_replay_term_nodes,
-       worker = graph_bounded_worker definitions,
+       worker = fn admit => graph_bounded_worker_with_admission
+         admit definitions,
        force_worker = SOME (graph_bounded_force_worker definitions)}
   fun prove_graph_proof input = prove_graph_proof_with_definitions [] input
 

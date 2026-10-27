@@ -5,6 +5,7 @@ struct
   structure H = SmtReplayArithmeticTests
   structure G = SmtReplayGraph
   structure A = SmtReplayArithmetic
+  structure W = SmtReplayInvocationWork
   structure ZR = Z3_GraphProofReplay
   val limit = H.limit
   val require = H.require
@@ -43,6 +44,8 @@ struct
         [``(SOME (p:bool) = SOME q) = (p = q)``,
          ``(SOME (p:bool) = NONE) = F``,
          ``THE (SOME (p:bool)) = p``,
+         ``THE (SOME (I (p:bool))) = p``,
+         ``THE (SOME ((n:num) + 0)) = n``,
          ``(SOME T = SOME F) = F``,
          ``THE (SOME T) = T``,
          ``FST ((p:bool),(q:bool)) = p``,
@@ -276,16 +279,16 @@ struct
               (SmtDatatypeProve.constructors_of ty)
             val goal = boolSyntax.list_mk_disj testers
             val _ = H.cpc goal [] "dt_split" [value] true
-            (* An inferred disjunction is a clause, not the atomic declared
-               disjunction used by H.cpc's synthetic final resolution. Check
-               its successful producer directly, without changing roles. *)
+            (* Retain a direct binder-result control as well as the complete
+               inferred enumeration certificate below. *)
             val _ = with_graph (fn graph => fn scope =>
               let val calls = ref 0
-                  val result = A.prove graph scope
+                  val result = A.prove_admitted graph scope
                     {inputs=[import graph scope value],template_limit=limit,
-                     observe=fn _ => (),procedure=fn [term] =>
+                     observe=fn _ => (),procedure=fn admit => fn [term] =>
                        (calls := !calls+1;
-                        #1 (CPC_ProofReplay.graph_bounded_worker []
+                        #1 (CPC_ProofReplay.graph_bounded_worker_with_admission
+                          admit []
                           ({id="@split",rule=valOf (CPC_Proof.lookup_rule
                               "1.3.4" "dt_split"),premises=[],conclusion=NONE,
                             args=[{term=term,provenance=
@@ -295,6 +298,145 @@ struct
                  exact goal [] (#theorem result) end)
         in () end
     in List.app check [``d:bool option``,``ds:bool list``] end
+
+  (* A valid inferred split through graph assembly and final Source closure.
+     Its canonical tester disjunction is one atomic literal, as returned by
+     the actual worker, on BOTH sides of the final resolution. *)
+  fun inferred_split_graph () =
+    let
+      val value = ``structured_split:smt_light``
+      val goal = SmtDatatypeProve.datatype_split_target (fn _ => ()) value
+      fun worker (step:CPC_Proof.step,inputs) =
+        let
+          val _ = require "split conclusion was supplied"
+            (not (Option.isSome (#conclusion step)))
+          val _ = require "split acquired premises" (null inputs)
+          val argument = #term (hd (#args step))
+          val result as (theorem,located) =
+            CPC_ProofReplay.graph_bounded_worker [] (step,inputs)
+          val _ = exact (SmtDatatypeProve.datatype_split_target
+            (fn _ => ()) argument) [] theorem
+          val _ = require "inferred split lost atomic provenance"
+            (case #provenance located of
+               CPC_Proof.AtomicProvenance => true | _ => false)
+        in result end
+    in H.cpc_arguments_using limit worker goal [] "dt_split"
+      [H.Object value] false end
+
+  fun split_admission () =
+    let
+      fun check cap nodes value =
+        let
+          val completed = ref false
+          val reached_worker = ref false
+          val expected = SmtDatatypeProve.datatype_split_target
+            (fn _ => ()) value
+          val _ = require "split admission fixture metric changed"
+            (Term.term_size expected = nodes andalso nodes > cap)
+          fun refused action =
+            ((action ();false) handle Feedback.HOL_ERR detail =>
+              String.isSubstring "operator schema exceeds local admission"
+                (Feedback.message_of detail))
+          val _ = with_graph (fn graph => fn scope =>
+            require "inferred split was proved before target admission"
+              (refused (fn () => ignore (A.prove_admitted graph scope
+                {inputs=[import graph scope value],template_limit=cap,
+                 observe=fn _ => (),procedure=fn admit => fn [term] =>
+                   let val result = #1
+                         (CPC_ProofReplay.graph_bounded_worker_with_admission
+                           admit []
+                           ({id="@admission",rule=valOf
+                              (CPC_Proof.lookup_rule "1.3.4" "dt_split"),
+                             premises=[],conclusion=NONE,
+                             args=[{term=term,provenance=
+                               CPC_Proof.AtomicProvenance}]},[]))
+                   in completed := true;result end
+                   | _ => raise Fail "split admission arity"}))))
+          val _ = require "over-limit split worker completed" (not (!completed))
+          (* The graph engine must protect even a supplied ordinary worker;
+             do not rely on that worker adopting a particular prover API. *)
+          val _ = require "graph split admission happened after callback"
+            (refused (fn () => H.cpc_arguments_using cap
+              (fn _ => (reached_worker := true;
+                raise Fail "unadmitted split reached ordinary worker"))
+              boolSyntax.T [] "dt_split" [H.Object value] false))
+        in require "unadmitted split entered ordinary worker"
+             (not (!reached_worker)) end
+      val _ = check 16 19 ``d:bool option``
+      val _ = Datatype [QUOTE ("structured_admission_enum = " ^
+        String.concatWith " | " (List.tabulate (64,fn i =>
+          "StructuredAdmission" ^ Int.toString i)))]
+      val ty = Type.mk_type ("structured_admission_enum",[])
+      val value = Term.mk_var ("d",ty)
+      val _ = check 8192 8573 value
+      (* A large declaration bundle is NOT a reason to refuse small laws. *)
+      val constructor = hd (SmtDatatypeProve.constructors_of ty)
+      val goal = boolSyntax.mk_eq (constructor,constructor)
+      val theorem = SmtDatatypeProve.datatype_prove_with_admission
+        (A.new_term_check {limit=32,observe=fn () => ()}) goal
+      val _ = exact goal [] theorem
+      val _ = H.cpc_arguments_using_admitted 256
+        (fn admit => CPC_ProofReplay.graph_bounded_worker_with_admission
+          admit []) goal [] "dt-cons-eq" [H.Object goal] true
+      (* Larger existing caller allowances must still work; never turn the
+         8192 regression into a blanket refusal of this datatype. *)
+      val split = SmtDatatypeProve.datatype_split_target (fn _ => ()) value
+      val cap = Term.term_size split
+      val theorem = #1 (CPC_ProofReplay.graph_bounded_worker_with_admission
+        (A.new_term_check {limit=cap,observe=fn () => ()}) []
+        ({id="@fitting",rule=valOf
+           (CPC_Proof.lookup_rule "1.3.4" "dt_split"),
+          premises=[],conclusion=NONE,
+          args=[{term=value,provenance=CPC_Proof.AtomicProvenance}]},[]))
+    in exact split [] theorem end
+
+  fun admission_first_error () =
+    let
+      val goal = ``~((xs:bool list) = T::xs)``
+      val (size_fn,_) = TypeBase.size_of ``:bool list``
+      val genuine = A.new_term_check {limit=limit,observe=fn () => ()}
+      val stopped = ref false
+      fun check term =
+        if !stopped then raise Fail "datatype retried after admission failure"
+        else if term ~~ size_fn then
+          (stopped := true;
+           raise Feedback.mk_HOL_ERR "Task39" "size-pattern" "first error")
+        else genuine term
+      val preserved =
+        ((ignore (#acyclicity (SmtDatatypeProve.checked_procedures check)
+            goal);false)
+         handle Feedback.HOL_ERR detail =>
+           Feedback.top_structure_of detail = "Task39" andalso
+           Feedback.message_of detail = "first error")
+    in require "datatype swallowed its first pattern admission exception"
+         (!stopped andalso preserved) end
+
+  fun admission_factories () = with_graph (fn graph => fn scope =>
+    let
+      val sources = SmtReplaySource.new graph scope limit
+        {goal=boolSyntax.T,assumptions=[]}
+      val work = W.begin graph scope sources
+        {limits={input_limit=limit,output_limit=limit,template_limit=limit},
+         work_limit=10000000}
+      val calls = ref 0
+      fun forbidden _ = (calls := !calls+1;raise Fail "premature worker factory")
+      val charged_before = #charged (W.audit work)
+      val rejected = with_graph (fn other => fn root =>
+        let val foreign = SmtReplaySource.new other root limit
+              {goal=boolSyntax.T,assumptions=[]}
+        in
+          ((ignore (CPC_GraphProofReplay.prove_admitted_using
+             {graph=other,scope=root,sources=foreign,preprocessing=NONE,
+              work=SOME work,proof={cvc_version="1.3.4",commands=[]},
+              ordinary_limit=limit,template_limit=limit,worker=forbidden,
+              clause_worker=SOME forbidden,force_worker=NONE});false)
+           handle Feedback.HOL_ERR detail =>
+             Feedback.message_of detail = "different original Sources")
+        end)
+      val after = W.audit work
+    in require "admission factory ran before owned frame validation"
+         (rejected andalso !calls=0 andalso #retired after andalso
+          #charged after = charged_before) end)
 
   fun cpc_annotations () =
     let
@@ -351,5 +493,6 @@ struct
   fun run () =
     (schemas ();tester_validation ();graph_operators ();
      generic_authority ();cpc_cases ();cpc_identities ();
-     cpc_splits ();cpc_annotations ())
+     cpc_splits ();inferred_split_graph ();split_admission ();
+     admission_first_error ();admission_factories ();cpc_annotations ())
 end

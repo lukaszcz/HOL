@@ -125,6 +125,7 @@ local
        proof node is admissible only when its parsed term is a member of this
        set; this is the enforcement half of translation round-trip identity. *)
     allowed_asserted_hyps : Term.term HOLset.set,
+    datatype_admit : Term.term -> unit,
     (* keeps track of assumptions; (only) these may remain in the
        final theorem *)
     asserted_hyps : Term.term HOLset.set,
@@ -165,6 +166,7 @@ local
 
   fun state_assert (s : state) (t : Term.term) : state =
     {
+      datatype_admit = #datatype_admit s,
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
       definition_hyps = #definition_hyps s,
@@ -211,6 +213,7 @@ local
         case #definition_occurrences_rev s of NONE => NONE
         | SOME previous => SOME (List.rev terms @ previous),
       flexible_vars = List.foldl make_rigid (#flexible_vars s) newly_rigid,
+      datatype_admit = #datatype_admit s,
       thm_cache = #thm_cache s,
       large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
@@ -235,6 +238,7 @@ local
       definition_hyps = #definition_hyps s,
       definition_occurrences_rev = #definition_occurrences_rev s,
       flexible_vars = #flexible_vars s,
+      datatype_admit = #datatype_admit s,
       thm_cache = if large then #thm_cache s
                   else Net.insert (conclusion, thm) (#thm_cache s),
       large_thm_cache =
@@ -5873,7 +5877,8 @@ local
            acyclicity procedure is general for selected registered datatype
            facts and fails loudly outside those shapes. *)
         rewrite_profile "datatypes" "rewrite(21)(datatype)"
-          SmtDatatypeProve.datatype_prove t
+          (SmtDatatypeProve.datatype_prove_with_admission
+            (#datatype_admit state)) t
 
     in
       (case !pre_bblast_state of
@@ -6868,7 +6873,8 @@ local
         (* E1(b): TypeBase-driven reconstruction is general for selected
            registered datatype facts and fails loudly outside those shapes. *)
         val thm = profile "th_lemma[datatype](2)"
-          SmtDatatypeProve.datatype_prove t
+          (SmtDatatypeProve.datatype_prove_with_admission
+            (#datatype_admit state)) t
       in
         (* cache 'thm' *)
         (state_cache_thm state thm, thm)
@@ -8796,7 +8802,9 @@ in
     recursive_rewrite_outer_for_test
       RecursiveAbstraction recurse fallback input
 
-  fun initial_replay_state allowed_asserted_hyps definitions proof : state = {
+  fun initial_replay_state_admitted admit
+      allowed_asserted_hyps definitions proof : state = {
+    datatype_admit = admit,
     allowed_asserted_hyps = allowed_asserted_hyps,
     asserted_hyps = Term.empty_tmset,
     definition_hyps = Term.empty_tmset,
@@ -8812,6 +8820,10 @@ in
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }
+
+  fun initial_replay_state allowed definitions proof =
+    initial_replay_state_admitted (SmtDatatypeProve.default_admission ())
+      allowed definitions proof
 
   (* Unit replay helpers do not have an original goal.  Derive their allowed
      set from the complete synthetic proof value so they continue to exercise
@@ -8891,14 +8903,17 @@ in
     thm
   end
 
-  fun replay_root_with_definitions_for_test definitions proof : Thm.thm =
+  fun replay_root_admitted admit definitions proof : Thm.thm =
   let
-    val state = initial_replay_state (proof_asserted_hyps proof)
+    val state = initial_replay_state_admitted admit (proof_asserted_hyps proof)
       definitions proof
     val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
   in
     thm
   end
+
+  fun replay_root_with_definitions_for_test definitions proof =
+    replay_root_admitted (SmtDatatypeProve.default_admission ()) definitions proof
 
   fun replay_root_for_test proof : Thm.thm =
     replay_root_with_definitions_for_test [] proof
@@ -9469,7 +9484,7 @@ in
         val argument_arity = length argument_nodes
         val variables = graph_arithmetic_variables observe graph
           (target :: premises @ argument_nodes) (#vars proof)
-        fun procedure terms =
+        fun procedure admit terms =
           let
             val conclusion = hd terms
             val premise_terms = List.take (tl terms,length premises)
@@ -9482,8 +9497,7 @@ in
             val ordinary = mk_proof
               (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),
                vars,[],#z3_version proof)
-            val theorem = replay_root_with_definitions_for_test
-              definitions ordinary
+            val theorem = replay_root_admitted admit definitions ordinary
             (* Check in the injective namespace BEFORE realization: native
                source spellings can coincide for different graph IDs. *)
             val theorem = Thm.EQ_MP
@@ -9498,7 +9512,7 @@ in
             val _ = selected := List.map #1 used
           in List.foldr (fn ((_,term),result) => Thm.DISCH term result)
                theorem used end
-        val result = SmtReplayArithmetic.prove graph
+        val result = SmtReplayArithmetic.prove_admitted graph
           (ReplayGraph.node_scope graph law)
           {inputs = target :: premises @ argument_nodes @ variables,
            template_limit = limit,observe = observe,procedure = procedure}
@@ -9553,6 +9567,7 @@ in
   val graph_bounded_local_law = graph_bounded_local_law_using (fn _ => ())
 
   fun record_definition_occurrences (s : state) : state = {
+    datatype_admit = #datatype_admit s,
     allowed_asserted_hyps = #allowed_asserted_hyps s,
     asserted_hyps = #asserted_hyps s,definition_hyps = #definition_hyps s,
     definition_occurrences_rev = SOME [],flexible_vars = #flexible_vars s,
@@ -9562,10 +9577,11 @@ in
     skeleton_context = #skeleton_context s,word_context = #word_context s,
     string_index_cache = #string_index_cache s,z3_version = #z3_version s}
 
-  fun replay_root_with_definition_occurrences definitions proof =
+  fun replay_root_with_definition_occurrences_admitted admit definitions proof =
     let
       val initial = record_definition_occurrences
-        (initial_replay_state (proof_asserted_hyps proof) definitions proof)
+        (initial_replay_state_admitted admit
+          (proof_asserted_hyps proof) definitions proof)
       val ((state,_),theorem) =
         thm_of_proofterm ((initial,proof),ID 0) Lib.I
     in {theorem = theorem,
@@ -9573,6 +9589,10 @@ in
           (Option.valOf (#definition_occurrences_rev state)),
         asserted = HOLset.listItems (#asserted_hyps state),
         translation_definitions = #translation_definitions state} end
+
+  fun replay_root_with_definition_occurrences definitions proof =
+    replay_root_with_definition_occurrences_admitted
+      (SmtDatatypeProve.default_admission ()) definitions proof
 
   (* Opt-in local compatibility bridge. The category comes only from
      actual state_define calls, never from asserted or intro_def spelling.
@@ -9602,7 +9622,7 @@ in
         List.map (ReplayGraph.representative graph) (#vars proof)
       (* Both routes use the same ordinary handler and state_define recorder.
          Arithmetic supplies named operands, never a second proof procedure. *)
-      fun replay conclusion premise_terms argument_terms variable_terms =
+      fun replay admit conclusion premise_terms argument_terms variable_terms =
         let
           val pt = graph_local_proofterm rule metadata conclusion
             premise_terms argument_terms
@@ -9611,7 +9631,8 @@ in
             (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),vars,[],
              #z3_version proof)
             val produced =
-              replay_root_with_definition_occurrences definitions ordinary
+              replay_root_with_definition_occurrences_admitted
+                admit definitions ordinary
             val theorem = #theorem produced
             val theorem = Thm.EQ_MP
               (Thm.ALPHA (Thm.concl theorem) conclusion) theorem
@@ -9654,11 +9675,11 @@ in
           val arity = 1 + List.length premises
           val variables = graph_arithmetic_variables (fn _ => ()) graph
             (target :: premises @ argument_nodes) (#vars proof)
-          fun procedure terms =
+          fun procedure admit terms =
             let
               val operands = List.take (terms,arity)
               val premise_terms = tl operands
-              val produced = replay (hd operands) premise_terms
+              val produced = replay admit (hd operands) premise_terms
                 (List.take (List.drop (terms,arity),argument_arity))
                 (List.drop (terms,arity+argument_arity))
               val theorem = #theorem produced
@@ -9678,7 +9699,7 @@ in
                  ones. Definition occurrence order and duplicates also stay. *)
             in List.foldr (fn (term,result) => Thm.DISCH term result)
                  theorem (recorded @ premise_terms) end
-          val result = SmtReplayArithmetic.prove graph scope
+          val result = SmtReplayArithmetic.prove_admitted graph scope
             {inputs = target :: premises @ argument_nodes @ variables,
              template_limit = limit,observe = fn _ => (),
              procedure = procedure}
@@ -9707,7 +9728,8 @@ in
               (recorded @ premise_terms)
         in (theorem,recorded,SOME nodes) end
       else
-        let val produced = replay conclusion premise_terms
+        let val produced = replay (SmtDatatypeProve.default_admission ())
+              conclusion premise_terms
               (List.map (ReplayGraph.representative graph) argument_nodes)
               variable_terms
         in (#theorem produced,#definitions produced,NONE) end

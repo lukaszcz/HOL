@@ -7975,6 +7975,9 @@ in
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
 
+  (* The immutable Task06 view, also used by bounded checked adapters. *)
+  val replay_datatype_destructor_theorems = datatype_destructor_theorems
+
   val outbound_type_declaration_records = type_declaration_records
   val outbound_term_declaration_text = term_declaration_text
   type 'term outbound_term_declaration_operations =

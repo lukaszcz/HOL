@@ -372,7 +372,7 @@ struct
     in exact ``(\u:int. u + 1) x = x + 1`` [] (#theorem result) end)
 
   datatype cpc_argument = Object of term | Objects of term list
-  fun cpc_arguments_using local_limit selected_worker
+  fun cpc_arguments_using_admitted local_limit selected_worker
       goal assumptions rule_name arguments declared =
     with_graph (fn graph => fn scope =>
     let
@@ -420,7 +420,7 @@ struct
               conclusion=SOME (located (G.constant graph scope boolSyntax.F)),
               args=[],raw_conclusion=NONE,raw_args=[]}}]}
       val calls = ref 0
-      fun worker (step:CPC_Proof.step,inputs) =
+      fun worker admit (step:CPC_Proof.step,inputs) =
         (calls := !calls+1;
          require "CPC changed omitted/declared result role"
            (Option.isSome (#conclusion step) = declared);
@@ -451,16 +451,17 @@ struct
              ((case #conclusion step of NONE => []
                | SOME value => [#term value]) @
               List.map #term (inputs @ #args step)));
-         selected_worker (step,inputs))
+         selected_worker admit (step,inputs))
       val result = Exn.capture (fn () =>
         let val preprocessing = SmtLib_GraphPreprocess.discover_from_sources
               graph scope sources
               {import_limit=limit,revisit=false,check_type=fn _ => (),
                conversion=fn _ => NONE}
-        in CPC_GraphProofReplay.prove_preprocessed_with_work_using work
+        in CPC_GraphProofReplay.prove_admitted_using
           {graph=graph,scope=scope,sources=sources,
-           preprocessing=preprocessing,proof=proof,ordinary_limit=limit,
-           template_limit=limit,worker=worker,force_worker=NONE} end) ()
+           preprocessing=SOME preprocessing,work=SOME work,
+           proof=proof,ordinary_limit=limit,template_limit=limit,
+           worker=worker,clause_worker=NONE,force_worker=NONE} end) ()
       val _ = W.close work
       val theorem = Exn.release result
       val _ = require "arithmetic worker was retried or bypassed" (!calls=1)
@@ -468,8 +469,11 @@ struct
         (Portable.pointer_eq (Thm.concl theorem,goal))
     in exact goal assumptions theorem end)
 
-  val cpc_arguments = cpc_arguments_using limit
-    (CPC_ProofReplay.graph_bounded_worker [])
+  fun cpc_arguments_using local_limit selected_worker =
+    cpc_arguments_using_admitted local_limit (fn _ => selected_worker)
+
+  val cpc_arguments = cpc_arguments_using_admitted limit
+    (fn admit => CPC_ProofReplay.graph_bounded_worker_with_admission admit [])
 
   fun cpc goal assumptions rule_name arguments declared =
     cpc_arguments goal assumptions rule_name (List.map Object arguments)
@@ -654,12 +658,15 @@ struct
         {import_limit=limit,revisit=false,check_type=fn _ => (),
          conversion=fn _ => NONE}
       val theorem =
-        CPC_GraphProofReplay.prove_preprocessed_with_clauses_and_work_using
-        work {graph=graph,scope=scope,sources=sources,
-          preprocessing=preprocessing,proof=proof,ordinary_limit=limit,
-          template_limit=limit,worker=CPC_ProofReplay.graph_bounded_worker [],
-          clause_worker=
-            CPC_ProofReplay.graph_bounded_worker_with_clause work [],
+        CPC_GraphProofReplay.prove_admitted_using
+        {graph=graph,scope=scope,sources=sources,
+          preprocessing=SOME preprocessing,work=SOME work,
+          proof=proof,ordinary_limit=limit,template_limit=limit,
+          worker=fn admit =>
+            CPC_ProofReplay.graph_bounded_worker_with_admission admit [],
+          clause_worker=SOME (fn admit =>
+            CPC_ProofReplay.graph_bounded_worker_with_clause_admitted
+              admit work []),
           force_worker=NONE}
       val _ = TextIO.closeIn stream val _ = W.close work
     in exact boolSyntax.F assumptions theorem end)

@@ -96,8 +96,41 @@ struct
         (scrutinee, List.map clause constructors)
     end
 
+  (* Inferred endpoints depend on the declaration, not just the scrutinee's
+     size. Admit the COMPLETE tester disjunction before any generic prover.
+     The continuation belongs to the caller, not a process-wide policy. *)
+  fun datatype_split_target admit scrutinee =
+    let
+      val _ = admit scrutinee
+      val ty = Term.type_of scrutinee
+      val testers = List.map (fn constructor =>
+        let val tester = datatype_tester_term ty constructor scrutinee
+            val _ = admit tester
+        in tester end) (constructors_of ty)
+      val target = boolSyntax.list_mk_disj testers
+      val _ = admit target
+    in target end
+
   fun datatype_types t =
     List.filter has_constructors (term_types t)
+
+  (* Each invocation supplies its own admission continuation. Declaration
+     bundles are projected by kernel CONJUNCT rules before generic matching;
+     an unrelated large conjunction must not hide a useful small equation. *)
+  fun checked_procedures check =
+  let
+  (* Admission/Work/observer failures must not become proof-search misses. *)
+  exception AdmissionFailure of exn
+  fun admit term = check term handle primary => raise AdmissionFailure primary
+  fun protect f x = f x handle AdmissionFailure primary => raise primary
+  fun admit_thm th = (admit (Thm.concl th);List.app admit (Thm.hyp th))
+  fun fitting th =
+    (admit_thm th;true) handle failure as
+        AdmissionFailure (Feedback.HOL_ERR detail) =>
+      if Feedback.top_structure_of detail = "SmtReplayArithmetic" andalso
+         Feedback.message_of detail =
+           "arithmetic operator schema exceeds local admission" then false
+      else raise failure
 
   fun add_thm th thms =
     if List.exists (fn th' => Term.aconv (Thm.concl th') (Thm.concl th))
@@ -109,10 +142,10 @@ struct
 
   fun conjuncts th = Drule.CONJUNCTS th handle Feedback.HOL_ERR _ => [th]
 
-  fun with_gsym ths =
-    ths @ List.mapPartial (Lib.total Conv.GSYM) ths
+  (* Only admitted leaves reach this helper. *)
+  fun with_gsym ths = ths @ List.mapPartial (Lib.total Conv.GSYM) ths
 
-  fun harvest_for_type ty =
+  fun harvest_uncached ty =
     let
       val one_one = List.mapPartial (Lib.total TypeBase.one_one_of) [ty]
       val distinct = List.mapPartial (Lib.total TypeBase.distinct_of) [ty]
@@ -120,12 +153,33 @@ struct
       val accessors =
         Option.getOpt (Lib.total TypeBase.accessors_of ty, [])
       val updates = Option.getOpt (Lib.total TypeBase.updates_of ty, [])
-      val one_one_expanded = List.concat (List.map conjuncts one_one)
-      val distinct_expanded = List.concat (List.map conjuncts distinct)
+      val destructors = case TypeBase.fetch ty of NONE => []
+        | SOME tyi => SmtLib.replay_datatype_destructor_theorems tyi
+      fun leaves ths = List.filter fitting
+        (List.concat (List.map conjuncts ths))
+      val one_one_expanded = leaves one_one
+      val distinct_expanded = leaves distinct
     in
-      one_one_expanded @ with_gsym distinct_expanded @ case_defs @
-      accessors @ updates
+      one_one_expanded @ with_gsym distinct_expanded @ leaves case_defs @
+      leaves (accessors @ updates @ destructors)
     end
+
+  (* Nested instances share the SAME generic TypeBase facts. Project and
+     admit those facts once per invocation, not once per type argument.
+     Physical identity is only an admission-cache key, never proof evidence.
+     Failed checks are not cached; no state survives this local procedure. *)
+  val harvested = ref ([] : (TypeBasePure.tyinfo * Thm.thm list) list)
+  fun harvest_for_type ty =
+    case TypeBase.fetch ty of NONE => []
+    | SOME metadata =>
+        (case List.find (fn (saved,_) =>
+            Portable.pointer_eq (saved,metadata)) (!harvested) of
+           SOME (_,facts) => facts
+         | NONE =>
+             let val facts = harvest_uncached ty
+                 val _ = harvested := (metadata,facts) ::
+                   List.take (!harvested,Int.min (15,length (!harvested)))
+             in facts end)
 
   fun datatype_rewrite_thms t =
     List.foldl (fn (ty, acc) => add_thms (harvest_for_type ty) acc)
@@ -134,23 +188,24 @@ struct
   fun size_thms_for_type ty =
     case Lib.total TypeBase.size_of ty of
       NONE => []
-    | SOME (_, th) => th :: conjuncts th
+    | SOME (_, th) => List.filter fitting (conjuncts th)
 
   fun datatype_size_thms t =
     List.foldl (fn (ty, acc) => add_thms (size_thms_for_type ty) acc)
       [] (datatype_types t)
 
   fun datatype_simp_prove t =
-    let val thms = datatype_rewrite_thms t
+    let val _ = admit t
+        val thms = datatype_rewrite_thms t
     in
       if List.null thms then unsupported t
-      else simpLib.SIMP_PROVE (bossLib.srw_ss()) thms t
+      else simpLib.SIMP_PROVE numLib.std_ss thms t
     end
 
   fun datatype_nchotomy_thms t =
-    List.mapPartial
+    List.filter fitting (List.mapPartial
       (fn ty => Lib.total TypeBase.nchotomy_of ty)
-      (List.filter (fn ty => ty <> Type.bool) (datatype_types t))
+      (List.filter (fn ty => ty <> Type.bool) (datatype_types t)))
 
   fun constructor_headed tm =
     let
@@ -198,7 +253,20 @@ struct
     end
 
   fun nchotomy_for_term tm =
-    Drule.ISPEC tm (TypeBase.nchotomy_of (Term.type_of tm))
+    let
+      val _ = admit tm
+      val pattern = TypeBase.nchotomy_of (Term.type_of tm)
+      val _ = admit_thm pattern
+      (* Check the substituted conclusion before ISPEC's matching/INST.
+         Term substitution here constructs syntax only, never a proof. *)
+      val (variable,body) = boolSyntax.dest_forall (Thm.concl pattern)
+      val types = Type.match_type (Term.type_of variable) (Term.type_of tm)
+      val variable = Term.inst types variable
+      val body = Term.inst types body
+      val _ = admit body
+      val target = Term.subst [{redex=variable,residue=tm}] body
+      val _ = admit target
+    in Drule.ISPEC tm pattern end
 
   fun split_terms_of_goal (assumptions, conclusion) =
     let
@@ -219,24 +287,45 @@ struct
      stale immediately.  The initial candidate count is a per-branch depth
      budget; recursive datatypes can introduce fresh constructor fields, but
      no branch can case-split more often than that original finite count. *)
+  fun admit_goal (assumptions,conclusion) =
+    (List.app admit assumptions;admit conclusion)
+
+  fun admit_split_substitutions term (assumptions,conclusion) =
+    let
+      fun branch constructor =
+        let
+          val (domains,_) = boolSyntax.strip_fun (Term.type_of constructor)
+          val pattern = Term.list_mk_comb
+            (constructor,List.map Term.genvar domains)
+          val _ = admit pattern
+          val _ = admit (boolSyntax.mk_eq (term,pattern))
+          val substitution = [{redex=term,residue=pattern}]
+        in List.app (admit o Term.subst substitution)
+             (conclusion :: assumptions) end
+    in List.app branch (constructors_of (Term.type_of term)) end
+
   fun datatype_split_fixpoint_tac thms budget goal =
-    Tactical.THEN
-      (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) thms,
+    (admit_goal goal;
+     Tactical.THEN
+      (bossLib.FULL_SIMP_TAC numLib.std_ss thms,
        fn simplified =>
-         if budget = 0 then Tactical.ALL_TAC simplified
+         (admit_goal simplified;
+          if budget = 0 then Tactical.ALL_TAC simplified
          else
            case split_terms_of_goal simplified of
              [] => Tactical.ALL_TAC simplified
            | split_term :: _ =>
-               Tactical.THEN
+               (admit_split_substitutions split_term simplified;
+                Tactical.THEN
                  (profile "datatype(split)"
                     Tactic.FULL_STRUCT_CASES_TAC
                     (nchotomy_for_term split_term),
                   datatype_split_fixpoint_tac thms (budget - 1))
-                 simplified) goal
+                 simplified))) goal)
 
   fun exhaustiveness_prove t =
     let
+      val _ = admit t
       val thms = datatype_rewrite_thms t
       val budget = List.length (datatype_split_terms t)
     in
@@ -247,12 +336,16 @@ struct
 
   fun acyclicity_prove t =
     let
+      val _ = admit t
       val thms = datatype_rewrite_thms t @ datatype_size_thms t
       fun size_neq_from_eq eq =
         let
           val (l, r) = boolSyntax.dest_eq eq
           val ty = Term.type_of l
           val (size_fn, _) = TypeBase.size_of ty
+          val _ = admit size_fn
+          val _ = admit (boolSyntax.mk_eq
+            (Term.mk_comb (size_fn,l),Term.mk_comb (size_fn,r)))
         in
           if ty = Type.bool orelse not (has_constructors ty) then
             raise ERR "acyclicity_prove" "not a datatype equality"
@@ -264,7 +357,9 @@ struct
                 bossLib.FULL_SIMP_TAC bossLib.arith_ss thms
               ])
         end
-      val acyclic_thms = List.mapPartial (Lib.total size_neq_from_eq)
+      fun attempt eq = SOME (size_neq_from_eq eq)
+        handle Feedback.HOL_ERR _ => NONE
+      val acyclic_thms = List.mapPartial attempt
         (HolKernel.find_terms boolSyntax.is_eq t)
     in
       if List.null acyclic_thms then unsupported t
@@ -276,7 +371,8 @@ struct
     end
 
   fun metis_datatype_prove t =
-    let val thms = datatype_rewrite_thms t
+    let val _ = admit t
+        val thms = datatype_rewrite_thms t
     in
       if List.null thms then unsupported t
       else with_metis_limit (fn () => metisLib.METIS_PROVE thms t) ()
@@ -290,8 +386,9 @@ struct
     else unsupported t
 
   fun datatype_prove t =
-    let val _ = profile "datatype(fragment-precondition)"
-      require_datatype_fragment t
+    let val _ = admit t
+        val _ = profile "datatype(fragment-precondition)"
+          require_datatype_fragment t
     in
       profile "datatype(simp)" datatype_simp_prove t
       handle Feedback.HOL_ERR _ =>
@@ -309,12 +406,45 @@ struct
      with ASSUME, so callers never discard or manufacture hypotheses. *)
   fun datatype_consequence_prove (assumptions, conclusion) =
     let
+      val _ = List.app admit (conclusion :: assumptions)
       val implication = List.foldr boolSyntax.mk_imp conclusion assumptions
+      val _ = admit implication
       val theorem = datatype_prove implication
     in
       List.foldl
         (fn (assumption, thm) => Thm.MP thm (Thm.ASSUME assumption))
         theorem assumptions
     end
+
+  in
+    {prove=protect datatype_prove,simp=protect datatype_simp_prove,
+     exhaustiveness=protect exhaustiveness_prove,
+     acyclicity=protect acyclicity_prove,
+     consequence=protect datatype_consequence_prove,
+     split_terms=protect datatype_split_terms,
+     fragment=protect datatype_fragment_admits,
+     metis=protect metis_datatype_prove}
+  end
+
+  fun default_admission () = SmtReplayArithmetic.new_term_check
+    {limit=SmtResource.max_bv_replay_term_nodes,observe=fn () => ()}
+  fun datatype_prove_with_admission admit t =
+    #prove (checked_procedures admit) t
+  fun datatype_prove t = datatype_prove_with_admission (default_admission ()) t
+  fun datatype_simp_prove t =
+    #simp (checked_procedures (default_admission ())) t
+  fun exhaustiveness_prove t =
+    #exhaustiveness (checked_procedures (default_admission ())) t
+  fun acyclicity_prove t =
+    #acyclicity (checked_procedures (default_admission ())) t
+  fun metis_datatype_prove t =
+    #metis (checked_procedures (default_admission ())) t
+  fun datatype_consequence_prove (assumptions,conclusion) =
+    #consequence (checked_procedures (default_admission ()))
+      (assumptions,conclusion)
+  fun datatype_split_terms t =
+    #split_terms (checked_procedures (default_admission ())) t
+  fun datatype_fragment_admits t =
+    #fragment (checked_procedures (default_admission ())) t
 
 end

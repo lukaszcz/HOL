@@ -207,7 +207,7 @@ struct
       "recorded rule clause occurrences",clause = SOME layout}
   fun clause_of step = case #clause (fact step) of SOME layout => layout
     | NONE => raise ERR "discover" "missing recorded clause boundary"
-  fun check_contradiction_observing_impl
+  fun check_contradiction_admitted_impl admitted_worker admitted_clause_worker
       {graph,scope,sources,proof : Q.graph_proof,ordinary_limit,
        template_limit,worker : worker,force_worker : worker option,
        observer : observer,history_mode,check_type,
@@ -491,15 +491,21 @@ struct
               List.app (fn (value:F.term) =>
                 ignore (selected_raw (#node value))) object_arguments
             else ()
-          fun ordinary local_step inputs =
-            case (owned_work,clause_worker) of
+          fun ordinary admit local_step inputs =
+            let
+              val worker = case admitted_worker of NONE => worker
+                | SOME produce => fn request => produce admit request
+              val clause_worker = case admitted_clause_worker of
+                  NONE => clause_worker
+                | SOME produce => SOME (fn request => produce admit request)
+            in case (owned_work,clause_worker) of
               (SOME work,SOME fixed) =>
                 let val _ = validate_owned work
                     val {theorem,located,clause} = fixed (local_step,inputs)
                     val _ = validate_owned work
                 in (theorem,located,clause) end
             | _ => let val (theorem,located) = worker (local_step,inputs)
-                   in (theorem,located,NONE) end
+                   in (theorem,located,NONE) end end
           val arithmetic_node = ref (NONE : G.node option)
           fun arithmetic () =
             let
@@ -511,7 +517,7 @@ struct
                 List.map (#node : F.term -> G.node) object_arguments
               fun located old term : located_term =
                 {term = term,provenance = #provenance old}
-              fun procedure terms =
+              fun procedure admit terms =
                 let
                   val (targets,rest) =
                     Lib.split_after (length target_nodes) terms
@@ -539,6 +545,15 @@ struct
                     List.concat (List.map realized_argument (#args step))
                   val _ = if null (!remaining) then () else
                     raise ERR "arithmetic" "unused structured arguments"
+                  (* A one-node scrutinee can generate an arbitrarily wide
+                     declaration-dependent endpoint. Pay/admit it with this
+                     invocation's cap BEFORE entering the ordinary worker. *)
+                  val _ = if #replay_handler (#rule step) = "dt_split" then
+                    (case args of [value] => ignore
+                       (SmtDatatypeProve.datatype_split_target admit
+                         (#term value))
+                     | _ => raise ERR "dt_split" "expected one scrutinee")
+                    else ()
                   val local_step : CPC_Proof.step =
                     {id = #id step,rule = #rule step,
                      premises = #premises step,args = args,
@@ -546,7 +561,7 @@ struct
                        ([],NONE) => NONE
                      | ([term],SOME original) => SOME (located original term)
                      | _ => raise ERR "arithmetic" "changed target arity"}
-                  val (theorem,result,_) = ordinary local_step
+                  val (theorem,result,_) = ordinary admit local_step
                     (ListPair.mapEq (fn (old,term) => located old term)
                       (inputs,pts))
                   (* Compare endpoints while names still distinguish graph
@@ -566,7 +581,7 @@ struct
                     (List.map #1 used,#provenance result)
                 in List.foldr (fn ((_,term),proof) => Thm.DISCH term proof)
                      theorem used end
-              val result = SmtReplayArithmetic.prove graph scope
+              val result = SmtReplayArithmetic.prove_admitted graph scope
                 {inputs = input_nodes,template_limit = ordinary_limit,
                  observe = arithmetic_charge,procedure = procedure}
               val (used,provenance) = valOf (!retained)
@@ -593,7 +608,9 @@ struct
              args = List.concat (List.map ordinary_argument (#args step))}
           val (worker_theorem,worker_located,held_clause) =
             if named_rule then arithmetic () else
-              ordinary (ordinary_step ()) inputs
+              ordinary (SmtReplayArithmetic.new_term_check
+                {limit=ordinary_limit,observe=arithmetic_observe})
+                (ordinary_step ()) inputs
           val _ = work_checkpoint "bounded.after-worker" (fn () =>
             " step=" ^ #id step ^ " rule=" ^ #name (#rule step))
           val theorem = worker_theorem
@@ -4153,6 +4170,35 @@ struct
        (observer InvocationAbort handle _ => ());
        case error of ObserverFailure original => raise original
        | _ => raise error) end
+  fun check_contradiction_observing_impl input =
+    check_contradiction_admitted_impl NONE NONE input
+
+  (* The checked naming boundary supplies its actual cap and Work observer
+     to declaration-derived proof procedures. Legacy callbacks are unchanged. *)
+  fun check_contradiction_admitted_using
+      {graph,scope,sources,preprocessing,work,proof,ordinary_limit,
+       template_limit,worker,clause_worker,force_worker} =
+    let
+      val fallback = SmtReplayArithmetic.new_term_check
+        {limit=ordinary_limit,observe=fn () => ()}
+      val contradiction = check_contradiction_admitted_impl
+        (SOME worker) clause_worker
+        {graph=graph,scope=scope,sources=sources,proof=proof,
+         ordinary_limit=ordinary_limit,template_limit=template_limit,
+         worker=fn request => worker fallback request,
+         force_worker=force_worker,
+         observer=fn _ => (),history_mode=false,check_type=fn _ => (),
+         completion=NONE,direct_deferred=NONE,owned_force_worker=NONE,
+         owned_completion=NONE,native_reservation=NONE,
+         preprocessing=preprocessing,owned_work=work,
+         clause_worker=Option.map
+           (fn produce => fn request => produce fallback request) clause_worker}
+    in contradiction end
+
+  fun prove_admitted_using (input as {sources,...}) =
+    SmtReplaySource.close_contradiction sources
+      (check_contradiction_admitted_using input)
+
   fun check_contradiction_observing
       {graph,scope,sources,proof,ordinary_limit,template_limit,
        worker,force_worker,observer} =
