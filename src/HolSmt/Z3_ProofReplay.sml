@@ -924,8 +924,11 @@ local
 
   fun nnf_prove (thms, t) =
     profile "nnf[structural]" nnf_structural_prove (thms, t)
-    handle Feedback.HOL_ERR _ =>
-      profile "nnf[metis-fallback]" metis_prove (thms, t)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+        profile "nnf[metis-fallback]" metis_prove (thms, t)
 
   val INT_LE_RMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n``,
@@ -9420,10 +9423,22 @@ in
          #z3_version proof)
       val theorem = replay_root_with_definitions_for_test definitions ordinary
       val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) conclusion) theorem
-      val conditional = List.foldr (fn (term,theorem) =>
-        Thm.DISCH term theorem) exact premise_terms
+      (* Capture actual hypotheses BEFORE conditional lifting. Discharging
+         every advertised premise would make unused Sources dependencies of
+         the later MP, even when ordinary replay did not use them. *)
+      val actual_hypotheses = Thm.hypset exact
+      val retained = ref Term.empty_tmset
+      val used = List.filter (fn (_,term) =>
+        if HOLset.member (actual_hypotheses,term) andalso
+            not (HOLset.member (!retained,term)) then
+          (retained := HOLset.add (!retained,term);true)
+        else false) (ListPair.zip (premises,premise_terms))
+      val selected_law = SmtReplayRules.implication graph
+        (ReplayGraph.node_scope graph law) (List.map #1 used) target
+      val conditional = List.foldr (fn ((_,term),theorem) =>
+        Thm.DISCH term theorem) exact used
       val aligned = Thm.EQ_MP (Thm.ALPHA (Thm.concl conditional)
-        (ReplayGraph.representative graph law)) conditional
+        (ReplayGraph.representative graph selected_law)) conditional
     in if List.null (Thm.hyp aligned) then SOME aligned else NONE end
     handle Conv.UNCHANGED => NONE
 

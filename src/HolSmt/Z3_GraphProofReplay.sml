@@ -38,6 +38,10 @@ struct
     | BinderEquality of
         {parent_scope : G.scope, variables : G.node list, target : G.node}
   datatype task = Visit of Z.proof_id | Finish of Z.proof_id
+  (* A producer returns a closed, clean theorem of law, or an exact
+     conditional over an ordered subset of these actual premise nodes.
+     Successful laws/ports are retained before freeze; assembly never calls
+     the producer. Full-law callbacks retain their existing behavior. *)
   type local_request =
     {rule : Z3_Proof.proof_rule,
      metadata : Z3_Proof.th_lemma_metadata option,
@@ -284,6 +288,16 @@ struct
                 gp_sources validation @ !roots
           val sources = ref (List.rev initial_sources)
           val witnesses = ref (Redblackmap.mkDict Int.compare)
+          val pruned_laws = ref false
+          val local_law_error = ERR "discover"
+            "local rule law is not closed, clean and exact"
+          fun law_tick () = case owned of NONE => ()
+            | SOME {work,...} =>
+                SmtReplayInvocationWork.spend_guard_policy work 1
+          fun pay_law_ports premises = case owned of NONE => ()
+            | SOME {work,...} =>
+              let val pay = SmtReplayInvocationWork.spend_guard_policy work
+              in pay 1;List.app (fn _ => pay 7) premises end
           val _ = case reconciliation of NONE => () | SOME plan =>
             List.app (fn (index,node) =>
               case Z3_GraphSourceReconcile.witness plan (index,node) of
@@ -307,11 +321,36 @@ struct
               (index+1,if Redblackmap.inDomain (table,G.node_id node) then
                  table else Redblackmap.insert (table,G.node_id node,index)))
             (0,Redblackmap.mkDict Int.compare) initial_sources
+          (* A lemma hypothesis shadows an equal original Source occurrence.
+             The original Work's prefix is not the lemma's local authority. *)
+          val local_indices = case owned of NONE => NONE
+            | SOME _ => if null local_assumptions then NONE else
+              let
+                fun compare (a,b) = (law_tick ();Int.compare (a,b))
+                val ids = List.foldl (fn (node,set) =>
+                    (law_tick ();Redblackset.add (set,G.node_id node)))
+                  (Redblackset.empty compare) local_assumptions
+                val prefix = case preprocessing of SOME {validation,...} =>
+                    length (gp_sources validation)
+                  | NONE => raise ERR "owned_discharge" "missing GP"
+                val (_,indices) = List.foldl (fn (node,(index,table)) =>
+                  (law_tick ();
+                   (index+1,if index < prefix orelse
+                       not (Redblackset.member (ids,G.node_id node)) orelse
+                       Redblackmap.inDomain (table,G.node_id node)
+                     then table else Redblackmap.insert
+                       (table,G.node_id node,index))))
+                  (0,Redblackmap.mkDict compare) initial_sources
+              in SOME indices end
           fun assumption node =
-            case Redblackmap.peek (initial_indices,G.node_id node) of
+            case (case local_indices of NONE => NONE
+              | SOME indices => Redblackmap.peek (indices,G.node_id node)) of
               SOME index => index
-            | NONE => raise ERR "discover"
-                "hypothesis is outside the enclosing source scope"
+            | NONE =>
+                (case Redblackmap.peek (initial_indices,G.node_id node) of
+                   SOME index => index
+                 | NONE => raise ERR "discover"
+                     "hypothesis is outside the enclosing source scope")
           fun endpoint id = case Redblackmap.peek (!endpoints,id) of
               SOME node => node
             | NONE => raise ERR "discover" "premise not yet discovered"
@@ -374,6 +413,40 @@ struct
             let val (tags,_) = Tag.dest_tag (Thm.tag theorem) in
               List.all (fn tag => tag = "DISK_THM") tags andalso
               List.null (Tag.axioms_of (Thm.tag theorem)) end
+          (* Close completed cross-block imports before the parent freezes.
+             Sparse realization never receives an open native witness. *)
+          fun retained_law node prefix theorem =
+            let
+              val _ = List.app (fn _ => law_tick ()) canonical_sources
+              val _ = List.app (fn _ => law_tick ()) (!sources)
+              val known = canonical_sources @ !sources
+              val incoming = Thm.hyp theorem
+              val _ = pay_law_ports incoming
+              val _ = pay_law_ports prefix
+              fun canonical hypothesis =
+                case List.find (fn source => (law_tick ();
+                    Portable.pointer_eq
+                      (hypothesis,G.representative graph source))) known of
+                  SOME source => source
+                | NONE => raise ERR "discover"
+                    "completed rule has a noncanonical source hypothesis"
+              val hypotheses = List.map canonical incoming
+              val ports = hypotheses @ prefix
+              val law = R.implication graph scope ports node
+              val conditional = List.foldr (fn (hypothesis,result) =>
+                Thm.DISCH (G.representative graph hypothesis) result)
+                theorem hypotheses
+              val closed = Thm.EQ_MP (Thm.ALPHA (Thm.concl conditional)
+                (G.representative graph law)) conditional
+              val _ = if null (Thm.hyp closed) andalso clean closed then ()
+                else raise local_law_error
+              val indices = List.map (fn hypothesis =>
+                (hypothesis,source hypothesis NONE)) ports
+              val index = source law (SOME closed)
+              val _ = pruned_laws := true
+              val _ = roots := law :: ports @ !roots
+            in BoundNnfLaw {target=node,law=law,index=index,
+                            hypotheses=indices} end
           fun compact rule = List.exists (fn name => name = rule)
             ["refl","symm","trans","trans-star","monotonicity",
              "and-elim","iff-false","iff-true","mp","mp-eq",
@@ -491,16 +564,54 @@ struct
                           | SOME theorem =>
                               let
                                 val _ = if List.null (Thm.hyp theorem) andalso
-                                    clean theorem andalso Portable.pointer_eq
-                                      (Thm.concl theorem,
-                                       G.representative graph law)
-                                  then () else raise ERR "discover"
-                                    "local rule law is not closed, clean and exact"
+                                    clean theorem then () else
+                                  raise local_law_error
+                                (* A bounded producer may omit unused premise
+                                   ports. Match ONLY exact canonical endpoints
+                                   in their original order; syntax/IDs are not
+                                   proof authority. The returned closed theorem
+                                   still proves the entire selected law. *)
+                                (* Pay the new port inventory, ordered match,
+                                   length and retained-list copies on the SAME
+                                   Work. Guard payment is legal outside an
+                                   owning native action, including priced Work. *)
+                                val _ = pay_law_ports premises
+                                val target = G.representative graph node
+                                fun selected [] term =
+                                      if Portable.pointer_eq (term,target)
+                                      then SOME [] else NONE
+                                  | selected ((id,premise)::rest) term =
+                                      if Portable.pointer_eq (term,target)
+                                      then SOME []
+                                      else case Lib.total boolSyntax.dest_imp
+                                          term of
+                                        SOME (antecedent,consequent) =>
+                                          if Portable.pointer_eq (antecedent,
+                                              G.representative graph premise)
+                                          then Option.map
+                                            (fn kept => (id,premise)::kept)
+                                            (selected rest consequent)
+                                          else selected rest term
+                                      | NONE => NONE
+                                val kept = case selected
+                                    (ListPair.zip (premises,premise_nodes))
+                                    (Thm.concl theorem) of
+                                  SOME kept => kept
+                                | NONE => raise local_law_error
+                                val _ = if List.length kept <
+                                    List.length premises then
+                                      pruned_laws := true else ()
+                                val law = R.implication graph scope
+                                  (List.map #2 kept) node
+                                val _ = if Portable.pointer_eq
+                                    (Thm.concl theorem,
+                                     G.representative graph law) then () else
+                                  raise local_law_error
                                 val index = source law (SOME theorem)
                                 val _ = roots := law :: !roots
                               in SOME (LocalLaw
-                                {target = node,premises = premises,law = law,
-                                 index = index}) end)
+                                {target = node,premises = List.map #1 kept,
+                                 law = law,index = index}) end)
                         end
                     in
                       if name = "asserted" orelse name = "hypothesis" then
@@ -638,8 +749,7 @@ struct
                             ignore (source hypothesis NONE))
                             (#hypotheses completed)
                           val theorem = #theorem completed
-                          val index = source node (SOME theorem)
-                        in (node,Source (node,index)) end
+                        in (node,retained_law node [] theorem) end
                       else if name = "lemma" then
                         let
                           val body = case premises of [body] => body
@@ -650,10 +760,11 @@ struct
                           val assumptions = List.map complement
                             (C.recorded (clause id))
                           val law = R.implication graph scope local_assumptions node
-                          val index = source law NONE
-                          val _ = roots := law :: assumptions @ !roots
-                        in (node,Lemma {target = node,body = body,
-                          assumptions = assumptions,law = law,index = index}) end
+                          val completed = complete current_frame scope body
+                            (local_assumptions @ assumptions)
+                            (Ordinary (SOME law))
+                        in (node,retained_law node local_assumptions
+                          (#theorem completed)) end
                       else if name = "unit-resolution" then
                         if List.null premises then raise ERR "unit_resolution"
                           "empty premise list" else
@@ -709,6 +820,14 @@ struct
             | Ordinary NONE =>
                 R.implication graph scope local_assumptions target
             | Ordinary (SOME node) => node
+          val sparse_frame = !pruned_laws orelse not (null local_assumptions)
+          val _ = if sparse_frame then pay_law_ports local_assumptions
+            else ()
+          val local_closure = if sparse_frame andalso
+              not (null local_assumptions) andalso
+              (case completion of Ordinary _ => true | _ => false)
+            then SOME (R.implication graph scope local_assumptions target)
+            else NONE
           val source_nodes = List.rev (!sources)
           (* Old environment routes remain conservative. The opt-in sparse
              route assembles actual compact Hyp before selecting definitions.
@@ -798,9 +917,12 @@ struct
           val closed_images = if not use_closed_laws then [] else
             case environment of NONE => [] | SOME resolution =>
               prepare_images resolution closed_laws
-          val freeze_roots = case environment of NONE => desired :: !roots
+          val closure_roots = case local_closure of NONE => []
+            | SOME node => [node]
+          val freeze_roots = closure_roots @ (case environment of
+              NONE => desired :: !roots
             | SOME resolution => desired :: !roots @
-                SmtReplayResolve.roots resolution
+                SmtReplayResolve.roots resolution)
           val _ = case preprocessing of NONE => ()
             | SOME {validation,...} =>
                 (case gp_cap validation of
@@ -808,12 +930,13 @@ struct
                  | SOME limit => if limit = template_limit then () else
                      raise ERR "preprocessing_source" "original GP cap differs")
           val block = case owned of NONE => (case preprocessing of NONE =>
-              (if needed_route then P.prepare_needed_sources
-               else P.freeze) graph
+              (if needed_route orelse sparse_frame then
+                 P.prepare_needed_sources else P.freeze) graph
                 {scope = scope,roots = freeze_roots,sources = source_nodes,
                  template_limit = template_limit}
             | SOME {validation,...} =>
-              (if needed_route then P.prepare_needed_sources_with_conversions
+              (if needed_route orelse sparse_frame then
+                 P.prepare_needed_sources_with_conversions
                else P.freeze_with_conversions) graph
                 {scope = scope,roots = freeze_roots,sources = source_nodes,
                  closed_facts = gp_facts validation,
@@ -855,7 +978,8 @@ struct
                   P.prepare_owned_realization_tables work frontier)
                 in owned_action current_frame scope (fn () =>
                   P.freeze_owned_realization_tables_plan work tables) end
-                val result = case ground_owner of NONE => ordinary ()
+                val result = case ground_owner of
+                    NONE => if sparse_frame then sparse () else ordinary ()
                   | SOME _ => sparse ()
                 val _ = case ground_owner of NONE => () | SOME _ =>
                   (P.validate_block_for work result;
@@ -1025,6 +1149,26 @@ struct
             | Ordinary _ => not (List.null local_assumptions)
           val (block,closed,edge) = if not discharge then
               (block,target,edge root)
+            else if sparse_frame then
+              let
+                (* The entire implication spine was discovered above. Only
+                   compact names enter DISCH; no realized body is rebuilt. *)
+                fun close [] = (target,edge root)
+                  | close (antecedent::rest) =
+                      let val (body,incoming) = close rest
+                          val node = R.implication graph scope
+                            [antecedent] body
+                          val result = P.compose block
+                            (fn [equation,proof] => Thm.EQ_MP
+                                (Thm.SYM equation)
+                                (Thm.DISCH (P.name block antecedent) proof)
+                              | _ => raise ERR "lemma"
+                                  "invalid compact discharge inputs")
+                            [P.constructor block node,incoming]
+                      in (node,result) end
+                val (closed,result) = owned_action current_frame scope
+                  (fn () => close local_assumptions)
+              in (block,closed,result) end
             else
               let val result = case owned of NONE =>
                     P.discharge_sources block
@@ -1192,6 +1336,23 @@ struct
                   {roots = SmtReplayResolve.roots resolution,
                    target = desired,edge = edge}
               in (#block final,#edge final,SOME resolution,images) end
+          (* Sparse proofs select Source occurrences from actual compact Hyp.
+             A changed closed law from a discarded alternative has no image
+             obligation in that proof, even in the non-needed environment
+             selectors. Keep the original occurrence numbering. *)
+          val closed_images = if null closed_images orelse
+              not (sparse_frame orelse needed_route) then closed_images else
+            let
+              val indices = case owned of NONE =>
+                  P.needed_source_occurrences block edge
+                | SOME {work,...} =>
+                    P.needed_source_occurrences_with_work work block edge
+              fun compare (a,b) = (law_tick ();Int.compare (a,b))
+              val used = List.foldl (fn (index,set) =>
+                  (law_tick ();Redblackset.add (set,index)))
+                (Redblackset.empty compare) indices
+            in List.filter (fn (index,_) =>
+              (law_tick ();Redblackset.member (used,index))) closed_images end
         in owned_action current_frame scope (fn () =>
           case completion of Ordinary _ =>
             {theorem = (case environment of NONE =>
