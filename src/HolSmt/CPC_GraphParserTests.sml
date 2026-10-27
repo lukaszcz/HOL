@@ -1757,6 +1757,16 @@ struct
             (prefix ^ "true wrong_close");
           negative (kind ^ " recursive named invalid binder vs body type")
             (text "0");
+          (* review-04e564acd: valid operands must also check the close
+             before constructing a typed quantifier/abstraction. *)
+          List.app (fn binders =>
+            negative (kind ^ " recursive valid binder close before type / " ^
+                binders)
+              ("((define @x () (@var \"x\" Bool)) " ^
+               "(define @vars () (@list @x)) " ^
+               "(define @xs () (@list (" ^ kind ^ " " ^ binders ^
+               " 0 wrong_close))) (assume @a true))"))
+            ["@vars","(@list @x)"];
           negative (kind ^ " recursive missing named binder diagnostic")
             ("((define @xs () (@list (" ^ kind ^
              " @task35_missing_binders true))) (assume @a true))");
@@ -2228,6 +2238,82 @@ struct
                (source_term syntax) end)
     in () end
 
+  (* review-04e564acd: equal lexical descriptors do NOT identify a private
+     allocation. Check actual packet IDs, not reconstructed/alpha terms. *)
+  fun detached_private_identity () =
+    let
+      val text =
+        "((define @u () (@var \"@fp.NAN#1\" (_ BitVec 1))) " ^
+        "(define @n () (@fp.NAN (_ BitVec 1))) " ^
+        "(assume @a (forall ((x Bool)) " ^
+        "(= (@fp.SIGN (_ BitVec 1) (ite x @n #b0)) #b0))))"
+      fun one [entry] = entry
+        | one _ = raise Fail "expected one authentic private entry"
+      fun inspect id app free descriptor variables bindings =
+        let
+          val (nan,_,_) = one (List.filter
+            (fn (_,kind,_) => kind="@fp.NAN") bindings)
+          val (_,_,source) = one (List.filter
+            (fn (_,kind,_) => kind="@fp.SIGN") bindings)
+          val source = valOf source
+          val lexical = #2 (one (List.filter
+            (fn (node,_) => id node=id nan) variables))
+          val (ordinary,_) = one (List.filter (fn (node,term) =>
+            not (List.exists (fn (marker,_,_) => id node=id marker) bindings)
+            andalso Term.compare (term,lexical)=EQUAL) variables)
+          fun position target =
+            let fun walk n ((node,_)::rest) =
+                      if id node=id target then n else walk (n+1) rest
+                  | walk _ [] = raise Fail "missing allocation"
+            in walk 0 variables end
+          val _ = require "fixture lost ordinary-first descriptor collision"
+            (id ordinary<>id nan andalso position ordinary<position nan)
+          val (prefix,_) = app source
+          val (head,branch) = app prefix
+          val (_,condition) = app head
+          val _ = case descriptor condition of
+              SOME (G.RigidSource,term) => require
+                "detached condition lost lexical x"
+                (Term.compare (term,Term.mk_var ("x",Type.bool))=EQUAL)
+            | _ => raise Fail "detached condition is not a source variable"
+          fun sorted nodes = Listsort.sort Int.compare (List.map id nodes)
+        in require "detached source substituted an ordinary namesake"
+          (id branch=id nan andalso
+           sorted (free source)=sorted [condition,nan]) end
+      fun graph_check (e:env) held =
+        let val graph = #graph e
+            fun app node = case G.view graph node of
+                G.Application pair => pair
+              | _ => raise Fail "expected source application"
+            fun free node = valOf (G.free_variable_nodes graph node)
+            fun variable node = case G.view graph node of
+                G.Variable pair => SOME pair | _ => NONE
+        in inspect G.node_id app free variable
+          (List.map (fn v => (#node v,#lexical v)) (Packet.variables held))
+          (List.map (fn b => (#marker b,#kind b,#source b))
+            (Packet.private_bindings held)) end
+      val _ = test "detached private identity native control" (fn () =>
+        owned (fn e => ignore (legacy e text)))
+    in List.app (fn route => test
+      ("detached source authentic private ID / " ^ route_name route)
+      (fn () => case route of
+          Value => with_value text (fn _ => fn current =>
+            let val context = #context current
+                fun app node = case PV.view context node of
+                    PV.Application pair => pair
+                  | _ => raise Fail "expected Value source application"
+                fun variable node = case PV.view context node of
+                    PV.Variable pair => SOME pair | _ => NONE
+            in inspect (PV.key context) app (PV.free_variables context)
+              variable
+              (List.map (fn v => (#node v,#lexical v)) (#variables current))
+              (List.map (fn b => (#marker b,#kind b,#source b))
+                (#private_bindings current)) end)
+        | _ => owned (fn e =>
+            let val held = native_packet route e text
+            in finally (fn () => graph_check e held)
+              (fn () => Packet.close held) end))) routes end
+
   fun private_source_sharing () =
     test "private source binder construction stays local/shared" (fn () =>
       let
@@ -2262,6 +2348,7 @@ struct
       val _ = missing_invariants ()
       val _ = private_binder_aliases ()
       val _ = private_source_sharing ()
+      val _ = detached_private_identity ()
       val _ = set_sort_metadata ()
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)

@@ -46,9 +46,10 @@ struct
      surrounding term binder. Snapshot that lexical source at the proof
      root, rather than moving a child-owned semantic value across a guard.
      Construction is typed/nodewise; private leaves resolve only through
-     the authentic allocation inventory. Relevant lexical environments
+     the authentic private allocation inventory, never ordinary solver
+     variables with equal lexical descriptors. Relevant lexical environments
      keep shared suffixes shared even below unrelated source binders. *)
-  fun detached_private_source backend syntax =
+  fun detached_private_source backend private_allocations syntax =
     let
       val root = B.root backend
       val spend = B.syntax_spend backend
@@ -57,11 +58,12 @@ struct
            Lib.list_compare Int.compare (le,re) | order => order)
       val memo = ref (Redblackmap.mkDict compare)
       val serial = ref 0
-      val variables = B.solver_variables backend
       fun private variable =
-        case List.find (fn {lexical,...} =>
-            (spend 1;Term.compare (lexical,variable)=EQUAL)) variables of
-            SOME {node,...} => node
+        case List.find (fn node =>
+            (spend 1;case B.variable_descriptor backend node of
+               SOME lexical => Term.compare (lexical,variable)=EQUAL
+             | NONE => false)) private_allocations of
+            SOME node => node
           | NONE => raise ERR "private_source" "unknown private allocation"
       fun walk frame environment syntax =
         let
@@ -358,7 +360,8 @@ struct
           fun retained_source () =
             case (source,syntax) of (SOME node,SOME syntax) =>
                 if G.scope_visible graph scope (G.node_scope graph node)
-                then source else SOME (detached_private_source backend syntax)
+                then source else SOME (detached_private_source backend
+                  (List.map #marker (!private_bindings)) syntax)
             | _ => source
           val owner = root
           val scope = valOf (B.frame_scope backend owner)
@@ -1008,7 +1011,8 @@ struct
           fun retained_source () =
             case (source,syntax) of (SOME node,SOME syntax) =>
                 if G.scope_visible graph scope (source_scope node)
-                then source else SOME (detached_private_source backend syntax)
+                then source else SOME (detached_private_source backend
+                  (List.map #marker (!private_bindings)) syntax)
             | _ => source
           val owner = root
           val scope = private_scope owner

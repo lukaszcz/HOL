@@ -3091,12 +3091,12 @@ local
                       else SOME (operand ())
                   in variables (variable :: accumulated) end
               end
-            in (variables [], true) end
+            in (variables [], true, recursive) end
           else if first = cpc_recursive_named_binders then
             (* The adapter resolves the alias before reading any body token.
                Invalid operands remain deferred until after body/close. *)
             (case (#lookup_binder_list cfg) second of
-               SOME variables => (variables, true)
+               SOME variables => (variables, true, true)
              | NONE => raise ERR "parse_binder_term"
                  "unresolved recursive CPC binder-list alias")
           else case (#lookup_binder_list cfg) first of
@@ -3104,14 +3104,14 @@ local
               let val _ = List.all Option.isSome variables orelse
                     raise ERR "parse_binder_term"
                       "binder list contains a non-variable term"
-              in (unread [second]; (variables, true)) end
+              in (unread [second]; (variables, true, false)) end
           | NONE =>
               (unread [first, second];
-               (List.map SOME (sorted_variables ()), false))
+               (List.map SOME (sorted_variables ()), false, false))
         end
       and binder_term frame name =
         let
-          val (variables, cpc_names) = binder_variables frame
+          val (variables, cpc_names, recursive) = binder_variables frame
           val _ = if List.exists (not o Option.isSome) variables then
               let
                 (* Native recursive parsing has not bound any operand yet. *)
@@ -3126,9 +3126,13 @@ local
           val parsed_body = ref
             (NONE : ('a construction_occurrence * C.syntax) option)
           fun bind [] frame =
-                let val parsed = term frame in
-                  parsed_body := SOME parsed; construction_value parsed
-                end
+                let
+                  val parsed = term frame
+                  (* Recursive CPC checks the close before constructing
+                     any abstraction or typed quantifier. Other readers
+                     retain their existing staged/index error ordering. *)
+                  val _ = if recursive then expect ")" else ()
+                in parsed_body := SOME parsed; construction_value parsed end
             | bind (((key, printed, ty), original) :: rest) frame =
                 let
                   (* CPC binder-list aliases bind the original lexical
@@ -3150,7 +3154,7 @@ local
                     (B.literal backend frame operator, abstraction) end
                 end
           val result = bind variables frame
-          val _ = expect ")"
+          val _ = if recursive then () else expect ")"
           val _ = (#record_binder_block cfg)
             (name, List.length variables, result)
           val body = valOf (!parsed_body)
@@ -3464,12 +3468,12 @@ local
                       else SOME (operand ())
                   in variables (variable :: accumulated) end
               end
-            in (variables [], true) end
+            in (variables [], true, recursive) end
           else if first = cpc_recursive_named_binders then
             (* The adapter resolves the alias before reading any body token.
                Invalid operands remain deferred until after body/close. *)
             (case (#lookup_binder_list cfg) second of
-               SOME variables => (variables, true)
+               SOME variables => (variables, true, true)
              | NONE => raise ERR "parse_binder_term"
                  "unresolved recursive CPC binder-list alias")
           else case (#lookup_binder_list cfg) first of
@@ -3477,14 +3481,14 @@ local
               let val _ = List.all Option.isSome variables orelse
                     raise ERR "parse_binder_term"
                       "binder list contains a non-variable term"
-              in (unread [second]; (variables, true)) end
+              in (unread [second]; (variables, true, false)) end
           | NONE =>
               (unread [first, second];
-               (List.map SOME (sorted_variables ()), false))
+               (List.map SOME (sorted_variables ()), false, false))
         end
       and binder_term frame name =
         let
-          val (variables, cpc_names) = binder_variables frame
+          val (variables, cpc_names, recursive) = binder_variables frame
           val _ = if List.exists (not o Option.isSome) variables then
               let
                 (* Native recursive parsing has not bound any operand yet. *)
@@ -3499,9 +3503,13 @@ local
           val parsed_body = ref
             (NONE : ('a construction_occurrence * C.syntax) option)
           fun bind [] frame =
-                let val parsed = term frame in
-                  parsed_body := SOME parsed; construction_value parsed
-                end
+                let
+                  val parsed = term frame
+                  (* Recursive CPC checks the close before constructing
+                     any abstraction or typed quantifier. Other readers
+                     retain their existing staged/index error ordering. *)
+                  val _ = if recursive then expect ")" else ()
+                in parsed_body := SOME parsed; construction_value parsed end
             | bind (((key, printed, ty), original) :: rest) frame =
                 let
                   (* CPC binder-list aliases bind the original lexical
@@ -3523,7 +3531,7 @@ local
                     (B.literal backend frame operator, abstraction) end
                 end
           val result = bind variables frame
-          val _ = expect ")"
+          val _ = if recursive then () else expect ")"
           val _ = (#record_binder_block cfg)
             (name, List.length variables, result)
           val body = valOf (!parsed_body)
