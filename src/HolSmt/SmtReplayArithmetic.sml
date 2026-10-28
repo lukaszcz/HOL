@@ -7,6 +7,28 @@ struct
   structure P = SmtReplayProof
   val ERR = Feedback.mk_HOL_ERR "SmtReplayArithmetic"
 
+  (* Admission is terminal through nested workers' HOL_ERR fallback ladders.
+     Only the outer consumer restores the original exception. Keep the
+     carrier here so each arithmetic invocation can unwrap its own callback
+     without exposing that callback's payload to intermediate alternatives. *)
+  exception TerminalAdmission of exn
+  val admission_scopes = ref 0
+  fun with_admission_errors f =
+    let
+      val outer = !admission_scopes = 0
+      val _ = admission_scopes := !admission_scopes + 1
+      val result = Exn.capture f ()
+      val _ = admission_scopes := !admission_scopes - 1
+    in case result of
+        Exn.Exn (TerminalAdmission primary) =>
+          if outer then raise primary else raise TerminalAdmission primary
+      | _ => Exn.release result
+    end
+
+  fun propagate_admission_error primary =
+    if !admission_scopes = 0 then raise primary
+    else raise TerminalAdmission primary
+
   fun has_numeric_operand graph scope {inputs,observe} =
     let
       fun header node =
@@ -369,7 +391,9 @@ struct
         in finish node (Drule.EQT_ELIM equality) end end
     in (if null (!opaque_nodes) then operator_schema ()
         else binder_schema ())
-       handle AdmissionCallback primary => raise primary end
+       handle TerminalAdmission (AdmissionCallback primary) =>
+                raise TerminalAdmission primary
+            | AdmissionCallback primary => raise primary end
 
   fun prove graph scope {inputs,template_limit,observe,procedure} =
     prove_admitted graph scope

@@ -86,6 +86,7 @@ struct
         frame:SmtReplayOwnedScopeReceipt.receipt} option) graph scope
       {proof : Z.proof,template_limit,local_law : local_request ->
         Thm.thm option,nnf : nnf_request -> Thm.thm option} =
+    SmtSeqProve.with_admission_errors (fn () =>
     let
       (* SAME original Work. Genuine binding frames retain both lexical
          and construction lifetimes; old selectors use NONE throughout. *)
@@ -1401,7 +1402,7 @@ struct
         (complete original_frame scope (#root proof) [] (Ordinary NONE))
       val _ = (#close proof) ()
     in theorem end
-    handle error => (((#close proof) () handle _ => ());raise error)
+    handle error => (((#close proof) () handle _ => ());raise error))
 
   fun replay_with_sources_using_packet ground_packet
       use_environment use_closed_laws use_needed use_variable_witnesses

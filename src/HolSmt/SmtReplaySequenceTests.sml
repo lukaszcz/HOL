@@ -196,7 +196,7 @@ struct
                  exact original [] theorem;same_tags native theorem)
         in require ("sequence Z3 merged declaration IDs: " ^ name)
           (declines (fn () => produce (request name bad))) end
-      fun cpc target =
+      fun cpc rule_name target =
         let val result = A.prove_admitted graph scope
               {inputs=[target,target],template_limit=limit,
                observe=fn _ => (),procedure=fn admit => fn [term,arg] =>
@@ -207,7 +207,7 @@ struct
                      CPC_Proof.UnavailableProvenance "sequence identity"}
                    val step:CPC_Proof.step =
                      {id="@seq",rule=valOf (CPC_Proof.lookup_rule
-                        "1.3.4" "seq-eval-op"),premises=[],
+                        "1.3.4" rule_name),premises=[],
                       conclusion=SOME located,args=[located]}
                  in #1
                    (CPC_ProofReplay.graph_bounded_worker_with_admission
@@ -220,9 +220,64 @@ struct
       val _ = List.app (fn produce => List.app (fn name =>
         List.app (z3 produce name) cases) ["th-lemma-seq","rewrite"])
         [compatibility,recorded]
-    in List.app (fn (good,bad) =>
-      (cpc good;require "CPC sequence worker merged declaration IDs"
-        (declines (fn () => (cpc bad;SOME ()))))) cases end)
+    in List.app (fn name => List.app (fn (good,bad) =>
+      (cpc name good;require ("CPC sequence worker merged IDs: " ^ name)
+        (declines (fn () => (cpc name bad;SOME ()))))) cases)
+      ["seq-eval-op","trust"] end)
+
+  (* Public compact dispatch, not a manufactured TRUST theorem. The bad
+     certificate has the very same native endpoint but a different graph
+     declaration on the right. Neither native spelling nor tags admit it. *)
+  fun compact_trust_identity () =
+    let
+      fun check different = with_graph (fn graph => fn scope =>
+        let
+          val goal = ``smt_seq_nth ([sequence_compact_identity:bool]) 0 =
+                       sequence_compact_identity``
+          val sources = SmtReplaySource.new graph scope limit
+            {goal=goal,assumptions=[``sequence_unused:bool``]}
+          val good = #node (SmtReplaySource.goal_source sources)
+          val operands = valOf (R.operands graph boolSyntax.equality 2 good)
+          val other = G.variable graph scope G.Generated
+            ``sequence_compact_identity:bool``
+          val equality = G.constant graph scope
+            (Term.rator (Term.rator goal))
+          val bad = G.application graph scope
+            (G.application graph scope (equality,hd operands),other)
+          val _ = require "compact TRUST needs same-native distinct IDs"
+            (good <> bad andalso G.representative graph bad ~~ goal)
+          val target = if different then bad else good
+          fun located node:SmtLib_GraphFrontend.term =
+            {node=node,scope=scope,binder_blocks=[],source_syntax=NONE,
+             occurrence=SmtLib_Parser.ConstructionOccurrence
+               {value=node,role=SmtLib_Parser.ConstructionAtom,
+                token="sequence-trust",children=[]}}
+          fun registered name = valOf (CPC_Proof.lookup_rule "1.3.4" name)
+          val proof:CPC_ProofParser.graph_proof =
+            {cvc_version="1.3.4",commands=
+              [CPC_ProofParser.GraphAssume ("@denied",located
+                 (SmtReplaySource.denied_goal_node sources)),
+               CPC_ProofParser.GraphStep {pop=false,step=
+                 {id="@seq",rule=registered "trust",premises=[],
+                  conclusion=SOME (located target),
+                  args=[CPC_ProofParser.GraphTerm (located target)],
+                  raw_conclusion=NONE,raw_args=[]}},
+               CPC_ProofParser.GraphStep {pop=false,step=
+                 {id="@done",rule=registered "resolution",
+                  premises=["@seq","@denied"],
+                  conclusion=SOME (located
+                    (G.constant graph scope boolSyntax.F)),
+                  args=[],raw_conclusion=NONE,raw_args=[]}}]}
+          fun replay () = CPC_ProofReplay.prove_graph_proof
+            {graph=graph,scope=scope,sources=sources,proof=proof}
+        in if different then
+             require "compact Seq TRUST merged distinct declaration IDs"
+               (declines (fn () => SOME (replay ())))
+           else let val theorem = replay ()
+                in exact goal [``sequence_unused:bool``] theorem;
+                   same_tags (SmtSeqProve.seq_prove goal) theorem end
+        end)
+    in check false;check true end
 
   (* Parsed Z3 assembly retains the original hypotheses, not just a local
      implication. The symbolic singleton also rules out ground-only replay. *)
@@ -261,8 +316,8 @@ struct
             val _ = exact goal [] native
         in List.app (check native goal [] rule (map H.Object args))
           [true,false] end
-      val _ = List.app (fn (goal,_) =>
-        both goal "seq-eval-op" [goal]) schemas
+      val _ = List.app (fn (goal,_) => List.app (fn name =>
+        both goal name [goal]) ["seq-eval-op","trust"]) schemas
       val _ = both ``smt_seq_at ([p]:bool list) 0 =
                        smt_seq_extract [p] 0 1``
         "str-at-elim" [``[p]:bool list``,``0:int``]
@@ -284,8 +339,9 @@ struct
       val contextual_native =
         SmtSeqProve.seq_contextual_prove context contextual_goal
       val _ = exact contextual_goal context contextual_native
-      val _ = List.app (check contextual_native contextual_goal context
-        "str" [H.Object contextual_goal]) [true,false]
+      val _ = List.app (fn name => List.app
+        (check contextual_native contextual_goal context name
+          [H.Object contextual_goal]) [true,false]) ["str","trust"]
       (* Reverse involution has its OWN native producer. Do not assume the
          generic Seq ladder proves this variable-list theorem. *)
       val reverse = ``REVERSE (REVERSE (xs:bool list)) = xs``
@@ -423,8 +479,264 @@ struct
         ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;3;2]``)))
     end
 
+  val nested_scalar_goal =
+    ``([word_from_bin_list
+          (smt_seq_replace_all ([1;0;1]:num list) [0] [1])]:
+         8 word list) ++ [] = [7w]``
+
+  (* Durable review coverage: scalar evaluation may bear words or lists,
+     but must not recursively CBV-evaluate the surrounding Seq operation. *)
+  fun closed_scalars () = with_graph (fn graph => fn scope =>
+    let
+      val goals =
+        [``([1w+2w]:8 word list) ++ [] = [3w]``,
+         ``smt_seq_nth ([1w+2w]:8 word list) 0 = 3w``,
+         ``smt_seq_update ([1w+2w]:8 word list) 0 [3w] = [3w]``,
+         ``smt_seq_replace_all ([1w+2w]:8 word list) [3w] [4w] = [4w]``,
+         ``([1w && 2w]:8 word list) ++ [] = [0w]``,
+         ``smt_seq_nth ([1w && 2w]:8 word list) 0 = 0w``,
+         ``([1w << 2]:8 word list) ++ [] = [4w]``,
+         ``([w2n (3w:8 word)]:num list) ++ [] = [3]``,
+         ``smt_seq_replace_all ([REVERSE [T;F]]:bool list list)
+             [[F;T]] [[T]] = [[T]]``,
+         ``smt_seq_replace_all ([MAP ($+ (1:int)) [1;2]]:int list list)
+             [[2;3]] [[]] = [[]]``,
+         ``smt_seq_replace_all ([word_from_bin_list [1;0;1]]:8 word list)
+             [5w] [4w] = [4w]``,
+         ``([word_from_bin_list [1;0;1]]:8 word list) ++ [] = [5w]``,
+         nested_scalar_goal]
+      fun check goal =
+        let
+          val native = SmtSeqProve.seq_prove goal
+          val _ = exact goal [] native
+          val calls = ref 0
+          val result = A.prove_admitted graph scope
+            {inputs=[import graph scope goal],template_limit=limit,
+             observe=fn _ => (),procedure=fn admit => fn [term] =>
+               (calls := !calls+1;
+                SmtSeqProve.seq_prove_with_admission admit term)
+               | _ => raise Fail "closed scalar arity"}
+          val theorem = #theorem result
+        in require "closed scalar worker was retried or bypassed" (!calls=1);
+           exact goal [] theorem;same_tags native theorem end
+    in List.app check goals end)
+
+  fun opaque_scalar_cancellation () =
+    let
+      val cap = 512
+      val scalar = ``2 EXP 1024``
+      val computed = boolSyntax.rhs
+        (Thm.concl (computeLib.EVAL_CONV scalar))
+      val _ = require "opaque scalar fixture result unexpectedly fits"
+        (Term.term_size computed > cap)
+      val admit = A.new_term_check {limit=cap,observe=fn () => ()}
+      val goals =
+        [``([2 EXP 1024]:num list) ++ [] = [2 EXP 1024]``,
+         ``smt_seq_nth ([2 EXP 1024]:num list) 0 = 2 EXP 1024``]
+      fun check goal =
+        case Exn.capture (SmtSeqProve.seq_prove_with_admission admit) goal of
+          Exn.Res theorem => exact goal [] theorem
+        | Exn.Exn error => raise Fail ("opaque scalar cancellation: " ^
+            Library.term_to_string goal ^ ": " ^ General.exnMessage error)
+    in List.app check goals end
+
+  val replacement_goal =
+    ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;2;3]``
+
+  (* Reject the GENERATED numeral-fuel equality, not the source goal or
+     generic recursive definition. This is the review's swallowed-error
+     reproducer: the callback must never be visited again after rejection. *)
+  fun replacement_fuel_equality tm =
+    boolSyntax.is_eq tm andalso
+    let
+      val (head,args) = boolSyntax.strip_comb (boolSyntax.lhs tm)
+    in Term.is_const head andalso
+       let val {Thy,Name,...} = Term.dest_thy_const head
+       in Thy="HolSmt" andalso Name="smt_seq_replace_all_aux" andalso
+          length args=4 andalso numSyntax.is_numeral (hd args) andalso
+          not (hd args ~~ numSyntax.zero_tm)
+       end
+    end
+
+  val admission_primary = Feedback.mk_HOL_ERR
+    "Task40Sequence" "generated" "primary admission error"
+
+  fun primary_preserved result =
+    case result of Exn.Exn (Feedback.HOL_ERR detail) =>
+        not (SmtResource.is_resource_gate detail) andalso
+        Feedback.top_structure_of detail = "Task40Sequence" andalso
+        Feedback.top_function_of detail = "generated" andalso
+        Feedback.message_of detail = "primary admission error"
+      | _ => false
+
+  fun first_generated_error label matches action =
+    let
+      val stopped = ref false
+      val after = ref 0
+      val genuine = A.new_term_check {limit=limit,observe=fn () => ()}
+      fun admit tm =
+        if !stopped then after := !after+1
+        else (genuine tm;
+          if matches tm then
+            (stopped := true;raise admission_primary)
+          else ())
+      val result = Exn.capture (fn () => action admit) ()
+    in require (label ^ ": generated admission was bypassed") (!stopped);
+       require (label ^ ": primary HOL_ERR was swallowed/replaced")
+         (primary_preserved result);
+       require (label ^ ": admission continued after primary error") (!after=0)
+    end
+
+  fun first_replacement_error label action =
+    first_generated_error label replacement_fuel_equality action
+
+  fun replacement_first_error () =
+    first_replacement_error "direct replacement" (fn admit =>
+      ignore (SmtSeqProve.seq_prove_with_admission admit replacement_goal))
+
+  (* The existential is made inside prove_split, unlike the generic
+     IS_SUBLIST_APPEND fact. Symbolic leaves force the append-witness path;
+     its candidate search must not treat this rejection as a failed split. *)
+  fun witness_first_error () =
+    let
+      val goal =
+        ``IS_SUBLIST ((xs:bool list) ++ middle ++ zs) middle``
+      val native = SmtSeqProve.seq_prove goal
+      val _ = exact goal [] native
+      val generated = boolSyntax.rhs (Thm.concl
+        (Conv.REWR_CONV rich_listTheory.IS_SUBLIST_APPEND goal))
+      val _ = require "witness fixture lost its generated existential"
+        (boolSyntax.is_exists generated andalso
+         not (null (Term.free_vars generated)) andalso
+         not (generated ~~ Thm.concl rich_listTheory.IS_SUBLIST_APPEND))
+    in first_generated_error "append witness" (fn tm => tm ~~ generated)
+      (fn admit => ignore
+        (SmtSeqProve.seq_prove_with_admission admit goal)) end
+
+  (* Reuse the SAME checked_procedures closure. A fuel conversion uses
+     Traverse's interrupt escape; restore must clear that saved exception
+     before the next invocation, not merely rethrow it. *)
+  fun replacement_closure_reset () =
+    let
+      val reject = ref true
+      val stopped = ref false
+      val after = ref 0
+      val genuine = A.new_term_check {limit=limit,observe=fn () => ()}
+      fun admit tm =
+        if !stopped then after := !after+1
+        else (genuine tm;
+          if !reject andalso replacement_fuel_equality tm then
+            (stopped := true;raise admission_primary)
+          else ())
+      val prove = SmtSeqProve.seq_prove_with_admission admit
+      val result = Exn.capture prove replacement_goal
+      val _ = require "reusable sequence closure lost its conversion error"
+        (!stopped andalso primary_preserved result andalso !after=0)
+      val _ = (reject := false;stopped := false)
+      val theorem = prove replacement_goal
+    in exact replacement_goal [] theorem end
+
+  (* closed_scalars checks the exact native and admitted positive first. *)
+  fun nested_scalar_first_error () =
+    first_replacement_error "replacement under scalar" (fn admit =>
+      ignore (SmtSeqProve.seq_prove_with_admission admit nested_scalar_goal))
+
+  (* API composition, deliberately nested in consumer scopes. Only the
+     ACTUAL Arithmetic observer rejects: the Seq callback arms it on a
+     generated fuel equality, then calls Arithmetic's own admit function.
+     Arithmetic must unwrap its private AdmissionCallback without exposing
+     the primary HOL_ERR to the inner consumer's fallback ladder. *)
+  fun arithmetic_observer_first_error () =
+    with_graph (fn graph => fn scope =>
+    let
+      val node = import graph scope replacement_goal
+      val armed = ref false
+      val stopped = ref false
+      val after = ref 0
+      fun observe _ =
+        if !stopped then after := !after+1
+        else if !armed then
+          (stopped := true;raise admission_primary)
+        else ()
+      fun procedure admit [term] =
+            SmtSeqProve.seq_prove_with_admission (fn tm =>
+              (if !stopped then after := !after+1 else ();
+               if replacement_fuel_equality tm then armed := true else ();
+               admit tm)) term
+        | procedure _ _ = raise Fail "observer replacement arity"
+      val result = Exn.capture (fn () =>
+        SmtSeqProve.with_admission_errors (fn () =>
+          SmtSeqProve.with_admission_errors (fn () =>
+            ignore (A.prove_admitted graph scope
+              {inputs=[node],template_limit=limit,observe=observe,
+               procedure=procedure})))) ()
+      val _ = require "Arithmetic observer bypassed generated fuel admission"
+        (!armed andalso !stopped)
+      val _ = require "Arithmetic leaked/replaced its admission callback"
+        (primary_preserved result)
+      val _ = require "Arithmetic continued after observer rejection"
+        (!after=0)
+      (* Outside all consumer scopes the same error must be raw again. *)
+      val reset = Exn.capture (fn () =>
+        SmtSeqProve.seq_prove_with_admission
+          (fn _ => raise admission_primary) replacement_goal) ()
+      val _ = require "nested consumer admission scopes were not reset"
+        (primary_preserved reset)
+      val recovered = A.prove_admitted graph scope
+        {inputs=[node],template_limit=limit,observe=fn _ => (),
+         procedure=fn admit => fn [term] =>
+           SmtSeqProve.seq_prove_with_admission admit term
+           | _ => raise Fail "observer recovery arity"}
+    in exact replacement_goal [] (#theorem recovered) end)
+
+  (* Invoke the admitted native workers used by the graph law producers.
+     In particular do NOT put with_admission_errors around the test: the
+     consumer itself must preserve the callback error across its fallbacks. *)
+  fun native_consumer_first_error () = with_graph (fn graph => fn scope =>
+    let
+      val node = import graph scope replacement_goal
+      fun run label worker = first_replacement_error label (fn reject =>
+        ignore (A.prove_admitted graph scope
+          {inputs=[node],template_limit=limit,observe=fn _ => (),
+           procedure=fn admit => fn [term] =>
+             worker (fn tm => (reject tm;admit tm)) term
+             | _ => raise Fail "consumer replacement arity"}))
+      fun cpc name admit term =
+        let
+          val located = {term=term,provenance=
+            CPC_Proof.UnavailableProvenance "replacement admission"}
+          val step:CPC_Proof.step =
+            {id="@seq",rule=valOf (CPC_Proof.lookup_rule "1.3.4" name),
+             premises=[],conclusion=SOME located,args=[located]}
+        in #1 (CPC_ProofReplay.graph_bounded_worker_with_admission
+          admit [] (step,[])) end
+      fun z3 recorded name admit term =
+        let
+          val rule = valOf (Z3_Proof.lookup_rule "4.15.3" name)
+          val metadata = if name="th-lemma-seq" then SOME
+            (Z3_Proof.mk_th_lemma_metadata ("seq",NONE,[])) else NONE
+          val pt = Z3_ProofReplay.graph_local_proofterm
+            rule metadata term [] []
+          val proof = Z3_Proof.mk_proof
+            (Redblackmap.insert (Redblackmap.mkDict Int.compare,0,pt),
+             Term.empty_tmset,[],"4.15.3")
+        in if recorded then #theorem
+          (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+            admit [] proof)
+        else Z3_ProofReplay.replay_root_admitted admit [] proof end
+      val _ = List.app (fn name => run ("CPC " ^ name) (cpc name))
+        ["seq-eval-op","str","trust"]
+    in List.app (fn recorded => List.app (fn name =>
+      run ("Z3 " ^ name ^ " recorded=" ^ Bool.toString recorded)
+        (z3 recorded name)) ["th-lemma-seq","rewrite"]) [false,true] end)
+
   fun run () =
     (schemas_and_sharing ();false_obligations ();contextual ();
-     graph_handlers ();parsed_z3 ();cpc_cases ();admission_first_error ();
-     intermediate_admission ();ground_replacement ();large_input ())
+     graph_handlers ();compact_trust_identity ();parsed_z3 ();cpc_cases ();
+     admission_first_error ();intermediate_admission ();
+     ground_replacement ();closed_scalars ();opaque_scalar_cancellation ();
+     replacement_first_error ();witness_first_error ();
+     replacement_closure_reset ();nested_scalar_first_error ();
+     arithmetic_observer_first_error ();native_consumer_first_error ();
+     large_input ())
 end

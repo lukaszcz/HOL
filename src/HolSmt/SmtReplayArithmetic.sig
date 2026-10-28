@@ -1,6 +1,11 @@
 (* Bounded operator obligations for the existing checked arithmetic workers. *)
 signature SmtReplayArithmetic =
 sig
+  (* Keep admission exceptions terminal through nested fallback ladders;
+     restore the exact primary exception at the outermost consumer scope.
+     Without an active scope, propagation raises the primary directly. *)
+  val with_admission_errors : (unit -> 'a) -> 'a
+  val propagate_admission_error : exn -> 'a
   (* Invocation-local syntax admission with the original primitive-Type
      allowance/diagnostic, without evaluating word dimensions. *)
   val new_type_check : (unit -> unit) -> Type.hol_type -> unit

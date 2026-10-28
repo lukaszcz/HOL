@@ -220,6 +220,7 @@ struct
         preprocessing : GP.validation option,
         owned_work : W.portfolio option,
         clause_worker : clause_worker option} =
+    SmtSeqProve.with_admission_errors (fn () =>
     let
       (* Read-only, opt-in diagnostics. Audit does not validate, debit or
          revive Work. Diagnostic failures never replace a replay result or
@@ -397,7 +398,8 @@ struct
                   (fn work => W.spend_guard_policy work 1) owned_work})
           (* Keep constructor equations and UPDATE relationships intact.
              Generic equality/evaluation rules must not merge same-native
-             graph variables either. TRUST retains its deferred fallback. *)
+             graph variables either. Non-Seq TRUST retains its deferred
+             fallback; native Seq TRUST needs the whole-operand boundary. *)
           val structured_rule =
             List.exists (fn handler => handler = #replay_handler (#rule step))
               ["array","arrays_select_const","arrays_read_over_write",
@@ -412,16 +414,25 @@ struct
                    | SOME value => [#node value]),
                 observe=fn () => Option.app
                   (fn work => W.spend_guard_policy work 1) owned_work})
+          (* TRUST requires known list syntax in its single target, not an
+             unknown binder or an incidental Seq premise of a non-Seq
+             (e.g. FP) obligation. Other handlers retain unknown dispatch. *)
+          fun sequence_inputs () =
+            if #replay_handler (#rule step) = "trust" then
+              List.map (#node : F.term -> G.node) object_arguments
+            else List.map node premises @
+              List.map (#node : F.term -> G.node) object_arguments @
+              (case #conclusion step of NONE => []
+               | SOME value => [#node value])
           val sequence_rule =
             List.exists (fn handler => handler = #replay_handler (#rule step))
               ["seq_rewrite","seq_rev_rev","seq_at_elim",
                "str_contains_refl","str_substr_full_eq","string",
-               "rare_inventory","aci_norm","rewrite"] andalso
-            SmtReplayStructured.has_sequence_operand graph scope
-              {inputs=List.map node premises @
-                 List.map (#node : F.term -> G.node) object_arguments @
-                 (case #conclusion step of NONE => []
-                  | SOME value => [#node value]),
+               "rare_inventory","aci_norm","rewrite","trust"] andalso
+            (if #replay_handler (#rule step) = "trust" then
+               SmtReplayStructured.has_known_sequence_operand
+             else SmtReplayStructured.has_sequence_operand) graph scope
+              {inputs=sequence_inputs (),
                observe=fn () => Option.app
                  (fn work => W.spend_guard_policy work 1) owned_work}
           val structured_rule = structured_rule orelse sequence_rule
@@ -4182,7 +4193,7 @@ struct
        Option.app W.close owned_work;
        (observer InvocationAbort handle _ => ());
        case error of ObserverFailure original => raise original
-       | _ => raise error) end
+       | _ => raise error) end)
   fun check_contradiction_observing_impl input =
     check_contradiction_admitted_impl NONE NONE input
 

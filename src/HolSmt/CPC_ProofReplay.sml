@@ -8578,6 +8578,7 @@ local
     in result
     end
   fun replay_trust_admitted admit force_fp state prems args =
+    SmtSeqProve.with_admission_errors (fn () =>
     let
       val target = expect_one_arg "trust" args
       fun context_terms () =
@@ -9987,7 +9988,7 @@ local
         next (fn () => profile "CPC(rung:trust/scoped_arithmetic)"
           prove_scoped_arithmetic ())
           (fn () => profile "CPC(rung:trust/rdiv)" replay_rdiv ())
-    end
+    end)
 
   fun replay_trust force_fp state prems args = replay_trust_admitted
     (SmtDatatypeProve.default_admission ()) force_fp state prems args
@@ -18052,6 +18053,9 @@ local
 
   fun replay_step_admitted datatype_admit record_scope strong_canon state
       (step : step) =
+    (* Keep Seq admission failures opaque to every enclosing HOL_ERR rung.
+       A graph invocation owns the outer scope when this worker is nested. *)
+    SmtSeqProve.with_admission_errors (fn () =>
     let
       val _ = observe_operation #steps
       val {id, conclusion = located_conclusion, rule, premises,
@@ -19896,7 +19900,7 @@ local
     in
       (state,
        theorem)
-    end
+    end)
 
   (* All legacy/default entries retain the original opaque scope result. *)
   fun replay_step_with_scope_boundary record_scope strong_canon state step =

@@ -7,6 +7,10 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtSeqProve"
 
+  (* Use the same terminal carrier as the bounded graph adapter, so its
+     private callback envelope is removed before outer consumer restoration. *)
+  val with_admission_errors = SmtReplayArithmetic.with_admission_errors
+
   fun is_smtstr_value tm =
     Term.is_comb tm andalso
     let val (head, _) = Term.dest_comb tm in
@@ -93,6 +97,10 @@ struct
     (``[x] = (s : 'a list) ==> EL 0 s = x``,
      bossLib.METIS_TAC [listTheory.EL, listTheory.HD])
 
+  val nth_unit_thm = Library.prove
+    (``smt_seq_nth ([x]:'a list) 0 = x``,
+     bossLib.RW_TAC (bossLib.srw_ss()) [HolSmtTheory.smt_seq_nth_def])
+
   (* SMT sequence nth is deliberately unspecified out of range.  Z3 rewrites
      it to an if whose out-of-range branch preserves that same application.
      Split on the complete semantic boundary once, then compare the resulting
@@ -113,14 +121,27 @@ struct
   (* The continuation belongs to the current compact replay invocation.
      Hide its exceptions from tactic/search filtering, restoring the exact
      primary exception only after all local alternatives have unwound. *)
-  val scalar_compset = computeLib.copy (computeLib.the_compset ())
+  val scalar_compset =
+    let
+      val local_set = computeLib.copy (computeLib.the_compset ())
+      fun remove (((thy,name),_),set) =
+        if thy="HolSmt" andalso String.isPrefix "smt_seq_" name then
+          computeLib.scrub_const set
+            (Term.prim_mk_const {Thy=thy,Name=name})
+        else set
+      (* Also stop Seq operations introduced by a scalar definition, not
+         just operations visible in the original scalar operand. Never
+         mutate the ordinary computation set. *)
+    in List.foldl remove local_set (computeLib.listItems local_set) end
 
   fun checked_procedures check =
   let
     exception AdmissionFailure of exn
-    val computing_elements = ref false
+    val interrupted = ref (NONE : exn option)
+    val computing_scalars = ref false
     fun admit tm = check tm handle primary => raise AdmissionFailure primary
-    fun protect f x = f x handle AdmissionFailure primary => raise primary
+    fun protect f x = f x handle AdmissionFailure primary =>
+      SmtReplayArithmetic.propagate_admission_error primary
     fun theorem th =
       (admit (Thm.concl th);List.app admit (Thm.hyp th);th)
     fun checked_tactic tactic (assumptions,goal) =
@@ -206,36 +227,156 @@ struct
        checked constructor driver above. This is invocation-local policy. *)
     fun scalar_step tm =
       let
-        val _ = if !computing_elements andalso Term.is_comb tm andalso
-            not (SmtResource.contains (fn node =>
-              Lib.can listSyntax.dest_list_type (Term.type_of node)) tm)
+        val (head,_) = boolSyntax.strip_comb tm
+        (* Compute scalar elements in every rung, not only replacement.
+           A scalar computation may consume a list (word_from_bin_list is
+           one example). Its admitted operand is not the enclosing sequence
+           obligation. Leave list spines, accessors and Boolean structure
+           with the checked constructor/rewrite driver. *)
+        val _ = if !computing_scalars andalso Term.is_comb tm andalso
+            not (Lib.can Type.dom_rng (Term.type_of tm)) andalso
+            not (Lib.can listSyntax.dest_list_type (Term.type_of tm)) andalso
+            not (named "min" ["=","==>"] head) andalso
+            not (named "list" ["LENGTH","EL","HD","LAST","NULL",
+              "isPREFIX","FOLDL","FOLDR"] head) andalso
+            not (named "rich_list" ["IS_SUBLIST","IS_SUFFIX"] head) andalso
+            not (named "HolSmt" ["smt_seq_nth","smt_seq_indexof"] head)
+            andalso not (named "bool" ["=","COND","/\\","\\/",
+              "==>","~","!","?"] head)
           then () else raise Conv.UNCHANGED
         val _ = admit tm
         val _ = if null (Term.free_vars tm) then ()
           else raise Conv.UNCHANGED
+        (* A scalar wrapper must not smuggle a recursive Seq computation
+           into CBV. Traverse first reduces those children with the checked
+           constructor driver. Literal list arguments remain supported. *)
+        fun sequence_computation node =
+          Term.is_const node andalso
+          let val {Thy,Name,...} = Term.dest_thy_const node
+          in (Thy="HolSmt" andalso String.isPrefix "smt_seq_" Name) orelse
+             (Thy="list" andalso List.exists (Lib.equal Name)
+               ["APPEND","LENGTH","TAKE","DROP","EL","MAP","FOLDL",
+                "FOLDR","REVERSE","isPREFIX","LUPDATE","HD","LAST",
+                "NULL","SNOC"]) orelse
+             (Thy="rich_list" andalso List.exists (Lib.equal Name)
+               ["IS_SUBLIST","IS_SUFFIX"])
+          end
+        val _ = if mentions sequence_computation tm then
+            raise Conv.UNCHANGED else ()
         val result = Conv.CHANGED_CONV
           (computeLib.CBV_CONV scalar_compset) tm
         val (left,right) = boolSyntax.dest_eq (Thm.concl result)
         val _ = List.app admit (left::right::Thm.hyp result)
       in result end
-    fun local_step tm = replacement_step tm
-      handle Conv.UNCHANGED =>
-        (list_step tm handle Conv.UNCHANGED => scalar_step tm
-          | Feedback.HOL_ERR _ => scalar_step tm)
-        | Feedback.HOL_ERR _ =>
-        (list_step tm handle Conv.UNCHANGED => scalar_step tm
-          | Feedback.HOL_ERR _ => scalar_step tm)
+    (* Compute bounded scalar occurrences before asking the list matcher to
+       compare spines. Otherwise every element rewrite restarts discovery
+       on all the remaining unequal list suffixes. Reuse checked equalities
+       for shared syntax; never run a recursive CBV/SIMP on the sequence.
+       Application transport is kernel congruence, not matching/INST. *)
+    fun scalar_occurrences tm =
+      Lib.with_flag (computing_scalars,true) (fn tm =>
+      let
+        val saved = ref (Redblackmap.mkDict Term.compare)
+        fun walk term =
+          case Redblackmap.peek (!saved,term) of SOME result => result
+          | NONE =>
+            let
+              val direct = SOME (scalar_step term)
+                handle Conv.UNCHANGED => NONE | Feedback.HOL_ERR _ => NONE
+              val result = case direct of SOME th => SOME th
+                | NONE => if Term.is_comb term then
+                    let
+                      val (f,x) = Term.dest_comb term
+                      val left = walk f val right = walk x
+                    in case (left,right) of (NONE,NONE) => NONE
+                      | _ =>
+                        let
+                          val th = Thm.MK_COMB
+                            (Option.getOpt (left,Thm.REFL f),
+                             Option.getOpt (right,Thm.REFL x))
+                        in SOME th end
+                    end
+                  else NONE
+              val _ = saved := Redblackmap.insert (!saved,term,result)
+            in result end
+        val result = walk tm
+        (* MK_COMB only transports the checked scalar equalities. It does
+           not match, simplify or open binders on its application operands.
+           Admit the completed sides ONCE before the next generic operation,
+           rather than rescan every growing list suffix along the way. *)
+        val _ = Option.app (fn th =>
+          let val (l,r) = boolSyntax.dest_eq (Thm.concl th)
+          in List.app admit (l::r::Thm.hyp th) end) result
+      in result end) tm
+    fun local_step tm =
+      (replacement_step tm
+        handle Conv.UNCHANGED =>
+          (list_step tm handle Conv.UNCHANGED => scalar_step tm
+            | Feedback.HOL_ERR _ => scalar_step tm)
+          | Feedback.HOL_ERR _ =>
+          (list_step tm handle Conv.UNCHANGED => scalar_step tm
+            | Feedback.HOL_ERR _ => scalar_step tm))
+      handle AdmissionFailure primary =>
+        (* Traverse discards arbitrary conversion exceptions. Its supported
+           interrupt escape must be translated outside that boundary. *)
+        (interrupted := SOME primary;raise Portable.Interrupt)
     fun with_rewrites facts prove =
-      (List.app (fn th => ignore (theorem th)) facts;
-       SmtDatatypeProve.with_checked_rewrites_using admit
-         (fn () => simpLib.++ (seq_ss,simpLib.rewrites facts))
-         local_step prove)
+      let
+        fun restore () = case !interrupted of NONE => ()
+          | SOME primary =>
+              (interrupted := NONE;raise AdmissionFailure primary)
+        val _ = List.app (fn th => ignore (theorem th)) facts
+        val result = SmtDatatypeProve.with_checked_rewrites_using admit
+          (fn () => simpLib.++ (seq_ss,simpLib.rewrites facts))
+          local_step prove handle primary => (restore ();raise primary)
+        val _ = restore ()
+      in result end
     fun simplify facts tm =
       (admit tm;with_rewrites facts (fn ss =>
         let val result = simpLib.SIMP_CONV ss [] tm
             val (left,right) = boolSyntax.dest_eq (Thm.concl result)
             val _ = List.app admit (left::right::Thm.hyp result)
         in result end))
+
+  (* Cheap discovery only: flattened constructor tokens can select an
+     opaque-element cancellation without evaluating those elements. A
+     mismatch must not enter the expensive checked list matcher before
+     scalar computation. The selected proof still comes from list_step. *)
+  fun structural_candidate t =
+    if not (boolSyntax.is_eq t) then false else
+    let
+      val (l,r) = boolSyntax.dest_eq t
+      val _ = if Lib.can listSyntax.dest_list_type (Term.type_of l) then ()
+        else raise Conv.UNCHANGED
+      val holes = ref (Redblackmap.mkDict Term.compare)
+      fun atom tm = case Redblackmap.peek (!holes,tm) of SOME v => v
+        | NONE => let val v = Term.genvar (Term.type_of tm)
+                  in holes := Redblackmap.insert (!holes,tm,v);v end
+      fun walk reversed term rest =
+        if listSyntax.is_nil term then rest
+        else if listSyntax.is_append term then
+          let val (a,b) = listSyntax.dest_append term
+          in if reversed then walk true b (walk true a rest)
+             else walk false a (walk false b rest) end
+        else if listSyntax.is_cons term then
+          let val (a,b) = listSyntax.dest_cons term
+              val token = (0,atom a)
+          in if reversed then walk true b (token::rest)
+             else token::walk false b rest end
+        else if listSyntax.is_reverse term then
+          walk (not reversed) (listSyntax.dest_reverse term) rest
+        else if listSyntax.is_snoc term then
+          let val (a,b) = listSyntax.dest_snoc term
+              val token = (0,atom a)
+          in if reversed then token::walk true b rest
+             else walk false b (token::rest) end
+        else (if reversed then 2 else 1,atom term)::rest
+      fun same ([],[]) = true
+        | same ((k,a)::xs,(j,b)::ys) =
+            k=j andalso Term.compare (a,b)=EQUAL andalso same (xs,ys)
+        | same _ = false
+    in same (walk false l [],walk false r []) end
+    handle Conv.UNCHANGED => false
 
   fun simp_prove_with rewrites t =
     SmtResource.with_resource_step_time "Sequence" "seq-simp" (fn () =>
@@ -245,17 +386,42 @@ struct
         (* Discover a complete constructor/segment cancellation before
            building a general simplifier. This is the same checked list
            procedure used by its fallback, on the same occurrence schema. *)
-        val local_result = SOME (list_step t)
+        fun local_result target = SOME (list_step target)
           handle Conv.UNCHANGED => NONE | Feedback.HOL_ERR _ => NONE
-        val normalized = case local_result of
-            SOME th =>
-              let val residual = boolSyntax.rhs (Thm.concl th)
-              in if Term.aconv residual boolSyntax.T then th
-                 else (Thm.TRANS th (simplify rewrites residual)
-                   handle Conv.UNCHANGED => th) end
-          | NONE => (simplify rewrites t
-              handle Conv.UNCHANGED =>
-                raise ERR "simp_prove_with" "no rewrite applies to this rung")
+        val structural = if structural_candidate t then local_result t
+          else NONE
+        fun computing () =
+          let
+            val residual = case structural of NONE => t
+              | SOME th => boolSyntax.rhs (Thm.concl th)
+            fun compute () = Lib.with_flag (computing_scalars,true)
+              (fn () =>
+              let
+                val scalars = scalar_occurrences residual
+                val target = case scalars of NONE => residual
+                  | SOME th => boolSyntax.rhs (Thm.concl th)
+                val normalized = if Term.aconv target boolSyntax.T then
+                    Thm.REFL target
+                  else case local_result target of
+                    SOME th =>
+                      let val rest = boolSyntax.rhs (Thm.concl th)
+                      in if Term.aconv rest boolSyntax.T then th
+                         else (Thm.TRANS th (simplify rewrites rest)
+                           handle Conv.UNCHANGED => th) end
+                  | NONE => (simplify rewrites target
+                      handle Conv.UNCHANGED => raise ERR "simp_prove_with"
+                        "no rewrite applies to this rung")
+              in case scalars of NONE => normalized
+                | SOME th => Thm.TRANS th normalized end) ()
+            val normalized = compute ()
+          in case structural of NONE => normalized
+            | SOME th => Thm.TRANS th normalized end
+        (* A cancelling opaque element need never be computed. In
+           particular its value may exceed this invocation's admission. *)
+        val normalized = case structural of SOME th =>
+            if Term.aconv (boolSyntax.rhs (Thm.concl th)) boolSyntax.T
+            then th else computing ()
+          | NONE => computing ()
         val t' = boolSyntax.rhs (Thm.concl normalized)
         val _ = admit t'
         val thm = tautLib.TAUT_PROVE t'
@@ -263,6 +429,31 @@ struct
       in theorem (Thm.EQ_MP (Thm.SYM normalized) thm) end) ()
 
   fun simp_prove t = simp_prove_with list_rewrites t
+
+  fun nth_unit_prove t =
+    let
+      val _ = admit t
+      val (lhs,rhs) = boolSyntax.dest_eq t
+      val (head,args) = boolSyntax.strip_comb lhs
+      val (sequence,index) = case args of [s,i] => (s,i)
+        | _ => raise Conv.UNCHANGED
+      val _ = if named "HolSmt" ["smt_seq_nth"] head andalso
+          Term.aconv index ``0:int`` then () else raise Conv.UNCHANGED
+      val (elements,ty) = listSyntax.dest_list sequence
+      val element = case elements of [x] => x | _ => raise Conv.UNCHANGED
+      val _ = List.app admit [element,rhs,index]
+      val x = Term.genvar ty
+      val y = if Term.compare (element,rhs)=EQUAL then x else Term.genvar ty
+      val schema = boolSyntax.mk_eq
+        (Term.list_mk_comb (head,[listSyntax.mk_list ([x],ty),index]),y)
+      val _ = admit schema
+      val _ = ignore (theorem nth_unit_thm)
+      val local_proof = theorem (Drule.INST_TY_TERM
+        (Term.match_term (Thm.concl nth_unit_thm) schema) nth_unit_thm)
+      val result = Thm.INST [{redex=x,residue=element}] local_proof
+    in theorem result end
+    handle Conv.UNCHANGED => raise ERR "nth_unit_prove"
+      "not a singleton nth equality"
 
   fun nth_boundary_prove t =
     let
@@ -425,8 +616,15 @@ struct
       fun likely (start,finish) = finish-start = length wanted andalso
         same (List.take (List.drop (pieces,start),finish-start),wanted)
       val (preferred,others) = List.partition likely boundaries
+      fun search [] = raise ERR "contains_append_witness_prove"
+            "no checked append witness"
+        | search (candidate::rest) = prove_split candidate
+            handle Feedback.HOL_ERR detail =>
+              if SmtResource.is_resource_gate detail then
+                raise Feedback.HOL_ERR detail else search rest
+              | Conv.UNCHANGED => search rest
     in
-      Lib.tryfind prove_split (preferred @ others)
+      search (preferred @ others)
     end
 
   val prefix_suffix_contains_rewrites = list_rewrites @ [
@@ -456,8 +654,16 @@ struct
   fun ground_replace_all_prove t =
     (admit t;if List.null (Term.free_vars t) then
       SmtResource.with_resource_step_time "Sequence" "seq-replace-all"
-        (Lib.with_flag (computing_elements,true)
-          (fn t => Drule.EQT_ELIM (simplify replace_all_rewrites t))) t
+        (fn t =>
+          let
+            val scalars = scalar_occurrences t
+            val target = case scalars of NONE => t
+              | SOME th => boolSyntax.rhs (Thm.concl th)
+            val normalized = Lib.with_flag (computing_scalars,true)
+              (simplify replace_all_rewrites) target
+            val normalized = case scalars of NONE => normalized
+              | SOME th => Thm.TRANS th normalized
+          in Drule.EQT_ELIM normalized end) t
     else
       raise ERR "ground_replace_all_prove" "replacement is not ground")
 
@@ -555,6 +761,7 @@ struct
             else
               fallback ()
       in
+        next (fn () => nth_unit_prove t) (fn () =>
         next
           (fn () => Profile.profile_with_exn_name
             "seq(0)(nth-boundary)" nth_boundary_prove t)
@@ -566,7 +773,7 @@ struct
         next (fn () => prefix_suffix_contains_prove t) (fn () =>
         next (fn () => indexof_replace_prove t) (fn () =>
         next (fn () => update_reverse_prove t)
-          (fn () => unsupported t))))))))
+          (fn () => unsupported t)))))))))
       end) ()
   in
     {prove=protect seq_prove,contextual=fn context =>

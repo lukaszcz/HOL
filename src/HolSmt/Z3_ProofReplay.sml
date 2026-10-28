@@ -8907,13 +8907,16 @@ in
   end
 
   fun replay_root_admitted admit definitions proof : Thm.thm =
+  (* Includes rewrite/th-lemma fallback and replay-error decoration. Nested
+     graph consumers defer restoration to their enclosing graph scope. *)
+  SmtSeqProve.with_admission_errors (fn () =>
   let
     val state = initial_replay_state_admitted admit (proof_asserted_hyps proof)
       definitions proof
     val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
   in
     thm
-  end
+  end)
 
   fun replay_root_with_definitions_for_test definitions proof =
     replay_root_admitted (SmtDatatypeProve.default_admission ()) definitions proof
@@ -9265,6 +9268,7 @@ in
   end
 
   fun replay_root_with_state_for_test proof =
+  SmtSeqProve.with_admission_errors (fn () =>
   let
     val state = initial_replay_state (proof_asserted_hyps proof) [] proof
     val ((state, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
@@ -9272,11 +9276,12 @@ in
     {asserted_hyps = HOLset.listItems (#asserted_hyps state),
      definition_hyps = HOLset.listItems (#definition_hyps state),
      thm = thm}
-  end
+  end)
 
   (* returns a theorem that concludes ``F``, with its hypotheses (a
      subset of) those asserted in the proof *)
   fun check_proof_impl definitions (asl, g, proof) : Thm.thm =
+  SmtSeqProve.with_admission_errors (fn () =>
   let
     val _ = replay_completed_steps := 0
     val _ = if !Library.trace > 1 then
@@ -9325,7 +9330,7 @@ in
         raise_final_error "hypcheck" state final_thm holerr
   in
     final_thm
-  end
+  end)
 
 
   fun check_proof_with_definitions definitions args : Thm.thm =
@@ -9581,6 +9586,7 @@ in
     string_index_cache = #string_index_cache s,z3_version = #z3_version s}
 
   fun replay_root_with_definition_occurrences_admitted admit definitions proof =
+    SmtSeqProve.with_admission_errors (fn () =>
     let
       val initial = record_definition_occurrences
         (initial_replay_state_admitted admit
@@ -9591,7 +9597,7 @@ in
         definitions = List.rev
           (Option.valOf (#definition_occurrences_rev state)),
         asserted = HOLset.listItems (#asserted_hyps state),
-        translation_definitions = #translation_definitions state} end
+        translation_definitions = #translation_definitions state} end)
 
   fun replay_root_with_definition_occurrences definitions proof =
     replay_root_with_definition_occurrences_admitted

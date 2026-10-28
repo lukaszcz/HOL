@@ -3,6 +3,10 @@
 signature SmtSeqProve =
 sig
 
+  (* Restore terminal admission exceptions only outside consumer fallback
+     ladders. Nested scopes preserve the same original exception. *)
+  val with_admission_errors : (unit -> 'a) -> 'a
+
   val has_seq_type : Term.term -> bool
 
   val concat_length_prove : Term.term -> Thm.thm

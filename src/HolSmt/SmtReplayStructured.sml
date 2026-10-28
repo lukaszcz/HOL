@@ -18,7 +18,7 @@ struct
           | SOME info => not (null (TypeBasePure.constructors_of info)))
       end
 
-  fun has_operand_using owns graph scope {inputs,observe} =
+  fun has_operand_using_unknown unknown owns graph scope {inputs,observe} =
     let
       val _ = G.validate_scope graph scope
       fun header node =
@@ -46,9 +46,12 @@ struct
                     (G.node_scope graph node) node of
                    SOME closure => visit (#body (G.binder_closure_data graph
                      (G.node_scope graph node) closure))
-                 | NONE => true)
-            | G.OpaqueRetained => true))
+                 | NONE => unknown)
+            | G.OpaqueRetained => unknown))
     in List.exists visit inputs end
+
+  (* Existing handlers conservatively retain unknown structured operands. *)
+  fun has_operand_using owns = has_operand_using_unknown true owns
 
   fun has_operand graph = has_operand_using (fn node => fn variable =>
     (variable andalso Lib.can Type.dom_rng (G.type_of graph node)) orelse
@@ -58,11 +61,19 @@ struct
 
   (* Native Seq is list-valued; String retains its separate carrier. Only
      inspect the outer type constructor, never instantiate a TypeBase fact. *)
-  fun has_sequence_operand graph = has_operand_using
+  fun has_sequence_operand_using unknown graph =
+    has_operand_using_unknown unknown
     (fn node => fn _ =>
       let val ty = G.type_of graph node
       in not (Type.is_vartype ty) andalso
          let val {Thy,Tyop,...} = Type.dest_thy_type ty
          in Thy = "list" andalso Tyop = "list" end
       end) graph
+
+  fun has_sequence_operand graph = has_sequence_operand_using true graph
+
+  (* TRUST needs positive list evidence, not an unknown binder/opaque node.
+     Recorded binder bodies still use the same paid graph traversal. *)
+  fun has_known_sequence_operand graph =
+    has_sequence_operand_using false graph
 end
