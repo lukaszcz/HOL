@@ -297,7 +297,7 @@ struct
       | Exn.Res theorem =>
           (Exn.release packet_close;Exn.release scope_close;theorem) end
 
-  fun cvc_original_with_clauses_and_work
+  fun cvc_original_with_clauses_and_work_impl prove
       (owned as OwnedInvocation
         {invocation = invocation as Invocation
           {limits,session,replay_started,...},work,...}) translation version
@@ -324,7 +324,7 @@ struct
               raise ERR "cvc_original_with_clauses_and_work"
                 "foreign parser packet"
         in SmtResource.profile_phase "cvc/emitted-replay-total"
-          (D.prove_cpc_with_clauses_and_work_using work session)
+          (prove work session)
           {proof = Q.proof parsed,ordinary_limit = ordinary_limit,
            template_limit = #template_limit (#recipe_limits limits),
            worker = worker,clause_worker = clause_worker,
@@ -336,6 +336,10 @@ struct
     in case outcome of Exn.Exn primary => raise primary
       | Exn.Res theorem =>
           (Exn.release packet_close;Exn.release scope_close;theorem) end
+
+  fun cvc_original_with_clauses_and_work owned translation version input =
+    cvc_original_with_clauses_and_work_impl
+      D.prove_cpc_with_clauses_and_work_using owned translation version input
 
   fun z3_original_with_work
       (owned as OwnedInvocation
@@ -378,10 +382,11 @@ struct
       input =
     let val _ = admit_emitted_translation_with_work owned receipt
         val translation = Emissions.translation_for work receipt
-        val worker = Emissions.worker_for work receipt
+        val worker = Emissions.admitted_worker_for work receipt
         val force = Emissions.force_worker_for work receipt
-        val clause_worker = Emissions.clause_worker_for work receipt
-    in cvc_original_with_clauses_and_work owned translation version
+        val clause_worker = Emissions.admitted_clause_worker_for work receipt
+    in cvc_original_with_clauses_and_work_impl
+      D.prove_cpc_admitted_with_clauses_and_work_using owned translation version
       {ordinary_limit = ordinary_limit,worker = worker,
        clause_worker = clause_worker,
        force_worker = SOME force} input end

@@ -42,6 +42,13 @@ sig
      template_limit:int,worker:CPC_GraphProofReplay.worker,
      clause_worker:CPC_GraphProofReplay.clause_worker,
      force_worker:CPC_GraphProofReplay.worker option} -> Thm.thm
+  val prove_cpc_admitted_with_clauses_and_work_using :
+    SmtReplayInvocationWork.portfolio -> SmtReplayWrapperSession.session ->
+    {proof:CPC_ProofParser.graph_proof,ordinary_limit:int,
+     template_limit:int,worker:(Term.term -> unit) ->
+       CPC_GraphProofReplay.worker,
+     clause_worker:(Term.term -> unit) -> CPC_GraphProofReplay.clause_worker,
+     force_worker:CPC_GraphProofReplay.worker option} -> Thm.thm
   val discover_with_policy : SmtReplayInvocationWork.portfolio ->
     SmtReplayWrapperSession.session ->
     (SmtReplaySource.sources -> SmtLib_GraphPreprocess.validation) -> unit

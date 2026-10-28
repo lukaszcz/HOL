@@ -7,6 +7,7 @@ struct
   structure A = SmtReplayArithmetic
   structure W = SmtReplayInvocationWork
   structure ZR = Z3_GraphProofReplay
+  structure CG = SmtCheckedGraph
   val limit = H.limit
   val require = H.require
   fun exact term hypotheses theorem =
@@ -50,6 +51,7 @@ struct
          ``THE (SOME T) = T``,
          ``FST ((p:bool),(q:bool)) = p``,
          ``HD ((p:bool)::ps) = p``,
+         ``APPEND [] (xs:bool list) = xs``,
          tester some ``SOME (p:bool)``,
          boolSyntax.mk_neg (tester none ``SOME (p:bool)``),
          tester none none]
@@ -88,6 +90,35 @@ struct
       val _ = rejects SmtDatatypeProve.datatype_prove
         ``SOME (p:bool) = SOME (~p)``
     in () end)
+
+  (* These small list obligations were handled by srw before the bounded
+     adapter. Constructor/selector facts alone must not silently narrow its
+     supported fragment. Exercise simplification and the full ladder, plus
+     a split which needs an exported rewrite in its branches. *)
+  fun rewrite_fallback () =
+    let
+      val goals =
+        [``APPEND [] (xs:bool list) = xs``,
+         ``APPEND ((x:bool)::xs) ys = x::APPEND xs ys``,
+         ``REVERSE ([]:bool list) = []``]
+      val _ = List.app (fn prove => List.app
+        (fn goal => exact goal [] (prove goal)) goals)
+        [SmtDatatypeProve.datatype_simp_prove,
+         SmtDatatypeProve.datatype_prove]
+      val goal = hd goals
+      val bounded = SmtDatatypeProve.checked_procedures
+        (A.new_term_check {limit=64,observe=fn () => ()})
+      val _ = exact goal [] (#simp bounded goal)
+      val assumption = ``p:bool``
+      val _ = exact goal [assumption]
+        (#consequence bounded ([assumption],goal))
+      val split = ``(case APPEND [] (xs:bool list) of
+                      [] => T | h::t => F) = (xs = [])``
+      val _ = exact split [] (SmtDatatypeProve.exhaustiveness_prove split)
+      val false_goal = ``APPEND [] (xs:bool list) = [T]``
+    in require "false exported rewrite obligation accepted"
+      (declines (fn () =>
+        SOME (SmtDatatypeProve.datatype_prove false_goal))) end
 
   fun tester_validation () =
     let
@@ -438,6 +469,96 @@ struct
          (rejected andalso !calls=0 andalso #retired after andalso
           #charged after = charged_before) end)
 
+  (* Exercise the production emitted/parsed/owned-clause route, not a
+     helper that installs an admitted receiver directly. The tiny dt-cycle
+     target fits 16 nodes; its declaration-derived size equation does not.
+     dt_split's separate generated-target precheck cannot protect this rule. *)
+  fun owned_cpc_admission () =
+    let
+      val _ = Datatype `structured_owned_admission =
+        StructuredOwnedLeaf | StructuredOwnedNode structured_owned_admission`
+      val goal = ``~((x:structured_owned_admission) = StructuredOwnedNode x)``
+      val limits:CG.limits =
+        {import_limit=512,literal_limit=512,binder_limit=512,
+         recipe_limits={template_limit=512,index_limit=512,
+           operand_limit=512,token_limit=512}}
+      fun fixture action =
+        let
+          val held = ref (NONE:W.portfolio option)
+          fun discover sources =
+            let val work = W.begin (SmtReplaySource.owning_graph sources)
+                  (SmtReplaySource.owning_scope sources) sources
+                  {limits={input_limit=512,output_limit=512,
+                     template_limit=512},work_limit=10000000}
+                val _ = held := SOME work
+                val stage = SmtLib_CheckedCarrierCallsite.prepare_compact_stage
+                  work {import_limit=512,check_type=fn _ => (),
+                    scope_opened=fn _ => ()}
+            in {work=work,preprocessing=
+              SmtLib_CompactPositiveGoalSourceStage.build stage} end
+          val owned = CG.prepare_original_with_work limits discover ([],goal)
+          val outcome = Exn.capture (fn () =>
+            let val emitted = CG.emit_translation_with_work owned
+                  {policy=fn _ => NONE,dialect=SmtLib.Standard27,
+                   apply_operator=SmtLib.ApplyAt,get_proof=true,
+                   target=SOME {solver="cvc5",version=SOME "1.3.4"}}
+            in action owned emitted (valOf (!held)) end) ()
+          val cleanup = Exn.capture CG.close_original_with_work owned
+        in case outcome of Exn.Exn primary => raise primary
+          | Exn.Res result => (Exn.release cleanup;result) end
+      fun replay cap owned {receipt,translation,strings} work =
+        let
+          val declarations = String.concat
+            (List.filter (String.isPrefix "(declare-") strings)
+          val assertion = valOf (List.find (String.isPrefix "(assert ") strings)
+          val denied = String.substring (assertion,8,String.size assertion-10)
+          val target = String.substring (denied,5,String.size denied-6)
+          val text = "(" ^ declarations ^ "(assume @denied " ^ denied ^ ") " ^
+            "(step @law " ^ target ^ " :rule dt-cycle :args (" ^ target ^
+            ")) (step @root false :rule contra :premises (@law @denied)))"
+          val input = TextIO.openString text
+          val result = Exn.capture
+            (CG.cvc_original_emitted_with_work owned receipt "1.3.4" cap) input
+          val _ = TextIO.closeIn input
+          val _ = require "owned CPC did not retire the original Work"
+            (#retired (W.audit work) andalso #charged (W.audit work)>0)
+        in result end
+      val _ = require "owned admission target no longer fits the small cap"
+        (Term.term_size goal <= 16)
+      val _ = fixture (fn owned => fn emitted => fn work =>
+        require "owned CPC callback bypassed caller-local pattern admission"
+          (case replay 16 owned emitted work of
+             Exn.Exn (CG.ReplayFailure (Feedback.HOL_ERR detail)) =>
+               String.isSubstring "operator schema exceeds local admission"
+                 (Feedback.message_of detail)
+           | Exn.Exn primary => raise primary
+           | Exn.Res _ => false))
+      val _ = fixture (fn owned => fn emitted => fn work =>
+        let val theorem = Exn.release (replay 512 owned emitted work)
+        in exact goal [] theorem;
+           require "owned CPC replaced the exact original conclusion"
+             (Portable.pointer_eq (Thm.concl theorem,goal)) end)
+      (* Both fixed factories must preserve the supplied observer's first
+         exception, without retrying with default/unobserved admission. *)
+      fun primary clause = fixture (fn _ => fn {receipt,...} => fn work =>
+        let exception Primary
+            val calls = ref 0
+            fun admit _ = (calls := !calls+1;raise Primary)
+            val located = {term=goal,provenance=CPC_Proof.AtomicProvenance}
+            val step:CPC_Proof.step =
+              {id="@owned-admission",rule=valOf
+                 (CPC_Proof.lookup_rule "1.3.4" "dt-cycle"),
+               premises=[],conclusion=SOME located,args=[located]}
+            val preserved = ((if clause then
+                ignore (SmtLib_GraphOwnedEmissions.admitted_clause_worker_for
+                  work receipt admit (step,[]))
+              else ignore (SmtLib_GraphOwnedEmissions.admitted_worker_for
+                work receipt admit (step,[]));false)
+              handle Primary => true)
+        in require "owned admission observer was replaced or retried"
+          (preserved andalso !calls=1 andalso #retired (W.audit work)) end)
+    in primary false;primary true end
+
   fun cpc_annotations () =
     let
       fun shared 0 = Type.bool
@@ -493,6 +614,8 @@ struct
   fun run () =
     (schemas ();tester_validation ();graph_operators ();
      generic_authority ();cpc_cases ();cpc_identities ();
+     rewrite_fallback ();
      cpc_splits ();inferred_split_graph ();split_admission ();
-     admission_first_error ();admission_factories ();cpc_annotations ())
+     admission_first_error ();admission_factories ();owned_cpc_admission ();
+     cpc_annotations ())
 end

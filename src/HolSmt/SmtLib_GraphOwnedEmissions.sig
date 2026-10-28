@@ -18,6 +18,12 @@ sig
     CPC_GraphProofReplay.worker
   val clause_worker_for : SmtReplayInvocationWork.portfolio -> receipt ->
     CPC_GraphProofReplay.clause_worker
+  (* Caller-local declaration/pattern admission from the naming boundary. *)
+  val admitted_worker_for : SmtReplayInvocationWork.portfolio -> receipt ->
+    (Term.term -> unit) -> CPC_GraphProofReplay.worker
+  val admitted_clause_worker_for :
+    SmtReplayInvocationWork.portfolio -> receipt ->
+    (Term.term -> unit) -> CPC_GraphProofReplay.clause_worker
   (* Fixed existing Z3 compatibility producers. The owned entry binds the
      actual parser proof privately; this supplies no parser/Source authority. *)
   val z3_workers_for : SmtReplayInvocationWork.portfolio -> receipt ->

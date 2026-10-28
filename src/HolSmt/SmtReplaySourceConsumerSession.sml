@@ -81,7 +81,7 @@ struct
        SmtReplayInvocationWork.close expected;raise primary) end
 
   val _ = CPC_GraphProofReplay.prove_preprocessed_with_clauses_and_work_using
-  fun prove_cpc_with_clauses_and_work_using expected session
+  fun prove_cpc_with_clauses_and_work_impl prove expected session
       {proof,ordinary_limit,template_limit,worker,clause_worker,
        force_worker} =
     let
@@ -99,8 +99,7 @@ struct
             val _ = W.begin_replay session
             val preprocessing = W.preprocessing_with_work expected session
             val theorem =
-              CPC_GraphProofReplay.prove_preprocessed_with_clauses_and_work_using
-              expected {graph = graph,scope = scope,sources = sources,
+              prove expected {graph = graph,scope = scope,sources = sources,
                 preprocessing = preprocessing,proof = proof,
                 ordinary_limit = ordinary_limit,template_limit = template_limit,
                 worker = worker,clause_worker = clause_worker,
@@ -112,6 +111,22 @@ struct
     in finish () handle primary =>
       ((W.close session handle _ => ());
        SmtReplayInvocationWork.close expected;raise primary) end
+
+  fun prove_cpc_with_clauses_and_work_using expected session input =
+    prove_cpc_with_clauses_and_work_impl
+      CPC_GraphProofReplay.prove_preprocessed_with_clauses_and_work_using
+      expected session input
+
+  fun prove_cpc_admitted_with_clauses_and_work_using expected session input =
+    prove_cpc_with_clauses_and_work_impl
+      (fn work => fn {preprocessing,worker,clause_worker,graph,scope,sources,
+                     proof,ordinary_limit,template_limit,force_worker} =>
+        CPC_GraphProofReplay.prove_admitted_using
+          {graph=graph,scope=scope,sources=sources,
+           preprocessing=SOME preprocessing,work=SOME work,proof=proof,
+           ordinary_limit=ordinary_limit,template_limit=template_limit,
+           worker=worker,clause_worker=SOME clause_worker,
+           force_worker=force_worker}) expected session input
 
   val _ =
     Z3_GraphProofReplay.check_proof_with_preprocessed_sources_with_work_using

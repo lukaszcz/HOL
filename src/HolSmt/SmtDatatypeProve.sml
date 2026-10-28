@@ -114,6 +114,69 @@ struct
   fun datatype_types t =
     List.filter has_constructors (term_types t)
 
+  (* A read-only syntactic index, NOT a simpset or a matching net. Equality
+     patterns are indexed by their endpoint heads too: canonicalisation can
+     add EQT wrappers or reverse a negated equality. A schematic head is a
+     wildcard. Only admitted theorems become generic rewrite patterns. *)
+  fun head_key tm =
+    let val head = #1 (boolSyntax.strip_comb tm)
+    in if Term.is_const head then
+      let val {Thy,Name,...} = Term.dest_thy_const head
+      in SOME (Thy ^ "." ^ Name) end
+    else NONE end
+
+  fun pattern_keys tm =
+    if boolSyntax.is_eq tm then
+      let
+        val (l,r) = boolSyntax.dest_eq tm
+        val keys = List.mapPartial Lib.I (pattern_keys l @ pattern_keys r)
+      in if null keys then [head_key tm] else List.map SOME keys end
+    else [head_key tm]
+
+  fun rewrite_keys tm =
+    if boolSyntax.is_forall tm then
+      rewrite_keys (#2 (boolSyntax.dest_forall tm))
+    else if boolSyntax.is_conj tm then
+      let val (l,r) = boolSyntax.dest_conj tm
+      in rewrite_keys l @ rewrite_keys r end
+    else if boolSyntax.is_imp_only tm then
+      let val (_,r) = boolSyntax.dest_imp_only tm
+      in if Term.aconv r boolSyntax.F then [NONE] else rewrite_keys r end
+    else if boolSyntax.is_eq tm then
+      let val (l,r) = boolSyntax.dest_eq tm
+      in pattern_keys
+        (if Term.aconv l boolSyntax.T orelse Term.aconv l boolSyntax.F
+         then r else l) end
+    else if boolSyntax.is_neg tm then
+      pattern_keys (boolSyntax.dest_neg tm)
+    else if Term.aconv tm boolSyntax.F orelse
+        boolSyntax.is_res_forall tm orelse
+        (case Lib.total Term.dest_thy_const
+            (#1 (boolSyntax.strip_comb tm)) of
+           SOME {Thy="marker",Name="Abbrev",...} => true
+         | _ => false) then [NONE]
+    else pattern_keys tm
+
+  fun index_fragment fragment =
+    let
+      val facts = List.concat (List.map Drule.CONJUNCTS
+        (simpLib.frag_rewrites fragment))
+      fun add ((rank,th),index) =
+        List.foldl (fn (key,index) =>
+          let val saved = Option.getOpt (Redblackmap.peek (index,key),[])
+          in Redblackmap.insert (index,key,(rank,th)::saved) end)
+          index (Lib.mk_set (rewrite_keys (Thm.concl th)))
+      val ranked = ListPair.zip (List.tabulate (length facts,Lib.I),facts)
+    in List.foldr add (Redblackmap.mkDict (Lib.option_compare String.compare))
+         ranked end
+
+  (* Immutable declaration metadata only: no admission result or compiled
+     conversion survives an invocation. New/removed srw fragments are read
+     on demand, so later user exports are not frozen out by this snapshot. *)
+  val initial_rewrite_indices = List.map (fn fragment =>
+    (fragment,index_fragment fragment))
+    (simpLib.ssfrags_of (bossLib.srw_ss ()))
+
   (* Each invocation supplies its own admission continuation. Declaration
      bundles are projected by kernel CONJUNCT rules before generic matching;
      an unrelated large conjunction must not hide a useful small equation. *)
@@ -194,13 +257,179 @@ struct
     List.foldl (fn (ty, acc) => add_thms (size_thms_for_type ty) acc)
       [] (datatype_types t)
 
-  fun datatype_simp_prove t =
+  (* Preserve pure srw rewrites, not its dynamic TypeBase conversions.
+     Ask for candidates at EACH redex, including newly introduced operators
+     and side conditions. There is no all-exported admission/search pass. *)
+  val exported_indices = ref NONE
+  fun rewrite_indices () =
+    case !exported_indices of SOME indices => indices
+    | NONE =>
+        let
+          fun index fragment =
+            case List.find (fn (saved,_) =>
+                Portable.pointer_eq (saved,fragment))
+                initial_rewrite_indices of
+              SOME (_,index) => index
+            | NONE => index_fragment fragment
+          val indices = List.map index
+            (simpLib.ssfrags_of (bossLib.srw_ss ()))
+          val _ = exported_indices := SOME indices
+        in indices end
+
+  fun rewrite_fallback_ss () =
+    let
+      val indices = rewrite_indices ()
+      val compiled = ref []
+      val selected = ref []
+      val interrupted = ref NONE
+      fun compile th =
+        case List.find (fn (saved,_) => Portable.pointer_eq (saved,th))
+            (!compiled) of
+          SOME (_,conversions) => (conversions,true)
+        | NONE =>
+            if not (fitting th) then ([],false)
+            else
+              let
+                val complete = ref true
+                fun conversion (th,control) =
+                  let val th = Drule.SPEC_ALL th
+                  in if not (fitting th) then (complete := false;NONE)
+                  else
+                    let
+                      val left = boolSyntax.lhs
+                        (#2 (boolSyntax.strip_imp (Thm.concl th)))
+                      val rigid = Term.free_varsl (Thm.hyp th)
+                      val bounded = case control of
+                          BoundedRewrites.UNBOUNDED => false | _ => true
+                      val conv = Cond_rewr.COND_REWR_CONV
+                        ("datatype exported rewrite",th) bounded
+                      fun apply solver stack tm =
+                        let
+                          val _ = case control of
+                              BoundedRewrites.BOUNDED n =>
+                                if !n = 0 then raise Conv.UNCHANGED else ()
+                            | _ => ()
+                          fun checked_solver assumptions condition =
+                            (List.app admit assumptions;admit condition;
+                             solver assumptions condition)
+                            handle AdmissionFailure primary =>
+                              (interrupted := SOME primary;
+                               raise Portable.Interrupt)
+                          val result = conv checked_solver stack tm
+                          val _ = admit_thm result
+                          val _ = case control of
+                              BoundedRewrites.BOUNDED n => n := !n - 1
+                            | _ => ()
+                        in result end
+                    in SOME (rigid,left,apply) end
+                  end
+                val conversions = List.mapPartial conversion
+                  (Cond_rewr.mk_cond_rewrs
+                    (BoundedRewrites.dest_tagged_rewrite th))
+                val _ = if !complete then
+                    compiled := (th,conversions) :: !compiled else ()
+              in (conversions,!complete) end
+      fun candidates tm =
+        let
+          (* Query syntax is not a declaration: do not strip its quantifiers
+             or implications, which may themselves be rewrite heads. *)
+          fun keys tm =
+            if boolSyntax.is_eq tm then
+              let val (l,r) = boolSyntax.dest_eq tm
+              in head_key tm :: keys l @ keys r end
+            else if boolSyntax.is_neg tm then
+              head_key tm :: keys (boolSyntax.dest_neg tm)
+            else [head_key tm]
+          val keys = List.map SOME
+            (Lib.mk_set (List.mapPartial Lib.I (keys tm))) @ [NONE]
+          fun add (entry as (rank,_),entries) =
+            if List.exists (fn (saved,_) => saved = rank) entries
+            then entries else entry::entries
+          fun select index =
+            List.map #2 (Listsort.sort
+              (fn ((l,_),(r,_)) => Int.compare (l,r))
+              (List.foldr (fn (key,entries) => List.foldr add entries
+                (Option.getOpt (Redblackmap.peek (index,key),[]))) [] keys))
+        in case List.find (fn (saved,_) => saved = keys) (!selected) of
+            SOME (_,net) => Ho_Net.lookup tm net
+          | NONE =>
+              let
+                val rules = List.map compile
+                  (List.concat (List.map select indices))
+                (* Use the SAME specificity and declaration ordering as the
+                   native simplifier. No unchecked pattern enters this net. *)
+                val net = List.foldr (fn (entry,net) =>
+                    Ho_Net.enter entry net) Ho_Net.empty
+                  (List.concat (List.map #1 rules))
+                val _ = if List.all #2 rules then
+                    selected := (keys,net) :: !selected else ()
+              in Ho_Net.lookup tm net end
+        end
+      val standard = simpLib.traversedata_for_ss numLib.std_ss
+      val ordinary = Traverse.dest_reducer (hd (#rewriters standard))
+      fun checked_solver solver assumptions condition =
+        (List.app admit assumptions;admit condition;
+         solver assumptions condition)
+        handle AdmissionFailure primary =>
+          (interrupted := SOME primary;raise Portable.Interrupt)
+      fun ordinary_step solver stack tm =
+        let
+          val result = #apply ordinary
+            {solver=checked_solver solver,conv=fn _ => Conv.NO_CONV,
+             context= #initial ordinary,stack=stack,
+             relation=(boolSyntax.equality,Thm.REFL)} tm
+          val _ = admit_thm result
+        in result end
+      fun rewrite solver stack tm =
+        let
+          val _ = admit tm
+          fun attempt [] = ordinary_step solver stack tm
+            | attempt (conv::rest) = conv solver stack tm
+                handle Feedback.HOL_ERR _ => attempt rest
+                     | Conv.UNCHANGED => attempt rest
+        in attempt (candidates tm) end
+        handle AdmissionFailure primary =>
+          (* Traverse.mapfilter2 discards arbitrary reducer exceptions, but
+             propagates Interrupt. Abort immediately and restore the exact
+             admission/Work/observer exception outside that boundary. *)
+          (interrupted := SOME primary;raise Portable.Interrupt)
+      (* Do not put this dispatcher behind std_ss's keyed rewrites. A
+         more-specific exported rule (e.g. LENGTH xs + 0) must get its native
+         chance before a general standard rule (n + 0) erases that redex.
+         Pure srw facts compete in the checked net above; only then try the
+         fixed standard root conversions, never a recursive inner SIMP. *)
+      val base = List.foldl (fn (proc,ss) =>
+          simpLib.++ (ss,simpLib.dproc_ss proc))
+        (simpLib.++ (pureSimps.pure_ss,boolSimps.CONG_ss))
+        (#dprocs standard)
+      val ss = simpLib.++ (base,simpLib.conv_ss
+        {name="admitted datatype exports",key=NONE,trace=2,conv=rewrite})
+    in (ss,interrupted) end
+
+  fun with_exported_rewrites prove =
+    let
+      val (ss,interrupted) = rewrite_fallback_ss ()
+      fun restore () = case !interrupted of NONE => ()
+        | SOME primary => raise AdmissionFailure primary
+      val result = prove ss handle primary => (restore ();raise primary)
+      val _ = restore ()
+    in result end
+
+  fun with_rewrite_fallback fallback prove thms =
+    prove numLib.std_ss thms handle primary as Feedback.HOL_ERR _ =>
+      if not fallback then raise primary
+      else with_exported_rewrites (fn ss => prove ss thms)
+
+  fun datatype_simp_with_fallback fallback t =
     let val _ = admit t
         val thms = datatype_rewrite_thms t
     in
       if List.null thms then unsupported t
-      else simpLib.SIMP_PROVE numLib.std_ss thms t
+      else with_rewrite_fallback fallback
+        (fn ss => fn facts => simpLib.SIMP_PROVE ss facts t) thms
     end
+
+  fun datatype_simp_prove t = datatype_simp_with_fallback true t
 
   fun datatype_nchotomy_thms t =
     List.filter fitting (List.mapPartial
@@ -304,10 +533,10 @@ struct
              (conclusion :: assumptions) end
     in List.app branch (constructors_of (Term.type_of term)) end
 
-  fun datatype_split_fixpoint_tac thms budget goal =
+  fun datatype_split_fixpoint_tac ss thms budget goal =
     (admit_goal goal;
      Tactical.THEN
-      (bossLib.FULL_SIMP_TAC numLib.std_ss thms,
+      (bossLib.FULL_SIMP_TAC ss thms,
        fn simplified =>
          (admit_goal simplified;
           if budget = 0 then Tactical.ALL_TAC simplified
@@ -320,19 +549,25 @@ struct
                  (profile "datatype(split)"
                     Tactic.FULL_STRUCT_CASES_TAC
                     (nchotomy_for_term split_term),
-                  datatype_split_fixpoint_tac thms (budget - 1))
+                  datatype_split_fixpoint_tac ss thms (budget - 1))
                  simplified))) goal)
 
-  fun exhaustiveness_prove t =
+  fun exhaustiveness_with_fallback fallback t =
     let
       val _ = admit t
       val thms = datatype_rewrite_thms t
       val budget = List.length (datatype_split_terms t)
     in
       if budget = 0 then unsupported t
+      (* Retry simplification, never an entire split search: each branch
+         must retain its original initial-subterm split budget. *)
+      else if fallback then with_exported_rewrites (fn ss =>
+        Tactical.prove (t,datatype_split_fixpoint_tac ss thms budget))
       else Tactical.prove (t,
-        datatype_split_fixpoint_tac thms budget)
+        datatype_split_fixpoint_tac numLib.std_ss thms budget)
     end
+
+  fun exhaustiveness_prove t = exhaustiveness_with_fallback true t
 
   fun acyclicity_prove t =
     let
@@ -385,20 +620,48 @@ struct
     if datatype_fragment_admits t then ()
     else unsupported t
 
+  (* Syntax only: never match an unchecked exported pattern. Constructor
+     cycles need size reasoning, not a second generic simp/split search.
+     Defer (do not discard) exported rewrites: users may export constructor
+     equations too. The direct simp/exhaustiveness APIs keep their fallback. *)
+  fun constructor_only t =
+    let
+      fun allowed tm =
+        if Term.is_comb tm then
+          Term.is_const (#1 (boolSyntax.strip_comb tm))
+        else if not (Term.is_const tm) then true
+        else
+          let
+            val {Thy,Name,...} = Term.dest_thy_const tm
+            val (_,range) = boolSyntax.strip_fun (Term.type_of tm)
+          in
+            (Thy = "min" andalso Name = "=") orelse
+            (Thy = "bool" andalso List.exists (fn name => Name = name)
+              ["~","/\\","\\/","==>","!","?","T","F"]) orelse
+            (has_constructors range andalso
+             List.exists (Term.same_const tm) (constructors_of range))
+          end
+    in List.all allowed (subterms t) end
+
   fun datatype_prove t =
     let val _ = admit t
         val _ = profile "datatype(fragment-precondition)"
           require_datatype_fragment t
+        val immediate = not (constructor_only t)
+        fun simplify fallback =
+          profile "datatype(simp)" (datatype_simp_with_fallback fallback) t
+          handle Feedback.HOL_ERR _ =>
+          profile "datatype(exhaustiveness)"
+            (exhaustiveness_with_fallback fallback) t
+        fun finish () =
+          profile "datatype(metis)" metis_datatype_prove t
     in
-      profile "datatype(simp)" datatype_simp_prove t
+      (simplify immediate handle Feedback.HOL_ERR _ =>
+       profile "datatype(acyclicity)" acyclicity_prove t)
       handle Feedback.HOL_ERR _ =>
-      profile "datatype(exhaustiveness)" exhaustiveness_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "datatype(acyclicity)" acyclicity_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "datatype(metis)" metis_datatype_prove t
-      handle Feedback.HOL_ERR _ =>
-      unsupported t
+        ((if immediate then finish () else
+            (simplify true handle Feedback.HOL_ERR _ => finish ()))
+         handle Feedback.HOL_ERR _ => unsupported t)
     end
 
   (* Establish a datatype consequence under its actual HOL assumptions.  The
