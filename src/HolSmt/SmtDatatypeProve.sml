@@ -516,41 +516,13 @@ struct
                in count (remove [body] hyps) ants
                     (boolSyntax.mk_imp (body,b)) end
              else if Term.aconv b boolSyntax.F then
-               finish (remove [a] hyps) ants (boolSyntax.mk_neg a)
+               (* Native NOT_INTRO preserves actual Hyp; only the outer
+                  DISCHes in finish remove accumulated antecedents. *)
+               finish hyps ants (boolSyntax.mk_neg a)
              else count (insert a hyps) (a::ants) b
           end
         else finish hyps ants tm)
     in count (Thm.hyp th) [] (Thm.concl th) end
-
-  (* Fixed, proved operator schemas suffice for common closed list laws.
-     This runs only AFTER exported candidates have had their native chance.
-     The complete checked conversion remains available for alignment. *)
-  fun normal_list_equality tm =
-    let
-      val (l,_) = boolSyntax.dest_eq tm
-      val _ = if listSyntax.is_list_type (Term.type_of l) then ()
-        else raise Conv.UNCHANGED
-      fun has predicate = Lib.can (HolKernel.find_term predicate) tm
-      val snoc = has listSyntax.is_snoc
-      val reverse = has listSyntax.is_reverse
-      val _ = if snoc orelse reverse orelse has listSyntax.is_append
-        then () else raise Conv.UNCHANGED
-      val _ = admit tm
-      val assoc = listTheory.APPEND_ASSOC
-      val _ = if fitting assoc then () else raise Conv.UNCHANGED
-      val assoc = Conv.GSYM assoc
-      val laws = assoc :: conjuncts listTheory.APPEND @
-        (if snoc then [listTheory.SNOC_APPEND] else []) @
-        (if reverse then listTheory.REVERSE_APPEND ::
-          conjuncts listTheory.REVERSE_DEF else [])
-      val _ = if List.all fitting laws then () else raise Conv.UNCHANGED
-      val result = Conv.CHANGED_CONV
-        (simpLib.SIMP_CONV numLib.std_ss laws) tm
-      val _ = if fitting result andalso
-          (Term.aconv (boolSyntax.rhs (Thm.concl result)) boolSyntax.T orelse
-           Term.aconv (boolSyntax.rhs (Thm.concl result)) boolSyntax.F)
-        then () else raise Conv.UNCHANGED
-    in result end
 
   fun rewrite_fallback_ss () =
     let
@@ -700,7 +672,7 @@ struct
           val _ = admit tm
           fun full_equality () = Conv.CHANGED_CONV (#equality lists) tm
           fun equality () =
-            normal_list_equality tm handle Feedback.HOL_ERR _ =>
+            #closed_equality lists tm handle Feedback.HOL_ERR _ =>
               full_equality () | Conv.UNCHANGED => full_equality ()
           fun list_step () =
             #normalise lists tm handle Feedback.HOL_ERR _ => equality ()

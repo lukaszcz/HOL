@@ -4,7 +4,8 @@
 structure SmtDatatypeListConv :>
 sig
   val procedures : (Term.term -> unit) ->
-    {equality: Conv.conv, normalise: Conv.conv}
+    {equality: Conv.conv, normalise: Conv.conv,
+     closed_equality: Conv.conv}
   val conversion : (Term.term -> unit) -> Conv.conv
 end =
 struct
@@ -405,10 +406,96 @@ let
     if is_snoc t then rewr listTheory.SNOC_APPEND t
     else if is_append t then append_simple_assoc t
     else raise Conv.UNCHANGED
+  (* Fast closed list laws use the SAME checked root/traversal boundaries
+     as cancellation. Never hide recursive SIMP_CONV work behind a final
+     theorem check: distributing REVERSE can grow and then erase a redex. *)
+  fun closed_equality t =
+    let
+      val _ = admit t
+      val (l,_) = dest_eq t
+      val _ = if is_list_type (type_of l) then ()
+              else raise Conv.UNCHANGED
+      fun closed_root u =
+        if is_append u then
+          root [backward listTheory.APPEND_ASSOC,
+                forward listTheory.APPEND] u
+        else if is_snoc u then root [forward listTheory.SNOC_APPEND] u
+        else if is_reverse u then
+          root [forward listTheory.REVERSE_APPEND,
+                forward listTheory.REVERSE_DEF] u
+        else no u
+      (* Only list spines can change under these schemas. The surrounding
+         simplifier has already visited element terms. Avoid a full generic
+         traversal of every application prefix and scalar element here. *)
+      (* Each option contains an already admitted theorem. Join it once,
+         rather than repeatedly rechecking both operands through layers of
+         generic conversion combinators. NONE is the unchanged identity. *)
+      fun compose NONE b = b
+        | compose a NONE = a
+        | compose (SOME a) (SOME b) = SOME (theorem (TRANS a b))
+      fun target u NONE = u
+        | target _ (SOME th) = rhs (Thm.concl th)
+      fun attempt c u = SOME (c u)
+        handle Conv.UNCHANGED => NONE | HOL_ERR _ => NONE
+      fun argument c u =
+        let val (f,x) = dest_comb u
+        in case c x of NONE => NONE
+           | SOME th => (admit f;SOME (theorem (AP_TERM f th))) end
+      fun left_argument c u =
+        let val (f,x) = dest_comb u
+        in case argument c f of NONE => NONE
+           | SOME th => (admit x;SOME (theorem (AP_THM th x))) end
+      (* Expose the left spine BEFORE evaluating concrete appends. In a
+         SNOC chain this first associates singleton chunks to the right,
+         then joins each chunk once, instead of repeatedly appending to a
+         growing concrete prefix. Every rewrite and congruence still has
+         its own checked intermediate. *)
+      fun spine u =
+        let
+          val _ = admit u
+          fun continue NONE = NONE
+            | continue (SOME th) =
+                compose (SOME th) (spine (rhs (Thm.concl th)))
+        in
+          if is_append u then
+            let
+              val (l,_) = dest_append u
+              val expose =
+                if is_snoc l then
+                  left_argument (attempt closed_root) u
+                else if is_reverse l then left_argument spine u
+                else NONE
+              val v = target u expose
+              val rest = case attempt closed_root v of
+                  NONE => argument spine v
+                | step => continue step
+            in compose expose rest end
+          else if is_snoc u then continue (attempt closed_root u)
+          else if is_reverse u then
+            (case attempt closed_root u of
+                SOME th => continue (SOME th)
+              | NONE =>
+                  let val child = argument spine u
+                  in compose child
+                    (continue (attempt closed_root (target u child))) end)
+          else if is_cons u then argument spine u
+          else NONE
+        end
+      val a = left_argument spine t
+      val normal = compose a (argument spine (target t a))
+      val result = case normal of
+          NONE => internal t
+        | SOME th => theorem (TRANS th (internal (rhs (Thm.concl th))))
+      val target = rhs (Thm.concl result)
+    in
+      if aconv target T orelse aconv target F then result
+      else raise Conv.UNCHANGED
+    end
   fun protect conv t = checked conv t
     handle AdmissionFailure e => raise e
 in
-  {equality=protect main,normalise=protect normalise}
+  {equality=protect main,normalise=protect normalise,
+   closed_equality=protect closed_equality}
 end
 
 fun conversion check = #equality (procedures check)

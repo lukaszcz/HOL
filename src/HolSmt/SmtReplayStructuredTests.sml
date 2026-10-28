@@ -215,6 +215,29 @@ struct
            require "checked list conversion changed tags"
              (Tag.dest_tag (Thm.tag native) = Tag.dest_tag (Thm.tag result))
         end) inputs
+      (* A fitting input/result can hide a larger recursive intermediate.
+         Exercise the public adapter, not just the local list port. *)
+      fun join [x] = x
+        | join (x::xs) = listSyntax.mk_append (x,join xs)
+        | join [] = raise Fail "empty list join"
+      val variables = List.tabulate (16,fn i =>
+        Term.mk_var ("xs" ^ Int.toString i,``:bool list``))
+      val right = join (map listSyntax.mk_reverse (rev variables))
+      val goal = boolSyntax.mk_eq
+        (listSyntax.mk_reverse (join variables),right)
+      val cap = Term.term_size goal + 4
+      val rejected = ref false
+      exception Intermediate
+      fun check tm =
+        if Term.term_size tm > cap then
+          (rejected := true;raise Intermediate)
+        else ()
+      val _ = require "recursive list simplification bypassed admission"
+        (((ignore (#simp (SmtDatatypeProve.checked_procedures check) goal);
+            false) handle Intermediate => true) andalso !rejected)
+      val generous = SmtDatatypeProve.checked_procedures
+        (A.new_term_check {limit=4096,observe=fn () => ()})
+      val _ = exact goal [] (#simp generous goal)
       val calls = ref 0
       fun stop _ =
         (calls := !calls+1;
@@ -369,6 +392,32 @@ struct
             (Thm.CONJ conditional bundle)))
         val _ = BasicProvers.with_simpset_updates (fn _ => conditional_ss)
           check ()
+        (* NOT_INTRO keeps original Hyp p. Dropping it makes this skipped
+           leaf appear to emit zero rules and shifts the live h suffix. *)
+        val sg = Define `structured_suffix_g (xs:bool list) = xs`
+        val sh = Define `structured_suffix_h (xs:bool list) = xs`
+        val p = ``suffix_p:bool``
+        val closed = boolSyntax.list_mk_conj
+          (List.tabulate (80,K boolSyntax.T))
+        val first_goal = boolSyntax.mk_imp (closed,boolSyntax.mk_imp
+          (boolSyntax.mk_neg p,boolSyntax.mk_imp (p,boolSyntax.F)))
+        val first = Drule.ADD_ASSUM p (tautLib.TAUT_PROVE first_goal)
+        val suffix_bundle = Thm.CONJ first (Thm.CONJ sg sh)
+        val _ = require "suffix fixture changed native cardinality"
+          (map (length o Cond_rewr.mk_cond_rewrs o
+             BoundedRewrites.dest_tagged_rewrite)
+             (Drule.CONJUNCTS suffix_bundle) = [1,1,1])
+        val suffix_ss = simpLib.remove_simps ["history_hyp_suffix.2"]
+          (simpLib.++ (srw_ss (),named "history_hyp_suffix" suffix_bundle))
+        val live = ``structured_suffix_h xs = (xs:bool list)``
+        val deleted_goal = ``structured_suffix_g xs = (xs:bool list)``
+        val _ = BasicProvers.with_simpset_updates (fn _ => suffix_ss)
+          (fn () =>
+            (List.app (fn prove => exact live [p] (prove live))
+              [fn t => simpLib.SIMP_PROVE (srw_ss ()) [] t,
+               #simp bounded,#prove bounded];
+             require "deleted suffix rewrite survived"
+               (declines (fn () => SOME (#simp bounded deleted_goal))))) ()
         val once = BoundedRewrites.Once g
         val duplicated = simpLib.++ (srw_ss (),simpLib.rewrites [once,once])
         val twice =
