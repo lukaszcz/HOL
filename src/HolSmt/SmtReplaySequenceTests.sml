@@ -560,6 +560,33 @@ struct
   val nested_length_goal =
     ``([LENGTH [2 EXP 8192]]:num list) ++ [] = [1]``
 
+  (* An irrelevant LENGTH can itself contain an expensive index, guard or
+     mapping function. Shape discovery must not compute any of those, even
+     though arithmetic rewriting is enabled in the ordinary simplifier. *)
+  val discarded_length_goals =
+    [``isPREFIX ([]:num list) [LENGTH (TAKE (2 EXP 8192) [1])]``,
+     ``TAKE 0 ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``([if T then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:num list)
+         ++ [] = [1]``,
+     ``isPREFIX ([]:num list)
+         [LENGTH (MAP (\n:num. 2 EXP n) [8192])]``,
+     ``([if F then LENGTH (DROP (2 EXP 8192) [1]) else 1]:num list)
+         ++ [] = [1]``,
+     ``TAKE 0 ([LENGTH (if 2 EXP 8192 = 0 then [1] else [])]:
+         num list) = []``,
+     ``isPREFIX ([]:num list)
+         [LENGTH ((\n:num. TAKE (2 EXP n) [1]) 8192)]``,
+     ``([if 0=0 then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:
+         num list) ++ [] = [1]``,
+     ``TAKE (1-1) ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``isPREFIX (TAKE 0 [1])
+         [LENGTH (TAKE (2 EXP 8192) [1])]``,
+     ``(if 2 EXP 8192 = 0 then LENGTH ([]:num list)
+          else LENGTH ([]:num list)) = 0``,
+     ``(if 2 EXP 8192 = 0 then LENGTH ([]:num list) else 0) = 0``,
+     ``([LENGTH (TAKE (2 EXP 8192) ([]:num list))]:num list)
+         ++ [] = [0]``]
+
   fun irrelevant_scalars () =
     let
       val admit = A.new_term_check {limit=4096,observe=fn () => ()}
@@ -568,10 +595,18 @@ struct
          ``([LENGTH (TAKE 0 [2 EXP 8192])]:num list) ++ [] = [0]``,
          ``([1 + LENGTH [2 EXP 8192]]:num list) ++ [] = [2]``,
          ``([LENGTH [2 EXP 8192];1+1]:num list) ++ [] = [1;2]``,
+         ``([LENGTH (TL [2 EXP 8192;1])]:num list) ++ [] = [1]``,
+         ``([LENGTH (I [2 EXP 8192])]:num list) ++ [] = [1]``,
+         ``([LENGTH ((\x:num list. x) [2 EXP 8192])]:num list)
+             ++ [] = [1]``,
+         ``([LENGTH (smt_seq_extract [2 EXP 8192] 0 1)]:num list)
+             ++ [] = [1]``,
+         ``([LENGTH (FILTER (K T) [2 EXP 8192])]:num list) ++ [] = [1]``,
          ``isPREFIX ([]:num list) [2 EXP 8192]``,
          ``TAKE 0 ([2 EXP 8192]:num list) = []``,
          ``([if T then 2 else 2 EXP 8192]:num list) ++ [] = [2]``,
-         ``([2 EXP 8192;1+1]:num list) ++ [] = [2 EXP 8192;2]``]
+         ``([2 EXP 8192;1+1]:num list) ++ [] = [2 EXP 8192;2]``] @
+        discarded_length_goals
     in List.app (fn goal =>
          (exact goal [] (SmtSeqProve.seq_prove_with_admission admit goal)
           handle error => raise Fail (Library.term_to_string goal ^ ": " ^
@@ -600,6 +635,45 @@ struct
           in same_tags native theorem;result end)
         goal [] "seq-eval-op" [H.Object goal] true end)
       [nested_length_goal,mixed_replacement_goal] end
+
+  fun discarded_lengths () =
+    let
+      val admit = A.new_term_check {limit=4096,observe=fn () => ()}
+      fun check goal =
+        let
+          val native = SmtSeqProve.seq_prove_with_admission admit goal
+          val _ = exact goal [] native
+          val _ = exact goal []
+            (SmtSeqProve.seq_contextual_prove_with_admission admit [] goal)
+          val assumption = ``task40_context:bool``
+          val contextual = SmtSeqProve.seq_contextual_prove_with_admission
+            admit [assumption] (boolSyntax.mk_conj (assumption,goal))
+          val _ = exact (boolSyntax.mk_conj (assumption,goal))
+            [assumption] contextual
+        in H.cpc_arguments_using_admitted 4096
+          (fn admit => fn input =>
+            let val result as (theorem,_) =
+                  CPC_ProofReplay.graph_bounded_worker_with_admission
+                    admit [] input
+            in same_tags native theorem;result end)
+          goal [] "seq-eval-op" [H.Object goal] true end
+      val false_goal =
+        ``([if T then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:
+            num list) ++ [] = [2]``
+      val _ = require "discarded LENGTH transport accepted a false goal"
+        (declines (fn () => SOME
+          (SmtSeqProve.seq_prove_with_admission admit false_goal)))
+      val _ = require "contextual discarded LENGTH accepted a false goal"
+        (declines (fn () => SOME
+          (SmtSeqProve.seq_contextual_prove_with_admission
+            admit [] false_goal)))
+      val _ = require "CPC discarded LENGTH accepted a false goal"
+        (declines (fn () => SOME
+          (H.cpc_arguments_using_admitted 4096
+            (fn admit => CPC_ProofReplay.graph_bounded_worker_with_admission
+              admit []) false_goal [] "seq-eval-op"
+            [H.Object false_goal] true)))
+    in List.app check discarded_length_goals end
 
   val replacement_goal =
     ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;2;3]``
@@ -991,6 +1065,7 @@ struct
        ("opaque",opaque_scalar_cancellation),
        ("irrelevant",irrelevant_scalars),
        ("nested/mixed CPC",nested_and_mixed_cpc),
+       ("discarded LENGTH",discarded_lengths),
        ("fuel error",replacement_first_error),("witness",witness_first_error),
        ("reset",replacement_closure_reset),
        ("nested scalar",nested_scalar_first_error),
