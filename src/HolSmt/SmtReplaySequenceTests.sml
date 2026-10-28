@@ -590,7 +590,40 @@ struct
      ``([if (1:num) < 2 then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:
          num list) ++ [] = [1]``,
      ``([LENGTH (TAKE (2 EXP 8192) ([]:num list))]:num list)
-         ++ [] = [0]``]
+         ++ [] = [0]``,
+     (* Controllers, not branch/list wrappers: expose erasure before the
+        discarded LENGTH can force its index. Keep lexical dependencies. *)
+     ``TAKE (I 0) ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``TAKE ((\n:num. n) 0)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``([if I T then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:num list)
+         ++ [] = [1]``,
+     ``([if (\b:bool. b) T then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``TAKE ((\n:num. n-1) 1)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``TAKE ((\n:num. 0) (2 EXP 8192))
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``TAKE (K 0 (2 EXP 8192))
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``TAKE ((\n:num. if T then 0 else 2 EXP n) 8192)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``([if (\x:bool. (\y:bool. x) F) T then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``TAKE ((\n:num. if (\n:num. n=0) 0 then 0 else n) 1)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``]
+
+  (* The optional beta probe must not duplicate this admitted literal:
+     the unchanged full LENGTH walk first makes both branches zero. This
+     is a native probe-order control, not a graph Work-scaling workload. *)
+  val nonlinear_controller_goals = List.map (Term.subst
+    [{redex=``large_controller:num``,residue=numSyntax.mk_numeral
+        (Arbnum.pow (Arbnum.two,Arbnum.fromInt 1100))}])
+    [``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (I ([]:num list)) else 0) = 0``,
+     (* Freshening the inner x must not capture the existing free x'. *)
+     ``(if (\x:num. (\x:num. x * x' < 1) large_controller) 0
+        then LENGTH (I ([]:num list)) else 0) = 0``]
 
   fun irrelevant_scalars () =
     let
@@ -662,6 +695,10 @@ struct
                     admit [] input
             in same_tags native theorem;result end)
           goal [] "seq-eval-op" [H.Object goal] true end
+      val _ = List.app (fn goal =>
+        (exact goal [] (SmtSeqProve.seq_prove_with_admission admit goal);
+         exact goal [] (SmtSeqProve.seq_contextual_prove_with_admission
+           admit [] goal))) nonlinear_controller_goals
       val false_goal =
         ``([if T then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:
             num list) ++ [] = [2]``

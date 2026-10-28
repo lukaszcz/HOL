@@ -518,16 +518,64 @@ struct
                Probe only a non-expanding Boolean/numeric skeleton. Unknown
                computations (notably EXP) remain opaque, even when closed.
                On a miss the original LENGTH walk retains its old order. *)
+            val original = hd args
+            val _ = admit original
+            val variables = ref (Term.all_vars original)
             val bindings = ref (Redblackmap.mkDict Term.compare)
             fun atom actual = case Redblackmap.peek (!bindings,actual) of
                 SOME hole => hole
-              | NONE => let val hole = Term.genvar (Term.type_of actual)
+              | NONE =>
+                  let val hole = Term.variant (!variables @
+                        List.map #2 (Redblackmap.listItems (!bindings)))
+                        (Term.genvar (Term.type_of actual))
                   in bindings := Redblackmap.insert
                        (!bindings,actual,hole);hole end
-            fun controller actual =
+            (* This is an optional, non-expanding probe. An opaque beta
+               controller must not start duplicating a large argument before
+               the full LENGTH walk can discover guard independence. Count
+               only free uses, stopping at two; leave nonlinear binders on
+               the unchanged full procedure, not on this early probe. *)
+            fun uses v term =
+              if not (Term.free_in v term) then 0
+              else if Term.is_var term then 1
+              else if Term.is_comb term then
+                let val (f,x) = Term.dest_comb term
+                    val n = uses v f
+                in if n >= 2 then 2 else Int.min (2,n + uses v x) end
+              else if Term.is_abs term then uses v (#2 (Term.dest_abs term))
+              else 0
+            (* Keep beta/I controllers, not just their numeric/Boolean
+               children. Under a binder, only independent syntax can be
+               an INST hole: abstracting a dependent body as a free atom
+               would lose the argument relationship (or capture it later).
+               Unknown dependent applications retain congruence structure;
+               their independent operator/operands remain opaque. Thus an
+               EXP is never computed by this non-forcing probe. *)
+            fun controller bound actual =
               if scalar_literal actual orelse
                   Term.aconv actual boolSyntax.T orelse
-                  Term.aconv actual boolSyntax.F then actual
+                  Term.aconv actual boolSyntax.F orelse
+                  List.exists (fn v => Term.aconv v actual) bound then actual
+              else if Term.is_abs actual then
+                let
+                  val (v,body) = Term.dest_abs actual
+                in if uses v body > 1 then
+                    if List.exists (fn v => Term.free_in v actual) bound
+                    then raise Conv.UNCHANGED else atom actual
+                  else
+                  let
+                    (* dest_abs may itself freshen a stored binder. Avoid
+                       previous holes as well as future holes, so INST can
+                       never capture an occurrence name on reclosure. *)
+                    val fresh = Term.variant (Term.free_vars actual @
+                      bound @ List.map #2
+                        (Redblackmap.listItems (!bindings))) v
+                    val body = if Term.aconv fresh v then body else
+                      Term.subst [{redex=v,residue=fresh}] body
+                    val _ = variables := fresh :: !variables
+                  in Term.mk_abs
+                    (fresh,controller (fresh::bound) body) end
+                end
               else
                 let val (head,args) = boolSyntax.strip_comb actual
                 in if named "min" ["="] head orelse
@@ -535,10 +583,18 @@ struct
                      orelse named "arithmetic"
                        ["+","-","*","DIV","MOD","MIN","MAX","<="] head
                      orelse named "prim_rec" ["<","PRE"] head
-                     orelse named "num" ["SUC"] head then
-                     Term.list_mk_comb (head,List.map controller args)
+                     orelse named "num" ["SUC"] head
+                     orelse named "combin" ["I","K"] head then
+                     Term.list_mk_comb
+                       (head,List.map (controller bound) args)
+                   else if Term.is_abs head orelse
+                       List.exists (fn v => Term.free_in v actual) bound
+                     then
+                       let val (f,x) = Term.dest_comb actual
+                       in Term.mk_comb
+                         (controller bound f,controller bound x) end
                    else atom actual end
-            val schema = controller (hd args)
+            val schema = controller [] original
             val _ = admit schema
             val proof = Lib.with_flag (computing_scalars,false)
               (simplify_raw list_rewrites) schema
@@ -546,6 +602,8 @@ struct
               {redex=hole,residue=actual})
               (Redblackmap.listItems (!bindings))) proof
             val (l,r) = boolSyntax.dest_eq (Thm.concl guard)
+            val _ = if Term.aconv l original then ()
+              else raise Conv.UNCHANGED
             val _ = List.app admit (l::r::Thm.hyp guard)
             val preparation = List.foldl (fn (arg,th) =>
                 Thm.MK_COMB (th,Thm.REFL arg))
