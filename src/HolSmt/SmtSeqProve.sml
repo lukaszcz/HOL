@@ -513,18 +513,40 @@ struct
             val _ = if (named "bool" ["COND"] head andalso length args=3)
                 orelse (named "list" ["TAKE","DROP"] head andalso
                   length args=2) then () else raise Conv.UNCHANGED
-            (* Try guard-independent erasure FIRST: COND_ID and TAKE []
-               must never demand a guard/index. Otherwise preprocess the
-               controlling operand, not the still-opaque branches/list. *)
-            val first = hd args
-            val shaped = walk first
-            val target = case shaped of NONE => first
-              | SOME th => boolSyntax.rhs (Thm.concl th)
-            val reduced = Lib.with_flag (computing_scalars,false)
-              (simplify_raw list_rewrites) target
-              handle Conv.UNCHANGED => Thm.REFL target
-            val guard = case shaped of NONE => reduced
-              | SOME th => Thm.TRANS th reduced
+            (* A controller is NOT necessarily demanded: branch LENGTHs
+               may later expose COND_ID through arbitrary list wrappers.
+               Probe only a non-expanding Boolean/numeric skeleton. Unknown
+               computations (notably EXP) remain opaque, even when closed.
+               On a miss the original LENGTH walk retains its old order. *)
+            val bindings = ref (Redblackmap.mkDict Term.compare)
+            fun atom actual = case Redblackmap.peek (!bindings,actual) of
+                SOME hole => hole
+              | NONE => let val hole = Term.genvar (Term.type_of actual)
+                  in bindings := Redblackmap.insert
+                       (!bindings,actual,hole);hole end
+            fun controller actual =
+              if scalar_literal actual orelse
+                  Term.aconv actual boolSyntax.T orelse
+                  Term.aconv actual boolSyntax.F then actual
+              else
+                let val (head,args) = boolSyntax.strip_comb actual
+                in if named "min" ["="] head orelse
+                     named "bool" ["COND","/\\","\\/","==>","~"] head
+                     orelse named "arithmetic"
+                       ["+","-","*","DIV","MOD","MIN","MAX","<="] head
+                     orelse named "prim_rec" ["<","PRE"] head
+                     orelse named "num" ["SUC"] head then
+                     Term.list_mk_comb (head,List.map controller args)
+                   else atom actual end
+            val schema = controller (hd args)
+            val _ = admit schema
+            val proof = Lib.with_flag (computing_scalars,false)
+              (simplify_raw list_rewrites) schema
+            val guard = Thm.INST (List.map (fn (actual,hole) =>
+              {redex=hole,residue=actual})
+              (Redblackmap.listItems (!bindings))) proof
+            val (l,r) = boolSyntax.dest_eq (Thm.concl guard)
+            val _ = List.app admit (l::r::Thm.hyp guard)
             val preparation = List.foldl (fn (arg,th) =>
                 Thm.MK_COMB (th,Thm.REFL arg))
               (Thm.MK_COMB (Thm.REFL head,guard)) (tl args)

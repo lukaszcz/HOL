@@ -584,6 +584,11 @@ struct
      ``(if 2 EXP 8192 = 0 then LENGTH ([]:num list)
           else LENGTH ([]:num list)) = 0``,
      ``(if 2 EXP 8192 = 0 then LENGTH ([]:num list) else 0) = 0``,
+     ``(if 2 EXP 8192 = 0 then LENGTH (I ([]:num list)) else 0) = 0``,
+     ``(if 2 EXP 8192 = 0 then LENGTH ((\x:num list. x) [])
+          else 0) = 0``,
+     ``([if (1:num) < 2 then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:
+         num list) ++ [] = [1]``,
      ``([LENGTH (TAKE (2 EXP 8192) ([]:num list))]:num list)
          ++ [] = [0]``]
 
