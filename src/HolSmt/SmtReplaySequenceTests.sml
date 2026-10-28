@@ -611,6 +611,26 @@ struct
      ``([if (\x:bool. (\y:bool. x) F) T then 1
           else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
      ``TAKE ((\n:num. if (\n:num. n=0) 0 then 0 else n) 1)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     (* Necessary controllers must retain the complete checked procedure,
+        not just a finite Boolean/numeric/linear-beta probe grammar. *)
+     ``TAKE ((\n:num. n+n) 0)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``TAKE ((\n:num. n-n) 1)
+         ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``,
+     ``([if (\b:bool. b /\ b) T then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``([if (\b:bool. b \/ b) T then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``([if (1:int) < 2 then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``([if FST (T,0:num) then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``([if SND (0:num,T) then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``([if NULL ([]:num list) then 1
+          else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [1]``,
+     ``TAKE (FST (0,2 EXP 8192))
          ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = []``]
 
   (* The optional beta probe must not duplicate this admitted literal:
@@ -623,7 +643,24 @@ struct
         then LENGTH (I ([]:num list)) else 0) = 0``,
      (* Freshening the inner x must not capture the existing free x'. *)
      ``(if (\x:num. (\x:num. x * x' < 1) large_controller) 0
-        then LENGTH (I ([]:num list)) else 0) = 0``]
+        then LENGTH (I ([]:num list)) else 0) = 0``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH ((\xs:num list. xs ++ xs) []) else 0) = 0``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (REVERSE ([]:num list)) else 0) = 0``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (TAKE 0 ([1]:num list)) else 0) = 0``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (TAKE (I 0) ([1]:num list)) else 0) = 0``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (TAKE (3-1-2) ([1]:num list)) else 0) = 0``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (TAKE ((\n:num. n-n) 1) ([1]:num list)) else 0) = 0``,
+
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (FILTER (K T) ([1]:num list)) else 1) = 1``,
+     ``(if (\n:num. n*n < 1) large_controller
+        then LENGTH (smt_seq_extract ([1]:num list) 0 1) else 1) = 1``]
 
   fun irrelevant_scalars () =
     let
@@ -698,7 +735,9 @@ struct
       val _ = List.app (fn goal =>
         (exact goal [] (SmtSeqProve.seq_prove_with_admission admit goal);
          exact goal [] (SmtSeqProve.seq_contextual_prove_with_admission
-           admit [] goal))) nonlinear_controller_goals
+           admit [] goal)) handle error => raise Fail
+             (Library.term_to_string goal ^ ": " ^
+              General.exnMessage error)) nonlinear_controller_goals
       val false_goal =
         ``([if T then 1 else LENGTH (TAKE (2 EXP 8192) [1])]:
             num list) ++ [] = [2]``
@@ -715,6 +754,15 @@ struct
             (fn admit => CPC_ProofReplay.graph_bounded_worker_with_admission
               admit []) false_goal [] "seq-eval-op"
             [H.Object false_goal] true)))
+      val _ = List.app (fn goal =>
+        require "computed controller accepted a false sequence obligation"
+          (declines (fn () => SOME
+            (SmtSeqProve.seq_prove_with_admission admit goal))))
+        [``TAKE ((\n:num. n+n) 0)
+            ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = [1]``,
+         ``([if (1:int) < 2 then 1
+              else LENGTH (TAKE (2 EXP 8192) [1])]:num list) ++ [] = [2]``,
+         ``TAKE (3-1-2) ([LENGTH (TAKE (2 EXP 8192) [1])]:num list) = [1]``]
     in List.app check discarded_length_goals end
 
   val replacement_goal =
@@ -766,6 +814,27 @@ struct
 
   fun first_replacement_error label action =
     first_generated_error label replacement_fuel_equality action
+
+  fun scalar_probe_first_error () =
+    let
+      val goal =
+        ``([LENGTH (TAKE (I 0) ([1]:num list))]:num list) ++ [] = [0]``
+      val source = Thm.concl combinTheory.I_THM
+      val reject = ref true
+      val stopped = ref false
+      val after = ref 0
+      val genuine = A.new_term_check {limit=4096,observe=fn () => ()}
+      fun admit tm =
+        if !stopped then after := !after+1
+        else (genuine tm;
+          if !reject andalso tm ~~ source then
+            (stopped := true;raise admission_primary) else ())
+      val prove = SmtSeqProve.seq_prove_with_admission admit
+      val result = Exn.capture prove goal
+      val _ = require "scalar probe swallowed its admission error"
+        (!stopped andalso primary_preserved result andalso !after=0)
+      val _ = (reject := false;stopped := false)
+    in exact goal [] (prove goal) end
 
   fun replacement_first_error () =
     first_replacement_error "direct replacement" (fn admit =>
@@ -1108,6 +1177,7 @@ struct
        ("irrelevant",irrelevant_scalars),
        ("nested/mixed CPC",nested_and_mixed_cpc),
        ("discarded LENGTH",discarded_lengths),
+       ("scalar probe error",scalar_probe_first_error),
        ("fuel error",replacement_first_error),("witness",witness_first_error),
        ("reset",replacement_closure_reset),
        ("nested scalar",nested_scalar_first_error),

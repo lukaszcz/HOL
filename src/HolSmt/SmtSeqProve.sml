@@ -142,7 +142,7 @@ struct
   val scalar_compset =
     let
       val local_set = computeLib.copy (computeLib.the_compset ())
-      fun remove (((thy,name),_),set) =
+      fun remove (((name,thy),_),set) =
         if thy="HolSmt" andalso String.isPrefix "smt_seq_" name then
           computeLib.scrub_const set
             (Term.prim_mk_const {Thy=thy,Name=name})
@@ -151,6 +151,12 @@ struct
          just operations visible in the original scalar operand. Never
          mutate the ordinary computation set. *)
     in List.foldl remove local_set (computeLib.listItems local_set) end
+
+  val scalar_rewrite_rules = Redblackmap.fromList
+    (Portable.pair_compare (String.compare,String.compare))
+    (List.map (fn (key,actions) => (key,List.concat (List.map
+      (fn clauses.RRules ths => ths | clauses.Conversion _ => []) actions)))
+      (computeLib.listItems scalar_compset))
 
   fun checked_procedures check =
   let
@@ -296,6 +302,149 @@ struct
         val (left,right) = boolSyntax.dest_eq (Thm.concl result)
         val _ = List.app admit (left::right::Thm.hyp result)
       in result end
+    (* Optional shape discovery must also compose with small controllers
+       (e.g. LENGTH (TAKE (I 0) xs)). Use rewrite equations only: arbitrary
+       computation conversions could expand EXP in one opaque native call.
+       Every beta/rewrite substitution is prospectively bounded. Exhaustion
+       is a private probe miss, never an admission/Work callback failure. *)
+    fun bounded_scalar () =
+      let
+        exception Miss
+        exception Exhausted
+        val remaining = ref 4096
+        val allowance = 128
+        fun require true = () | require false = raise Miss
+        fun attempt f = SOME (f ()) handle Miss => NONE
+        fun fits sigma tm =
+          let
+            (* Stock dest_abs opens its entire body. Establish the raw
+               bound without opening any binder before the substitution
+               forecast below uses the native view. *)
+            val _ = require (Option.isSome
+              (SmtReplayImport.bounded_raw_size allowance tm))
+            val left = ref allowance
+            fun scan sigma tm =
+              let val _ = require (!left > 0)
+                  val _ = left := !left - 1
+              in if Term.is_var tm then
+                   (case List.find
+                       (fn {redex,...} => Term.aconv redex tm) sigma of
+                      NONE => ()
+                    | SOME {residue,...} => scan [] residue)
+                 else if Term.is_comb tm then
+                   let val (f,x) = Term.dest_comb tm
+                   in scan sigma f;scan sigma x end
+                 else if Term.is_abs tm then
+                   scan sigma (#2 (Term.dest_abs tm))
+                 else () end
+          in (scan sigma tm;true) end handle Miss => false
+        fun types_fit types tm =
+          let
+            fun annotation ty =
+              let val left = ref allowance
+                  fun scan substitutions ty =
+                    (require (!left > 0);left := !left - 1;
+                     if Type.is_vartype ty then
+                       (case List.find (fn {redex,...} =>
+                           Type.compare (redex,ty)=EQUAL) substitutions of
+                          NONE => ()
+                        | SOME {residue,...} => scan [] residue)
+                     else List.app (scan substitutions)
+                       (#2 (Type.dest_type ty)))
+              in scan types ty end
+            fun walk tm =
+              (annotation (Term.type_of tm);
+               if Term.is_comb tm then
+                 let val (f,x) = Term.dest_comb tm in walk f;walk x end
+               else if Term.is_abs tm then
+                 let val (v,b) = Term.dest_abs tm in walk v;walk b end
+               else ())
+          in walk tm;true end handle Miss => false
+        fun probe tm =
+          let
+            val local_left = ref 2048
+            fun spend () =
+              if !remaining = 0 orelse !local_left = 0 then raise Exhausted
+              else (remaining := !remaining - 1;
+                    local_left := !local_left - 1)
+            fun checked th =
+              let val (l,r) = boolSyntax.dest_eq (Thm.concl th)
+                  val _ = require (fits [] r)
+                  val _ = List.app admit (l::r::Thm.hyp th)
+                  val _ = require (not (Term.aconv l r))
+              in th end
+            fun rewrite tm fact =
+              let
+                val _ = spend ()
+                val _ = require (null (Thm.hyp fact) andalso
+                  fits [] (Thm.concl fact))
+                val _ = admit (Thm.concl fact)
+                val fact = Drule.SPEC_ALL fact
+                val (l,r) = case Lib.total boolSyntax.dest_eq
+                    (Thm.concl fact) of SOME sides => sides
+                  | NONE => raise Miss
+                val (sigma,types) = Term.match_term l tm
+                  handle Feedback.HOL_ERR _ => raise Miss
+                val _ = require (types_fit types (Thm.concl fact))
+                val typed_rhs = Term.inst types r
+                val _ = require (fits sigma typed_rhs)
+                val _ = admit typed_rhs
+                val result = Thm.INST sigma (Thm.INST_TYPE types fact)
+                val left = boolSyntax.lhs (Thm.concl result)
+              in checked (Thm.TRANS (Thm.ALPHA tm left) result) end
+            fun root tm =
+              if Term.is_comb tm andalso Term.is_abs (Term.rator tm) then
+                let val (v,body) = Term.dest_abs (Term.rator tm)
+                    val _ = require (fits
+                      [{redex=v,residue=Term.rand tm}] body)
+                in checked (Thm.BETA_CONV tm) end
+              else
+                let
+                  val head = #1 (boolSyntax.strip_comb tm)
+                  val _ = require (Term.is_const head)
+                  val {Name,Thy,...} = Term.dest_thy_const head
+                  val facts = Option.getOpt
+                    (Redblackmap.peek (scalar_rewrite_rules,(Name,Thy)),[])
+                  fun first [] = raise Miss
+                    | first (th::ths) = rewrite tm th
+                        handle Miss => first ths
+                in first facts end
+            fun step tm =
+              let val _ = spend ()
+                  val _ = require (fits [] tm)
+                  val _ = require (not (scalar_literal tm))
+                  val _ = admit tm
+                  val direct = attempt (fn () => root tm)
+                  fun projection th =
+                    let val result = boolSyntax.rhs (Thm.concl th)
+                    in scalar_literal result orelse
+                       Term.aconv result boolSyntax.T orelse
+                       Term.aconv result boolSyntax.F orelse
+                       List.exists (Term.aconv result)
+                         (#2 (boolSyntax.strip_comb tm)) end
+                  fun descend () =
+                    if Term.is_comb tm then
+                      let val (f,x) = Term.dest_comb tm
+                      in case attempt (fn () => step f) of
+                          SOME th => checked (Thm.MK_COMB (th,Thm.REFL x))
+                        | NONE => checked (Thm.MK_COMB (Thm.REFL f,step x))
+                      end
+                    else raise Miss
+              in case direct of SOME th =>
+                   if projection th then th
+                   else (descend () handle Miss => th)
+                 | NONE => descend () end
+            fun normalise tm = case attempt (fn () => step tm) of
+                NONE => Thm.REFL tm
+              | SOME th => Thm.TRANS th
+                  (normalise (boolSyntax.rhs (Thm.concl th)))
+            val _ = require (fits [] tm)
+            val _ = scalar_operand tm handle Conv.UNCHANGED => raise Miss
+            val _ = admit tm
+          in SOME (checked (normalise tm)) end
+          handle Miss => NONE | Exhausted => NONE
+      in probe end
+
     (* Compute bounded scalar occurrences before asking the list matcher to
        compare spines. Otherwise every element rewrite restarts discovery
        on all the remaining unequal list suffixes. Reuse checked equalities
@@ -384,14 +533,9 @@ struct
             val _ = List.app admit (left::right::Thm.hyp result)
         in result end))
 
-    (* LENGTH observes shape, not elements. Preserve the original checked
-       shape procedure, but first let root projection/erasure laws discard
-       operands. Walking every LENGTH eagerly can otherwise evaluate an
-       index or guard in an unreachable operand. *)
-    fun shape_lengths tm =
-      let
-        val saved = ref (Redblackmap.mkDict Term.compare)
-        fun length_step safe term =
+    (* Keep elements opaque while retaining the checked list relationships.
+       The caller selects the non-computational or full demanded procedure. *)
+    fun length_step safe term =
           let
             val (head,args) = boolSyntax.strip_comb term
             val _ = if is_length head andalso length args=1 then ()
@@ -402,6 +546,40 @@ struct
               | NONE => let val hole = Term.genvar (Term.type_of actual)
                   in bindings := Redblackmap.insert
                        (!bindings,actual,hole);hole end
+            (* The speculative pass uses only shape equations and opaque
+               scalar computations and large literals. Small literals keep
+               index/constructor relationships without duplicating a large
+               beta argument. This is optional discovery, not a new input
+               limit. Preserve generic application/binder syntax; there is
+               no whitelist of controllers or list wrappers. *)
+            fun skeleton bound actual =
+              if List.exists (fn v => Term.aconv v actual) bound orelse
+                  Term.aconv actual boolSyntax.T orelse
+                  Term.aconv actual boolSyntax.F orelse
+                  (scalar_literal actual andalso Term.term_size actual <= 32)
+                then actual
+              else if listSyntax.is_nil actual then actual
+              else if not (Lib.can listSyntax.dest_list_type
+                    (Term.type_of actual)) andalso
+                  not (Lib.can Type.dom_rng (Term.type_of actual)) andalso
+                  not (List.exists (fn v => Term.free_in v actual) bound)
+                then atom actual
+              else if listSyntax.is_cons actual then
+                let val (h,t) = listSyntax.dest_cons actual
+                in listSyntax.mk_cons
+                  (skeleton bound h,skeleton bound t) end
+              else if Term.is_abs actual then
+                let val (v,body) = Term.dest_abs actual
+                    val fresh = Term.variant (Term.all_vars term @ bound @
+                      List.map #2 (Redblackmap.listItems (!bindings))) v
+                    val body = Term.subst [{redex=v,residue=fresh}] body
+                in Term.mk_abs (fresh,skeleton (fresh::bound) body) end
+              else if Term.is_comb actual then
+                let val (f,x) = Term.dest_comb actual
+                in Term.mk_comb (skeleton bound f,skeleton bound x) end
+              else if Term.is_const actual andalso
+                  Lib.can Type.dom_rng (Term.type_of actual) then actual
+              else atom actual
             val shapes = ref (Redblackmap.mkDict Term.compare)
             fun shape actual =
               case Redblackmap.peek (!shapes,actual) of SOME result => result
@@ -410,18 +588,7 @@ struct
                   if listSyntax.is_cons actual then
                     let val (h,t) = listSyntax.dest_cons actual
                     in listSyntax.mk_cons (atom h,shape t) end
-                  else if safe then
-                    if listSyntax.is_nil actual then actual
-                    else
-                      let val (head,args) = boolSyntax.strip_comb actual
-                      in if named "list"
-                           ["APPEND","SNOC","REVERSE","TAKE","DROP",
-                            "MAP","LUPDATE","GENLIST"] head then
-                           Term.list_mk_comb (head,List.map (fn arg =>
-                             if Lib.can listSyntax.dest_list_type
-                                 (Term.type_of arg) then shape arg
-                             else atom arg) args)
-                         else atom actual end
+                  else if safe then skeleton [] actual
                   else if Term.is_comb actual andalso
                       not (scalar_literal actual) then
                     let val (f,x) = Term.dest_comb actual
@@ -441,8 +608,16 @@ struct
               {redex=hole,residue=actual})
               (Redblackmap.listItems (!bindings))) result
             val (l,r) = boolSyntax.dest_eq (Thm.concl result)
+            val _ = if Term.aconv l term then () else
+              raise ERR "length_step" "shape restoration changed its source"
             val _ = List.app admit (l::r::Thm.hyp result)
           in result end
+
+    (* First expose guard-independent shapes without computing scalars.
+       Then normalize demanded controllers on opaque branch/list operands
+       before walking anything those controllers may discard. *)
+    fun shape_lengths tm =
+      let
         (* Prove only a root projection or constant result on opaque
            operands. Never inspect the list discarded by prefix/TAKE/COND. *)
         fun project term =
@@ -483,29 +658,63 @@ struct
             val (l,r) = boolSyntax.dest_eq (Thm.concl proof)
             val _ = List.app admit (l::r::Thm.hyp proof)
           in proof end
-        (* Cheap branch-shape discovery cannot force a scalar, beta body
-           or unknown list function. Keep the complete original procedure
-           for demanded LENGTHs; this optional pass only finds erasures. *)
+        (* Only non-computational branch shapes are visited eagerly.
+           Recheck projection after child transport, before any controller
+           or unreachable scalar is handed to the ordinary simplifier. *)
         val safe_saved = ref (Redblackmap.mkDict Term.compare)
+        val scalar_probe = bounded_scalar ()
+        fun safe_step term =
+          project term handle Conv.UNCHANGED =>
+          (length_step true term handle Conv.UNCHANGED =>
+            case scalar_probe term of SOME th => th
+              | NONE => raise Conv.UNCHANGED)
         fun safe_walk term =
           case Redblackmap.peek (!safe_saved,term) of SOME th => th
           | NONE =>
               let
-                val direct = SOME (length_step true term)
+                val direct = SOME (safe_step term)
                   handle Conv.UNCHANGED => NONE | Feedback.HOL_ERR _ => NONE
                 val result = case direct of SOME th => SOME th
                   | NONE => if Term.is_comb term andalso
                       not (scalar_literal term) then
-                      let val (f,x) = Term.dest_comb term
-                          val left = safe_walk f val right = safe_walk x
-                      in case (left,right) of (NONE,NONE) => NONE
-                        | _ => SOME (Thm.MK_COMB
-                            (Option.getOpt (left,Thm.REFL f),
-                             Option.getOpt (right,Thm.REFL x))) end
+                      let
+                        val (f,x) = Term.dest_comb term
+                        val left = safe_walk f
+                        val start = Option.map
+                          (fn th => Thm.MK_COMB (th,Thm.REFL x)) left
+                        (* A newly exposed controller may erase x. Do not
+                           even spend the bounded scalar-probe allowance
+                           on that unreachable operand. *)
+                        val erased = case start of NONE => NONE
+                          | SOME th => SOME (Thm.TRANS th
+                              (project (boolSyntax.rhs (Thm.concl th))))
+                              handle Conv.UNCHANGED => NONE
+                                | Feedback.HOL_ERR _ => NONE
+                      in case erased of SOME th => SOME th
+                        | NONE =>
+                          let val right = safe_walk x
+                          in case (left,right) of (NONE,NONE) => NONE
+                            | _ => SOME (Thm.MK_COMB
+                                (Option.getOpt (left,Thm.REFL f),
+                                 Option.getOpt (right,Thm.REFL x))) end
+                      end
                     else NONE
+                val result = case result of NONE => NONE | SOME th =>
+                  let val target = boolSyntax.rhs (Thm.concl th)
+                      val rest = SOME (safe_step target)
+                        handle Conv.UNCHANGED => NONE
+                          | Feedback.HOL_ERR _ => NONE
+                  in case rest of NONE => SOME th
+                    | SOME rest =>
+                        let val proof = Thm.TRANS th rest
+                        in case safe_walk (boolSyntax.rhs (Thm.concl rest)) of
+                            NONE => SOME proof
+                          | SOME final => SOME (Thm.TRANS proof final) end
+                  end
                 val _ = safe_saved := Redblackmap.insert
                   (!safe_saved,term,result)
               in result end
+        val saved = ref (Redblackmap.mkDict Term.compare)
         fun discard_step term =
           project term handle Conv.UNCHANGED =>
           let
@@ -513,105 +722,24 @@ struct
             val _ = if (named "bool" ["COND"] head andalso length args=3)
                 orelse (named "list" ["TAKE","DROP"] head andalso
                   length args=2) then () else raise Conv.UNCHANGED
-            (* A controller is NOT necessarily demanded: branch LENGTHs
-               may later expose COND_ID through arbitrary list wrappers.
-               Probe only a non-expanding Boolean/numeric skeleton. Unknown
-               computations (notably EXP) remain opaque, even when closed.
-               On a miss the original LENGTH walk retains its old order. *)
+            (* This controller is now demanded, after non-forcing branch
+               shape discovery and root projection. Use the complete old
+               checked procedure, not a finite controller grammar. Never
+               descend into the operands it might erase. *)
             val original = hd args
             val _ = admit original
-            val variables = ref (Term.all_vars original)
-            val bindings = ref (Redblackmap.mkDict Term.compare)
-            fun atom actual = case Redblackmap.peek (!bindings,actual) of
-                SOME hole => hole
-              | NONE =>
-                  let val hole = Term.variant (!variables @
-                        List.map #2 (Redblackmap.listItems (!bindings)))
-                        (Term.genvar (Term.type_of actual))
-                  in bindings := Redblackmap.insert
-                       (!bindings,actual,hole);hole end
-            (* This is an optional, non-expanding probe. An opaque beta
-               controller must not start duplicating a large argument before
-               the full LENGTH walk can discover guard independence. Count
-               only free uses, stopping at two; leave nonlinear binders on
-               the unchanged full procedure, not on this early probe. *)
-            fun uses v term =
-              if not (Term.free_in v term) then 0
-              else if Term.is_var term then 1
-              else if Term.is_comb term then
-                let val (f,x) = Term.dest_comb term
-                    val n = uses v f
-                in if n >= 2 then 2 else Int.min (2,n + uses v x) end
-              else if Term.is_abs term then uses v (#2 (Term.dest_abs term))
-              else 0
-            (* Keep beta/I controllers, not just their numeric/Boolean
-               children. Under a binder, only independent syntax can be
-               an INST hole: abstracting a dependent body as a free atom
-               would lose the argument relationship (or capture it later).
-               Unknown dependent applications retain congruence structure;
-               their independent operator/operands remain opaque. Thus an
-               EXP is never computed by this non-forcing probe. *)
-            fun controller bound actual =
-              if scalar_literal actual orelse
-                  Term.aconv actual boolSyntax.T orelse
-                  Term.aconv actual boolSyntax.F orelse
-                  List.exists (fn v => Term.aconv v actual) bound then actual
-              else if Term.is_abs actual then
-                let
-                  val (v,body) = Term.dest_abs actual
-                in if uses v body > 1 then
-                    if List.exists (fn v => Term.free_in v actual) bound
-                    then raise Conv.UNCHANGED else atom actual
-                  else
-                  let
-                    (* dest_abs may itself freshen a stored binder. Avoid
-                       previous holes as well as future holes, so INST can
-                       never capture an occurrence name on reclosure. *)
-                    val fresh = Term.variant (Term.free_vars actual @
-                      bound @ List.map #2
-                        (Redblackmap.listItems (!bindings))) v
-                    val body = if Term.aconv fresh v then body else
-                      Term.subst [{redex=v,residue=fresh}] body
-                    val _ = variables := fresh :: !variables
-                  in Term.mk_abs
-                    (fresh,controller (fresh::bound) body) end
-                end
-              else
-                let val (head,args) = boolSyntax.strip_comb actual
-                in if named "min" ["="] head orelse
-                     named "bool" ["COND","/\\","\\/","==>","~"] head
-                     orelse named "arithmetic"
-                       ["+","-","*","DIV","MOD","MIN","MAX","<="] head
-                     orelse named "prim_rec" ["<","PRE"] head
-                     orelse named "num" ["SUC"] head
-                     orelse named "combin" ["I","K"] head then
-                     Term.list_mk_comb
-                       (head,List.map (controller bound) args)
-                   else if Term.is_abs head orelse
-                       List.exists (fn v => Term.free_in v actual) bound
-                     then
-                       let val (f,x) = Term.dest_comb actual
-                       in Term.mk_comb
-                         (controller bound f,controller bound x) end
-                   else atom actual end
-            val schema = controller [] original
-            val _ = admit schema
-            val proof = Lib.with_flag (computing_scalars,false)
-              (simplify_raw list_rewrites) schema
-            val guard = Thm.INST (List.map (fn (actual,hole) =>
-              {redex=hole,residue=actual})
-              (Redblackmap.listItems (!bindings))) proof
-            val (l,r) = boolSyntax.dest_eq (Thm.concl guard)
-            val _ = if Term.aconv l original then ()
-              else raise Conv.UNCHANGED
-            val _ = List.app admit (l::r::Thm.hyp guard)
+            val guard = simplify_raw list_rewrites original
+            val _ = if Term.aconv original
+                (boolSyntax.rhs (Thm.concl guard)) then
+                raise Conv.UNCHANGED else ()
             val preparation = List.foldl (fn (arg,th) =>
                 Thm.MK_COMB (th,Thm.REFL arg))
               (Thm.MK_COMB (Thm.REFL head,guard)) (tl args)
             val prepared = boolSyntax.rhs (Thm.concl preparation)
             val _ = admit prepared
-          in Thm.TRANS preparation (project prepared) end
-        and walk term =
+          in Thm.TRANS preparation (project prepared)
+               handle Conv.UNCHANGED => preparation end
+        fun walk term =
           case Redblackmap.peek (!saved,term) of SOME result => result
           | NONE =>
             let
