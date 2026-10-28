@@ -120,6 +120,76 @@ struct
       (declines (fn () =>
         SOME (SmtDatatypeProve.datatype_prove false_goal))) end
 
+  (* EnumType deliberately replaces distinct_of with a checked conversion
+     above 15 constructors. A rewrite-only fallback loses those small laws.
+     Test both sides of the threshold and a much larger declaration, without
+     admitting its entire representation/case bundle to generic procedures. *)
+  fun enum_fallback () =
+    let
+      fun check count =
+        let
+          val name = "structured_enum" ^ Int.toString count
+          val _ = Datatype [QUOTE (name ^ " = " ^
+            String.concatWith " | " (List.tabulate (count,fn i =>
+              "StructuredEnum" ^ Int.toString count ^ "C" ^ Int.toString i)))]
+          val ty = Type.mk_type (name,[])
+          val cs = SmtDatatypeProve.constructors_of ty
+          val left = hd cs
+          val right = List.last cs
+          fun neq (l,r) = boolSyntax.mk_neg (boolSyntax.mk_eq (l,r))
+          val goal = neq (left,right)
+          (* Standard rewriting exposes a fresh enum redex: this must also
+             reach the checked fallback, not only initial discovery. *)
+          val exposed = neq (Term.mk_comb
+            (Term.inst [``:'a`` |-> ty] ``I:'a -> 'a``,left),right)
+          val native = simpLib.SIMP_PROVE (srw_ss ()) [] goal
+          val _ = exact goal [] native
+          val bounded = SmtDatatypeProve.checked_procedures
+            (A.new_term_check {limit=32,observe=fn () => ()})
+          val _ = List.app (fn prove => List.app (fn target =>
+            let val th = prove target
+            in exact target [] th;
+               require "enum fallback changed full tags"
+                 (Tag.dest_tag (Thm.tag th) = Tag.dest_tag (Thm.tag native))
+            end) [goal,neq (right,left),neq (left,hd (tl cs)),exposed])
+            [SmtDatatypeProve.datatype_simp_prove,
+             SmtDatatypeProve.datatype_prove,#simp bounded,#prove bounded]
+          val assumption = ``enum_assumption:bool``
+          val _ = exact goal [assumption]
+            (#consequence bounded ([assumption],goal))
+          val _ = with_graph (fn graph => fn scope =>
+            let val result = A.prove_admitted graph scope
+                  {inputs=[import graph scope goal],template_limit=128,
+                   observe=fn _ => (),procedure=fn admit => fn [target] =>
+                     SmtDatatypeProve.datatype_prove_with_admission admit target
+                     | _ => raise Fail "enum schema arity"}
+            in exact goal [] (#theorem result) end)
+          val _ = List.app (fn target => require
+            "false enum obligation proved"
+            (declines (fn () => SOME (#simp bounded target))))
+            [boolSyntax.mk_eq (left,right),neq (left,left)]
+          (* Check a failure at a conversion-only operand, not merely at the
+             input gate. It must survive Traverse's exception filtering and
+             the full ladder without retries or later admission effects. *)
+          val stopped = ref false
+          val numeric = boolSyntax.mk_eq (numSyntax.zero_tm,
+            numSyntax.term_of_int (count-1))
+          fun admit tm =
+            if !stopped then raise Fail "enum retried after admission failure"
+            else if tm ~~ numeric then
+              (stopped := true;
+               raise Feedback.mk_HOL_ERR "Task39Enum" "numeric" "first error")
+            else A.new_term_check {limit=128,observe=fn () => ()} tm
+          val _ = if count <= 15 then () else require
+            "enum conversion swallowed its first admission exception"
+            (((ignore (SmtDatatypeProve.datatype_prove_with_admission admit
+                exposed);false)
+              handle Feedback.HOL_ERR detail =>
+                Feedback.top_structure_of detail = "Task39Enum" andalso
+                Feedback.message_of detail = "first error") andalso !stopped)
+        in () end
+    in List.app check [15,16,64] end
+
   fun tester_validation () =
     let
       val value = ``d:bool option``
@@ -614,7 +684,7 @@ struct
   fun run () =
     (schemas ();tester_validation ();graph_operators ();
      generic_authority ();cpc_cases ();cpc_identities ();
-     rewrite_fallback ();
+     rewrite_fallback ();enum_fallback ();
      cpc_splits ();inferred_split_graph ();split_admission ();
      admission_first_error ();admission_factories ();owned_cpc_admission ();
      cpc_annotations ())

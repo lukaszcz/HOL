@@ -257,9 +257,72 @@ struct
     List.foldl (fn (ty, acc) => add_thms (size_thms_for_type ty) acc)
       [] (datatype_types t)
 
-  (* Preserve pure srw rewrites, not its dynamic TypeBase conversions.
-     Ask for candidates at EACH redex, including newly introduced operators
-     and side conditions. There is no all-exported admission/search pass. *)
+  (* Large enums omit distinct_of; TypeBase instead installs EnumType's
+     representation conversion. Reconstruct that checked proof locally,
+     selecting just the two representation equations by syntax. Never give
+     the entire declaration bundle to a generic matcher or simplifier. *)
+  val enum_facts = ref ([] : (TypeBasePure.tyinfo * Thm.thm list) list)
+  fun enum_representation ty =
+    case TypeBase.fetch ty of NONE => []
+    | SOME metadata =>
+        (case List.find (fn (saved,_) =>
+            Portable.pointer_eq (saved,metadata)) (!enum_facts) of
+           SOME (_,facts) => facts
+         | NONE =>
+             let
+               (* TypeBase resolves and removes the EnumType extra sexp.
+                  Its proved representation bundle remains in simpls_of. *)
+               val facts = List.concat (List.map conjuncts
+                 (#rewrs (TypeBasePure.simpls_of metadata)))
+               val _ = enum_facts := (metadata,facts) ::
+                 List.take (!enum_facts,Int.min (15,length (!enum_facts)))
+             in facts end)
+
+  fun enum_equality tm =
+    let
+      val (left,right) = boolSyntax.dest_eq tm
+      val _ = if Term.is_const left andalso Term.is_const right andalso
+          not (earlier_rung_type (Term.type_of left)) andalso
+          not (Term.same_const left right) then () else raise Conv.UNCHANGED
+      fun equation constructor th =
+        case Lib.total (boolSyntax.dest_eq o Thm.concl) th of
+          SOME (lhs,rhs) =>
+            Term.is_comb lhs andalso Term.aconv (Term.rand lhs) constructor
+            andalso numSyntax.is_numeral rhs
+        | NONE => false
+      val facts = enum_representation (Term.type_of left)
+      fun select constructor =
+        case List.find (equation constructor) facts of
+          SOME th => (admit_thm th;th)
+        | NONE => raise Conv.UNCHANGED
+      val lth = select left
+      val rth = select right
+      val rep = Term.rator (boolSyntax.lhs (Thm.concl lth))
+      val _ = if Term.aconv rep (Term.rator (boolSyntax.lhs (Thm.concl rth)))
+        then () else raise Conv.UNCHANGED
+      val _ = admit rep
+      val _ = admit (boolSyntax.mk_eq
+        (Term.mk_comb (rep,left),Term.mk_comb (rep,right)))
+      val numeric = boolSyntax.mk_eq
+        (boolSyntax.rhs (Thm.concl lth),boolSyntax.rhs (Thm.concl rth))
+      val _ = List.app admit [tm,numeric]
+      val eq = Thm.AP_TERM rep (Thm.ASSUME tm)
+      val numeric_eq = Thm.TRANS (Thm.SYM lth) (Thm.TRANS eq rth)
+      val _ = admit_thm numeric_eq
+      val falsity = Conv.CONV_RULE numLib.REDUCE_CONV numeric_eq
+      val _ = admit_thm falsity
+      val _ = List.app admit
+        [boolSyntax.mk_imp (tm,boolSyntax.F),boolSyntax.mk_neg tm,
+         boolSyntax.mk_eq (tm,boolSyntax.F)]
+      val result = Drule.EQF_INTRO
+        (Thm.NOT_INTRO (Thm.DISCH tm falsity))
+      val _ = admit_thm result
+    in result end
+
+  (* Preserve pure srw rewrites and the bounded enum conversion above, not
+     arbitrary dynamic TypeBase conversions. Ask for candidates at EACH
+     redex, including new operators and side conditions. There is no
+     all-exported admission/search pass. *)
   val exported_indices = ref NONE
   fun rewrite_indices () =
     case !exported_indices of SOME indices => indices
@@ -383,7 +446,10 @@ struct
       fun rewrite solver stack tm =
         let
           val _ = admit tm
-          fun attempt [] = ordinary_step solver stack tm
+          fun attempt [] =
+                (enum_equality tm handle Feedback.HOL_ERR _ =>
+                   ordinary_step solver stack tm
+                 | Conv.UNCHANGED => ordinary_step solver stack tm)
             | attempt (conv::rest) = conv solver stack tm
                 handle Feedback.HOL_ERR _ => attempt rest
                      | Conv.UNCHANGED => attempt rest
@@ -421,12 +487,26 @@ struct
       else with_exported_rewrites (fn ss => prove ss thms)
 
   fun datatype_simp_with_fallback fallback t =
-    let val _ = admit t
-        val thms = datatype_rewrite_thms t
+    let
+      val _ = admit t
+      (* Enum disjointness needs only two small representation equations,
+         not the entire set of constructor case laws or a failed size proof.
+         Discover checked local rewrites before generic simplification. The
+         ordinary ladder remains available if these alone do not suffice. *)
+      val enums = List.mapPartial (fn eq =>
+        SOME (enum_equality eq) handle Feedback.HOL_ERR _ => NONE
+          | Conv.UNCHANGED => NONE)
+        (HolKernel.find_terms boolSyntax.is_eq t)
+      fun ordinary () =
+        let val thms = datatype_rewrite_thms t
+        in if List.null thms then unsupported t
+           else with_rewrite_fallback fallback
+             (fn ss => fn facts => simpLib.SIMP_PROVE ss facts t) thms
+        end
     in
-      if List.null thms then unsupported t
-      else with_rewrite_fallback fallback
-        (fn ss => fn facts => simpLib.SIMP_PROVE ss facts t) thms
+      if null enums then ordinary ()
+      else (simpLib.SIMP_PROVE numLib.std_ss enums t
+        handle Feedback.HOL_ERR _ => ordinary ())
     end
 
   fun datatype_simp_prove t = datatype_simp_with_fallback true t
