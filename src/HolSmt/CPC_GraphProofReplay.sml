@@ -246,6 +246,12 @@ struct
         Option.isSome native_reservation
       fun notify event = observer event
         handle error => raise ObserverFailure error
+      (* Abort notification is cleanup, not an alternative replay failure.
+         Preserve every primary exception, including opaque admission
+         carriers, until its owning consumer restores it. *)
+      fun forced_abort occurrence error =
+        ((notify (ForcedAbort {serial = occurrence}) handle _ => ());
+         raise error)
       fun validate_owned work =
         let val original = W.original_sources work
             val limits = W.semantic_limits work
@@ -2080,30 +2086,8 @@ struct
                            located = {term = Thm.concl theorem,
                              provenance = #provenance result}})
                         in theorem end
-                        fun abort error =
-                          let
-                            val _ = notify (ForcedAbort {serial = occurrence})
-                              handle abort_error =>
-                                (case error of ObserverFailure _ => raise error
-                                 | Feedback.HOL_ERR detail =>
-                                     (case owned_work of
-                                        SOME work =>
-                                          if #retired (W.audit work) orelse
-                                              SmtResource.is_resource_gate
-                                                detail then raise error
-                                          else raise abort_error
-                                      | NONE =>
-                                          if SmtResource.is_resource_gate
-                                              detail then raise error
-                                          else raise abort_error)
-                                 | _ =>
-                                     (case owned_work of
-                                        SOME work =>
-                                          if #retired (W.audit work) then
-                                            raise error else raise abort_error
-                                      | NONE => raise abort_error))
-                          in raise error end
-                      in execute () handle error => abort error end
+                      in execute () handle error =>
+                        forced_abort occurrence error end
       fun force_obligation obligation = case owned_work of NONE =>
           force_obligation_using raw admit obligation
         | SOME work =>
@@ -4001,17 +3985,8 @@ struct
                            located = {term = Thm.concl theorem,
                              provenance = #provenance result}})
                         in theorem end
-                        fun abort error =
-                          let
-                            val _ = notify (ForcedAbort {serial = occurrence})
-                              handle abort_error =>
-                                (case error of ObserverFailure _ => raise error
-                                 | Feedback.HOL_ERR detail =>
-                                     if SmtResource.is_resource_gate detail then
-                                       raise error else raise abort_error
-                                 | _ => raise abort_error)
-                          in raise error end
-                      in execute () handle error => abort error end)
+                      in execute () handle error =>
+                        forced_abort occurrence error end)
                 fun attempt [] =
                       (generalized () handle Feedback.HOL_ERR error =>
                         case owned_work of

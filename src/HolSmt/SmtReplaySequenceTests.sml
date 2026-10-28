@@ -461,10 +461,16 @@ struct
     in require "large supported sequence worker was retried" (!calls=1);
        exact goal [] theorem;same_tags native theorem end)
 
+  val mixed_replacement_goal =
+    ``smt_seq_replace_all ([1;2;1;2;1;2;1;2]:int list) [1] [3] =
+        [3;2;3;2;3;2;3;2] /\
+      smt_seq_replace_all ([1;2]:int list) [1;2] [3] = [3]``
+
   fun ground_replacement () =
     let
       val goals =
-        [``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;2;3]``,
+        [mixed_replacement_goal,
+         ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;2;3]``,
          ``smt_seq_replace_all ([1;1;1]:int list) [1;1] [2] = [2;1]``,
          ``smt_seq_replace_all ([1;2]:int list) [] [3] = [1;2]``,
          ``smt_seq_replace_all ([(1w+2w);3w]:8 word list) [3w] [4w] =
@@ -479,7 +485,10 @@ struct
     in List.app (fn goal => require "false closed replacement was accepted"
          (declines (fn () => SOME
            (SmtSeqProve.seq_prove_with_admission check goal))))
-         [``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;3;2]``,
+         [``smt_seq_replace_all ([1;2;1;2;1;2;1;2]:int list) [1] [3] =
+              [3;2;3;2;3;2;3;2] /\
+            smt_seq_replace_all ([1;2]:int list) [1;2] [3] = [4]``,
+          ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;3;2]``,
           ``smt_seq_replace_all ([1;2;1;2;1;2;1;2]:int list) [1] [3] =
               [3;2;3;2;3;2;3;4]``]
     end
@@ -548,11 +557,18 @@ struct
   (* Shape laws discard elements, not just equal list operands. The input
      fits the unchanged checked allowance; evaluating its irrelevant value
      would produce a 16387-node numeral and must never be attempted. *)
+  val nested_length_goal =
+    ``([LENGTH [2 EXP 8192]]:num list) ++ [] = [1]``
+
   fun irrelevant_scalars () =
     let
       val admit = A.new_term_check {limit=4096,observe=fn () => ()}
       val goals =
-        [``isPREFIX ([]:num list) [2 EXP 8192]``,
+        [nested_length_goal,
+         ``([LENGTH (TAKE 0 [2 EXP 8192])]:num list) ++ [] = [0]``,
+         ``([1 + LENGTH [2 EXP 8192]]:num list) ++ [] = [2]``,
+         ``([LENGTH [2 EXP 8192];1+1]:num list) ++ [] = [1;2]``,
+         ``isPREFIX ([]:num list) [2 EXP 8192]``,
          ``TAKE 0 ([2 EXP 8192]:num list) = []``,
          ``([if T then 2 else 2 EXP 8192]:num list) ++ [] = [2]``,
          ``([2 EXP 8192;1+1]:num list) ++ [] = [2 EXP 8192;2]``]
@@ -561,6 +577,29 @@ struct
           handle error => raise Fail (Library.term_to_string goal ^ ": " ^
             General.exnMessage error))) goals
     end
+
+  (* Complete admitted CPC assembly for the two supported-input reviews;
+     this also checks worker selection, exact Goal/Hyp and all native tags. *)
+  fun nested_and_mixed_cpc () =
+    let
+      val admit = A.new_term_check {limit=4096,observe=fn () => ()}
+      val _ = exact nested_length_goal []
+        (SmtSeqProve.seq_contextual_prove_with_admission
+          admit [] nested_length_goal)
+      val _ = require "false nested shape-only LENGTH was accepted"
+        (declines (fn () => SOME
+          (SmtSeqProve.seq_prove_with_admission admit
+            ``([LENGTH [2 EXP 8192]]:num list) ++ [] = [2]``)))
+    in List.app (fn goal =>
+      let val native = SmtSeqProve.seq_prove goal
+      in H.cpc_arguments_using_admitted 4096
+        (fn admit => fn input =>
+          let val result as (theorem,_) =
+                CPC_ProofReplay.graph_bounded_worker_with_admission
+                  admit [] input
+          in same_tags native theorem;result end)
+        goal [] "seq-eval-op" [H.Object goal] true end)
+      [nested_length_goal,mixed_replacement_goal] end
 
   val replacement_goal =
     ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;2;3]``
@@ -795,6 +834,151 @@ struct
         (!stopped andalso primary_preserved result andalso !after=0)
     in H.cpc_arguments goal [] "trust" [H.Object goal] true end
 
+  (* ForcedAbort is cleanup at BOTH force sites. In particular, an opaque
+     admission carrier must survive a failing observer until the outer
+     consumer restores its exact primary exception. The legacy fixture uses
+     the real native TRUST deferral, not a test worker returning ASSUME. *)
+  structure CleanupReplay = CPC_GraphProofReplay
+  fun cleanup_precedence () =
+    let
+      exception CallbackPrimary of unit ref
+      exception CleanupFailure
+      val token = ref ()
+      val callback_primary = CallbackPrimary token
+      val ordinary = Feedback.mk_HOL_ERR
+        "Task40Cleanup" "callback" "ordinary primary"
+      val resource = case Exn.capture (fn () =>
+          SmtResource.check_dag_size_with_limit
+            "Sequence" "cleanup-precedence" 1 2) () of
+          Exn.Exn error => error
+        | _ => raise Fail "missing cleanup resource fixture"
+      fun same_hol expected error = case (expected,error) of
+          (Feedback.HOL_ERR left,Feedback.HOL_ERR right) =>
+            Feedback.top_structure_of left = Feedback.top_structure_of right
+            andalso Feedback.top_function_of left =
+              Feedback.top_function_of right
+            andalso Feedback.message_of left = Feedback.message_of right
+            andalso SmtResource.is_resource_gate left =
+              SmtResource.is_resource_gate right
+        | _ => false
+      fun same_callback (CallbackPrimary actual) =
+            Portable.pointer_eq (token,actual)
+        | same_callback _ = false
+      val _ = require "cleanup resource fixture lost its classifier"
+        (case resource of Feedback.HOL_ERR detail =>
+           SmtResource.is_resource_gate detail | _ => false)
+      fun check legacy (primary,classify) carried cleanup_fails =
+        with_graph (fn graph => fn scope =>
+        let
+          val sequence_goal =
+            ``smt_seq_nth ([sequence_cleanup:bool]) 0 = sequence_cleanup``
+          (* The native TRUST worker defers private-marker propositions even
+             when reflexivity can independently close them during forcing. *)
+          val marker = Term.mk_var ("@fp.sequence_cleanup",Type.bool)
+          val goal = if legacy then boolSyntax.mk_eq (marker,marker)
+                     else sequence_goal
+          val sources = SmtReplaySource.new graph scope limit
+            {goal=goal,assumptions=[]}
+          val target = #node (SmtReplaySource.goal_source sources)
+          fun located node:SmtLib_GraphFrontend.term =
+            {node=node,scope=scope,binder_blocks=[],source_syntax=NONE,
+             occurrence=SmtLib_Parser.ConstructionOccurrence
+               {value=node,role=SmtLib_Parser.ConstructionAtom,
+                token="cleanup-precedence",children=[]}}
+          fun registered name = valOf (CPC_Proof.lookup_rule "1.3.4" name)
+          val proof:CPC_ProofParser.graph_proof =
+            {cvc_version="1.3.4",commands=
+              [CPC_ProofParser.GraphAssume ("@denied",located
+                 (SmtReplaySource.denied_goal_node sources)),
+               CPC_ProofParser.GraphStep {pop=false,step=
+                 {id="@seq",rule=registered "trust",premises=[],
+                  conclusion=SOME (located target),
+                  args=[CPC_ProofParser.GraphTerm (located target)],
+                  raw_conclusion=NONE,raw_args=[]}},
+               CPC_ProofParser.GraphStep {pop=false,step=
+                 {id="@done",rule=registered "resolution",
+                  premises=["@seq","@denied"],
+                  conclusion=SOME
+                    (located (G.constant graph scope boolSyntax.F)),
+                  args=[],raw_conclusion=NONE,raw_args=[]}}]}
+          val forced = ref 0
+          val callbacks = ref 0
+          val begins = ref 0
+          val aborts = ref 0
+          val ends = ref 0
+          val invocation_aborts = ref 0
+          val invocation_ends = ref 0
+          val worker = CPC_ProofReplay.graph_bounded_worker []
+          fun reject _ = (callbacks := !callbacks+1;raise primary)
+          fun force _ =
+            (forced := !forced+1;
+             if carried then
+               (* Reenter the public checked entry inside the graph's real
+                  consumer scope; do not manufacture its private carrier. *)
+               (ignore (SmtSeqProve.seq_prove_with_admission
+                  reject sequence_goal);
+                raise Fail "cleanup callback unexpectedly returned")
+             else raise primary)
+          fun observer event = case event of
+              CleanupReplay.ForcedBegin _ => begins := !begins+1
+            | CleanupReplay.ForcedEnd _ => ends := !ends+1
+            | CleanupReplay.ForcedAbort _ =>
+                (aborts := !aborts+1;
+                 if cleanup_fails then raise CleanupFailure else ())
+            | CleanupReplay.InvocationAbort =>
+                (invocation_aborts := !invocation_aborts+1;
+                 if cleanup_fails then raise CleanupFailure else ())
+            | CleanupReplay.InvocationEnd =>
+                invocation_ends := !invocation_ends+1
+            | _ => ()
+          fun replay force observe =
+            if legacy then CleanupReplay.check_contradiction_observing
+              {graph=graph,scope=scope,sources=sources,proof=proof,
+               ordinary_limit=limit,template_limit=limit,worker=worker,
+               force_worker=SOME force,observer=observe}
+            else CleanupReplay.check_contradiction_owned_proof_completing
+              {graph=graph,scope=scope,sources=sources,proof=proof,
+               ordinary_limit=limit,template_limit=limit,worker=worker,
+               owned_force_worker=fn {step,premises,...} =>
+                 force (step,premises),
+               completion=fn {prove,...} => (ignore (prove target);NONE),
+               direct_deferred=fn _ => NONE,check_type=fn _ => (),
+               observer=observe}
+          fun preserved result = case result of Exn.Exn error =>
+                classify error
+            | _ => false
+          val result = Exn.capture (fn () => replay force observer) ()
+          val _ = require "cleanup force/abort path was not exercised once"
+            (!forced=1 andalso !begins=1 andalso !aborts=1 andalso
+             !invocation_aborts=1 andalso !ends=0 andalso
+             !invocation_ends=0 andalso
+             !callbacks=(if carried then 1 else 0))
+          val _ = require ("cleanup replaced or exposed the primary exception: " ^
+            "legacy=" ^ Bool.toString legacy ^ " carried=" ^
+            Bool.toString carried ^ " failing=" ^
+            Bool.toString cleanup_fails ^ " got=" ^
+            (case result of Exn.Exn error => General.exnMessage error
+             | _ => "success")) (preserved result)
+          (* A leaked consumer scope would expose a carrier here instead of
+             the same raw primary. Then recover in the SAME graph and scope. *)
+          val reset = Exn.capture (fn () =>
+            SmtSeqProve.seq_prove_with_admission reject sequence_goal) ()
+          val _ = require "cleanup did not restore admission scope"
+            (preserved reset andalso
+             !callbacks=(if carried then 2 else 1))
+          val _ = exact sequence_goal [] (SmtSeqProve.seq_prove sequence_goal)
+          fun healthy (input as (step:CPC_Proof.step,_)) =
+            if legacy then (Thm.REFL marker,valOf (#conclusion step))
+            else worker input
+          val recovered = replay healthy (fn _ => ())
+        in exact boolSyntax.F [boolSyntax.mk_neg goal] recovered end)
+      val primaries =
+        [(resource,same_hol resource),(ordinary,same_hol ordinary),
+         (callback_primary,same_callback)]
+    in List.app (fn legacy => List.app (fn primary =>
+      List.app (fn carried => List.app (check legacy primary carried)
+        [false,true]) [false,true]) primaries) [false,true] end
+
   fun run () =
     List.app (fn (name,test) => test () handle error =>
       raise Fail (name ^ ": " ^ General.exnMessage error))
@@ -806,10 +990,12 @@ struct
        ("replacement",ground_replacement),("scalars",closed_scalars),
        ("opaque",opaque_scalar_cancellation),
        ("irrelevant",irrelevant_scalars),
+       ("nested/mixed CPC",nested_and_mixed_cpc),
        ("fuel error",replacement_first_error),("witness",witness_first_error),
        ("reset",replacement_closure_reset),
        ("nested scalar",nested_scalar_first_error),
        ("observer",arithmetic_observer_first_error),
        ("consumer",native_consumer_first_error),
-       ("reentrant graph",reentrant_graph_error),("large",large_input)]
+       ("reentrant graph",reentrant_graph_error),("large",large_input),
+       ("cleanup precedence",cleanup_precedence)]
 end

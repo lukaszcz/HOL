@@ -301,7 +301,7 @@ struct
        on all the remaining unequal list suffixes. Reuse checked equalities
        for shared syntax; never run a recursive CBV/SIMP on the sequence.
        Application transport is kernel congruence, not matching/INST. *)
-    fun scalar_occurrences tm =
+    fun scalar_occurrences_raw tm =
       Lib.with_flag (computing_scalars,true) (fn tm =>
       let
         val saved = ref (Redblackmap.mkDict Term.compare)
@@ -312,8 +312,17 @@ struct
               val literal = scalar_literal term
               val direct = if literal then NONE else SOME (scalar_step term)
                 handle Conv.UNCHANGED => NONE | Feedback.HOL_ERR _ => NONE
+              (* Only explicit sequence constructors are strict here.
+                 In particular, LENGTH/TAKE/COND nested in an element must
+                 first use their demand-driven constructor laws, not force
+                 values that those laws can discard. Partial applications
+                 retain the same head while MK_COMB transports each child. *)
+              val (head,_) = boolSyntax.strip_comb term
+              val strict = named "list"
+                  ["CONS","APPEND","SNOC","REVERSE"] head orelse
+                named "HolSmt" ["smt_seq_replace_all"] head
               val result = case direct of SOME th => SOME th
-                | NONE => if not literal andalso Term.is_comb term then
+                | NONE => if strict andalso Term.is_comb term then
                     let
                       val (f,x) = Term.dest_comb term
                       val left = walk f val right = walk x
@@ -328,7 +337,15 @@ struct
                   else NONE
               val _ = saved := Redblackmap.insert (!saved,term,result)
             in result end
-        val result = walk tm
+        (* The batch selector admits only equalities. Do not recurse into
+           arbitrary Boolean elements as though their children were strict. *)
+        val (l,r) = boolSyntax.dest_eq tm
+        val left = walk l val right = walk r
+        val result = case (left,right) of (NONE,NONE) => NONE
+          | _ => SOME (Thm.MK_COMB
+              (Thm.AP_TERM (Term.rator (Term.rator tm))
+                (Option.getOpt (left,Thm.REFL l)),
+               Option.getOpt (right,Thm.REFL r)))
         (* MK_COMB only transports the checked scalar equalities. It does
            not match, simplify or open binders on its application operands.
            Admit the completed sides ONCE before the next generic operation,
@@ -360,12 +377,99 @@ struct
           local_step prove handle primary => (restore ();raise primary)
         val _ = restore ()
       in result end
-    fun simplify facts tm =
+    fun simplify_raw facts tm =
       (admit tm;with_rewrites facts (fn ss =>
         let val result = simpLib.SIMP_CONV ss [] tm
             val (left,right) = boolSyntax.dest_eq (Thm.concl result)
             val _ = List.app admit (left::right::Thm.hyp result)
         in result end))
+
+    (* LENGTH observes list shape, not its elements. Reduce a compact
+       constructor schema before the general simplifier descends into those
+       elements. Opaque occurrences share one typed name; only a successful
+       checked conversion is instantiated, once, back to the original term.
+       Non-constructor relationships (TAKE indices, append segments, etc.)
+       remain explicit, and a proof miss leaves the ordinary path available. *)
+    fun shape_lengths tm =
+      let
+        val saved = ref (Redblackmap.mkDict Term.compare)
+        fun length_step term =
+          let
+            val (head,args) = boolSyntax.strip_comb term
+            val _ = if is_length head andalso length args=1 then ()
+              else raise Conv.UNCHANGED
+            val bindings = ref (Redblackmap.mkDict Term.compare)
+            fun atom actual = case Redblackmap.peek (!bindings,actual) of
+                SOME hole => hole
+              | NONE => let val hole = Term.genvar (Term.type_of actual)
+                  in bindings := Redblackmap.insert
+                       (!bindings,actual,hole);hole end
+            val shapes = ref (Redblackmap.mkDict Term.compare)
+            fun shape actual =
+              case Redblackmap.peek (!shapes,actual) of SOME result => result
+              | NONE =>
+                let val result =
+                  if listSyntax.is_cons actual then
+                    let val (h,t) = listSyntax.dest_cons actual
+                    in listSyntax.mk_cons (atom h,shape t) end
+                  else if Term.is_comb actual andalso
+                      not (scalar_literal actual) then
+                    let val (f,x) = Term.dest_comb actual
+                    in Term.mk_comb (shape f,shape x) end
+                  else actual
+                  val _ = shapes := Redblackmap.insert
+                    (!shapes,actual,result)
+                in result end
+            val schema = Term.mk_comb (head,shape (hd args))
+            val _ = admit schema
+            val result = Lib.with_flag (computing_scalars,false)
+              (simplify_raw list_rewrites) schema
+            val _ = if Term.aconv (boolSyntax.lhs (Thm.concl result))
+                (boolSyntax.rhs (Thm.concl result))
+              then raise Conv.UNCHANGED else ()
+            val result = Thm.INST (List.map (fn (actual,hole) =>
+              {redex=hole,residue=actual})
+              (Redblackmap.listItems (!bindings))) result
+            val (l,r) = boolSyntax.dest_eq (Thm.concl result)
+            val _ = List.app admit (l::r::Thm.hyp result)
+          in result end
+        fun walk term =
+          case Redblackmap.peek (!saved,term) of SOME result => result
+          | NONE =>
+            let
+              val direct = SOME (length_step term)
+                handle Conv.UNCHANGED => NONE | Feedback.HOL_ERR _ => NONE
+              val result = case direct of SOME th => SOME th
+                | NONE => if Term.is_comb term andalso
+                    not (scalar_literal term) then
+                    let val (f,x) = Term.dest_comb term
+                        val left = walk f val right = walk x
+                    in case (left,right) of (NONE,NONE) => NONE
+                      | _ => SOME (Thm.MK_COMB
+                          (Option.getOpt (left,Thm.REFL f),
+                           Option.getOpt (right,Thm.REFL x))) end
+                  else NONE
+              val _ = saved := Redblackmap.insert (!saved,term,result)
+            in result end
+      in if mentions is_length tm then
+           let val result = walk tm
+               val _ = Option.app (fn th =>
+                 let val (l,r) = boolSyntax.dest_eq (Thm.concl th)
+                 in List.app admit (l::r::Thm.hyp th) end) result
+           in result end
+         else NONE end
+    fun after_shapes conversion tm =
+      case shape_lengths tm of NONE => conversion tm
+      | SOME shape =>
+          let val target = boolSyntax.rhs (Thm.concl shape)
+          in Thm.TRANS shape (conversion target) end
+    fun simplify facts = after_shapes (simplify_raw facts)
+    fun scalar_occurrences tm =
+      case shape_lengths tm of NONE => scalar_occurrences_raw tm
+      | SOME shape =>
+          (case scalar_occurrences_raw (boolSyntax.rhs (Thm.concl shape)) of
+             NONE => SOME shape
+           | SOME scalar => SOME (Thm.TRANS shape scalar))
 
     (* Bulk scalar computation is safe only for a plain list equality with
        no shared computation to cancel, or a concrete nonempty replacement
@@ -758,7 +862,8 @@ struct
                  length (#1 (listSyntax.dest_list r)) = 1
               end handle Conv.UNCHANGED => false | Feedback.HOL_ERR _ => false
             val facts = if mentions wide_unit target then
-                replacement_unit_thm::listTheory.MAP::list_rewrites
+                replacement_unit_thm::listTheory.MAP::
+                  (list_rewrites @ replace_all_rewrites)
               else replace_all_rewrites
             fun normalise matching =
               Lib.with_flag (matching_lists,matching) (fn () =>
@@ -855,8 +960,15 @@ struct
         (fn () =>
           (List.app admit (t::context);
            with_rewrites (List.map Thm.ASSUME context @ list_rewrites)
-             (fn ss => theorem (Tactical.TAC_PROOF ((context,t),
-               checked_tactic (bossLib.ASM_SIMP_TAC ss [])))))) ()
+             (fn ss =>
+               let val shape = shape_lengths t
+                   val target = case shape of NONE => t
+                     | SOME th => boolSyntax.rhs (Thm.concl th)
+                   val result = theorem (Tactical.TAC_PROOF ((context,target),
+                     checked_tactic (bossLib.ASM_SIMP_TAC ss [])))
+               in case shape of NONE => result
+                 | SOME th => theorem (Thm.EQ_MP (Thm.SYM th) result)
+               end))) ()
     else
       unsupported t
 
