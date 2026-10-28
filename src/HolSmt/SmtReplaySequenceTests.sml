@@ -468,15 +468,20 @@ struct
          ``smt_seq_replace_all ([1;1;1]:int list) [1;1] [2] = [2;1]``,
          ``smt_seq_replace_all ([1;2]:int list) [] [3] = [1;2]``,
          ``smt_seq_replace_all ([(1w+2w);3w]:8 word list) [3w] [4w] =
-             [4w;4w]``]
+             [4w;4w]``,
+         ``smt_seq_replace_all ([1;2;1;2;1;2;1;2]:int list) [1] [3] =
+             [3;2;3;2;3;2;3;2]``]
       val check = A.new_term_check {limit=limit,observe=fn () => ()}
       val _ = List.app (fn goal =>
         let val theorem = SmtSeqProve.seq_prove_with_admission check goal
         in exact goal [] theorem;
            same_tags (SmtSeqProve.seq_prove goal) theorem end) goals
-    in require "false closed replacement was accepted"
-      (declines (fn () => SOME (SmtSeqProve.seq_prove_with_admission check
-        ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;3;2]``)))
+    in List.app (fn goal => require "false closed replacement was accepted"
+         (declines (fn () => SOME
+           (SmtSeqProve.seq_prove_with_admission check goal))))
+         [``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;3;2]``,
+          ``smt_seq_replace_all ([1;2;1;2;1;2;1;2]:int list) [1] [3] =
+              [3;2;3;2;3;2;3;4]``]
     end
 
   val nested_scalar_goal =
@@ -539,6 +544,23 @@ struct
         | Exn.Exn error => raise Fail ("opaque scalar cancellation: " ^
             Library.term_to_string goal ^ ": " ^ General.exnMessage error)
     in List.app check goals end
+
+  (* Shape laws discard elements, not just equal list operands. The input
+     fits the unchanged checked allowance; evaluating its irrelevant value
+     would produce a 16387-node numeral and must never be attempted. *)
+  fun irrelevant_scalars () =
+    let
+      val admit = A.new_term_check {limit=4096,observe=fn () => ()}
+      val goals =
+        [``isPREFIX ([]:num list) [2 EXP 8192]``,
+         ``TAKE 0 ([2 EXP 8192]:num list) = []``,
+         ``([if T then 2 else 2 EXP 8192]:num list) ++ [] = [2]``,
+         ``([2 EXP 8192;1+1]:num list) ++ [] = [2 EXP 8192;2]``]
+    in List.app (fn goal =>
+         (exact goal [] (SmtSeqProve.seq_prove_with_admission admit goal)
+          handle error => raise Fail (Library.term_to_string goal ^ ": " ^
+            General.exnMessage error))) goals
+    end
 
   val replacement_goal =
     ``smt_seq_replace_all ([1;2;1]:int list) [1] [3] = [3;2;3]``
@@ -647,7 +669,7 @@ struct
      Arithmetic must unwrap its private AdmissionCallback without exposing
      the primary HOL_ERR to the inner consumer's fallback ladder. *)
   fun arithmetic_observer_first_error () =
-    with_graph (fn graph => fn scope =>
+    let fun check reentrant = with_graph (fn graph => fn scope =>
     let
       val node = import graph scope replacement_goal
       val armed = ref false
@@ -656,7 +678,11 @@ struct
       fun observe _ =
         if !stopped then after := !after+1
         else if !armed then
-          (stopped := true;raise admission_primary)
+          (stopped := true;
+           if reentrant then ignore
+             (SmtSeqProve.seq_prove_with_admission
+               (fn _ => raise admission_primary) replacement_goal)
+           else raise admission_primary)
         else ()
       fun procedure admit [term] =
             SmtSeqProve.seq_prove_with_admission (fn tm =>
@@ -688,6 +714,7 @@ struct
            SmtSeqProve.seq_prove_with_admission admit term
            | _ => raise Fail "observer recovery arity"}
     in exact replacement_goal [] (#theorem recovered) end)
+    in check false;check true end
 
   (* Invoke the admitted native workers used by the graph law producers.
      In particular do NOT put with_admission_errors around the test: the
@@ -695,12 +722,31 @@ struct
   fun native_consumer_first_error () = with_graph (fn graph => fn scope =>
     let
       val node = import graph scope replacement_goal
-      fun run label worker = first_replacement_error label (fn reject =>
-        ignore (A.prove_admitted graph scope
-          {inputs=[node],template_limit=limit,observe=fn _ => (),
-           procedure=fn admit => fn [term] =>
-             worker (fn tm => (reject tm;admit tm)) term
-             | _ => raise Fail "consumer replacement arity"}))
+      fun run label worker =
+        let
+          val _ = first_replacement_error label (fn reject =>
+            ignore (A.prove_admitted graph scope
+              {inputs=[node],template_limit=limit,observe=fn _ => (),
+               procedure=fn admit => fn [term] =>
+                 worker (fn tm => (reject tm;admit tm)) term
+                 | _ => raise Fail "consumer replacement arity"}))
+          val goal = ``smt_seq_nth ([sequence_reentrant:bool]) 0 =
+                        sequence_reentrant``
+          val stopped = ref false
+          val after = ref 0
+          fun reenter _ =
+            if !stopped then after := !after+1
+            else (stopped := true;
+              ignore (SmtSeqProve.seq_prove_with_admission
+                (fn _ => raise admission_primary) goal))
+          (* No test-added consumer scope: this is a callback reentering
+             the public checked entry while the real consumer is active. *)
+          val result = Exn.capture (fn () => worker reenter goal) ()
+          val _ = require (label ^ ": reentrant primary exception leaked")
+            (!stopped andalso primary_preserved result andalso !after=0)
+          val theorem = worker
+            (A.new_term_check {limit=limit,observe=fn () => ()}) goal
+        in exact goal [] theorem end
       fun cpc name admit term =
         let
           val located = {term=term,provenance=
@@ -730,13 +776,40 @@ struct
       run ("Z3 " ^ name ^ " recorded=" ^ Bool.toString recorded)
         (z3 recorded name)) ["th-lemma-seq","rewrite"]) [false,true] end)
 
+  fun reentrant_graph_error () =
+    let
+      val goal = ``smt_seq_nth ([sequence_reentrant:bool]) 0 =
+                    sequence_reentrant``
+      val stopped = ref false
+      val after = ref 0
+      fun worker admit input =
+        CPC_ProofReplay.graph_bounded_worker_with_admission
+          (fn tm => if !stopped then (after := !after+1;admit tm)
+            else (stopped := true;
+              ignore (SmtSeqProve.seq_prove_with_admission
+                (fn _ => raise admission_primary) goal))) [] input
+      val result = Exn.capture (fn () =>
+        H.cpc_arguments_using_admitted limit worker goal [] "trust"
+          [H.Object goal] true) ()
+      val _ = require "graph TRUST leaked its reentrant admission exception"
+        (!stopped andalso primary_preserved result andalso !after=0)
+    in H.cpc_arguments goal [] "trust" [H.Object goal] true end
+
   fun run () =
-    (schemas_and_sharing ();false_obligations ();contextual ();
-     graph_handlers ();compact_trust_identity ();parsed_z3 ();cpc_cases ();
-     admission_first_error ();intermediate_admission ();
-     ground_replacement ();closed_scalars ();opaque_scalar_cancellation ();
-     replacement_first_error ();witness_first_error ();
-     replacement_closure_reset ();nested_scalar_first_error ();
-     arithmetic_observer_first_error ();native_consumer_first_error ();
-     large_input ())
+    List.app (fn (name,test) => test () handle error =>
+      raise Fail (name ^ ": " ^ General.exnMessage error))
+      [("schemas",schemas_and_sharing),("false",false_obligations),
+       ("contextual",contextual),("handlers",graph_handlers),
+       ("trust identity",compact_trust_identity),("Z3",parsed_z3),
+       ("CPC",cpc_cases),("admission error",admission_first_error),
+       ("intermediate",intermediate_admission),
+       ("replacement",ground_replacement),("scalars",closed_scalars),
+       ("opaque",opaque_scalar_cancellation),
+       ("irrelevant",irrelevant_scalars),
+       ("fuel error",replacement_first_error),("witness",witness_first_error),
+       ("reset",replacement_closure_reset),
+       ("nested scalar",nested_scalar_first_error),
+       ("observer",arithmetic_observer_first_error),
+       ("consumer",native_consumer_first_error),
+       ("reentrant graph",reentrant_graph_error),("large",large_input)]
 end

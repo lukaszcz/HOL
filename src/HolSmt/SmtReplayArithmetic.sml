@@ -25,9 +25,13 @@ struct
       | _ => Exn.release result
     end
 
-  fun propagate_admission_error primary =
-    if !admission_scopes = 0 then raise primary
-    else raise TerminalAdmission primary
+  (* A callback may reenter an admitted worker. Its failure is already
+     terminal in the enclosing consumer: never add a second envelope. *)
+  fun propagate_admission_error (primary as TerminalAdmission _) =
+        raise primary
+    | propagate_admission_error primary =
+        if !admission_scopes = 0 then raise primary
+        else raise TerminalAdmission primary
 
   fun has_numeric_operand graph scope {inputs,observe} =
     let
@@ -392,7 +396,7 @@ struct
     in (if null (!opaque_nodes) then operator_schema ()
         else binder_schema ())
        handle TerminalAdmission (AdmissionCallback primary) =>
-                raise TerminalAdmission primary
+                propagate_admission_error primary
             | AdmissionCallback primary => raise primary end
 
   fun prove graph scope {inputs,template_limit,observe,procedure} =
