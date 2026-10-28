@@ -157,25 +157,38 @@ struct
          | _ => false) then [NONE]
     else pattern_keys tm
 
+  (* Immutable leaf syntax only. Activity and canonical suffix predicates
+     are attached from the CURRENT simpset, never frozen in this index. *)
   fun index_fragment fragment =
     let
-      val facts = List.concat (List.map Drule.CONJUNCTS
-        (simpLib.frag_rewrites fragment))
-      fun add ((rank,th),index) =
+      val sources = simpLib.frag_rewrites fragment
+      val numbered = ListPair.zip
+        (List.tabulate (length sources,Lib.I),sources)
+      val leaves = List.concat (List.map (fn (source,th) =>
+        List.map (fn leaf => (source,leaf)) (Drule.CONJUNCTS th)) numbered)
+      val ranked = ListPair.zip (List.tabulate (length leaves,Lib.I),leaves)
+      fun add ((rank,entry as (_,th)),index) =
         List.foldl (fn (key,index) =>
           let val saved = Option.getOpt (Redblackmap.peek (index,key),[])
-          in Redblackmap.insert (index,key,(rank,th)::saved) end)
+          in Redblackmap.insert (index,key,(rank,entry)::saved) end)
           index (Lib.mk_set (rewrite_keys (Thm.concl th)))
-      val ranked = ListPair.zip (List.tabulate (length facts,Lib.I),facts)
     in List.foldr add (Redblackmap.mkDict (Lib.option_compare String.compare))
          ranked end
 
-  (* Immutable declaration metadata only: no admission result or compiled
-     conversion survives an invocation. New/removed srw fragments are read
-     on demand, so later user exports are not frozen out by this snapshot. *)
   val initial_rewrite_indices = List.map (fn fragment =>
     (fragment,index_fragment fragment))
     (simpLib.ssfrags_of (bossLib.srw_ss ()))
+
+  fun index_sources (fragment,sources) =
+    let
+      val index = case List.find (fn (saved,_) =>
+          Portable.pointer_eq (saved,fragment)) initial_rewrite_indices of
+          SOME (_,index) => index
+        | NONE => index_fragment fragment
+      val active = Array.array (length (simpLib.frag_rewrites fragment),NONE)
+      val _ = List.app (fn entry as (rank,_,_) =>
+        Array.update (active,rank,SOME entry)) sources
+    in (index,active) end
 
   (* Each invocation supplies its own admission continuation. Declaration
      bundles are projected by kernel CONJUNCT rules before generic matching;
@@ -290,6 +303,12 @@ struct
             Term.is_comb lhs andalso Term.aconv (Term.rand lhs) constructor
             andalso numSyntax.is_numeral rhs
         | NONE => false
+      (* A fitting distinctness law is both cheaper and more general than
+         optional representation reconstruction. In particular its small
+         caller cap need not admit the numerals of a high-index enum. *)
+      val _ = case Lib.total TypeBase.distinct_of (Term.type_of left) of
+          SOME _ => raise Conv.UNCHANGED
+        | NONE => ()
       val facts = enum_representation (Term.type_of left)
       fun select constructor =
         case List.find (equation constructor) facts of
@@ -325,35 +344,258 @@ struct
      all-exported admission/search pass. *)
   val exported_indices = ref NONE
   fun rewrite_indices () =
-    case !exported_indices of SOME indices => indices
-    | NONE =>
+    let val current = bossLib.srw_ss ()
+    in case !exported_indices of
+        SOME (saved,indices) =>
+          if Portable.pointer_eq (saved,current) then indices
+          else fresh_indices current
+      | NONE => fresh_indices current
+    end
+  and fresh_indices current =
+    let val indices = List.map index_sources (simpLib.rewrite_sources current)
+        val _ = exported_indices := SOME (current,indices)
+    in indices end
+
+  (* Count canonical names for a skipped (oversize) source leaf using
+     syntax only. It must still occupy its original suffixes: deleting a
+     generated name must not delete a different, fitting sibling instead.
+     This mirrors Cond_rewr's cardinality, not its proof construction. *)
+  fun rewrite_count (th,control) =
+    let
+      val bounded = case control of BoundedRewrites.UNBOUNDED => false
+        | _ => true
+      fun eqcount hypotheses (l,r) =
         let
-          fun index fragment =
-            case List.find (fn (saved,_) =>
-                Portable.pointer_eq (saved,fragment))
-                initial_rewrite_indices of
-              SOME (_,index) => index
-            | NONE => index_fragment fragment
-          val indices = List.map index
-            (simpLib.ssfrags_of (bossLib.srw_ss ()))
-          val _ = exported_indices := SOME indices
-        in indices end
+          val loops = if Term.is_var l then Term.free_in l r
+            else HolKernel.can (HolKernel.find_term (Term.aconv l)) r
+          fun literal t = Term.aconv t boolSyntax.T orelse
+            Term.aconv t boolSyntax.F
+          fun member v = List.exists (Term.aconv v) hypotheses
+          val safe = not (Term.is_var l) orelse Term.type_of l <> Type.bool
+            orelse member l orelse bounded
+          val extra = List.exists (fn v => not (member v) andalso
+              not (List.exists (Term.aconv v) (Term.free_vars l)))
+            (Term.free_vars r)
+          val left = if safe andalso not extra then l
+            else boolSyntax.mk_eq (l,r)
+          val right = if safe andalso not extra then r else boolSyntax.T
+          fun simple t = case Lib.total boolSyntax.dest_eq t of
+              NONE => true
+            | SOME (a,b) =>
+                (Term.is_var a andalso Term.is_const b) orelse
+                (Term.is_const a andalso Term.is_var b)
+        in if loops andalso not bounded then 2
+           else if literal l then 1
+           else if boolSyntax.is_eq left andalso simple right then 2 else 1
+        end
+      fun terminal hypotheses conditions tm =
+        if boolSyntax.is_eq tm then eqcount hypotheses (boolSyntax.dest_eq tm)
+        else if boolSyntax.is_neg tm then
+          let val body = boolSyntax.dest_neg tm
+          in if boolSyntax.is_eq body then 2
+             else if Term.is_var body andalso
+                 not (List.exists (Term.aconv body) hypotheses) then 0 else 1
+          end
+        else if Term.aconv tm boolSyntax.T then 0
+        else if Term.is_var tm andalso
+            not (List.exists (Term.aconv tm) hypotheses) then 0
+        else if head_key tm = SOME "marker.Abbrev" then
+          let
+            (* Abbrev recursively canonicalizes an UNDISCHed theorem;
+               unlike ordinary leaves, its recursive calls see conditions
+               as actual hypotheses. *)
+            val hypotheses = conditions @ hypotheses
+            val body = Term.rand tm
+            val (l,r) = boolSyntax.dest_eq body
+            fun pointwise (l,r) =
+              if Term.is_abs r then
+                let
+                  val (v,b) = Term.dest_abs r
+                  val fresh = Term.variant
+                    (hypotheses @ Term.free_varsl [l,r]) v
+                  val body = Term.subst [{redex=v,residue=fresh}] b
+                in pointwise (Term.mk_comb (l,fresh),body) end
+              else (r,l)
+            val base = eqcount hypotheses (r,l)
+          in if Term.is_abs r then
+              base + eqcount hypotheses (pointwise (l,r)) else base end
+          handle Feedback.HOL_ERR _ => 0
+        else 1
+      (* Pay for source-syntax inspection before unbounded metadata queries
+         such as FV/occurrence tests. These are not proof operands. Work and
+         observer exceptions remain terminal, including on skipped facts. *)
+      fun pay [] = ()
+        | pay (tm::rest) =
+            (admit boolSyntax.T;
+             case Term.dest_term tm of
+               Term.COMB (f,x) => pay (f::x::rest)
+             | Term.LAMB (_,b) => pay (b::rest)
+             | _ => pay rest)
+      val _ = pay (Thm.concl th :: Thm.hyp th)
+      val branch_cache = ref []
+      fun branches tm =
+        case List.find (fn (saved,_) => Portable.pointer_eq (saved,tm))
+            (!branch_cache) of
+          SOME (_,n) => n
+        | NONE =>
+            let
+              val n = if boolSyntax.is_conj tm then
+                  let val (l,r) = boolSyntax.dest_conj tm
+                  in branches l * branches r end
+                else if boolSyntax.is_disj tm then
+                  let val (l,r) = boolSyntax.dest_disj tm
+                  in branches l + branches r end
+                else if boolSyntax.is_exists tm then
+                  branches (#2 (boolSyntax.dest_exists tm))
+                else 1
+              val _ = branch_cache := (tm,n) :: !branch_cache
+            in n end
+      fun negative tm =
+        if boolSyntax.is_conj tm then
+          let val (l,r) = boolSyntax.dest_conj tm
+          in branches l * negative r end
+        else if boolSyntax.is_disj tm then
+          let val (l,r) = boolSyntax.dest_disj tm
+          in negative l + negative r end
+        else if boolSyntax.is_exists tm then
+          let val (v,b) = boolSyntax.dest_exists tm
+              val fresh = Term.variant (Term.free_vars b) v
+          in negative (Term.subst [{redex=v,residue=fresh}] b) end
+        else terminal [] [] (boolSyntax.mk_neg tm)
+      fun has_abbrev tm =
+        (admit boolSyntax.T;
+         case Term.dest_term tm of
+            Term.CONST {Thy,Name,...} => Thy = "marker" andalso Name = "Abbrev"
+          | Term.COMB (f,x) => has_abbrev f orelse has_abbrev x
+          | Term.LAMB (_,b) => has_abbrev b
+          | _ => false)
+      fun remove terms hyps = List.filter
+        (fn h => not (List.exists (Term.aconv h) terms)) hyps
+      fun insert tm hyps =
+        if List.exists (Term.aconv tm) hyps then hyps else tm :: hyps
+      fun finish hyps ants tm =
+        let val remaining = remove ants hyps
+            val _ = pay (remaining @ ants)
+        in terminal (Term.free_varsl remaining) (Term.free_varsl ants) tm end
+      (* Retain actual Hyp terms, not just their FV: native DISCH can remove
+         an ORIGINAL hypothesis too. Only hypothesis-free, non-Abbrev paths
+         may multiply branch counts without enumerating their contexts. *)
+      fun count hyps ants tm =
+        (admit boolSyntax.T;
+         if boolSyntax.is_conj tm then
+          let val (l,r) = boolSyntax.dest_conj tm
+          in count hyps ants l + count hyps ants r end
+        else if boolSyntax.is_forall tm then
+          let val (v,b) = boolSyntax.dest_forall tm
+              val _ = pay hyps
+              val fresh = Term.variant (Term.free_varsl (b::hyps)) v
+          in count hyps ants (Term.subst [{redex=v,residue=fresh}] b) end
+        else if boolSyntax.is_res_forall tm then
+          let val (v,p,b) = boolSyntax.dest_res_forall tm
+          in count hyps ants (boolSyntax.mk_forall (v,
+               boolSyntax.mk_imp (boolSyntax.mk_IN (v,p),b))) end
+        else if boolSyntax.is_imp_only tm then
+          let val (a,b) = boolSyntax.dest_imp_only tm
+          in if null (remove ants hyps) andalso not (has_abbrev b) then
+               if Term.aconv b boolSyntax.F then negative a
+               else let val n = count [] [] b
+                    in if n = 0 then 0 else branches a * n end
+             else if boolSyntax.is_conj a then
+               let val (l,r) = boolSyntax.dest_conj a
+               in count (remove [l,r] hyps) ants
+                    (boolSyntax.mk_imp (l,boolSyntax.mk_imp (r,b))) end
+             else if boolSyntax.is_disj a then
+               let val (l,r) = boolSyntax.dest_disj a
+               in count (remove [l] hyps) ants (boolSyntax.mk_imp (l,b)) +
+                  count (remove [r] hyps) ants (boolSyntax.mk_imp (r,b)) end
+             else if boolSyntax.is_exists a then
+               let val (v,body) = boolSyntax.dest_exists a
+                   val _ = pay hyps
+                   val fresh = Term.variant (Term.free_varsl (tm::hyps)) v
+                   val body = Term.subst [{redex=v,residue=fresh}] body
+               in count (remove [body] hyps) ants
+                    (boolSyntax.mk_imp (body,b)) end
+             else if Term.aconv b boolSyntax.F then
+               finish (remove [a] hyps) ants (boolSyntax.mk_neg a)
+             else count (insert a hyps) (a::ants) b
+          end
+        else finish hyps ants tm)
+    in count (Thm.hyp th) [] (Thm.concl th) end
+
+  (* Fixed, proved operator schemas suffice for common closed list laws.
+     This runs only AFTER exported candidates have had their native chance.
+     The complete checked conversion remains available for alignment. *)
+  fun normal_list_equality tm =
+    let
+      val (l,_) = boolSyntax.dest_eq tm
+      val _ = if listSyntax.is_list_type (Term.type_of l) then ()
+        else raise Conv.UNCHANGED
+      fun has predicate = Lib.can (HolKernel.find_term predicate) tm
+      val snoc = has listSyntax.is_snoc
+      val reverse = has listSyntax.is_reverse
+      val _ = if snoc orelse reverse orelse has listSyntax.is_append
+        then () else raise Conv.UNCHANGED
+      val _ = admit tm
+      val assoc = listTheory.APPEND_ASSOC
+      val _ = if fitting assoc then () else raise Conv.UNCHANGED
+      val assoc = Conv.GSYM assoc
+      val laws = assoc :: conjuncts listTheory.APPEND @
+        (if snoc then [listTheory.SNOC_APPEND] else []) @
+        (if reverse then listTheory.REVERSE_APPEND ::
+          conjuncts listTheory.REVERSE_DEF else [])
+      val _ = if List.all fitting laws then () else raise Conv.UNCHANGED
+      val result = Conv.CHANGED_CONV
+        (simpLib.SIMP_CONV numLib.std_ss laws) tm
+      val _ = if fitting result andalso
+          (Term.aconv (boolSyntax.rhs (Thm.concl result)) boolSyntax.T orelse
+           Term.aconv (boolSyntax.rhs (Thm.concl result)) boolSyntax.F)
+        then () else raise Conv.UNCHANGED
+    in result end
 
   fun rewrite_fallback_ss () =
     let
       val indices = rewrite_indices ()
+      val lists = SmtDatatypeListConv.procedures admit
       val compiled = ref []
       val selected = ref []
       val interrupted = ref NONE
-      fun compile th =
-        case List.find (fn (saved,_) => Portable.pointer_eq (saved,th))
+      val controls = ref []
+      fun same_leaf (NONE,NONE) = true
+        | same_leaf (SOME l,SOME r) = Portable.pointer_eq (l,r)
+        | same_leaf _ = false
+      fun compile (entry as (_,source,survives),picked) =
+        case List.find (fn ((saved,leaf),_) =>
+            Portable.pointer_eq (saved,entry) andalso same_leaf (leaf,picked))
             (!compiled) of
           SOME (_,conversions) => (conversions,true)
         | NONE =>
-            if not (fitting th) then ([],false)
-            else
               let
                 val complete = ref true
+                val (untagged,fresh_control) =
+                  BoundedRewrites.dest_tagged_rewrite
+                    (Option.getOpt (picked,source))
+                (* Canonical siblings of ONE bounded source share its
+                   counter; distinct additions of the same theorem do not. *)
+                val control = case List.find (fn (saved,_) =>
+                    Portable.pointer_eq (saved,entry)) (!controls) of
+                    SOME (_,control) => control
+                  | NONE => (controls := (entry,fresh_control):: !controls;
+                             fresh_control)
+                val suffix = ref 0
+                fun canonical leaf =
+                  if fitting leaf then
+                    let
+                      val rewrites = Cond_rewr.mk_cond_rewrs (leaf,control)
+                      fun keep rewrite =
+                        (suffix := !suffix+1;
+                         if case survives of NONE => true
+                              | SOME active => active (!suffix)
+                         then SOME rewrite else NONE)
+                    in List.mapPartial keep rewrites end
+                  else (complete := false;
+                    case survives of NONE => ()
+                      | SOME _ => suffix := !suffix +
+                          rewrite_count (leaf,control);[])
                 fun conversion (th,control) =
                   let val th = Drule.SPEC_ALL th
                   in if not (fitting th) then (complete := false;NONE)
@@ -387,10 +629,10 @@ struct
                     in SOME (rigid,left,apply) end
                   end
                 val conversions = List.mapPartial conversion
-                  (Cond_rewr.mk_cond_rewrs
-                    (BoundedRewrites.dest_tagged_rewrite th))
+                  (List.concat (List.map canonical (conjuncts untagged)))
                 val _ = if !complete then
-                    compiled := (th,conversions) :: !compiled else ()
+                    compiled := ((entry,picked),conversions) :: !compiled
+                  else ()
               in (conversions,!complete) end
       fun candidates tm =
         let
@@ -408,11 +650,21 @@ struct
           fun add (entry as (rank,_),entries) =
             if List.exists (fn (saved,_) => saved = rank) entries
             then entries else entry::entries
-          fun select index =
-            List.map #2 (Listsort.sort
+          fun select (index,active) =
+            let
+              val whole = ref []
+              fun resolve (_, (source,leaf)) =
+                case Array.sub (active,source) of
+                    NONE => NONE
+                  | SOME (entry as (_,_,NONE)) => SOME (entry,SOME leaf)
+                  | SOME entry =>
+                      if Lib.mem source (!whole) then NONE
+                      else (whole := source :: !whole;SOME (entry,NONE))
+            in List.mapPartial resolve (Listsort.sort
               (fn ((l,_),(r,_)) => Int.compare (l,r))
               (List.foldr (fn (key,entries) => List.foldr add entries
                 (Option.getOpt (Redblackmap.peek (index,key),[]))) [] keys))
+            end
         in case List.find (fn (saved,_) => saved = keys) (!selected) of
             SOME (_,net) => Ho_Net.lookup tm net
           | NONE =>
@@ -446,10 +698,19 @@ struct
       fun rewrite solver stack tm =
         let
           val _ = admit tm
+          fun full_equality () = Conv.CHANGED_CONV (#equality lists) tm
+          fun equality () =
+            normal_list_equality tm handle Feedback.HOL_ERR _ =>
+              full_equality () | Conv.UNCHANGED => full_equality ()
+          fun list_step () =
+            #normalise lists tm handle Feedback.HOL_ERR _ => equality ()
+              | Conv.UNCHANGED => equality ()
+          fun after_enum () =
+            ordinary_step solver stack tm handle Feedback.HOL_ERR _ =>
+              list_step () | Conv.UNCHANGED => list_step ()
           fun attempt [] =
-                (enum_equality tm handle Feedback.HOL_ERR _ =>
-                   ordinary_step solver stack tm
-                 | Conv.UNCHANGED => ordinary_step solver stack tm)
+                (enum_equality tm handle Feedback.HOL_ERR _ => after_enum ()
+                 | Conv.UNCHANGED => after_enum ())
             | attempt (conv::rest) = conv solver stack tm
                 handle Feedback.HOL_ERR _ => attempt rest
                      | Conv.UNCHANGED => attempt rest

@@ -100,7 +100,8 @@ struct
       val goals =
         [``APPEND [] (xs:bool list) = xs``,
          ``APPEND ((x:bool)::xs) ys = x::APPEND xs ys``,
-         ``REVERSE ([]:bool list) = []``]
+         ``REVERSE ([]:bool list) = []``,
+         ``SNOC (p:bool) xs = xs ++ [p]``]
       val _ = List.app (fn prove => List.app
         (fn goal => exact goal [] (prove goal)) goals)
         [SmtDatatypeProve.datatype_simp_prove,
@@ -154,6 +155,13 @@ struct
             end) [goal,neq (right,left),neq (left,hd (tl cs)),exposed])
             [SmtDatatypeProve.datatype_simp_prove,
              SmtDatatypeProve.datatype_prove,#simp bounded,#prove bounded]
+          val _ = if count <> 15 then () else
+            let
+              val small = SmtDatatypeProve.checked_procedures
+                (A.new_term_check {limit=16,observe=fn () => ()})
+              val high = neq (List.nth (cs,13),List.nth (cs,14))
+            in List.app (fn prove => exact high [] (prove high))
+                 [#simp small,#prove small] end
           val assumption = ``enum_assumption:bool``
           val _ = exact goal [assumption]
             (#consequence bounded ([assumption],goal))
@@ -189,6 +197,197 @@ struct
                 Feedback.message_of detail = "first error") andalso !stopped)
         in () end
     in List.app check [15,16,64] end
+
+  fun list_conversion () =
+    let
+      val inputs =
+        [``SNOC x l = l' ++ [y:'a]``,
+         ``[a;b;c;d:'a] = SNOC d (SNOC c l)``,
+         ``[x1;x2;x3:'a] ++ l2 ++ [x3] ++ l3 =
+             [x1;x2] ++ l1 ++ l2' ++ l3``,
+         ``((l1:'a list) ++ [])::t = p ++ q``]
+      val convert = SmtDatatypeListConv.conversion
+        (A.new_term_check {limit=256,observe=fn () => ()})
+      val _ = List.app (fn input =>
+        let val native = listSimps.LIST_EQ_SIMP_CONV input
+            val result = convert input
+        in exact (Thm.concl native) [] result;
+           require "checked list conversion changed tags"
+             (Tag.dest_tag (Thm.tag native) = Tag.dest_tag (Thm.tag result))
+        end) inputs
+      val calls = ref 0
+      fun stop _ =
+        (calls := !calls+1;
+         if !calls = 10 then raise Feedback.mk_HOL_ERR
+           "Task39List" "observer" "first error"
+         else require "list conversion retried after first error"
+           (!calls < 10))
+      val _ = require "list conversion swallowed its first admission error"
+        (((ignore (SmtDatatypeListConv.conversion stop (hd inputs));false)
+          handle Feedback.HOL_ERR detail =>
+            Feedback.top_structure_of detail = "Task39List" andalso
+            Feedback.message_of detail = "first error") andalso !calls = 10)
+    in () end
+
+  (* ssfrags_of is addition history, NOT the effective rewrite set. Keep
+     deletions (including generated suffixes) tied to each addition. Run
+     repeated calls with the same procedures across deletion/readdition. *)
+  fun rewrite_history () = Context.with_context (Context.snapshot ())
+    (fn () =>
+      let
+        val f = Define `structured_history_f (xs:bool list) = xs`
+        val g = Define `structured_history_g (xs:bool list) = xs`
+        val h = Define `structured_history_h (xs:bool list) = xs`
+        val fg = simpLib.SIMP_PROVE bool_ss [f,g]
+          ``structured_history_f [] = structured_history_g ([]:bool list)``
+        val gf = Thm.SYM fg
+        val goal = ``structured_history_g [] = ([]:bool list)``
+        val f_nil = ``structured_history_f ([]:bool list)``
+        val g_nil = ``structured_history_g ([]:bool list)``
+        val visits = ref 0
+        val f_visits = ref 0
+        fun admit tm =
+          (if tm ~~ f_nil then f_visits := !f_visits+1 else ();
+           if tm ~~ f_nil orelse tm ~~ g_nil then visits := !visits+1 else ();
+           require "deleted rewrite cycle" (!f_visits < 16 andalso
+             !visits < 4096);
+           A.new_term_check {limit=64,observe=fn () => ()} tm)
+        val bounded = SmtDatatypeProve.checked_procedures admit
+        fun check () =
+          (exact goal [] (simpLib.SIMP_PROVE (srw_ss ()) [] goal);
+           List.app (fn prove =>
+             (visits := 0;f_visits := 0;exact goal [] (prove goal)))
+             [#simp bounded,#prove bounded])
+        fun named name th = simpLib.rewrites_with_names
+          [({Thy=current_theory (),Name=name},th)]
+        val base = simpLib.++ (srw_ss (),named "history_g" g)
+        val cycles = simpLib.++ (simpLib.++ (base,named "history_fg" fg),
+          named "history_gf" gf)
+        val prime = ``APPEND [] (xs:bool list) = xs``
+        val _ = BasicProvers.with_simpset_updates (fn _ => cycles)
+          (fn () => exact prime [] (#simp bounded prime)) ()
+        val deleted = simpLib.remove_simps ["history_fg","history_gf"] cycles
+        val _ = BasicProvers.with_simpset_updates (fn _ => deleted)
+          (fn () => (check ();check ())) ()
+        (* The old source and the newly added source have the SAME name.
+           The deleted source must stay deleted, not borrow the new name. *)
+        val replaced = simpLib.++ (deleted,named "history_gf" h)
+        val hgoal = ``structured_history_h [] = ([]:bool list)``
+        val _ = BasicProvers.with_simpset_updates (fn _ => replaced)
+          (fn () => (check ();List.app (fn prove => exact hgoal []
+            (prove hgoal)) [#simp bounded,#prove bounded])) ()
+        val bundle = Thm.CONJ fg gf
+        val generated = simpLib.remove_simps ["history_bundle.1",
+          "history_bundle.2"] (simpLib.++ (base,named "history_bundle" bundle))
+        val _ = BasicProvers.with_simpset_updates (fn _ => generated) check ()
+        val qualified = simpLib.remove_simps
+          [current_theory () ^ ".history_bundle.1",
+           current_theory () ^ ".history_bundle.2"]
+          (simpLib.++ (base,named "history_bundle" bundle))
+        val _ = BasicProvers.with_simpset_updates (fn _ => qualified) check ()
+        (* An unadmitted sibling still occupies its original generated
+           suffixes; counting it must not run a generic canonicalizer. *)
+        val large = listSyntax.mk_list
+          (List.tabulate (80,fn _ => boolSyntax.T),Type.bool)
+        val oversized = Thm.CONJ (Thm.REFL large) bundle
+        val skipped = simpLib.remove_simps ["history_skip.3","history_skip.4"]
+          (simpLib.++ (base,named "history_skip" oversized))
+        val _ = BasicProvers.with_simpset_updates (fn _ => skipped) check ()
+        val big = boolSyntax.mk_eq (large,large)
+        val ant = boolSyntax.mk_conj (``p:bool``,big)
+        val tautology = Thm.DISCH ant (Thm.CONJUNCT1 (Thm.ASSUME ant))
+        val zero = simpLib.remove_simps ["history_zero.1","history_zero.2"]
+          (simpLib.++ (base,named "history_zero" (Thm.CONJ tautology bundle)))
+        val _ = BasicProvers.with_simpset_updates (fn _ => zero) check ()
+        val discharged = Drule.ADD_ASSUM ``p:bool`` tautology
+        val discharge_ss = simpLib.remove_simps
+          ["history_discharge.1","history_discharge.2"]
+          (simpLib.++ (base,named "history_discharge"
+            (Thm.CONJ discharged bundle)))
+        val _ = BasicProvers.with_simpset_updates (fn _ => discharge_ss)
+          check ()
+        val x = ``x:bool``
+        val restriction = Term.mk_abs (x,boolSyntax.mk_disj
+          (``(P:bool -> bool) x``,
+           boolSyntax.mk_conj (``(Q:bool -> bool) x``,big)))
+        val target = boolSyntax.mk_res_forall
+          (x,restriction,Term.mk_comb (restriction,x))
+        val restricted = simpLib.SIMP_PROVE bool_ss
+          [boolTheory.RES_FORALL_THM,boolTheory.IN_DEF] target
+        val restricted_ss = simpLib.remove_simps
+          ["history_restricted.2","history_restricted.3"]
+          (simpLib.++ (base,named "history_restricted"
+            (Thm.CONJ restricted bundle)))
+        val _ = BasicProvers.with_simpset_updates (fn _ => restricted_ss)
+          check ()
+        val identity = ``\x:bool. x``
+        val long_identity = funpow 40
+          (fn t => Term.mk_comb (``I:(bool -> bool) -> bool -> bool``,t))
+          identity
+        val abbreviation = Term.mk_comb (``marker$Abbrev``,
+          boolSyntax.mk_eq (long_identity,identity))
+        val abbrev_th = simpLib.SIMP_PROVE bool_ss
+          [markerTheory.Abbrev_def,combinTheory.I_THM] abbreviation
+        val abbreviation_ss = simpLib.remove_simps
+          ["history_abbrev.5","history_abbrev.6"]
+          (simpLib.++ (base,named "history_abbrev"
+            (Thm.CONJ abbrev_th bundle)))
+        val _ = BasicProvers.with_simpset_updates (fn _ => abbreviation_ss)
+          check ()
+        (* FUN_EQ must freshen against free source/Hyp names before the
+           pointwise equation is counted; apparent capture is not a loop. *)
+        val truth_function = ``\z:bool. T``
+        val free_x = ``x:bool``
+        val seed = Term.mk_comb (``K:bool -> bool -> bool``,
+          Term.mk_comb (truth_function,free_x))
+        val long = funpow 40
+          (fn t => Term.mk_comb (``I:(bool -> bool) -> bool -> bool``,t)) seed
+        val abstraction = Term.mk_abs (free_x,
+          Term.mk_comb (truth_function,free_x))
+        val capture_target = Term.mk_comb (``marker$Abbrev``,
+          boolSyntax.mk_eq (long,abstraction))
+        val capture = Drule.ADD_ASSUM (boolSyntax.mk_eq (free_x,free_x))
+          (simpLib.SIMP_PROVE bool_ss [markerTheory.Abbrev_def,
+             combinTheory.I_THM,combinTheory.K_THM,
+             boolTheory.FUN_EQ_THM] capture_target)
+        val capture_ss = simpLib.remove_simps
+          ["history_capture.1","history_capture.2",
+           "history_capture.3","history_capture.4"]
+          (simpLib.++ (base,named "history_capture" (Thm.CONJ capture bundle)))
+        val _ = BasicProvers.with_simpset_updates (fn _ => capture_ss) check ()
+        val long_false = funpow 40
+          (fn t => Term.mk_comb (``I:bool -> bool``,t)) boolSyntax.F
+        val conditional_target = boolSyntax.mk_imp
+          (boolSyntax.mk_neg free_x,Term.mk_comb (``marker$Abbrev``,
+            boolSyntax.mk_eq (long_false,free_x)))
+        val conditional = simpLib.SIMP_PROVE bool_ss
+          [markerTheory.Abbrev_def,combinTheory.I_THM] conditional_target
+        val conditional_ss = simpLib.remove_simps
+          ["history_conditional.1",
+           "history_conditional.2","history_conditional.3"]
+          (simpLib.++ (base,named "history_conditional"
+            (Thm.CONJ conditional bundle)))
+        val _ = BasicProvers.with_simpset_updates (fn _ => conditional_ss)
+          check ()
+        val once = BoundedRewrites.Once g
+        val duplicated = simpLib.++ (srw_ss (),simpLib.rewrites [once,once])
+        val twice =
+          ``structured_history_g (structured_history_g []) = ([]:bool list)``
+        val _ = BasicProvers.with_simpset_updates (fn _ => duplicated)
+          (fn () => List.app (fn prove => exact twice [] (prove twice))
+            [fn t => simpLib.SIMP_PROVE (srw_ss ()) [] t,
+             #simp bounded,#prove bounded]) ()
+        val single_budget = simpLib.++ (srw_ss (),
+          named "history_single_budget" (BoundedRewrites.Once (Thm.CONJ g h)))
+        val mixed =
+          ``structured_history_g (structured_history_h xs) = (xs:bool list)``
+        fun fails prove =
+          ((ignore (prove mixed);false) handle Feedback.HOL_ERR _ => true)
+        val _ = BasicProvers.with_simpset_updates (fn _ => single_budget)
+          (fn () => require "canonical siblings received separate budgets"
+            (fails (fn t => simpLib.SIMP_PROVE (srw_ss ()) [] t) andalso
+             fails (#simp bounded))) ()
+      in () end) ()
 
   fun tester_validation () =
     let
@@ -684,7 +883,7 @@ struct
   fun run () =
     (schemas ();tester_validation ();graph_operators ();
      generic_authority ();cpc_cases ();cpc_identities ();
-     rewrite_fallback ();enum_fallback ();
+     rewrite_fallback ();enum_fallback ();rewrite_history ();list_conversion ();
      cpc_splits ();inferred_split_graph ();split_admission ();
      admission_first_error ();admission_factories ();owned_cpc_admission ();
      cpc_annotations ())

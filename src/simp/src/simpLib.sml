@@ -339,6 +339,58 @@ fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
          excluded = excluded}
 fun remove_simps nms ss = ss -* nms
 
+(* Unlike ssfrags_of, retain the deletion history belonging to each source
+   addition. This is a read-only view: no conversions are run or rebuilt.
+   Use the native name filter, including theory and generated suffix rules. *)
+fun rewrite_sources (SS {history,...}) =
+    let
+      (* Decode each successful deletion event once, not once per source
+         or canonical child. The event was already validated by -*; its
+         theory qualification must not depend on a later ancestry change. *)
+      fun pattern key =
+          case String.fields (equal #".") key of
+              [_] => (NONE,key)
+            | [a,b] => if CharVector.all Char.isDigit b then (NONE,key)
+                       else (SOME a,b)
+            | [a,b,c] => (SOME a,b ^ "." ^ c)
+            | _ => raise ERR ("rewrite_sources","invalid deletion event")
+      fun tail key =
+          let val last = List.last (String.fields (equal #".") key)
+          in if size last > 0 andalso CharVector.all Char.isDigit last
+             then SOME last else NONE end
+      fun sources [] _ _ = []
+        | sources (DELETE_EVENT names :: rest) deleted suffixes =
+            sources rest (map pattern names @ deleted)
+              (List.mapPartial tail names @ suffixes)
+        | sources (ADDWEAKENER _ :: rest) deleted suffixes =
+            sources rest deleted suffixes
+        | sources (ADDFRAG (frag as SSFRAG_CON {rewrs,...}) :: rest)
+                  deleted suffixes =
+            let
+              fun source (rank,(name,th)) =
+                  let
+                    fun active suffix = if null deleted then true else
+                        let
+                          val (thypart,base) = case name of
+                              NONE => (NONE,"<anonymous>")
+                            | SOME {Thy,Name} => (SOME Thy,Name ^ suffix)
+                          val entry = {thypart=thypart,
+                            ci={name="rewrite:" ^ base,
+                                conval=fn _ => fn _ => Conv.NO_CONV}}
+                        in not (name_match entry deleted) end
+                    val selective = List.exists
+                      (fn suffix => not (active ("." ^ suffix))) suffixes
+                  in if active "" then
+                       SOME (rank,th,if selective then
+                         SOME (fn n => active ("." ^ Int.toString n))
+                         else NONE)
+                     else NONE end
+              val numbered = ListPair.zip
+                (List.tabulate (length rewrs,Lib.I),rewrs)
+            in (frag,List.mapPartial source numbered) ::
+               sources rest deleted suffixes end
+    in sources history [] [] end
+
 
   (* ---------------------------------------------------------------------
    * USER_CONV wraps a bit of tracing around a user conversion.
