@@ -5646,7 +5646,8 @@ local
          (let
             (* E1(b): the general Seq prover has an explicit family gate. *)
             val thm = rewrite_profile "sequences" "rewrite(6)(seq)"
-              SmtSeqProve.seq_prove t
+              (SmtSeqProve.seq_prove_with_admission
+                (#datatype_admit state)) t
           in
             (state_cache_thm state thm, thm)
           end
@@ -7195,14 +7196,16 @@ local
     let
       val thm =
         (* E1(b): the general Seq procedure gates its supported family. *)
-        profile "th_lemma[seq](2)(seq_prove)" SmtSeqProve.seq_prove t
+        profile "th_lemma[seq](2)(seq_prove)"
+          (SmtSeqProve.seq_prove_with_admission (#datatype_admit state)) t
         handle Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else
             (* E1(b): contextual Seq replay fails loudly at its boundary. *)
             profile "th_lemma[seq](3)(contextual)"
-            (SmtSeqProve.seq_contextual_prove
+            (SmtSeqProve.seq_contextual_prove_with_admission
+              (#datatype_admit state)
               (HOLset.listItems (#asserted_hyps state))) t
     in
       (state_cache_thm state thm, thm)

@@ -412,6 +412,19 @@ struct
                    | SOME value => [#node value]),
                 observe=fn () => Option.app
                   (fn work => W.spend_guard_policy work 1) owned_work})
+          val sequence_rule =
+            List.exists (fn handler => handler = #replay_handler (#rule step))
+              ["seq_rewrite","seq_rev_rev","seq_at_elim",
+               "str_contains_refl","str_substr_full_eq","string",
+               "rare_inventory","aci_norm","rewrite"] andalso
+            SmtReplayStructured.has_sequence_operand graph scope
+              {inputs=List.map node premises @
+                 List.map (#node : F.term -> G.node) object_arguments @
+                 (case #conclusion step of NONE => []
+                  | SOME value => [#node value]),
+               observe=fn () => Option.app
+                 (fn work => W.spend_guard_policy work 1) owned_work}
+          val structured_rule = structured_rule orelse sequence_rule
           val named_rule = arithmetic_rule orelse structured_rule
           fun arithmetic_charge amount = Option.app
             (fn work => W.spend_guard_policy work amount) owned_work

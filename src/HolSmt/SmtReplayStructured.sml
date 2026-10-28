@@ -18,7 +18,7 @@ struct
           | SOME info => not (null (TypeBasePure.constructors_of info)))
       end
 
-  fun has_operand graph scope {inputs,observe} =
+  fun has_operand_using owns graph scope {inputs,observe} =
     let
       val _ = G.validate_scope graph scope
       fun header node =
@@ -36,15 +36,10 @@ struct
          if Redblackset.member (!seen,G.node_id node) then false else
            (seen := Redblackset.add (!seen,G.node_id node);
             case G.view graph node of
-              G.Variable _ =>
-                Lib.can Type.dom_rng (G.type_of graph node) orelse
-                datatype_type (G.type_of graph node)
-            | G.Constant _ =>
-                Term.same_const (G.representative graph node)
-                  combinSyntax.update_tm orelse
-                datatype_type (G.type_of graph node)
+              G.Variable _ => owns node true
+            | G.Constant _ => owns node false
             | G.Application (f,x) =>
-                datatype_type (G.type_of graph node)
+                owns node false
                 orelse visit f orelse visit x
             | G.AdmittedBinder _ =>
                 (case G.recorded_binder_closure graph
@@ -54,4 +49,20 @@ struct
                  | NONE => true)
             | G.OpaqueRetained => true))
     in List.exists visit inputs end
+
+  fun has_operand graph = has_operand_using (fn node => fn variable =>
+    (variable andalso Lib.can Type.dom_rng (G.type_of graph node)) orelse
+    (not variable andalso (case G.view graph node of G.Constant _ =>
+       Term.same_const (G.representative graph node) combinSyntax.update_tm
+     | _ => false)) orelse datatype_type (G.type_of graph node)) graph
+
+  (* Native Seq is list-valued; String retains its separate carrier. Only
+     inspect the outer type constructor, never instantiate a TypeBase fact. *)
+  fun has_sequence_operand graph = has_operand_using
+    (fn node => fn _ =>
+      let val ty = G.type_of graph node
+      in not (Type.is_vartype ty) andalso
+         let val {Thy,Tyop,...} = Type.dest_thy_type ty
+         in Thy = "list" andalso Tyop = "list" end
+      end) graph
 end

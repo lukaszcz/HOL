@@ -3495,7 +3495,7 @@ local
   (* The Seq RARE names have deliberately narrow, recorded schemas.  Keeping
      them out of the generic RARE ladder means an unrecognised Seq rule stays
      a named CPC obligation rather than becoming an accidental simplifier. *)
-  fun replay_seq_rewrite name prems conclusion args =
+  fun replay_seq_rewrite admit name prems conclusion args =
     let
       fun prove_string target =
         List.foldl (fn (premise, proof) => Drule.PROVE_HYP premise proof)
@@ -3527,7 +3527,8 @@ local
           end
       | ("str-substr-concat1", NONE, [prefix, suffix, start, length]) =>
           prove_string (substr_concat_target (prefix, suffix, start, length))
-      | (_, _, [target]) => SmtSeqProve.seq_prove target
+      | (_, _, [target]) =>
+          SmtSeqProve.seq_prove_with_admission admit target
       | _ => raise ERR name "expected one Seq rewrite proposition"
     end
 
@@ -3543,15 +3544,21 @@ local
         [{redex = variable, residue = sequence}] theorem
     | _ => raise ERR "instantiate_smtstr" "expected one String variable"
 
-  fun replay_seq_rev_rev args =
+  fun replay_seq_rev_rev admit args =
     case args of
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
           instantiate_smtstr smtstringTheory.smtstr_rev_rev sequence
-        else Drule.ISPEC sequence listTheory.REVERSE_REVERSE
+        else
+          let val target = boolSyntax.mk_eq
+                (listSyntax.mk_reverse (listSyntax.mk_reverse sequence),
+                 sequence)
+              val _ = List.app admit
+                [sequence,target,Thm.concl listTheory.REVERSE_REVERSE]
+          in Drule.ISPEC sequence listTheory.REVERSE_REVERSE end
     | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
 
-  fun replay_str_contains_refl args =
+  fun replay_str_contains_refl admit args =
     case args of
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
@@ -3565,19 +3572,13 @@ local
               Name = "IS_SUBLIST", Ty = Type.--> (sequence_ty,
                 Type.--> (sequence_ty, Type.bool))}
             val target = Term.list_mk_comb (contains, [sequence, sequence])
-            val proof = Tactical.TAC_PROOF (([], target),
-              Tactical.THEN
-                (bossLib.RW_TAC (bossLib.srw_ss ())
-                   [rich_listTheory.IS_SUBLIST_APPEND],
-                 Tactical.THEN (Tactic.EXISTS_TAC empty,
-                   Tactical.THEN (Tactic.EXISTS_TAC empty,
-                     bossLib.SIMP_TAC (bossLib.srw_ss ()) []))))
+            val proof = SmtSeqProve.seq_prove_with_admission admit target
           in
             Drule.EQT_INTRO proof
           end
     | _ => raise ERR "str-contains-refl" "expected one sequence argument"
 
-  fun replay_str_substr_full_eq args =
+  fun replay_str_substr_full_eq admit args =
     case args of
       [sequence, length] =>
         if is_smtstr_type (Term.type_of sequence) then
@@ -3605,7 +3606,8 @@ local
               (Term.list_mk_comb (extract,
                  [sequence, intSyntax.zero_tm, expected_length]), sequence)
           in
-            if Term.aconv length expected_length then SmtSeqProve.seq_prove target
+            if Term.aconv length expected_length then
+              SmtSeqProve.seq_prove_with_admission admit target
             else raise ERR "str-substr-full-eq" "length argument does not match"
           end
     | _ => raise ERR "str-substr-full-eq"
@@ -3614,7 +3616,7 @@ local
   fun replay_string_at_elim sequence index =
     Drule.SPECL [sequence, index] smtstringTheory.smtstr_at_def
 
-  fun replay_seq_at_elim conclusion args =
+  fun replay_seq_at_elim admit conclusion args =
     case (conclusion, args) of
       (SOME target, [sequence, index]) =>
         if is_smtstr_type (Term.type_of sequence) then
@@ -3622,7 +3624,7 @@ local
             if Term.aconv target (Thm.concl thm) then thm
             else raise ERR "str-at-elim" "String conclusion does not match"
           end
-        else SmtSeqProve.seq_prove target
+        else SmtSeqProve.seq_prove_with_admission admit target
     | (NONE, [sequence, index]) =>
         if is_smtstr_type (Term.type_of sequence) then
           replay_string_at_elim sequence index
@@ -3641,7 +3643,7 @@ local
                Term.list_mk_comb (extract,
                  [sequence, index, intSyntax.one_tm]))
           in
-            SmtSeqProve.seq_prove target
+            SmtSeqProve.seq_prove_with_admission admit target
           end
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
@@ -4361,7 +4363,7 @@ local
       (theorem, provenance)
     end
 
-  fun replay_aci_norm args =
+  fun replay_aci_norm_admitted admit args =
     let
       val target = expect_one_arg "aci_norm" args
       val reflexive =
@@ -4573,7 +4575,8 @@ local
         if SmtResource.is_resource_gate holerr then
           raise Feedback.HOL_ERR holerr
         else
-          (profile "CPC(rung:seq/aci_norm)" SmtSeqProve.seq_prove target
+          (profile "CPC(rung:seq/aci_norm)"
+             (SmtSeqProve.seq_prove_with_admission admit) target
            handle Feedback.HOL_ERR holerr =>
              if SmtResource.is_resource_gate holerr then
                raise Feedback.HOL_ERR holerr
@@ -4587,6 +4590,9 @@ local
                     profile "CPC(rung:word/aci_norm_tautology)"
                       (tautology "aci_norm") target))
     end
+
+  fun replay_aci_norm args = replay_aci_norm_admitted
+    (SmtDatatypeProve.default_admission ()) args
 
   fun replay_bv_xor_duplicate args =
     case args of
@@ -8571,7 +8577,7 @@ local
           in Thm.MP theorem cnf_theorem end) ()
     in result
     end
-  fun replay_trust force_fp state prems args =
+  fun replay_trust_admitted admit force_fp state prems args =
     let
       val target = expect_one_arg "trust" args
       fun context_terms () =
@@ -9698,12 +9704,13 @@ local
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
           val thm =
-            SmtSeqProve.seq_prove target
+            SmtSeqProve.seq_prove_with_admission admit target
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
               else
-                SmtSeqProve.seq_contextual_prove context target
+                SmtSeqProve.seq_contextual_prove_with_admission
+                  admit context target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -9981,6 +9988,9 @@ local
           prove_scoped_arithmetic ())
           (fn () => profile "CPC(rung:trust/rdiv)" replay_rdiv ())
     end
+
+  fun replay_trust force_fp state prems args = replay_trust_admitted
+    (SmtDatatypeProve.default_admission ()) force_fp state prems args
 
   fun replay_ite_eq args =
     let
@@ -14582,7 +14592,7 @@ local
       SOME target => arith_prove_from_prems prems target
     | NONE => raise ERR "arith" "CPC arithmetic step omitted its conclusion"
 
-  fun replay_string state name prems conclusion args =
+  fun replay_string admit state name prems conclusion args =
     let
       fun same_const thy name tm =
         case Lib.total Term.dest_thy_const tm of
@@ -15682,12 +15692,13 @@ local
             List.map Thm.concl prems
           val thm = profile "CPC(rung:string/seq_contextual)"
             (fn target =>
-              SmtSeqProve.seq_prove target
+              SmtSeqProve.seq_prove_with_admission admit target
               handle Feedback.HOL_ERR holerr =>
                 if SmtResource.is_resource_gate holerr then
                   raise Feedback.HOL_ERR holerr
                 else
-                  SmtSeqProve.seq_contextual_prove context target) target
+                  SmtSeqProve.seq_contextual_prove_with_admission
+                    admit context target) target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -15960,7 +15971,7 @@ local
       | _ => bad_shape ()
     end
 
-  fun replay_inventory_string_rule name prems conclusion args =
+  fun replay_inventory_string_rule admit name prems conclusion args =
     let
       val expected = rare_string_expected_target name args
         handle Feedback.HOL_ERR holerr =>
@@ -15988,11 +15999,12 @@ local
       val context = List.map Thm.concl prems
       val theorem =
         if SmtSeqProve.has_seq_type target then
-          (SmtSeqProve.seq_prove target
+          (SmtSeqProve.seq_prove_with_admission admit target
            handle Feedback.HOL_ERR holerr =>
              if SmtResource.is_resource_gate holerr then
                raise Feedback.HOL_ERR holerr
-             else SmtSeqProve.seq_contextual_prove context target)
+             else SmtSeqProve.seq_contextual_prove_with_admission
+               admit context target)
         else
           (SmtStringProve.string_rewrite_prove target
            handle Feedback.HOL_ERR holerr =>
@@ -16541,7 +16553,7 @@ local
       {expected_premises = expected_premises, expected = expected}
     end
 
-  fun replay_rare_source_recipe family name
+  fun replay_rare_source_recipe admit family name
       (recipe : rare_source_recipe) prems conclusion args =
     let
       val {expected_premises, expected} =
@@ -16564,7 +16576,7 @@ local
         let val implication = implication_target () in
           apply_implication
             (if SmtSeqProve.has_seq_type implication then
-               SmtSeqProve.seq_prove implication
+               SmtSeqProve.seq_prove_with_admission admit implication
             else SmtStringProve.string_prove intLib.ARITH_PROVE implication)
         end
       fun missing_recipe () = raise ERR name
@@ -17987,7 +17999,7 @@ local
         ("cvc5-1.3.4 recursive RARE rule " ^ name ^
          " requires its authoritative omitted conclusion")
 
-  fun replay_rare_inventory state name prems conclusion located_args =
+  fun replay_rare_inventory admit state name prems conclusion located_args =
     case rare_inventory_lookup name of
       NONE => raise ERR "rare_inventory"
         ("internal cvc5-1.3.4 RARE inventory drift: " ^ name)
@@ -18010,17 +18022,17 @@ local
              validate_recursive_rare_inventory_contract name prems conclusion
                (replay_rare_rewrite name args)
          | RareSourceRecipe recipe =>
-             replay_rare_source_recipe (#family entry) name recipe
+             replay_rare_source_recipe admit (#family entry) name recipe
                prems conclusion (source_args recipe)
          | RareSourceUnsupported (_, reason) =>
              source_unsupported reason
          | RareStringRecipe recipe =>
              if rare_string_recipe_name recipe = name then
-               replay_inventory_string_rule name prems conclusion args
+               replay_inventory_string_rule admit name prems conclusion args
              else raise ERR name "internal TASK23 String recipe mismatch"
          | RareContainsRefl =>
              validate_rare_inventory_contract name prems conclusion
-               (replay_str_contains_refl args)
+               (replay_str_contains_refl admit args)
          | RareContainsSplitChar =>
              replay_contains_split_char prems conclusion args
          | RareUnsupported diagnostic => raise ERR name diagnostic
@@ -19630,7 +19642,8 @@ local
            | "ite_then_false" => opaque ( replay_ite_then_false args)
            | "ite_false_cond" => opaque ( replay_ite_false_cond args)
            | "ite_neg_branch" => opaque ( replay_ite_neg_branch args prems)
-           | "trust" => opaque (replay_trust false state prems args)
+           | "trust" => opaque
+               (replay_trust_admitted datatype_admit false state prems args)
            | "ite_eq" => opaque ( replay_ite_eq args)
            | "ite_elim1" => opaque ( replay_ite_elim1 prems)
            | "ite_elim2" => opaque ( replay_ite_elim2 prems)
@@ -19720,7 +19733,8 @@ local
                (case located_args of
                   [target] =>
                     let
-                      val theorem = replay_aci_norm args
+                      val theorem =
+                        replay_aci_norm_admitted datatype_admit args
                       val (target_left, target_right) =
                         boolSyntax.dest_eq (#term target)
                       val theorem =
@@ -19746,7 +19760,7 @@ local
                     end
                 | _ => unavailable_result
                     "aci_norm lacks one exact target occurrence"
-                    (replay_aci_norm args))
+                    (replay_aci_norm_admitted datatype_admit args))
            | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
            | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
            | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
@@ -19768,14 +19782,18 @@ local
                  | _ => opaque theorem
                end
            | "seq_rewrite" => opaque (
-               replay_seq_rewrite (#name rule) prems conclusion args)
-           | "seq_rev_rev" => opaque ( replay_seq_rev_rev args)
-           | "str_contains_refl" => opaque ( replay_str_contains_refl args)
+               replay_seq_rewrite datatype_admit (#name rule)
+                 prems conclusion args)
+           | "seq_rev_rev" => opaque (replay_seq_rev_rev datatype_admit args)
+           | "str_contains_refl" => opaque
+               (replay_str_contains_refl datatype_admit args)
            | "rare_inventory" => opaque (
-               replay_rare_inventory state (#name rule) prems conclusion
-                 located_args)
-           | "str_substr_full_eq" => opaque ( replay_str_substr_full_eq args)
-           | "seq_at_elim" => opaque ( replay_seq_at_elim conclusion args)
+               replay_rare_inventory datatype_admit state (#name rule)
+                 prems conclusion located_args)
+           | "str_substr_full_eq" => opaque
+               (replay_str_substr_full_eq datatype_admit args)
+           | "seq_at_elim" => opaque
+               (replay_seq_at_elim datatype_admit conclusion args)
            | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
            | "sets_ext" => opaque ( replay_sets_ext prems)
            | "sets_rewrite" => opaque (
@@ -19814,7 +19832,8 @@ local
            | "bool" => opaque ( replay_bool prems conclusion)
            | "arith" => opaque ( replay_arith prems conclusion)
            | "string" => opaque (
-               replay_string state (#name rule) prems conclusion args)
+               replay_string datatype_admit state (#name rule)
+                 prems conclusion args)
            | _ => unsupported_step step)) ()
            handle Conv.UNCHANGED =>
              raise ERR "replay_step"
@@ -20329,7 +20348,8 @@ in
         (rare_string_expected_premises name args)
       val target = rare_string_expected_target name args
     in
-      replay_inventory_string_rule name premises (SOME target) args
+      replay_inventory_string_rule (SmtDatatypeProve.default_admission ())
+        name premises (SOME target) args
     end
 
   (* Build a complete public CPC step from the declarative source recipe.
@@ -20566,7 +20586,8 @@ in
             (#premises recipe)
           val target = eval_rare_source_recipe name
             (#formals recipe) args (#target recipe)
-          val theorem = replay_rare_source_recipe family name recipe
+          val theorem = replay_rare_source_recipe
+            (SmtDatatypeProve.default_admission ()) family name recipe
             (List.map Thm.ASSUME premises) (SOME target) args
           val closed = List.foldl
             (fn (premise, theorem) => Thm.DISCH premise theorem)

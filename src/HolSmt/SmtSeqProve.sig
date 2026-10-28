@@ -13,5 +13,8 @@ sig
   val update_reverse_prove : Term.term -> Thm.thm
   val seq_contextual_prove : Term.term list -> Term.term -> Thm.thm
   val seq_prove : Term.term -> Thm.thm
+  val seq_prove_with_admission : (Term.term -> unit) -> Term.term -> Thm.thm
+  val seq_contextual_prove_with_admission : (Term.term -> unit) ->
+    Term.term list -> Term.term -> Thm.thm
 
 end

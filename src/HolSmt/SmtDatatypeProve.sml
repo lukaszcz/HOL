@@ -193,13 +193,22 @@ struct
   (* Each invocation supplies its own admission continuation. Declaration
      bundles are projected by kernel CONJUNCT rules before generic matching;
      an unrelated large conjunction must not hide a useful small equation. *)
-  fun checked_procedures check =
+  fun checked_procedures_using source_ss local_conversion
+      split_conversions check =
   let
   (* Admission/Work/observer failures must not become proof-search misses. *)
   exception AdmissionFailure of exn
   fun admit term = check term handle primary => raise AdmissionFailure primary
   fun protect f x = f x handle AdmissionFailure primary => raise primary
   fun admit_thm th = (admit (Thm.concl th);List.app admit (Thm.hyp th))
+  (* Traverse consumes conversion sides with kernel congruence/TRANS, not
+     as a combined matching operand. Seq keeps each side under its original
+     cap; charging their temporary equality wrapper as an input would newly
+     refuse a fitting near-cap sequence. Source rewrite patterns above and
+     all assumptions/conditions still receive full native admission. *)
+  fun admit_conversion th = if not split_conversions then admit_thm th else
+    let val (left,right) = boolSyntax.dest_eq (Thm.concl th)
+    in List.app admit (left::right::Thm.hyp th) end
   fun fitting th =
     (admit_thm th;true) handle failure as
         AdmissionFailure (Feedback.HOL_ERR detail) =>
@@ -344,7 +353,7 @@ struct
      all-exported admission/search pass. *)
   val exported_indices = ref NONE
   fun rewrite_indices () =
-    let val current = bossLib.srw_ss ()
+    let val current = source_ss ()
     in case !exported_indices of
         SOME (saved,indices) =>
           if Portable.pointer_eq (saved,current) then indices
@@ -593,7 +602,7 @@ struct
                               (interrupted := SOME primary;
                                raise Portable.Interrupt)
                           val result = conv checked_solver stack tm
-                          val _ = admit_thm result
+                          val _ = admit_conversion result
                           val _ = case control of
                               BoundedRewrites.BOUNDED n => n := !n - 1
                             | _ => ()
@@ -665,7 +674,15 @@ struct
             {solver=checked_solver solver,conv=fn _ => Conv.NO_CONV,
              context= #initial ordinary,stack=stack,
              relation=(boolSyntax.equality,Thm.REFL)} tm
-          val _ = admit_thm result
+          (* The standard reducer may return primitive REFL on the entire
+             current input. Discard this no-op before admitting a doubled
+             equality wrapper: neither side is a new generic operand. The
+             theorem, not pointer identity, remains the proof authority. *)
+          val (left,right) = boolSyntax.dest_eq (Thm.concl result)
+          val _ = if split_conversions andalso
+              Portable.pointer_eq (left,right) then raise Conv.UNCHANGED
+            else ()
+          val _ = admit_conversion result
         in result end
       fun rewrite solver stack tm =
         let
@@ -677,9 +694,17 @@ struct
           fun list_step () =
             #normalise lists tm handle Feedback.HOL_ERR _ => equality ()
               | Conv.UNCHANGED => equality ()
+          fun local_step () =
+            let val result = local_conversion tm
+                val _ = admit_conversion result
+            in result end
+            handle Feedback.HOL_ERR _ =>
+              if split_conversions then raise Conv.UNCHANGED else list_step ()
+              | Conv.UNCHANGED =>
+              if split_conversions then raise Conv.UNCHANGED else list_step ()
           fun after_enum () =
             ordinary_step solver stack tm handle Feedback.HOL_ERR _ =>
-              list_step () | Conv.UNCHANGED => list_step ()
+              local_step () | Conv.UNCHANGED => local_step ()
           fun attempt [] =
                 (enum_equality tm handle Feedback.HOL_ERR _ => after_enum ()
                  | Conv.UNCHANGED => after_enum ())
@@ -999,8 +1024,24 @@ struct
      consequence=protect datatype_consequence_prove,
      split_terms=protect datatype_split_terms,
      fragment=protect datatype_fragment_admits,
-     metis=protect metis_datatype_prove}
+     metis=protect metis_datatype_prove,
+     with_simpset=fn prove => protect (fn () =>
+       with_exported_rewrites prove) ()}
   end
+
+  fun checked_procedures check =
+    checked_procedures_using bossLib.srw_ss (fn _ => raise Conv.UNCHANGED)
+      false check
+
+  (* Replay-local clients can retain their own pure rewrite sources while
+     sharing checked redex/condition/result admission and list conversions.
+     No update is made to the ambient simpset or TypeBase. *)
+  fun with_checked_rewrites_using check source_ss conversion prove =
+    #with_simpset
+      (checked_procedures_using source_ss conversion true check) prove
+  fun with_checked_rewrites check source_ss prove =
+    with_checked_rewrites_using check source_ss
+      (fn _ => raise Conv.UNCHANGED) prove
 
   fun default_admission () = SmtReplayArithmetic.new_term_check
     {limit=SmtResource.max_bv_replay_term_nodes,observe=fn () => ()}
