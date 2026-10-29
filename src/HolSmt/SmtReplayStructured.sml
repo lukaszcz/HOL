@@ -61,11 +61,23 @@ struct
     let val {Thy,Tyop,...} = Type.dest_thy_type ty
     in Thy = "smtstring" andalso (Tyop = "smtstr" orelse Tyop = "reglan") end
 
+  fun bag_head graph node = case G.view graph node of
+      G.Constant _ =>
+        SmtBagProve.has_native_bag_encoding (G.representative graph node)
+    | _ => false
+
+  (* Positive native bag evidence only; unknown binders do not select TRUST.
+     Generic rules also name constant-only bag constructors, even when their
+     element type is schematic and there is no numeric result subterm. *)
+  fun has_known_bag_operand graph = has_operand_using_unknown false
+    (fn node => fn _ => bag_head graph node) graph
+
   fun has_operand graph = has_operand_using (fn node => fn variable =>
     (variable andalso Lib.can Type.dom_rng (G.type_of graph node)) orelse
     (not variable andalso (case G.view graph node of G.Constant _ =>
        Term.same_const (G.representative graph node) combinSyntax.update_tm
-     | _ => false)) orelse string_type (G.type_of graph node) orelse
+     | _ => false)) orelse bag_head graph node orelse
+    string_type (G.type_of graph node) orelse
     datatype_type (G.type_of graph node)) graph
 
   (* Native Seq is list-valued; String retains its separate carrier. Only

@@ -12,7 +12,36 @@ struct
     let val {Thy, Name, ...} = Term.dest_thy_const tm
     in Thy = thy andalso List.exists (Lib.equal Name) names end
 
-  val mentions = SmtResource.contains
+  (* Classification keeps the ordinary non-family bypass. Before either
+     the predicate or the shared DAG walker opens a binder, admit its full
+     annotation under the existing primitive-Type allowance. This is local
+     syntax policy, not a process-wide admission hook. *)
+  fun mentions predicate root =
+    let
+      exception Found
+      val maximum = SmtResource.max_bv_replay_term_nodes
+      val check_type = SmtReplayArithmetic.new_type_check (fn () => ())
+      fun children tm = if not (Term.is_abs tm) then
+          SmtResource.term_children tm
+        else
+          (case SmtReplayImport.bounded_raw_size_with_type_check
+              check_type maximum tm of
+             NONE =>
+               (SmtResource.check_term_size_for "BitVector" "binder-opening"
+                  (maximum+1);[])
+           | SOME _ =>
+               [#2 (SmtReplayImport.dest_abs_preserving_names tm)])
+      fun inspect tm =
+        (if Term.is_abs tm then check_type (Term.type_of tm) else ();
+         if predicate tm then raise Found else ())
+      fun search () =
+        (let val summary = SmtResource.bounded_structure_with_children
+               children inspect maximum root
+             val _ = if #complete summary then () else
+               SmtResource.check_dag_size_with_limit "Skeleton"
+                 "theory-classification" maximum (#dag_nodes summary)
+         in false end) handle Found => true
+    in search () end
 
   fun is_bag_constant tm =
     named "bag"
@@ -27,10 +56,19 @@ struct
   fun is_int_count_lambda tm =
     Term.is_abs tm andalso
     let
-      val (x, body) = Term.dest_abs tm
+      (* Recognition is not authority to open an unbounded native binder.
+         Use the existing public resource metric and primitive-Type gate. *)
+      val check_type = SmtReplayArithmetic.new_type_check (fn () => ())
+      val _ = case SmtReplayImport.bounded_raw_size_with_type_check
+          check_type SmtResource.max_bv_replay_term_nodes tm of
+          SOME _ => ()
+        | NONE => SmtResource.check_term_size_for "BitVector" "binder-opening"
+            (SmtResource.max_bv_replay_term_nodes+1)
+      val (x, body) = SmtReplayImport.dest_abs_preserving_names tm
       val (head, args) = boolSyntax.strip_comb body
       fun selected_at_x array =
         let val (_, index) = Term.dest_comb array
+            val _ = check_type (Term.type_of index)
         in Term.aconv index x end
     in
       Library.same_const intSyntax.plus_tm head andalso
@@ -38,7 +76,9 @@ struct
          [left, right] => selected_at_x left andalso selected_at_x right
        | _ => false)
     end
-    handle Feedback.HOL_ERR _ => false
+    handle Feedback.HOL_ERR detail =>
+      if SmtResource.is_resource_gate detail then raise Feedback.HOL_ERR detail
+      else false
 
   fun has_bag_encoding t =
     mentions is_bag_constant t orelse mentions is_int_count_lambda t
@@ -92,58 +132,109 @@ struct
      integerTheory.INT_OF_NUM_ADD,
      combinTheory.UPDATE_def,
      combinTheory.APPLY_UPDATE_THM,
+     (* srw's set-membership conversion, expressed as its checked equation. *)
+     boolTheory.IN_DEF,
      boolTheory.FUN_EQ_THM]
 
-  fun simp_prove t =
-    simpLib.SIMP_PROVE (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
-      (bag_rewrites_for t) t
-
-  fun pointwise_prove t =
-    SmtResource.with_resource_step_time "Bag" "bag-condition-splitting"
-      (fn t => Tactical.prove (t,
-        let val rewrites = bag_rewrites_for t in
-        Tactical.THEN (bossLib.RW_TAC
-          (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)) rewrites,
-          Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
-            Tactical.THEN
-              (bossLib.FULL_SIMP_TAC
-                (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
-                rewrites,
-               intLib.ARITH_TAC))) end)) t
-
-  fun unsupported t =
-    raise ERR "bag_prove"
-      ("unsupported bag encoding shape; checked replay handles native " ^
-       "bag count characterizations and Z3 (_ map +) Int-array " ^
-       "normalization; conclusion=" ^ Library.term_to_string t)
-
-  fun bag_prove_with_arith_unbounded arith_prove t =
-    if not (has_bag_encoding t) then
-      unsupported t
-    else
-      simp_prove t
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else pointwise_prove t
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else arith_prove t
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else unsupported t
-
-  fun bag_prove_with_arith arith_prove t =
-    if not (has_bag_encoding t) then
-      unsupported t
-    else
-      SmtResource.with_resource_step_time "Bag" "bag-replay"
+  (* Preserve the bag portfolio and its constructor/count equations. Only
+     free graph variables may be named by the caller: counts, elements and
+     guards are not independent holes. Admission is invocation-local, and
+     failures must survive both tactic and consumer fallback handlers. *)
+  fun checked_procedures check =
+  let
+    exception AdmissionFailure of exn
+    fun admit tm = check tm handle primary => raise AdmissionFailure primary
+    fun protect f x = f x handle AdmissionFailure primary =>
+      SmtReplayArithmetic.propagate_admission_error primary
+    fun goal tactic (assumptions,conclusion) =
+      (List.app admit (conclusion::assumptions);
+       tactic (assumptions,conclusion))
+    fun cases input = goal (fn input as (_,conclusion) =>
+      let
+        val _ = HolKernel.find_term (fn tm => boolSyntax.is_cond tm andalso
+          not (Term.is_const (#1 (boolSyntax.dest_cond tm)))) conclusion
+        (* COND_CASES_TAC instantiates these fixed schemas at the admitted
+           conditional's result type before splitting the bounded goal. *)
+        val _ = admit (Thm.concl boolTheory.COND_CLAUSES)
+        val _ = admit (Thm.concl boolTheory.EXCLUDED_MIDDLE)
+      in Tactic.COND_CASES_TAC input end) input
+    fun with_rewrites facts prove =
+      SmtDatatypeProve.with_checked_rewrites admit
+        (fn () => simpLib.++
+          (simpLib.++ (bossLib.srw_ss(),intSimps.INT_RWTS_ss),
+           simpLib.rewrites facts)) prove
+    fun simp_prove t =
+      (admit t;with_rewrites (bag_rewrites_for t)
+        (fn ss => simpLib.SIMP_PROVE ss [] t))
+    fun pointwise_prove t =
+      SmtResource.with_resource_step_time "Bag" "bag-condition-splitting"
         (fn t =>
-          (SmtResource.check_resource_goal "Bag" "bag-replay" t;
-           bag_prove_with_arith_unbounded arith_prove t)) t
+          (admit t;with_rewrites (bag_rewrites_for t) (fn ss =>
+            Tactical.prove (t,
+              Tactical.THEN (goal (simpLib.SIMP_TAC ss []),
+                Tactical.THEN (Tactical.REPEAT (goal Tactic.STRIP_TAC),
+                  Tactical.THEN
+                    (Tactical.REPEAT (Tactical.THEN
+                       (cases,
+                        goal (simpLib.FULL_SIMP_TAC ss []))),
+                     Tactical.THEN (goal (simpLib.FULL_SIMP_TAC ss []),
+                       goal intLib.ARITH_TAC)))))))) t
+    (* CPC's scoped fallback deliberately uses its old srw portfolio, not
+       extra bag equations. Admit every actual Hyp and generated branch. *)
+    fun contextual (context,t) =
+      SmtResource.with_resource_step_time "Bag" "contextual" (fn () =>
+        (List.app admit (t::context);
+         SmtResource.check_resource_goal "Bag" "contextual" t;
+         SmtDatatypeProve.with_checked_rewrites admit bossLib.srw_ss
+           (fn ss => Tactical.TAC_PROOF ((context,t),
+             Tactical.THEN (Tactical.REPEAT cases,
+               Tactical.THEN (goal (bossLib.FULL_SIMP_TAC ss []),
+                 goal intLib.ARITH_TAC)))))) ()
 
+    fun unsupported t =
+      raise ERR "bag_prove"
+        ("unsupported bag encoding shape; checked replay handles native " ^
+         "bag count characterizations and Z3 (_ map +) Int-array " ^
+         "normalization; conclusion=" ^ Library.term_to_string t)
+
+    fun bag_prove_with_arith_unbounded arith_prove t =
+      if not (has_bag_encoding t) then unsupported t
+      else
+        simp_prove t
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else pointwise_prove t
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else (admit t;arith_prove t)
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else unsupported t
+
+    fun bag_prove_with_arith arith_prove t =
+      if not (has_bag_encoding t) then unsupported t
+      else
+        SmtResource.with_resource_step_time "Bag" "bag-replay"
+          (fn t =>
+            (SmtResource.check_resource_goal "Bag" "bag-replay" t;
+             bag_prove_with_arith_unbounded arith_prove t)) t
+
+  in
+    {prove=fn arith => protect (bag_prove_with_arith arith),
+     contextual=protect contextual}
+  end
+
+  fun default_admission () = SmtReplayArithmetic.new_term_check
+    {limit=SmtResource.max_bv_replay_term_nodes,observe=fn () => ()}
+  fun bag_prove_with_admission admit arith =
+    #prove (checked_procedures admit) arith
+  fun bag_contextual_prove_with_admission admit context t =
+    #contextual (checked_procedures admit) (context,t)
+  fun bag_prove_with_arith arith t =
+    bag_prove_with_admission (default_admission ()) arith t
   fun bag_prove t = bag_prove_with_arith intLib.ARITH_PROVE t
 
 end

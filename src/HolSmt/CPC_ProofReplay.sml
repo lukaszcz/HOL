@@ -8663,21 +8663,14 @@ local
           ("unsupported CPC Set step: rule=trust; theory=set; " ^
            "conclusion=" ^ Library.term_to_string target)
       fun replay_bag () =
-        SmtBagProve.bag_prove_with_arith arith_prove target
+        SmtBagProve.bag_prove_with_admission admit arith_prove target
       fun prove_scoped_bag () =
         let
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
-          val thm = SmtResource.with_resource_step_time "Bag" "contextual"
-            (fn () =>
-              (SmtResource.check_resource_goal "Bag" "contextual" target;
-               Tactical.TAC_PROOF ((context, target),
-                 Tactical.THEN
-                   (Tactical.REPEAT Tactic.COND_CASES_TAC,
-                    Tactical.THEN
-                      (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
-                       intLib.ARITH_TAC))))) ()
+          val thm = SmtBagProve.bag_contextual_prove_with_admission
+            admit context target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems

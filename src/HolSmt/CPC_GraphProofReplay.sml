@@ -473,8 +473,20 @@ struct
                 {inputs=sequence_inputs (),
                  observe=fn () => Option.app
                    (fn work => W.spend_guard_policy work 1) owned_work})
+          val bag_rule = List.exists
+            (fn handler => handler = #replay_handler (#rule step))
+              ["trust","rewrite","rare_inventory","aci_norm"] andalso
+            SmtReplayStructured.has_known_bag_operand graph scope
+              {inputs=List.map node premises @ sequence_inputs (),
+               observe=fn () => Option.app
+                 (fn work => W.spend_guard_policy work 1) owned_work}
+            andalso not (#replay_handler (#rule step) = "trust" andalso
+              SmtReplayStructured.has_fp_trust_operand graph scope
+                {inputs=sequence_inputs (),
+                 observe=fn () => Option.app
+                   (fn work => W.spend_guard_policy work 1) owned_work})
           val structured_rule = structured_rule orelse sequence_rule orelse
-            string_rule
+            string_rule orelse bag_rule
           val named_rule = arithmetic_rule orelse structured_rule orelse
             binder_congruence step premises
           fun arithmetic_charge amount = Option.app
@@ -645,7 +657,10 @@ struct
                     (List.map #1 used,#provenance result)
                 in List.foldr (fn ((_,term),proof) => Thm.DISCH term proof)
                      theorem used end
-              val result = SmtReplayArithmetic.prove_admitted graph scope
+              val prove = if bag_rule then
+                  SmtReplayArithmetic.prove_bounded_variables_admitted
+                else SmtReplayArithmetic.prove_admitted
+              val result = prove graph scope
                 {inputs = input_nodes,template_limit = ordinary_limit,
                  observe = arithmetic_charge,procedure = procedure}
               val (used,provenance) = valOf (!retained)

@@ -25,6 +25,15 @@ sig
      observe : IntInf.int -> unit,
      procedure : (Term.term -> unit) -> Term.term list -> Thm.thm} ->
     {theorem : Thm.thm, node : SmtReplayGraph.node}
+  (* Same bounded variable-only schema contract. Discover its full result
+     graph before a single checked INST of variables (no compound operands).
+     Used locally for bag obligations with large shared element syntax. *)
+  val prove_bounded_variables_admitted :
+    SmtReplayGraph.graph -> SmtReplayGraph.scope ->
+    {inputs : SmtReplayGraph.node list, template_limit : int,
+     observe : IntInf.int -> unit,
+     procedure : (Term.term -> unit) -> Term.term list -> Thm.thm} ->
+    {theorem : Thm.thm, node : SmtReplayGraph.node}
   val prove : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     {inputs : SmtReplayGraph.node list, template_limit : int,
      observe : IntInf.int -> unit, procedure : Term.term list -> Thm.thm} ->

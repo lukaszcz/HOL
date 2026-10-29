@@ -93,17 +93,29 @@ struct
           recent := ty :: List.take (!recent,Int.min (15,length (!recent)))))
     end
 
-  fun new_term_check {limit,observe} =
+  fun new_annotation_check unique observe check_type =
+    let
+      val recent = ref ([] : Term.term list)
+      fun hit term [] = false
+        | hit term (old::rest) =
+            (observe ();Portable.pointer_eq (term,old) orelse hit term rest)
+      fun annotations term =
+        if unique andalso hit term (!recent) then () else
+          (observe ();check_type (Term.type_of term);
+           if Term.is_comb term then
+             let val (f,x) = Term.dest_comb term
+             in annotations f;annotations x end
+           else if Term.is_abs term then
+             let val (v,b) = SmtReplayImport.dest_abs_preserving_names term
+             in annotations v;annotations b end else ();
+           if unique then recent := term ::
+             List.take (!recent,Int.min (7,length (!recent))) else ())
+    in annotations end
+
+  fun new_term_check_using unique {limit,observe} =
     let
       val check_type = new_type_check observe
-      fun annotations term =
-        (observe ();check_type (Term.type_of term);
-         if Term.is_comb term then
-           let val (f,x) = Term.dest_comb term
-           in annotations f;annotations x end
-         else if Term.is_abs term then
-           let val (v,b) = SmtReplayImport.dest_abs_preserving_names term
-           in annotations v;annotations b end else ())
+      val annotations = new_annotation_check unique observe check_type
     in fn term =>
       (case SmtReplayImport.bounded_raw_size_with_type_check_observed
           {check_type=check_type,observe=observe,limit=limit} term of
@@ -112,7 +124,10 @@ struct
            "arithmetic operator schema exceeds local admission")
     end
 
-  fun prove_admitted graph scope {inputs,template_limit,observe,procedure} =
+  val new_term_check = new_term_check_using false
+
+  fun prove_admitted_using bounded_variables graph scope
+      {inputs,template_limit,observe,procedure} =
     let
       exception AdmissionCallback of exn
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
@@ -175,7 +190,7 @@ struct
             {check_type=check_type,observe=tick,limit=template_limit} term of
           SOME _ => () | NONE => raise ERR "prove"
             "arithmetic operator schema exceeds local admission"
-      val check_obligation = new_term_check
+      val check_obligation = new_term_check_using bounded_variables
         {limit=template_limit,observe=tick}
       fun admit_obligation term = check_obligation term
         handle primary as Feedback.HOL_ERR detail =>
@@ -185,14 +200,8 @@ struct
             raise primary
           else raise AdmissionCallback primary
         | primary => raise AdmissionCallback primary
-      fun annotations term =
-        (tick ();check_type (Term.type_of term);
-         if Term.is_comb term then
-           let val (f,x) = Term.dest_comb term
-           in annotations f;annotations x end
-         else if Term.is_abs term then
-           let val (v,b) = SmtReplayImport.dest_abs_preserving_names term
-           in annotations v;annotations b end else ())
+      val annotations =
+        new_annotation_check bounded_variables tick check_type
       (* This private namespace is disjoint from G.placeholder's namespace.
          checked_graph_schema reserves it before realization allocates names.
          Fixed-width IDs preserve numeric order for arithmetic elimination
@@ -231,7 +240,12 @@ struct
           val operands = List.foldl (fn ((node,hole),table) =>
             Redblackmap.insert (table,hole,node))
             (Redblackmap.mkDict variable_compare) bindings
-          fun tree frame bound term =
+          (* The bag-only finite schema path retains a tiny physical syntax
+             memo. This is construction reuse, never semantic equality; frame
+             identity keeps lexical variables separate. Misses use the same
+             complete discovery. Do not change ordinary binder replay. *)
+          val syntax = ref ([] : (G.scope * Term.term * G.node) list)
+          fun build frame bound term =
             (tick ();
              if Term.is_var term then
                (case Redblackmap.peek (bound,term) of
@@ -254,11 +268,36 @@ struct
                    (* Recorded closure children share the owner's lifetime;
                       later consumers must still be able to inspect them. *)
                in node end)
+          and tree frame bound term =
+            if not bounded_variables then build frame bound term else
+            let
+              fun lookup [] = NONE
+                | lookup ((saved,old,node)::rest) =
+                    (tick ();
+                     if saved = frame andalso
+                         Portable.pointer_eq (old,term) then SOME node
+                     else lookup rest)
+            in case lookup (!syntax) of SOME node => node
+              | NONE =>
+                  let val node = build frame bound term
+                      val _ = syntax := (frame,term,node) ::
+                        List.take (!syntax,Int.min (7,length (!syntax)))
+                  in node end
+            end
           (* Discover the entire successful result before its single native
              INST. Substitute VARIABLES only, never expanded graph operands. *)
           val node = tree scope operands (Thm.concl theorem)
           val substitution = List.map (fn (actual,hole) =>
             {redex=hole,residue=G.representative graph actual}) bindings
+          (* Physical construction/annotation reuse does not waive the
+             native substitution's unfolded work. Prepay its actual bounded
+             operand before INST, on the same invocation allowance. *)
+          val _ = if not bounded_variables then () else
+            (case SmtReplayImport.bounded_raw_size template_limit
+                (Thm.concl theorem) of
+               SOME count => charge (IntInf.fromInt count)
+             | NONE => raise ERR "prove"
+                 "arithmetic operator schema exceeds local admission")
           val _ = guard ()
           val realized = SmtReplayRuleObservation.INST substitution theorem
         in finish node realized end
@@ -373,8 +412,15 @@ struct
           (* A checked datatype worker can introduce case lambdas even when
              its only input was a scrutinee variable (omitted dt_split).
              Reuse that SAME successful proof, never retry the procedure. *)
-          if SmtResource.contains Term.is_abs (Thm.concl proof) then
-            binder_result pairs proof
+          if bounded_variables orelse
+              SmtResource.contains Term.is_abs (Thm.concl proof) then
+            binder_result pairs
+              (if bounded_variables then
+                 (* Preserve the operator route's checked Boolean closure
+                    (and its DISK_THM dependency), without graph rematching.
+                    Its fixed EQT wrapper has the same +4 allowance below. *)
+                 Drule.EQT_ELIM (Drule.EQT_INTRO proof)
+               else proof)
           else let
           (* The four extra nodes are ONLY EQT_INTRO's fixed wrapper, not an
              increased input, result, skeleton, BV, binder or runtime cap. *)
@@ -398,6 +444,14 @@ struct
        handle TerminalAdmission (AdmissionCallback primary) =>
                 propagate_admission_error primary
             | AdmissionCallback primary => raise primary end
+
+  val prove_admitted = prove_admitted_using false
+  (* Bag's complete bounded variable-only obligations need not pay for a
+     second general graph matching programme over every shared element
+     occurrence. The existing binder path discovers the entire result graph
+     before one INST of VARIABLES only; no compound operand is substituted.
+     All original input/Hyp/result/annotation admission remains mandatory. *)
+  val prove_bounded_variables_admitted = prove_admitted_using true
 
   fun prove graph scope {inputs,template_limit,observe,procedure} =
     prove_admitted graph scope

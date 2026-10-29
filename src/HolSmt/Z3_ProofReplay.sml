@@ -5635,7 +5635,8 @@ local
       (let
          (* E1(b): the general Bag prover fails loudly outside its family. *)
          val thm = rewrite_profile "bags" "rewrite(5)(bag)"
-           (SmtBagProve.bag_prove_with_arith arith_prove) t
+           (SmtBagProve.bag_prove_with_admission
+             (#datatype_admit state) arith_prove) t
        in
          (state_cache_thm state thm, thm)
        end
@@ -6224,7 +6225,8 @@ local
     let
       (* E1(b): the general Bag prover fails loudly outside its family. *)
       val thm = profile "th_lemma[bag](2)(bag_prove)"
-        (SmtBagProve.bag_prove_with_arith arith_prove) t
+        (SmtBagProve.bag_prove_with_admission
+          (#datatype_admit state) arith_prove) t
     in
       (state_cache_thm state thm, thm)
     end)
@@ -9476,6 +9478,12 @@ in
     SmtReplayStructured.has_operand graph scope
       {inputs=inputs,observe=fn () => observe 1}
 
+  fun graph_named_prover observe graph scope inputs =
+    if SmtReplayStructured.has_known_bag_operand graph scope
+        {inputs=inputs,observe=fn () => observe 1} then
+      SmtReplayArithmetic.prove_bounded_variables_admitted
+    else SmtReplayArithmetic.prove_admitted
+
   fun graph_bounded_local_law_using observe graph definitions
       (proof : Z3_GraphProofParser.proof)
       ({rule,metadata,target,premises,arguments,law}
@@ -9557,9 +9565,9 @@ in
             val _ = selected := List.map #1 used
           in List.foldr (fn ((_,term),result) => Thm.DISCH term result)
                theorem used end
-        val result = SmtReplayArithmetic.prove_admitted graph
-          (ReplayGraph.node_scope graph law)
-          {inputs = target :: premises @ argument_nodes @ variables,
+        val inputs = target :: premises @ argument_nodes @ variables
+        val result = graph_named_prover observe graph scope inputs graph scope
+          {inputs = inputs,
            template_limit = limit,observe = observe,procedure = procedure}
         val selected_law = SmtReplayRules.implication graph
           (ReplayGraph.node_scope graph law) (!selected) target
@@ -9753,8 +9761,10 @@ in
                  ones. Definition occurrence order and duplicates also stay. *)
             in List.foldr (fn (term,result) => Thm.DISCH term result)
                  theorem (recorded @ premise_terms) end
-          val result = SmtReplayArithmetic.prove_admitted graph scope
-            {inputs = target :: premises @ argument_nodes @ variables,
+          val inputs = target :: premises @ argument_nodes @ variables
+          val result = graph_named_prover (fn _ => ()) graph scope inputs
+            graph scope
+            {inputs = inputs,
              template_limit = limit,observe = fn _ => (),
              procedure = procedure}
           (* Read transported definition nodes from the checked result, not
