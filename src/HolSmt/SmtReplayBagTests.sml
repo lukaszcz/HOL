@@ -538,6 +538,78 @@ struct
         [premise] contextual_goal
     in exact contextual_goal [premise] recovered end
 
+  (* A two-function rule must forecast its selective beta phases in native
+     match order. In particular b e -> 0 must not hide the later P e path.
+     Arm at the inner predicate result, then reject the WHOLE rebuilt binder
+     before conversion. Rejecting only the final conversion would let the
+     old silently rolled-back forecast pass this test. *)
+  fun prospective_betas () =
+    let
+      val target =
+        ``BAG_FILTER (\v:bool. (v,v) = bag_beta_pair) (\v:bool. 0)
+            bag_beta_x =
+          (if (bag_beta_x,bag_beta_x) = bag_beta_pair then 0 else 0)``
+      val final =
+        ``\e:bool. if (e,e) = bag_beta_pair then (0:num) else 0``
+      fun predicate tm =
+        let val (l,r) = boolSyntax.dest_eq tm
+            val (x,y) = pairSyntax.dest_pair l
+        in r ~~ ``bag_beta_pair:bool # bool`` andalso
+           Term.is_var x andalso x ~~ y end
+        handle Feedback.HOL_ERR _ => false
+      exception Primary
+      exception RolledBack
+      fun multi label worker =
+        let val _ = testutils.tprint ("bag prospective phases " ^ label)
+            val armed = ref false val stopped = ref false val after = ref 0
+            val genuine = A.new_term_check
+              {limit=limit,observe=fn () => ()}
+            fun check tm =
+              if !stopped then (after := !after+1;genuine tm)
+              else if !armed andalso Term.is_abs tm then
+                (stopped := true;
+                 if tm ~~ final then raise Primary else raise RolledBack)
+              else (genuine tm;if predicate tm then armed := true else ())
+            val result = Exn.capture (worker check) target
+        in require "later beta phase was rolled back or admitted too late"
+             (!armed andalso !stopped andalso !after=0 andalso
+              (case result of Exn.Exn Primary => true | _ => false));
+           exact target [] (worker genuine target);testutils.OK () end
+      val _ = multi "native" prove
+      val _ = multi "CPC TRUST" (cpc_worker "trust")
+      (* These tuples are prospective pair-map intermediates, absent from
+         both the input and native conversion result. A callback-free
+         contextual worker returns without ever admitting either one. *)
+      val assumption = ``BAG_IN (ctx_x:bool) ctx_b``
+      val contextual_target =
+        ``(bag_consumer:num # bool -> num)
+            (((\v:num. (0:num)) ## (\v:bool. (v,v) = bag_beta_pair))
+              (cx,cy)) = bag_consumer (0,(cy,cy)=bag_beta_pair) /\
+          BAG_IN (ctx_x:bool) ctx_b``
+      val intermediates =
+        [``((\v:num. (0:num)) cx,(\v:bool. (v,v) = bag_beta_pair) cy)``,
+         ``((\v:num. (0:num)) cx,(cy:bool,cy)=bag_beta_pair)``]
+      fun contextual intermediate =
+        let val _ = testutils.tprint "bag prospective contextual beta"
+            val stopped = ref false val after = ref 0
+            val genuine = A.new_term_check
+              {limit=limit,observe=fn () => ()}
+            fun check tm =
+              if !stopped then (after := !after+1;genuine tm)
+              else if tm ~~ intermediate then
+                (stopped := true;raise Primary)
+              else genuine tm
+            fun worker admit =
+              SmtBagProve.bag_contextual_prove_with_admission
+                admit [assumption] contextual_target
+            val result = Exn.capture worker check
+            val native = worker genuine
+        in require "contextual native beta preceded prospective admission"
+             (!stopped andalso !after=0 andalso
+              (case result of Exn.Exn Primary => true | _ => false));
+           exact contextual_target [assumption] native;testutils.OK () end
+    in List.app contextual intermediates end
+
   fun binder_names () = with_graph (fn graph => fn scope =>
     let
       (* A bound Boolean and a free list may share their spelling. Native
@@ -626,7 +698,9 @@ struct
                  procedure=fn admit => fn [left,right] =>
                    (calls := !calls+1;
                     require "fitting bag shared root was copied"
-                      (Portable.pointer_eq (left,right));
+                      (if SmtResource.contains Term.is_abs goal then
+                         left ~~ right
+                       else Portable.pointer_eq (left,right));
                     require "fitting bag source variables reached worker"
                       (H.disjoint [goal] [left,right]);
                     shape goal left;worker admit left)
@@ -637,7 +711,58 @@ struct
            exact goal [] (#theorem result);
            same_tags native (#theorem result);testutils.OK () end)
       val check = check_using prove
+      (* The old shared 32-visit discovery fuel consumed SOME^31's payload
+         root before seeing the query's discriminating NONE. *)
+      fun wrap 0 e = e | wrap n e = wrap (n-1) (optionSyntax.mk_some e)
+      val nested_element = wrap 31 (shared_element 15)
+      val equal_element = optionSyntax.mk_some (shared_element 14)
+      val equal_count = Term.mk_comb (bag,equal_element)
+      val equal_goal = boolSyntax.mk_eq
+        (Term.mk_comb (bagSyntax.mk_insert (equal_element,bag),equal_element),
+         numSyntax.mk_plus (equal_count,``1:num``))
+      val nested_type = Term.type_of nested_element
+      val nested_bag = Term.mk_var ("bag_nested_count",
+        Type.mk_type ("fun",[nested_type,numSyntax.num]))
+      val nested_none = Term.inst
+        [{redex=Type.alpha,residue=optionSyntax.dest_option nested_type}]
+        ``NONE:'a option``
+      val nested_goal = boolSyntax.mk_eq
+        (Term.mk_comb (bagSyntax.mk_insert (nested_element,nested_bag),
+           nested_none),Term.mk_comb (nested_bag,nested_none))
+      val empty = ``EMPTY_BAG:bool -> num``
+      val large_guard = shared_element 15
+      val large_guard_goal = boolSyntax.mk_eq
+        (boolSyntax.mk_cond (large_guard,empty,empty),empty)
+      val binder = ``bag_unused_bound:bool``
+      val bound_guard_goal = boolSyntax.mk_eq
+        (Term.mk_abs (binder,boolSyntax.mk_cond (large_guard,empty,empty)),
+         Term.mk_abs (binder,empty))
+      fun known_guard negative =
+        let val _ = testutils.tprint "bag fitting contextual known guard"
+            val bag = ``bag_other:bool -> num``
+            val goal = boolSyntax.mk_eq
+              (boolSyntax.mk_cond (large_guard,
+                 if negative then bag else empty,
+                 if negative then empty else bag),empty)
+            val hypothesis = if negative then boolSyntax.mk_neg large_guard
+              else large_guard
+            val _ = require "known-guard fixture ceased fitting"
+              (Term.term_size goal = 131079 andalso
+               Term.term_size hypothesis < cap)
+            val theorem = SmtBagProve.bag_contextual_prove_with_admission
+              (A.new_term_check {limit=cap,observe=fn () => ()})
+              [hypothesis] goal
+        in exact goal [hypothesis] theorem;testutils.OK () end
     in check "INSERT SOME/NONE" 131083 insert_goal;
+       check "nested INSERT SOME/NONE" 131143 nested_goal;
+       check "INSERT equal SOME" 196623 equal_goal;
+       check_using (fn admit =>
+         SmtBagProve.bag_contextual_prove_with_admission admit [])
+         "contextual large guard" 131079 large_guard_goal;
+       check_using (fn admit =>
+         SmtBagProve.bag_contextual_prove_with_admission admit [])
+         "contextual large guard under binder" 131081 bound_guard_goal;
+       known_guard false;known_guard true;
        check "reflexive INSERT opaque bag" reflexive_size reflexive_goal;
        check "conditional shared singleton" 196619 conditional_goal;
        check_using (fn admit =>
@@ -733,6 +858,7 @@ struct
        ("bag context",contextual),("bag CPC",cpc_cases),
        ("bag compact TRUST",compact_trust_identity),
        ("bag graph identity",graph_handlers),("bag admission",admission_errors),
+       ("bag prospective beta phases",prospective_betas),
        ("bag binder names",binder_names),
        ("bag fitting intermediates",fitting_intermediates),
        ("bag large",large_input)]

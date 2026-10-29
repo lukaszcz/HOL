@@ -151,7 +151,7 @@ struct
        tactic (assumptions,conclusion))
     fun theorem th =
       (List.app admit (Thm.concl th :: Thm.hyp th);th)
-    fun cases input = goal (fn input as (_,conclusion) =>
+    fun cases input = goal (fn input as (context,conclusion) =>
       let
         val conditional = HolKernel.find_term
           (fn tm => boolSyntax.is_cond tm andalso
@@ -162,9 +162,6 @@ struct
            one conjunction before extracting either equation. That unused
            intermediate can be twice the admitted goal. The checked simp
            driver below reduces each branch under its actual assumption. *)
-        val law = theorem boolTheory.EXCLUDED_MIDDLE
-        val _ = admit (boolSyntax.mk_disj
-          (condition,boolSyntax.mk_neg condition))
         fun branch value intro th (assumptions,target) =
           let
             val equation = boolSyntax.mk_eq (condition,value)
@@ -178,10 +175,24 @@ struct
           in Tactical.THEN
             (Tactic.SUBST1_TAC (intro th),Tactic.ASSUME_TAC th)
             (assumptions,target) end
-      in Thm_cont.DISJ_CASES_THEN2
-           (branch boolSyntax.T Drule.EQT_INTRO)
-           (branch boolSyntax.F Drule.EQF_INTRO)
-           (Thm.SPEC condition law) input end) input
+        fun known [] = NONE
+          | known (h::hs) =
+              (admit boolSyntax.T;
+               if Term.aconv h condition then SOME
+                 (branch boolSyntax.T Drule.EQT_INTRO (Thm.ASSUME h))
+               else if boolSyntax.is_neg h andalso
+                   Term.aconv (boolSyntax.dest_neg h) condition then SOME
+                 (branch boolSyntax.F Drule.EQF_INTRO (Thm.ASSUME h))
+               else known hs)
+      in case known context of SOME tactic => tactic input
+        | NONE =>
+            let val law = theorem boolTheory.EXCLUDED_MIDDLE
+                val _ = admit (boolSyntax.mk_disj
+                  (condition,boolSyntax.mk_neg condition))
+            in Thm_cont.DISJ_CASES_THEN2
+                 (branch boolSyntax.T Drule.EQT_INTRO)
+                 (branch boolSyntax.F Drule.EQF_INTRO)
+                 (Thm.SPEC condition law) input end end) input
 
     (* Forecast native rewrite instantiation with syntax only. Matching
        operands, actual Hyp, type substitutions and binder bodies are all
@@ -277,38 +288,60 @@ struct
           | betas n term =
               let val (f,x) = Term.dest_comb term
               in beta (Term.mk_comb (betas (n-1) f,x)) end
-        fun paths variable pattern actual =
+        (* BETA_VAR compiles selective paths on the ORIGINAL rule, then
+           HO_PART_MATCH runs them in match-substitution order. A previous
+           phase may erase an unselected sibling: never traverse it against
+           the old pattern. A missing SELECTED path rolls back the entire
+           phase, as native TRY_CONV does; admission failures do not. *)
+        datatype path = Betas of int | Body of path
+          | Rator of path | Rand of path | Both of path * path
+        fun plan variable pattern =
           (check boolSyntax.T;
            if Term.is_abs pattern then
-             let val (v,body) =
+             let val (v,b) =
                    SmtReplayImport.dest_abs_preserving_names pattern
-             in if Term.aconv v variable then actual else
-                 let val _ = check actual
-                     val (w,b) =
-                       SmtReplayImport.dest_abs_preserving_names actual
-                 in Term.mk_abs (w,paths variable body b) end end
+             in if Term.aconv v variable then NONE
+                else Option.map Body (plan variable b) end
            else if Term.is_comb pattern then
              let val (head,args) = boolSyntax.strip_comb pattern
-             in if Term.aconv head variable then betas (length args) actual
-               else let val (f,x) = Term.dest_comb pattern
-                        val (g,y) = Term.dest_comb actual
-                    in Term.mk_comb
-                      (paths variable f g,paths variable x y) end end
-           else actual)
-        fun substituted_lambda variable =
-          let val variable = typed variable
-          in List.exists (fn {redex,residue} =>
-               Term.aconv redex variable andalso Term.is_abs residue) sigma
-          end
-        val functions = List.filter (fn variable =>
-          Lib.can Type.dom_rng (Term.type_of variable) andalso
-          substituted_lambda variable) (Term.free_vars source)
-        fun phase (variable,actual) =
-          let val result = paths variable source actual
-                handle Feedback.HOL_ERR _ => actual
-              val _ = formula result
-          in result end
-        val _ = List.foldl phase initial functions
+             in if Term.aconv head variable then SOME (Betas (length args))
+                else let val (f,x) = Term.dest_comb pattern
+                     in case (plan variable f,plan variable x) of
+                         (NONE,NONE) => NONE
+                       | (SOME p,NONE) => SOME (Rator p)
+                       | (NONE,SOME p) => SOME (Rand p)
+                       | (SOME p,SOME q) => SOME (Both (p,q)) end end
+           else NONE)
+        fun apply (Betas n) actual = betas n actual
+          | apply (Body p) actual =
+              let val _ = check actual
+                  val (v,b) =
+                    SmtReplayImport.dest_abs_preserving_names actual
+                  val result = Term.mk_abs (v,apply p b)
+                  val _ = check result
+              in result end
+          | apply (Rator p) actual =
+              let val (f,x) = Term.dest_comb actual
+              in Term.mk_comb (apply p f,x) end
+          | apply (Rand p) actual =
+              let val (f,x) = Term.dest_comb actual
+              in Term.mk_comb (f,apply p x) end
+          | apply (Both (p,q)) actual =
+              let val (f,x) = Term.dest_comb actual
+              in Term.mk_comb (apply p f,apply q x) end
+        val plans = List.mapPartial (fn variable =>
+          Option.map (fn p => (typed variable,p)) (plan variable source))
+          (List.filter (fn v => not (HOLset.member (rigid,v)))
+            (Term.free_vars source))
+        fun phase ({redex,...},actual) =
+          case List.find (fn (v,_) => Term.aconv v redex) plans of
+            NONE => actual
+          | SOME (_,p) =>
+              let val result = apply p actual
+                    handle Feedback.HOL_ERR _ => actual
+                  val _ = formula result
+              in result end
+        val _ = List.foldl phase initial sigma
       in () end
     fun with_rewrites facts prove =
       let
@@ -331,10 +364,11 @@ struct
       (SmtReplayImport.bounded_raw_size_with_type_check_observed
         {limit=128,observe=fn () => admit boolSyntax.T,
          check_type=fn _ => ()} tm)
-    fun erasure tm =
+    fun erasure allow_insert tm =
       let
         val (head,args) = boolSyntax.strip_comb tm
-        val insert = named "bag" ["BAG_INSERT"] head andalso length args=3
+        val insert = allow_insert andalso
+          named "bag" ["BAG_INSERT"] head andalso length args=3
         val conditional = boolSyntax.is_cond tm
         val _ = if insert orelse conditional then ()
           else raise Conv.UNCHANGED
@@ -348,28 +382,59 @@ struct
               let val hole = Term.genvar (Term.type_of actual)
               in bindings := Redblackmap.insert (!bindings,actual,hole);
                  hole end
-        val remaining = ref 32
         fun constructor actual =
-          if !remaining = 0 then atom actual else
           let val _ = admit boolSyntax.T
-              val _ = remaining := !remaining-1
               val (con,fields) = boolSyntax.strip_comb actual
-              (* Declaration identity is enough for shape discovery. Do
-                 not type-instantiate a whole constructor bundle merely to
-                 decide which syntax to keep in the checked schema. *)
+              (* Read declaration identities, not a type-instantiated
+                 constructor bundle. Discovery is syntax, not a theorem. *)
               val constructors = case TypeBase.fetch (Term.type_of actual) of
                   NONE => []
                 | SOME info => TypeBasePure.constructors_of info
           in if Term.is_const con andalso List.exists
               (fn ctor => (admit boolSyntax.T;Term.same_const con ctor))
-              constructors then
-               Term.list_mk_comb (con,List.map constructor fields)
-             else atom actual end
-          handle Feedback.HOL_ERR _ => atom actual
+              constructors then SOME (con,fields) else NONE end
+        (* Demand BOTH outer constructors before their fields. Keep only a
+           path witnessing disjointness; fields off that path are opaque.
+           A fixed discovery fuel must not hide a fitting discriminator.
+           Shared/opaque fields terminate discovery, so a large payload
+           below SOME versus NONE is never explored or duplicated. *)
+        fun distinguish (left,right) =
+          (admit boolSyntax.T;
+           if Term.aconv left right then NONE else
+           case (constructor left,constructor right) of
+             (SOME (l,ls),SOME (r,rs)) =>
+               if not (Term.same_const l r) then SOME
+                 (Term.list_mk_comb (l,List.map atom ls),
+                  Term.list_mk_comb (r,List.map atom rs))
+               else
+                 let fun fields prefix [] [] = NONE
+                       | fields prefix (x::xs) (y::ys) =
+                           (case distinguish (x,y) of
+                              NONE => fields ((atom x,atom y)::prefix) xs ys
+                            | SOME pair =>
+                                let val pairs = List.rev prefix @ [pair] @
+                                      ListPair.map (fn (a,b) => (atom a,atom b))
+                                        (xs,ys)
+                                in SOME
+                                  (Term.list_mk_comb (l,List.map #1 pairs),
+                                   Term.list_mk_comb (r,List.map #2 pairs)) end)
+                       | fields _ _ _ = NONE
+                 in fields [] ls rs end
+           | _ => NONE)
+        (* Retain one outer constructor even without disjointness. For
+           equal SOME fields, for example, the checked count equation can
+           erase a constructor occurrence as well as its guard. Naming the
+           whole element would lose that non-growth proof. *)
+        fun shallow actual = case constructor actual of
+            NONE => atom actual
+          | SOME (con,fields) =>
+              Term.list_mk_comb (con,List.map atom fields)
         val schema = if insert then
-            Term.list_mk_comb (head,
-              [constructor (hd args),atom (List.nth (args,1)),
-               constructor (List.nth (args,2))])
+            let val element = hd args val query = List.nth (args,2)
+                val (e,q) = case distinguish (element,query) of
+                    SOME pair => pair
+                  | NONE => (shallow element,shallow query)
+            in Term.list_mk_comb (head,[e,atom (List.nth (args,1)),q]) end
           else let val (p,l,r) = boolSyntax.dest_cond tm
                in boolSyntax.mk_cond (atom p,atom l,atom r) end
         val _ = admit schema
@@ -380,9 +445,10 @@ struct
             SmtResource.contains Term.is_abs (Thm.concl result)
           then raise Conv.UNCHANGED else ()
         (* This is an optional erasure, not an eager normalization pass.
-           Require componentwise non-growth (each opaque field and the
-           fixed syntax). Thus a reflexive fitting INSERT cannot be expanded
-           into a duplicated conditional before reflexivity gets its turn. *)
+           Never duplicate an opaque field. Usually fixed syntax shrinks as
+           well; otherwise require actual unfolded non-growth below. Thus a
+           reflexive fitting INSERT cannot expand into a duplicated guard,
+           but removing a large repeated element can pay for numeral 1. *)
         val holes = List.map #2 (Redblackmap.listItems (!bindings))
         fun occurrences needle term =
           (admit boolSyntax.T;
@@ -398,16 +464,25 @@ struct
              let val (f,x) = Term.dest_comb term
              in 1 + fixed f + fixed x end
            else 1)
-        val _ = if fixed right <= fixed left andalso List.all
+        val _ = if List.all
             (fn hole => occurrences hole right <= occurrences hole left)
             holes then () else raise Conv.UNCHANGED
+        val fixed_shrinks = fixed right <= fixed left
         val sigma = List.map (fn (actual,hole) =>
           {redex=hole,residue=actual}) (Redblackmap.listItems (!bindings))
         val instantiate = substitution admit [] sigma
-        val _ = List.app (admit o instantiate)
-          (left::right::Thm.hyp result)
+        val l = instantiate left val r = instantiate right
+        fun size term =
+          SmtReplayImport.bounded_raw_size_with_type_check_observed
+            {limit=SmtResource.max_bv_replay_term_nodes,
+             observe=fn () => admit boolSyntax.T,check_type=fn _ => ()} term
+        val _ = if fixed_shrinks then () else
+          (case (size l,size r) of (SOME n,SOME m) =>
+             if m <= n then () else raise Conv.UNCHANGED
+           | _ => raise Conv.UNCHANGED)
+        val _ = List.app admit (l::r::List.map instantiate (Thm.hyp result))
       in Thm.INST sigma result end
-    fun simplify_erased prove t =
+    fun simplify_erased allow_insert prove t =
       let
         val _ = admit t
         (* Physical reuse only avoids repeating discovery on shared input
@@ -426,8 +501,18 @@ struct
                       | _ => SOME (Thm.MK_COMB
                           (Option.getOpt (l,Thm.REFL f),
                            Option.getOpt (r,Thm.REFL x))) end
+                  else if Term.is_abs tm then
+                    let val _ = admit tm
+                        val (v,b) =
+                          SmtReplayImport.dest_abs_preserving_names tm
+                    in case erase b of NONE => NONE
+                      | SOME bridge =>
+                          let val result = Term.mk_abs
+                                (v,boolSyntax.rhs (Thm.concl bridge))
+                              val _ = admit result
+                          in SOME (Thm.ABS v bridge) end end
                   else NONE
-                val result = SOME (erasure tm)
+                val result = SOME (erasure allow_insert tm)
                   handle Conv.UNCHANGED => descend ()
                     | Feedback.HOL_ERR _ => descend ()
                 val _ = saved := (tm,result) ::
@@ -440,7 +525,7 @@ struct
             in Thm.EQ_MP (Thm.SYM bridge) (prove result) end
       end
     fun simp_prove t =
-      simplify_erased (fn t => with_rewrites (bag_rewrites_for t)
+      simplify_erased true (fn t => with_rewrites (bag_rewrites_for t)
         (fn ss => simpLib.SIMP_PROVE ss [] t)) t
     fun pointwise_prove t =
       SmtResource.with_resource_step_time "Bag" "bag-condition-splitting"
@@ -461,11 +546,16 @@ struct
       SmtResource.with_resource_step_time "Bag" "contextual" (fn () =>
         (List.app admit (t::context);
          SmtResource.check_resource_goal "Bag" "contextual" t;
-         SmtDatatypeProve.with_checked_rewrites admit bossLib.srw_ss
-           (fn ss => Tactical.TAC_PROOF ((context,t),
-             Tactical.THEN (Tactical.REPEAT cases,
-               Tactical.THEN (goal (bossLib.FULL_SIMP_TAC ss []),
-                 goal intLib.ARITH_TAC)))))) ()
+         (* Discard provably unused guards before splitting. Restrict this
+            erasure to conditionals: CPC retains its original srw portfolio,
+            rather than acquiring the ordinary Bag rung's extra equations. *)
+         simplify_erased false (fn t =>
+           SmtDatatypeProve.with_checked_rewrites_preflight admit
+             bossLib.srw_ss preflight
+             (fn ss => Tactical.TAC_PROOF ((context,t),
+               Tactical.THEN (Tactical.REPEAT cases,
+                 Tactical.THEN (goal (bossLib.FULL_SIMP_TAC ss []),
+                   goal intLib.ARITH_TAC))))) t)) ()
 
     fun unsupported t =
       raise ERR "bag_prove"
