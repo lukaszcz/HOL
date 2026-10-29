@@ -375,11 +375,19 @@ struct
              oversized unused Boolean premise can still stay a name. *)
           val _ = fit ()
           val equations = ref (Redblackmap.mkDict Int.compare)
+          val source_names = ref (Redblackmap.mkDict Term.compare)
+          val local_names = ref ([] : Term.term list)
           fun expand node =
             case Redblackmap.peek (!equations,G.node_id node) of
               SOME theorem => theorem
             | NONE =>
                 let
+                  val _ = local_names := name node :: !local_names
+                  val _ = case G.view graph node of
+                      G.Variable (G.RigidSource,variable) =>
+                        source_names := Redblackmap.insert
+                          (!source_names,variable,name node)
+                    | _ => ()
                   val theorem = if opaque node then
                       Thm.REFL (name node)
                     else case G.view graph node of
@@ -401,7 +409,32 @@ struct
           val _ = List.app admit (proposition :: List.concat
             (map (fn th => Thm.concl th :: Thm.hyp th)
               (facts @ SmtRegLanProve.congruence_theorems)))
-          val theorem = SmtRegLanProve.congruence facts proposition
+          (* Native exact-antecedent lookup can select a residual law
+             variable (the middle of transitivity, for example) by its
+             source identity. Rename the LAWS through the same injective
+             boundary as the frame, not just their matched consequences.
+             Only rigid source leaves establish this correspondence: a
+             generated/solver/bound namesake is a distinct declaration.
+             Variables absent from the final projection get fresh locals,
+             so they cannot accidentally select a graph placeholder. *)
+          val schemas = map Drule.SPEC_ALL
+            SmtRegLanProve.congruence_theorems
+          val variables = Term.free_varsl (map Thm.concl schemas)
+          val reserved = ref (!local_names)
+          fun rename variable =
+            let val local_name = case Redblackmap.peek
+                    (!source_names,variable) of
+                    SOME owned => owned
+                  | NONE => Term.variant (!reserved)
+                      (Term.mk_var ("smt_reglan_schema_" ^
+                        #1 (Term.dest_var variable),Term.type_of variable))
+                val _ = reserved := local_name :: !reserved
+            in {redex=variable,residue=local_name} end
+          val substitution = map rename variables
+          val schemas = map (Thm.INST substitution) schemas
+          val _ = List.app (admit o Thm.concl) schemas
+          val theorem = SmtRegLanProve.congruence_with_theorems
+            schemas facts proposition
           val _ = List.app admit (Thm.concl theorem :: Thm.hyp theorem)
         in Thm.EQ_MP target_bridge
              (Thm.EQ_MP (Thm.SYM bridge) theorem) end

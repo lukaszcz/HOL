@@ -554,6 +554,18 @@ struct
       val children = [``reglan_equiv r u``,``reglan_equiv u t``]
       val endpoints = [``reglan_equiv (reglan_star r) v``,
         ``reglan_equiv v (reglan_star t)``]
+      (* Use the native law's actual residual variable, not its spelling.
+         This law precedes star congruence and must retain its exact Hyp
+         even though matching its conclusion does not bind the middle. *)
+      val generic = Drule.SPEC_ALL smtstringTheory.reglan_equiv_trans
+      val (antecedents,_) = boolSyntax.strip_imp (Thm.concl generic)
+      val (first,_) = boolSyntax.dest_conj (hd antecedents)
+      val (_,middle) = SmtRegLanProve.dest_equiv first
+      val (lhs,rhs) = SmtRegLanProve.dest_equiv star
+      val residual = [SmtRegLanProve.mk_equiv (lhs,middle),
+        SmtRegLanProve.mk_equiv (middle,rhs)]
+      val typed_namesake = Term.mk_var
+        (#1 (Term.dest_var middle),Type.bool)
       fun double 0 term = term
         | double n term = double (n-1) (boolSyntax.mk_conj (term,term))
       val oversized_unused = double 13 ``unused_large:bool``
@@ -593,7 +605,11 @@ struct
          (star,[large_conjunct]),
          (``reglan_equiv r t``,[``reglan_equiv r t``,``(r:reglan) = t``,
            double 13 ``reglan_equiv u v``,
-           double 13 ``reglan_equiv u v``])]
+           double 13 ``reglan_equiv u v``]),
+         (star,residual @ [``reglan_equiv r t``]),
+         (star,``reglan_equiv r t`` :: List.rev residual),
+         (star,[boolSyntax.list_mk_conj residual,``reglan_equiv r t``]),
+         (star,[typed_namesake,``reglan_equiv r t``] @ endpoints)]
       fun check (i,(goal,premises)) =
         let
           val native = SmtRegLanProve.congruence
@@ -645,7 +661,35 @@ struct
                     (Z3_CompactReplayTests.fixed graph proof)));
              testutils.OK ())
         in List.app parsed [false,true] end
-    in List.app check (Lib.enumerate 1 cases) end
+      fun declaration kind = with_graph (fn graph => fn scope =>
+        let
+          val target = import graph scope star
+          val child = import graph scope ``reglan_equiv r t``
+          val left = import graph scope lhs
+          val right = import graph scope rhs
+          val other = G.variable graph scope kind middle
+          fun relation a b = G.application graph scope
+            (G.application graph scope
+              (G.constant graph scope SmtRegLanProve.equiv_tm,a),b)
+          val inputs = [relation left other,relation other right,child]
+          val block = P.prepare_needed_sources graph
+            {scope=scope,roots=target::inputs,sources=inputs,
+             template_limit=limit}
+          val edge = R.assemble graph block
+            {rule="cong",target=target,premises=Lib.enumerate 0 inputs
+              |> map (fn (i,node) => (node,P.source block i))}
+          val native = SmtRegLanProve.congruence
+            [Thm.ASSUME ``reglan_equiv r t``] star
+          val theorem = P.realize block target edge
+        in exact star (Thm.hyp native) theorem;
+           same_tags native theorem end)
+    in List.app check (Lib.enumerate 1 cases);
+       List.app (fn (label,kind) =>
+         (testutils.tprint ("Task41 residual declaration " ^ label);
+          declaration kind;testutils.OK ()))
+         [("generated",G.Generated),("solver",G.SolverFlexible),
+          ("bound",G.Bound)]
+    end
 
   (* Binder operands cannot be expanded through constructor equations.
      Exercise the existing bounded variable-only law boundary BEFORE freeze,
