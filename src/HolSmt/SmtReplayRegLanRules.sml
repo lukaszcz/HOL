@@ -294,16 +294,74 @@ struct
                       (!sizes,G.node_id node,n)
                 in n end
           (* Forecast syntax and Types before any native proof operation.
-             Reserve six nodes for the congruence equation wrapper. A
-             large unused premise remains a name, not a whole-frame veto. *)
+             Keep relation/Boolean patterns and the target's schema heads;
+             cut large DATA operands consistently across the whole frame.
+             Cutting entire propositions (or their constructor operands only
+             at some occurrences) changes native schema priority and Hyp. *)
           val _ = List.app (ignore o size) (target :: map #1 premises)
+          val forced = ref (Redblackset.empty Int.compare)
+          fun force node =
+            if Redblackset.member (!forced,G.node_id node) then () else
+              (forced := Redblackset.add (!forced,G.node_id node);
+               case G.view graph node of
+                 G.Application (f,_) => force f
+               | _ => ())
+          val patterns = ref (Redblackmap.mkDict Int.compare)
+          fun pattern node =
+            case Redblackmap.peek (!patterns,G.node_id node) of
+              SOME relevant => relevant
+            | NONE =>
+                let val children = case spine graph node of
+                        SOME (_,args) => args | NONE => []
+                    val nested = List.map pattern (List.filter (fn child =>
+                      Type.compare (G.type_of graph child,Type.bool)=EQUAL)
+                      children)
+                    val relevant = Option.isSome (relation graph node) orelse
+                      Option.isSome (hol_equality graph node) orelse
+                      List.exists Lib.I nested
+                    val _ = if relevant then force node else ()
+                    val _ = patterns := Redblackmap.insert
+                      (!patterns,G.node_id node,relevant)
+                in relevant end
+          val _ = List.app (ignore o pattern) (target :: map #1 premises)
+          val _ = List.app force [target,left,right]
+          val allowance = ref (limit - 6)
+          fun opaque node = size node > !allowance andalso
+            not (Redblackset.member (!forced,G.node_id node))
+          (* A shared operand can fit individually but not at all of its
+             occurrences in a wrapper. Tighten ONLY the local data frontier,
+             consistently for every occurrence, until the whole frame fits.
+             No native operation precedes this prospective calculation. *)
+          fun fit () =
+            let val projected = ref (Redblackmap.mkDict Int.compare)
+                fun forecast node =
+                  case Redblackmap.peek (!projected,G.node_id node) of
+                    SOME n => n
+                  | NONE =>
+                      let val n = if opaque node then 1 else
+                            case G.view graph node of G.Application (f,x) =>
+                              Int.min (limit,1 + forecast f + forecast x)
+                            | _ => 1
+                          val _ = projected := Redblackmap.insert
+                            (!projected,G.node_id node,n)
+                      in n end
+            in if List.all (fn node => forecast node <= limit - 6)
+                (target :: map #1 premises) then ()
+               else if !allowance > 1 then
+                 (allowance := !allowance div 2;fit ())
+               else raise ERR "congruence"
+                 "regex syntax frame exceeds local admission"
+            end
+          (* Reserve six nodes for intermediate equation wrappers. A pure
+             oversized unused Boolean premise can still stay a name. *)
+          val _ = fit ()
           val equations = ref (Redblackmap.mkDict Int.compare)
           fun expand node =
             case Redblackmap.peek (!equations,G.node_id node) of
               SOME theorem => theorem
             | NONE =>
                 let
-                  val theorem = if size node > limit - 6 then
+                  val theorem = if opaque node then
                       Thm.REFL (name node)
                     else case G.view graph node of
                       G.Application (f,x) =>

@@ -9480,13 +9480,37 @@ in
       (proof : Z3_GraphProofParser.proof)
       ({rule,metadata,target,premises,arguments,law}
         : Z3_GraphProofReplay.local_request) =
+    let
+      exception ProspectiveCallback of exn
+      fun replay () =
     if graph_named_law observe graph (ReplayGraph.node_scope graph law)
         rule (target :: premises @ List.map #node arguments) then
       (let
         val limit = SmtResource.max_bitblast_term_nodes
+        val scope = ReplayGraph.node_scope graph law
+        val epoch = Type.type_epoch ()
+        val symbols = Term.term_epoch ()
+        fun guard () =
+          (ReplayGraph.validate_scope graph scope;
+           if epoch = Type.type_epoch () andalso
+               symbols = Term.term_epoch () then () else
+             raise ERR "graph_bounded_local_law"
+               "prospective binder declarations retired")
+        fun tick () = (guard ();observe 1;guard ())
+          handle primary => raise ProspectiveCallback primary
+        val check_type = SmtReplayArithmetic.new_type_check tick
+        val inclusive_size =
+          SmtReplayImport.bounded_binder_size_with_type_check_observed
+        val _ = guard ()
         val _ = List.app (fn node =>
-          case ReplayGraph.unfolded_nodes_observed
-              (fn () => observe 1) graph
+          (ignore (ReplayGraph.type_of graph node);
+           if ReplayGraph.scope_visible graph scope
+               (ReplayGraph.node_scope graph node) then () else
+             raise ERR "graph_bounded_local_law"
+               "prospective binder outside active scope"))
+          (law :: List.map #node arguments)
+        val _ = List.app (fn node =>
+          case ReplayGraph.unfolded_nodes_observed tick graph
               ReplayGraph.BinderInclusiveNodes limit node of
             SOME count => if count <= limit then () else raise Conv.UNCHANGED
           | NONE =>
@@ -9494,8 +9518,9 @@ in
                  monotonicity may still use the existing fully bounded
                  variable-only binder schema; unknown is not closed. *)
               if #replay_handler rule = "monotonicity" andalso
-                  Option.isSome (SmtReplayImport.bounded_binder_size limit
-                    (ReplayGraph.representative graph node)) then ()
+                  Option.isSome (inclusive_size
+                      {check_type=check_type,observe=tick,limit=limit}
+                      (ReplayGraph.representative graph node)) then ()
               else raise Conv.UNCHANGED)
           (law :: List.map #node arguments)
         val selected = ref ([] : ReplayGraph.node list)
@@ -9590,6 +9615,7 @@ in
         (ReplayGraph.representative graph selected_law)) conditional
     in if List.null (Thm.hyp aligned) then SOME aligned else NONE end
     handle Conv.UNCHANGED => NONE
+    in replay () handle ProspectiveCallback primary => raise primary end
 
   val graph_bounded_local_law = graph_bounded_local_law_using (fn _ => ())
 

@@ -7,6 +7,7 @@ struct
   structure H = SmtReplayArithmeticTests
   structure G = SmtReplayGraph
   structure A = SmtReplayArithmetic
+  structure I = SmtReplayImport
   structure P = SmtReplayProof
   structure R = SmtReplayRules
   structure Q = CPC_ProofParser
@@ -556,6 +557,21 @@ struct
       fun double 0 term = term
         | double n term = double (n-1) (boolSyntax.mk_conj (term,term))
       val oversized_unused = double 13 ``unused_large:bool``
+      fun shared_regex 0 term = term
+        | shared_regex n term = shared_regex (n-1)
+            (Term.list_mk_comb (``reglan_union``,[term,term]))
+      val opaque = shared_regex 11 ``r:reglan``
+      val opaque_goal = SmtRegLanProve.mk_equiv (opaque,``t:reglan``)
+      val opaque_equality = boolSyntax.mk_eq (opaque,``t:reglan``)
+      fun union a b = Term.list_mk_comb (``reglan_union``,[a,b])
+      val mixed = SmtRegLanProve.mk_equiv
+        (union opaque ``r:reglan``,union opaque ``t:reglan``)
+      val patterned = SmtRegLanProve.mk_equiv
+        (union opaque ``r:reglan``,union ``t:reglan`` ``s:reglan``)
+      val whole_pattern = boolSyntax.mk_conj
+        (opaque_goal,``reglan_equiv r s``)
+      val large_conjunct = boolSyntax.mk_conj
+        (``reglan_equiv r t``,opaque_goal)
       val cases =
         [(star,[``reglan_equiv r t /\ spare``]),
          (star,[``spare /\ (reglan_equiv r t /\ spare2)``]),
@@ -567,7 +583,14 @@ struct
            children @ endpoints),
          (star,[``(r:reglan) = t /\ spare``]),
          (``reglan_equiv r t``,
-           [``reglan_equiv r t``,``(r:reglan) = t``,oversized_unused])]
+           [``reglan_equiv r t``,``(r:reglan) = t``,oversized_unused]),
+         (opaque_goal,[opaque_goal,opaque_equality]),
+         (opaque_goal,[opaque_equality,opaque_goal]),
+         (mixed,[``reglan_equiv r t``,mixed]),
+         (mixed,[mixed,``reglan_equiv r t``]),
+         (patterned,[whole_pattern,patterned]),
+         (patterned,[patterned,whole_pattern]),
+         (star,[large_conjunct])]
       fun check (i,(goal,premises)) =
         let
           val native = SmtRegLanProve.congruence
@@ -677,6 +700,91 @@ struct
           (Z3_CompactReplayTests.replay graph scope proof limit
             (Z3_CompactReplayTests.fixed graph proof))))) end
 
+  (* Unknown inclusive inventory must be checked/observed BEFORE native
+     count-only binder opening, not retrospectively by prove_admitted. *)
+  fun binder_admission () =
+    let
+      val term = ``!x:bool. !y:bool. x /\ y``
+      val inclusive = valOf (I.bounded_binder_size 100 term)
+      val checks = ref 0
+      val visits = ref 0
+      fun count cap = I.bounded_binder_size_with_type_check_observed
+        {limit=cap,observe=fn () => visits := !visits+1,
+         check_type=fn _ => checks := !checks+1} term
+      val _ = require "inclusive binder cutoff changed"
+        (count (inclusive-1) = NONE andalso
+         count inclusive = SOME inclusive andalso
+         count (inclusive+1) = SOME inclusive andalso !checks >= 6)
+      val short_visits = !visits
+      val _ = ignore (count 1)
+      val _ = require "rejected inclusive visits were not observed"
+        (!visits > short_visits)
+      fun shared 0 = Type.bool
+        | shared n = let val ty = shared (n-1)
+                     in Type.mk_type ("fun",[ty,ty]) end
+      val hidden = shared 21
+      val u = Term.mk_var ("task41_u",Type.bool)
+      val v = Term.mk_var ("task41_v",Type.bool)
+      val z = Term.mk_var ("task41_z",hidden)
+      val inner = Term.mk_abs (v,z)
+      val f = Term.mk_var ("task41_f",Type.mk_type ("fun",[hidden,Type.bool]))
+      val body = Term.mk_comb (f,Term.mk_comb (inner,u))
+      val buried = boolSyntax.mk_forall (u,body)
+      exception BeforeInner
+      val opened_types = ref ([] : Type.hol_type list)
+      val _ = require "nested binder was opened without prospective Type check"
+        ((ignore (I.bounded_binder_size_with_type_check_observed
+          {limit=100,observe=fn () => (),check_type=fn ty =>
+            (opened_types := ty :: !opened_types;
+             if length (!opened_types)=2 then raise BeforeInner else ())}
+          buried);false)
+         handle BeforeInner =>
+           length (!opened_types)=2 andalso
+           #1 (Type.dest_type (#2 (Type.dom_rng (hd (!opened_types))))) =
+             "fun")
+      val _ = with_graph (fn graph => fn scope =>
+        let
+          val target = import graph scope ``reglan_equiv r t``
+          val premise = import graph scope buried
+          val law = R.implication graph scope [premise] target
+          val _ = require "binder test unexpectedly has known inventory"
+            (G.unfolded_nodes graph G.BinderInclusiveNodes 200000 law = NONE)
+          val proof : Z3_GraphProofParser.proof =
+            {steps=Redblackmap.mkDict Z3_GraphProofParser.compare_id,
+             root=Z3_GraphProofParser.Anonymous 0,vars=[],
+             z3_version="4.15.3",close=fn () => ()}
+          val request : ZR.local_request =
+            {rule=valOf (Z3_Proof.lookup_rule "4.15.3" "monotonicity"),
+             metadata=NONE,target=target,premises=[premise],arguments=[],
+             law=law}
+          fun invoke observe = Z3_ProofReplay.graph_bounded_local_law_using
+            observe graph [] proof request
+          val _ = require "hidden binder Type escaped original admission"
+            ((ignore (invoke (fn _ => ()));false)
+             handle Feedback.HOL_ERR detail =>
+               Feedback.message_of detail =
+                 Feedback.message_of
+                   ((SmtResource.check_dag_size_with_limit "BitVector"
+                      "word-graph-primitive-type-tree"
+                      SmtResource.max_bv_replay_term_nodes
+                      (SmtResource.max_bv_replay_term_nodes+1);
+                     raise Fail "Type overflow admitted")
+                    handle Feedback.HOL_ERR expected => expected))
+          fun callback_failure error =
+            let val calls = ref 0
+                fun observe _ =
+                  (calls := !calls+1;if !calls=1000 then raise error else ())
+                val actual = Exn.capture (fn () => invoke observe) ()
+            in require "prospective callback was swallowed or retried"
+              (!calls=1000 andalso
+               case actual of Exn.Exn exn =>
+                 Feedback.exn_to_string exn = Feedback.exn_to_string error
+               | _ => false) end
+        in List.app callback_failure
+          [Fail "Task41 prospective callback",
+           Feedback.mk_HOL_ERR "Task41" "prospective" "callback"] end)
+    in () end
+
   (* Preserve native TRUST's earlier FP/private-marker deferral. String
      naming must not close/reject ASSUME target before the existing force
      boundary. Use the real worker and a checked force proof, once each. *)
@@ -750,5 +858,6 @@ struct
      ("compound regex bridges",compound_regex),
      ("regex premise priority",regex_premise_priority),
      ("regex binder laws",regex_binders),
+     ("prospective binder admission",binder_admission),
      ("deferred priority",deferred_priority)]
 end

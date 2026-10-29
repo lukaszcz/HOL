@@ -46,6 +46,11 @@ sig
     {target:Term.term,observe:unit -> unit} -> raw_bound option
   (* SmtResource's unfolded metric includes the binder variable slot. *)
   val bounded_binder_size : int -> Term.term -> int option
+  (* Inclusive metric, with prospective function/range-Type admission at
+     EVERY binder and observations of actual visits, including rejection. *)
+  val bounded_binder_size_with_type_check_observed :
+    {check_type:Type.hol_type -> unit,observe:unit -> unit,limit:int} ->
+    Term.term -> int option
   (* Exact IntInf size under an explicit optional ceiling. NONE denotes
      finite excess, never absence of syntax. No default or raw-child grant. *)
   val raw_size_with_policy : SmtReplayResourcePolicy.limit ->
