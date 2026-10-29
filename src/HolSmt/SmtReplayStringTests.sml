@@ -544,6 +544,139 @@ struct
              premises=[(input,P.source block 0)]}))) end)
     in () end
 
+  (* Premise patterns and successful proof priority are observable through
+     actual Hyp. Test the same parsed certificate against native replay,
+     individual-leaf assembly, and both graph freeze/owned routes. *)
+  fun regex_premise_priority () =
+    let
+      val star = ``reglan_equiv (reglan_star r) (reglan_star t)``
+      val children = [``reglan_equiv r u``,``reglan_equiv u t``]
+      val endpoints = [``reglan_equiv (reglan_star r) v``,
+        ``reglan_equiv v (reglan_star t)``]
+      fun double 0 term = term
+        | double n term = double (n-1) (boolSyntax.mk_conj (term,term))
+      val oversized_unused = double 13 ``unused_large:bool``
+      val cases =
+        [(star,[``reglan_equiv r t /\ spare``]),
+         (star,[``spare /\ (reglan_equiv r t /\ spare2)``]),
+         (star,[``reglan_equiv r u /\ reglan_equiv u t``]),
+         (star,children @ endpoints),
+         (star,endpoints @ children),
+         (star,[``reglan_equiv r t``] @ endpoints),
+         (``smt_in_re s (reglan_star r) = smt_in_re s (reglan_star t)``,
+           children @ endpoints),
+         (star,[``(r:reglan) = t /\ spare``]),
+         (``reglan_equiv r t``,
+           [``reglan_equiv r t``,``(r:reglan) = t``,oversized_unused])]
+      fun check (i,(goal,premises)) =
+        let
+          val native = SmtRegLanProve.congruence
+            (map Thm.ASSUME premises) goal
+          fun verify theorem =
+            (exact goal (Thm.hyp native) theorem;same_tags native theorem)
+          val tokens = List.tabulate (length premises,
+            fn i => "p" ^ Int.toString i)
+          val bindings = ListPair.zip (tokens,premises) @ [("g",goal)]
+          val certificate = "((proof (monotonicity " ^
+            String.concatWith " " (map (fn p => "(asserted " ^ p ^ ")")
+              tokens) ^ " g)))"
+          val label = "Task41 premise priority " ^ Int.toString i
+          val _ = testutils.tprint (label ^ " native Z3")
+          val (types,terms) = SmtLib_Logics.parsedicts_of_logic "ALL"
+          val terms = List.foldl (fn ((token,term),dict) =>
+            Library.extend_dict
+              ((token,SmtLib_Theories.K_zero_zero term),dict)) terms bindings
+          val stream = TextIO.openString certificate
+          val result = Exn.capture (fn () => verify
+            (Z3_ProofReplay.replay_root_for_test
+              (Z3_ProofParser.parse_stream_with_version (types,terms)
+                "4.15.3" stream))) ()
+          val _ = TextIO.closeIn stream
+          val _ = Exn.release result
+          val _ = testutils.OK ()
+          val _ = testutils.tprint (label ^ " compact")
+          val _ = with_graph (fn graph => fn scope =>
+            let
+              val target = import graph scope goal
+              val inputs = map (import graph scope) premises
+              val block = P.prepare_needed_sources graph
+                {scope=scope,roots=target::inputs,sources=inputs,
+                 template_limit=limit}
+              val edge = R.assemble graph block
+                {rule="cong",target=target,premises=Lib.enumerate 0 inputs
+                  |> map (fn (i,node) => (node,P.source block i))}
+            in verify (P.realize block target edge) end)
+          val _ = testutils.OK ()
+          fun parsed owned =
+            (testutils.tprint (label ^ (if owned then " owned Z3"
+               else " graph Z3"));
+             Z3_CompactReplayTests.with_proof bindings certificate
+               (fn graph => fn scope => fn proof => verify
+                 (if owned then Z3_CompactReplayTests.owned_replay
+                    graph scope proof goal premises
+                    (Z3_CompactReplayTests.fixed graph proof)
+                  else Z3_CompactReplayTests.replay graph scope proof limit
+                    (Z3_CompactReplayTests.fixed graph proof)));
+             testutils.OK ())
+        in List.app parsed [false,true] end
+    in List.app check (Lib.enumerate 1 cases) end
+
+  (* Binder operands cannot be expanded through constructor equations.
+     Exercise the existing bounded variable-only law boundary BEFORE freeze,
+     through both proof formats, rather than treating a predicate as a name. *)
+  fun regex_binders () =
+    let
+      val goal = ``reglan_equiv r t``
+      fun check premise =
+        let
+          val native = SmtRegLanProve.congruence [Thm.ASSUME premise] goal
+          fun verify theorem =
+            (exact goal [premise] theorem;same_tags native theorem)
+          val unused = ``unused_binder:bool``
+          val bindings = [("g",goal),("p",premise),("r",``r:reglan``),
+            ("unused",unused)]
+          val _ = List.app (fn owned =>
+            (testutils.tprint (if owned then "Task41 binder owned Z3"
+               else "Task41 binder graph Z3");
+             Z3_CompactReplayTests.with_proof bindings
+              "((proof (monotonicity (asserted p) (asserted unused) g)))"
+              (fn graph => fn scope => fn proof => verify
+                (if owned then Z3_CompactReplayTests.owned_replay
+                   graph scope proof goal [premise,unused]
+                   (Z3_CompactReplayTests.fixed graph proof)
+                 else Z3_CompactReplayTests.replay graph scope proof limit
+                   (Z3_CompactReplayTests.fixed graph proof)));
+             testutils.OK ())) [false,true]
+          val _ = testutils.tprint "Task41 binder parsed CPC"
+          val _ = with_graph (fn graph => fn scope =>
+            let
+              val sources = SmtReplaySource.new graph scope limit
+                {goal=goal,assumptions=[premise]}
+              val options = Z3_CompactReplayTests.options graph scope bindings
+              val stream = TextIO.openString
+                "((assume @p p) (assume @denied (not g)) \
+                \(step @law g :rule cong :premises (@p) :args (r)) \
+                \(step @done false :rule resolution \
+                \:premises (@law @denied)))"
+              val result = Exn.capture (fn () =>
+                let val proof = Q.parse_graph_stream_with_version options
+                      (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4" stream
+                in CPC_ProofReplay.prove_graph_proof
+                  {graph=graph,scope=scope,sources=sources,proof=proof} end) ()
+              val _ = TextIO.closeIn stream
+            in verify (Exn.release result) end)
+        in testutils.OK () end
+      val _ = List.app check
+        [``!x y:reglan. reglan_equiv x y``,
+         ``!x y:reglan. reglan_equiv x y /\ spare``]
+    in require "false quantified regex premise accepted"
+      (declines (fn () => Z3_CompactReplayTests.with_proof
+        [("g",goal),("p",``!x:reglan. reglan_equiv x x``)]
+        "((proof (monotonicity (asserted p) g)))"
+        (fn graph => fn scope => fn proof => SOME
+          (Z3_CompactReplayTests.replay graph scope proof limit
+            (Z3_CompactReplayTests.fixed graph proof))))) end
+
   (* Preserve native TRUST's earlier FP/private-marker deferral. String
      naming must not close/reject ASSUME target before the existing force
      boundary. Use the real worker and a checked force proof, once each. *)
@@ -615,5 +748,7 @@ struct
      ("parsed CPC",parsed_cpc),("regex fallback/negatives",regex_congruence),
      ("parsed regex fallback",parsed_regex),
      ("compound regex bridges",compound_regex),
+     ("regex premise priority",regex_premise_priority),
+     ("regex binder laws",regex_binders),
      ("deferred priority",deferred_priority)]
 end

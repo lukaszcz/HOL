@@ -9444,6 +9444,11 @@ in
       | "def_axiom" => DEF_AXIOM conclusion
       | "elim_unused" => ELIM_UNUSED conclusion
       | "intro_def" => INTRO_DEF conclusion
+      | "monotonicity" =>
+          if SmtRegLanProve.is_equiv conclusion orelse
+              List.exists SmtRegLanProve.is_equiv premise_terms then
+            MONOTONICITY (pts,conclusion)
+          else raise Conv.UNCHANGED
       | "nnf_neg" => NNF_NEG (pts,conclusion)
       | "nnf_pos" => NNF_POS (pts,conclusion)
       | "quant_inst" => QUANT_INST (arguments,conclusion)
@@ -9477,14 +9482,21 @@ in
         : Z3_GraphProofReplay.local_request) =
     if graph_named_law observe graph (ReplayGraph.node_scope graph law)
         rule (target :: premises @ List.map #node arguments) then
-      let
+      (let
         val limit = SmtResource.max_bitblast_term_nodes
         val _ = List.app (fn node =>
           case ReplayGraph.unfolded_nodes_observed
               (fn () => observe 1) graph
               ReplayGraph.BinderInclusiveNodes limit node of
             SOME count => if count <= limit then () else raise Conv.UNCHANGED
-          | NONE => raise Conv.UNCHANGED)
+          | NONE =>
+              (* An opaque binder has no inclusive graph count. Regex
+                 monotonicity may still use the existing fully bounded
+                 variable-only binder schema; unknown is not closed. *)
+              if #replay_handler rule = "monotonicity" andalso
+                  Option.isSome (SmtReplayImport.bounded_binder_size limit
+                    (ReplayGraph.representative graph node)) then ()
+              else raise Conv.UNCHANGED)
           (law :: List.map #node arguments)
         val selected = ref ([] : ReplayGraph.node list)
         val arity = 1 + length premises
@@ -9529,6 +9541,13 @@ in
         val aligned = Thm.EQ_MP (Thm.ALPHA (Thm.concl (#theorem result))
           (ReplayGraph.representative graph selected_law)) (#theorem result)
       in if List.null (Thm.hyp aligned) then SOME aligned else NONE end
+      handle Conv.UNCHANGED =>
+          if #replay_handler rule = "monotonicity" then NONE
+          else raise Conv.UNCHANGED
+        | Feedback.HOL_ERR error =>
+          if #replay_handler rule = "monotonicity" andalso
+              not (SmtResource.is_resource_gate error) then NONE
+          else raise Feedback.HOL_ERR error)
     else let
       val limit = SmtResource.max_bitblast_term_nodes
       fun admitted node =

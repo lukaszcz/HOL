@@ -30,6 +30,28 @@ struct
                 Term.same_const a SmtRegLanProve.equiv_tm)
            | _ => false end
     | NONE => false
+  fun applicable graph target premises =
+    Option.isSome (relation graph target) orelse
+    (consumer graph target andalso
+     List.exists (Option.isSome o relation graph) premises)
+
+  (* Binder syntax needs the existing variable-only conditional-law adapter
+     before freeze; constructor equations deliberately keep binders opaque. *)
+  fun has_binder graph {inputs,observe} =
+    let
+      fun compare pair = (observe ();Int.compare pair)
+      val seen = ref (Redblackset.empty compare)
+      fun visit node =
+        (observe ();
+         if Redblackset.member (!seen,G.node_id node) then false else
+           (seen := Redblackset.add (!seen,G.node_id node);
+            case G.view graph node of
+              G.Application (f,x) => visit f orelse visit x
+            | G.AdmittedBinder _ => true
+            | G.OpaqueRetained => true
+            | _ => false))
+    in List.exists visit inputs end
+
   val congruence_schemas =
     [smtstringTheory.reglan_concat_equiv,
      smtstringTheory.reglan_union_equiv,
@@ -244,6 +266,68 @@ struct
                     in search rest back seen end
         in search [(left,refl left)] []
           (Redblackset.singleton Int.compare (G.node_id left)) end
+      (* Prefer the retained procedure on a bounded, checked syntax frame.
+         In particular, Boolean premise patterns and competing proof chains
+         must reach it together, in source order. Trying recursive workers
+         or endpoint paths first changes its successful fallback and Hyp.
+         These are local names, never realized source operands. On a frame
+         miss the existing nodewise adapter remains available. *)
+      fun bounded_congruence () =
+        let
+          val limit = P.template_limit block
+          val sizes = ref (Redblackmap.mkDict Int.compare)
+          val check_type = SmtReplayArithmetic.new_type_check (fn () => ())
+          val visits = ref 0
+          fun size node = case Redblackmap.peek (!sizes,G.node_id node) of
+              SOME n => n
+            | NONE =>
+                let val _ = if !visits < limit then () else
+                      raise ERR "congruence"
+                        "regex syntax frontier exceeds local admission"
+                    val _ = visits := !visits + 1
+                    val _ = check_type (G.type_of graph node)
+                    val n = case G.view graph node of
+                        G.Application (f,x) =>
+                          Int.min (limit,1 + size f + size x)
+                      | _ => 1
+                    val _ = sizes := Redblackmap.insert
+                      (!sizes,G.node_id node,n)
+                in n end
+          (* Forecast syntax and Types before any native proof operation.
+             Reserve six nodes for the congruence equation wrapper. A
+             large unused premise remains a name, not a whole-frame veto. *)
+          val _ = List.app (ignore o size) (target :: map #1 premises)
+          val equations = ref (Redblackmap.mkDict Int.compare)
+          fun expand node =
+            case Redblackmap.peek (!equations,G.node_id node) of
+              SOME theorem => theorem
+            | NONE =>
+                let
+                  val theorem = if size node > limit - 6 then
+                      Thm.REFL (name node)
+                    else case G.view graph node of
+                      G.Application (f,x) =>
+                        let val children = Thm.MK_COMB (expand f,expand x)
+                            val edge = P.definition block node
+                            val _ = dependencies := edge :: !dependencies
+                        in Thm.TRANS (P.theorem block edge) children end
+                    | _ => constructor node
+                  val _ = equations := Redblackmap.insert
+                    (!equations,G.node_id node,theorem)
+                in theorem end
+          val bridge = expand target
+          val proposition = boolSyntax.rhs (Thm.concl bridge)
+          val facts = map (fn (node,edge) =>
+            Thm.EQ_MP (expand node) (P.theorem block edge)) premises
+          val admit = SmtReplayArithmetic.new_term_check
+            {limit=limit,observe=fn () => ()}
+          val _ = List.app admit (proposition :: List.concat
+            (map (fn th => Thm.concl th :: Thm.hyp th)
+              (facts @ SmtRegLanProve.congruence_theorems)))
+          val theorem = SmtRegLanProve.congruence facts proposition
+          val _ = List.app admit (Thm.concl theorem :: Thm.hyp theorem)
+        in Thm.EQ_MP target_bridge
+             (Thm.EQ_MP (Thm.SYM bridge) theorem) end
       fun congruence () =
         let
           fun schema fallback = if semantic then
@@ -254,13 +338,12 @@ struct
               raise Feedback.HOL_ERR primary else next ()
           fun chain () = if semantic then symmetric_chain () else
             raise ERR "congruence" "not a semantic chain"
-        (* Keep successful schemas first. A checked path between endpoint
-           names avoids speculative worker calls on unrelated children.
-           The original worker receives checked bridges on misses, with its
-           former named-only input retained if bridge admission/proving fails.
-           No String/regex prover rung or schema priority is changed. *)
-        in retry (fn () => schema false)
-          (fn () => retry chain (fn () => schema true)) end
+          val saved_dependencies = !dependencies
+          fun legacy () =
+            (dependencies := saved_dependencies;
+             retry (fn () => schema false)
+               (fn () => retry chain (fn () => schema true)))
+        in retry bounded_congruence legacy end
       val theorem = case rule of
           "refl" => if semantic andalso left = right andalso
               List.null premises then refl left else

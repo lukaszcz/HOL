@@ -372,6 +372,16 @@ struct
              provenance = AtomicProvenance}
         | argument _ = raise ERR "bounded_rule"
             "non-term argument needs a specialized bounded rule adapter"
+      fun binder_congruence (step : Q.graph_rule_step) premises =
+        #replay_handler (#rule step) = "cong" andalso
+        (case #conclusion step of NONE => false | SOME conclusion =>
+          SmtReplayRegLanRules.applicable graph (#node conclusion)
+            (map node premises) andalso
+          SmtReplayRegLanRules.has_binder graph
+            {inputs= #node conclusion :: map node premises,
+             observe=fn () => Option.app
+               (fn work => W.spend_guard_policy work 1) owned_work})
+
       fun bounded (step : Q.graph_rule_step) premises =
         let
           val _ = work_checkpoint "bounded.enter" (fn () =>
@@ -465,7 +475,8 @@ struct
                    (fn work => W.spend_guard_policy work 1) owned_work})
           val structured_rule = structured_rule orelse sequence_rule orelse
             string_rule
-          val named_rule = arithmetic_rule orelse structured_rule
+          val named_rule = arithmetic_rule orelse structured_rule orelse
+            binder_congruence step premises
           fun arithmetic_charge amount = Option.app
             (fn work => W.spend_guard_policy work amount) owned_work
           fun arithmetic_observe () = arithmetic_charge 1
@@ -1972,18 +1983,25 @@ struct
                   raise Feedback.HOL_ERR error else bounded step premises)
             | CPC_SharedReplayPlan.Aligned => align step premises
             | CPC_SharedReplayPlan.Simple =>
-              (simple step premises handle Feedback.HOL_ERR error =>
-                if SmtResource.is_resource_gate error then
-                  raise Feedback.HOL_ERR error else
-                  (case (owned_work,handler) of (SOME work,"eq_resolve") =>
-                     (case alias_eq_resolve work step premises of
-                        SOME selected => selected
-                      | NONE => bounded step premises)
-                   | (SOME work,"trans") =>
-                       (case alias_transitivity work step premises of
-                          SOME selected => selected
-                        | NONE => bounded step premises)
-                   | _ => bounded step premises))
+              let
+                fun ordinary () =
+                  (simple step premises handle Feedback.HOL_ERR error =>
+                    if SmtResource.is_resource_gate error then
+                      raise Feedback.HOL_ERR error else
+                      (case (owned_work,handler) of (SOME work,"eq_resolve") =>
+                         (case alias_eq_resolve work step premises of
+                            SOME selected => selected
+                          | NONE => bounded step premises)
+                       | (SOME work,"trans") =>
+                           (case alias_transitivity work step premises of
+                              SOME selected => selected
+                            | NONE => bounded step premises)
+                       | _ => bounded step premises))
+              in if binder_congruence step premises then
+                  (bounded step premises handle Feedback.HOL_ERR error =>
+                    if SmtResource.is_resource_gate error then
+                      raise Feedback.HOL_ERR error else ordinary ())
+                else ordinary () end
             | _ => bounded step premises)
         in make (#id step) current premises route end
       fun discover (Q.GraphAssume (id,term)) =

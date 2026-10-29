@@ -290,6 +290,7 @@ struct
           val sources = ref (List.rev initial_sources)
           val witnesses = ref (Redblackmap.mkDict Int.compare)
           val pruned_laws = ref false
+          val selective_congruence = ref false
           val local_law_error = ERR "discover"
             "local rule law is not closed, clean and exact"
           fun law_tick () = case owned of NONE => ()
@@ -488,6 +489,14 @@ struct
                         if name = "lemma" orelse name = "quant-intro" orelse
                             bound_nnf then []
                         else List.map endpoint premises
+                      val regex_congruence = name = "monotonicity" andalso
+                        SmtReplayRegLanRules.applicable graph node premise_nodes
+                      val binder_congruence = regex_congruence andalso
+                        SmtReplayRegLanRules.has_binder graph
+                          {inputs=node::premise_nodes,observe=fn () =>
+                            Option.app (fn {work,...} =>
+                              SmtReplayInvocationWork.spend_guard_policy
+                                work 1) owned}
                       fun ground_plan () =
                         case (owned,ground_owner) of
                           (SOME {work,...},SOME owner) =>
@@ -558,7 +567,8 @@ struct
                               in SOME (RecordedLaw
                                 {target = node,premises = premises,law = law,
                                  index = index,definitions = indices}) end
-                        in case recorded_law of SOME produce =>
+                        in case (if binder_congruence then NONE
+                                 else recorded_law) of SOME produce =>
                              recorded_plan produce
                            | NONE => (case callback (fn () => local_law request) of
                                NONE => NONE
@@ -784,12 +794,15 @@ struct
                         in (node,OwnedApplyDefinition
                           {target = node,premise = premise}) end
                       else if compact name then
-                        (node,case
+                        (if regex_congruence then
+                           selective_congruence := true else ();
+                         (node,case
                             (if name = "rewrite" orelse name = "commutativity"
+                                orelse binder_congruence
                              then local_plan () else NONE) of
                            SOME plan => plan
                          | NONE => Compact
-                             {rule = name,target = node,premises = premises})
+                             {rule = name,target = node,premises = premises}))
                       else
                         (node,case local_plan () of SOME plan => plan
                          | NONE => raise ERR "discover"
@@ -821,7 +834,13 @@ struct
             | Ordinary NONE =>
                 R.implication graph scope local_assumptions target
             | Ordinary (SOME node) => node
-          val sparse_frame = !pruned_laws orelse not (null local_assumptions)
+          (* Regex congruence selects actual premises in its checked worker.
+             A common-context projection would make every advertised premise
+             a genuine Hyp before that selection can take place. Keep the
+             original Source slots but give this adapter individual leaves,
+             on both legacy and owned freeze routes. *)
+          val sparse_frame = !pruned_laws orelse !selective_congruence orelse
+            not (null local_assumptions)
           val _ = if sparse_frame then pay_law_ports local_assumptions
             else ()
           val local_closure = if sparse_frame andalso
