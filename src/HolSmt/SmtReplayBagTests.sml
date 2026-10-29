@@ -873,6 +873,236 @@ struct
        compare "lambda recovery" laws target
     end
 
+  (* Unlike fitting_context's constant payload, these fields depend on
+     the enclosing binders. Closing h f via g f f needs two frontiers:
+     expose the lambda, then k; never instantiate the duplicated payload. *)
+  fun dependent_context () =
+    let
+      val cap = 200000
+      val x = ``bag_dep_x:bool``
+      val n = ``bag_dep_n:num``
+      val join = ``bag_dep_join:bool -> bool -> bool``
+      fun shared leaf 0 = leaf
+        | shared leaf depth =
+            let val child = shared leaf (depth-1)
+            in Term.list_mk_comb (join,[child,child]) end
+      val k = ``bag_dep_k:bool -> bool -> bool``
+      val h = ``bag_dep_h:(bool -> bool) -> bool``
+      val g = ``bag_dep_g:(bool -> bool) -> (bool -> bool) -> bool``
+      val fact = ``BAG_IN bag_dep_q (bag_dep_b:bool -> num)``
+      val laws =
+        [``!f:bool -> bool. (bag_dep_h:(bool -> bool) -> bool) f =
+             (bag_dep_g:(bool -> bool) -> (bool -> bool) -> bool) f f``,
+         ``!p:bool -> bool.
+             (bag_dep_g:(bool -> bool) -> (bool -> bool) -> bool)
+               (\x:bool. (bag_dep_k:bool -> bool -> bool) x (p x))
+               (\x:bool. (bag_dep_k:bool -> bool -> bool) x (p x))``,
+         fact]
+      fun abstraction payload =
+        Term.mk_abs (x,Term.list_mk_comb (k,[x,payload]))
+      fun target payload = boolSyntax.mk_conj
+        (Term.mk_comb (h,abstraction payload),fact)
+      fun expanded payload =
+        let val a = abstraction payload
+        in Term.list_mk_comb (g,[a,a]) end
+      fun fits goal rhs = require "dependent compact boundary changed"
+        (Term.term_size goal < cap andalso Term.term_size rhs > cap)
+      fun compare_at maximum label tap context goal =
+        let val _ = testutils.tprint ("bag dependent context " ^ label)
+            val native = Tactical.TAC_PROOF ((context,goal),
+              Tactical.THEN (Tactical.REPEAT Tactic.COND_CASES_TAC,
+                Tactical.THEN (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                  intLib.ARITH_TAC)))
+            val calls = ref (0:IntInf.int)
+            val work = ref (0:IntInf.int)
+            val genuine = A.new_term_check
+              {limit=maximum,observe=fn () => work := !work+1}
+            fun admit tm = (calls := !calls+1;tap tm;genuine tm)
+            val actual = SmtBagProve.bag_contextual_prove_with_admission
+              admit context goal
+        in exact goal (Thm.hyp native) native;
+           exact goal (Thm.hyp native) actual;same_tags native actual;
+           require "dependent closure bypassed paid admission"
+             (!calls > 0 andalso !work >= !calls);
+           testutils.OK ();(!calls,!work) end
+      fun compare label tap context goal =
+        compare_at cap label tap context goal
+      fun plain label context goal =
+        ignore (compare label (fn _ => ()) context goal)
+      (* Original review fixture: every leaf is the bound x, not a free
+         constant. Depth 13 is supported too, even without a cap crossing. *)
+      val _ = List.app (fn depth =>
+        let val payload = shared x depth
+            val goal = target payload
+            val _ = require "dependent review input no longer fits"
+              (Term.term_size goal < cap)
+            val _ = if depth=15 then fits goal (expanded payload) else ()
+        in plain ("review " ^ Int.toString depth) laws goal end) [13,15]
+      val _ = with_graph (fn graph => fn scope =>
+        let val goal = target (shared x 15)
+            val _ = testutils.tprint "bag dependent graph transport"
+            val inputs = List.map (fn t =>
+              #node (G.import graph scope cap t)) (goal::laws)
+            val actual = A.prove_bounded_variables_admitted graph scope
+              {inputs=inputs,template_limit=cap,observe=fn _ => (),
+               procedure=fn admit => fn terms =>
+                 let val th =
+                       SmtBagProve.bag_contextual_prove_with_admission
+                         admit (tl terms) (hd terms)
+                 in List.foldr (fn (h,th) => Thm.DISCH h th)
+                      th (tl terms) end}
+            val native = Tactical.TAC_PROOF ((laws,goal),
+              Tactical.THEN (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                intLib.ARITH_TAC))
+            val native = List.foldr (fn (h,th) => Thm.DISCH h th)
+              native laws
+        in exact (boolSyntax.list_mk_imp (laws,goal)) [] (#theorem actual);
+           same_tags native (#theorem actual);testutils.OK () end)
+      (* A fitting source must not pay for a whole-operand closure redex.
+         Exercise both a tiny exact cutoff and the unchanged actual cap. *)
+      val balanced_cache = ref (Redblackmap.mkDict Int.compare)
+      fun balanced count =
+        case Redblackmap.peek (!balanced_cache,count) of SOME t => t
+        | NONE =>
+            let val t = if count=1 then x else Term.list_mk_comb
+                  (join,[balanced (count div 2),
+                         balanced (count-count div 2)])
+            in balanced_cache := Redblackmap.insert
+                 (!balanced_cache,count,t);t end
+      val _ = List.app (fn (maximum,leaves,wrap,expected) =>
+        let val payload = balanced leaves
+            val payload = if wrap then Term.mk_comb
+              (``bag_dep_step:bool -> bool``,payload) else payload
+            val goal = Term.mk_comb (h,abstraction payload)
+            val _ = require "dependent cutoff fixture changed"
+              (Term.term_size goal=expected)
+        in ignore (compare_at maximum
+             ("cap " ^ Int.toString maximum) (fn _ => ()) laws goal)
+        end) [(256,63,false,256),(200000,49998,true,199998)]
+      (* Separately allocated alpha lambdas must share one field, including
+         when the higher-order context requires their repeated identity. *)
+      val alpha_a = Term.mk_abs (x,shared x 6)
+      val y = ``bag_dep_y:bool``
+      val alpha_b = Term.mk_abs (y,shared y 6)
+      val alpha_laws =
+        [``!u v:bool. (bag_dep_ah:bool -> bool -> bool) u v =
+             (bag_dep_ag:bool -> bool -> bool -> bool -> bool) u u v v``,
+         ``!f:bool -> bool.
+             (bag_dep_ag:bool -> bool -> bool -> bool -> bool)
+               ((bag_dep_al:(bool -> bool) -> bool) f)
+               (bag_dep_al f) ((bag_dep_ar:(bool -> bool) -> bool) f)
+               (bag_dep_ar f)``]
+      val alpha_goal = Term.list_mk_comb
+        (``bag_dep_ah:bool -> bool -> bool``,
+         [Term.mk_comb (``bag_dep_al:(bool -> bool) -> bool``,alpha_a),
+          Term.mk_comb (``bag_dep_ar:(bool -> bool) -> bool``,alpha_b)])
+      val _ = require "independent alpha fixture changed"
+        (Term.term_size alpha_goal=515 andalso
+         not (Portable.pointer_eq (alpha_a,alpha_b)))
+      val _ = compare_at 1024 "independent alpha fields" (fn _ => ())
+        alpha_laws alpha_goal
+      val k2 = ``bag_dep_k2:bool -> num -> bool -> bool``
+      val h2 = ``bag_dep_h2:(bool -> num -> bool) -> bool``
+      val g2 =
+        ``bag_dep_g2:(bool -> num -> bool) -> (bool -> num -> bool) -> bool``
+      val mixed_laws =
+        [``!f:bool -> num -> bool.
+             (bag_dep_h2:(bool -> num -> bool) -> bool) f =
+             (bag_dep_g2:(bool -> num -> bool) ->
+               (bool -> num -> bool) -> bool) f f``,
+         ``!p:bool -> num -> bool.
+             (bag_dep_g2:(bool -> num -> bool) ->
+               (bool -> num -> bool) -> bool)
+               (\x:bool. \n:num.
+                 (bag_dep_k2:bool -> num -> bool -> bool) x n (p x n))
+               (\x:bool. \n:num.
+                 (bag_dep_k2:bool -> num -> bool -> bool) x n (p x n))``,
+         fact]
+      fun mixed (label,leaf) =
+        let val payload = shared leaf 14
+            val a = Term.list_mk_abs
+              ([x,n],Term.list_mk_comb (k2,[x,n,payload]))
+            val goal = boolSyntax.mk_conj (Term.mk_comb (h2,a),fact)
+            val _ = fits goal (Term.list_mk_comb (g2,[a,a]))
+        in plain label mixed_laws goal end
+      (* Payload dependencies have arities 2, 1, 1 and 0. Both binders
+         remain live in k2 even when a particular payload ignores one. *)
+      val _ = List.app mixed
+        [("mixed both live",``(bag_dep_r:bool -> num -> bool)
+             bag_dep_x bag_dep_n``),
+         ("mixed outer only",``(bag_dep_r:bool -> num -> bool)
+             bag_dep_x bag_dep_free_num``),
+         ("mixed inner only",``(bag_dep_r:bool -> num -> bool)
+             bag_dep_free_bool bag_dep_n``),
+         ("mixed independent",``(bag_dep_r:bool -> num -> bool)
+             bag_dep_free_bool bag_dep_free_num``)]
+      (* This redex is introduced by realizing a functional hole. The
+         payload itself must be kept verbatim, including SOURCE redexes. *)
+      fun prebeta payload = Term.mk_comb (h,Term.mk_abs (x,
+        Term.list_mk_comb (k,[x,Term.mk_comb
+          (Term.mk_abs (x,payload),x)])))
+      val source = shared
+        ``(\z:bool. (bag_dep_r1:bool -> bool) z) bag_dep_x`` 14
+      val source_pre = prebeta source
+      val pre_seen = ref false
+      fun source_tap tm =
+        if tm ~~ source_pre then pre_seen := true else ()
+      val _ = fits (target source) (expanded source)
+      val _ = compare "source beta retained" source_tap laws (target source)
+      val _ = require "whole-operand administrative beta was constructed"
+        (not (!pre_seen))
+      (* Reject the first LOCAL introduced beta operand, or its forecast
+         result. No whole-operand pre-beta realization is permitted. *)
+      val small = shared x 6
+      fun terminal label forecast =
+        let val _ = testutils.tprint ("bag dependent terminal " ^ label)
+            val armed = ref NONE val stopped = ref false val after = ref 0
+            val genuine = A.new_term_check {limit=cap,observe=fn () => ()}
+            fun stop () = (stopped := true;raise Feedback.mk_HOL_ERR
+              "Task42Dependent" label "first admission")
+            fun admit tm =
+              if !stopped then (after := !after+1;genuine tm)
+              else if Option.isSome (!armed) then
+                (if forecast andalso tm ~~ valOf (!armed) then stop ()
+                 else genuine tm)
+              else if Term.is_comb tm andalso
+                  Term.is_abs (Term.rator tm) then
+                (armed := SOME (Term.beta_conv tm);
+                 if forecast then genuine tm else stop ())
+              else genuine tm
+            val result = Exn.capture (fn () =>
+              SmtBagProve.bag_contextual_prove_with_admission
+                admit laws (target small)) ()
+        in require "dependent admission lost or retried its first error"
+             (Option.isSome (!armed) andalso !stopped andalso !after=0 andalso
+              (case result of Exn.Exn (Feedback.HOL_ERR detail) =>
+                 Feedback.top_structure_of detail = "Task42Dependent" andalso
+                 Feedback.top_function_of detail = label andalso
+                 Feedback.message_of detail = "first admission"
+               | _ => false));
+           testutils.OK ();plain (label ^ " recovery") laws (target small)
+        end
+      val _ = terminal "pre-beta" false
+      val _ = terminal "beta forecast" true
+      (* Dependent unary suffixes exercise arena construction, not just
+         shallow shared trees. These same laws close after two refinements.
+         Count checker visits AND callback calls; this is a local paid-Work
+         regression, not a claim of universal linear native runtime. *)
+      fun suffix 0 = x
+        | suffix size = Term.mk_comb
+            (``bag_dep_step:bool -> bool``,suffix (size-1))
+      fun scaling size = compare ("suffix " ^ Int.toString size)
+        (fn _ => ()) laws (target (suffix size))
+      val (small_calls,small_work) = scaling 256
+      val (large_calls,large_work) = scaling 512
+      val _ = print ("BAG_DEPENDENT_WORK calls=" ^
+        IntInf.toString small_calls ^ "/" ^ IntInf.toString large_calls ^
+        " visits=" ^ IntInf.toString small_work ^ "/" ^
+        IntInf.toString large_work ^ "\n")
+    in require "dependent suffix exceeded local 2x-growth Work allowance"
+         (large_calls <= 3*small_calls andalso large_work <= 3*small_work)
+    end
+
   (* Freshening must not capture an existing free prime-name in a beta
      body. This quantified beta result is neither a whole input nor a
      whole output conversion side: rejecting it tests the forecast itself. *)
@@ -1173,6 +1403,7 @@ struct
        ("bag prospective beta phases",prospective_betas),
        ("bag prospective context",prospective_context),
        ("bag fitting context",fitting_context),
+       ("bag dependent context",dependent_context),
        ("bag prospective capture",prospective_capture),
        ("bag binder names",binder_names),
        ("bag fitting intermediates",fitting_intermediates),

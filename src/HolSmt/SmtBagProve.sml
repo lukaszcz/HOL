@@ -143,6 +143,7 @@ struct
   fun checked_procedures check =
   let
     exception AdmissionFailure of exn
+    val admitted_source_size = ref 0
     fun admit tm = check tm handle primary => raise AdmissionFailure primary
     fun protect f x = f x handle AdmissionFailure primary =>
       SmtReplayArithmetic.propagate_admission_error primary
@@ -514,10 +515,11 @@ struct
 
            If a context pattern needs the structure of an opaque residue,
            refine its frontier by one application or abstraction layer and
-           retry discovery. Binder-dependent syntax stays under its binder;
-           only independent children share free holes. Refinement terminates
-           on the finite input syntax; every native attempt remains
-           prospectively gated.
+           retry discovery. A dependent field is a FUNCTION hole applied
+           to its live binders, not an independent value. Realization closes
+           that field and retracts only the introduced beta paths, with
+           prospective admission before INST and every checked conversion.
+           Refinement visits finite source syntax, never closure wrappers.
            Small actual matches retain their original path and order. *)
         fun compose_rule (th,Context (_,facts),tm) =
           let
@@ -527,90 +529,163 @@ struct
             val (sigma,_) = HolKernel.ho_match_term
               (HOLset.listItems (Thm.hyp_tyvars th)) (Thm.hyp_frees th) left tm
             val roots = List.map #residue sigma
-            val avoids = ref (Term.free_varsl
+            val source_names = Term.free_varsl
               (tm :: List.concat (List.map
-                (fn law => Thm.concl law::Thm.hyp law) facts)))
-            val bindings = ref (Redblackmap.mkDict Term.compare)
-            fun atom actual =
-              case Redblackmap.peek (!bindings,actual) of
-                SOME (hole,_) => hole
+                (fn law => Thm.concl law::Thm.hyp law) facts))
+            val avoids = ref source_names
+            fun tick () = admit boolSyntax.T
+            (* Syntax-only arena. App keys contain child IDs, never native
+               suffixes. Leaf syntax is bounded by the unchanged small-term
+               frontier (128 nodes); its comparisons cannot rescan a large
+               suffix. Dependencies are computed bottom-up, not by repeated
+               structural-map occurrence queries on each dependent suffix.
+               A bounded physical cache is only a reuse hint; misses still
+               visit/pay source syntax and cannot identify different terms.
+               All semantic retractions below remain checked separately. *)
+            datatype node = Node of
+              int * Term.term * int * int list * view
+            and view = Leaf | App of node * node | Abs of Term.term * node
+            fun id (Node (i,_,_,_,_)) = i
+            fun syntax (Node (_,t,_,_,_)) = t
+            fun size (Node (_,_,n,_,_)) = n
+            fun deps (Node (_,_,_,vs,_)) = vs
+            fun view (Node (_,_,_,_,v)) = v
+            val next = ref 0
+            fun compare_id pair = (tick ();Int.compare pair)
+            fun compare_leaf pair = (tick ();Term.compare pair)
+            val leaves = ref (Redblackmap.mkDict compare_leaf)
+            fun compare_pair ((a,b),(c,d)) = case compare_id (a,c) of
+                EQUAL => compare_id (b,d) | order => order
+            val apps = ref (Redblackmap.mkDict compare_pair)
+            val abstractions = ref (Redblackmap.mkDict compare_pair)
+            val binders = ref (Redblackmap.mkDict compare_leaf)
+            val variables = ref (Redblackmap.mkDict compare_id)
+            fun pay n = if n=0 then () else (tick ();pay (n-1))
+            val cache = Array.array (257,[]:(Term.term * node) list)
+            fun union [] ys = ys
+              | union xs [] = xs
+              | union (x::xs) (y::ys) =
+                  (tick ();if x=y then x::union xs ys
+                   else if x<y then x::union xs (y::ys)
+                   else y::union (x::xs) ys)
+            fun make t n vs v =
+              (next := !next+1;Node (!next,t,n,vs,v))
+            fun build term =
+              let val _ = tick ()
+                  val bucket = SmtReplayImport.pointer_bucket_observed
+                    pay 2 257 term
+                  val saved = Array.sub (cache,bucket)
+                  val hit = List.find (fn (old,_) =>
+                    (tick ();Portable.pointer_eq (old,term))) saved
+              in case hit of SOME (_,n) => n | NONE =>
+                let
+                  val bounded =
+                    SmtReplayImport.bounded_raw_size_with_type_check_observed
+                      {limit=128,observe=tick,check_type=fn ty =>
+                         admit (Term.mk_var ("__smt_bag_annotation",ty))} term
+                  fun leaf count =
+                    case Redblackmap.peek (!leaves,term) of SOME n => n
+                    | NONE =>
+                        let val _ = admit term
+                            val vs = List.foldl (fn (v,vs) =>
+                              (tick ();case Redblackmap.peek (!binders,v) of
+                                 NONE => vs | SOME i => union [i] vs))
+                              [] (Term.free_vars term)
+                            val n = make term count vs Leaf
+                        in leaves := Redblackmap.insert (!leaves,term,n);n end
+                  val result = case bounded of SOME count => leaf count
+                  | NONE => if Term.is_comb term then
+                    let val (f,x) = Term.dest_comb term
+                        val l = build f val r = build x
+                        val key = (id l,id r)
+                    in case Redblackmap.peek (!apps,key) of
+                        SOME n => n
+                      | NONE =>
+                          let val n = make
+                                (Term.mk_comb (syntax l,syntax r))
+                                (1+size l+size r) (union (deps l) (deps r))
+                                (App (l,r))
+                          in apps := Redblackmap.insert (!apps,key,n);n end
+                    end
+                  else if Term.is_abs term then
+                    let val _ = admit term
+                        val (old,body) =
+                          SmtReplayImport.dest_abs_preserving_names term
+                        (* A lexical canonical name, fresh for all source
+                           frees and this abstraction's actual outer frees.
+                           Independent alpha copies share IDs; live outer
+                           binders cannot be captured or identified. *)
+                        val v = Term.variant
+                          (source_names @ Term.free_vars term)
+                          (Term.mk_var ("__smt_bag_bound",Term.type_of old))
+                        val _ = avoids := v :: !avoids
+                        val _ = admit body
+                        val b = Term.subst [{redex=old,residue=v}] body
+                        val _ = admit b
+                        val index = case Redblackmap.peek (!binders,v) of
+                            SOME i => i
+                          | NONE =>
+                              (next := !next+1;
+                               binders := Redblackmap.insert
+                                 (!binders,v,!next);
+                               variables := Redblackmap.insert
+                                 (!variables,!next,v);!next)
+                        val child = build b
+                        val vs = List.filter
+                          (fn i => (tick ();i<>index)) (deps child)
+                        val key = (index,id child)
+                    in case Redblackmap.peek (!abstractions,key) of
+                        SOME n => n
+                      | NONE =>
+                          let val n = make (Term.mk_abs (v,syntax child))
+                                (1+size child) vs (Abs (v,child))
+                          in abstractions := Redblackmap.insert
+                               (!abstractions,key,n);n end end
+                  else leaf 1
+                    val _ = Array.update (cache,bucket,
+                      (term,result)::List.take (saved,Int.min (3,length saved)))
+                in result end end
+            val roots = List.map (fn t => (t,build t)) roots
+            val bindings = ref (Redblackmap.mkDict compare_id)
+            fun arguments n = List.map (fn i =>
+              (tick ();valOf (Redblackmap.peek (!variables,i)))) (deps n)
+            fun atom n = case Redblackmap.peek (!bindings,id n) of
+                SOME (_,hole,_) => hole
               | NONE =>
-                  let val hole = Term.variant (!avoids)
-                        (Term.genvar (Term.type_of actual))
+                  let val vs = arguments n
+                      val ty = List.foldr
+                        (fn (v,ty) => Type.mk_type
+                          ("fun",[Term.type_of v,ty]))
+                        (Term.type_of (syntax n)) vs
+                      val hole = Term.variant (!avoids) (Term.genvar ty)
+                      val _ = admit hole
                   in avoids := hole :: !avoids;
                      bindings := Redblackmap.insert
-                       (!bindings,actual,(hole,ref false));hole end
-            val _ = List.app (fn actual =>
-              if small actual then () else ignore (atom actual)) roots
-            (* Observed, memoized FREE occurrence tests. Repeated suffix
-               queries along a binder-dependent spine must not rescan that
-               spine quadratically; a shadowing binder closes the query. *)
-            fun occurrence variable =
-              let val memo = ref (Redblackmap.mkDict Term.compare)
-                  val open_abs = SmtReplayImport.dest_abs_preserving_names
-                  fun occurs term =
-                    (admit boolSyntax.T;
-                     case Redblackmap.peek (!memo,term) of
-                       SOME result => result
-                     | NONE =>
-                         let val result =
-                               if Term.is_var term then
-                                 Term.aconv variable term
-                               else if Term.is_comb term then
-                                 let val (f,x) = Term.dest_comb term
-                                 in occurs f orelse occurs x end
-                               else if Term.is_abs term then
-                                 let val _ = admit term
-                                     val (v,b) = open_abs term
-                                 in not (Term.aconv v variable) andalso
-                                      occurs b end
-                               else false
-                         in memo := Redblackmap.insert (!memo,term,result);
-                            result end)
-              in occurs end
-            (* A frontier is immutable during one attempt. Reuse its
-               syntax projection, notably admitted binder openings, rather
-               than freshening and rebuilding it for each naming entry. *)
-            val represented = ref (Redblackmap.mkDict Term.compare)
-            fun represent actual =
-              case Redblackmap.peek (!bindings,actual) of
-                NONE => actual
-              | SOME (hole,expanded) =>
-                  if not (!expanded) then hole else
-                    (case Redblackmap.peek (!represented,actual) of
-                       SOME result => result
-                     | NONE => let
-                      fun field bound x =
-                        if small x then x
-                        else if List.exists (fn occurs => occurs x) bound
-                          then expose bound x
-                        else (ignore (atom x);represent x)
-                      and expose bound x =
-                        if Term.is_abs x then
-                          let val _ = admit x
-                              val (old,body) =
-                                SmtReplayImport.dest_abs_preserving_names x
-                              (* Existing holes must not be captured by a
-                                 source binder chosen before genvar ran. *)
-                              val v = Term.variant
-                                (!avoids @ Term.free_vars body) old
-                              val _ = avoids := v :: !avoids
-                              val _ = admit body
-                              val b = Term.subst [{redex=old,residue=v}] body
-                              val _ = admit b
-                          in Term.mk_abs (v,field (occurrence v::bound) b)
-                          end
-                        else if Term.is_comb x then
-                          let val (f,a) = Term.dest_comb x
-                          in Term.mk_comb (field bound f,field bound a) end
-                        else x
-                      val result =
-                        if Term.is_abs actual then expose [] actual else
-                          let val (head,args) = boolSyntax.strip_comb actual
-                          in Term.list_mk_comb (head,List.map (field []) args)
-                          end
-                    in represented := Redblackmap.insert
-                         (!represented,actual,result);result end)
+                       (!bindings,id n,(n,hole,ref false));hole end
+            val _ = List.app (fn (_,n) =>
+              if size n<=128 then () else ignore (atom n)) roots
+            val represented = ref (Redblackmap.mkDict compare_id)
+            fun represent n =
+              case Redblackmap.peek (!bindings,id n) of
+                NONE => syntax n
+              | SOME (_,hole,expanded) =>
+                  if not (!expanded) then
+                    Term.list_mk_comb (hole,arguments n)
+                  else case Redblackmap.peek (!represented,id n) of
+                    SOME result => result
+                  | NONE =>
+                      let
+                        fun field x = if size x<=128 then syntax x
+                          else (ignore (atom x);represent x)
+                        fun spine x args = case view x of
+                            App (f,a) => spine f (field a::args)
+                          | _ => Term.list_mk_comb (syntax x,args)
+                        val result = case view n of
+                            Abs (v,b) => Term.mk_abs (v,field b)
+                          | App _ => spine n []
+                          | Leaf => syntax n
+                      in represented := Redblackmap.insert
+                           (!represented,id n,result);result end
             fun count variable term =
               (admit boolSyntax.T;
                if Term.aconv variable term then 1
@@ -625,11 +700,16 @@ struct
                else 0)
             fun attempt () =
               let
-                val _ = represented := Redblackmap.mkDict Term.compare
-                val _ = List.app (fn root => ignore (represent root)) roots
+                val _ = represented := Redblackmap.mkDict compare_id
+                val _ = List.app (fn (_,n) => ignore (represent n)) roots
                 val entries = Redblackmap.listItems (!bindings)
-                val naming = List.map (fn (actual,_) =>
-                  {redex=actual,residue=represent actual}) entries
+                (* Only CLOSED source fields can be substituted globally.
+                   Dependent fields occur inside their enclosing projection. *)
+                val naming = List.map (fn (actual,n) =>
+                    {redex=actual,residue=represent n}) roots @
+                  List.mapPartial (fn (_,(n,_,_)) =>
+                    if null (deps n) then SOME
+                      {redex=syntax n,residue=represent n} else NONE) entries
                 val _ = List.app (fn {redex,residue} =>
                   List.app admit [redex,residue]) naming
                 fun compact term =
@@ -642,7 +722,7 @@ struct
                 val proof = Conv.TRY_CONV
                   (traverse true initial context) target
                 val (l,r) = boolSyntax.dest_eq (Thm.concl proof)
-                val holes = List.map (#1 o #2)
+                val holes = List.map (fn (_,(_,hole,_)) => hole)
                   (Redblackmap.listItems (!bindings))
                 (* An exported rule's retained Hyp is not one of our
                    schematic context assumptions. Never substitute through
@@ -654,38 +734,229 @@ struct
                 val shrinks = safe_hyp andalso not (Term.aconv l r) andalso
                   Term.term_size r < Term.term_size l andalso
                   List.all (fn hole => count hole r <= count hole l) holes
-              in if not shrinks then NONE else
-                let val realization = List.map (fn (actual,(hole,_)) =>
-                      {redex=hole,residue=actual})
-                      (Redblackmap.listItems (!bindings))
-                    val instantiate = substitution admit [] realization
-                    val _ = List.app (admit o instantiate)
-                      (l::r::Thm.hyp proof)
-                    (* Check the syntax retraction before native INST. Only
-                       original actual context facts may discharge these
-                       assumptions; naming never strengthens a theorem. *)
-                    val _ = if Term.aconv (instantiate l) tm andalso
-                        ListPair.allEq (fn (source,abstract) =>
-                          Term.aconv (Thm.concl source)
-                            (instantiate (Thm.concl abstract))) (facts,context)
+                val actual_roots = l::r::Thm.hyp proof @
+                  List.map Thm.concl context
+                val dependent = List.exists (fn (_,(n,hole,_)) =>
+                  not (null (deps n)) andalso
+                  List.exists (Term.free_in hole) actual_roots)
+                  (Redblackmap.listItems (!bindings))
+              in if not shrinks then NONE
+                else if not dependent then
+                  (* Preserve the original one-INST path when all retained
+                     holes are independent. Unused dependent frontiers are
+                     not substitutions and need no closure realization. *)
+                  let val realization = List.mapPartial
+                        (fn (_,(n,hole,_)) => if null (deps n) then SOME
+                          {redex=hole,residue=syntax n} else NONE)
+                        (Redblackmap.listItems (!bindings))
+                      val instantiate = substitution admit [] realization
+                      val _ = List.app (admit o instantiate) actual_roots
+                      val _ = if Term.aconv (instantiate l) tm andalso
+                          ListPair.allEq (fn (law,abstract) =>
+                            Term.aconv (Thm.concl law)
+                              (instantiate (Thm.concl abstract)))
+                              (facts,context)
+                        then () else raise Conv.UNCHANGED
+                      val lifted = Thm.INST realization proof
+                      fun discharge (law,result) =
+                        if List.exists (Term.aconv (Thm.concl law))
+                            (Thm.hyp result)
+                        then Drule.PROVE_HYP law result else result
+                  in SOME (List.foldl discharge lifted facts) end
+                else let
+                    val entries = Redblackmap.listItems (!bindings)
+                    val open_abs =
+                      SmtReplayImport.dest_abs_preserving_names
+                    fun rhs th = boolSyntax.rhs (Thm.concl th)
+                    fun checked th = (ignore (rule admit th);th)
+                    fun refl term = (admit term;Thm.REFL term)
+                    fun combine (left,right) =
+                      let val l = boolSyntax.lhs (Thm.concl left)
+                          val r = boolSyntax.lhs (Thm.concl right)
+                          val _ = List.app admit
+                            [Term.mk_comb (l,r),
+                             Term.mk_comb (rhs left,rhs right)]
+                      in checked (Thm.MK_COMB (left,right)) end
+                    (* Do not insert a large closure into a whole operand
+                       and THEN beta-reduce it: that administrative redex
+                       can exceed an otherwise fitting source's allowance.
+                       Realize through small, ordinary definitional Hyp.
+                       Reduce each small constructor equation locally before
+                       lifting its checked children through congruence.
+                       Finally CHOOSE away definitions, parents first; no
+                       expanded definition or large pre-beta INST is made. *)
+                    (* The admitted source supplies a lower bound on the
+                       caller's allowance, not permission to raise it. Stop
+                       factoring as soon as a whole field AND its definition,
+                       existential closure and local beta operands fit that
+                       bound. In particular a long unary suffix needs only
+                       a bounded fringe, not one growing Hyp per source node. *)
+                    val raw_size =
+                      SmtReplayImport.bounded_raw_size_with_type_check_observed
+                    val source_size = Int.max (!admitted_source_size,
+                      valOf (raw_size
+                        {limit=SmtResource.max_bv_replay_term_nodes,
+                         observe=tick,check_type=fn ty => admit
+                           (Term.mk_var ("__smt_bag_annotation",ty))} tm))
+                    val names = ref (Redblackmap.mkDict compare_leaf)
+                    val definitions = ref (Redblackmap.mkDict compare_id)
+                    val _ = List.app (fn (_,(n,hole,_)) =>
+                      names := Redblackmap.insert (!names,hole,n)) entries
+                    fun name n =
+                      case Redblackmap.peek (!definitions,id n) of
+                        SOME (q,_,_,_) => q
+                      | NONE =>
+                          let val vs = arguments n
+                              val q = case Redblackmap.peek
+                                  (!bindings,id n) of
+                                  SOME (_,hole,_) => hole
+                                | NONE =>
+                                    let val ty = List.foldr
+                                          (fn (v,t) => Type.mk_type
+                                            ("fun",[Term.type_of v,t]))
+                                          (Term.type_of (syntax n)) vs
+                                        val q = Term.variant (!avoids)
+                                          (Term.genvar ty)
+                                    in avoids := q :: !avoids;q end
+                              val _ = admit q
+                              val _ = names := Redblackmap.insert
+                                (!names,q,n)
+                              fun reference child = Term.list_mk_comb
+                                (name child,arguments child)
+                              val arity = length vs
+                              val opaque = size n + arity +
+                                Int.max (7,2*arity) <= source_size
+                              val body = if opaque then syntax n else
+                                case view n of
+                                  Leaf => syntax n
+                                | App (f,x) => Term.mk_comb
+                                    (reference f,reference x)
+                                | Abs (v,b) => Term.mk_abs (v,reference b)
+                              val witness = Term.list_mk_abs (vs,body)
+                              val equation = boolSyntax.mk_eq (q,witness)
+                              val _ = List.app admit [witness,equation]
+                              val _ = definitions := Redblackmap.insert
+                                (!definitions,id n,
+                                 (q,witness,equation,opaque))
+                          in q end
+                    val saved = ref (Redblackmap.mkDict compare_leaf)
+                    fun convert term =
+                      let val _ = admit term
+                          (* Only bounded compact keys, never realized
+                             suffixes, enter this conversion memo. *)
+                          val cacheable = small term
+                      in case if cacheable then
+                          Redblackmap.peek (!saved,term) else NONE of
+                        SOME result => result
+                      | NONE =>
+                        let
+                          val (head,args) = boolSyntax.strip_comb term
+                          val result = case Redblackmap.peek (!names,head) of
+                            SOME n =>
+                              let val q = name n
+                                  val (_,_,equation,opaque) = valOf
+                                    (Redblackmap.peek (!definitions,id n))
+                                  val arg_bridges = List.map convert args
+                                  val prefix = List.foldl
+                                    (fn (arg,f) => combine (f,arg))
+                                    (refl q) arg_bridges
+                                  val actuals = List.map rhs arg_bridges
+                                  val arity = Int.min
+                                    (length (deps n),length actuals)
+                                  val (front,back) =
+                                    (List.take (actuals,arity),
+                                     List.drop (actuals,arity))
+                                  fun apply (arg,law) =
+                                    let val law = combine (law,refl arg)
+                                        val redex = rhs law
+                                        val (f,x) = Term.dest_comb redex
+                                        val _ = admit f
+                                        val (v,b) = open_abs f
+                                        val output = substitution admit []
+                                          [{redex=v,residue=x}] b
+                                        val _ = admit output
+                                    in checked (Thm.TRANS law
+                                         (Thm.BETA_CONV redex)) end
+                                  val local_law = List.foldl apply
+                                    (Thm.ASSUME equation) front
+                                  (* Leaf source syntax stays verbatim:
+                                     source beta-redexes are NOT ours. *)
+                                  val body = if opaque then
+                                      refl (rhs local_law)
+                                    else case view n of Leaf =>
+                                      refl (rhs local_law)
+                                    | _ => convert (rhs local_law)
+                                  val expanded = checked
+                                    (Thm.TRANS local_law body)
+                                  val applied = List.foldl
+                                    (fn (arg,f) => combine (f,refl arg))
+                                    expanded back
+                              in checked (Thm.TRANS prefix applied) end
+                          | NONE =>
+                              if Term.is_comb term then
+                                let val (f,x) = Term.dest_comb term
+                                in combine (convert f,convert x) end
+                              else if Term.is_abs term then
+                                let val (old,b) = open_abs term
+                                    (* Small source leaves can bind a name
+                                       which genvar subsequently selected.
+                                       Keep those bound occurrences lexical,
+                                       never interpret them as graph holes. *)
+                                    val v = Term.variant
+                                      (!avoids @ Term.free_vars b) old
+                                    val _ = avoids := v :: !avoids
+                                    val _ = admit b
+                                    val renamed = Term.subst
+                                      [{redex=old,residue=v}] b
+                                    val _ = admit renamed
+                                    val body = convert renamed
+                                    val _ = admit (Term.mk_abs (v,rhs body))
+                                in checked (Thm.ABS v body) end
+                              else refl term
+                          val _ = if cacheable then saved :=
+                            Redblackmap.insert (!saved,term,result) else ()
+                        in result end end
+                    val left = convert l val right = convert r
+                    val contexts = List.map
+                      (convert o Thm.concl) context
+                    val _ = if Term.aconv (rhs left) tm andalso
+                        ListPair.allEq (fn (source,bridge) =>
+                          Term.aconv (Thm.concl source) (rhs bridge))
+                          (facts,contexts)
                       then () else raise Conv.UNCHANGED
-                    val lifted = Thm.INST realization proof
-                    fun discharge (law,result) =
-                      if List.exists (Term.aconv (Thm.concl law))
-                          (Thm.hyp result)
-                      then Drule.PROVE_HYP law result else result
-                in SOME (List.foldl discharge lifted facts) end end
+                    val result = checked (Thm.TRANS (Thm.SYM left)
+                      (Thm.TRANS proof right))
+                    fun discharge ((law,bridge),result) =
+                      let val compact = boolSyntax.lhs (Thm.concl bridge)
+                      in if List.exists (Term.aconv compact) (Thm.hyp result)
+                         then checked (Drule.PROVE_HYP
+                           (Thm.EQ_MP (Thm.SYM bridge) law) result)
+                         else result end
+                    val result = List.foldl discharge result
+                      (ListPair.zip (facts,contexts))
+                    fun close ((_,(q,witness,equation,_)),result) =
+                      if not (List.exists (Term.aconv equation)
+                          (Thm.hyp result)) then result else
+                      let val existence = boolSyntax.mk_exists (q,equation)
+                          val _ = List.app admit
+                            (existence::witness::Thm.hyp result)
+                          val exists = Thm.EXISTS (existence,witness)
+                            (refl witness)
+                      in checked (Thm.CHOOSE (q,exists) result) end
+                in SOME (List.foldl close result
+                     (List.rev (Redblackmap.listItems (!definitions))))
+                end end
             fun discover () =
               case (attempt () handle Conv.UNCHANGED => NONE) of
                 SOME proof => SOME proof
               | NONE =>
                   let val frontier = List.filter
-                        (fn (actual,(_,expanded)) =>
+                        (fn (_,(n,_,expanded)) =>
                           not (!expanded) andalso
-                          (Term.is_comb actual orelse Term.is_abs actual))
+                          (case view n of Leaf => false | _ => true))
                         (Redblackmap.listItems (!bindings))
                   in if null frontier then NONE else
-                    (List.app (fn (_,(_,expanded)) => expanded := true)
+                    (List.app (fn (_,(_,_,expanded)) => expanded := true)
                        frontier;discover ()) end
           in if Redblackmap.numItems (!bindings) = 0 then NONE
              else discover () end
@@ -920,6 +1191,15 @@ struct
       SmtResource.with_resource_step_time "Bag" "contextual" (fn () =>
         (List.app admit (t::context);
          SmtResource.check_resource_goal "Bag" "contextual" t;
+         (* Retain the already admitted original source's raw allowance
+            witness across simplifier descent. This is a lower bound on
+            the caller's cap, never a larger admission policy. *)
+         (if small t then () else admitted_source_size := valOf
+           (SmtReplayImport.bounded_raw_size_with_type_check_observed
+             {limit=SmtResource.max_bv_replay_term_nodes,
+              observe=fn () => admit boolSyntax.T,
+              check_type=fn ty => admit
+                (Term.mk_var ("__smt_bag_annotation",ty))} t));
          (* Discard provably unused guards before splitting. Restrict this
             erasure to conditionals: CPC retains its original srw portfolio,
             rather than acquiring the ordinary Bag rung's extra equations. *)
