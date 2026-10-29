@@ -305,9 +305,21 @@ struct
                 (root :: List.map #residue sigma)
           in build avoids [] root end
       in instantiate end
+    (* A canonical equation is an operator envelope, not a new operand.
+       In particular importing an admitted p as p=T must not charge those
+       four wrapper nodes against p's allowance. Admit every consumed side,
+       condition and actual Hyp independently, including typed forecasts. *)
+    fun formula check term =
+      let val (conditions,equation) = boolSyntax.strip_imp term
+          val (l,r) = boolSyntax.dest_eq equation
+      in List.app check (Term.rator (Term.rator equation)::l::r::conditions)
+      end
+    fun rule check th =
+      (formula check (Thm.concl th);List.app check (Thm.hyp th);th)
     fun preflight check th tm =
       let
-        val _ = List.app check (tm :: Thm.concl th :: Thm.hyp th)
+        val _ = check tm
+        val _ = rule check th
         val left = boolSyntax.lhs
           (#2 (boolSyntax.strip_imp (Thm.concl th)))
         val rigid = Thm.hyp_frees th
@@ -316,14 +328,16 @@ struct
         val instantiate = substitution check types sigma
         (* INST_TYPE precedes term INST, so admit that intermediate too. *)
         val typed = substitution check types []
-        val _ = List.app (check o typed) (Thm.concl th :: Thm.hyp th)
-        fun formula term =
+        fun forecast instantiate term =
           let val (conditions,equation) = boolSyntax.strip_imp term
               val (l,r) = boolSyntax.dest_eq equation
-          in List.app check (l::r::conditions) end
+          in boolSyntax.list_mk_imp (List.map instantiate conditions,
+               boolSyntax.mk_eq (instantiate l,instantiate r)) end
+        val _ = formula check (forecast typed (Thm.concl th))
+        val _ = List.app (check o typed) (Thm.hyp th)
         val source = Thm.concl th
-        val initial = instantiate source
-        val _ = formula initial
+        val initial = forecast instantiate source
+        val _ = formula check initial
         val _ = List.app (check o instantiate) (Thm.hyp th)
         (* HO_PART_MATCH also applies BETA_VAR at the flexible function
            occurrences of the ORIGINAL rule. Forecast those exact paths,
@@ -395,7 +409,7 @@ struct
           | SOME (_,p) =>
               let val result = apply p actual
                     handle Feedback.HOL_ERR _ => actual
-                  val _ = formula result
+                  val _ = formula check result
               in result end
         val _ = List.foldl phase initial sigma
       in () end
@@ -429,9 +443,9 @@ struct
                Cond_rewr.mk_cond_rewrs
                  (th,BoundedRewrites.UNBOUNDED))
             fun conversion (th,_) =
-              let val _ = ignore (theorem th)
+              let val _ = ignore (rule admit th)
                   val th = Drule.SPEC_ALL th
-                  val _ = ignore (theorem th)
+                  val _ = ignore (rule admit th)
                   val left = boolSyntax.lhs
                     (#2 (boolSyntax.strip_imp (Thm.concl th)))
                   val _ = admit left
@@ -499,9 +513,11 @@ struct
            ever instantiated when the compact proof has already erased it.
 
            If a context pattern needs the structure of an opaque residue,
-           refine its frontier by one application layer and retry discovery.
-           Shared children share holes. Refinement terminates on the finite
-           input syntax; every native attempt remains prospectively gated.
+           refine its frontier by one application or abstraction layer and
+           retry discovery. Binder-dependent syntax stays under its binder;
+           only independent children share free holes. Refinement terminates
+           on the finite input syntax; every native attempt remains
+           prospectively gated.
            Small actual matches retain their original path and order. *)
         fun compose_rule (th,Context (_,facts),tm) =
           let
@@ -526,15 +542,75 @@ struct
                        (!bindings,actual,(hole,ref false));hole end
             val _ = List.app (fn actual =>
               if small actual then () else ignore (atom actual)) roots
+            (* Observed, memoized FREE occurrence tests. Repeated suffix
+               queries along a binder-dependent spine must not rescan that
+               spine quadratically; a shadowing binder closes the query. *)
+            fun occurrence variable =
+              let val memo = ref (Redblackmap.mkDict Term.compare)
+                  val open_abs = SmtReplayImport.dest_abs_preserving_names
+                  fun occurs term =
+                    (admit boolSyntax.T;
+                     case Redblackmap.peek (!memo,term) of
+                       SOME result => result
+                     | NONE =>
+                         let val result =
+                               if Term.is_var term then
+                                 Term.aconv variable term
+                               else if Term.is_comb term then
+                                 let val (f,x) = Term.dest_comb term
+                                 in occurs f orelse occurs x end
+                               else if Term.is_abs term then
+                                 let val _ = admit term
+                                     val (v,b) = open_abs term
+                                 in not (Term.aconv v variable) andalso
+                                      occurs b end
+                               else false
+                         in memo := Redblackmap.insert (!memo,term,result);
+                            result end)
+              in occurs end
+            (* A frontier is immutable during one attempt. Reuse its
+               syntax projection, notably admitted binder openings, rather
+               than freshening and rebuilding it for each naming entry. *)
+            val represented = ref (Redblackmap.mkDict Term.compare)
             fun represent actual =
               case Redblackmap.peek (!bindings,actual) of
                 NONE => actual
               | SOME (hole,expanded) =>
                   if not (!expanded) then hole else
-                    let val (head,args) = boolSyntax.strip_comb actual
-                        fun field x = if small x then x else
-                          (ignore (atom x);represent x)
-                    in Term.list_mk_comb (head,List.map field args) end
+                    (case Redblackmap.peek (!represented,actual) of
+                       SOME result => result
+                     | NONE => let
+                      fun field bound x =
+                        if small x then x
+                        else if List.exists (fn occurs => occurs x) bound
+                          then expose bound x
+                        else (ignore (atom x);represent x)
+                      and expose bound x =
+                        if Term.is_abs x then
+                          let val _ = admit x
+                              val (old,body) =
+                                SmtReplayImport.dest_abs_preserving_names x
+                              (* Existing holes must not be captured by a
+                                 source binder chosen before genvar ran. *)
+                              val v = Term.variant
+                                (!avoids @ Term.free_vars body) old
+                              val _ = avoids := v :: !avoids
+                              val _ = admit body
+                              val b = Term.subst [{redex=old,residue=v}] body
+                              val _ = admit b
+                          in Term.mk_abs (v,field (occurrence v::bound) b)
+                          end
+                        else if Term.is_comb x then
+                          let val (f,a) = Term.dest_comb x
+                          in Term.mk_comb (field bound f,field bound a) end
+                        else x
+                      val result =
+                        if Term.is_abs actual then expose [] actual else
+                          let val (head,args) = boolSyntax.strip_comb actual
+                          in Term.list_mk_comb (head,List.map (field []) args)
+                          end
+                    in represented := Redblackmap.insert
+                         (!represented,actual,result);result end)
             fun count variable term =
               (admit boolSyntax.T;
                if Term.aconv variable term then 1
@@ -549,6 +625,7 @@ struct
                else 0)
             fun attempt () =
               let
+                val _ = represented := Redblackmap.mkDict Term.compare
                 val _ = List.app (fn root => ignore (represent root)) roots
                 val entries = Redblackmap.listItems (!bindings)
                 val naming = List.map (fn (actual,_) =>
@@ -604,7 +681,8 @@ struct
               | NONE =>
                   let val frontier = List.filter
                         (fn (actual,(_,expanded)) =>
-                          not (!expanded) andalso Term.is_comb actual)
+                          not (!expanded) andalso
+                          (Term.is_comb actual orelse Term.is_abs actual))
                         (Redblackmap.listItems (!bindings))
                   in if null frontier then NONE else
                     (List.app (fn (_,(_,expanded)) => expanded := true)

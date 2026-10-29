@@ -769,6 +769,110 @@ struct
          (A.new_term_check {limit=limit,observe=fn () => ()}) [] local_goal)
     end
 
+  (* Canonical context wrappers are not additional source operands. A
+     fitting hypothesis must survive p=T import, whether retained or used.
+     Lambda frontiers must expose structure without naming bound values. *)
+  fun fitting_context () =
+    let
+      val memo = ref (Redblackmap.mkDict Int.compare)
+      fun balanced leaves = case Redblackmap.peek (!memo,leaves) of
+          SOME tm => tm
+        | NONE =>
+            let val tm = if leaves=1 then ``bag_ctx_leaf:bool`` else
+                  Term.list_mk_comb (``bag_ctx_join:bool -> bool -> bool``,
+                    [balanced (leaves div 2),
+                     balanced (leaves-leaves div 2)])
+            in memo := Redblackmap.insert (!memo,leaves,tm);tm end
+      val near = balanced 50000
+      val tiny = ``BAG_CARD (EMPTY_BAG:bool -> num) = 0``
+      fun compare label context target =
+        let val _ = testutils.tprint ("bag fitting context " ^ label)
+            val native = Tactical.TAC_PROOF ((context,target),
+              Tactical.THEN (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                intLib.ARITH_TAC))
+            val actual = SmtBagProve.bag_contextual_prove_with_admission
+              (A.new_term_check {limit=200000,observe=fn () => ()})
+              context target
+        in exact target (Thm.hyp native) actual;same_tags native actual;
+           testutils.OK () end
+      val _ = require "canonical context boundary fixture changed"
+        (Term.term_size near=199997 andalso
+         Term.term_size (boolSyntax.mk_eq (near,boolSyntax.T))=200001)
+      val _ = compare "canonical retained" [near] tiny
+      val _ = compare "canonical used" [near] near
+      (* Component-wise admission must still visit the polymorphic
+         equality operator annotation before constructing its conversion. *)
+      exception Operator
+      val operator_seen = ref false
+      val operator_after = ref 0
+      val operator_check = A.new_term_check
+        {limit=200000,observe=fn () => ()}
+      val operator_result = Exn.capture (fn () =>
+        SmtBagProve.bag_contextual_prove_with_admission
+          (fn tm => if !operator_seen then
+              (operator_after := !operator_after+1;operator_check tm)
+            else if tm ~~ Term.rator (Term.rator
+                (boolSyntax.mk_eq (near,boolSyntax.T))) then
+              (operator_seen := true;raise Operator)
+            else operator_check tm) [near] tiny) ()
+      val _ = require "canonical equation operator bypassed Type admission"
+        (!operator_seen andalso !operator_after=0 andalso
+         (case operator_result of Exn.Exn Operator => true | _ => false))
+      val payload = balanced 32768
+      val x = ``bag_ctx_x:bool``
+      val k = ``bag_ctx_k:bool -> bool -> bool``
+      val abstraction = Term.mk_abs (x,Term.list_mk_comb (k,[x,payload]))
+      val h = ``bag_ctx_h:(bool -> bool) -> bool``
+      val fact = ``BAG_IN bag_ctx_q (bag_ctx_b:bool -> num)``
+      val laws =
+        [``!f:bool -> bool. (bag_ctx_h:(bool -> bool) -> bool) f =
+             (bag_ctx_g:(bool -> bool) -> (bool -> bool) -> bool) f f``,
+         ``!v:bool. (bag_ctx_g:(bool -> bool) -> (bool -> bool) -> bool)
+             (\x:bool. (bag_ctx_k:bool -> bool -> bool) x v)
+             (\x:bool. (bag_ctx_k:bool -> bool -> bool) x v)``,fact]
+      val target = boolSyntax.mk_conj (Term.mk_comb (h,abstraction),fact)
+      val _ = require "lambda context fixture changed"
+        (Term.term_size target=131084)
+      val _ = compare "lambda" laws target
+      (* Alpha names do not carry authority. Keep a free prime-name and
+         multiple live binders in the abstraction, then require an actual
+         structural context law to close the duplicated intermediate. *)
+      val nested = Term.mk_abs (x,Term.mk_abs (``bag_ctx_x':bool``,
+        Term.list_mk_comb (``bag_ctx_k2:bool -> bool -> bool -> bool``,
+          [x,``bag_ctx_x':bool``,payload])))
+      val nested_laws =
+        [``!f:bool -> bool -> bool.
+             (bag_ctx_h2:(bool -> bool -> bool) -> bool) f =
+             (bag_ctx_g2:(bool -> bool -> bool) ->
+                (bool -> bool -> bool) -> bool) f f``,
+         ``!v:bool. (bag_ctx_g2:(bool -> bool -> bool) ->
+                (bool -> bool -> bool) -> bool)
+             (\a b:bool. (bag_ctx_k2:bool -> bool -> bool -> bool) a b v)
+             (\a b:bool. (bag_ctx_k2:bool -> bool -> bool -> bool) a b v)``,
+         fact]
+      val nested_target = boolSyntax.mk_conj (Term.mk_comb
+        (``bag_ctx_h2:(bool -> bool -> bool) -> bool``,nested),fact)
+      val _ = compare "nested live binders" nested_laws nested_target
+      (* A non-closing context still reaches prospective RHS admission;
+         abstraction refinement is not permission to erase a false law. *)
+      val stopped = ref false val after = ref 0
+      exception Primary
+      val expanded = Term.list_mk_comb
+        (``bag_ctx_g:(bool -> bool) -> (bool -> bool) -> bool``,
+         [abstraction,abstraction])
+      val genuine = A.new_term_check {limit=200000,observe=fn () => ()}
+      fun admit tm = if !stopped then (after := !after+1;genuine tm)
+        else if tm ~~ expanded then (stopped := true;raise Primary)
+        else genuine tm
+      val result = Exn.capture (fn () =>
+        SmtBagProve.bag_contextual_prove_with_admission admit
+          [hd laws,fact] target) ()
+    in require "lambda miss bypassed admission or retried first error"
+         (!stopped andalso !after=0 andalso
+          (case result of Exn.Exn Primary => true | _ => false));
+       compare "lambda recovery" laws target
+    end
+
   (* Freshening must not capture an existing free prime-name in a beta
      body. This quantified beta result is neither a whole input nor a
      whole output conversion side: rejecting it tests the forecast itself. *)
@@ -1068,6 +1172,7 @@ struct
        ("bag graph identity",graph_handlers),("bag admission",admission_errors),
        ("bag prospective beta phases",prospective_betas),
        ("bag prospective context",prospective_context),
+       ("bag fitting context",fitting_context),
        ("bag prospective capture",prospective_capture),
        ("bag binder names",binder_names),
        ("bag fitting intermediates",fitting_intermediates),
