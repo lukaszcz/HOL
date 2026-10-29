@@ -592,6 +592,7 @@ struct
          (patterned,[patterned,whole_pattern]),
          (star,[large_conjunct]),
          (``reglan_equiv r t``,[``reglan_equiv r t``,``(r:reglan) = t``,
+           double 13 ``reglan_equiv u v``,
            double 13 ``reglan_equiv u v``])]
       fun check (i,(goal,premises)) =
         let

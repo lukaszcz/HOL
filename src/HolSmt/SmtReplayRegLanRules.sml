@@ -363,8 +363,9 @@ struct
                      not (Redblackset.member (essential,G.node_id node)))
                      premises
                    val _ = List.app (fn (node,_) =>
-                     forced := Redblackset.delete (!forced,G.node_id node))
-                     omitted
+                     if Redblackset.member (!forced,G.node_id node) then
+                       forced := Redblackset.delete (!forced,G.node_id node)
+                     else ()) omitted
                  in if null omitted then raise ERR "congruence"
                       "regex syntax frame exceeds local admission"
                     else fit ()
