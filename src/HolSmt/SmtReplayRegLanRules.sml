@@ -110,26 +110,28 @@ struct
       fun named term = case Redblackmap.peek (names,term) of SOME node => node
         | NONE => raise ERR "congruence" "schema operand is not an owned name"
       val memo = ref (Redblackmap.mkDict pair_compare)
-      fun congruent (left,right) =
+      fun congruent fallback (left,right) =
         if left = right then refl left else
           case exact_relation (left,right) of SOME theorem => theorem
           | NONE => case Redblackmap.peek
               (!memo,(G.node_id left,G.node_id right)) of
                 SOME theorem => theorem
               | NONE =>
-                  let val theorem = constructor_congruence true (left,right)
+                  let val theorem = constructor_congruence fallback true
+                        (left,right)
                       val _ = memo := Redblackmap.insert
                         (!memo,(G.node_id left,G.node_id right),theorem)
                   in theorem end
-      and antecedent proposition =
+      and antecedent fallback proposition =
         case Lib.total boolSyntax.dest_conj proposition of
-          SOME (left,right) => Thm.CONJ (antecedent left) (antecedent right)
+          SOME (left,right) => Thm.CONJ
+            (antecedent fallback left) (antecedent fallback right)
         | NONE => case Lib.total SmtRegLanProve.dest_equiv proposition of
-            SOME (left,right) => congruent (named left,named right)
+            SOME (left,right) => congruent fallback (named left,named right)
           | NONE => case Lib.total boolSyntax.dest_eq proposition of
               SOME (left,right) => exact_equality (named left,named right)
             | NONE => raise ERR "congruence" "unsupported schema antecedent"
-      and constructor_congruence semantic (left,right) =
+      and constructor_congruence fallback semantic (left,right) =
         let
           val lhs = constructor left
           val rhs = constructor right
@@ -144,29 +146,72 @@ struct
                 val instance = Drule.INST_TY_TERM
                   (Term.match_term conclusion target) generic
                 val (antecedents,_) = boolSyntax.strip_imp (Thm.concl instance)
-            in Drule.LIST_MP (List.map antecedent antecedents) instance end
+            in Drule.LIST_MP (List.map (antecedent fallback) antecedents)
+              instance end
           val theorem = Lib.tryfind instantiate congruence_schemas
             handle Feedback.HOL_ERR primary =>
-              if SmtResource.is_resource_gate primary then
-                raise Feedback.HOL_ERR primary
+              if not fallback orelse SmtResource.is_resource_gate primary
+              then raise Feedback.HOL_ERR primary
               else
                 let
-                  (* Keep the original bounded congruence fallback. In
-                     particular, operand equalities/relations may require
-                     transitivity rather than a single matching premise.
-                     Only the already compact operator spines and named
-                     premises reach the worker, never realized operands. *)
+                  (* Connect names in premises (including compound
+                     intermediates) to compact constructor spines. Recording
+                     equations as dependencies alone does not make them
+                     worker facts. No realized operand is exposed. *)
+                  fun prove facts =
+                    let
+                      val admit = SmtReplayArithmetic.new_term_check
+                        {limit=P.template_limit block,observe=fn () => ()}
+                      val _ = List.app admit (target ::
+                        List.concat (List.map (fn theorem =>
+                          Thm.concl theorem :: Thm.hyp theorem)
+                          (facts @ SmtRegLanProve.congruence_theorems)))
+                      val theorem = SmtRegLanProve.congruence facts target
+                      val _ = List.app admit
+                        (Thm.concl theorem :: Thm.hyp theorem)
+                    in theorem end
                   val facts = List.map #2 exposed
-                  val admit = SmtReplayArithmetic.new_term_check
-                    {limit=P.template_limit block,observe=fn () => ()}
-                  val _ = List.app admit (target ::
-                    List.concat (List.map (fn theorem =>
-                      Thm.concl theorem :: Thm.hyp theorem)
-                      (facts @ SmtRegLanProve.congruence_theorems)))
-                  val theorem = SmtRegLanProve.congruence facts target
-                  val _ = List.app admit
-                    (Thm.concl theorem :: Thm.hyp theorem)
-                in theorem end
+                  val saved_dependencies = !dependencies
+                in
+                    let
+                      val seen = ref (Redblackset.empty Int.compare)
+                      val visits = ref 0
+                      fun visit () =
+                        if !visits < P.template_limit block then
+                          visits := !visits + 1
+                        else raise ERR "congruence"
+                          "regex constructor frontier exceeds local admission"
+                      fun children node =
+                        let fun walk node operands =
+                              (visit ();
+                               case G.view graph node of
+                                 G.Application (f,x) => walk f (x::operands)
+                               | G.Constant _ => operands
+                               | _ => node::operands)
+                        in walk node [] end
+                      fun frontier node =
+                        if Redblackset.member (!seen,G.node_id node) then []
+                        else
+                          (visit ();
+                           seen := Redblackset.add (!seen,G.node_id node);
+                           case G.view graph node of
+                             G.Application _ =>
+                               let val operands = children node
+                               in constructor node ::
+                                 List.concat (List.map frontier operands) end
+                           | G.Constant _ => [constructor node]
+                           | _ => [])
+                      val roots = left :: right :: List.concat
+                        (List.map (fn ((a,b),_) => [a,b])
+                          (relations @ equalities))
+                      val bridges = List.concat (List.map frontier roots)
+                    in prove (facts @ bridges) end
+                    handle Feedback.HOL_ERR primary =>
+                      (dependencies := saved_dependencies;
+                       if SmtResource.is_resource_gate primary then
+                         raise Feedback.HOL_ERR primary
+                       else prove facts)
+                end
           val bridge = if semantic then
               Thm.MK_COMB (Thm.AP_TERM SmtRegLanProve.equiv_tm lhs,rhs)
             else
@@ -199,6 +244,23 @@ struct
                     in search rest back seen end
         in search [(left,refl left)] []
           (Redblackset.singleton Int.compare (G.node_id left)) end
+      fun congruence () =
+        let
+          fun schema fallback = if semantic then
+              congruent fallback (left,right)
+            else constructor_congruence fallback false (left,right)
+          fun retry action next = action () handle Feedback.HOL_ERR primary =>
+            if SmtResource.is_resource_gate primary then
+              raise Feedback.HOL_ERR primary else next ()
+          fun chain () = if semantic then symmetric_chain () else
+            raise ERR "congruence" "not a semantic chain"
+        (* Keep successful schemas first. A checked path between endpoint
+           names avoids speculative worker calls on unrelated children.
+           The original worker receives checked bridges on misses, with its
+           former named-only input retained if bridge admission/proving fails.
+           No String/regex prover rung or schema priority is changed. *)
+        in retry (fn () => schema false)
+          (fn () => retry chain (fn () => schema true)) end
       val theorem = case rule of
           "refl" => if semantic andalso left = right andalso
               List.null premises then refl left else
@@ -223,8 +285,7 @@ struct
                 chain relations left else raise ERR "assemble"
                   "transitivity includes a different relation" end
         | "trans-star" => symmetric_chain ()
-        | "cong" => if semantic then congruent (left,right)
-            else constructor_congruence false (left,right)
+        | "cong" => congruence ()
         | _ => raise ERR "assemble" "unknown semantic relation procedure"
       val named = Thm.EQ_MP (Thm.SYM target_bridge) theorem
     in P.compose block (fn _ => named) (!dependencies) end

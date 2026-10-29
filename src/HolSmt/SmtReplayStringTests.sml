@@ -432,6 +432,118 @@ struct
       val theorem = Exn.release result
     in exact goal hypotheses theorem;same_tags native theorem end)
 
+  (* Compound relation endpoints have both a name and a constructor spine.
+     Chains use the former; schema goals use the latter. Check their bridge
+     directly and through the parsed monotonicity route, before realization. *)
+  fun compound_regex () =
+    let
+      val cases =
+        [(``reglan_equiv (reglan_star r) (reglan_star t)``,
+          [``reglan_equiv (reglan_star r) u``,
+           ``reglan_equiv u (reglan_star t)``]),
+         (``reglan_equiv (reglan_union r q) (reglan_union t q)``,
+          [``reglan_equiv (reglan_union r q) u``,
+           ``reglan_equiv u (reglan_union t q)``]),
+         (``reglan_equiv (reglan_star (reglan_union r q))
+                        (reglan_star (reglan_union t q))``,
+          [``reglan_equiv (reglan_union r q) u``,
+           ``reglan_equiv u (reglan_union t q)``]),
+         (``reglan_equiv (reglan_comp r) (reglan_plus t)``,
+          [``reglan_equiv u (reglan_comp r)``,
+           ``reglan_equiv (reglan_plus t) u``]),
+         (``reglan_equiv (reglan_star r) (reglan_star t)``,
+          [``reglan_star r = u``, ``u = reglan_star t``]),
+         (``reglan_equiv r t``,
+          [``reglan_equiv r (reglan_star a)``, ``(a:reglan) = b``,
+           ``reglan_equiv (reglan_star b) t``]),
+         (``reglan_equiv r t``,
+          [``reglan_equiv r (reglan_star a)``, ``reglan_equiv a b``,
+           ``reglan_equiv (reglan_star b) t``]),
+         (``reglan_equiv r t``,
+          [``reglan_equiv r (reglan_star (reglan_star a))``,
+           ``reglan_equiv a b``,
+           ``reglan_equiv (reglan_star (reglan_star b)) t``]),
+         (``smt_in_re s (reglan_star r) = smt_in_re t (reglan_star r')``,
+          [``(s:smtstr) = t``, ``reglan_equiv r r'``]),
+         (``reglan_equiv (reglan_power (reglan_star r) n)
+                        (reglan_power (reglan_star r') m)``,
+          [``reglan_equiv r r'``, ``n:num = m``])]
+      fun check (i,(goal,hypotheses)) =
+        let
+          val label = "Task41 compound " ^ Int.toString i
+          val _ = testutils.tprint (label ^ " native")
+          val native = SmtRegLanProve.congruence
+            (map Thm.ASSUME hypotheses) goal
+          val _ = exact goal hypotheses native
+          val _ = testutils.OK ()
+          fun verify theorem =
+            (exact goal hypotheses theorem;same_tags native theorem)
+          val _ = testutils.tprint (label ^ " compact")
+          val _ = with_graph (fn graph => fn scope =>
+            let
+              val target = import graph scope goal
+              val inputs = map (import graph scope) hypotheses
+              val unused = import graph scope ``unused_compound:bool``
+              val block = P.prepare_needed_sources graph
+                {scope=scope,roots=target::unused::inputs,
+                 sources=inputs @ [unused],template_limit=limit}
+              val edge = R.assemble graph block
+                {rule="cong",target=target,
+                 premises=Lib.enumerate 0 (inputs @ [unused])
+                   |> map (fn (i,node) => (node,P.source block i))}
+            in verify (P.realize block target edge) end)
+          val _ = testutils.OK ()
+          val _ = testutils.tprint (label ^ " parsed Z3")
+          val tokens = List.tabulate (length hypotheses,
+            fn i => "p" ^ Int.toString i)
+          val bindings = ListPair.zip (tokens,hypotheses) @ [("g",goal)]
+          val certificate = "((proof (monotonicity " ^
+            String.concatWith " " (map (fn p => "(asserted " ^ p ^ ")")
+              tokens) ^ " g)))"
+          val _ = Z3_CompactReplayTests.with_proof bindings certificate
+            (fn graph => fn scope => fn proof => verify
+              (Z3_CompactReplayTests.replay graph scope proof limit
+                (Z3_CompactReplayTests.fixed graph proof)))
+        in testutils.OK () end
+      val _ = List.app check (Lib.enumerate 1 cases)
+      val _ = with_graph (fn graph => fn scope =>
+        let
+          val (goal,hypotheses) = hd cases
+          val native = SmtRegLanProve.congruence
+            (map Thm.ASSUME hypotheses) goal
+          val sources = SmtReplaySource.new graph scope limit
+            {goal=goal,assumptions=hypotheses}
+          val options = Z3_CompactReplayTests.options graph scope
+            [("r",``r:reglan``),("u",``u:reglan``),("t",``t:reglan``)]
+          val stream = TextIO.openString
+            "((assume @p (= (re.* r) u)) \
+            \(assume @q (= u (re.* t))) \
+            \(assume @denied (not (= (re.* r) (re.* t)))) \
+            \(step @law (= (re.* r) (re.* t)) \
+            \:rule cong :premises (@p @q) :args ((re.* r))) \
+            \(step @done false :rule resolution :premises (@law @denied)))"
+          val result = Exn.capture (fn () =>
+            let val proof = Q.parse_graph_stream_with_version options
+                  (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4" stream
+            in CPC_ProofReplay.prove_graph_proof
+              {graph=graph,scope=scope,sources=sources,proof=proof} end) ()
+          val _ = TextIO.closeIn stream
+          val theorem = Exn.release result
+        in exact goal hypotheses theorem;same_tags native theorem end)
+      val _ = with_graph (fn graph => fn scope =>
+        let
+          val (goal,hypotheses) = hd cases
+          val target = import graph scope goal
+          val input = import graph scope (hd hypotheses)
+          val block = P.prepare_needed_sources graph
+            {scope=scope,roots=[target,input],sources=[input],
+             template_limit=limit}
+        in require "compound regex accepted a missing chain link"
+          (declines (fn () => SOME (R.assemble graph block
+            {rule="cong",target=target,
+             premises=[(input,P.source block 0)]}))) end)
+    in () end
+
   (* Preserve native TRUST's earlier FP/private-marker deferral. String
      naming must not close/reject ASSUME target before the existing force
      boundary. Use the real worker and a checked force proof, once each. *)
@@ -502,5 +614,6 @@ struct
      ("CPC roles",cpc_cases),("parsed Z3",parsed_z3),
      ("parsed CPC",parsed_cpc),("regex fallback/negatives",regex_congruence),
      ("parsed regex fallback",parsed_regex),
+     ("compound regex bridges",compound_regex),
      ("deferred priority",deferred_priority)]
 end
