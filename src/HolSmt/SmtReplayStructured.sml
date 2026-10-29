@@ -53,11 +53,20 @@ struct
   (* Existing handlers conservatively retain unknown structured operands. *)
   fun has_operand_using owns = has_operand_using_unknown true owns
 
+  (* String is a type definition, not a datatype. Its variables must use
+     the same injective namespace even without a literal/list/numeric child.
+     Read only the outer type operator, as for native Seq below. *)
+  fun string_type ty =
+    not (Type.is_vartype ty) andalso
+    let val {Thy,Tyop,...} = Type.dest_thy_type ty
+    in Thy = "smtstring" andalso (Tyop = "smtstr" orelse Tyop = "reglan") end
+
   fun has_operand graph = has_operand_using (fn node => fn variable =>
     (variable andalso Lib.can Type.dom_rng (G.type_of graph node)) orelse
     (not variable andalso (case G.view graph node of G.Constant _ =>
        Term.same_const (G.representative graph node) combinSyntax.update_tm
-     | _ => false)) orelse datatype_type (G.type_of graph node)) graph
+     | _ => false)) orelse string_type (G.type_of graph node) orelse
+    datatype_type (G.type_of graph node)) graph
 
   (* Native Seq is list-valued; String retains its separate carrier. Only
      inspect the outer type constructor, never instantiate a TypeBase fact. *)
@@ -69,6 +78,24 @@ struct
          let val {Thy,Tyop,...} = Type.dest_thy_type ty
          in Thy = "list" andalso Tyop = "list" end
       end) graph
+
+  fun has_string_operand_using unknown graph =
+    has_operand_using_unknown unknown
+      (fn node => fn _ => string_type (G.type_of graph node)) graph
+
+  fun has_string_operand graph = has_string_operand_using true graph
+  fun has_known_string_operand graph = has_string_operand_using false graph
+
+  (* TRUST's existing FP/private-marker rung precedes String. An incidental
+     String operand must not turn its deferred assumption into a supposedly
+     closed String law. This is syntax-only priority, not FP admission. *)
+  fun has_fp_trust_operand graph = has_operand_using (fn node => fn _ =>
+    case G.view graph node of
+      G.Constant _ =>
+        let val {Thy,...} = Term.dest_thy_const (G.representative graph node)
+        in Thy = "smtfloat" orelse Thy = "binary_ieee" end
+    | G.Variable (_,term) => String.isPrefix "@fp." (#1 (Term.dest_var term))
+    | _ => false) graph
 
   fun has_sequence_operand graph = has_sequence_operand_using true graph
 

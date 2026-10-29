@@ -441,7 +441,30 @@ struct
               {inputs=sequence_inputs (),
                observe=fn () => Option.app
                  (fn work => W.spend_guard_policy work 1) owned_work}
-          val structured_rule = structured_rule orelse sequence_rule
+          (* Pure symbolic String has no datatype/list/numeric witness.
+             Preserve the existing worker and fallback ladder, but distinguish
+             its graph variables before endpoint/Hyp selection. TRUST still
+             needs positive family evidence in its target, not an incidental
+             premise or an unknown binder of another family. *)
+          val string_rule =
+            List.exists (fn handler => handler = #replay_handler (#rule step))
+              ["seq_rewrite","str_contains_refl","str_substr_full_eq",
+               "string","rare_inventory","aci_norm","rewrite","trust"]
+            andalso
+            (if #replay_handler (#rule step) = "trust" then
+               SmtReplayStructured.has_known_string_operand
+             else SmtReplayStructured.has_string_operand) graph scope
+              {inputs=sequence_inputs (),
+               observe=fn () => Option.app
+                 (fn work => W.spend_guard_policy work 1) owned_work}
+          val string_rule = string_rule andalso
+            not (#replay_handler (#rule step) = "trust" andalso
+              SmtReplayStructured.has_fp_trust_operand graph scope
+                {inputs=sequence_inputs (),
+                 observe=fn () => Option.app
+                   (fn work => W.spend_guard_policy work 1) owned_work})
+          val structured_rule = structured_rule orelse sequence_rule orelse
+            string_rule
           val named_rule = arithmetic_rule orelse structured_rule
           fun arithmetic_charge amount = Option.app
             (fn work => W.spend_guard_policy work amount) owned_work

@@ -146,6 +146,27 @@ struct
                 val (antecedents,_) = boolSyntax.strip_imp (Thm.concl instance)
             in Drule.LIST_MP (List.map antecedent antecedents) instance end
           val theorem = Lib.tryfind instantiate congruence_schemas
+            handle Feedback.HOL_ERR primary =>
+              if SmtResource.is_resource_gate primary then
+                raise Feedback.HOL_ERR primary
+              else
+                let
+                  (* Keep the original bounded congruence fallback. In
+                     particular, operand equalities/relations may require
+                     transitivity rather than a single matching premise.
+                     Only the already compact operator spines and named
+                     premises reach the worker, never realized operands. *)
+                  val facts = List.map #2 exposed
+                  val admit = SmtReplayArithmetic.new_term_check
+                    {limit=P.template_limit block,observe=fn () => ()}
+                  val _ = List.app admit (target ::
+                    List.concat (List.map (fn theorem =>
+                      Thm.concl theorem :: Thm.hyp theorem)
+                      (facts @ SmtRegLanProve.congruence_theorems)))
+                  val theorem = SmtRegLanProve.congruence facts target
+                  val _ = List.app admit
+                    (Thm.concl theorem :: Thm.hyp theorem)
+                in theorem end
           val bridge = if semantic then
               Thm.MK_COMB (Thm.AP_TERM SmtRegLanProve.equiv_tm lhs,rhs)
             else

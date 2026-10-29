@@ -33141,6 +33141,7 @@ let
     ("arithmetic_named_obligations", SmtReplayArithmeticTests.run),
     ("structured_named_obligations", SmtReplayStructuredTests.run),
     ("sequence_named_obligations", SmtReplaySequenceTests.run),
+    ("string_named_obligations", SmtReplayStringTests.run),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", CPC_GraphParserTests.run),
