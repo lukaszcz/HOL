@@ -207,8 +207,26 @@ struct
            in exact target [assumption] theorem;
               Thm.DISCH assumption theorem end
            | _ => raise Fail "bag context arity"}
+      (* This guard is bound: contextual cases must not split it as a
+         free assumption before simplification opens the quantifier. *)
+      val bound_goal =
+        ``!p:bool. (if p then EMPTY_BAG:bool -> num else EMPTY_BAG) =
+                    EMPTY_BAG``
+      val bound_native = SmtBagProve.bag_contextual_prove_with_admission
+        (A.new_term_check {limit=limit,observe=fn () => ()}) [] bound_goal
+      val bound_result = A.prove_bounded_variables_admitted graph scope
+        {inputs=[import graph scope bound_goal],template_limit=limit,
+         observe=fn _ => (),procedure=fn admit => fn [target] =>
+           let val theorem =
+                 SmtBagProve.bag_contextual_prove_with_admission
+                   admit [] target
+           in exact target [] theorem;theorem end
+           | _ => raise Fail "bound bag context arity"}
     in exact (boolSyntax.mk_imp (premise,contextual_goal)) []
-         (#theorem result);same_tags native (#theorem result) end)
+         (#theorem result);same_tags native (#theorem result);
+       exact bound_goal [] bound_native;
+       exact bound_goal [] (#theorem bound_result);
+       same_tags bound_native (#theorem bound_result) end)
 
   fun cpc_worker name admit term =
     let val located = {term=term,provenance=
@@ -430,18 +448,20 @@ struct
     let
       val goal = #1 (List.nth (schemas,2))
       val fact = Thm.concl bagTheory.BAG_INSERT
-      fun check label worker =
+      fun check_on goal fact label reject worker =
         let val _ = testutils.tprint ("bag admission " ^ label)
             val stopped = ref false
             val after = ref 0
+            val fact_accepted = ref false
             val genuine = A.new_term_check
               {limit=limit,observe=fn () => ()}
             fun admit tm =
               if !stopped then (after := !after+1;genuine tm)
-              else if tm ~~ fact then
+              else if reject tm then
                 (stopped := true;raise Feedback.mk_HOL_ERR
                   "Task42Bag" "rewrite" "first error")
-              else genuine tm
+              else (if tm ~~ fact then fact_accepted := true else ();
+                    genuine tm)
             val result = Exn.capture (fn () => worker admit goal) ()
             val preserved = case result of
                 Exn.Exn (Feedback.HOL_ERR detail) =>
@@ -449,8 +469,13 @@ struct
                   Feedback.top_function_of detail = "rewrite" andalso
                   Feedback.message_of detail = "first error"
               | _ => false
-            val _ = require (label ^ ": bag admission swallowed or retried")
+            val _ = require (label ^ ": bag admission swallowed or retried" ^
+              " (stopped=" ^ Bool.toString (!stopped) ^ ", after=" ^
+              Int.toString (!after) ^ ", preserved=" ^
+              Bool.toString preserved ^ ")")
               (!stopped andalso !after=0 andalso preserved)
+            val _ = require (label ^ ": generic bag law was not accepted")
+              (reject fact orelse !fact_accepted)
             (* A failed callback must not poison the next invocation. Use
                the real bounded admission check, not an accepting stub. *)
             val theorem = worker genuine goal
@@ -467,11 +492,37 @@ struct
           (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
             admit [] proof)
         else Z3_ProofReplay.replay_root_admitted admit [] proof end
-      val _ = check "native" prove
-      val _ = check "CPC TRUST" (cpc_worker "trust")
-      val _ = List.app (fn recorded => List.app (fn name =>
-        check ("Z3 " ^ name) (z3 recorded name))
-        ["rewrite","th-lemma-array"]) [false,true]
+      val check = check_on goal fact
+      (* Keep the source-law rejection, and independently reject a root
+         abstraction in prospective INSERT instantiation (its RHS), after
+         accepting the generic equation. Neither failure may reach a later
+         admission callback or poison the next invocation. *)
+      val _ = List.app (fn (phase,reject) =>
+        (check (phase ^ " native") reject prove;
+         check (phase ^ " CPC TRUST") reject (cpc_worker "trust");
+         List.app (fn recorded => List.app (fn name =>
+           check (phase ^ " Z3 " ^ name) reject (z3 recorded name))
+           ["rewrite","th-lemma-array"]) [false,true]))
+        [("source rewrite",fn tm => tm ~~ fact),
+         ("instantiated rewrite",Term.is_abs)]
+      (* HO_PART_MATCH beta-reduces flexible function occurrences after
+         INST. Its duplicated argument must be forecast as well, not only
+         the smaller pre-beta lambda application. *)
+      val beta_goal =
+        ``BAG_FILTER (\v:bool. (v,v) = bag_beta_pair) b bag_beta_x =
+            (if (bag_beta_x,bag_beta_x) = bag_beta_pair
+             then b bag_beta_x else 0)``
+      fun beta_result tm =
+        let val (left,right) = boolSyntax.dest_eq tm
+            val (x,y) = pairSyntax.dest_pair left
+        in Term.is_var right andalso Term.is_var x andalso
+           Term.type_of x = Type.bool andalso Term.aconv x y end
+        handle Feedback.HOL_ERR _ => false
+      val beta_fact = Thm.concl bagTheory.BAG_FILTER_DEF
+      val beta_check = check_on beta_goal beta_fact
+        "higher-order beta rewrite" beta_result
+      val _ = beta_check prove
+      val _ = beta_check (cpc_worker "trust")
       exception ContextPrimary
       val calls = ref 0
       val result = Exn.capture (fn () =>
@@ -509,17 +560,97 @@ struct
     in exact goal [] native;exact goal [] (#theorem result);
        same_tags native (#theorem result) end)
 
-  (* Shallow physically shared operand near the existing 200000-node cap;
-     fitting input succeeds, smaller allowance never enters the worker. *)
-  fun large_input () = with_graph (fn graph => fn scope =>
+  fun shared_element depth =
     let
       val combine = ``bag_combine:bool -> bool -> bool``
       fun shared 0 = ``bag_leaf:bool``
         | shared n = let val child = shared (n-1)
                      in Term.list_mk_comb (combine,[child,child]) end
+    in shared depth end
+
+  (* Fitting inputs must not pay admission for an unused INSERT branch,
+     an expanding reflexive INSERT, or both leaves of COND_CLAUSES as one
+     conjunction. Keep the real 200000-node allowance, not an accepting
+     admission stub. *)
+  fun fitting_intermediates () =
+    let
+      val cap = 200000
+      val element = optionSyntax.mk_some (shared_element 15)
+      val bag = ``bag_large_count:bool option -> num``
+      val none = ``NONE:bool option``
+      val inserted = bagSyntax.mk_insert (element,bag)
+      val insert_goal = boolSyntax.mk_eq
+        (Term.mk_comb (inserted,none),Term.mk_comb (bag,none))
+      val payload = shared_element 14
+      val opaque_bag = Term.mk_comb
+        (``bag_builder:bool -> (bool -> num)``,payload)
+      val reflexive_count = Term.mk_comb
+        (bagSyntax.mk_insert (``e:bool``,opaque_bag),``x:bool``)
+      val reflexive_goal = boolSyntax.mk_eq
+        (reflexive_count,reflexive_count)
+      (* shared_element has s(0)=1, s(n+1)=3+2*s(n), hence
+         s(14)=4*2^14-3. Builder application adds 2, INSERT e b x adds
+         6, and equality adds 3 around two occurrences of that side. *)
+      val payload_size = 4 * 16384 - 3
+      val count_size = 6 + 2 + payload_size
+      val reflexive_size = 3 + 2 * count_size
+      val _ = require "opaque reflexive INSERT fixture changed"
+        (Term.term_size payload = payload_size andalso
+         Term.term_size opaque_bag = 2 + payload_size andalso
+         Term.term_size reflexive_count = count_size)
+      val singleton = bagSyntax.mk_insert
+        (shared_element 14,``EMPTY_BAG:bool -> num``)
+      fun conditional guard = boolSyntax.mk_eq
+        (boolSyntax.mk_cond (guard,singleton,singleton),singleton)
+      val conditional_goal = conditional ``bag_large_guard:bool``
+      val bundle = boolSyntax.mk_conj
+        (conditional boolSyntax.T,conditional boolSyntax.F)
+      val _ = require "large conditional bundle fixture changed"
+        (Term.term_size bundle = 393241 andalso
+         Term.term_size bundle > cap)
+      fun check_using worker label size goal =
+        with_graph (fn graph => fn scope =>
+        let
+          val _ = testutils.tprint ("bag fitting " ^ label)
+          val _ = require (label ^ ": fitting bag fixture size changed")
+            (Term.term_size goal = size andalso size < cap)
+          val native = worker
+            (A.new_term_check {limit=cap,observe=fn () => ()}) goal
+          val _ = exact goal [] native
+          val node = #node (G.import graph scope cap goal)
+          val calls = ref 0
+          val (result,statistics) =
+            SmtReplayRuleObservation.with_statistics (fn () =>
+              A.prove_bounded_variables_admitted graph scope
+                {inputs=[node,node],template_limit=cap,observe=fn _ => (),
+                 procedure=fn admit => fn [left,right] =>
+                   (calls := !calls+1;
+                    require "fitting bag shared root was copied"
+                      (Portable.pointer_eq (left,right));
+                    require "fitting bag source variables reached worker"
+                      (H.disjoint [goal] [left,right]);
+                    shape goal left;worker admit left)
+                   | _ => raise Fail "fitting bag arity"})
+        in require "fitting bag worker was retried or bypassed" (!calls=1);
+           require "fitting bag transport was not one INST"
+             (#selected_returns statistics = 1);
+           exact goal [] (#theorem result);
+           same_tags native (#theorem result);testutils.OK () end)
+      val check = check_using prove
+    in check "INSERT SOME/NONE" 131083 insert_goal;
+       check "reflexive INSERT opaque bag" reflexive_size reflexive_goal;
+       check "conditional shared singleton" 196619 conditional_goal;
+       check_using (fn admit =>
+         SmtBagProve.bag_contextual_prove_with_admission admit [])
+         "contextual conditional" 196619 conditional_goal end
+
+  (* Shallow physically shared operand near the existing 200000-node cap;
+     fitting input succeeds, smaller allowance never enters the worker. *)
+  fun large_input () = with_graph (fn graph => fn scope =>
+    let
       val insert = #1 (boolSyntax.strip_comb ``BAG_INSERT (x:bool) EMPTY_BAG``)
       val singleton = Term.list_mk_comb
-        (insert,[shared 14,``EMPTY_BAG:bool -> num``])
+        (insert,[shared_element 14,``EMPTY_BAG:bool -> num``])
       val union = #1 (boolSyntax.strip_comb ``BAG_UNION (b:bool -> num) c``)
       val goal = boolSyntax.mk_eq (Term.list_mk_comb
         (union,[``EMPTY_BAG:bool -> num``,singleton]),singleton)
@@ -529,24 +660,57 @@ struct
         (size > 131000 andalso size < cap)
       val node = #node (G.import graph scope cap goal)
       val calls = ref 0
-      fun run allowance = A.prove_bounded_variables_admitted graph scope
-        {inputs=[node,node],template_limit=allowance,observe=fn _ => (),
-         procedure=fn admit => fn [left,right] =>
-           (calls := !calls+1;
-            require "large shared bag root was copied"
-              (Portable.pointer_eq (left,right));
-            require "large source variables reached bag worker"
-              (H.disjoint [goal] [left,right]);prove admit left)
-           | _ => raise Fail "large bag arity"}
-      val refused = (ignore (run (size-1));false)
+      val worker_returned = ref false
+      fun run allowance observe =
+        (worker_returned := false;
+         A.prove_bounded_variables_admitted graph scope
+          {inputs=[node,node],template_limit=allowance,observe=observe,
+           procedure=fn admit => fn [left,right] =>
+             let
+               val _ = calls := !calls+1
+               val _ = require "large shared bag root was copied"
+                 (Portable.pointer_eq (left,right))
+               val _ = require "large source variables reached bag worker"
+                 (H.disjoint [goal] [left,right])
+               val theorem = prove admit left
+             in worker_returned := true;theorem end
+             | _ => raise Fail "large bag arity"})
+      val refused = (ignore (run (size-1) (fn _ => ()));false)
         handle Feedback.HOL_ERR detail => String.isSubstring
           "exceeds local admission" (Feedback.message_of detail)
       val _ = require "oversized bag input entered worker"
         (refused andalso !calls=0)
+      (* Result admission has two unfolded scans before the final native
+         INST count. A count scan observes >2 visits per raw node. Three
+         paid scans exceed 7*size; two scans plus shallow DAG metadata do
+         not. Bulk INST prepayment alone cannot pay the preceding count. *)
+      val minimum_ticks = 7 * IntInf.fromInt size
+      val ticks = ref (0:IntInf.int)
+      val bulk = ref 0
+      fun observe amount = if not (!worker_returned) then ()
+        else if amount = 1 then ticks := !ticks+1
+        else (bulk := !bulk+1;
+          require "bag native counting happened before its visit payments"
+            (amount = IntInf.fromInt size andalso !ticks >= minimum_ticks))
       val (result,statistics) =
-        SmtReplayRuleObservation.with_statistics (fn () => run cap)
-      val _ = require "bounded bag realization was not one INST"
-        (#selected_returns statistics = 1)
+        SmtReplayRuleObservation.with_statistics (fn () => run cap observe)
+      val _ = require "bounded bag realization was not one paid INST"
+        (#selected_returns statistics = 1 andalso !bulk=1 andalso !calls=1)
+      exception CountingBudget
+      val _ = ticks := 0
+      val _ = bulk := 0
+      fun stop_count amount = if not (!worker_returned) then ()
+        else if amount = 1 then
+          (ticks := !ticks+1;
+           if !ticks >= minimum_ticks then raise CountingBudget else ())
+        else bulk := !bulk+1
+      val (count_stopped,count_statistics) =
+        SmtReplayRuleObservation.with_statistics (fn () =>
+          Exn.capture (fn () => run cap stop_count) ())
+      val _ = require "bag counting observer escaped or reached native INST"
+        (!calls=2 andalso !bulk=0 andalso
+         #selected_returns count_statistics = 0 andalso
+         (case count_stopped of Exn.Exn CountingBudget => true | _ => false))
       exception NativeBudget
       val (stopped,statistics) = SmtReplayRuleObservation.with_statistics
         (fn () => Exn.capture (fn () =>
@@ -558,7 +722,7 @@ struct
       val _ = require "native bag substitution escaped prospective payment"
         (#selected_returns statistics = 0 andalso
          (case stopped of Exn.Exn NativeBudget => true | _ => false))
-    in require "large bag worker retried" (!calls=1);
+    in require "large bag worker retried" (!calls=2);
        exact goal [] (#theorem result) end)
 
   fun run () =
@@ -569,5 +733,7 @@ struct
        ("bag context",contextual),("bag CPC",cpc_cases),
        ("bag compact TRUST",compact_trust_identity),
        ("bag graph identity",graph_handlers),("bag admission",admission_errors),
-       ("bag binder names",binder_names),("bag large",large_input)]
+       ("bag binder names",binder_names),
+       ("bag fitting intermediates",fitting_intermediates),
+       ("bag large",large_input)]
 end

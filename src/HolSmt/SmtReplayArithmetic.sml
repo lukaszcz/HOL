@@ -290,10 +290,12 @@ struct
           val substitution = List.map (fn (actual,hole) =>
             {redex=hole,residue=G.representative graph actual}) bindings
           (* Physical construction/annotation reuse does not waive the
-             native substitution's unfolded work. Prepay its actual bounded
-             operand before INST, on the same invocation allowance. *)
+             native substitution's unfolded work. Pay the counting visits
+             prospectively, then separately prepay INST's bounded operand
+             on the same invocation allowance. *)
           val _ = if not bounded_variables then () else
-            (case SmtReplayImport.bounded_raw_size template_limit
+            (case SmtReplayImport.bounded_raw_size_with_type_check_observed
+                {check_type=check_type,observe=tick,limit=template_limit}
                 (Thm.concl theorem) of
                SOME count => charge (IntInf.fromInt count)
              | NONE => raise ERR "prove"

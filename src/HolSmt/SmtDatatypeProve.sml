@@ -193,8 +193,8 @@ struct
   (* Each invocation supplies its own admission continuation. Declaration
      bundles are projected by kernel CONJUNCT rules before generic matching;
      an unrelated large conjunction must not hide a useful small equation. *)
-  fun checked_procedures_using source_ss local_conversion
-      split_conversions check =
+  fun checked_procedures_using_preflight source_ss local_conversion
+      split_conversions preflight check =
   let
   (* Admission/Work/observer failures must not become proof-search misses. *)
   exception AdmissionFailure of exn
@@ -601,6 +601,12 @@ struct
                             handle AdmissionFailure primary =>
                               (interrupted := SOME primary;
                                raise Portable.Interrupt)
+                          (* Inspect the canonical SPEC_ALL rule before native
+                             matching/INST. HOL_ERR means a normal rule miss;
+                             failures from admit stay terminal via the outer
+                             AdmissionFailure/Interrupt restoration path. *)
+                          val _ = case preflight of NONE => ()
+                            | SOME inspect => inspect admit th tm
                           val result = conv checked_solver stack tm
                           val _ = admit_conversion result
                           val _ = case control of
@@ -1029,6 +1035,12 @@ struct
        with_exported_rewrites prove) ()}
   end
 
+  (* Existing clients do not opt into prospective rewrite admission. *)
+  fun checked_procedures_using source_ss local_conversion
+      split_conversions check =
+    checked_procedures_using_preflight source_ss local_conversion
+      split_conversions NONE check
+
   fun checked_procedures check =
     checked_procedures_using bossLib.srw_ss (fn _ => raise Conv.UNCHANGED)
       false check
@@ -1042,6 +1054,14 @@ struct
   fun with_checked_rewrites check source_ss prove =
     with_checked_rewrites_using check source_ss
       (fn _ => raise Conv.UNCHANGED) prove
+
+  (* The callback receives the protected admission continuation, the
+     canonical SPEC_ALL theorem, and the redex. Use admit for terminal
+     admission failures; raise HOL_ERR directly to try the next rule. *)
+  fun with_checked_rewrites_preflight check source_ss preflight prove =
+    #with_simpset
+      (checked_procedures_using_preflight source_ss
+        (fn _ => raise Conv.UNCHANGED) true (SOME preflight) check) prove
 
   fun default_admission () = SmtReplayArithmetic.new_term_check
     {limit=SmtResource.max_bv_replay_term_nodes,observe=fn () => ()}
