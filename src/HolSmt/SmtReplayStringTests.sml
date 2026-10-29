@@ -590,7 +590,9 @@ struct
          (mixed,[mixed,``reglan_equiv r t``]),
          (patterned,[whole_pattern,patterned]),
          (patterned,[patterned,whole_pattern]),
-         (star,[large_conjunct])]
+         (star,[large_conjunct]),
+         (``reglan_equiv r t``,[``reglan_equiv r t``,``(r:reglan) = t``,
+           double 13 ``reglan_equiv u v``])]
       fun check (i,(goal,premises)) =
         let
           val native = SmtRegLanProve.congruence

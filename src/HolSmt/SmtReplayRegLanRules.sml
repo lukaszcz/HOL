@@ -323,8 +323,10 @@ struct
                     val _ = patterns := Redblackmap.insert
                       (!patterns,G.node_id node,relevant)
                 in relevant end
-          val _ = List.app (ignore o pattern) (target :: map #1 premises)
+          val _ = ignore (pattern target)
           val _ = List.app force [target,left,right]
+          val essential = !forced
+          val _ = List.app (ignore o pattern o #1) premises
           val allowance = ref (limit - 6)
           fun opaque node = size node > !allowance andalso
             not (Redblackset.member (!forced,G.node_id node))
@@ -349,8 +351,24 @@ struct
                 (target :: map #1 premises) then ()
                else if !allowance > 1 then
                  (allowance := !allowance div 2;fit ())
-               else raise ERR "congruence"
-                 "regex syntax frame exceeds local admission"
+               else
+                 let
+                   (* A huge advertised Boolean pattern must not veto a
+                      small earlier schema. Keep its root opaque when even
+                      its DATA-named pattern cannot fit, but never erase a
+                      head/pattern demanded by the target itself. *)
+                   val omitted = List.filter (fn (node,_) =>
+                     forecast node > limit - 6 andalso
+                     Redblackset.member (!forced,G.node_id node) andalso
+                     not (Redblackset.member (essential,G.node_id node)))
+                     premises
+                   val _ = List.app (fn (node,_) =>
+                     forced := Redblackset.delete (!forced,G.node_id node))
+                     omitted
+                 in if null omitted then raise ERR "congruence"
+                      "regex syntax frame exceeds local admission"
+                    else fit ()
+                 end
             end
           (* Reserve six nodes for intermediate equation wrappers. A pure
              oversized unused Boolean premise can still stay a name. *)
