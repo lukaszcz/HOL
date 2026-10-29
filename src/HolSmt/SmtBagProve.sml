@@ -151,7 +151,7 @@ struct
        tactic (assumptions,conclusion))
     fun theorem th =
       (List.app admit (Thm.concl th :: Thm.hyp th);th)
-    fun cases input = goal (fn input as (context,conclusion) =>
+    fun cases decide input = goal (fn input as (context,conclusion) =>
       let
         val conditional = HolKernel.find_term
           (fn tm => boolSyntax.is_cond tm andalso
@@ -175,6 +175,27 @@ struct
           in Tactical.THEN
             (Tactic.SUBST1_TAC (intro th),Tactic.ASSUME_TAC th)
             (assumptions,target) end
+        fun equation h =
+          if not (boolSyntax.is_eq h) then NONE else
+            let val (l,r) = boolSyntax.dest_eq h
+                fun boolean value = Term.aconv value boolSyntax.T orelse
+                  Term.aconv value boolSyntax.F
+                val orientation =
+                  if Term.aconv l condition andalso boolean r
+                    then SOME (r,false)
+                  else if Term.aconv r condition andalso boolean l
+                    then SOME (l,true) else NONE
+            in case orientation of NONE => NONE
+              | SOME (value,symmetric) =>
+                  let val _ = List.app admit
+                        [h,condition,boolSyntax.mk_eq (condition,value),
+                         if Term.aconv value boolSyntax.T then condition
+                         else boolSyntax.mk_neg condition]
+                      val law = Thm.ASSUME h
+                      val law = if symmetric then Thm.SYM law else law
+                      val fact = if Term.aconv value boolSyntax.T then
+                          Drule.EQT_ELIM law else Drule.EQF_ELIM law
+                  in SOME (branch value (fn _ => law) fact) end end
         fun known [] = NONE
           | known (h::hs) =
               (admit boolSyntax.T;
@@ -183,8 +204,33 @@ struct
                else if boolSyntax.is_neg h andalso
                    Term.aconv (boolSyntax.dest_neg h) condition then SOME
                  (branch boolSyntax.F Drule.EQF_INTRO (Thm.ASSUME h))
-               else known hs)
-      in case known context of SOME tactic => tactic input
+               else case equation h of SOME tactic => SOME tactic
+                 | NONE => known hs)
+        fun reflexive () =
+          if not (boolSyntax.is_eq condition) then NONE else
+            let val (l,r) = boolSyntax.dest_eq condition
+            in if not (Term.aconv l r) then NONE else
+              let val _ = List.app admit
+                    [l,r,condition,boolSyntax.mk_eq (condition,boolSyntax.T)]
+              in SOME (branch boolSyntax.T Drule.EQT_INTRO (Thm.REFL l))
+              end end
+        (* Decide the demanded guard before constructing excluded middle.
+           Reflexivity and normalized context equations can decide a fitting
+           guard whose duplicated disjunction would not fit. A simplifier
+           miss retains the original split, never an unchecked fallback. *)
+        fun decided () =
+          let val equation = decide context condition
+              val value = boolSyntax.rhs (Thm.concl equation)
+          in if Term.aconv value boolSyntax.T then SOME
+               (branch value (fn _ => equation) (Drule.EQT_ELIM equation))
+             else if Term.aconv value boolSyntax.F then SOME
+               (branch value (fn _ => equation) (Drule.EQF_ELIM equation))
+             else NONE end
+          handle Feedback.HOL_ERR _ => NONE | Conv.UNCHANGED => NONE
+      in case (case known context of SOME tactic => SOME tactic
+                 | NONE => case reflexive () of SOME tactic => SOME tactic
+                     | NONE => decided ()) of
+          SOME tactic => tactic input
         | NONE =>
             let val law = theorem boolTheory.EXCLUDED_MIDDLE
                 val _ = admit (boolSyntax.mk_disj
@@ -223,8 +269,7 @@ struct
           let val result = type_syntax ty
               val _ = check_type result
           in result end
-        val avoids = Term.free_varsl (List.map #residue sigma)
-        fun build bound tm =
+        fun build avoids bound tm =
           (tick ();
            if Term.is_var tm then
              (case List.find (fn (v,_) => Term.aconv v tm) bound of
@@ -240,15 +285,26 @@ struct
                {Thy=Thy,Name=Name,Ty=typed (Term.type_of tm)} end
            else if Term.is_comb tm then
              let val (f,x) = Term.dest_comb tm
-             in Term.mk_comb (build bound f,build bound x) end
+             in Term.mk_comb (build avoids bound f,build avoids bound x) end
            else
              let val _ = check tm
                  val (v,b) = SmtReplayImport.dest_abs_preserving_names tm
                  val fresh = Term.variant (avoids @ List.map #2 bound)
                    (Term.mk_var (#1 (Term.dest_var v),
                      typed (Term.type_of v)))
-             in Term.mk_abs (fresh,build ((v,fresh)::bound) b) end)
-      in build [] end
+             in Term.mk_abs
+               (fresh,build avoids ((v,fresh)::bound) b) end)
+        fun instantiate root =
+          if null types andalso null sigma then (check root;root) else
+          let val _ = check root
+              (* Avoid ORIGINAL free names as well as residue names. This
+                 prevents capture by freshening, including when distinct
+                 source variable types collapse under INST_TYPE. Bound
+                 lookup above still uses the original typed identity. *)
+              val avoids = Term.free_varsl
+                (root :: List.map #residue sigma)
+          in build avoids [] root end
+      in instantiate end
     fun preflight check th tm =
       let
         val _ = List.app check (tm :: Thm.concl th :: Thm.hyp th)
@@ -343,6 +399,249 @@ struct
               in result end
         val _ = List.foldl phase initial sigma
       in () end
+    fun small tm = Option.isSome
+      (SmtReplayImport.bounded_raw_size_with_type_check_observed
+        {limit=128,observe=fn () => admit boolSyntax.T,
+         check_type=fn _ => ()} tm)
+
+    (* The simplifier normally imports assumptions through its own rewrite
+       net, bypassing exported conversions. Replace that reducer locally,
+       retaining its canonicalization, Ho_Net priority and traversal, with
+       prospective checks before every native context match.
+       Congruence-local facts stay in the reducer's lexical context, not in
+       a mutable global or invocation-wide assumption pool. *)
+    fun with_context_rewrites ss prove =
+      let
+        exception Context of
+          (Thm.thm option *
+           ((Term.term list -> Term.term -> Thm.thm) ->
+             Term.term list -> Term.term -> Thm.thm)) Ho_Net.net *
+          Thm.thm list
+        val compose = ref
+          (fn (_:Thm.thm,_:exn,_:Term.term) => NONE:Thm.thm option)
+        val interrupted = ref NONE
+        fun guarded f x = f x handle AdmissionFailure primary =>
+          (interrupted := SOME primary;raise Portable.Interrupt)
+        fun add (Context (net,previous),facts) = guarded (fn () =>
+          let
+            fun canonical th =
+              (ignore (theorem th);
+               Cond_rewr.mk_cond_rewrs
+                 (th,BoundedRewrites.UNBOUNDED))
+            fun conversion (th,_) =
+              let val _ = ignore (theorem th)
+                  val th = Drule.SPEC_ALL th
+                  val _ = ignore (theorem th)
+                  val left = boolSyntax.lhs
+                    (#2 (boolSyntax.strip_imp (Thm.concl th)))
+                  val _ = admit left
+                  val conv = Cond_rewr.COND_REWR_CONV
+                    ("bag context rewrite",th) false
+                  fun apply solver stack tm =
+                    (preflight admit th tm;
+                     let val result = conv solver stack tm
+                         val (l,r) = boolSyntax.dest_eq (Thm.concl result)
+                         val _ = List.app admit (l::r::Thm.hyp result)
+                     in result end)
+              in (HOLset.listItems (Thm.hyp_frees th),left,
+                   (SOME th,apply)) end
+            val rules = List.map conversion
+              (List.concat (List.map canonical facts))
+          in Context (List.foldr (fn (rule,net) => Ho_Net.enter rule net)
+               net rules,facts @ previous) end) ()
+        fun apply compact
+            {solver,context=context as Context (net,_),stack,...} tm =
+              guarded (fn () =>
+                let fun checked_solver assumptions condition =
+                      (List.app admit assumptions;admit condition;
+                       solver assumptions condition)
+                    fun checked_result result =
+                      let val (l,r) = boolSyntax.dest_eq (Thm.concl result)
+                          val _ = List.app admit (l::r::Thm.hyp result)
+                      in result end
+                    fun selected (source,conv) = guarded (fn () =>
+                      case source of SOME th =>
+                        if not compact andalso not (small tm) andalso
+                            small (Thm.concl th) andalso
+                            boolSyntax.is_eq (Thm.concl th) then
+                          (case (!compose) (th,context,tm) of
+                             NONE => conv checked_solver stack tm
+                           | SOME result => checked_result result)
+                        else conv checked_solver stack tm
+                      | NONE => conv checked_solver stack tm) ()
+                in Lib.tryfind selected (Ho_Net.lookup tm net) end) ()
+          | apply _ _ _ = raise Fail "bag rewrite context"
+        val data = simpLib.traversedata_for_ss ss
+        val original = Traverse.dest_reducer (hd (#rewriters data))
+        (* The exported-rule dispatcher is the original net's one wildcard
+           conversion. Enter it FIRST, just as native addcontext extends
+           that initial net. Specificity and equal-key source order thus
+           remain native, including context overrides of bag equations. *)
+        fun fallback solver stack tm = #apply original
+          {solver=solver,conv=fn _ => Conv.NO_CONV,
+           context= #initial original,stack=stack,
+           relation=(boolSyntax.equality,Thm.REFL)} tm
+        val initial = Ho_Net.enter
+          ([],Term.genvar Type.alpha,(NONE,fallback)) Ho_Net.empty
+        fun reducer compact initial = Traverse.REDUCER
+          {name=SOME "admitted bag context",initial=Context (initial,[]),
+           addcontext=add,apply=apply compact}
+        fun traverse compact net = Traverse.TRAVERSE
+          {rewriters=[reducer compact net],dprocs= #dprocs data,
+           travrules= #travrules data,relation= #relation data,
+           limit= #limit data}
+        (* Close a demanded context rewrite on a small checked obligation
+           BEFORE inserting its large match residues. Name the SAME syntax
+           in the target and actual context facts, retaining specificity,
+           repeated arguments and rigid namesakes. These are schematic
+           assumptions, not new laws: lift once, then discharge them with
+           their original checked theorems. No expanded g large large is
+           ever instantiated when the compact proof has already erased it.
+
+           If a context pattern needs the structure of an opaque residue,
+           refine its frontier by one application layer and retry discovery.
+           Shared children share holes. Refinement terminates on the finite
+           input syntax; every native attempt remains prospectively gated.
+           Small actual matches retain their original path and order. *)
+        fun compose_rule (th,Context (_,facts),tm) =
+          let
+            val _ = List.app admit (tm::Thm.concl th::Thm.hyp th)
+            val left = boolSyntax.lhs (Thm.concl th)
+            val _ = admit left
+            val (sigma,_) = HolKernel.ho_match_term
+              (HOLset.listItems (Thm.hyp_tyvars th)) (Thm.hyp_frees th) left tm
+            val roots = List.map #residue sigma
+            val avoids = ref (Term.free_varsl
+              (tm :: List.concat (List.map
+                (fn law => Thm.concl law::Thm.hyp law) facts)))
+            val bindings = ref (Redblackmap.mkDict Term.compare)
+            fun atom actual =
+              case Redblackmap.peek (!bindings,actual) of
+                SOME (hole,_) => hole
+              | NONE =>
+                  let val hole = Term.variant (!avoids)
+                        (Term.genvar (Term.type_of actual))
+                  in avoids := hole :: !avoids;
+                     bindings := Redblackmap.insert
+                       (!bindings,actual,(hole,ref false));hole end
+            val _ = List.app (fn actual =>
+              if small actual then () else ignore (atom actual)) roots
+            fun represent actual =
+              case Redblackmap.peek (!bindings,actual) of
+                NONE => actual
+              | SOME (hole,expanded) =>
+                  if not (!expanded) then hole else
+                    let val (head,args) = boolSyntax.strip_comb actual
+                        fun field x = if small x then x else
+                          (ignore (atom x);represent x)
+                    in Term.list_mk_comb (head,List.map field args) end
+            fun count variable term =
+              (admit boolSyntax.T;
+               if Term.aconv variable term then 1
+               else if Term.is_comb term then
+                 let val (f,x) = Term.dest_comb term
+                 in count variable f + count variable x end
+               else if Term.is_abs term then
+                 let val _ = admit term
+                     val (_,body) =
+                       SmtReplayImport.dest_abs_preserving_names term
+                 in count variable body end
+               else 0)
+            fun attempt () =
+              let
+                val _ = List.app (fn root => ignore (represent root)) roots
+                val entries = Redblackmap.listItems (!bindings)
+                val naming = List.map (fn (actual,_) =>
+                  {redex=actual,residue=represent actual}) entries
+                val _ = List.app (fn {redex,residue} =>
+                  List.app admit [redex,residue]) naming
+                fun compact term =
+                  let val _ = admit term
+                      val result = Term.subst naming term
+                      val _ = admit result
+                  in result end
+                val target = compact tm
+                val context = List.map (Thm.ASSUME o compact o Thm.concl) facts
+                val proof = Conv.TRY_CONV
+                  (traverse true initial context) target
+                val (l,r) = boolSyntax.dest_eq (Thm.concl proof)
+                val holes = List.map (#1 o #2)
+                  (Redblackmap.listItems (!bindings))
+                (* An exported rule's retained Hyp is not one of our
+                   schematic context assumptions. Never substitute through
+                   a coincidentally named rigid source variable there. *)
+                val safe_hyp = List.all (fn h =>
+                  List.exists (Term.aconv h o Thm.concl) context orelse
+                  List.all (fn hole => not (Term.free_in hole h)) holes)
+                  (Thm.hyp proof)
+                val shrinks = safe_hyp andalso not (Term.aconv l r) andalso
+                  Term.term_size r < Term.term_size l andalso
+                  List.all (fn hole => count hole r <= count hole l) holes
+              in if not shrinks then NONE else
+                let val realization = List.map (fn (actual,(hole,_)) =>
+                      {redex=hole,residue=actual})
+                      (Redblackmap.listItems (!bindings))
+                    val instantiate = substitution admit [] realization
+                    val _ = List.app (admit o instantiate)
+                      (l::r::Thm.hyp proof)
+                    (* Check the syntax retraction before native INST. Only
+                       original actual context facts may discharge these
+                       assumptions; naming never strengthens a theorem. *)
+                    val _ = if Term.aconv (instantiate l) tm andalso
+                        ListPair.allEq (fn (source,abstract) =>
+                          Term.aconv (Thm.concl source)
+                            (instantiate (Thm.concl abstract))) (facts,context)
+                      then () else raise Conv.UNCHANGED
+                    val lifted = Thm.INST realization proof
+                    fun discharge (law,result) =
+                      if List.exists (Term.aconv (Thm.concl law))
+                          (Thm.hyp result)
+                      then Drule.PROVE_HYP law result else result
+                in SOME (List.foldl discharge lifted facts) end end
+            fun discover () =
+              case (attempt () handle Conv.UNCHANGED => NONE) of
+                SOME proof => SOME proof
+              | NONE =>
+                  let val frontier = List.filter
+                        (fn (actual,(_,expanded)) =>
+                          not (!expanded) andalso Term.is_comb actual)
+                        (Redblackmap.listItems (!bindings))
+                  in if null frontier then NONE else
+                    (List.app (fn (_,(_,expanded)) => expanded := true)
+                       frontier;discover ()) end
+          in if Redblackmap.numItems (!bindings) = 0 then NONE
+             else discover () end
+          | compose_rule _ = NONE
+        val _ = compose := compose_rule
+        fun restore () = case !interrupted of NONE => ()
+          | SOME primary => raise AdmissionFailure primary
+        fun protect f x =
+          let val result = f x handle primary => (restore ();raise primary)
+              val _ = restore ()
+          in result end
+        fun convert facts = protect (fn tm =>
+          (List.app (fn th => ignore (theorem th)) facts;admit tm;
+           Conv.TRY_CONV (traverse false initial facts) tm))
+        fun simp input = goal (Tactic.CONV_TAC (convert [])) input
+        fun asm_simp input = goal (Tactical.ASSUM_LIST
+          (fn facts => Tactic.CONV_TAC (convert facts))) input
+        (* The ordinary FULL_SIMP_TAC [] schedule, using the local checked
+           conversion also when simplifying the assumptions themselves.
+           No directives or caller-added simp facts enter these Bag rungs. *)
+        fun full_simp input = goal (Tactical.ASSUM_LIST (fn facts =>
+          let fun simplify (th,earlier) =
+                Conv.CONV_RULE (convert earlier) th :: earlier
+              fun keep th = Tactical.FIRST
+                  [Tactic.CONTR_TAC th,Tactic.ACCEPT_TAC th,
+                   Tactic.ASSUME_TAC th]
+              fun drop current = Tactical.MAP_EVERY Tactic.ASSUME_TAC
+                (List.rev (List.take (current,length current-length facts)))
+          in Tactical.THEN
+            (Tactical.MAP_EVERY (Thm_cont.STRIP_ALL_THEN keep)
+               (List.foldl simplify [] facts),
+             Tactical.THEN (Tactical.POP_ASSUM_LIST drop,asm_simp)) end)) input
+      in prove {convert=convert,simp=simp,full_simp=full_simp,
+           prove=fn tm => Drule.EQT_ELIM (convert [] tm)} end
     fun with_rewrites facts prove =
       let
         (* ++ canonicalizes and indexes its added patterns eagerly. The
@@ -352,7 +651,8 @@ struct
       in SmtDatatypeProve.with_checked_rewrites_preflight admit
         (fn () => simpLib.++
           (simpLib.++ (bossLib.srw_ss(),intSimps.INT_RWTS_ss),
-           simpLib.rewrites facts)) preflight prove end
+           simpLib.rewrites facts)) preflight
+        (fn ss => with_context_rewrites ss prove) end
 
     (* Demand the constructor guard BEFORE expanding INSERT's lambda. Keep
        constructor identities and shared element relationships in a small
@@ -360,10 +660,6 @@ struct
        is a universally proved equation, not authority from graph naming.
        Lift it once, after admitting the substituted sides, never the
        duplicated branch which the small proof has already discarded. *)
-    fun small tm = Option.isSome
-      (SmtReplayImport.bounded_raw_size_with_type_check_observed
-        {limit=128,observe=fn () => admit boolSyntax.T,
-         check_type=fn _ => ()} tm)
     fun erasure allow_insert tm =
       let
         val (head,args) = boolSyntax.strip_comb tm
@@ -439,7 +735,7 @@ struct
                in boolSyntax.mk_cond (atom p,atom l,atom r) end
         val _ = admit schema
         val result = with_rewrites (bag_rewrites_for schema)
-          (fn ss => simpLib.SIMP_CONV ss [] schema)
+          (fn {convert,...} => convert [] schema)
         val (left,right) = boolSyntax.dest_eq (Thm.concl result)
         val _ = if Term.aconv left right orelse
             SmtResource.contains Term.is_abs (Thm.concl result)
@@ -526,19 +822,19 @@ struct
       end
     fun simp_prove t =
       simplify_erased true (fn t => with_rewrites (bag_rewrites_for t)
-        (fn ss => simpLib.SIMP_PROVE ss [] t)) t
+        (fn {prove,...} => prove t)) t
     fun pointwise_prove t =
       SmtResource.with_resource_step_time "Bag" "bag-condition-splitting"
         (fn t =>
-          (admit t;with_rewrites (bag_rewrites_for t) (fn ss =>
-            Tactical.prove (t,
-              Tactical.THEN (goal (simpLib.SIMP_TAC ss []),
+          (admit t;with_rewrites (bag_rewrites_for t)
+            (fn {convert,simp,full_simp,...} => Tactical.prove (t,
+              Tactical.THEN (simp,
                 Tactical.THEN (Tactical.REPEAT (goal Tactic.STRIP_TAC),
                   Tactical.THEN
                     (Tactical.REPEAT (Tactical.THEN
-                       (cases,
-                        goal (simpLib.FULL_SIMP_TAC ss []))),
-                     Tactical.THEN (goal (simpLib.FULL_SIMP_TAC ss []),
+                       (cases (fn context =>
+                          convert (List.map Thm.ASSUME context)),full_simp)),
+                     Tactical.THEN (full_simp,
                        goal intLib.ARITH_TAC)))))))) t
     (* CPC's scoped fallback deliberately uses its old srw portfolio, not
        extra bag equations. Admit every actual Hyp and generated branch. *)
@@ -552,10 +848,14 @@ struct
          simplify_erased false (fn t =>
            SmtDatatypeProve.with_checked_rewrites_preflight admit
              bossLib.srw_ss preflight
-             (fn ss => Tactical.TAC_PROOF ((context,t),
-               Tactical.THEN (Tactical.REPEAT cases,
-                 Tactical.THEN (goal (bossLib.FULL_SIMP_TAC ss []),
-                   goal intLib.ARITH_TAC))))) t)) ()
+             (fn ss => with_context_rewrites ss
+               (fn {convert,full_simp,...} =>
+                 Tactical.TAC_PROOF ((context,t),
+                   Tactical.THEN (Tactical.REPEAT
+                     (cases (fn context =>
+                       convert (List.map Thm.ASSUME context))),
+                     Tactical.THEN (full_simp,
+                       goal intLib.ARITH_TAC)))))) t)) ()
 
     fun unsupported t =
       raise ERR "bag_prove"

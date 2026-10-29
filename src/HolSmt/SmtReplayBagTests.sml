@@ -610,6 +610,201 @@ struct
            exact contextual_target [assumption] native;testutils.OK () end
     in List.app contextual intermediates end
 
+  fun shared_element depth =
+    let
+      val combine = ``bag_combine:bool -> bool -> bool``
+      fun shared 0 = ``bag_leaf:bool``
+        | shared n = let val child = shared (n-1)
+                     in Term.list_mk_comb (combine,[child,child]) end
+    in shared depth end
+
+  (* Context rules are not exported srw rules. Reject an instantiated RHS
+     absent from the input AND the final native result, before that rewrite
+     can run. Exercise both a scoped Bag conjunction and a bare context
+     consequence, plus congruence-local assumptions. *)
+  fun prospective_context () =
+    let
+      val facts = [``!z:bool. (bag_h:bool -> bool) z = bag_g z z``,
+                   ``!u v:bool. (bag_g:bool -> bool -> bool) u v``]
+      val premise = ``BAG_IN (ctx_x:bool) ctx_b``
+      fun target arg bag =
+        let val result = Term.mk_comb (``bag_h:bool -> bool``,arg)
+        in if bag then boolSyntax.mk_conj (result,premise) else result end
+      exception Primary
+      fun check bag =
+        let val _ = testutils.tprint "bag prospective assumption rewrite"
+            val arg = shared_element 15
+            val expanded = Term.list_mk_comb
+              (``bag_g:bool -> bool -> bool``,[arg,arg])
+            val goal = target arg bag
+            val context = if bag then facts @ [premise] else facts
+            val expanding = if bag then [hd facts,premise] else [hd facts]
+            val stopped = ref false val after = ref 0
+            val genuine = A.new_term_check
+              {limit=200000,observe=fn () => ()}
+            fun admit tm =
+              if !stopped then (after := !after+1;genuine tm)
+              else if tm ~~ expanded then
+                (stopped := true;raise Primary)
+              else genuine tm
+            val _ = require "context expansion fixtures changed"
+              (Term.term_size goal < 200000 andalso
+               Term.term_size expanded > 200000)
+            val result = Exn.capture (fn () =>
+              SmtBagProve.bag_contextual_prove_with_admission
+                admit expanding goal) ()
+            val _ = require ("context RHS was not admitted prospectively: " ^
+              Bool.toString (!stopped) ^ "/" ^ Int.toString (!after) ^
+              (case result of Exn.Res _ => " returned"
+               | Exn.Exn Primary => " primary"
+               | Exn.Exn _ => " wrong exception"))
+              (!stopped andalso !after=0 andalso
+               (case result of Exn.Exn Primary => true | _ => false))
+            val cutoff = Exn.capture (fn () =>
+              SmtBagProve.bag_contextual_prove_with_admission
+                genuine expanding goal) ()
+            val _ = require "oversized assumption RHS bypassed admission"
+              (case cutoff of Exn.Exn (Feedback.HOL_ERR detail) =>
+                Feedback.top_structure_of detail = "SmtReplayArithmetic"
+                | _ => false)
+            (* The complete context DOES prove the fitting large goal.
+               Compose its compact laws rather than refusing a needless
+               oversized intermediate. Compare all actual dependencies
+               and tags against the original contextual tactic. *)
+            val theorem = SmtBagProve.bag_contextual_prove_with_admission
+              genuine context goal
+            val native = Tactical.TAC_PROOF ((context,goal),
+              Tactical.THEN (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                intLib.ARITH_TAC))
+        in exact goal context theorem;same_tags native theorem;
+           require "context composition changed actual Hyp"
+             (HOLset.equal (Thm.hypset native,Thm.hypset theorem));
+           testutils.OK () end
+      val _ = List.app check [false,true]
+      fun compatibility depth fixed universal shape =
+        let val _ = testutils.tprint "bag contextual source priority/freshness"
+            val arg = shared_element depth
+            val z = ``z:bool``
+            val law = if shape then
+                ``!u v w:bool. (bag_g:bool -> bool -> bool)
+                    ((bag_combine:bool -> bool -> bool) u v) w``
+              else if fixed then boolSyntax.mk_forall (z,
+                Term.list_mk_comb (``bag_g:bool -> bool -> bool``,[arg,z]))
+              else ``(bag_g:bool -> bool -> bool) z z``
+            val context = [hd facts,law] @
+              (if universal then [List.nth (facts,1)] else [])
+            val goal = target arg false
+            val genuine = A.new_term_check
+              {limit=200000,observe=fn () => ()}
+            val actual = SmtBagProve.bag_contextual_prove_with_admission
+              genuine context goal
+            val native = Tactical.TAC_PROOF ((context,goal),
+              Tactical.THEN (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                intLib.ARITH_TAC))
+        in exact goal (Thm.hyp native) actual;same_tags native actual;
+           testutils.OK () end
+      val _ = compatibility 6 false true false
+      val _ = compatibility 6 true true false
+      val _ = compatibility 15 true true false
+      val _ = compatibility 15 true false false
+      val _ = compatibility 15 false false true
+      fun terminal label reject context goal =
+        let val _ = testutils.tprint ("bag contextual terminal " ^ label)
+            val stopped = ref false val after = ref 0
+            val genuine = A.new_term_check
+              {limit=200000,observe=fn () => ()}
+            fun admit tm =
+              if !stopped then (after := !after+1;genuine tm)
+              else if reject tm then
+                (stopped := true;raise Feedback.mk_HOL_ERR
+                  "Task42Context" label "first admission")
+              else genuine tm
+            val result = Exn.capture (fn () =>
+              SmtBagProve.bag_contextual_prove_with_admission
+                admit context goal) ()
+        in require "contextual composition/guard error was retried"
+             (!stopped andalso !after=0 andalso
+              (case result of Exn.Exn (Feedback.HOL_ERR detail) =>
+                 Feedback.top_structure_of detail = "Task42Context" andalso
+                 Feedback.top_function_of detail = label andalso
+                 Feedback.message_of detail = "first admission"
+               | _ => false));
+           let val actual = SmtBagProve.bag_contextual_prove_with_admission
+                 genuine context goal
+               val native = Tactical.TAC_PROOF ((context,goal),
+                 bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [])
+           in exact goal (Thm.hyp native) actual;same_tags native actual end;
+           testutils.OK () end
+      fun symbolic tm =
+        case boolSyntax.strip_comb tm of (head,[x,y]) =>
+          head ~~ ``bag_g:bool -> bool -> bool`` andalso
+          Term.is_var x andalso x ~~ y
+        | _ => false
+      val _ = terminal "composition" symbolic facts
+        (target (shared_element 6) false)
+      val guard = boolSyntax.mk_eq (shared_element 14,shared_element 14)
+      val empty = ``EMPTY_BAG:bool -> num``
+      val _ = terminal "guard" (fn tm => tm ~~ guard) []
+        (boolSyntax.mk_eq (boolSyntax.mk_cond
+          (guard,empty,``bag_other:bool -> num``),empty))
+      (* The hypothesis is introduced by implication congruence, not the
+         top-level goal context. Its instantiated RHS must use the same
+         dispatcher and preserve the first callback error. *)
+      val local_rule = hd facts
+      val arg = ``bag_local_x:bool``
+      val rhs = ``(bag_g:bool -> bool -> bool) bag_local_x bag_local_x``
+      val local_goal = boolSyntax.mk_imp
+        (local_rule,boolSyntax.mk_eq (target arg false,rhs))
+      val seen = ref false
+      val local_admit = A.new_term_check {limit=limit,observe=fn () => ()}
+      val result = Exn.capture (fn () =>
+        SmtBagProve.bag_contextual_prove_with_admission
+          (fn tm => if tm ~~ rhs then (seen := true;raise Primary)
+            else local_admit tm)
+          [] local_goal) ()
+    in require "congruence-local assumption escaped admission"
+         (!seen andalso
+          (case result of Exn.Exn Primary => true | _ => false));
+       exact local_goal [] (SmtBagProve.bag_contextual_prove_with_admission
+         (A.new_term_check {limit=limit,observe=fn () => ()}) [] local_goal)
+    end
+
+  (* Freshening must not capture an existing free prime-name in a beta
+     body. This quantified beta result is neither a whole input nor a
+     whole output conversion side: rejecting it tests the forecast itself. *)
+  fun prospective_capture () =
+    let
+      val cases =
+        [(``BAG_FILTER (\v:bool. !e:bool. bag_R (e':bool) v e) b bag_x =
+             (if (!q:bool. bag_R e' bag_x q) then b bag_x else 0)``,
+          ``!q:bool. bag_R (e':bool) (e:bool) q``),
+         (``BAG_FILTER
+             (\v:bool. !e:bool. bag_R3 (e':bool) (e'':bool) (e''':bool) v e)
+             b bag_x =
+             (if (!q:bool. bag_R3 e' e'' e''' bag_x q)
+              then b bag_x else 0)``,
+          ``!q:bool. bag_R3 (e':bool) (e'':bool) (e''':bool) (e:bool) q``),
+         (``BAG_FILTER (\v:bool. !e:num. bag_Rn (e':num) v e) b bag_x =
+             (if (!q:num. bag_Rn e' bag_x q) then b bag_x else 0)``,
+          ``!q:num. bag_Rn (e':num) (e:bool) q``)]
+      exception Primary
+      fun check (target,expected) (label,worker) =
+        let val _ = testutils.tprint ("bag capture-free beta " ^ label)
+            val stopped = ref false val after = ref 0
+            val genuine = A.new_term_check
+              {limit=limit,observe=fn () => ()}
+            fun admit tm =
+              if !stopped then (after := !after+1;genuine tm)
+              else if tm ~~ expected then (stopped := true;raise Primary)
+              else genuine tm
+            val result = Exn.capture (worker admit) target
+        in require "capture-correct beta was not admitted before conversion"
+             (!stopped andalso !after=0 andalso
+              (case result of Exn.Exn Primary => true | _ => false));
+           exact target [] (worker genuine target);testutils.OK () end
+    in List.app (fn pair => List.app (check pair)
+         [("native",prove),("CPC",cpc_worker "trust")]) cases end
+
   fun binder_names () = with_graph (fn graph => fn scope =>
     let
       (* A bound Boolean and a free list may share their spelling. Native
@@ -631,14 +826,6 @@ struct
            prove admit term | _ => raise Fail "bag binder arity"}
     in exact goal [] native;exact goal [] (#theorem result);
        same_tags native (#theorem result) end)
-
-  fun shared_element depth =
-    let
-      val combine = ``bag_combine:bool -> bool -> bool``
-      fun shared 0 = ``bag_leaf:bool``
-        | shared n = let val child = shared (n-1)
-                     in Term.list_mk_comb (combine,[child,child]) end
-    in shared depth end
 
   (* Fitting inputs must not pay admission for an unused INSERT branch,
      an expanding reflexive INSERT, or both leaves of COND_CLAUSES as one
@@ -763,6 +950,27 @@ struct
          SmtBagProve.bag_contextual_prove_with_admission admit [])
          "contextual large guard under binder" 131081 bound_guard_goal;
        known_guard false;known_guard true;
+       check_using (fn admit =>
+         SmtBagProve.bag_contextual_prove_with_admission admit [])
+         "contextual reflexive guard" 131079
+         (boolSyntax.mk_eq (boolSyntax.mk_cond
+           (boolSyntax.mk_eq (shared_element 14,shared_element 14),
+            empty,``bag_other:bool -> num``),empty));
+       List.app (fn (negative,symmetric) =>
+         let val _ = testutils.tprint "bag fitting normalized guard"
+             val value = if negative then boolSyntax.F else boolSyntax.T
+             val hypothesis = boolSyntax.mk_eq
+               (if symmetric then (value,large_guard) else (large_guard,value))
+             val other = ``bag_other:bool -> num``
+             val target = boolSyntax.mk_eq
+               (boolSyntax.mk_cond (large_guard,
+                 if negative then other else empty,
+                 if negative then empty else other),empty)
+             val theorem = SmtBagProve.bag_contextual_prove_with_admission
+               (A.new_term_check {limit=cap,observe=fn () => ()})
+               [hypothesis] target
+         in exact target [hypothesis] theorem;testutils.OK () end)
+         [(false,false),(false,true),(true,false),(true,true)];
        check "reflexive INSERT opaque bag" reflexive_size reflexive_goal;
        check "conditional shared singleton" 196619 conditional_goal;
        check_using (fn admit =>
@@ -859,6 +1067,8 @@ struct
        ("bag compact TRUST",compact_trust_identity),
        ("bag graph identity",graph_handlers),("bag admission",admission_errors),
        ("bag prospective beta phases",prospective_betas),
+       ("bag prospective context",prospective_context),
+       ("bag prospective capture",prospective_capture),
        ("bag binder names",binder_names),
        ("bag fitting intermediates",fitting_intermediates),
        ("bag large",large_input)]
