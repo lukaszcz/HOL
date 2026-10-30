@@ -25,7 +25,9 @@ decision (`evidence/task29a/grid-partial/`). `--layout-seed` randomizes
 each process's code layout, `extend --grid DIR` runs the predeclared,
 candidate-blind second stage, and `--resume` continues after an
 infrastructure failure (`PROTOCOL.md`, "Code-layout randomization").
-Results: `evidence/task29a/` and
+The complete layout-randomized two-stage grid is `evidence/task29a/grid/`:
+144 pass, 18 inconclusive, 0 fail, so the gate is not met. Results:
+`evidence/task29a/` and
 [`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
 
 Fresh post-workload actual object/code/pool diagnostics are documented in

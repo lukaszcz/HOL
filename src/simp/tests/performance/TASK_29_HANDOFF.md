@@ -778,16 +778,36 @@ Offline replay also found and fixed a driver defect: archived pair keys
 are strings, and with more than ten pairs they sort differently from
 integer keys.
 
+## TASK29A layout-randomized two-stage grid (2026-10-30) — INCONCLUSIVE
+
+The four fixed-layout fails above were attributed to code layout
+(predeclared diagnostics R1–R4, `evidence/task29a/attribution/`). The full
+162-cell rerun then used seeded per-process layout randomization and the
+predeclared second stage. Results are in `evidence/task29a/grid/`, and both
+stages replay offline.
+
+- Stage 1 (20 pairs): 124 pass, 38 inconclusive, 0 fail.
+- Stage 2 remeasured 35 cells with invalid controls at 40–120 pairs.
+- Final: **144 pass, 18 inconclusive, 0 fail**.
+
+Thirteen of the 18 are control-limited: develop/develop alone is wider
+than the 3% window even at 120 pairs. The remaining five have valid
+controls and intervals crossing 1.03. Among them, `frag_named_merge/10000`
+at 1.021–1.067 is the only measurable slowdown. Four infrastructure
+interruptions were resumed without dropping or repeating a recorded cell.
+The details and the per-cell table are in
+[TASK29A](TASK_29A_numerical_attribution_closure.md#layout-randomized-two-stage-grid-2026-10-30--inconclusive-not-closure).
+
 ## Exact blockers and next step
 
-- [TASK29A](TASK_29A_numerical_attribution_closure.md): the four
-  fixed-layout fails of the equivalence-policy grid are attributed to code
-  layout, not to an ordinary-path cost (predeclared diagnostics R1–R4,
-  `evidence/task29a/attribution/`). With seeded layout randomization the
-  two `frag_named_rules` cells pass, and the two size-10000 cells need more
-  pairs. The decision now rests on the full layout-randomized two-stage
-  rerun predeclared in TASK29A ("Fail attribution: code layout"), and the
-  policy owner should confirm that method amendment.
+- [TASK29A](TASK_29A_numerical_attribution_closure.md): the predeclared
+  layout-randomized grid is complete and **inconclusive** (144 pass, 18
+  inconclusive, 0 fail). Closure needs policy-owner decisions:
+  - confirm the layout-randomization/second-stage amendment;
+  - decide how cells whose develop/develop noise exceeds the margin on
+    this host are treated, or provide an exclusive environment;
+  - decide on the five valid-control cells that cross the margin, in
+    particular `frag_named_merge/10000` (1.021–1.067).
 - [TASK29B](TASK_29B_allocation_counter.md): supply/review a supported cumulative
   HOL allocator instrument and measure the full increasing-rule allocation
   matrix; current snapshot fields cannot satisfy it.

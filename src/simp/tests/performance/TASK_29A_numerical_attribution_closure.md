@@ -373,6 +373,94 @@ use `--resume` only after an infrastructure failure. The final decision
 is the second stage's `decisions.json`, whatever it shows. Results are
 added below when the run completes.
 
+## Layout-randomized two-stage grid (2026-10-30) — INCONCLUSIVE, not closure
+
+The predeclared rerun is complete (`evidence/task29a/grid/`, with a
+README). It ran from 2026-10-26 17:14 to 2026-10-30 09:42 UTC. Infrastructure
+interrupted it four times: the shared root disk filled twice, another host
+process deleted the `/tmp` lock, and there was one planned stop to move that
+lock into `.agent-files/` (`9ee8d00bd`). Each resume replayed every recorded
+cell exactly. Unrecorded cells were measured again from scratch; no cell was
+selected, dropped or repeated. From cell 11 on, scratch trees lived in the
+sandbox's `/dev/shm`. That is a storage location only. Both stages replay
+offline, and their logs are in the evidence directory.
+
+- **Stage 1** (162 cells, 20 pairs): 124 pass, 38 inconclusive, 0 fail.
+- **Stage 2** remeasured the 35 cells whose develop/develop control was
+  outside the window. Each got the pair count computed from its control
+  alone: 40–120 pairs, 3200 pairs in all.
+- **Grid decision** (`stage2/decisions.json`): **144 pass, 18
+  inconclusive, 0 fail**. Its status is `inconclusive`.
+
+No cell fails. Inconclusive is not pass, so the gate is not met. The 18
+cells (CPU ratio candidate/develop and B/B CPU interval, final stage):
+
+| Cell | Pairs | CPU 95% CI | B/B CPU CI | Why inconclusive |
+|---|---:|---|---|---|
+| frag_create-0 | 120 | 0.933-1.029 | 0.951-1.030 | B/B outside window |
+| frag_create-10000 | 100 | 0.965-1.021 | 0.991-1.039 | B/B outside window |
+| frag_named-0 | 120 | 0.943-1.020 | 0.966-1.040 | B/B outside window |
+| frag_record-10000 | 120 | 0.964-1.018 | 0.968-1.023 | B/B outside window |
+| frag_update-1000 | 120 | 0.988-1.034 | 0.989-1.035 | B/B outside window |
+| frag_update-10000 | 120 | 0.985-1.047 | 0.968-1.044 | B/B outside window |
+| frag_duplicate-10000 | 80 | 0.984-1.018 | 0.988-1.031 | B/B outside window |
+| frag_ac-0 | 120 | 0.923-1.002 | 0.947-1.041 | B/B outside window |
+| frag_ac-1 | 120 | 0.958-1.023 | 0.970-1.033 | B/B outside window |
+| frag_ac-10 | 120 | 0.930-1.041 | 0.921-1.028 | B/B outside window |
+| frag_ac-100 | 120 | 0.975-1.039 | 0.939-1.045 | B/B outside window |
+| frag_ac-1000 | 120 | 0.968-1.052 | 0.950-1.041 | B/B outside window |
+| compile_bounded-10000 | 80 | 0.936-0.979 | 0.990-1.031 | B/B outside window |
+| frag_named_merge-10000 | 120 | 1.021-1.067 | 0.984-1.030 | CI crosses 1.03 |
+| frag_merge-100 | 20 | 1.002-1.037 | 0.995-1.010 | CI crosses 1.03 |
+| frag_typebase-0 | 20 | 0.988-1.037 | 0.981-1.011 | CI crosses 1.03 |
+| frag_update-0 | 90 | 0.992-1.032 | 0.984-1.016 | CI crosses 1.03 |
+| frag_create-10 | 20 | CPU pass; wall 0.986-1.030 | 0.998-1.016 | wall CI crosses 1.03 |
+
+There are two classes.
+
+- **Control-limited (13 cells).** Even at the 120-pair cap, the cell's own
+  develop/develop interval stays outside [1/1.03, 1.03]. Under layout
+  randomization, the process-to-process spread in these fragment cells,
+  mostly `frag_ac` and size 0 or 10000, is wider than the margin. More
+  pairs on this host cannot resolve them. None shows a candidate cost:
+  every candidate interval contains 1 or lies below it.
+  `compile_bounded/10000` is 2–6% faster.
+- **Valid control, CI crossing the margin (5 cells).** These cells can be
+  measured at the margin, but their intervals cross 1.03.
+  - `frag_named_merge/10000` is the only cell with a measurable slowdown:
+    1.021–1.067 (median about 1.04) at 120 pairs, with a valid control.
+    Its 20-pair stage-1 interval was 0.987–1.117.
+  - `frag_merge/100` (1.002–1.037) is also wholly above 1, but at only 20
+    pairs.
+  - The others contain 1.
+
+  The predeclared extension rule only remeasures cells with an invalid
+  control. So `frag_merge/100`, `frag_typebase/0` and `frag_create/10`
+  stayed at 20 pairs. That is a gap in the rule; it was noticed during
+  stage 1 and deliberately not changed mid-run.
+
+None of the four fixed-layout fails of the earlier grid fails under
+randomization. `frag_named_rules/1` and `/10` pass in stage 1, and
+`frag_named/10000` passes after more pairs. `frag_create/10000` (formerly
+1.094–1.110) is now 0.965–1.021, inconclusive only because its control is
+too wide. This matches the layout attribution above.
+
+**Status.** TASK29A is **not complete**. The predeclared measurement is
+finished and its decision is final for this candidate and method. Closing
+the gate now needs a decision from the policy owner that measurement alone
+cannot supply:
+
+1. confirm the layout-randomization/second-stage amendment;
+2. decide how cells whose own develop/develop noise exceeds the margin on
+   the available host are treated. Either they stay blocking, or an
+   exclusive, quieter environment is provided;
+3. decide on the five valid-control cells, above all `frag_named_merge/10000`.
+   One option is a predeclared further stage for valid-control cells that
+   cross the margin. Another is source attribution of a possible 2–7%
+   cost in named merges at size 10000.
+
+## Work and acceptance
+
 ## Work and acceptance
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant

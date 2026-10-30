@@ -1,0 +1,894 @@
+{
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "candidate": "6f62229c04d548973eb74955a283e2abe3ce9133",
+  "seconds": 0.3,
+  "pairs": 20,
+  "samples": 5,
+  "outliers": "none removed",
+  "policy": {
+    "minimum_pairs": 10,
+    "outliers": "none removed",
+    "estimator": "median of paired candidate/baseline ratios",
+    "bootstrap": "20000 paired resamples; seed 3003; ranks 499/19499",
+    "decision": "low > 1+margin: fail; high <= 1+margin: pass; otherwise inconclusive",
+    "zero_denominator": "inconclusive, including 0/0; no pairs dropped",
+    "budgets": "3% equivalence margin on inclusive CPU and wall only",
+    "version": 2,
+    "margin": 0.03,
+    "gated_timing": [
+      "cpu",
+      "wall"
+    ],
+    "control": "B/B interval within [1/(1+margin), 1+margin], else no pass",
+    "gc": "reported, not gated; inclusive CPU already contains GC time",
+    "storage": "graph words and slopes keep the zero-margin decision"
+  },
+  "iterations": {
+    "schema": "task29a-iterations-v1",
+    "source": {
+      "sha256": "604f5fcc198b3b71ea4835ce99f019933f858c9efb858557de6f8eb63ceea952",
+      "bytes": 9611
+    },
+    "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+    "headroom": 2,
+    "rule": "HEADROOM * max develop calibration count in B/B",
+    "iterations": {
+      "frag_create-0": 67108864,
+      "frag_create-1": 33554432,
+      "frag_create-10": 4194304,
+      "frag_create-100": 1048576,
+      "frag_create-1000": 131072,
+      "frag_create-10000": 16384,
+      "frag_named-0": 67108864,
+      "frag_named-1": 33554432,
+      "frag_named-10": 8388608,
+      "frag_named-100": 1048576,
+      "frag_named-1000": 131072,
+      "frag_named-10000": 16384,
+      "frag_named_rules-0": 33554432,
+      "frag_named_rules-1": 8388608,
+      "frag_named_rules-10": 2097152,
+      "frag_named_rules-100": 131072,
+      "frag_named_rules-1000": 16384,
+      "frag_named_rules-10000": 1024,
+      "frag_record-0": 33554432,
+      "frag_record-1": 33554432,
+      "frag_record-10": 4194304,
+      "frag_record-100": 1048576,
+      "frag_record-1000": 131072,
+      "frag_record-10000": 16384,
+      "frag_update-0": 67108864,
+      "frag_update-1": 33554432,
+      "frag_update-10": 8388608,
+      "frag_update-100": 2097152,
+      "frag_update-1000": 524288,
+      "frag_update-10000": 32768,
+      "frag_duplicate-0": 8388608,
+      "frag_duplicate-1": 8388608,
+      "frag_duplicate-10": 8388608,
+      "frag_duplicate-100": 2097152,
+      "frag_duplicate-1000": 262144,
+      "frag_duplicate-10000": 16384,
+      "frag_merge-0": 8388608,
+      "frag_merge-1": 8388608,
+      "frag_merge-10": 8388608,
+      "frag_merge-100": 8388608,
+      "frag_merge-1000": 8388608,
+      "frag_merge-10000": 8388608,
+      "frag_named_merge-0": 8388608,
+      "frag_named_merge-1": 8388608,
+      "frag_named_merge-10": 4194304,
+      "frag_named_merge-100": 2097152,
+      "frag_named_merge-1000": 262144,
+      "frag_named_merge-10000": 32768,
+      "frag_ac-0": 67108864,
+      "frag_ac-1": 67108864,
+      "frag_ac-10": 67108864,
+      "frag_ac-100": 67108864,
+      "frag_ac-1000": 67108864,
+      "frag_ac-10000": 33554432,
+      "frag_ac_merge-0": 8388608,
+      "frag_ac_merge-1": 8388608,
+      "frag_ac_merge-10": 8388608,
+      "frag_ac_merge-100": 2097152,
+      "frag_ac_merge-1000": 262144,
+      "frag_ac_merge-10000": 8192,
+      "frag_typebase-0": 16777216,
+      "frag_typebase-1": 2097152,
+      "frag_typebase-10": 131072,
+      "frag_typebase-100": 16384,
+      "frag_typebase-1000": 2048,
+      "frag_typebase-10000": 128,
+      "frag_type_lookup-0": 4194304,
+      "frag_type_lookup-1": 1048576,
+      "frag_type_lookup-10": 131072,
+      "frag_type_lookup-100": 16384,
+      "frag_type_lookup-1000": 2048,
+      "frag_type_lookup-10000": 128,
+      "compile_batch-0": 4194304,
+      "compile_batch-1": 1048576,
+      "compile_batch-10": 131072,
+      "compile_batch-100": 8192,
+      "compile_batch-1000": 1024,
+      "compile_batch-10000": 64,
+      "compile_single-0": 134217728,
+      "compile_single-1": 1048576,
+      "compile_single-10": 65536,
+      "compile_single-100": 8192,
+      "compile_single-1000": 512,
+      "compile_single-10000": 32,
+      "compile_empty-0": 4194304,
+      "compile_empty-1": 4194304,
+      "compile_empty-10": 4194304,
+      "compile_empty-100": 4194304,
+      "compile_empty-1000": 4194304,
+      "compile_empty-10000": 4194304,
+      "compile_excluded-0": 33554432,
+      "compile_excluded-1": 33554432,
+      "compile_excluded-10": 33554432,
+      "compile_excluded-100": 33554432,
+      "compile_excluded-1000": 33554432,
+      "compile_excluded-10000": 33554432,
+      "compile_conditional-0": 4194304,
+      "compile_conditional-1": 524288,
+      "compile_conditional-10": 65536,
+      "compile_conditional-100": 4096,
+      "compile_conditional-1000": 512,
+      "compile_conditional-10000": 16,
+      "compile_bounded-0": 4194304,
+      "compile_bounded-1": 524288,
+      "compile_bounded-10": 65536,
+      "compile_bounded-100": 8192,
+      "compile_bounded-1000": 512,
+      "compile_bounded-10000": 32,
+      "compile_ac-0": 4194304,
+      "compile_ac-1": 32768,
+      "compile_ac-10": 4096,
+      "compile_ac-100": 256,
+      "compile_ac-1000": 16,
+      "compile_ac-10000": 2,
+      "compile_maker-0": 4194304,
+      "compile_maker-1": 1048576,
+      "compile_maker-10": 131072,
+      "compile_maker-100": 8192,
+      "compile_maker-1000": 1024,
+      "compile_maker-10000": 64,
+      "compile_user-0": 4194304,
+      "compile_user-1": 2097152,
+      "compile_user-10": 262144,
+      "compile_user-100": 32768,
+      "compile_user-1000": 2048,
+      "compile_user-10000": 128,
+      "compile_collector-0": 4194304,
+      "compile_collector-1": 1048576,
+      "compile_collector-10": 131072,
+      "compile_collector-100": 8192,
+      "compile_collector-1000": 1024,
+      "compile_collector-10000": 64,
+      "compile_construct_conv-0": 67108864,
+      "compile_construct_conv-1": 67108864,
+      "compile_construct_conv-10": 67108864,
+      "compile_construct_conv-100": 67108864,
+      "compile_construct_conv-1000": 67108864,
+      "compile_construct_conv-10000": 67108864,
+      "compile_reuse-0": 2097152,
+      "compile_reuse-1": 1048576,
+      "compile_reuse-10": 1048576,
+      "compile_reuse-100": 1048576,
+      "compile_reuse-1000": 1048576,
+      "compile_reuse-10000": 524288,
+      "compile_complete-0": 1048576,
+      "compile_complete-1": 524288,
+      "compile_complete-10": 131072,
+      "compile_complete-100": 8192,
+      "compile_complete-1000": 1024,
+      "compile_complete-10000": 64,
+      "compile_supplied-0": 2097152,
+      "compile_supplied-1": 524288,
+      "compile_supplied-10": 65536,
+      "compile_supplied-100": 8192,
+      "compile_supplied-1000": 512,
+      "compile_supplied-10000": 64,
+      "storage_graph-0": 4194304,
+      "storage_graph-1": 1048576,
+      "storage_graph-10": 131072,
+      "storage_graph-100": 8192,
+      "storage_graph-1000": 1024,
+      "storage_graph-10000": 64
+    }
+  },
+  "iterations_seal": {
+    "sha256": "88e716ba27e456c70221dec7d5fc27c30555ee1d58e878f933ce0ca466fe29c6",
+    "bytes": 5716
+  },
+  "schema": "task29a-extension-v1",
+  "grid": "../stage1",
+  "grid_inventory": {
+    "sha256": "88a03e8c2b6df6e10711b7ffbef2e82450228c9959e61a88a11fb6c9648a7ba7",
+    "bytes": 61554
+  },
+  "grid_decisions": {
+    "sha256": "f47b744ae71c5c73b7ef6e5f639d43c7da2bb56c45edad59b62deb127825afca",
+    "bytes": 239795
+  },
+  "layout_seed": "task29a-grid-1-ext",
+  "target": 0.015,
+  "max_pairs": 120,
+  "runs": [
+    {
+      "case": "frag_create",
+      "size": 0,
+      "iterations": 67108864,
+      "archive": "frag_create-0.json.xz",
+      "seal": {
+        "sha256": "16201ab50ea6593e7755a77e5e8e862eb917acbf6eb34d2e20d1523bb294d770",
+        "bytes": 2239796
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_create",
+      "size": 100,
+      "iterations": 1048576,
+      "archive": "frag_create-100.json.xz",
+      "seal": {
+        "sha256": "bc0abd9806996c2568dfdf8339fa30af1819622a9908b595b94e1d7f7cc1dbb1",
+        "bytes": 1114396
+      },
+      "files": 217,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 50
+    },
+    {
+      "case": "frag_create",
+      "size": 10000,
+      "iterations": 16384,
+      "archive": "frag_create-10000.json.xz",
+      "seal": {
+        "sha256": "0d6b785fe8974379a792352a0381cddc4f3c079b3053f36b7bbdb10151466f8c",
+        "bytes": 1777324
+      },
+      "files": 417,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 100
+    },
+    {
+      "case": "frag_named",
+      "size": 0,
+      "iterations": 67108864,
+      "archive": "frag_named-0.json.xz",
+      "seal": {
+        "sha256": "9c7d5742c6656573007691583f3000a346099aed0b1c4f0fa74e28405afaa3bc",
+        "bytes": 2261424
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_named",
+      "size": 1,
+      "iterations": 33554432,
+      "archive": "frag_named-1.json.xz",
+      "seal": {
+        "sha256": "8e065da9448ba42c16c1ec6e59c1eca8ecaf1d5e5af3f8cacbdca4a2184c8524",
+        "bytes": 1128808
+      },
+      "files": 217,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 50
+    },
+    {
+      "case": "frag_named",
+      "size": 100,
+      "iterations": 1048576,
+      "archive": "frag_named-100.json.xz",
+      "seal": {
+        "sha256": "5bba21e975a11134fdcccf1eb12df3e07d41f852ba76229f1f87f20ac7ec047d",
+        "bytes": 971632
+      },
+      "files": 177,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 40
+    },
+    {
+      "case": "frag_named",
+      "size": 1000,
+      "iterations": 131072,
+      "archive": "frag_named-1000.json.xz",
+      "seal": {
+        "sha256": "9912e1ac0cdf4ef84e2cfd6c974575f3886b7a5e168a0dcdd6cf777eb1ed680f",
+        "bytes": 1788548
+      },
+      "files": 417,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 100
+    },
+    {
+      "case": "frag_named",
+      "size": 10000,
+      "iterations": 16384,
+      "archive": "frag_named-10000.json.xz",
+      "seal": {
+        "sha256": "a20ae41b9e03dad52ff569862798fbb03a8e3141c57b44e6fc46fde9871c081e",
+        "bytes": 2109796
+      },
+      "files": 497,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_named_rules",
+      "size": 10000,
+      "iterations": 1024,
+      "archive": "frag_named_rules-10000.json.xz",
+      "seal": {
+        "sha256": "9345c7ff93252571b0680616c5e895a1ef783b59908633dabb4f7877678561fa",
+        "bytes": 856312
+      },
+      "files": 177,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 40
+    },
+    {
+      "case": "frag_record",
+      "size": 100,
+      "iterations": 1048576,
+      "archive": "frag_record-100.json.xz",
+      "seal": {
+        "sha256": "2204157c08af8b29b31d1d90125e1b8e413c4a3a419482f09ef74631cedd0726",
+        "bytes": 2130240
+      },
+      "files": 497,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_record",
+      "size": 1000,
+      "iterations": 131072,
+      "archive": "frag_record-1000.json.xz",
+      "seal": {
+        "sha256": "26b69f363fa6c30c2b9a73574df9c6cbfd00d2f4ab794df0518dc25f770e948c",
+        "bytes": 1203504
+      },
+      "files": 257,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 60
+    },
+    {
+      "case": "frag_record",
+      "size": 10000,
+      "iterations": 16384,
+      "archive": "frag_record-10000.json.xz",
+      "seal": {
+        "sha256": "c95bf8cee47a6e6c17ba4bbe03b426310756c6a162bb63424cc4804634af52f1",
+        "bytes": 2070256
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_update",
+      "size": 0,
+      "iterations": 67108864,
+      "archive": "frag_update-0.json.xz",
+      "seal": {
+        "sha256": "24ee074c4283ab390a78f146786faa112a3aaa72c96f590776c6972c646d230e",
+        "bytes": 1775484
+      },
+      "files": 377,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 90
+    },
+    {
+      "case": "frag_update",
+      "size": 1,
+      "iterations": 33554432,
+      "archive": "frag_update-1.json.xz",
+      "seal": {
+        "sha256": "2af072927e7e5fa97cff9dd1ec03eeeb8bac29d57312288a6fae2f5e41bf5102",
+        "bytes": 1265712
+      },
+      "files": 257,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 60
+    },
+    {
+      "case": "frag_update",
+      "size": 1000,
+      "iterations": 524288,
+      "archive": "frag_update-1000.json.xz",
+      "seal": {
+        "sha256": "d1eb4ab5578484cc19574552fa184811b3781d064d3931a4fc26d43f3d64d3fb",
+        "bytes": 2250928
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_update",
+      "size": 10000,
+      "iterations": 32768,
+      "archive": "frag_update-10000.json.xz",
+      "seal": {
+        "sha256": "18da39a7cf74d9637f310338ee43eca9e2214fc603ccd18696e6fc6476627927",
+        "bytes": 2085420
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_duplicate",
+      "size": 10,
+      "iterations": 8388608,
+      "archive": "frag_duplicate-10.json.xz",
+      "seal": {
+        "sha256": "d3cdc1c2816fe7352628bb3fb232cf2844e40b49c7bc68ef6569b6ce756b202f",
+        "bytes": 1300384
+      },
+      "files": 257,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 60
+    },
+    {
+      "case": "frag_duplicate",
+      "size": 10000,
+      "iterations": 16384,
+      "archive": "frag_duplicate-10000.json.xz",
+      "seal": {
+        "sha256": "19662a58f47055f085358e06b8880b6b4e7174b1eec296b24d98bfedb01b0b56",
+        "bytes": 1455836
+      },
+      "files": 337,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 80
+    },
+    {
+      "case": "frag_named_merge",
+      "size": 10,
+      "iterations": 4194304,
+      "archive": "frag_named_merge-10.json.xz",
+      "seal": {
+        "sha256": "e4e5651216914d61939c5dee78b12bd7b5fcda4d7f3e8b42cb998593b392796f",
+        "bytes": 1730432
+      },
+      "files": 377,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 90
+    },
+    {
+      "case": "frag_named_merge",
+      "size": 1000,
+      "iterations": 262144,
+      "archive": "frag_named_merge-1000.json.xz",
+      "seal": {
+        "sha256": "0c088e81fcb09acd9fac12c3c7490777d6d16cee9e02cfefcbcec064d2480ff0",
+        "bytes": 1684552
+      },
+      "files": 377,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 90
+    },
+    {
+      "case": "frag_named_merge",
+      "size": 10000,
+      "iterations": 32768,
+      "archive": "frag_named_merge-10000.json.xz",
+      "seal": {
+        "sha256": "94e0ef0619c7dc5b340b73d059e3da5d8e717af403056bfc2e298acd3dc39903",
+        "bytes": 2189512
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac",
+      "size": 0,
+      "iterations": 67108864,
+      "archive": "frag_ac-0.json.xz",
+      "seal": {
+        "sha256": "c967254e3716cac9cd4fbf955d3baccd729bec4c1c45038d7563d66d6af3df9e",
+        "bytes": 2226312
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac",
+      "size": 1,
+      "iterations": 67108864,
+      "archive": "frag_ac-1.json.xz",
+      "seal": {
+        "sha256": "1b1e33ba26f94ce6aa01a0ab71e36e7b346e567568ae7fe9fc2cd05c5159ad71",
+        "bytes": 2230672
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac",
+      "size": 10,
+      "iterations": 67108864,
+      "archive": "frag_ac-10.json.xz",
+      "seal": {
+        "sha256": "5a72b3a6022812c9b09369e6a5a3e7192673799bcdf87436bdd66c37c2120b9f",
+        "bytes": 2205824
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac",
+      "size": 100,
+      "iterations": 67108864,
+      "archive": "frag_ac-100.json.xz",
+      "seal": {
+        "sha256": "0ac823e56368f074b4bbc2c29bf3d2759d3af90d42c23c9298062177312f8529",
+        "bytes": 2228552
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac",
+      "size": 1000,
+      "iterations": 67108864,
+      "archive": "frag_ac-1000.json.xz",
+      "seal": {
+        "sha256": "4432c095b4b7657580d6a5912dd8ac7a001cc63d818be913fbb959c26ab45e61",
+        "bytes": 2669588
+      },
+      "files": 497,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac",
+      "size": 10000,
+      "iterations": 33554432,
+      "archive": "frag_ac-10000.json.xz",
+      "seal": {
+        "sha256": "bd2477b95884387924386a1c34922927c250fc9de91e1cd466c60f9c83f35f66",
+        "bytes": 2606676
+      },
+      "files": 497,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "frag_ac_merge",
+      "size": 0,
+      "iterations": 8388608,
+      "archive": "frag_ac_merge-0.json.xz",
+      "seal": {
+        "sha256": "3b246b352235b0509a838596935c9784a8d4d06ec25d8c6196b0fe67ddfefca2",
+        "bytes": 1421296
+      },
+      "files": 297,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 70
+    },
+    {
+      "case": "frag_ac_merge",
+      "size": 1,
+      "iterations": 8388608,
+      "archive": "frag_ac_merge-1.json.xz",
+      "seal": {
+        "sha256": "f9f323219de1c35e89dadc1b4cb6ddbde59e8b6f6df3654f590dd4c15e1333fb",
+        "bytes": 1258200
+      },
+      "files": 257,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 60
+    },
+    {
+      "case": "frag_ac_merge",
+      "size": 1000,
+      "iterations": 262144,
+      "archive": "frag_ac_merge-1000.json.xz",
+      "seal": {
+        "sha256": "fd7d9edf601ff33b44e5119d5210ebf51c2f6f07669c66cbdc95f004645b6629",
+        "bytes": 1337208
+      },
+      "files": 257,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 60
+    },
+    {
+      "case": "frag_ac_merge",
+      "size": 10000,
+      "iterations": 8192,
+      "archive": "frag_ac_merge-10000.json.xz",
+      "seal": {
+        "sha256": "61e091ee8d3f295e2b1075bbf462d84d942343172f481e2a6485c9ce9f42d661",
+        "bytes": 947008
+      },
+      "files": 177,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 40
+    },
+    {
+      "case": "compile_conditional",
+      "size": 10000,
+      "iterations": 16,
+      "archive": "compile_conditional-10000.json.xz",
+      "seal": {
+        "sha256": "3f763a9b67f4b18ddc86601e1960fb9c540fd202b553818e4513fe59308ba913",
+        "bytes": 961288
+      },
+      "files": 257,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 60
+    },
+    {
+      "case": "compile_bounded",
+      "size": 10000,
+      "iterations": 32,
+      "archive": "compile_bounded-10000.json.xz",
+      "seal": {
+        "sha256": "cfbbf44cb4b21dca3d7d0b4ad1f5ea87da9084e42d26e210cb73ab1b3444e74f",
+        "bytes": 1217956
+      },
+      "files": 337,
+      "exit": 2,
+      "protocol": true,
+      "pairs": 80
+    },
+    {
+      "case": "compile_ac",
+      "size": 1000,
+      "iterations": 16,
+      "archive": "compile_ac-1000.json.xz",
+      "seal": {
+        "sha256": "d46df457942d6e43af6b1b9223b86edccdc73a13a2a34a96d197832bc6710122",
+        "bytes": 1450676
+      },
+      "files": 497,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 120
+    },
+    {
+      "case": "compile_ac",
+      "size": 10000,
+      "iterations": 2,
+      "archive": "compile_ac-10000.json.xz",
+      "seal": {
+        "sha256": "7a99744b4b57c6063e4570909752503c9d58fc77454877335090930d16bc0532",
+        "bytes": 1313696
+      },
+      "files": 497,
+      "exit": 0,
+      "protocol": true,
+      "pairs": 120
+    }
+  ],
+  "driver": {
+    "sha256": "75d3e9df941a47f6a742eb57d8e8543fc9ad42053cf05e34e9dddfebd0387e8e",
+    "bytes": 24168
+  },
+  "acceptance": {
+    "sha256": "2ddffc08c6ef5e931688822d593308f5652b0232e37c0b3d94dae246663b5ee1",
+    "bytes": 37897
+  },
+  "plan": [
+    [
+      "frag_create",
+      0,
+      120
+    ],
+    [
+      "frag_create",
+      100,
+      50
+    ],
+    [
+      "frag_create",
+      10000,
+      100
+    ],
+    [
+      "frag_named",
+      0,
+      120
+    ],
+    [
+      "frag_named",
+      1,
+      50
+    ],
+    [
+      "frag_named",
+      100,
+      40
+    ],
+    [
+      "frag_named",
+      1000,
+      100
+    ],
+    [
+      "frag_named",
+      10000,
+      120
+    ],
+    [
+      "frag_named_rules",
+      10000,
+      40
+    ],
+    [
+      "frag_record",
+      100,
+      120
+    ],
+    [
+      "frag_record",
+      1000,
+      60
+    ],
+    [
+      "frag_record",
+      10000,
+      120
+    ],
+    [
+      "frag_update",
+      0,
+      90
+    ],
+    [
+      "frag_update",
+      1,
+      60
+    ],
+    [
+      "frag_update",
+      1000,
+      120
+    ],
+    [
+      "frag_update",
+      10000,
+      120
+    ],
+    [
+      "frag_duplicate",
+      10,
+      60
+    ],
+    [
+      "frag_duplicate",
+      10000,
+      80
+    ],
+    [
+      "frag_named_merge",
+      10,
+      90
+    ],
+    [
+      "frag_named_merge",
+      1000,
+      90
+    ],
+    [
+      "frag_named_merge",
+      10000,
+      120
+    ],
+    [
+      "frag_ac",
+      0,
+      120
+    ],
+    [
+      "frag_ac",
+      1,
+      120
+    ],
+    [
+      "frag_ac",
+      10,
+      120
+    ],
+    [
+      "frag_ac",
+      100,
+      120
+    ],
+    [
+      "frag_ac",
+      1000,
+      120
+    ],
+    [
+      "frag_ac",
+      10000,
+      120
+    ],
+    [
+      "frag_ac_merge",
+      0,
+      70
+    ],
+    [
+      "frag_ac_merge",
+      1,
+      60
+    ],
+    [
+      "frag_ac_merge",
+      1000,
+      60
+    ],
+    [
+      "frag_ac_merge",
+      10000,
+      40
+    ],
+    [
+      "compile_conditional",
+      10000,
+      60
+    ],
+    [
+      "compile_bounded",
+      10000,
+      80
+    ],
+    [
+      "compile_ac",
+      1000,
+      120
+    ],
+    [
+      "compile_ac",
+      10000,
+      120
+    ]
+  ]
+}
