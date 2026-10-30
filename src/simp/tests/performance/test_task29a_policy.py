@@ -2,7 +2,6 @@
 """TASK29A equivalence policy: margin gate, control window, GC reporting."""
 import copy
 import json
-import os
 from pathlib import Path
 import random
 import tempfile
@@ -222,34 +221,6 @@ class Grid(unittest.TestCase):
             grid.check_report(Path("unused"), stored, "b", "c", 0.3,
                               "frag_create", 0, 64, pairs=20)
 
-    def test_partial_grid_evidence_is_sealed(self):
-        # The interrupted 20-pair run: every retained archive is sealed in
-        # its inventory and none of it is a grid decision.
-        root = a.HERE / "evidence/task29a/grid-partial"
-        inventory = a.load(root / "inventory.json")
-        self.assertIn(inventory["driver"], grid.DRIVERS)
-        self.assertEqual(inventory["policy"], V2)
-        self.assertEqual(inventory["iterations"], a.load(grid.COUNTS))
-        self.assertFalse((root / "decisions.json").exists())
-        exits = {}
-        for row in inventory["runs"]:
-            self.assertEqual(a.seal(root / row["archive"]), row["seal"])
-            self.assertTrue(row["protocol"])
-            exits["%s-%d" % (row["case"], row["size"])] = row["exit"]
-        self.assertEqual(len(exits), 20)
-        self.assertEqual(sorted(k for k, v in exits.items() if v == 1), [
-            "frag_create-10000", "frag_named-10000", "frag_named_rules-1",
-            "frag_named_rules-10"])
-        self.assertEqual(sorted(p.name for p in root.glob("*.json.xz")),
-                         sorted(r["archive"] for r in inventory["runs"]))
-
-    @unittest.skipUnless(os.environ.get("TASK29A_GRID_EVIDENCE"),
-                         "set TASK29A_GRID_EVIDENCE=1 to replay archives")
-    def test_partial_grid_replays(self):
-        root = a.HERE / "evidence/task29a/grid-partial"
-        self.assertEqual(grid.main(["replay", "--partial", "--output",
-                                    str(root)]), 2)
-
     def test_checkpoint_rewrites(self):
         with tempfile.TemporaryDirectory(prefix="task29a-test-") as d:
             path = Path(d) / "inventory.json"
@@ -260,7 +231,7 @@ class Grid(unittest.TestCase):
                              ["inventory.json"])
 
     def test_predeclared_counts_cover_grid(self):
-        counts = a.load(a.HERE / "evidence/task29a/iterations.json")
+        counts = a.load(grid.COUNTS)
         self.assertEqual(counts["schema"], "task29a-iterations-v1")
         self.assertEqual(set(counts["iterations"]),
                          {"%s-%d" % k for k in grid.gate.keys()})

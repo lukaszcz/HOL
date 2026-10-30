@@ -1,10 +1,7 @@
 """Controls are synthetic except the separately authorized runtime driver."""
-import gzip
-import hashlib
 import json
 from pathlib import Path
 import sys
-import subprocess
 import tempfile
 import unittest
 
@@ -124,44 +121,6 @@ class ControlSchemaTests(unittest.TestCase):
             with self.subTest(label=label), self.assertRaises(ValueError):
                 s.observations(text.replace(label+"\t4\t4\t0\t0\t0",
                                             label+"\t5\t5\t0\t0\t0"))
-
-
-class ArchivedControlTests(unittest.TestCase):
-    def test_actual_runtime_archive(self):
-        path = HERE / "evidence/task29/managed-counter/controls.json.gz"
-        receipt = json.loads(gzip.decompress(path.read_bytes()))
-        self.assertTrue(receipt["success"])
-        self.assertFalse(receipt["task29_complete"])
-        self.assertTrue(all(c["exit"] == 0 and not c["timed_out"]
-                            for c in receipt["commands"]))
-        observed = s.observations(receipt["control_output"])
-        self.assertEqual(json.dumps(observed, sort_keys=True),
-                         json.dumps(receipt["observations"], sort_keys=True))
-        # This historical control fixture predates the extended coverage
-        # driver. Bind its ORIGINAL input bytes to the containing commit;
-        # never manufacture updated seals or demand newly added files there.
-        revision = "fe97e59a6"
-        for path, seal in receipt["inputs"].items():
-            if "/allocator-counter/" not in path:
-                continue
-            relative = "src/simp/tests/performance/allocator-counter/" + (
-                path.rsplit("/", 1)[1])
-            raw = subprocess.check_output(
-                ["git", "show", revision + ":" + relative], cwd=HERE)
-            self.assertEqual(seal["sha256"], hashlib.sha256(raw).hexdigest())
-            self.assertEqual(seal["bytes"], len(raw))
-
-    def test_actual_endpoint_loss_or_change_rejected(self):
-        path = HERE / "evidence/task29/managed-counter/controls.json.gz"
-        receipt = json.loads(gzip.decompress(path.read_bytes()))
-        lines = receipt["control_output"].splitlines()
-        i = next(i for i, line in enumerate(lines)
-                 if line.startswith("@@TASK29_ALLOC_ENDPOINT"))
-        for changed in (lines[:i]+lines[i+1:],
-                        lines[:i]+[lines[i].replace("\t8\t0\t", "\t8\t1\t")]
-                        +lines[i+1:]):
-            with self.assertRaises(ValueError):
-                s.observations("\n".join(changed))
 
 
 class IdentityTests(unittest.TestCase):

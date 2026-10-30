@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """Offline matrix admission mutations; no builds or measurements."""
-import base64
 import copy
-import gzip
 import hashlib
-import json
-import lzma
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -253,44 +249,6 @@ class ArchiveProvenance(unittest.TestCase):
             self.reject()
         selected["launcher"] = original
         self.reject()
-
-    def test_old_non_matrix_diagnostic_remains_supported(self):
-        folder = HERE / "evidence/task03/current-head"
-        manifest = json.loads((folder / "manifest.json").read_text())
-        receipt = json.loads(gzip.decompress(
-            (folder / "pair-00-baseline.json.gz").read_bytes()))
-        self.assertNotIn("shared_inputs", manifest)
-        ae.audit(manifest, receipt)
-
-
-class RetainedMatrixArchives(unittest.TestCase):
-    def test_original_archives_fail_closed_without_inventory(self):
-        # Inspect real manifests in memory, without expanding trees or adding
-        # receipt-derived seals to historical acceptance evidence.
-        count = 0
-        for name in ("paired.json.xz", "client.json.xz",
-                     "tactic-route.json.xz"):
-            payload = json.loads(lzma.decompress(
-                (HERE / "evidence/task28" / name).read_bytes()))
-            for logical, record in payload["files"].items():
-                if not logical.endswith("manifest.json"):
-                    continue
-                if record["encoding"] == "base64":
-                    data = base64.b64decode(record["content"])
-                    if logical.endswith(".gz"):
-                        data = gzip.decompress(data)
-                else:
-                    data = record["content"]
-                manifest = json.loads(data)
-                if manifest.get("performance", {}).get("suite") != "matrix":
-                    continue
-                self.assertNotIn("shared_inputs", manifest)
-                with self.subTest(archive=name, manifest=logical), \
-                        self.assertRaises(KeyError) as caught:
-                    ae.audit_manifest(manifest)
-                self.assertEqual(caught.exception.args, ("shared_inputs",))
-                count += 1
-        self.assertGreaterEqual(count, 4)
 
 
 if __name__ == "__main__":

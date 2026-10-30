@@ -31,7 +31,7 @@ PAIRS, SAMPLES = 10, 3
 # Calibration targets 0.3 s on a loaded host. Doubling the largest develop
 # count keeps a quieter rerun above the driver's own wall-time floor.
 HEADROOM = 2
-COUNTS = a.HERE / "evidence/task29a/iterations.json"
+COUNTS = a.HERE / "task29a_iterations.json"
 # Earlier drivers whose runs still replay: 6f62229c0 (before canonical
 # comparison and replay --partial), 224219893 (before --layout-seed) and
 # 3ef5b380b (before --resume and the second stage), cb71be0ce (before

@@ -1,5 +1,0 @@
-record baseline-control diagnostic replay OK
-record baseline-candidate diagnostic replay OK
-collector baseline-control diagnostic replay OK
-collector baseline-candidate diagnostic replay OK
-TASK29A remains blocked; no timing gate was evaluated.
