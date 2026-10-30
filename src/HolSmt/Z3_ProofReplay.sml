@@ -8149,6 +8149,35 @@ local
       val originals = HOLset.listItems defs
       fun is_oriented definition = Option.isSome
         (oriented_definition_parts var_set definition)
+      (* Keep the original optional whole-source EVAL contract here, not the
+         recorded graph API's finite whole-operand admission. EVAL may discard
+         a binder without opening it; speculative counting/opening would add
+         a new refusal or unfolded traversal. No constructed graph is supplied
+         to this compatibility shortcut. A miss remains an ordinary Hyp. *)
+      fun prove_ground source =
+        let
+          val evaluated = bossLib.EVAL source
+          val (left, right) = boolSyntax.dest_eq (Thm.concl evaluated)
+          val (tags, _) = Tag.dest_tag (Thm.tag evaluated)
+        in if Term.same_const right boolSyntax.T andalso
+            List.null (Thm.hyp evaluated) andalso
+            List.null (Tag.axioms_of (Thm.tag evaluated)) andalso
+            List.all (fn tag => tag = "DISK_THM") tags then
+            let
+              val proof = Drule.EQT_ELIM evaluated
+              (* EVAL normally retains its exact original left endpoint.
+                 Do not compare that entire shared Source through a freshly
+                 allocated equality wrapper just to prove reflexivity. *)
+              val exact = if Portable.pointer_eq (left, source) then proof
+                else Thm.EQ_MP (Thm.ALPHA left source) proof
+            in SOME (source, exact) end
+          else NONE end
+        handle Conv.UNCHANGED => NONE
+             | Feedback.HOL_ERR error =>
+                 if SmtResource.is_resource_gate error then
+                   raise Feedback.HOL_ERR error else NONE
+      val (originals, ground_sources) = List.partition is_oriented originals
+      val ground_laws = List.mapPartial prove_ground ground_sources
       (* Preserve the checked self-word route, including its profile and
          resource diagnostic, before general simultaneous unification. *)
       fun identity (definition, (entries, laws)) =
@@ -8171,7 +8200,7 @@ local
       val dag_limit = Option.valOf Int.maxInt
       val imported = List.map G.execute_import
         (G.plan_imports graph scope dag_limit originals)
-      (* Unaffected binders must have known dependencies too. Retain the old
+      (* Remaining binders must have known dependencies. Retain the old
          bounded binder admission; do not treat an opaque binder as closed. *)
       val opened = ref (Redblackmap.mkDict Int.compare)
       fun open_node node =
@@ -8211,15 +8240,7 @@ local
         Option.map (fn proof => (node, exact node proof))
           (Redblackmap.peek (identity_table, original)))
         (ListPair.zip (originals, sources))
-      (* Optional whole-original EVAL, including nonclosed/nonoriented
-         identities. Failure to evaluate leaves an ordinary hypothesis.
-         The legacy route has no new finite ground-operand policy. *)
-      val ground_plan = SmtReplayGroundDefinitions.prepare_complete_recorded
-        graph {scope = scope, allocated = allocated, sources = sources,
-          needed = sources, definitions = sources, limit = dag_limit - 1}
-      val ground_laws = SmtReplayGroundDefinitions.execute ground_plan
-        {check_type = fn _ => ()}
-      val laws = identity_laws @ ground_laws
+      val laws = identity_laws
       val environment = E.prepare graph
         {scope = scope, allocated = allocated, sources = sources,
          needed = needed, roots = roots}
@@ -8308,10 +8329,45 @@ local
         | E.UnificationRefused _ => packed ()
         | E.ResolutionRefused _ => resolution_error ()
       val () = R.validate graph scope resolution
+      val projection_budget = Z3_DefinitionProjection.operand_budget
+      val large_original = List.exists (fn node =>
+        case G.unfolded_nodes graph G.RawNodes projection_budget node of
+          SOME size => size > projection_budget | NONE => false) sources
+      (* An unchanged imported residue already has an authentic original
+         spelling. Reuse it in native images rather than cloning its DAG and
+         forcing PROVE_HYP to compare two unfolded trees. This chooses syntax
+         only; every discharge still has its own checked theorem below. *)
+      val original_vector = Vector.fromList originals
+      val native_images = ref (if not large_original then
+          Redblackmap.mkDict Int.compare
+        else List.foldl (fn (row : E.definition, table) =>
+          if R.node resolution (#residue row) <> #residue row then table
+          else let
+            val (left, right) = boolSyntax.dest_eq
+              (Vector.sub (original_vector, #occurrence row))
+            val term = if #name_on_left row then right else left
+          in Redblackmap.insert (table, G.node_id (#residue row), term) end)
+          (Redblackmap.mkDict Int.compare) (E.definitions environment))
+      fun native node = if not large_original then G.representative graph node
+        else case Redblackmap.peek (!native_images, G.node_id node) of
+          SOME term => term
+        | NONE => let
+            val term = case G.view graph node of
+                G.Application (left, right) =>
+                  Term.mk_comb (native left, native right)
+              | _ => G.representative graph node
+            val () = native_images := Redblackmap.insert
+              (!native_images, G.node_id node, term)
+          in term end
+      fun native_exact node proof =
+        let val target = native node in
+          if Portable.pointer_eq (Thm.concl proof, target) then proof
+          else Thm.EQ_MP (Thm.ALPHA (Thm.concl proof) target) proof
+        end
       val substitutions = List.mapPartial (fn (variable, node) =>
         let val resolved = R.node resolution node
         in if resolved = node then NONE
-           else SOME (variable |-> G.representative graph resolved) end)
+           else SOME (variable |-> native resolved) end)
         (ListPair.zip (variables, allocated))
       val image_table = List.foldl (fn ((index, proof), table) =>
         Redblackmap.insert (table, index, proof))
@@ -8324,27 +8380,60 @@ local
           val current = R.node resolution source
           fun reflexivity () =
             let
-              val target = G.representative graph current
+              val target = native current
               val (left, right) = boolSyntax.dest_eq target
               val () = if Term.term_eq left right then () else
                 raise ERR "remove_definitions"
                   "resolved stored assignment is not reflexive"
-            in exact current (Thm.REFL left) end
+            in native_exact current (Thm.REFL left) end
         in case Redblackmap.peek (image_table, index) of
-            SOME proof => SOME (exact current proof)
+            SOME proof => SOME (native_exact current proof)
           | NONE => case Redblackmap.peek (law_table, G.node_id source) of
-              SOME proof => SOME (exact current
+              SOME proof => SOME (native_exact current
                 (Thm.INST substitutions proof))
             | NONE => if Redblackset.member (needed_ids, G.node_id source)
                 then SOME (reflexivity ()) else NONE
         end
       (* No realized-theorem elimination loop: even closed-law and packed
          images are prepared before this one traversal of the input theorem. *)
-      val hyp_thms = List.mapPartial witness
-        (ListPair.zip (List.tabulate (List.length sources, Lib.I), sources))
-      val result = Thm.INST substitutions thm
-    in List.foldl (fn (proof, result) => Drule.PROVE_HYP proof result)
-      result hyp_thms end
+      val witnessed = List.mapPartial (fn (index, (original, source)) =>
+        Option.map (fn proof => (original, source, proof))
+          (witness (index, source)))
+        (ListPair.zip (List.tabulate (List.length sources, Lib.I),
+          ListPair.zip (originals, sources)))
+      val hyp_thms = List.map #3 witnessed
+      (* Remove checked ground Sources before substitution, not by opening
+         or instantiating their discarded bodies. PROVE_HYP retains the exact
+         input Goal and every other Hyp/tag; there is still only one INST. *)
+      val discharged_thm = List.foldl
+        (fn ((_, proof), result) => Drule.PROVE_HYP proof result)
+        thm ground_laws
+      (* Small isolated components can be closed by bounded existential
+         projection, after removing the large independent definitions. This
+         keeps their irrelevant bindings out of the native input traversal.
+         Ineligible shapes use the unchanged one-shot path, never a refusal.
+         Both paths instantiate the input at most once. *)
+      val retained = HOLset.listItems (HOLset.difference
+        (Thm.hypset discharged_thm,
+         HOLset.addList (Term.empty_tmset, originals)))
+      val projection = if not large_original then NONE else
+        Z3_DefinitionProjection.prepare
+          {assignments = substitutions, definitions = List.map
+             (fn (original, source, proof) =>
+               {source = original, proof = proof,
+                free = List.map (G.representative graph)
+                  (Option.valOf (G.free_variable_nodes graph source))})
+             witnessed,
+           retained = retained, conclusion = Thm.concl discharged_thm}
+      val (substitution, proofs) = case projection of NONE =>
+          (substitutions, hyp_thms)
+        | SOME plan => (Z3_DefinitionProjection.substitutions plan,
+            Z3_DefinitionProjection.early_witnesses plan)
+      val result = Thm.INST substitution discharged_thm
+      val result = List.foldl
+        (fn (proof, result) => Drule.PROVE_HYP proof result) result proofs
+    in case projection of NONE => result
+      | SOME plan => Z3_DefinitionProjection.finish plan result end
   end
   end
 

@@ -9,6 +9,7 @@ struct
   structure S = SmtReplaySource
   structure Z = Z3_GraphProofParser
   structure Q = SmtLib_GraphProof
+  structure P = Z3_DefinitionProjection
   val limit = 10000
   fun require message yes = if yes then () else raise Fail message
   fun refuses action = (action ();false) handle Feedback.HOL_ERR _ => true
@@ -197,8 +198,158 @@ struct
     in require "direct self dependency gained an assignment"
       (refuses (fn () => ignore (remove [unused] [x] (theorem [unused])))) end
 
+  fun projection_controls () =
+    let
+      val x = ``projection_x:num`` val y = ``projection_y:num``
+      val z = ``projection_z:num`` val t = ``projection_t:num``
+      val a = ``projection_a:num`` val p = ``projection_p:bool``
+      val zero = ``0:num``
+      val big = funpow 13 (fn term => numSyntax.mk_plus (term,term)) a
+      val assignments = [x |-> big,y |-> zero,z |-> zero]
+      fun row left right proof free =
+        {source=boolSyntax.mk_eq (left,right),proof=proof,free=free}
+      val large = row x big (Thm.REFL big) [x,a]
+      val small = [row y zero (Thm.REFL zero) [y],
+        row z y (Thm.REFL zero) [z,y]]
+      val definitions = large::small
+      fun prepare assignments definitions retained conclusion = P.prepare
+        {assignments=assignments,definitions=definitions,
+         retained=retained,conclusion=conclusion}
+      val plan = case prepare assignments definitions [p] p of
+          SOME plan => plan
+        | NONE => raise Fail "small isolated component was not projected"
+      val _ = require "projection did not remove only the isolated bindings"
+        (case P.substitutions plan of [{redex,residue}] =>
+           Term.term_eq redex x andalso Term.term_eq residue big | _ => false)
+      fun input base = List.foldl (fn (d,th) =>
+        Drule.ADD_ASSUM (#source d) th) base definitions
+      fun early base = List.foldl (fn (proof,th) => Drule.PROVE_HYP proof th)
+        (Thm.INST (P.substitutions plan) (input base))
+        (P.early_witnesses plan)
+      fun check base =
+        let val result = P.finish plan (early base)
+        in require "projection changed Goal/permitted Hyp/full tags"
+          (Portable.pointer_eq (Thm.concl result,Thm.concl base) andalso
+           HOLset.equal (Thm.hypset result,Thm.hypset base) andalso
+           Tag.dest_tag (Thm.tag result) = Tag.dest_tag (Thm.tag base)) end
+      val _ = check (Thm.ASSUME p)
+      val _ = check (Thm.mk_oracle_thm "projection-input-tag" ([p],p))
+      val _ = require "projection accepted an undischarged large early Hyp"
+        (refuses (fn () => ignore (P.finish plan (input (Thm.ASSUME p)))))
+      val _ = require "projection accepted an unexpected small Hyp"
+        (refuses (fn () => ignore (P.finish plan
+          (Drule.ADD_ASSUM ``projection_extra:bool`` (early (Thm.ASSUME p))))))
+      val _ = require "projection accepted an unexpected goal"
+        (refuses (fn () => ignore (P.finish plan (early boolTheory.TRUTH))))
+      val wide = funpow 8 (fn term => numSyntax.mk_plus (term,term)) a
+      val _ = require "projection exceeded its prospective local bound"
+        (not (Option.isSome (prepare [x |-> big,y |-> wide]
+          [large,row y wide (Thm.REFL wide) [y,a]] [p] p)))
+      val _ = require "projection quantified a retained variable"
+        (not (Option.isSome (prepare assignments definitions
+          [boolSyntax.mk_eq (y,zero)] p)))
+      val _ = require "projection quantified a goal variable"
+        (not (Option.isSome (prepare assignments definitions [p]
+          (boolSyntax.mk_eq (z,zero)))))
+      val binder = Term.mk_abs (``n:num``,p)
+      val _ = require "projection opened a retained binder on its miss"
+        (not (Option.isSome (prepare assignments definitions
+          [boolSyntax.mk_eq (binder,binder)] p)))
+      (* z is unsafe; removing it must also remove y through the earlier
+         z=y row, while the independent t component stays eligible. *)
+      val big_z = numSyntax.mk_plus (big,z)
+      val big_zero = numSyntax.mk_plus (big,zero)
+      val coupled = small @ [row x big_z (Thm.REFL big_zero) [x,a,z],
+        row t zero (Thm.REFL zero) [t]]
+      val coupled_plan = prepare
+        [x |-> big_zero,y |-> zero,z |-> zero,t |-> zero] coupled [p] p
+      val _ = require "projection did not propagate transitive isolation"
+        (case coupled_plan of NONE => false | SOME plan =>
+          ListPair.allEq (fn (a,b) => Term.term_eq a b)
+            (List.map #redex (P.substitutions plan),[x,y,z]))
+      fun dirty proof = require "projection accepted a nonclosed/dirty witness"
+        (refuses (fn () => ignore (prepare assignments
+          [large,row y zero proof [y],List.last small] [p] p)))
+      val _ = dirty (Drule.ADD_ASSUM p (Thm.REFL zero))
+      val _ = dirty (Thm.mk_oracle_thm "projection-witness-tag"
+        ([],boolSyntax.mk_eq (zero,zero)))
+      val _ = require "projection accepted a wrong checked witness"
+        (refuses (fn () => ignore (prepare assignments
+          [large,row y zero (Thm.REFL ``1:num``) [y],List.last small] [p] p)))
+      val deep_type = funpow 13
+        (fn ty => Type.mk_type ("fun",[ty,ty])) numSyntax.num
+      val typed = Term.mk_var ("projection_deep_type",deep_type)
+      val _ = require "projection admitted an oversized type annotation"
+        (not (Option.isSome (prepare [x |-> big,typed |-> typed]
+          [large,row typed typed (Thm.REFL typed) [typed]] [p] p)))
+    in () end
+
+  (* The discarded binder and ordinary DAG both exceed the BV unfolded
+     quota. Neither is an operand of the checked packed identity worker. *)
+  fun no_new_refusals () =
+    let
+      fun remove variables definitions =
+        let
+          val theorem = List.foldl (fn (term,proof) =>
+            Drule.ADD_ASSUM term proof) boolTheory.TRUTH definitions
+        in Z3_ProofReplay.remove_definitions
+          (HOLset.addList (Term.empty_tmset,definitions),
+           HOLset.addList (Term.empty_tmset,variables),theorem) end
+      fun closed label theorem = require label
+        (Portable.pointer_eq (Thm.concl theorem,boolSyntax.T) andalso
+         null (Thm.hyp theorem) andalso clean theorem)
+      fun shared combine depth atom = if depth=0 then atom
+        else let val child = shared combine (depth-1) atom
+             in combine (child,child) end
+      val x = ``closure_no_refusal_x:num``
+      val large = Term.mk_abs (``n:num``,
+        shared boolSyntax.mk_conj 21 ``closure_no_refusal_public:bool``)
+      val discarded = Term.mk_comb
+        (Term.mk_comb (``K:num->(num->bool)->num``,``1:num``),large)
+      fun ground yes = boolSyntax.mk_eq
+        (boolSyntax.mk_cond (yes,``0:num``,discarded),``0:num``)
+      val assignment = boolSyntax.mk_eq (x,``0:num``)
+      val _ = closed "ground EVAL opened its discarded binder"
+        (remove [] [ground boolSyntax.T])
+      val _ = closed "ground Source entered unrelated assignment resolution"
+        (remove [x] [ground boolSyntax.T,assignment])
+      val false_source = ground boolSyntax.F
+      val retained = remove [] [false_source]
+      val _ = require "unevaluated nonoriented Source gained binder admission"
+        (Portable.pointer_eq (Thm.concl retained,boolSyntax.T) andalso
+         HOLset.equal (Thm.hypset retained,
+           HOLset.addList (Term.empty_tmset,[false_source])) andalso
+         clean retained)
+      val big = shared numSyntax.mk_plus 21 ``closure_no_refusal_a:num``
+      val word = ``closure_no_refusal_word:word4``
+      val anchor = ``closure_no_refusal_anchor:word4``
+      val bits = List.tabulate (4,fn i => Term.mk_var
+        ("closure_no_refusal_bit" ^ Int.toString i,Type.bool))
+      val vector = bitstringSyntax.mk_v2w
+        (listSyntax.mk_list (bits,Type.bool),fcpSyntax.mk_int_numeric_type 4)
+      val bit_definitions = List.tabulate (4,fn i => boolSyntax.mk_eq
+        (List.nth (bits,i),wordsSyntax.mk_word_bit
+          (numSyntax.term_of_int (3-i),word)))
+      fun packed (reverse,fresh) =
+        let
+          val definitions = [boolSyntax.mk_eq (x,big),
+            boolSyntax.mk_eq (word,anchor),boolSyntax.mk_eq (word,vector)] @
+            (if fresh then [] else bit_definitions)
+          val definitions = if reverse then List.map
+            (fn term => let val (left,right) = boolSyntax.dest_eq term
+              in boolSyntax.mk_eq (right,left) end) definitions
+            else definitions
+        in closed "packed SCC bounded an unrelated ordinary acyclic DAG"
+          (remove (x::word::bits) definitions) end
+    in List.app packed [(false,false),(true,false),
+         (false,true),(true,true)] end
+
   fun run () =
-    (tprint "Complete ground definitions retain checked legacy families";
+    (tprint "Bounded projection preserves isolation, Hyp, tags and fallback";
+     projection_controls ();OK ();
+     tprint "Definition closure preserves discarded binders and acyclic DAGs";
+     no_new_refusals ();OK ();
+     tprint "Complete ground definitions retain checked legacy families";
      ground ();OK ();
      tprint "Reflexive, acyclic and ground actual Hyp compose with beta";
      combined false false ``(\x:bool. x) closure_p`` ``closure_p:bool``;

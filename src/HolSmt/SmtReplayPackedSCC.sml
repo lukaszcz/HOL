@@ -71,7 +71,7 @@ struct
   fun packed_operands (row : E.definition,anchor : E.definition,bit_rows) =
     List.map (fn row : E.definition => #stored row) (row :: anchor :: bit_rows)
   (* Fresh pairs may be generated obligations rather than original rows.
-     Only matching original bit definitions enter original type admission. *)
+     Only matching original bit definitions enter original operand admission. *)
   fun original_bit_rows by_name pairs =
     List.concat (List.map (fn (bit,residue) => List.filter
       (fn row : E.definition => #residue row = residue)
@@ -113,9 +113,6 @@ struct
           SOME count => if count <= limit then count else raise ERR
             "resolve" "packed witness exceeds original graph limit"
         | NONE => raise ERR "resolve" "unknown packed witness size"
-      (* Only actual needed definitions enter the word worker. Historical
-         Sources and preserved original beta/eta syntax are not operands. *)
-      val _ = List.app (fn node => ignore (size node)) needed
       val env = E.prepare graph {scope = scope,allocated = allocated,
         sources = sources,needed = needed,roots = roots @ preserved}
       val rows = E.definitions env
@@ -233,6 +230,13 @@ struct
           else (Redblackset.add (seen,G.node_id (#stored row)),family :: kept))
         (set (),[]) discovered
       val families = List.rev families
+      (* Only selected packed equations, anchors and bit definitions are
+         witness operands. Unrelated needed acyclic rows keep their own
+         admission contract. Admit before type callbacks or word proof. *)
+      val operands = List.concat (List.map
+        (fn (row,anchor,bit_rows,_) =>
+          packed_operands (row,anchor,bit_rows)) families)
+      val _ = List.app (fn node => ignore (size node)) operands
       val packed_ids = Redblackset.addList (set (),List.map
         (fn (row : E.definition,_,_,_) => G.node_id (#stored row)) families)
       val ordinary = List.filter (fn row : E.definition =>
@@ -269,9 +273,7 @@ struct
          raw (Thm.concl wordsTheory.word_bit);
          List.app schema families;
          List.app (check_type o G.type_of graph)
-           (G.reachable graph (List.concat (List.map
-             (fn (row,anchor,bit_rows,_) =>
-               packed_operands (row,anchor,bit_rows)) families))))
+           (G.reachable graph operands))
       fun run () = case unify_bounded graph scope allocated limit
           (List.map (fn row : E.definition =>
             (#variable row,#residue row)) ordinary) of
@@ -364,8 +366,6 @@ struct
           SOME count => if count <= limit then count else raise ERR
             "resolve" "packed witness exceeds original graph limit"
         | NONE => raise ERR "resolve" "unknown packed witness size"
-      (* Match the conservative worker's actual-needed operand boundary. *)
-      val _ = List.app (fn node => ignore (size node)) needed
       val env = E.prepare graph {scope = scope,allocated = allocated,
         sources = sources,needed = needed,roots = roots @ preserved}
       val rows = E.definitions env
@@ -537,6 +537,12 @@ struct
       val families = List.filter
         (fn (row : E.definition,_,_,_) => not (has anchors (#stored row)))
         (List.rev families)
+      (* Match the conservative worker's selected original operand boundary.
+         Fresh obligations have their separate same-limit admission below. *)
+      val operands = List.concat (List.map
+        (fn (row,anchor,pairs,_) => packed_operands
+          (row,anchor,original_bit_rows by_name pairs)) families)
+      val _ = List.app (fn node => ignore (size node)) operands
       val packed_ids = Redblackset.addList (set (),List.map
         (fn (row : E.definition,_,_,_) => G.node_id (#stored row)) families)
       val obligation_pairs = if not fresh then [] else
@@ -590,9 +596,7 @@ struct
          raw (Thm.concl wordsTheory.word_bit);
          List.app schema families;
          List.app (check_type o G.type_of graph)
-           (G.reachable graph (List.concat (List.map
-             (fn (row,anchor,pairs,_) => packed_operands
-               (row,anchor,original_bit_rows by_name pairs)) families))))
+           (G.reachable graph operands))
       fun run () = case unify_bounded graph scope allocated limit
           (List.map (fn row : E.definition =>
             (#variable row,#residue row)) ordinary @ obligation_pairs) of
