@@ -33275,12 +33275,14 @@ let
   val step = ``review_step:bool -> bool``
   fun spine 0 = ``review_free:bool``
     | spine n = Term.mk_comb (step,spine (n-1))
-  fun work_context 0 = context
-    | work_context n = context @
-        [Term.mk_comb (``review_Q:bool -> bool``,spine n)]
-  fun work n =
+  fun numeric_spine 0 = ``review_free:num``
+    | numeric_spine n = Term.mk_comb (``SUC``,numeric_spine (n-1))
+  fun work_context spine predicate 0 = context
+    | work_context spine predicate n = context @
+        [Term.mk_comb (predicate,spine n)]
+  fun work spine predicate n =
     let
-      val facts = work_context n
+      val facts = work_context spine predicate n
       val expected = legacy facts
       val calls = ref (0:IntInf.int)
       val visits = ref (0:IntInf.int)
@@ -33289,9 +33291,10 @@ let
       val actual = prove admit facts
       val _ = compare facts expected actual
     in (!calls,!visits) end
-  val (base_calls,base_visits) = work 0
-  val (small_calls,small_visits) = work 512
-  val (large_calls,large_visits) = work 1024
+  val free_work = work spine ``review_Q:bool -> bool``
+  val (base_calls,base_visits) = free_work 0
+  val (small_calls,small_visits) = free_work 512
+  val (large_calls,large_visits) = free_work 1024
   fun linear (baseline:IntInf.int) small large =
     let val first = small-baseline
         val second = large-baseline
@@ -33304,6 +33307,39 @@ let
       [base_calls,small_calls,large_calls]) ^ " visits=" ^
     String.concatWith "/" (List.map IntInf.toString
       [base_visits,small_visits,large_visits]) ^ "\n")
+  (* Standard-namespace heads must not rescan each growing suffix either.
+     Use successive differences too, so lazy fixed pattern compilation
+     cannot conceal a quadratic cost behind its constant startup work. *)
+  val numeric_work = work numeric_spine ``review_Q:num -> bool``
+  val (n0,v0) = numeric_work 0
+  val (n256,v256) = numeric_work 256
+  val (n512,v512) = numeric_work 512
+  val (n1024,v1024) = numeric_work 1024
+  val _ = assert (linear n0 n512 n1024 andalso linear v0 v512 v1024
+    andalso n1024-n512 <= 3*(n512-n256)
+    andalso v1024-v512 <= 3*(v512-v256),
+    "SUC bag context exceeded local 2x-growth Work allowance")
+  val _ = print ("BAG_SUC_WORK calls=" ^
+    String.concatWith "/" (List.map IntInf.toString
+      [n0,n256,n512,n1024]) ^ " visits=" ^
+    String.concatWith "/" (List.map IntInf.toString
+      [v0,v256,v512,v1024]) ^ "\n")
+  fun demanded name laws term =
+    let val goal = boolSyntax.mk_conj (target,term)
+        val facts = context @ laws
+        val expected = legacy_at facts goal
+        val actual = prove_at (checker (fn () => ())) facts goal
+    in compare_at goal facts expected actual;
+       print ("BAG_SUC_CONTROL " ^ name ^ " PASS\n") end
+  val _ = demanded "ground reduction" [``(review_Q:num -> bool) 2``]
+    ``(review_Q:num -> bool) (SUC (SUC 0))``
+  val _ = demanded "exported symbolic rewrite"
+    [``!n. SUC (SUC n) = review_s n``,
+     ``(review_Q:num -> bool) (review_s (review_free:num))``]
+    ``(review_Q:num -> bool) (SUC (SUC review_free))``
+  val _ = demanded "standard rewrite below SUC"
+    [``(review_Q:num -> bool) (SUC review_free)``]
+    ``(review_Q:num -> bool) (SUC (PRE (SUC review_free)))``
 in () end
 
 fun bag_named_obligations () =

@@ -696,6 +696,65 @@ struct
         in Term.is_abs head orelse
           (Term.is_const head andalso Lib.mem
             (#Thy (Term.dest_thy_const head)) standard_rewrite_theories) end
+      (* A symbolic SUC spine is a REDUCE miss, but its namespace alone
+         cannot certify that: std_ss also owns source rewrites. Compile a
+         conservative net from those actual sources, not a list of allowed
+         SUC operands. Failure to admit a source leaves the filter disabled;
+         it must not remove an otherwise supported ordinary attempt. *)
+      val suc_patterns = ref NONE
+      fun standard_suc_patterns () =
+        case !suc_patterns of SOME patterns => patterns
+        | NONE =>
+          let
+            val complete = ref true
+            fun canonical source =
+              if fitting source then
+                let val (law,control) =
+                      BoundedRewrites.dest_tagged_rewrite source
+                    val rules = Cond_rewr.mk_cond_rewrs (law,control)
+                    fun pattern (rule,_) =
+                      if fitting rule then
+                        let val rule = Drule.SPEC_ALL rule
+                        in if fitting rule then
+                          let val left = boolSyntax.lhs
+                                (#2 (boolSyntax.strip_imp (Thm.concl rule)))
+                          in SOME (Term.free_varsl (Thm.hyp rule),left,())
+                          end
+                        else (complete := false;NONE) end
+                      else (complete := false;NONE)
+                in List.mapPartial pattern rules end
+              else (complete := false;[])
+            val patterns = List.concat (List.map canonical
+              (List.concat (List.map simpLib.frag_rewrites
+                (simpLib.ssfrags_of numLib.std_ss))))
+            val net = List.foldr (fn (entry,net) => Ho_Net.enter entry net)
+              Ho_Net.empty patterns
+            val result = if !complete then SOME net else NONE
+            val _ = suc_patterns := SOME result
+          in result end
+      (* REDUCE accepts exactly numerals and SUC chains of numerals. Keep
+         one physical cursor, not a structural term map or a growing scan.
+         A cached SUC result also describes its child, so descending as well
+         as ascending visits of an unchanged spine take constant work. *)
+      val reducible_cursor = ref NONE
+      fun reducible tm =
+        let
+          val _ = admit boolSyntax.T
+          val result = case !reducible_cursor of
+              SOME (saved,result) =>
+                if Portable.pointer_eq (saved,tm) orelse
+                    (numSyntax.is_suc saved andalso
+                     Portable.pointer_eq (Term.rand saved,tm)) then result
+                else compute tm
+            | NONE => compute tm
+          val _ = reducible_cursor := SOME (tm,result)
+        in result end
+      and compute tm = numSyntax.is_numeral tm orelse
+        (numSyntax.is_suc tm andalso reducible (Term.rand tm))
+      fun standard_suc_miss tm =
+        if not (numSyntax.is_suc tm) then false
+        else case standard_suc_patterns () of NONE => false
+          | SOME net => null (Ho_Net.lookup tm net) andalso not (reducible tm)
       fun checked_solver solver assumptions condition =
         (List.app admit assumptions;admit condition;
          solver assumptions condition)
@@ -704,7 +763,8 @@ struct
       fun ordinary_step solver stack tm =
         let
           val _ = case preflight of NONE => () | SOME _ =>
-            if ordinary_head tm then admit tm else raise Conv.UNCHANGED
+            if ordinary_head tm andalso not (standard_suc_miss tm)
+            then admit tm else raise Conv.UNCHANGED
           val result = #apply ordinary
             {solver=checked_solver solver,conv=fn _ => Conv.NO_CONV,
              context= #initial ordinary,stack=stack,
