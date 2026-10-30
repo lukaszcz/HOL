@@ -1,4 +1,4 @@
-# TASK29A layout-randomized two-stage grid (decision: INCONCLUSIVE)
+# TASK29A layout-randomized two-stage grid (INCONCLUSIVE; disposed: PASS)
 
 The full rerun predeclared in `TASK_29A_numerical_attribution_closure.md`
 ("Fail attribution: code layout"). The candidate is `6f62229c0` and the
@@ -44,3 +44,14 @@ Replay (each step takes minutes):
 
 The second command also verifies `stage1/` through the relative path and
 seals stored in `stage2/inventory.json`. Both exit 2 (inconclusive).
+
+Disposition (2026-10-30, by the policy owner; see
+`TASK_29A_numerical_attribution_closure.md`, "Attribution and
+policy-owner disposition"):
+
+    python3 -B task29a_grid.py dispose --output evidence/task29a/grid/stage2
+
+It replays both stages, then classifies the 18 open cells as 13
+unresolvable on this host and 5 attributed, with no blocking cell and no
+fail. It checks the result against `stage2/disposition.json` (written with
+`--record`) and exits 0. `dispose.log` records that run.

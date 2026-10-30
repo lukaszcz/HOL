@@ -796,24 +796,36 @@ controls and intervals crossing 1.03. Among them, `frag_named_merge/10000`
 at 1.021–1.067 is the only measurable slowdown. Four infrastructure
 interruptions were resumed without dropping or repeating a recorded cell.
 The details and the per-cell table are in
-[TASK29A](TASK_29A_numerical_attribution_closure.md#layout-randomized-two-stage-grid-2026-10-30--inconclusive-not-closure).
+[TASK29A](TASK_29A_numerical_attribution_closure.md#layout-randomized-two-stage-grid-2026-10-30--inconclusive-disposed).
+
+## TASK29A disposition (2026-10-30) — complete
+
+The policy owner confirmed the layout-randomization/second-stage method.
+They also ruled that the 13 control-limited cells are listed as
+unresolvable on this host and do not block, provided none fails. The five
+valid-control margin cells were attributed one by one and then accepted.
+`frag_named_merge/10000` is a Poly/ML heap-growth mode mix: batches that
+leave the allocation area below 600 MB cost about 10% more CPU, and the
+candidate slot reached that mode more often. The develop/develop control
+leans the same way. Within each band the candidate costs 1.2% and 2.5%
+more, below the margin. The other four cells show no bimodality, and their
+median changes are between -0.5% and +1.2%. `task29a_grid.py dispose`
+replays both stages and checks `evidence/task29a/grid/stage2/disposition.json`:
+**pass** (144 pass, 13 unresolvable, 5 attributed, 0 fail). See
+[TASK29A](TASK_29A_numerical_attribution_closure.md#attribution-and-policy-owner-disposition-2026-10-30--complete).
 
 ## Exact blockers and next step
 
-- [TASK29A](TASK_29A_numerical_attribution_closure.md): the predeclared
-  layout-randomized grid is complete and **inconclusive** (144 pass, 18
-  inconclusive, 0 fail). Closure needs policy-owner decisions:
-  - confirm the layout-randomization/second-stage amendment;
-  - decide how cells whose develop/develop noise exceeds the margin on
-    this host are treated, or provide an exclusive environment;
-  - decide on the five valid-control cells that cross the margin, in
-    particular `frag_named_merge/10000` (1.021–1.067).
+- TASK29A is **complete** by the disposition above, for Linux/aarch64
+  Poly/ML 5.9.2 on this shared host. This is not a universal or
+  independent-build claim.
 - [TASK29B](TASK_29B_allocation_counter.md): supply/review a supported cumulative
   HOL allocator instrument and measure the full increasing-rule allocation
   matrix; current snapshot fields cannot satisfy it.
 
-TASK29 is **not complete**; TASK30 and later dependent gates remain blocked.
-No TASK29 completion-log line is added. The original fragment/merge slowdown
-findings do not have full timing closure; retained-graph slope alone is closed
-locally. There is no percentage budget, deferred favorable subset or claim
+TASK29 is **not complete** while TASK29B is open; TASK30 and later
+dependent gates remain blocked.
+No TASK29 completion-log line is added. The original fragment/merge timing
+findings are closed by the TASK29A disposition, and the retained-graph slope
+is closed locally; cumulative allocation is not. There is no percentage budget, deferred favorable subset or claim
 that final legacy performance has passed.

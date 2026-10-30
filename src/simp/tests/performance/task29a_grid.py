@@ -34,8 +34,9 @@ HEADROOM = 2
 COUNTS = a.HERE / "evidence/task29a/iterations.json"
 # Earlier drivers whose runs still replay: 6f62229c0 (before canonical
 # comparison and replay --partial), 224219893 (before --layout-seed) and
-# 3ef5b380b (before --resume and the second stage) and cb71be0ce (before
-# resume across a changed driver or acceptance).
+# 3ef5b380b (before --resume and the second stage), cb71be0ce (before
+# resume across a changed driver or acceptance) and 9ee8d00bd (before
+# dispose).
 DRIVERS = [dict(bytes=12534, sha256="234da42ca599122645b9f578b1ddd37c"
                                     "6ffb70d83764d6e91e045ac4ffc4bd97"),
            dict(bytes=13917, sha256="664c632deb187a1ea9c3b59445676253"
@@ -43,7 +44,9 @@ DRIVERS = [dict(bytes=12534, sha256="234da42ca599122645b9f578b1ddd37c"
            dict(bytes=14854, sha256="ad4c81fb5b22fc8a5878bebcc5081dee"
                                     "c28a2b67d0b350b9cb34a857d13a787c"),
            dict(bytes=22914, sha256="dd16fa8da12bf1b9f9c3fe9f41037a9a"
-                                    "5f1eee263973a9ced20d0159a681c927")]
+                                    "5f1eee263973a9ced20d0159a681c927"),
+           dict(bytes=24168, sha256="75d3e9df941a47f6a742eb57d8e8543f"
+                                    "c9ad42053cf05e34e9dddfebd0387e8e")]
 # acceptance.py before --layout-seed; runs without a seed analyze the same.
 ACCEPTANCE = [dict(bytes=37287, sha256="343dfc5d009e8851f0db990bc484bdb2"
                                        "ed1dce3e85efac2416b1335854080b97")]
@@ -465,6 +468,72 @@ def replay(args):
     return status_code(decisions)
 
 
+# Policy-owner disposition of a complete two-stage grid (2026-10-30). It
+# leaves the measured decisions unchanged and classifies the cells that
+# stayed inconclusive. A cell whose B/B control is still outside the window
+# after the second stage cannot resolve the margin on the measuring host; it
+# is listed and does not block. The attributed cells were examined one by
+# one (TASK_29A, "Attribution and policy-owner disposition") and accepted.
+# A fail, a protocol failure, a retained-scaling miss or any other
+# inconclusive cell still blocks.
+CONTROL = "baseline-control outside equivalence window"
+DISPOSITION = dict(
+    schema="task29a-disposition-v1", decided="2026-10-30",
+    unresolvable="B/B control outside the window after the second stage",
+    attributed={
+        "frag_named_merge-10000":
+            "heap-growth mode mix; within-band CPU +1.2%/+2.5%",
+        "frag_merge-100": "median +1.2%; 20 pairs; no bimodality",
+        "frag_typebase-0": "median +1.2%; 20 pairs; no bimodality",
+        "frag_update-0": "median +0.6%; 90 pairs; no bimodality",
+        "frag_create-10": "CPU pass; wall median -0.5%; 20 pairs"})
+
+
+def dispose(decisions):
+    """Final TASK29A gate status of a two-stage grid's decisions."""
+    a.require("remeasured" in decisions, "disposition needs a second stage")
+    cells = {k: [] for k in ("pass", "unresolvable", "attributed",
+                             "blocking", "fail")}
+    for row in decisions["workloads"]:
+        name = "%s-%d" % (row["case"], row["size"])
+        open_ = [v for v in row["metrics"].values()
+                 if v["decision"] not in ("pass", "reported")]
+        kind = ("blocking" if not row["protocol"] else
+                "fail" if any(v["decision"] == "fail" for v in open_) else
+                "pass" if not open_ else
+                "unresolvable" if all(v["reason"] == CONTROL
+                                      for v in open_) else
+                "attributed" if name in DISPOSITION["attributed"] else
+                "blocking")
+        cells[kind].append(name)
+    a.require(sorted(cells["attributed"]) ==
+              sorted(DISPOSITION["attributed"]), "stale attribution")
+    scaling = decisions["retained_scaling"]
+    if scaling is not None and (scaling["status"] != "measured" or any(
+            r["words_per_rule"]["decision"] != "pass"
+            for r in scaling["adjacent_intervals"]
+            if r["selection"] == "candidate")):
+        cells["blocking"].append("retained_scaling")
+    status = ("fail" if cells["fail"] else
+              "blocked" if cells["blocking"] else "pass")
+    return dict(DISPOSITION, status=status, cells=cells,
+                counts={k: len(v) for k, v in cells.items()})
+
+
+def disposition(args):
+    """Replay a two-stage grid, then record or check its disposition."""
+    root = args.output.resolve()
+    replay(argparse.Namespace(output=root, partial=False))
+    result = dispose(a.load(root / "decisions.json"))
+    path = root / "disposition.json"
+    if args.record:
+        a.save(path, result)
+    a.require(result == a.load(path), "changed TASK29A disposition")
+    print("TASK29A disposition: %s %s" % (result["status"],
+                                           json.dumps(result["counts"])))
+    return {"pass": 0, "fail": 1}.get(result["status"], 2)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -500,6 +569,11 @@ def main(argv=None):
     check.add_argument("--output", type=Path, required=True)
     check.add_argument("--partial", action="store_true",
                        help="interrupted run: replay cells, no decision")
+    final = sub.add_parser("dispose")
+    final.add_argument("--output", type=Path, required=True,
+                       help="complete second stage")
+    final.add_argument("--record", action="store_true",
+                       help="write disposition.json instead of checking")
     args = parser.parse_args(argv)
     if args.action == "predeclare":
         a.require(not args.output.exists(), "refusing to overwrite counts")
@@ -513,6 +587,8 @@ def main(argv=None):
     if args.action == "extend":
         a.require(args.authorize_measurements, "exclusive window required")
         return extend(args)
+    if args.action == "dispose":
+        return disposition(args)
     return replay(args)
 
 

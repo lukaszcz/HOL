@@ -201,5 +201,51 @@ class TwoStage(unittest.TestCase):
                         grid.replay(args)
 
 
+class Disposition(unittest.TestCase):
+    def decisions(self, **open_cells):
+        def row(name, cpu="pass", wall="pass", reason="paired bootstrap"):
+            case, size = name.rsplit("-", 1)
+            metrics = dict(cpu=dict(decision=cpu, reason=reason),
+                           wall=dict(decision=wall, reason=reason),
+                           gc=dict(decision="reported"))
+            return dict(case=case, size=int(size), protocol=True,
+                        metrics=metrics)
+        rows = [row(n, **open_cells.get(n, dict(cpu="inconclusive",
+                                                wall="inconclusive")))
+                for n in grid.DISPOSITION["attributed"]]
+        rows.append(row("frag_record-0", **open_cells.get("frag_record-0",
+                                                          {})))
+        rows.append(row("frag_ac-0", "inconclusive", "inconclusive",
+                        grid.CONTROL))
+        return dict(workloads=rows, remeasured={}, retained_scaling=dict(
+            status="measured", adjacent_intervals=[dict(
+                selection="candidate",
+                words_per_rule=dict(decision="pass"))]))
+
+    def test_listed_cells_do_not_block(self):
+        result = grid.dispose(self.decisions())
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["cells"]["unresolvable"], ["frag_ac-0"])
+        self.assertEqual(result["counts"]["attributed"], 5)
+
+    def test_fail_unlisted_and_scaling_still_block(self):
+        fail = self.decisions(**{"frag_record-0": dict(cpu="fail")})
+        self.assertEqual(grid.dispose(fail)["status"], "fail")
+        other = self.decisions(**{"frag_record-0": dict(
+            wall="inconclusive")})
+        self.assertEqual(grid.dispose(other)["cells"]["blocking"],
+                         ["frag_record-0"])
+        scaling = self.decisions()
+        scaling["retained_scaling"]["status"] = "blocked"
+        self.assertEqual(grid.dispose(scaling)["status"], "blocked")
+
+    def test_attribution_must_match_open_cells(self):
+        stale = self.decisions(**{"frag_merge-100": {}})
+        with self.assertRaisesRegex(ValueError, "stale attribution"):
+            grid.dispose(stale)
+        with self.assertRaisesRegex(ValueError, "second stage"):
+            grid.dispose({"workloads": []})
+
+
 if __name__ == "__main__":
     unittest.main()

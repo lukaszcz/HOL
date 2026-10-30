@@ -1,5 +1,9 @@
 # TASK29A — close the isolated fragment/compiler numerical gate
 
+**Outcome (2026-10-30): complete by policy-owner disposition.** See
+"Attribution and policy-owner disposition" near the end. The earlier
+sections are kept as recorded.
+
 ## Context and dependency
 
 Bounded follow-up to TASK29, after TASK28. TASK29 is **blocked**, not landed
@@ -373,7 +377,7 @@ use `--resume` only after an infrastructure failure. The final decision
 is the second stage's `decisions.json`, whatever it shows. Results are
 added below when the run completes.
 
-## Layout-randomized two-stage grid (2026-10-30) — INCONCLUSIVE, not closure
+## Layout-randomized two-stage grid (2026-10-30) — INCONCLUSIVE, disposed
 
 The predeclared rerun is complete (`evidence/task29a/grid/`, with a
 README). It ran from 2026-10-26 17:14 to 2026-10-30 09:42 UTC. Infrastructure
@@ -445,7 +449,8 @@ randomization. `frag_named_rules/1` and `/10` pass in stage 1, and
 1.094–1.110) is now 0.965–1.021, inconclusive only because its control is
 too wide. This matches the layout attribution above.
 
-**Status.** TASK29A is **not complete**. The predeclared measurement is
+**Status when recorded.** TASK29A was **not complete**; the disposition
+below closes it. The predeclared measurement is
 finished and its decision is final for this candidate and method. Closing
 the gate now needs a decision from the policy owner that measurement alone
 cannot supply:
@@ -459,9 +464,82 @@ cannot supply:
    cross the margin. Another is source attribution of a possible 2–7%
    cost in named merges at size 10000.
 
-## Work and acceptance
+## Attribution and policy-owner disposition (2026-10-30) — COMPLETE
+
+The policy owner answered the three questions above on 2026-10-30:
+
+1. The layout-randomization/second-stage amendment is **confirmed** as the
+   TASK29A measurement method.
+2. **Control-limited cells do not block.** A cell whose own develop/develop
+   interval is still outside the window after the second stage is listed as
+   unresolvable on the measuring host, with its intervals, as long as it
+   has no fail. This applies to 13 cells.
+3. The five valid-control margin cells were **attributed first, then
+   accepted** as attributed. The attribution is below.
+
+The executed source is identical on both sides: production `simpLib.sml`
+is byte-identical between baseline `cccaa27d7` and candidate `6f62229c0`.
+`named_merge_ss` and `merge_ss` live there. All figures come from the
+archived process records (`stage2/frag_named_merge-10000.json.xz` and the
+other cells' archives).
+
+- **`frag_named_merge/10000`** (1.021–1.067 at 120 pairs). Each timed
+  batch starts from a collected 23 MB heap, and Poly/ML grows the
+  allocation area during the batch. User time steps with that growth:
+  batches whose area stays below 600 MB run at about 38 µs/op of user
+  time with many partial collections. Batches that reach 600 MB or more
+  run at about 29 µs/op, with system time rising with the area. Matching
+  batches by band (median CPU µs/op, batches):
+
+  | Band | Experiment | Baseline slot | Candidate slot | Ratio |
+  |---|---|---|---|---|
+  | < 600 MB | develop/candidate | 40.67 (147) | 41.15 (221) | 1.012 |
+  | ≥ 600 MB | develop/candidate | 36.84 (453) | 37.78 (379) | 1.025 |
+  | < 600 MB | develop/develop | 40.24 (138) | 40.40 (194) | 1.004 |
+  | ≥ 600 MB | develop/develop | 37.61 (462) | 37.78 (406) | 1.004 |
+
+  Most of the cell's ratio is the band mix: 37% of candidate batches stay
+  below 600 MB, against 25% of develop batches in the same pairs. At
+  process level, 60 of 120 candidate processes are in the slow mode
+  against 38 of 120 (Fisher p = 0.006). The B/B control leans the same
+  way with develop in both slots: 32% against 23% of batches, and 54
+  against 41 processes (p = 0.11). The mode is a runtime heap-growth
+  outcome and is not fixed by the layout padding: 36 of the 85 develop
+  padding counts that occur more than once produce both modes. The
+  remaining within-band difference (1–2.5%) is below the 3% margin. The
+  merge code is unchanged, so no ordinary-path source change explains
+  it.
+- **`frag_merge/100`, `frag_typebase/0`, `frag_update/0`,
+  `frag_create/10`.** There is no bimodality, and the final allocation area
+  does not track CPU (|Spearman| ≤ 0.3). Median per-process CPU changes by
+  +1.2%, +1.2%, +0.6% and −0.5%. The intervals cross 1.03 only through
+  sampling noise; three of these cells had 20 pairs.
+
+`task29a_grid.py dispose` implements the disposition. It replays the
+two-stage grid, then classifies each final cell: pass; unresolvable (all
+open metrics are inconclusive only because of the B/B control);
+attributed (an explicit list of five cells with reasons, checked against
+the open cells); fail; or blocking. A fail, a protocol failure, a
+retained-scaling miss, or any other inconclusive cell still blocks.
+`evidence/task29a/grid/stage2/disposition.json` records the result, and
+`dispose.log` shows it was replayed:
+
+    python3 -B task29a_grid.py dispose --output evidence/task29a/grid/stage2
+
+**TASK29A gate: PASS by policy-owner disposition.** The tally is 144 pass,
+0 fail, 13 unresolvable on this host and 5 attributed, with the retained
+slope passing. This closes the isolated fragment/compiler timing gate
+for Linux/aarch64 Poly/ML 5.9.2 on this shared host. It is not a
+universal or independent-build claim. It supersedes the acceptance text
+below wherever that text asks every cell to pass with admissible controls
+or asks for an exclusive host. TASK29B's cumulative-allocation
+prerequisite remains separate and open, so TASK29 stays blocked on it.
 
 ## Work and acceptance
+
+Amended on 2026-10-30 by the policy owner: see "Attribution and
+policy-owner disposition" above. The original text follows unchanged.
+
 
 - Diagnose all failed and inconclusive cells, including the no-rule constant
   cases. Keep all original observations. Do not select favorable repetitions,

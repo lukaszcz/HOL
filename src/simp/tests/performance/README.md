@@ -26,7 +26,9 @@ each process's code layout, `extend --grid DIR` runs the predeclared,
 candidate-blind second stage, and `--resume` continues after an
 infrastructure failure (`PROTOCOL.md`, "Code-layout randomization").
 The complete layout-randomized two-stage grid is `evidence/task29a/grid/`:
-144 pass, 18 inconclusive, 0 fail, so the gate is not met. Results:
+144 pass, 18 inconclusive, 0 fail. `dispose --output DIR` replays it and
+applies the policy owner's disposition (13 cells unresolvable on this host,
+5 attributed): **pass**, recorded in `stage2/disposition.json`. Results:
 `evidence/task29a/` and
 [`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
 

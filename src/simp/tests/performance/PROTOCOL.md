@@ -243,6 +243,19 @@ like a slowdown or speedup at a fixed layout (`evidence/task29a/attribution/`).
   infrastructure failure (for example a full disk), with identical settings.
   Recorded cells are replayed and kept; an unrecorded cell is measured
   again from scratch.
+- **Disposition** (`task29a_grid.py dispose --output STAGE2`, decided by
+  the policy owner on 2026-10-30). It replays both stages and leaves every
+  measured decision unchanged. It then classifies each final cell:
+  - pass;
+  - *unresolvable*: every open metric is inconclusive only because its
+    B/B control is still outside the window after the second stage;
+  - *attributed*: one of an explicit list of cells, each with a recorded
+    reason, which must match the open cells exactly;
+  - blocking or fail.
+
+  A fail, a protocol failure, a retained-scaling miss or any other
+  inconclusive cell blocks. `--record` writes `disposition.json`, and
+  later runs check it.
 
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived
