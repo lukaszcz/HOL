@@ -9664,9 +9664,7 @@ local
           val _ = if target_dag <= 256 then visit target else ()
           val variables = List.rev (!variables)
           fun private_marker variable =
-            let val (name, _) = Term.dest_var variable in
-              String.isPrefix "@fp." name
-            end handle Feedback.HOL_ERR _ => false
+            CPC_ProofParser.is_cpc_fp_private_marker variable
         in
           if target_dag > 256 orelse List.null variables orelse
              List.exists private_marker variables then
@@ -9686,11 +9684,12 @@ local
         prover () handle SmtFpGraph.Declined _ => continuation ()
           | Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
+            (* A different checked bridge may admit the same source without
+               the failed circuit expansion. It supplies its own proof, not
+               a reusable result from this gate. Preserve the FIRST gate if
+               no alternative succeeds. Interrupt/timeouts still propagate. *)
             (continuation ()
-             handle Feedback.HOL_ERR fallback_error =>
-               if SmtResource.is_resource_gate fallback_error then
-                 raise Feedback.HOL_ERR fallback_error
-               else raise Feedback.HOL_ERR holerr)
+             handle Feedback.HOL_ERR _ => raise Feedback.HOL_ERR holerr)
           else continuation ()
       fun replay_seq () =
         let
@@ -9749,7 +9748,7 @@ local
                 val _ = seen := HOLset.add (!seen, term)
               in
                 if Term.is_var term then
-                  String.isPrefix "@fp." (#1 (Term.dest_var term))
+                  CPC_ProofParser.is_cpc_fp_private_marker term
                 else List.exists visit (SmtResource.term_children term)
               end
         in visit root end
@@ -20217,8 +20216,10 @@ local
       fun prove_hyp hyp =
         profile "CPC(remove_extra_hyps:canonical_assumption)"
           prove_canonical_hyp hyp
-        handle Feedback.HOL_ERR _ =>
-          profile "CPC(remove_extra_hyps:fp_special_values)"
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error
+          else profile "CPC(remove_extra_hyps:fp_special_values)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
@@ -20232,8 +20233,10 @@ local
                 smtfloatTheory.smtfp_pinf_bits,
                 (* cvc5 expands negative infinity to its FP bit triple. *)
                 smtfloatTheory.smtfp_ninf_bits])
-        handle Feedback.HOL_ERR _ =>
-          profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error
+          else profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
@@ -20243,20 +20246,27 @@ local
                 (* cvc5 pushes real negation through encoded ceiling and
                    exposes the equivalent negated floor. *)
                 intrealTheory.INT_CEILING_NEG])
-        handle Feedback.HOL_ERR _ =>
-          profile "CPC(remove_extra_hyps:datatype)"
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error
+          else profile "CPC(remove_extra_hyps:datatype)"
             SmtDatatypeProve.datatype_consequence_prove
             (boolSyntax.mk_neg g :: asl, hyp)
-        handle Feedback.HOL_ERR _ =>
-          if Library.contains_conditional hyp then
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error
+          else if Library.contains_conditional hyp then
             profile "CPC(remove_extra_hyps:conditional_arith)"
               prove_from_context hyp
           else raise ERR "remove_extra_hyps"
             "extra hypothesis is not a conditional arithmetic consequence"
       fun remove_hyp (hyp, result) =
-        Drule.PROVE_HYP (prove_hyp hyp) result
+        Timeout.apply SmtResource.max_hypothesis_entailment_time
+          (fn () => Drule.PROVE_HYP (prove_hyp hyp) result) ()
         handle Feedback.HOL_ERR holerr =>
-          raise ERR "remove_extra_hyps"
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else raise ERR "remove_extra_hyps"
             ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
              "bridges; hypothesis=" ^ Library.term_to_string hyp ^
              "; attempted=[canonical assumption, FP special values, " ^
@@ -20873,7 +20883,15 @@ in
             raise ERR "instantiate_cpc_fp_private_markers"
               (kind ^ " witness has the wrong type")
         in {redex = marker, residue = replacement} end
-    in List.map witness bindings end
+      (* The parser records outer components before their older operands.
+         Normalize that finite assignment DAG before the one input INST:
+         simultaneous substitution alone leaves an inner marker in an outer
+         witness. These are witness recipes, not instantiated input proofs. *)
+      fun normalize (binding, substitutions) =
+        let val {redex,residue} = witness binding
+        in {redex=redex,residue=Term.subst substitutions residue} ::
+           substitutions end
+    in List.foldr normalize [] bindings end
 
   fun instantiate_cpc_fp_private_bindings bindings theorem =
     let val substitutions = cpc_fp_private_substitutions bindings in
@@ -20892,16 +20910,35 @@ in
      finite one-to-one assignments of the remaining components to those
      operands, accepting only an assignment for which every deferred bridge
      has an independent kernel proof.  No TRUST proposition is assumed. *)
+  fun validate_cpc_fp_private_sources allowed =
+    let
+      fun source_has_marker term =
+        let
+          val found = ref false
+          val scan = SmtResource.bounded_structure_with_inspector
+            (fn node => if CPC_ProofParser.is_cpc_fp_private_marker node
+              then found := true else ())
+            SmtResource.max_bitblast_term_nodes term
+          val _ = #complete scan orelse
+            raise ERR "instantiate_cpc_fp_unbound_markers"
+              "private FP marker scan exceeded the DAG resource limit"
+        in !found end
+    in
+      if List.exists source_has_marker (HOLset.listItems allowed) then
+        raise ERR "instantiate_cpc_fp_unbound_markers"
+          "private FP component occurs in the original proof context"
+      else ()
+    end
+
   fun instantiate_cpc_fp_unbound_markers state allowed theorem =
     let
       val kinds =
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND",
          "@fp.ZERO", "@fp.NAN", "@fp.INF"]
       fun marker_kind term =
-        let val (name, _) = Term.dest_var term in
-          List.find (fn kind =>
-            String.isPrefix (kind ^ "#unbound") name) kinds
-        end handle Feedback.HOL_ERR _ => NONE
+        Option.map #2 (List.find (fn (marker, _) =>
+          Term.aconv marker term)
+          (CPC_ProofParser.cpc_fp_private_unbound_markers ()))
       fun unique terms = List.rev (List.foldl
         (fn (term, kept) =>
           if List.exists (Term.aconv term) kept then kept
@@ -20921,10 +20958,6 @@ in
         in !found end
       val extra = HOLset.listItems
         (HOLset.difference (Thm.hypset theorem, allowed))
-      val _ = List.all (List.null o markers)
-          (HOLset.listItems allowed) orelse
-        raise ERR "instantiate_cpc_fp_unbound_markers"
-          "private FP component occurs in the original proof context"
       val all_markers = unique
         (List.map #1 (List.concat (List.map markers extra)))
       fun classified_source term =
@@ -20969,9 +21002,16 @@ in
               SOME (#source first)
             else raise ERR "instantiate_cpc_fp_unbound_markers"
               "inconsistent private FP classification anchors"
-      fun assignments kind group =
+      fun assignment_budget () =
+        raise ERR "instantiate_cpc_fp_unbound_markers"
+          "private FP witness search exceeds fixed assignment budget"
+      fun assignments limit kind group =
         let
-          fun choose [] _ chosen = [List.rev chosen]
+          val count = ref 0
+          fun choose [] _ chosen =
+                (count := !count + 1;
+                 if !count > limit then assignment_budget ()
+                 else [List.rev chosen])
             | choose (marker :: remaining) used chosen =
                 let
                   val available =
@@ -20992,14 +21032,12 @@ in
       fun combine [] = [[]]
         | combine ((kind, group) :: remaining) =
             let val tails = combine remaining in
-              List.concat (List.map (fn bindings =>
-                List.map (fn tail => bindings @ tail) tails)
-                (assignments kind group))
+              if null tails then [] else
+                List.concat (List.map (fn bindings =>
+                  List.map (fn tail => bindings @ tail) tails)
+                  (assignments (4096 div length tails) kind group))
             end
       val candidates = combine groups
-      val _ = List.length candidates <= 4096 orelse
-        raise ERR "instantiate_cpc_fp_unbound_markers"
-          "private FP witness search exceeds fixed assignment budget"
       fun fp_bridge hypothesis =
         case Lib.total boolSyntax.dest_eq hypothesis of
           SOME (left, right) =>
@@ -21049,6 +21087,7 @@ in
           (Feedback.HOL_MESG ("CPC private FP " ^ message);
            TextIO.flushOut TextIO.stdOut)
         else ()
+      val primary_gate = ref NONE
       fun valid bindings =
         let
           val substitutions = cpc_fp_private_substitutions bindings
@@ -21058,24 +21097,32 @@ in
                 ("bridge cost=" ^
                  Int.toString (fp_operation_cost hypothesis) ^ " begin")
               val instance = Term.subst substitutions hypothesis
-              val proof = replay_trust true state [] [instance]
+              val proof = Timeout.apply
+                SmtResource.max_hypothesis_entailment_time
+                (fn () => replay_trust true state [] [instance]) ()
               val _ = trace_private "bridge proved"
             in
               Term.aconv (Thm.concl proof) instance andalso
               HOLset.isSubset (Thm.hypset proof, allowed)
             end
         in List.all check bridges end
-        (* A resource gate is inconclusive for this candidate, just as a
-           failed checked proof is.  Other finite assignments may still
-           admit a checked proof; none is accepted without one. *)
+        (* An inconclusive assignment publishes no proof. Another finite
+           assignment still needs every bridge independently checked. Keep
+           the first resource diagnostic if the whole search is unsuccessful;
+           never catch an interrupt or timeout as an ordinary search miss. *)
         handle Feedback.HOL_ERR holerr =>
-          (trace_private ("bridge failed: " ^
+          (if SmtResource.is_resource_gate holerr andalso
+              not (Option.isSome (!primary_gate)) then
+             primary_gate := SOME holerr else ();
+           trace_private ("bridge failed: " ^
              Feedback.message_of holerr); false)
              | HolSatLib.SAT_cex _ =>
           (trace_private "bridge counterexample"; false)
       val candidate_index = ref 0
-      fun find [] = raise ERR "instantiate_cpc_fp_unbound_markers"
-          "no checked assignment discharges private FP bridges"
+      fun find [] = (case !primary_gate of
+            SOME error => raise Feedback.HOL_ERR error
+          | NONE => raise ERR "instantiate_cpc_fp_unbound_markers"
+              "no checked assignment discharges private FP bridges")
         | find (candidate :: remaining) =
             (candidate_index := !candidate_index + 1;
              trace_private ("candidate " ^
@@ -21186,11 +21233,18 @@ in
                         current)
                     theorem dependencies
                 end
-              val proof = Lib.tryfind (fn cached => close (#thm cached))
-                candidates
+              fun attempt [] = raise ERR "discharge_later_checked_steps"
+                    "no independent cached deferred proof"
+                | attempt (cached :: rest) = close (#thm cached)
+                    handle Feedback.HOL_ERR error =>
+                      if SmtResource.is_resource_gate error then
+                        raise Feedback.HOL_ERR error
+                      else attempt rest
+              val proof = attempt candidates
               val _ = dependency_memo := (target, proof) :: !dependency_memo
             in proof end
-      fun discharge (hypothesis, result) =
+      fun discharge (hypothesis, result) = Timeout.apply
+        SmtResource.max_hypothesis_entailment_time (fn () =>
         let
           val _ = checked_count := !checked_count + 1
           val ordinal = Int.toString (!checked_count)
@@ -21253,7 +21307,7 @@ in
             else checked_then_generalized ()
           val discharged = prove_exact_hyp proof result
           val _ = trace_checked ("done=" ^ ordinal)
-        in discharged end
+        in discharged end) ()
         handle Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
@@ -21292,6 +21346,10 @@ in
         raise ERR "check_proof" "final CPC conclusion is not F"
       val allowed = HOLset.addList (Term.empty_tmset,
         boolSyntax.mk_neg g :: asl)
+      (* Exclude allocated markers from original Sources before either
+         kind of private abbreviation is instantiated. Explicit operands
+         close first, including those used by an unbound component bridge. *)
+      val _ = validate_cpc_fp_private_sources allowed
       val thm = profile "CPC(check:fp_private_abbreviations)"
         instantiate_cpc_fp_private_markers thm
       val _ = trace_check "private markers instantiated"
@@ -21316,8 +21374,9 @@ in
       thm
     end
 
-  fun check_proof_with_definitions definitions args =
-    profile "CPC(check_proof:total)" (check_proof_impl definitions) args
+  fun check_proof_with_definitions definitions (args as (_, _, proof)) =
+    CPC_ProofParser.with_cpc_fp_private_proof proof
+      (profile "CPC(check_proof:total)" (check_proof_impl definitions)) args
 
   fun check_proof args = check_proof_with_definitions [] args
 
@@ -22074,20 +22133,36 @@ in
   fun replay_trust_for_test target =
     replay_trust true (initial_state [] []) [] [target]
 
-  fun discharge_private_fp_for_test theorem =
+  fun discharge_private_fp_with_context_for_test hypotheses theorem =
     let
-      val state = initial_state [] []
-      val allowed = Term.empty_tmset
+      val state = initial_state [] hypotheses
+      val allowed = HOLset.addList (Term.empty_tmset,hypotheses)
+      val _ = validate_cpc_fp_private_sources allowed
+      val instantiated = instantiate_cpc_fp_private_markers theorem
       val instantiated = instantiate_cpc_fp_unbound_markers
-        state allowed theorem
+        state allowed instantiated
     in discharge_later_checked_steps state allowed instantiated end
 
-  fun replay_root_with_definitions_for_test definitions proof =
+  val discharge_private_fp_for_test =
+    discharge_private_fp_with_context_for_test []
+
+  fun discharge_deferred_for_test hypotheses proofs theorem =
     let
-      val (state, thm) = replay_commands (initial_state definitions [])
-        (proof_commands proof)
-      val _ = profile_cardinalities state
-    in thm end
+      val initial = initial_state [] hypotheses
+      val state = {asserted_hyps = #asserted_hyps initial,scope_hyps = [],
+        translation_definitions = [],steps = #steps initial,
+        cache_stats = #cache_stats initial,
+        thm_cache = List.foldl (fn (proof, cache) =>
+          Net.insert (Thm.concl proof, {thm = proof}) cache) Net.empty proofs}
+    in discharge_later_checked_steps state (#asserted_hyps state) theorem end
+
+  fun replay_root_with_definitions_for_test definitions proof =
+    CPC_ProofParser.with_cpc_fp_private_proof proof (fn () =>
+      let
+        val (state, thm) = replay_commands (initial_state definitions [])
+          (proof_commands proof)
+        val _ = profile_cardinalities state
+      in thm end) ()
 
   fun replay_root_for_test proof =
     replay_root_with_definitions_for_test [] proof

@@ -223,8 +223,9 @@ struct
     SmtSeqProve.with_admission_errors (fn () =>
     let
       (* Read-only, opt-in diagnostics. Audit does not validate, debit or
-         revive Work. Diagnostic failures never replace a replay result or
-         its primary exception; the ordinary path does no diagnostic IO. *)
+         revive Work. Nonterminal diagnostic failures are ignored; terminal
+         failures must not be hidden. The ordinary path does no diagnostic IO.
+         Abort cleanup below preserves the first terminal exception. *)
       val trace_work =
         OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" = SOME "1"
       fun work_checkpoint phase describe =
@@ -237,7 +238,9 @@ struct
                    Bool.toString retired ^ describe () ^ "\n");
                  TextIO.flushOut TextIO.stdErr
               end)
-           handle _ => ())
+           handle error =>
+             if SmtResource.terminal_diagnostic_exception error then
+               raise error else ())
       fun work_phase phase = work_checkpoint phase (fn () => "")
       val extended_mode = Option.isSome completion orelse
         Option.isSome direct_deferred orelse
@@ -246,12 +249,24 @@ struct
         Option.isSome native_reservation
       fun notify event = observer event
         handle error => raise ObserverFailure error
-      (* Abort notification is cleanup, not an alternative replay failure.
-         Preserve every primary exception, including opaque admission
-         carriers, until its owning consumer restores it. *)
+      (* Only ordinary HOL_ERR failures can enter another proof alternative.
+         Cleanup must not hide a terminal failure behind one of those, nor
+         replace the first terminal failure. Other exceptions (including
+         ObserverFailure and opaque admission carriers) already abort replay;
+         preserve their envelopes until the owning consumer restores them.
+         Attempt every cleanup action, even after a diagnostic fails. *)
+      fun abort_after primary [] = raise primary
+        | abort_after primary (cleanup::rest) =
+            ((case primary of Feedback.HOL_ERR _ =>
+                SmtResource.resolve_diagnostic_exception primary cleanup
+                  (fn original => raise original)
+              | _ => (ignore (Exn.capture cleanup ());raise primary))
+             handle error => abort_after error rest)
       fun forced_abort occurrence error =
-        ((notify (ForcedAbort {serial = occurrence}) handle _ => ());
-         raise error)
+        abort_after error
+          [fn () => observer (ForcedAbort {serial = occurrence})]
+      fun with_entailment_time operation =
+        Timeout.apply SmtResource.max_hypothesis_entailment_time operation ()
       fun validate_owned work =
         let val original = W.original_sources work
             val limits = W.semantic_limits work
@@ -2144,7 +2159,11 @@ struct
                         in theorem end
                       in execute () handle error =>
                         forced_abort occurrence error end
-      fun force_obligation obligation = case owned_work of NONE =>
+      (* Standalone forcing (including completion leases and bounded Source
+         cuts) has the same bound as deferred closure. When called by closure,
+         its enclosing timer stays live: forcing cannot restart its budget. *)
+      fun force_obligation obligation = with_entailment_time (fn () =>
+        case owned_work of NONE =>
           force_obligation_using raw admit obligation
         | SOME work =>
           let
@@ -2170,7 +2189,7 @@ struct
               (W.spend work 2;obligation_admissions := Redblackmap.insert
                 (!obligation_admissions,G.node_id obligation,
                  (theorem,!held))))
-          in theorem end
+          in theorem end)
       fun ordinary_completion () = let
       val _ = if List.exists (fn step => case recipe step of
           NativeObligation _ => true | _ => false) completed then
@@ -3852,7 +3871,21 @@ struct
           val dependency_ids = action (fn () => P.dependencies block edge)
           val source_occurrences = ListPair.zip (source_nodes,
             List.tabulate (List.length source_nodes,fn index => index))
+          (* Source occurrences have roles, not just proposition IDs. A
+             genuine checked local law can itself conclude the obligation;
+             using that law is independent proof, not a self-Hyp. Keep the
+             ancestor check for actual Sources/deferred ports, excluding
+             only the independently checked law slots in this inventory. *)
+          fun inventory_count entries = case owned_work of
+              NONE => length entries
+            | SOME work => action (fn () => List.foldl
+                (fn (_,count) => (W.spend work 1;count+1))
+                (W.spend work 1;0) entries)
+          val law_start = inventory_count canonical_sources +
+            inventory_count local_assumptions
+          val law_end = law_start + inventory_count (!law_nodes)
           val _ = if List.exists (fn (source,index) =>
+              not (law_start <= index andalso index < law_end) andalso
               List.exists (fn ancestor => ancestor = source) ancestors andalso
               List.exists (fn dependency => dependency = index) dependency_ids)
               source_occurrences then raise ERR "obligation"
@@ -3907,8 +3940,10 @@ struct
           raise ERR "obligation" "cyclic deferred proof dependency"
         else case Redblackmap.peek
             (!obligation_proofs,G.node_id obligation) of SOME theorem => theorem
-          | NONE =>
+          | NONE => with_entailment_time (fn () =>
               let
+                (* One budget includes completing every candidate, universal
+                   closure and forcing; no fallback receives a fresh budget. *)
                 val candidates = Option.getOpt (Redblackmap.peek
                   (checked_facts,G.node_id obligation),[])
                 fun independent step = case recipe step of
@@ -4119,7 +4154,7 @@ struct
                   raise ERR "obligation" "wrong checked obligation endpoint"
                 val _ = obligation_proofs := Redblackmap.insert
                   (!obligation_proofs,G.node_id obligation,theorem)
-              in theorem end
+              in theorem end)
       val _ = List.app (fn step => case recipe step of
           ObligationLaw {obligation,...} =>
             ignore (close_obligation [] obligation)
@@ -4219,12 +4254,12 @@ struct
       val _ = notify InvocationEnd
     in theorem end
     in run () handle error =>
-      (work_checkpoint "abort"
-         (fn () => " exception=" ^ General.exnName error);
-       Option.app W.close owned_work;
-       (observer InvocationAbort handle _ => ());
-       case error of ObserverFailure original => raise original
-       | _ => raise error) end)
+      (abort_after error
+         [fn () => work_checkpoint "abort"
+            (fn () => " exception=" ^ General.exnName error),
+          fn () => Option.app W.close owned_work,
+          fn () => observer InvocationAbort]
+       handle ObserverFailure original => raise original) end)
   fun check_contradiction_observing_impl input =
     check_contradiction_admitted_impl NONE NONE input
 

@@ -363,7 +363,9 @@ structure CVC = struct
             SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
               outfile proof_start instream
               (SmtResource.profile_phase "cvc/cpc-parse"
-                (parse (ty_dict, tm_dict))))
+                (CPC_ProofParser.with_cpc_fp_private_source_terms
+                  (Lib.snd goal :: finite_hyps @ Lib.fst goal)
+                  (parse (ty_dict, tm_dict)))))
             handle Feedback.HOL_ERR holerr =>
               (TextIO.closeIn instream;
                if SmtResource.is_resource_gate holerr then

@@ -16458,8 +16458,13 @@ fun cpc_fp_private_witness_search_success () =
 let
   val x = ``x : (3,5) smtfp``
   val y = ``y : (3,5) smtfp``
-  val first = Term.mk_var ("@fp.INF#unbound0", ``:word1``)
-  val second = Term.mk_var ("@fp.INF#unbound1", ``:word1``)
+  val _ = parse_cpc_proof_string
+    "((define @m0 () (@fp.INF (_ BitVec 1))) \
+    \(define @m1 () (@fp.INF (_ BitVec 1))) \
+    \(assume @p (= @m0 @m1)))"
+  val markers = CPC_ProofParser.cpc_fp_private_unbound_markers ()
+  val first = #1 (List.nth (markers,0))
+  val second = #1 (List.nth (markers,1))
   fun bridge source marker = boolSyntax.mk_eq
     (``smtfp_is_infinite ^source``,
      boolSyntax.mk_eq (``1w : word1``, marker))
@@ -16683,15 +16688,29 @@ if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
     \(step-pop @p2 :rule scope :premises (@p1)) \
     \(step @p3 :rule refl :args (true)) \
     \(step @p4 true :rule true_elim :premises (@p3)))"
+  val () = Profile.reset_all ()
   val (thm, stats) =
     CPC_ProofReplay.replay_root_with_cache_stats_for_test proof
+  val stale = parse_cpc_proof_string
+    "((declare-const scoped_p Bool) \
+    \(assume-push @p1 scoped_p) \
+    \(step-pop @p2 :rule scope :premises (@p1)) \
+    \(step @p3 scoped_p :rule contra))"
 in
   assert (Thm.concl thm ~~ ``T``,
     "CPC scope cache regression replayed to the wrong conclusion");
-  assert (#context_rejections stats >= 1,
-    "theorem depending on a popped CPC scope was not context-rejected");
+  (* Selected cache policy admits only hyp-free theorems. A scoped fact
+     must therefore be rejected at insertion, before a later context probe.
+     Keep the original probe check for implementations admitting open facts. *)
+  assert (#context_rejections stats >= 1 orelse
+      cpc_profile_call_count "CPC(cache:insert_not_cacheable)" >= 1,
+    "popped CPC scope was neither insertion- nor context-rejected");
   assert (#misses stats >= 1,
-    "popped-scope CPC theorem unexpectedly produced a cache hit")
+    "popped-scope CPC theorem unexpectedly produced a cache hit");
+  expect_hol_error_contains "popped CPC scope cannot bypass invalid handler"
+    "contra"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_root_with_cache_stats_for_test stale))
 end
 
 fun cpc_cache_prefers_derived_over_assumption_success () =
@@ -33360,6 +33379,8 @@ let
     ("string_named_obligations", SmtReplayStringTests.run),
     ("bag_named_obligations", bag_named_obligations),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
+    ("cpc_deferred_graph_closure", CPC_DeferredGraphTests.run),
+    ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", CPC_GraphParserTests.run),
     ("smt_resource_diagnostic_contract",

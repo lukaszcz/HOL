@@ -204,10 +204,17 @@ local
       (!cpc_list_definitions, provenance_key name))
     handle Redblackmap.NotFound => NONE
 
+  val cpc_fp_private_parse_avoid = ref ([] : Term.term list)
+  fun cpc_source_variable specification =
+    let val variable = Term.mk_var specification
+        val _ = cpc_fp_private_parse_avoid :=
+          variable :: !cpc_fp_private_parse_avoid
+    in variable end
+
   val cpc_cfg : SmtLib_Parser.parser_cfg = {
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
     mk_let = SmtLib_Parser.smtlib_mk_let,
-    mk_bound_var = Term.mk_var,
+    mk_bound_var = cpc_source_variable,
     lookup_binder_list = lookup_cpc_list,
     record_binder_block = record_cpc_binder_block,
     symbol_key = quoted_symbol_key,
@@ -276,13 +283,84 @@ local
       SOME name => name
     | NONE => SmtLib_Parser.proof_symbol_text token
 
+  (* Source terms are supplied by the caller, not recovered by probing
+     dictionary callbacks. Keep this scope separate from per-parse avoids.
+     Ordinary non-FP parsing does no source traversal: each scope collects
+     and memoizes its variables only when a private marker is requested. *)
+  val cpc_fp_private_source_avoid =
+    ref ((fn () => []) : unit -> Term.term list)
+
+  fun cpc_fp_private_source_vars terms =
+    let
+      val variables = ref Term.empty_varset
+      fun inspect term =
+        if Term.is_var term then
+          variables := HOLset.add (!variables, term)
+        else ()
+      (* These are exactly the permitted legacy proof Sources, already
+         subject to this same binder-opening policy during final marker
+         exclusion. Reuse its prospective raw admission, never open a large
+         opaque binder to obtain freshness metadata. Bound names need not
+         be reserved: kernel instantiation is capture-avoiding. *)
+      (* Same DAG metric/limit and diagnostic as legacy final Source marker
+         exclusion; do not introduce a new freshness admission policy. *)
+      fun collect term =
+        if Term.is_var term then inspect term
+        else
+          let val scan = SmtResource.bounded_structure_with_inspector
+                inspect SmtResource.max_bitblast_term_nodes term
+          in if #complete scan then () else
+            raise Feedback.mk_HOL_ERR "CPC_ProofReplay"
+              "instantiate_cpc_fp_unbound_markers"
+              "private FP marker scan exceeded the DAG resource limit"
+          end
+      val _ = List.app collect terms
+    in HOLset.listItems (!variables) end
+
+  fun with_cpc_fp_private_source_terms terms action input =
+    let
+      val saved = !cpc_fp_private_source_avoid
+      val cached = ref NONE
+      fun avoid () =
+        case !cached of
+          SOME variables => variables
+        | NONE =>
+            let
+              val variables = cpc_fp_private_source_vars terms @ saved ()
+              val _ = cached := SOME variables
+            in variables end
+      val _ = cpc_fp_private_source_avoid := avoid
+    in
+      Portable.finally
+        (fn () => cpc_fp_private_source_avoid := saved) action input
+    end
+
+  (* Declaration callers supply variables, not compound source terms. *)
+  fun cpc_fp_private_avoid_terms terms =
+    cpc_fp_private_parse_avoid :=
+      terms @ !cpc_fp_private_parse_avoid
+
+  fun fresh_cpc_fp_private_marker ty _ =
+    let
+      (* Original variables come from the permitted Source scope; parsed
+         declarations and earlier private allocations are reserved directly.
+         Do not rescan a constructed witness operand (possibly an opaque
+         binder) just to rediscover those names. *)
+      val marker = Term.variant
+        ((!cpc_fp_private_source_avoid) () @ !cpc_fp_private_parse_avoid)
+        (Term.genvar ty)
+      val _ = cpc_fp_private_parse_avoid :=
+        marker :: !cpc_fp_private_parse_avoid
+    in marker end
+
   fun add_term (dicts_ref : dicts ref) name tm =
     let
       val (tydict, tmdict) = !dicts_ref
       val tmdict = Library.extend_dict ((name,
         SmtLib_Theories.K_zero_zero tm), tmdict)
     in
-      dicts_ref := (tydict, tmdict)
+      dicts_ref := (tydict, tmdict);
+      if Term.is_var tm then cpc_fp_private_avoid_terms [tm] else ()
     end
 
   (* CPC prints rational literals as atoms (for example `-1` and `4/3`),
@@ -529,9 +607,73 @@ local
   val cpc_fp_private_bindings_ref =
     ref ([] : cpc_fp_private_binding list)
 
-  val cpc_fp_private_unbound_count = ref 0
+  val cpc_fp_private_unbound_markers_ref =
+    ref ([] : (Term.term * string) list)
 
   fun cpc_fp_private_bindings () = !cpc_fp_private_bindings_ref
+  fun cpc_fp_private_unbound_markers () =
+    !cpc_fp_private_unbound_markers_ref
+
+  (* Only syntactic FP metadata is retained here, never replay results or
+     theorem authority. The weak key must be the command spine itself, not
+     a fresh ref wrapping it: the latter could die while the proof is live.
+     Poly/ML's Weak API types weak targets as refs. At this boundary only,
+     view the heap object as an opaque ref; never dereference or assign it.
+     No registry value or closure keeps a strong pointer to the commands.
+     Empty spines are shared immediates, so use the proof record for those.
+     Like the replay's existing Poly/ML sharing operations, this needs a
+     runtime adapter on other ML systems; there is no portable Weak API. *)
+  type cpc_fp_private_proof_entry = {
+    key : unit ref option ref,
+    bindings : cpc_fp_private_binding list,
+    unbound : (Term.term * string) list
+  }
+
+  val cpc_fp_private_proofs =
+    ref ([] : cpc_fp_private_proof_entry list)
+
+  fun cpc_fp_private_proof_key (proof : proof) : unit ref =
+    if List.null (#commands proof) then RunCall.unsafeCast proof
+    else RunCall.unsafeCast (#commands proof)
+
+  fun prune_cpc_fp_private_proofs () =
+    cpc_fp_private_proofs := List.filter
+      (fn {key, ...} : cpc_fp_private_proof_entry => Option.isSome (!key))
+      (!cpc_fp_private_proofs)
+
+  fun retain_cpc_fp_private_proof proof =
+    let
+      val _ = prune_cpc_fp_private_proofs ()
+    in
+      if List.null (!cpc_fp_private_bindings_ref) andalso
+         List.null (!cpc_fp_private_unbound_markers_ref) then ()
+      else cpc_fp_private_proofs := {
+        key = Weak.weak (SOME (cpc_fp_private_proof_key proof)),
+        bindings = !cpc_fp_private_bindings_ref,
+        unbound = !cpc_fp_private_unbound_markers_ref
+      } :: !cpc_fp_private_proofs
+    end
+
+  fun with_cpc_fp_private_proof proof action input =
+    let
+      val _ = prune_cpc_fp_private_proofs ()
+      val key = cpc_fp_private_proof_key proof
+      fun matches ({key = weak, ...} : cpc_fp_private_proof_entry) =
+        case !weak of
+          SOME saved => Portable.pointer_eq (saved, key)
+        | NONE => false
+      val saved_bindings = !cpc_fp_private_bindings_ref
+      val saved_unbound = !cpc_fp_private_unbound_markers_ref
+      val (bindings, unbound) =
+        case List.find matches (!cpc_fp_private_proofs) of
+          SOME {bindings, unbound, ...} => (bindings, unbound)
+        | NONE => ([], [])
+      val _ = cpc_fp_private_bindings_ref := bindings
+      val _ = cpc_fp_private_unbound_markers_ref := unbound
+      fun restore () =
+        (cpc_fp_private_bindings_ref := saved_bindings;
+         cpc_fp_private_unbound_markers_ref := saved_unbound)
+    in Portable.finally restore action input end
 
   fun cpc_fp_private_abbreviation token sort_marker source =
     let
@@ -545,10 +687,8 @@ local
         SOME {marker, ...} => marker
       | NONE =>
           let
-            val marker = Term.mk_var
-              (token ^ "#" ^
-               Int.toString (List.length (!cpc_fp_private_bindings_ref)),
-               Term.type_of sort_marker)
+            val marker = fresh_cpc_fp_private_marker
+              (Term.type_of sort_marker) [source]
             val binding = {marker = marker, kind = token, source = source}
           in
             cpc_fp_private_bindings_ref :=
@@ -564,11 +704,13 @@ local
       case args of
         [sort_marker] =>
           let
-            val serial = !cpc_fp_private_unbound_count
-            val _ = cpc_fp_private_unbound_count := serial + 1
-          in Term.mk_var
-            (token ^ "#unbound" ^ Int.toString serial,
-             Term.type_of sort_marker) end
+            val marker = fresh_cpc_fp_private_marker
+              (Term.type_of sort_marker) []
+          in
+            cpc_fp_private_unbound_markers_ref :=
+              (marker, token) :: !cpc_fp_private_unbound_markers_ref;
+            marker
+          end
       | [sort_marker, source] =>
           cpc_fp_private_abbreviation token sort_marker source
       | _ => raise ERR "cpc_fp_private_parsefn"
@@ -1505,7 +1647,7 @@ local
                 (#1 (!dicts_ref))
               val _ = Library.expect_token ")" (get_token ())
             in
-              Term.mk_var (var_name, var_type)
+              cpc_source_variable (var_name, var_type)
             end
           else if head = "forall" orelse head = "exists" orelse
                   head = "lambda" then
@@ -2207,6 +2349,7 @@ local
       val _ = Library.expect_token ")" (get_token ())
       val tm = Term.mk_var
         (name, boolSyntax.list_mk_fun (domain, range))
+      val _ = cpc_fp_private_avoid_terms [tm]
       fun parse _ indices args =
         if not (List.null indices) orelse
            (parse_domain andalso
@@ -2914,7 +3057,7 @@ local
                   (#1 (!dicts_ref))
                 val _ = Library.expect_token ")" (get_token ())
               in
-                SOME {term = Term.mk_var (var_name, var_type),
+                SOME {term = cpc_source_variable (var_name, var_type),
                   provenance = AtomicProvenance}
               end
             else
@@ -3667,6 +3810,14 @@ in
   val cpc_re_unfold_pos_component = cpc_re_unfold_pos_component
   type cpc_fp_private_binding = cpc_fp_private_binding
   val cpc_fp_private_bindings = cpc_fp_private_bindings
+  val with_cpc_fp_private_proof = with_cpc_fp_private_proof
+  val with_cpc_fp_private_source_terms = with_cpc_fp_private_source_terms
+  fun is_cpc_fp_private_marker term =
+    List.exists (fn {marker, ...} : cpc_fp_private_binding =>
+      Term.aconv marker term) (cpc_fp_private_bindings ()) orelse
+    List.exists (fn (marker, _) => Term.aconv marker term)
+      (cpc_fp_private_unbound_markers ())
+  val cpc_fp_private_unbound_markers = cpc_fp_private_unbound_markers
 
   fun parse_stream_with_version (dicts : dicts) version instream : proof =
     let
@@ -3676,7 +3827,8 @@ in
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
       val _ = cpc_fp_private_bindings_ref := []
-      val _ = cpc_fp_private_unbound_count := 0
+      val _ = cpc_fp_private_unbound_markers_ref := []
+      val _ = cpc_fp_private_parse_avoid := []
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
       val _ = cpc_term_intern :=
         Array.array (term_intern_bucket_count, [])
@@ -3746,8 +3898,10 @@ in
         case !pending of
           SOME (rule_name, diagnostic) => raise ERR rule_name diagnostic
         | NONE => ()
+      val proof = {commands = commands, cvc_version = version}
+      val _ = retain_cpc_fp_private_proof proof
     in
-      {commands = commands, cvc_version = version}
+      proof
     end
 
   fun parse_stream dicts instream =
