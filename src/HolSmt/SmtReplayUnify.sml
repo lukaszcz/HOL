@@ -241,10 +241,15 @@ struct
           val _ = Redblackmap.app
             (fn (_, {variable,...}) => order variable) (!substitution)
           val assignments = List.rev (!ordered)
+          (* Callback assignments can name variables found only beneath a
+             binder boundary. Every name in the compact assignment context
+             must participate in realization, not just its residue. Keep the
+             traversal block-local; do not open binder bodies to find them. *)
           val roots = G.block_reachable graph
             (List.concat
               (List.map (fn (left,right) => [left,right]) equations) @
-             List.map #residue assignments)
+             List.concat (List.map (fn {variable,residue} =>
+               [variable,residue]) assignments))
           val binder_relations = List.map #2
             (Redblackmap.listItems (!used_binders))
           fun name node = G.placeholder graph node

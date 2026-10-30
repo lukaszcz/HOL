@@ -201,6 +201,81 @@ struct
          Feedback.top_function_of error = "admission")
     val _ = OK ()
 
+    val _ = tprint "Callback-only binder assignments realize with checked laws"
+    fun callback_local demanded reversed =
+      let
+        val function_type = Type.bool --> Type.bool
+        val f = variable graph scope G.SolverFlexible
+          "callback_function" function_type
+        val h = variable graph scope G.RigidSource "callback_head"
+          (function_type --> function_type --> Type.bool)
+        fun pair a b = G.application graph scope
+          (G.application graph scope (h,a),b)
+        val left = binder x
+        val right = binder truth
+        val endpoints = if demanded then
+            [(f,right),(pair f f,pair left right)]
+          else [(left,right)]
+        val endpoints = if reversed then
+            List.map (fn (a,b) => (b,a)) endpoints else endpoints
+        (* Repeat in both orientations without resubmitting the callback's
+           assignment as an explicit equation (Library does that itself). *)
+        val equations = endpoints @
+          List.map (fn (a,b) => (b,a)) endpoints @ endpoints
+        val saved = ref (NONE : B.relation option)
+        val demands = ref 0
+        fun discover (left,right) =
+          case B.discover graph scope
+              {left=left,right=right,flexible=[f,x],limit=64} of
+            NONE => NONE
+          | SOME relation =>
+              (demands := !demands+1;saved := SOME relation;
+               SOME (B.assignments relation))
+        val result = success (U.unify_with_binders graph discover
+          {scope=scope,flexible=[f,x],equations=equations,binders=[]})
+        val _ = ensure "fixture exposed its callback variable outside binders"
+          (not (List.exists (fn node => node=x) (G.block_reachable graph
+            (List.concat (List.map (fn (a,b) => [a,b]) equations)))))
+        val _ = ensure "callback assignment missing from realization roots"
+          (List.exists (fn node => node=x) (U.roots result) andalso
+           !demands=1 andalso
+           length (U.assignments result)=(if demanded then 2 else 1))
+        val plan = N.discover graph scope result
+        val definitions = List.map
+          (fn {assignment={variable,residue},equation} =>
+            {variable=variable,residue=residue,equation=equation})
+          (N.obligations plan)
+        fun checked_binder ({equation,...} : N.binder_relation) =
+          let
+            val theorem = B.prove graph scope (valOf (!saved)) definitions
+            val target = G.representative graph equation
+          in Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) target) theorem end
+        fun realize binder = N.realize_local plan
+          {assignment=local_assignment,binder=binder}
+        val theorem = realize checked_binder
+        val {left=expected_left,right=expected_right,...} =
+          List.last (N.equations plan)
+        val (actual_left,actual_right) = Term.dest_eq (Thm.concl theorem)
+        val expected_hyp = HOLset.addList (Term.empty_tmset,
+          List.map (fn {equation,...} => G.representative graph equation)
+            definitions)
+        val _ = ensure "callback realization changed exact Goal/Hyp/tags"
+          (Portable.pointer_eq
+             (actual_left,G.representative graph expected_left) andalso
+           Portable.pointer_eq
+             (actual_right,G.representative graph expected_right) andalso
+           HOLset.equal (Thm.hypset theorem,expected_hyp) andalso clean theorem)
+        val _ = ensure "callback binder witness admitted an unrelated Hyp"
+          (rejected (fn () => ignore (realize (fn relation =>
+            Drule.ADD_ASSUM boolSyntax.F (checked_binder relation)))))
+        val _ = ensure "callback binder witness admitted an unchecked tag"
+          (rejected (fn () => ignore (realize (fn relation =>
+            Thm.add_tag (invalid_tag,checked_binder relation)))))
+      in () end
+    val _ = List.app (fn demanded => List.app (callback_local demanded)
+      [false,true]) [false,true]
+    val _ = OK ()
+
     val _ = tprint "Dereferenced binder discovery stays compact in shared DAGs"
     val f = Term.mk_var ("task44_function",Type.mk_type
       ("fun",[Type.bool,Type.bool]))

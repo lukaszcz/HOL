@@ -44,6 +44,8 @@ sig
      definitions or a trusted semantic rewrite. *)
   val assignments : result -> assignment list
   val assumptions : result -> assumption list
+  (* Block-local closure of endpoints and both sides of every assignment,
+     including variables discovered only by demanded binder callbacks. *)
   val roots : result -> SmtReplayGraph.node list
   val context : result -> Term.term
   (* Executable context/proof access rejects a closed result scope. *)
