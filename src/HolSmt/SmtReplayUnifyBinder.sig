@@ -19,6 +19,18 @@ sig
     {node : SmtReplayGraph.node,
      resolve : SmtReplayGraph.node -> SmtReplayGraph.node,
      limit : int} -> SmtReplayGraph.node * relation
+  (* The legacy Library fallback admitted whole-input result types, not every
+     internal annotation. Its replacement owns that same Type policy at the
+     call site. These variants retain all raw operand/residue/output bounds,
+     ownership and proof checks, without introducing an internal-Type cutoff
+     on that formerly successful route. Existing entries above stay strict. *)
+  val discover_raw : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
+    {left : SmtReplayGraph.node, right : SmtReplayGraph.node,
+     flexible : SmtReplayGraph.node list, limit : int} -> relation option
+  val normalize_raw : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
+    {node : SmtReplayGraph.node,
+     resolve : SmtReplayGraph.node -> SmtReplayGraph.node,
+     limit : int} -> SmtReplayGraph.node * relation
   val assignments : relation -> SmtReplayUnify.assignment list
   val left : relation -> SmtReplayGraph.node
   val right : relation -> SmtReplayGraph.node

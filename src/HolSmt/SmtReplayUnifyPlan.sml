@@ -126,6 +126,85 @@ struct
             | _ => raise ERR "assemble" "incorrect equality premises")
           [P.constructor block target,relation] end
     in ListPair.mapEq prove (U.proofs result,equations) end
+  (* The legacy demanded-binder caller has already admitted its original
+     result Types and every native local binder operand/output. Its old
+     fallback did not admit every internal annotation. Realize the unifier's
+     closed compact law directly, rather than introduce a new canonical-Type
+     cutoff through general block definition/source alignment. No native
+     substitution or equality search runs over the realized input DAG. *)
+  fun realize_local (plan as Plan {graph,result,obligations,binders,...})
+      {assignment,binder} =
+    let
+      val _ = active plan
+      fun clean theorem =
+        let val (oracles,_) = Tag.dest_tag (Thm.tag theorem) in
+          null oracles andalso null (Tag.axioms_of (Thm.tag theorem)) end
+      fun source hypothesis = List.exists (fn {equation,...} =>
+        Portable.pointer_eq (hypothesis,G.representative graph equation))
+        obligations
+      fun witness equation theorem =
+        if Portable.pointer_eq
+            (Thm.concl theorem,G.representative graph equation) andalso
+            clean theorem andalso List.all source (Thm.hyp theorem) then
+          theorem
+        else raise ERR "realize_local" "invalid local equality witness"
+      val assignments = List.foldl (fn (obligation,table) =>
+        Redblackmap.insert (table,
+          G.node_id (#variable (#assignment obligation)),
+          witness (#equation obligation) (assignment obligation)))
+        (Redblackmap.mkDict Int.compare) obligations
+      val relations = List.foldl (fn (relation,table) =>
+        Redblackmap.insert (table,
+          (G.node_id (#left relation),G.node_id (#right relation)),
+          witness (#equation relation) (binder relation)))
+        (Redblackmap.mkDict (fn ((a,b),(c,d)) =>
+          case Int.compare (a,c) of EQUAL => Int.compare (b,d)
+            | order => order)) binders
+      fun fact {kind,...} = case kind of
+          U.ConstructorEquation node =>
+            (case G.view graph node of G.Application (operator,operand) =>
+              let
+                val term = G.representative graph node
+                val left = G.representative graph operator
+                val right = G.representative graph operand
+                val (actual_left,actual_right) = Term.dest_comb term
+                val _ = if Portable.pointer_eq (left,actual_left) andalso
+                    Portable.pointer_eq (right,actual_right) then () else
+                  raise ERR "realize_local" "constructor children changed"
+                val target = boolSyntax.mk_eq (term,Term.mk_comb (left,right))
+                val reflexive = Thm.REFL term
+              in Thm.EQ_MP (Thm.ALPHA (Thm.concl reflexive) target)
+                reflexive end
+             | _ => raise ERR "realize_local" "invalid constructor")
+        | U.SolverAssignment {variable,...} =>
+            Redblackmap.find (assignments,G.node_id variable)
+        | U.BinderEquality (left,right) => Redblackmap.find
+            (relations,(G.node_id left,G.node_id right))
+      val (endpoint,proof) = case List.rev (U.proofs result) of
+          last::_ => last
+        | [] => raise ERR "realize_local" "empty equation portfolio"
+      val compact = Thm.DISCH (U.context result) proof
+      val _ = if null (Thm.hyp compact) andalso clean compact then () else
+        raise ERR "realize_local" "unifier law is not closed and clean"
+      val facts = Vector.fromList (List.map fact (U.assumptions result))
+      fun balanced start count = if count=0 then boolTheory.TRUTH
+        else if count=1 then Vector.sub (facts,start)
+        else let val half=count div 2 in
+          Thm.CONJ (balanced start half) (balanced (start+half) (count-half))
+        end
+      val substitution = List.map (fn node =>
+        {redex=G.placeholder graph node,residue=G.representative graph node})
+        (U.roots result)
+      val law = Thm.INST substitution compact
+      val theorem = Thm.MP law (balanced 0 (Vector.length facts))
+      val (left,right) = Term.dest_eq (Thm.concl theorem)
+      val _ = if Portable.pointer_eq
+          (left,G.representative graph (#1 endpoint)) andalso
+          Portable.pointer_eq (right,G.representative graph (#2 endpoint))
+          andalso clean theorem andalso List.all source (Thm.hyp theorem)
+        then () else raise ERR "realize_local" "realization changed endpoints"
+    in theorem end
+
   fun assemble block plan assignment = assemble_with_relations block plan
     {assignment = assignment,binder = fn _ => raise ERR "assemble"
       "binder relation requires a checked witness"}

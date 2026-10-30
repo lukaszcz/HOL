@@ -590,61 +590,11 @@ struct
      "smaller" variable. This avoids creating circular definitions across
      multiple calls of this function (i.e. one call instantiating `z1 = z2`
      and another instantiating `z2 = z1`). *)
-  (* This adapter is used only after public raw/type admission below. *)
   local
-  fun bounded_gen_instantiation (lhs, rhs, var_set) =
-  let
-    (* Only proof-local names may be solved by replay unification.  Treat
-       every other free variable in the goal as a rigid constant; otherwise
-       a syntactic mismatch can be hidden by "defining" a user variable. *)
-    val goal_vars = SmtResource.profile_phase "definition-unification/free-vars"
-      (fn () => Term.FVL [lhs, rhs] Term.empty_tmset) ()
-    val protected = HOLset.listItems (HOLset.difference (goal_vars, var_set))
-    val substs = SmtResource.profile_phase "definition-unification/search"
-      (fn () => Unify.simp_unify_terms protected lhs rhs) ()
-      handle Feedback.HOL_ERR holerr =>
-        SmtResource.profile_phase "definition-unification/diagnostic" (fn () =>
-        raise Feedback.mk_HOL_ERR "Library" "gen_instantiation"
-          ("simp_unify_terms rejected protected goal variables: " ^
-           Feedback.message_of holerr ^ "; protected-count=" ^
-           Int.toString (List.length protected) ^
-           (if !trace < 3 then "" else
-              "; lhs=" ^ term_to_string lhs ^ "; rhs=" ^ term_to_string rhs ^
-              "; protected=" ^ String.concatWith ", "
-                (List.map term_to_string protected)))) ()
-    fun admitted term =
-      case SmtReplayImport.bounded_raw_size
-          SmtResource.max_bv_replay_term_nodes term of
-          SOME _ => ()
-        | NONE => SmtResource.check_term_size_for "BitVector" "binder-opening"
-            (SmtResource.max_bv_replay_term_nodes + 1)
-    val _ = List.app (admitted o #residue) substs
-    fun orient {redex, residue} = orient_def var_set (redex, residue)
-    val oriented_substs = List.map orient substs
-    val _ = List.all (fn (name, _) => HOLset.member (var_set, name))
-      oriented_substs orelse
-      raise Feedback.mk_HOL_ERR "Library" "gen_instantiation"
-        "unification produced a definition for a non-Z3 variable"
-    val asl = List.map boolSyntax.mk_eq oriented_substs
-    val thms = List.map Thm.ASSUME asl
-  in
-    let
-      val theta = ListPair.map
-        (fn ((name, _), theorem) => {redex = name, residue = theorem})
-        (oriented_substs, thms)
-      val left = Drule.SUBST_CONV theta lhs lhs
-      val right = Drule.SUBST_CONV theta rhs rhs
-      val bridge = Thm.ALPHA
-        (boolSyntax.rhs (Thm.concl left))
-        (boolSyntax.rhs (Thm.concl right))
-    in
-      Thm.TRANS left (Thm.TRANS bridge (Thm.SYM right))
-    end
-  end
-
   datatype graph_instantiation = Instantiation of ReplayN.plan
     | InstantiationDeclined of string * bool
   fun graph_instantiation_with_normalizer graph normalizer extra_binders
+      discover_binder
       {scope,flexible,lhs,rhs,seed,binders} =
     let
       fun failure ReplayU.TypeMismatch = ("type mismatch",false)
@@ -652,7 +602,7 @@ struct
         | failure ReplayU.OccursCheck = ("occurs check",false)
         | failure ReplayU.NeedsBinderAdmission = ("binder admission",true)
         | failure ReplayU.EscapingScope = ("scope escape",false)
-      fun run equations = ReplayU.unify_using graph
+      fun run equations = ReplayU.unify_with_binders graph discover_binder
         {scope = scope,flexible = flexible,equations = equations,
          binders = binders @ extra_binders ()}
       val initial = List.map (fn {variable,residue} => (variable,residue))
@@ -688,7 +638,7 @@ struct
     end
   fun graph_instantiation_using graph input =
     graph_instantiation_with_normalizer graph (fn _ => NONE)
-      (fn () => []) input
+      (fn () => []) (fn _ => NONE) input
   fun graph_instantiation graph {scope,flexible,lhs,rhs} =
     graph_instantiation_using graph {scope = scope,flexible = flexible,
       lhs = lhs,rhs = rhs,seed = [],binders = []}
@@ -723,25 +673,10 @@ struct
         | NONE => 1073741823
       val left = ReplayG.import graph scope maximum lhs
       val right = ReplayG.import graph scope maximum rhs
-      fun assemble plan relations left right =
+      fun assemble plan relations raw left right =
         let
           val obligations = ReplayN.obligations plan
           val binders = ReplayN.binder_relations plan
-          val sources = List.map #equation obligations @
-            List.map #equation binders
-          val block = ReplayP.freeze graph
-            {scope = scope,roots = ReplayN.roots plan,
-             sources = sources,template_limit = maximum}
-          val (_,indices) = List.foldl (fn (equation,(index,table)) =>
-            (index+1,Redblackmap.insert
-              (table,ReplayG.node_id equation,index)))
-            (0,Redblackmap.mkDict Int.compare) sources
-          fun witness (obligation : ReplayN.obligation) =
-            ReplayP.source block (Redblackmap.find
-              (indices,ReplayG.node_id (#equation obligation)))
-          fun binder_witness (relation : ReplayN.binder_relation) =
-            ReplayP.source block (Redblackmap.find
-              (indices,ReplayG.node_id (#equation relation)))
           val definitions = List.map
             (fn {assignment = {variable,residue},equation} =>
               {variable = variable,residue = residue,equation = equation})
@@ -756,16 +691,39 @@ struct
               val proof = ReplayB.prove graph scope relation definitions
               val target = ReplayG.representative graph (#equation needed)
             in Thm.EQ_MP (Thm.ALPHA (Thm.concl proof) target) proof end
-          val proofs = List.foldl (fn (relation,table) =>
-            Redblackmap.insert (table,ReplayG.node_id (#equation relation),
-              local_proof relation)) (Redblackmap.mkDict Int.compare) binders
-          val edges = ReplayN.assemble_with_relations block plan
-            {assignment = witness,binder = binder_witness}
-          val target = #target (List.last (ReplayN.equations plan))
-          val theorem = if List.null binders then
-              ReplayP.realize block target (List.last edges)
-            else ReplayP.realize_with_sources block target (List.last edges)
-              (fn (_,node) => Redblackmap.peek (proofs,ReplayG.node_id node))
+          fun general () =
+            let
+              val sources = List.map #equation obligations @
+                List.map #equation binders
+              val block = ReplayP.freeze graph
+                {scope = scope,roots = ReplayN.roots plan,
+                 sources = sources,template_limit = maximum}
+              val (_,indices) = List.foldl (fn (equation,(index,table)) =>
+                (index+1,Redblackmap.insert
+                  (table,ReplayG.node_id equation,index)))
+                (0,Redblackmap.mkDict Int.compare) sources
+              fun witness (obligation : ReplayN.obligation) =
+                ReplayP.source block (Redblackmap.find
+                  (indices,ReplayG.node_id (#equation obligation)))
+              fun binder_witness (relation : ReplayN.binder_relation) =
+                ReplayP.source block (Redblackmap.find
+                  (indices,ReplayG.node_id (#equation relation)))
+              val proofs = List.foldl (fn (relation,table) =>
+                Redblackmap.insert (table,ReplayG.node_id (#equation relation),
+                  local_proof relation)) (Redblackmap.mkDict Int.compare) binders
+              val edges = ReplayN.assemble_with_relations block plan
+                {assignment = witness,binder = binder_witness}
+              val target = #target (List.last (ReplayN.equations plan))
+            in if List.null binders then
+                ReplayP.realize block target (List.last edges)
+              else ReplayP.realize_with_sources block target (List.last edges)
+                (fn (_,node) => Redblackmap.peek (proofs,ReplayG.node_id node))
+            end
+          val theorem = if raw then ReplayN.realize_local plan
+              {assignment = fn {equation,...} =>
+                 Thm.ASSUME (ReplayG.representative graph equation),
+               binder = local_proof}
+            else general ()
         in Thm.TRANS left (Thm.TRANS theorem (Thm.SYM right)) end
       val binder_limit = SmtResource.max_bv_replay_term_nodes
       fun binder_admission action = action ()
@@ -776,91 +734,110 @@ struct
               "BitVector" "binder-opening" (binder_limit+1);
              raise Feedback.HOL_ERR error)
           else raise Feedback.HOL_ERR error
-      fun graph_attempt (left : ReplayG.source) (right : ReplayG.source)
-          relations =
+      fun graph_attempt (left : ReplayG.source) (right : ReplayG.source) =
         let
+          val relations = ref []
           val normalized = ref []
+          val raw_needed = ref false
+          fun pair left right = if ReplayG.node_id left <
+              ReplayG.node_id right then
+                (ReplayG.node_id left,ReplayG.node_id right)
+            else (ReplayG.node_id right,ReplayG.node_id left)
+          fun compare ((a,b),(c,d)) = case Int.compare (a,c) of
+              EQUAL => Int.compare (b,d) | order => order
+          val aligned = ref NONE
+          fun aligned_pairs () = case !aligned of SOME pairs => pairs
+            | NONE =>
+              let
+                val visited = ref (Redblackset.empty compare)
+                fun visit left right =
+                  let val key = pair left right in
+                    if Redblackset.member (!visited,key) then () else
+                    (visited := Redblackset.add (!visited,key);
+                     case (ReplayG.view graph left,ReplayG.view graph right) of
+                         (ReplayG.Application (lf,lx),
+                          ReplayG.Application (rf,rx)) =>
+                           (visit lf rf;visit lx rx)
+                       | _ => ())
+                  end
+                val _ = visit (#node left) (#node right)
+                val _ = aligned := SOME (!visited)
+              in !visited end
+          (* Preserve the old fallback's call-site Type policy. Aligned
+             binders retain their existing stricter internal-Type admission;
+             newly demanded pairs had only whole-input result-Type admission.
+             Both paths bound every native binder operand/residue/output. *)
+          fun result_types () =
+            let
+              fun visit [] _ = ()
+                | visit (ty::rest) count =
+                    if count >= binder_limit then
+                      SmtResource.check_term_size_for "BitVector"
+                        "binder-opening" (binder_limit+1)
+                    else visit ((if Type.is_vartype ty then [] else
+                      #2 (Type.dest_type ty)) @ rest) (count+1)
+            in List.app (fn term => visit [Term.type_of term] 0) [lhs,rhs] end
+          fun legacy_decline () =
+            (List.app (fn term =>
+               case SmtReplayImport.bounded_raw_size binder_limit term of
+                   SOME _ => ()
+                 | NONE => SmtResource.check_term_size_for "BitVector"
+                     "binder-opening" (binder_limit+1)) [lhs,rhs];
+             result_types ();
+             instantiation_declined "bounded binder mismatch")
+          fun discover (left,right) = binder_admission (fn () =>
+            let
+              val strict = Redblackset.member (aligned_pairs (),pair left right)
+              val _ = if strict then ()
+                else (result_types ();raw_needed := true)
+              val discover = if strict then ReplayB.discover
+                else ReplayB.discover_raw
+            in case discover graph scope
+                {left = left,right = right,flexible = flexible,
+                 limit = binder_limit} of
+                SOME relation =>
+                  (relations := relation :: !relations;
+                   SOME (ReplayB.assignments relation))
+              | NONE => if strict then
+                  instantiation_declined "bounded binder mismatch"
+                else legacy_decline ()
+            end)
           fun normalize {node,resolve} = binder_admission (fn () =>
-            let val (result,relation) = ReplayB.normalize graph scope
+            let val normalize = if !raw_needed then ReplayB.normalize_raw
+                  else ReplayB.normalize
+                val (result,relation) = normalize graph scope
                   {node = node,resolve = resolve,limit = binder_limit}
                 val _ = normalized := relation :: !normalized
             in SOME result end)
           fun extra_binders () = List.map (fn relation =>
-            (ReplayB.left relation,ReplayB.right relation)) (!normalized)
+            (ReplayB.left relation,ReplayB.right relation))
+            (!relations @ !normalized)
         in case graph_instantiation_with_normalizer graph normalize
-            extra_binders
+            extra_binders discover
             {scope = scope,flexible = flexible,
-             lhs = #node left,rhs = #node right,
-             seed = List.concat (List.map ReplayB.assignments relations),
-             binders = List.map (fn relation =>
-               (ReplayB.left relation,ReplayB.right relation)) relations}
+             lhs = #node left,rhs = #node right,seed = [],binders = []}
           of Instantiation plan => SOME
-               (assemble plan (relations @ !normalized)
+               (assemble plan (!relations @ !normalized) (!raw_needed)
                  (#bridge left) (#bridge right))
            | InstantiationDeclined (reason,false) =>
-               instantiation_declined reason
+               if !raw_needed then legacy_decline ()
+               else instantiation_declined reason
            | InstantiationDeclined (_,true) => NONE
         end
       fun admit_nodes (left : ReplayG.source) (right : ReplayG.source) =
         binder_admission (fn () =>
           (ReplayB.admit graph binder_limit left,
            ReplayB.admit graph binder_limit right))
-      fun binder_relations left right =
-        let
-          fun compare ((a,b),(c,d)) = case Int.compare (a,c) of
-              EQUAL => Int.compare (b,d) | order => order
-          val visited = ref (Redblackset.empty compare)
-          val relations = ref []
-          fun visit left right =
-            let
-              val key = if ReplayG.node_id left < ReplayG.node_id right then
-                  (ReplayG.node_id left,ReplayG.node_id right)
-                else (ReplayG.node_id right,ReplayG.node_id left)
-            in if left = right orelse Redblackset.member (!visited,key) then ()
-              else
-                (visited := Redblackset.add (!visited,key);
-                 case (ReplayG.view graph left,ReplayG.view graph right) of
-                     (ReplayG.Application (lf,lx),
-                      ReplayG.Application (rf,rx)) =>
-                       (visit lf rf;visit lx rx)
-                   | (ReplayG.AdmittedBinder _,ReplayG.AdmittedBinder _) =>
-                       (case binder_admission (fn () =>
-                           ReplayB.discover graph scope
-                             {left = left,right = right,flexible = flexible,
-                              limit = binder_limit}) of
-                            SOME relation => relations := relation :: !relations
-                          | NONE => instantiation_declined
-                              "bounded binder mismatch")
-                   | _ => ())
-            end
-          val _ = visit left right
-        in List.rev (!relations) end
-      fun bounded () =
-        let
-          val limit = SmtResource.max_bv_replay_term_nodes
-          fun admit term = case SmtReplayImport.bounded_raw_size limit term of
-              SOME _ => ()
-            | NONE => SmtResource.check_term_size_for
-                "BitVector" "binder-opening" (limit+1)
-          fun type_admit ty =
-            let
-              fun visit [] _ = ()
-                | visit (ty::rest) count =
-                    if count >= limit then SmtResource.check_term_size_for
-                      "BitVector" "binder-opening" (limit+1)
-                    else visit ((if Type.is_vartype ty then [] else
-                      #2 (Type.dest_type ty)) @ rest) (count+1)
-            in visit [ty] 0 end
-          val _ = List.app admit [lhs,rhs]
-          val _ = List.app (type_admit o Term.type_of) [lhs,rhs]
-        in bounded_gen_instantiation (lhs,rhs,var_set) end
-    in case graph_attempt left right [] of SOME theorem => theorem
+    in case graph_attempt left right of SOME theorem => theorem
       | NONE => let val (left,right) = admit_nodes left right in
-          case graph_attempt left right [] of SOME theorem => theorem
+          case graph_attempt left right of SOME theorem => theorem
             | NONE =>
-                let val relations = binder_relations (#node left) (#node right)
-                in case graph_attempt left right relations of
-                    SOME theorem => theorem | NONE => bounded () end
+                (* Only an opaque binder beyond local admission can remain.
+                   Never retry native discovery/substitution over the input
+                   application DAG, even when the DAG itself is small. *)
+                (SmtResource.check_term_size_for "BitVector" "binder-opening"
+                   (binder_limit+1);
+                 instantiation_declined "binder admission")
           end end
   end
 

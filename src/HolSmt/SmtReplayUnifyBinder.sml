@@ -7,7 +7,8 @@ struct
   type definition = {variable : G.node,residue : G.node,equation : G.node}
   datatype relation = Relation of
     {graph : G.graph,scope : G.scope,left : G.node,right : G.node,
-     assignments : SmtReplayUnify.assignment list,limit : int}
+     assignments : SmtReplayUnify.assignment list,limit : int,
+     internal_types : bool}
   fun active (Relation {graph,scope,...}) = G.validate_scope graph scope
   fun assignments (relation as Relation {assignments,...}) =
     (active relation;assignments)
@@ -25,7 +26,7 @@ struct
             else walk ((if Type.is_vartype ty then [] else
               #2 (Type.dest_type ty)) @ rest) (count+1)
     in walk [ty] 0 end
-  fun admitted graph limit nodes =
+  fun admitted internal_types graph limit nodes =
     let
       val _ = if limit >= 1 then () else
         raise ERR "admission" "nonpositive binder admission limit"
@@ -34,10 +35,11 @@ struct
       val _ = List.app (fn node =>
         if Redblackset.member (!types_seen,G.type_id graph node) then ()
         else (types_seen := Redblackset.add (!types_seen,G.type_id graph node);
-              types limit (G.type_of graph node))) (G.reachable graph nodes)
+              types limit (G.type_of graph node)))
+          (if internal_types then G.reachable graph nodes else [])
     in () end
 
-  fun admit graph limit (saved : G.source) : G.source =
+  fun admit_using check_types graph limit (saved : G.source) : G.source =
     let
       val memo = ref (Redblackmap.mkDict Int.compare)
       fun visit node = case Redblackmap.peek (!memo,G.node_id node) of
@@ -51,7 +53,8 @@ struct
                          NONE => (node,Thm.REFL original)
                        | SOME _ =>
                            let
-                             val _ = types limit (G.type_of graph node)
+                             val _ = if check_types then
+                               types limit (G.type_of graph node) else ()
                              val source = G.admit_binder graph
                                (G.node_scope graph node) limit original
                            in (#node source,#bridge source) end)
@@ -79,6 +82,8 @@ struct
     in {node = node,original = #original saved,
         bridge = Thm.TRANS (#bridge saved) bridge} end
 
+  fun admit graph = admit_using true graph
+
   fun equality graph scope variable residue =
     let
       val marker = Term.genvar (G.type_of graph variable)
@@ -89,8 +94,9 @@ struct
   fun definition graph scope {variable,residue} : definition =
     {variable = variable,residue = residue,
      equation = equality graph scope variable residue}
-  fun checked graph scope (left,right) limit definitions =
+  fun checked internal_types graph scope (left,right) limit definitions =
     let
+      val admitted = admitted internal_types
       val _ = admitted graph limit [left,right]
       val variables = case
           (G.free_variable_nodes graph left,G.free_variable_nodes graph right)
@@ -151,12 +157,14 @@ struct
       val lhs_result = boolSyntax.rhs (Thm.concl lhs)
       val rhs_result = boolSyntax.rhs (Thm.concl rhs)
       val _ = List.app (raw limit) [lhs_result,rhs_result]
-      val _ = List.app (types limit o Term.type_of) [lhs_result,rhs_result]
+      val _ = if internal_types then
+        List.app (types limit o Term.type_of) [lhs_result,rhs_result] else ()
       val bridge = Thm.ALPHA lhs_result rhs_result
     in Thm.TRANS lhs (Thm.TRANS bridge (Thm.SYM rhs)) end
 
-  fun discover graph scope {left,right,flexible,limit} =
+  fun discover_using internal_types graph scope {left,right,flexible,limit} =
     let
+      val admitted = admitted internal_types
       val _ = G.validate_scope graph scope
       fun binder node =
         (if G.scope_visible graph scope (G.node_scope graph node) then ()
@@ -186,7 +194,8 @@ struct
           (flexible @ free))
       fun import_residue residue =
         let
-          val source = admit graph limit (G.import graph imports limit residue)
+          val source = admit_using internal_types graph limit
+            (G.import graph imports limit residue)
           val memo = ref (Redblackmap.mkDict Int.compare)
           fun rehome node = case Redblackmap.peek (!memo,G.node_id node) of
               SOME result => result
@@ -208,7 +217,8 @@ struct
       fun assignment {redex,residue} =
         let
           val _ = raw limit residue
-          val _ = types limit (Term.type_of residue)
+          val _ = if internal_types then types limit (Term.type_of residue)
+            else ()
           val variable = case List.find (fn node =>
               Term.aconv (G.representative graph node) redex) flexible of
                 SOME node => node
@@ -221,10 +231,11 @@ struct
           val assignments = List.map assignment substs
           (* Reject capture/false matches before exposing candidates. Global
              graph unification separately validates assignment ownership. *)
-          val _ = checked graph scope (left,right) limit
+          val _ = checked internal_types graph scope (left,right) limit
             (List.map (definition graph scope) assignments)
         in Relation {graph = graph,scope = scope,left = left,right = right,
-          assignments = assignments,limit = limit} end) ()
+          assignments = assignments,limit = limit,
+          internal_types = internal_types} end) ()
       val _ = G.close_scope graph imports
     in SOME (Exn.release attempt) end
     handle Feedback.HOL_ERR error =>
@@ -233,8 +244,12 @@ struct
            ["occurs","unify_terms","simp_unify_terms"] then NONE
       else raise Feedback.HOL_ERR error
 
-  fun normalize graph scope {node,resolve,limit} =
+  fun discover graph = discover_using true graph
+  fun discover_raw graph = discover_using false graph
+
+  fun normalize_using internal_types graph scope {node,resolve,limit} =
     let
+      val admitted = admitted internal_types
       val _ = G.validate_scope graph scope
       val _ = admitted graph limit [node]
       val free = case G.free_variable_nodes graph node of SOME nodes => nodes
@@ -314,13 +329,18 @@ struct
       val normalized = clone scope (Redblackmap.mkDict Int.compare) node
       val _ = admitted graph limit [normalized]
       val relation = Relation {graph = graph,scope = scope,
-        left = node,right = normalized,assignments = [],limit = limit}
+        left = node,right = normalized,assignments = [],limit = limit,
+        internal_types = internal_types}
     in (normalized,relation) end
 
+  fun normalize graph = normalize_using true graph
+  fun normalize_raw graph = normalize_using false graph
+
   fun prove graph scope (relation as Relation
-      {graph = owner,scope = frame,left,right,limit,...}) definitions =
+      {graph = owner,scope = frame,left,right,limit,internal_types,...})
+      definitions =
     (active relation;G.validate_scope graph scope;
      if G.root_scope owner = G.root_scope graph andalso frame = scope then
-       checked graph scope (left,right) limit definitions
+       checked internal_types graph scope (left,right) limit definitions
      else raise ERR "prove" "relation belongs to another graph/scope")
 end

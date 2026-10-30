@@ -54,7 +54,7 @@ struct
         project left (Thm.CONJUNCT1 theorem) @
         project right (Thm.CONJUNCT2 theorem)
 
-  fun unify_using graph {scope,flexible,equations,binders} =
+  fun unify_with_binders graph discover {scope,flexible,equations,binders} =
     let
       exception Mismatch of failure
       val _ = G.validate_scope graph scope
@@ -202,7 +202,20 @@ struct
                          (used_binders := Redblackmap.insert
                            (!used_binders,pair_key left right,relation);
                           search pending)
-                     | NONE => raise Mismatch NeedsBinderAdmission)
+                     | NONE =>
+                         (case discover (left,right) of
+                              NONE => raise Mismatch NeedsBinderAdmission
+                            | SOME assignments =>
+                                (used_binders := Redblackmap.insert
+                                   (!used_binders,pair_key left right,
+                                    (left,right));
+                                 search (List.map
+                                   (fn {variable,residue} =>
+                                     if flexible_node variable then
+                                       (variable,residue)
+                                     else raise ERR "unify_with_binders"
+                                       "binder assigned an unpermitted node")
+                                   assignments @ pending))))
               | _ => raise Mismatch RigidMismatch)
           end
       val searched = (search equations;NONE)
@@ -311,6 +324,7 @@ struct
            assumptions = assumptions,roots = roots,
            context = context,proofs = proofs,projections = projections}) end
     end
+  fun unify_using graph input = unify_with_binders graph (fn _ => NONE) input
   fun unify graph {scope,flexible,equations} = unify_using graph
     {scope = scope,flexible = flexible,equations = equations,binders = []}
 end

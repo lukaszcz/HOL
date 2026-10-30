@@ -27,6 +27,15 @@ sig
     {scope : SmtReplayGraph.scope, flexible : SmtReplayGraph.node list,
      equations : (SmtReplayGraph.node * SmtReplayGraph.node) list,
      binders : (SmtReplayGraph.node * SmtReplayGraph.node) list} -> outcome
+  (* Demand local binder discovery after assignment dereferencing. Returned
+     assignments undergo the same permission/type/occurs/scope checks as input
+     equations. The relation is only an obligation: assembly still requires
+     an independent checked witness, never this callback's metadata. *)
+  val unify_with_binders : SmtReplayGraph.graph ->
+    (SmtReplayGraph.node * SmtReplayGraph.node -> assignment list option) ->
+    {scope : SmtReplayGraph.scope, flexible : SmtReplayGraph.node list,
+     equations : (SmtReplayGraph.node * SmtReplayGraph.node) list,
+     binders : (SmtReplayGraph.node * SmtReplayGraph.node) list} -> outcome
   val validate_result : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     result -> unit
 
