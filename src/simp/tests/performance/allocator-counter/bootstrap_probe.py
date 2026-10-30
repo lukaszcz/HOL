@@ -38,7 +38,7 @@ def build_native_hol(pristine, dst, repo, env, run, report):
     Bootstrap without forced traps, then use the separately patched DSO only
     for allocation experiments. All generated ML code has source lineage.
     """
-    from run_controls import verify_source
+    from private_runtime import verify_source, HOL_SEQUENCE
     source = dst / "native-source"
     prefix = dst / "native-install"
     shutil.copytree(pristine, source)
@@ -64,6 +64,9 @@ def build_native_hol(pristine, dst, repo, env, run, report):
     # diagnostic snapshot, never a work branch or a modification of repo.
     a.require(not (hol / "bin/hol.state0").exists(), "prebuilt HOL image")
     report["hol_snapshot"] = head
+    # Every build step below runs in this clone: HOLDIR names it, never the
+    # caller's checkout.
+    env["HOLDIR"] = str(hol)
     report["hol_source_inputs"] = {
         name: a.seal(hol / name) for name in a.git(
             hol, "ls-files").splitlines() if (hol / name).is_file()}
@@ -75,10 +78,14 @@ def build_native_hol(pristine, dst, repo, env, run, report):
     run([str(prefix / "bin/poly"), "--error-exit", "--use",
          "tools/smart-configure.sml"], hol)
     run([str(hol / "bin/build"), "--no-cache", "-j2",
-         "--seq=tools/sequences/upto-parallel"], hol)
+         "--seq=" + HOL_SEQUENCE], hol)
     report["hol_products"] = {str(hol / name): a.seal(hol / name)
                               for name in ("bin/hol", "bin/hol.state0",
                                            "bin/Holmake")}
+    # sigobj is what a process searches for loadable modules.
+    report["hol_sigobj"] = {
+        str(p.relative_to(hol)): a.seal(p)
+        for p in sorted((hol / "sigobj").iterdir()) if p.is_file()}
     report["hol_libraries"] = loading.library_inputs(
         run(["ldd", str(hol / "bin/hol")], hol))
     # Configuration writes generated sources; retain the before/after delta
@@ -100,12 +107,13 @@ def main(argv=None):
     parser.add_argument("--repo", type=Path, default=HERE.parents[4])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--authorize-experimental-runtime", action="store_true")
+    parser.add_argument("--authorize-experimental-runtime",
+                        action="store_true")
     parser.add_argument("--hol-lineage", action="store_true")
     args = parser.parse_args(argv)
     if not args.authorize_experimental_runtime or args.timeout <= 0:
         parser.error("authorization and positive timeout required")
-    from run_controls import verify_source
+    from private_runtime import verify_source
     repo = args.repo.resolve(strict=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     report = dict(schema="task29-native-bootstrap-probe-v1", success=False,
@@ -161,7 +169,8 @@ def main(argv=None):
                         loading.check_seals(report["inputs"])
                         verify_source(args.source)
                         report["success"] = True
-                        print("source-built HOL completed; NOT allocation gate")
+                        print("source-built HOL completed; "
+                              "NOT allocation gate")
                         return 0
                     source = Path(tmp) / "source"
                     shutil.copytree(args.source, source)

@@ -99,7 +99,8 @@ class FailureSchemaTests(unittest.TestCase):
             for value in replacements:
                 invalid = valid.copy()
                 invalid[index] = value
-                with self.subTest(limit=invalid), self.assertRaises(ValueError):
+                with self.subTest(limit=invalid), \
+                        self.assertRaises(ValueError):
                     s.observations(synthetic(limit=invalid))
         for invalid in (valid[:-1], valid + [0]):
             with self.assertRaises(ValueError):

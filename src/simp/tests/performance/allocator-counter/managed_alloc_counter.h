@@ -12,6 +12,8 @@
 #define POLY_MANAGED_ALLOC_SNAPSHOT_BYTES_V1 64
 #define POLY_MANAGED_INTERPRETER_ALLOC_SNAPSHOT_WORDS_V1 8
 #define POLY_MANAGED_INTERPRETER_ALLOC_SNAPSHOT_BYTES_V1 64
+#define POLY_MANAGED_PATH_ALLOC_SNAPSHOT_WORDS_V1 32
+#define POLY_MANAGED_PATH_ALLOC_SNAPSHOT_BYTES_V1 256
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +51,34 @@ int PolyManagedAllocSnapshotV1(void *out, size_t bytes);
  */
 int PolyManagedInterpreterAllocSnapshotV1(void *out, size_t bytes);
 
+/* Private lower-level allocation-path diagnostics; NOT a coverage guarantee.
+ * Same buffer/lifetime/locking/saturation rules, independent overflow mask,
+ * and no change to either snapshot ABI above. 256 writable C bytes:
+ *   [0] version (1), [1] bytes per PolyWord, [2] sticky overflow mask
+ *   (bit i for counter i below), [3 + i] counter i (0..27), [31] reserved (0)
+ * Counters, from Processes::FindAllocationSpace (FAS), whose caller is one of
+ * native (n=0), RTS (n=1) or bytecode interpreter (n=2). FAS requests of
+ * zero words (pure segment acquisition) are not recorded:
+ *   i = 6n + 2o + g (0..17): successful FAS returns for caller n, where
+ *       o = 0 within the current segment, 1 a separate large-object area,
+ *       2 a newly obtained segment (refill); o = 1 can only happen for
+ *       n = 1, since the native and bytecode callers pass alwaysInSeg;
+ *       g = 0 on the first attempt,
+ *       1 after this call's QuickGC returned true, or after it waited for
+ *       another thread's pending GC request (so the GC may be another
+ *       thread's, not one this call performed)
+ *   18 + n: FAS returned 0 (failed reservation) for caller n
+ *   21 / 22: QuickGC inside FAS returned true / false
+ *   23: MemMgr::AllocCodeSpace returned 0 (code-space reservation failed)
+ *   24 + n: words in the successful FAS returns of caller n (all o, g)
+ *   27: PolyArm64GetThreadData found no task data for the calling thread
+ *       (a thread not created by the runtime entered it); expected zero
+ * Native FAS calls include reservations that SetMemRegisters immediately
+ * undoes before its final counted decrement; these are lower-level events,
+ * not counted allocations. Two different snapshot calls are not atomic.
+ */
+int PolyManagedAllocPathSnapshotV1(void *out, size_t bytes);
+
 #ifdef __cplusplus
 }
 
@@ -70,6 +100,24 @@ void RecordManagedAllocation(ManagedAllocKind kind, uint64_t words);
  * no-op, just as for RecordManagedAllocation. Never call both for one event.
  */
 void RecordManagedInterpreterAllocation(bool slow, uint64_t words);
+
+/* Lower-level diagnostics only (see PolyManagedAllocPathSnapshotV1); none of
+ * these touches the original counters. The caller of FindAllocationSpace is
+ * identified by a thread-local set immediately before each supported call.
+ * An unidentified non-zero-word FindAllocationSpace outcome aborts.
+ */
+enum ManagedFindOutcome {
+    ManagedFindSegment = 0,
+    ManagedFindLargeObject = 1,
+    ManagedFindRefill = 2
+};
+void ManagedSetFindCaller(ManagedAllocKind caller);
+void RecordManagedFindSuccess(ManagedFindOutcome outcome, uint64_t words,
+                              bool afterGC);
+void RecordManagedFindFailure(uint64_t words);
+void RecordManagedQuickGC(bool succeeded);
+void RecordManagedCodeFailure();
+void RecordManagedForeignThread();
 
 /* FindAllocationSpace rounds heap reservations to even PolyWords in
  * compact32 mode. Native traps already report that rounded distance.

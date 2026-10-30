@@ -85,9 +85,9 @@ def main():
         actual = replay(read_patch(), originals)
         assert actual == expected
         after_seal = json.loads((HERE / "PATCHED_SHA256.json").read_text())
-        assert {p: hashlib.sha256(b).hexdigest() for p, b in actual.items()} == (
-            after_seal
-        )
+        assert {
+            p: hashlib.sha256(b).hexdigest() for p, b in actual.items()
+        } == after_seal
     # Four paths, five success hooks. Branch diagnostics replace, rather
     # than supplement, the interpreter's two original accounting calls.
     hooks = {
@@ -113,18 +113,43 @@ def main():
         "        ManagedHeapReservationWords(words));\n"
         "    return (PolyObject*)(space + 1);"
     ) in bytecode
-    assert "libpolyml/processes.cpp" not in actual
-    if not args.source_only:
-        assert b"processes.cpp" not in read_patch()
-    assert actual["libpolyml/arm64.cpp"].count(b"\r\n") == (
-        actual["libpolyml/arm64.cpp"].count(b"\n")
-    )
+    # Lower-level path diagnostics: one caller marker at each of the three
+    # FindAllocationSpace users, three success outcomes, GC and failure.
+    for name, marker in (
+            ("arm64.cpp", "ManagedSetFindCaller(ManagedAllocNative);"),
+            ("run_time.cpp", "ManagedSetFindCaller(ManagedAllocRTS);"),
+            ("bytecode.cpp",
+             "ManagedSetFindCaller(ManagedAllocInterpreter);")):
+        assert actual["libpolyml/" + name].decode().count(marker) == 1
+    processes = actual["libpolyml/processes.cpp"].decode()
+    for outcome in ("Segment", "LargeObject", "Refill"):
+        assert processes.count(
+            "RecordManagedFindSuccess(ManagedFind" + outcome) == 1
+    assert processes.count("RecordManagedFindFailure(words);") == 1
+    assert processes.count("RecordManagedQuickGC(managedGC);") == 1
+    assert processes.count("managedAfterGC = true;") == 2
+    assert actual["libpolyml/memmgr.cpp"].decode().count(
+        "RecordManagedCodeFailure();") == 1
+    # The one place the native backend creates task data for a thread the
+    # runtime did not create is counted; the source has no other such site.
+    arm64 = actual["libpolyml/arm64.cpp"]
+    assert arm64.count(b"RecordManagedForeignThread();") == 1
+    assert (
+        b"    if (taskData == 0)\r\n    {\r\n"
+        b"        RecordManagedForeignThread();\r\n"
+        b"        try {\r\n"
+        b"            taskData = processes->CreateNewTaskData();"
+    ) in arm64
+    assert arm64.count(b"CreateNewTaskData()") == 1
+    assert arm64.count(b"\r\n") == arm64.count(b"\n")
     if args.source_only:
-        print("PASS: pinned source hashes; seven in-memory transformations")
+        print("PASS: pinned source hashes; eight in-memory transformations")
         print("Generated artifacts NOT checked or updated.")
     else:
-        print("PASS: seven targets replay byte-exactly; input/output hashes match")
-    print("Five success hooks, including fast/slow interpreter diagnostics;")
+        print("PASS: eight targets replay byte-exactly; "
+              "input/output hashes match")
+    print("Five success hooks, interpreter fast/slow and lower-level path")
+    print("diagnostics;")
     print("original ARM64 CRLF preserved. STATIC ONLY; not complete coverage.")
 
 

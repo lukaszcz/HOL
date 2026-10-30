@@ -31,7 +31,8 @@ def replace_once(text, old, new):
 
 def transformations(originals):
     result = {}
-    for name in ("arm64.cpp", "run_time.cpp", "bytecode.cpp", "memmgr.cpp"):
+    for name in ("arm64.cpp", "run_time.cpp", "bytecode.cpp", "memmgr.cpp",
+                 "processes.cpp"):
         path = "libpolyml/" + name
         raw = originals[path]
         # arm64.cpp is CRLF in the reviewed distribution. Preserve it.
@@ -46,19 +47,49 @@ def transformations(originals):
         if name == "arm64.cpp":
             text = replace_once(
                 text,
-                "        allocPointer -= allocWords; // Now allocate\n",
-                "        allocPointer -= allocWords; // Now allocate\n"
-                "        RecordManagedAllocation(ManagedAllocNative, allocWords);\n",
+                "        PolyWord* space =\n"
+                "            processes->FindAllocationSpace("
+                "this, allocWords, true);",
+                "        ManagedSetFindCaller(ManagedAllocNative);\n"
+                "        PolyWord* space =\n"
+                "            processes->FindAllocationSpace("
+                "this, allocWords, true);",
             )
             text = replace_once(
                 text,
-                "    // If we are profiling store allocation we set mem_hl so that a trap\n"
+                "        allocPointer -= allocWords; // Now allocate\n",
+                "        allocPointer -= allocWords; // Now allocate\n"
+                "        RecordManagedAllocation("
+                "ManagedAllocNative, allocWords);\n",
+            )
+            text = replace_once(
+                text,
+                "    // If we are profiling store allocation we set mem_hl so "
+                "that a trap\n"
                 "    // will be generated.\n"
                 "    if (profileMode == kProfileStoreAllocation)\n"
-                "        assemblyInterface.localMbottom = assemblyInterface.localMpointer;",
-                "    // Experimental exact counter: always trap on native allocation.\n"
-                "    // Independent of profileMode and addProfileCount's PC attribution.\n"
-                "    assemblyInterface.localMbottom = assemblyInterface.localMpointer;",
+                "        assemblyInterface.localMbottom = "
+                "assemblyInterface.localMpointer;",
+                "    // Experimental exact counter: always trap on native "
+                "allocation.\n"
+                "    // Independent of profileMode and addProfileCount's PC "
+                "attribution.\n"
+                "    assemblyInterface.localMbottom = "
+                "assemblyInterface.localMpointer;",
+            )
+            # The only place the native backend creates task data for a
+            # thread the runtime did not create.
+            text = replace_once(
+                text,
+                "    if (taskData == 0)\n"
+                "    {\n"
+                "        try {\n"
+                "            taskData = processes->CreateNewTaskData();",
+                "    if (taskData == 0)\n"
+                "    {\n"
+                "        RecordManagedForeignThread();\n"
+                "        try {\n"
+                "            taskData = processes->CreateNewTaskData();",
             )
         elif name == "run_time.cpp":
             impl = (HERE / "counter_impl.inc").read_text()
@@ -70,12 +101,28 @@ def transformations(originals):
             )
             text = replace_once(
                 text,
+                "    PolyWord *foundSpace = "
+                "processes->FindAllocationSpace(taskData, words, false);",
+                "    ManagedSetFindCaller(ManagedAllocRTS);\n"
+                "    PolyWord *foundSpace = "
+                "processes->FindAllocationSpace(taskData, words, false);",
+            )
+            text = replace_once(
+                text,
                 "    return pObj;\n}",
                 "    RecordManagedAllocation(ManagedAllocRTS,\n"
                 "        ManagedHeapReservationWords(words));\n"
                 "    return pObj;\n}",
             )
         elif name == "bytecode.cpp":
+            text = replace_once(
+                text,
+                "    PolyWord* space = "
+                "processes->FindAllocationSpace(taskData, words, true);",
+                "    ManagedSetFindCaller(ManagedAllocInterpreter);\n"
+                "    PolyWord* space = "
+                "processes->FindAllocationSpace(taskData, words, true);",
+            )
             text = replace_once(
                 text,
                 "        taskData->allocPointer -= words;\n",
@@ -91,12 +138,97 @@ def transformations(originals):
                 "        ManagedHeapReservationWords(words));\n"
                 "    return (PolyObject*)(space + 1);",
             )
+        elif name == "processes.cpp":
+            text = replace_once(
+                text, "    bool triedInterrupt = false;",
+                "    bool triedInterrupt = false;\n"
+                "    bool managedAfterGC = false;",
+            )
+            text = replace_once(
+                text,
+                "            return taskData->allocPointer;\n"
+                "        }\n"
+                "        else // Insufficient space in this area.",
+                "            RecordManagedFindSuccess(ManagedFindSegment, "
+                "words,\n"
+                "                                     managedAfterGC);\n"
+                "            return taskData->allocPointer;\n"
+                "        }\n"
+                "        else // Insufficient space in this area.",
+            )
+            text = replace_once(
+                text,
+                "                if (foundSpace) return foundSpace;",
+                "                if (foundSpace)\n"
+                "                {\n"
+                "                    RecordManagedFindSuccess("
+                "ManagedFindLargeObject,\n"
+                "                                             words, "
+                "managedAfterGC);\n"
+                "                    return foundSpace;\n"
+                "                }",
+            )
+            text = replace_once(
+                text,
+                "#endif\n"
+                "                    return taskData->allocPointer;\n"
+                "                }\n"
+                "            }\n",
+                "#endif\n"
+                "                    RecordManagedFindSuccess("
+                "ManagedFindRefill, words,\n"
+                "                                             "
+                "managedAfterGC);\n"
+                "                    return taskData->allocPointer;\n"
+                "                }\n"
+                "            }\n",
+            )
+            text = replace_once(
+                text, "                    continue; // Try again",
+                "                    managedAfterGC = true; "
+                "// Another thread's GC\n"
+                "                    continue; // Try again",
+            )
+            text = replace_once(
+                text, "            if (! QuickGC(taskData, words))",
+                "            bool managedGC = QuickGC(taskData, words);\n"
+                "            RecordManagedQuickGC(managedGC);\n"
+                "            if (managedGC) managedAfterGC = true;\n"
+                "            if (! managedGC)",
+            )
+            text = replace_once(
+                text,
+                "                        if (ProcessAsynchRequests"
+                "(taskData))\n"
+                "                            return 0; // Has been "
+                "interrupted.",
+                "                        if (ProcessAsynchRequests"
+                "(taskData))\n"
+                "                        {\n"
+                "                            RecordManagedFindFailure("
+                "words);\n"
+                "                            return 0; // Has been "
+                "interrupted.\n"
+                "                        }",
+            )
         elif name == "memmgr.cpp":
             text = replace_once(
                 text,
+                "            if (allocSpace == 0)\n"
+                "                return 0; // Try a GC.",
+                "            if (allocSpace == 0)\n"
+                "            {\n"
+                "                RecordManagedCodeFailure();\n"
+                "                return 0; // Try a GC.\n"
+                "            }",
+            )
+            text = replace_once(
+                text,
                 "                            return obj;",
-                "                            // Include header and actual alignment.\n"
-                "                            RecordManagedAllocation(ManagedAllocCode,\n"
+                "                            // Include header and actual "
+                "alignment.\n"
+                "                            RecordManagedAllocation("
+                "ManagedAllocCode,\n"
                 "                                (uint64_t)(next - pt));\n"
                 "                            return obj;",
             )
@@ -147,7 +279,8 @@ def main():
     patch = bytearray()
     for name, after in sorted(patched.items()):
         before = originals.get(name, b"")
-        patch.extend(b"diff --git a/" + name.encode() + b" b/" + name.encode() + b"\n")
+        patch.extend(b"diff --git a/" + name.encode() + b" b/" +
+                     name.encode() + b"\n")
         if name not in originals:
             patch.extend(b"new file mode 100644\n")
         patch.extend(b"".join(difflib.diff_bytes(

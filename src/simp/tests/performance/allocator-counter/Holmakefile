@@ -5,10 +5,13 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 CC = cc
 EXTRA_CLEANS = counter-controls.exe worker-controls.exe \
-               interpreter-controls.exe failure-controls.exe bracket.so
+               interpreter-controls.exe failure-controls.exe \
+               path-controls.exe interpreter-path-controls.exe \
+               failure-path-controls.exe bracket.so
 
 all: counter-controls.exe worker-controls.exe interpreter-controls.exe \
-     failure-controls.exe bracket.so
+     failure-controls.exe path-controls.exe interpreter-path-controls.exe \
+     failure-path-controls.exe bracket.so
 
 counter-controls.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
@@ -20,6 +23,15 @@ interpreter-controls.exe: interpreter_selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
 failure-controls.exe: failure_selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+path-controls.exe: path_selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+interpreter-path-controls.exe: interpreter_path_selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+failure-path-controls.exe: failure_path_selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
 # Linux/aarch64 experiment; fail linking if the patched symbol is absent.

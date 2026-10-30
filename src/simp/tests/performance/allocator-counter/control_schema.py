@@ -59,7 +59,8 @@ def observations(text):
             require(len(parts) == 7, "malformed layout")
             layouts.append((parts[1], numbers(parts[2:], 5)))
         elif kind == "CONTROLS_COMPLETE_V1":
-            require(kind not in singleton and parts == [parts[0], str(len(LABELS))],
+            require(kind not in singleton and
+                    parts == [parts[0], str(len(LABELS))],
                     "missing/duplicate/wrong completion count")
             singleton[kind] = parts[1:]
             completed = True
@@ -70,7 +71,8 @@ def observations(text):
     require(set(singleton) == {n + "_V1" for n in known} |
             {"CONTROLS_COMPLETE_V1"}, "missing control summary")
     require(singleton["ABI_V1"] == ["15"], "C ABI controls did not pass")
-    require(singleton["SCOPE_V1"] == ["controls-only; not full runtime validation"]
+    require(singleton["SCOPE_V1"] ==
+            ["controls-only; not full runtime validation"]
             and len(singleton["UNCLAIMED_V1"]) == 1 and
             "TASK29B matrix" in singleton["UNCLAIMED_V1"][0],
             "scope/limitations record changed")
@@ -97,7 +99,8 @@ def observations(text):
     gc = data["gc-before-retained"]
     require(all(data[n] == gc for n in (
         "gc-before-retained-repeat", "gc-with-retained-arrays-1",
-        "gc-with-retained-arrays-2")), "GC recounts retained-data/unknown activity")
+        "gc-with-retained-arrays-2")),
+        "GC recounts retained-data/unknown activity")
     expected = []
     for prefix, sizes, physical in (
         ("word-array", WORD_SIZES, lambda n: n + 1),
@@ -119,4 +122,5 @@ def observations(text):
             "no code-space coverage")
     return dict(brackets=len(LABELS), endpoints=endpoints, deltas=data,
                 layouts=dict(layouts), no_op_words=idle,
-                scope="controls only; interpreter/failures/full matrix unverified")
+                scope="controls only; interpreter/failures/full matrix "
+                "unverified")

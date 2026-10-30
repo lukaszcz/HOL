@@ -7,19 +7,30 @@ This is an experimental patch derived from the local Isabelle2025-2
 reviewed by inspection of the allocator, ARM64 trap/entry mechanisms, native
 allocation emitters, interpreter allocator, code allocator, and relevant
 GC/image paths. A second source review checked native pointer conventions and
-ordinary FFI paths. Private runtime controls now execute 138 brackets across
-four Holmake/testutils launchers (original, ML workers, hybrid bytecode, native
-failures). This is not independent maintainer approval or executed proof of
-completeness. Static and runtime receipts are kept distinct. Nothing here
-closes TASK29B's full coverage or matrix requirements, TASK29's comparison, or
+ordinary FFI paths. The driver executes 233 brackets across seven
+Holmake/testutils launcher processes: the original controls (34), ML workers
+(22), hybrid bytecode (47) and native failures (35), plus three lower-level
+path launchers (22 native/RTS success, 33 bytecode, 40 RTS/native/code
+failure).
+This is not independent maintainer approval or executed proof of
+completeness. Static analysis and runtime receipts are kept distinct. Nothing
+here closes TASK29B's paired-matrix requirement, TASK29's comparison, or
 TASK33's lifetime/peak requirements.
 
-The supported target is the native Linux/aarch64 runtime, with either 64-bit
-PolyWords or compact32 (32-bit PolyWords in the 64-bit process). The hybrid
-bytecode interpreter inside that runtime is included. Other native targets,
-interpreter-only configurations, arbitrary handwritten machine-code heap
-allocators, signal-handler queries, and fork-without-exec are not supported.
-Compile-time guards reject the other configured runtime backends.
+The supported and measured target is the native Linux/aarch64 runtime with
+64-bit PolyWords, including the hybrid bytecode interpreter inside it.
+**compact32 (32-bit PolyWords in the 64-bit process) and callbacks from
+threads not created by the runtime are out of scope**, not pending work: the
+driver refuses a compact32 configuration (`path_schema.reject_compact32`),
+the C shim loaded into every measured process may import only an exact
+allowlist of symbols (`private_runtime.SHIM_IMPORTS`; thread and process
+creation are not on it), each path launcher records the process's OS thread
+inventory before and after its measurements, and the runtime counts entries
+of a thread it did not create (see the path diagnostics). Remarks below about
+compact32 describe source reading only; nothing executes them. Other native
+targets, interpreter-only configurations, arbitrary handwritten machine-code
+heap allocators, signal-handler queries, and fork-without-exec are not
+supported. Compile-time guards reject the other configured runtime backends.
 
 ## Precisely what is counted
 
@@ -99,12 +110,12 @@ entry/FFI save/restore paths, not another heap bump allocator. Boxing helpers
 in `Arm64PreAssembly.ML:1064-1098` use the same allocation operations.
 
 `libpolyml/arm64assembly.S:86-88,126-150` saves/reloads the allocation register
-and limit on entry/traps. `arm64.cpp:613-640` decodes the allocation destination
-register from the continuation and computes
-`allocWords = allocPointer - destination + 1`. The `+1` corrects the saved
-register's object-pointer/header-pointer convention. This is a **request**:
-counting at `HandleTrap`, or beside `addProfileCount`, would charge failed
-allocations and was rejected.
+and limit on entry/traps. `arm64.cpp:613-640` decodes the allocation
+destination register from the continuation and computes `allocWords =
+allocPointer - destination + 1`. The `+1` corrects the saved register's
+object-pointer/header-pointer convention. This is a **request**: counting at
+`HandleTrap`, or beside `addProfileCount`, would charge failed allocations and
+was rejected.
 
 `arm64.cpp:787-839` performs the reservation. If there is insufficient room it
 calls `FindAllocationSpace(..., true)`, then undoes that temporary decrement
@@ -116,11 +127,12 @@ intermediate reserve/undo is not counted. Zero-word initialization is skipped.
 
 Every `SetMemRegisters` now sets the **assembly** lower bound equal to its
 allocation pointer unconditionally. The next positive native decrement must
-trap, irrespective of `profileMode`. The real `TaskData::allocLimit` is unchanged
-so C allocators still use the real segment. Native entry, trap continuation,
-and normal RTS return use this setup. FFI save/restore and callbacks load the
-same assembly-interface limit (`Arm64ForeignCall.sml:75-86,415-460,680-714`).
-The patch does not rewrite generated ML code or require enabling profiling.
+trap, irrespective of `profileMode`. The real `TaskData::allocLimit` is
+unchanged so C allocators still use the real segment. Native entry, trap
+continuation, and normal RTS return use this setup. FFI save/restore and
+callbacks load the same assembly-interface limit
+(`Arm64ForeignCall.sml:75-86,415-460,680-714`). The patch does not rewrite
+generated ML code or require enabling profiling.
 
 The existing native allocation profiler may still record request attribution
 when explicitly enabled, but that neither updates nor supplies this counter.
@@ -133,8 +145,8 @@ disable forced traps. Prefer profiling disabled for measurement controls.
 `libpolyml/run_time.cpp:71-100` is the common `alloc` implementation. Its
 `data_words` limit check and null/IOException failure branch precede the new
 hook, which runs after length/data initialization and before return.
-`alloc_and_save` delegates to it; string, real, bignum, exception, thread-object,
-and other RTS object constructors reach it. Bignum shortening in
+`alloc_and_save` delegates to it; string, real, bignum, exception,
+thread-object, and other RTS object constructors reach it. Bignum shortening in
 `arb.cpp:345-394` does not refund an earlier allocation.
 
 `processes.cpp:947-1060` rounds heap reservations even in compact32, reuses a
@@ -146,11 +158,12 @@ approach uint64 overflow).
 
 ### Hybrid bytecode interpreter
 
-`libpolyml/bytecode.cpp:171-193` is the common object allocator, used by all the
-bytecode allocation/boxing sites found in the file. Its fast path already rounds
-compact32 words before decrementing; count those words directly. Its slow path
-saves interpreter roots, calls `FindAllocationSpace(..., true)`, restores state,
-and checks for null; only success counts, with the same rounding as the RTS.
+`libpolyml/bytecode.cpp:171-193` is the common object allocator, used by all
+the bytecode allocation/boxing sites found in the file. Its fast path already
+rounds compact32 words before decrementing; count those words directly. Its
+slow path saves interpreter roots, calls `FindAllocationSpace(..., true)`,
+restores state, and checks for null; only success counts, with the same
+rounding as the RTS.
 Do not count in both `allocateMemory` and `FindAllocationSpace`.
 
 The two success hooks now call `RecordManagedInterpreterAllocation` with an
@@ -165,16 +178,70 @@ Both exported snapshot symbols must resolve into the same DSO instance.
 **Branch distinction:** bytecode.cpp:175 requires one MORE available word than
 processes.cpp:958's within-segment test. Consequently a bytecode slow success
 can still be satisfied within the current segment. A large-array request alone
-also does not prove which bytecode branch ran. New diagnostics observe actual
-success branches, not request-size guesses, and do NOT claim refill/GC-retry
-coverage of the lower-level allocator.
+also does not prove which bytecode branch ran. The interpreter fast/slow
+diagnostics therefore observe actual bytecode branches, and say nothing about
+the lower level: refill, large-object area and success-after-GC are observed
+only by the separate path diagnostics described next.
+
+### Lower-level path diagnostics (third ABI)
+
+`PolyManagedAllocPathSnapshotV1(void *, size_t)` writes 256 bytes (32
+uint64 words: version, bytes per word, an independent sticky overflow mask
+with one bit per counter, 28 counters, one reserved zero word). It leaves the
+original eight-word and interpreter-branch ABIs, their counters and their
+saturation bits untouched; the counters are updated under the same mutex but
+never feed back into the original totals. It records, per caller (native
+`SetMemRegisters`, RTS `alloc`, bytecode `allocateMemory`), the outcome of each
+non-zero-word `Processes::FindAllocationSpace` call: success within the
+segment, in a separate large-object area, or after obtaining a new segment
+(refill), each split by whether a garbage collection happened first for that
+call; failed reservations per caller; `QuickGC` results inside it; and the
+words of successful calls. `MemMgr::AllocCodeSpace` returning 0 has its own
+counter. The caller is a thread-local set immediately before each of the three
+call sites; a non-zero-word call with no caller aborts rather than guessing
+(an abort that cannot occur in the built runtime, since every call site tags,
+so `arithmetic_test.cpp` executes it in forked children that must die by
+SIGABRT, beside positive controls that must not). Native calls include
+reservations that `SetMemRegisters` later undoes, so these are lower-level
+events, not counted allocations.
+
+Three details of the counters limit what they can show.
+
+- The native (`arm64.cpp`) and bytecode (`bytecode.cpp`) callers pass
+  `alwaysInSeg`, so `FindAllocationSpace` never takes its large-object-area
+  branch for them. Those cells are asserted zero; only RTS requests exercise
+  that branch.
+- The after-GC flag is set when this call's `QuickGC` returned true, or when
+  the call waited for another thread's pending GC request. The GC that made
+  room may therefore be another thread's.
+- Counter 27 counts entries into `PolyArm64GetThreadData` that find no task
+  data for the calling thread: the one place the native backend creates task
+  data for a thread the runtime did not create (`check_patch.py` asserts it is
+  the only such site). It must be zero at every endpoint of every launcher,
+  and the matrix fixture reads it after its last bracket. It detects such an
+  entry in the executed region; it does not make that path correct, and it
+  is no substitute for the OS thread inventory, which sees only threads that
+  exist when it is read.
+
+The path controls assert structural identities, never GC schedules (which
+legitimately vary): RTS path words equal raw RTS words; interpreter path
+success events equal the branch slow count and its words equal the branch slow
+words; the RTS success events of a loop of known RTS operations equal the
+number of operations (each retry success counted exactly once); native and
+interpreter loops keep their exact raw slopes while the refill and
+success-after-GC counters are non-zero (a retry does not double-count); and a
+failed request has exactly one failure counter, no success counters and the
+same raw vector as the control with no allocation. After a native failure
+the thread's next small native allocation may need one segment refill, which
+is charged like any other native reservation; the schema admits exactly that
+one refill and its words, nothing else.
 
 `libpolyml/interpreter.cpp` is the separate machine-dependent interpreter-only
-backend, not selected in the supported build. The shared `bytecode.cpp` allocator
-is still required because the native backend can execute interpreted code,
-including bootstrap phases. `CODEISNOTEXECUTABLE` in `Makefile.am` selects the
-interpreter-only configuration; the counter rejects that build rather than
-advertising unreviewed native coverage.
+backend, not selected in the supported build. The shared `bytecode.cpp`
+allocator is still required because the native backend can execute interpreted
+code, including bootstrap phases. `CODEISNOTEXECUTABLE` in `Makefile.am`
+selects the interpreter-only configuration; the counter rejects that build
+rather than advertising unreviewed native coverage.
 
 ### Code-space allocator
 
@@ -213,28 +280,29 @@ A statically initialized pthread mutex protects five uint64 counters (total and
 four categories) and their sticky overflow mask. This avoids constructor-order
 issues, per-thread list enumeration, dead-thread loss, torn 64-bit reads, and
 C++ atomic-library/toolchain assumptions. It serializes **all** increments and
-snapshots. Each update changes total/category/mask under one lock; each snapshot
-copies the complete state under that lock, then copies its local C-stack record
-to the caller's C buffer after unlocking. The buffer may be unaligned.
+snapshots. Each update changes total/category/mask under one lock; each
+snapshot copies the complete state under that lock, then copies its local
+C-stack record to the caller's C buffer after unlocking. The buffer may be
+unaligned.
 
 There are no GC, scheduler, profile, ML allocator, logging, or callback calls
 inside the critical section. Code allocation takes `codeSpaceLock` then the
 counter lock; no counter-lock path acquires any runtime lock, so no inverse
 lock order is introduced. Mutex operation failure aborts instead of silently
-returning a plausible but corrupt measurement. The normal snapshot path performs
-only locking, scalar arithmetic, stack writes and memcpy, not managed allocation.
-This is not async-signal-safe. Fork can inherit a locked mutex and copied counts:
-fork-without-exec, DSO unload/reload, and mixing multiple runtime instances are
-outside this ABI's process-lifetime contract.
+returning a plausible but corrupt measurement. The normal snapshot path
+performs only locking, scalar arithmetic, stack writes and memcpy, not managed
+allocation. This is not async-signal-safe. Fork can inherit a locked mutex and
+copied counts: fork-without-exec, DSO unload/reload, and mixing multiple
+runtime instances are outside this ABI's process-lifetime contract.
 
 A successful allocator call has updated the counter before returning its
 reservation. Native code updates before resuming its initializer. The counter
 update is the accounting linearization point. A concurrent snapshot can be
 before or after an in-flight reservation's hook; it does not stop all mutators
 or promise that every thread has completed initialization. For an operation
-including workers, join/quiesce them before the end snapshot. Thread termination
-never subtracts prior increments. Other threads' real allocations remain in the
-global metric; thread safety is not per-operation attribution.
+including workers, join/quiesce them before the end snapshot. Thread
+termination never subtracts prior increments. Other threads' real allocations
+remain in the global metric; thread safety is not per-operation attribution.
 
 Overflow uses `increment > UINT64_MAX - current` before addition. On overflow
 that component saturates and its mask bit is permanently set. Total has its own
@@ -251,149 +319,153 @@ The API checks null output and the supplied byte length; it cannot validate an
 arbitrary C pointer's mapping/lifetime. The caller owns 64 writable C bytes and
 must not concurrently read/reuse/free the same output buffer during the call.
 Copies to separate caller-owned buffers are independent. Metadata is uint64,
-host-endian, not an ML tuple, PolyWord array, network packet, or serialized heap.
-The versioned C symbol is exported with default ELF visibility and needs no
-Poly/ML `entrypts` registration: use the supported foreign C ABI, not `RunCall`
-RTS conventions or closure representation casts. Actual symbol reachability in
-the built/linked runtime remains a required executed check.
+host-endian, not an ML tuple, PolyWord array, network packet, or serialized
+heap. The versioned C symbol is exported with default ELF visibility and needs
+no Poly/ML `entrypts` registration: use the supported foreign C ABI, not
+`RunCall` RTS conventions or closure representation casts. Actual symbol
+reachability in the built/linked runtime remains a required executed check.
 
-## Outstanding validation and interpretation limits
+## What the controls establish, and what they do not
 
-No known unhooked **ordinary mutator allocation path in the supported source
-configuration** was found in this inspection. That is a source-review finding,
-not a runtime completeness claim. The first development execution built the private DSO, linked it to HOL and
-passed 34 brackets: known-size native word/byte arrays, escaping ref lists,
-RTS bignum multiplication, retained-data GC, compiler code allocation and
-no-op FFI repeats. Native array slopes include the million-word case exactly.
-The hardened driver additionally checks the actual process's mappings and
-snapshot-symbol binding, the direct C ABI, and synthetic overflow/concurrency
-arithmetic. Consult the corresponding receipt for executed outcomes.
+All numbers below are produced by `run_controls.py` and checked by the strict
+schemas; the receipt is the only evidence. Nothing here is a claim about code
+that no launcher executes.
 
-The extended receipt in `../evidence/task29/managed-coverage/` adds:
+Original controls (`selftest.sml`, `control_schema.py`, 34 brackets):
+known-size native word/byte arrays, escaping ref lists, RTS bignum
+multiplication, retained-data GC, compiler code allocation and no-op FFI
+repeats with exact slopes; the driver additionally checks the actual process
+mappings, the snapshot-symbol binding, the direct C ABI and synthetic
+overflow/concurrency arithmetic (`arithmetic_test.cpp`, never allocated HOL
+words).
 
-- Four precreated ML workers, two rounds at 0/256/512 escaping refs each:
-  native totals 4/5124/10244 words. Mutex gates exclude worker allocation
-  outside the designated rounds. No-op, retirement, and retained-data GC
-  deltas are each four words. `isActive=false` establishes actual retirement;
-  acknowledgement alone is not used. Errors are published, not discarded by
-  Thread.fork. These controls do not validate foreign-thread attachment.
-- A freshly source-bootstrapped bytecode compiler and basis, following
-  RootInterpreted.ML/BuildAll.sml. Typed `CompilerBody.compiler` entries are
-  compiled before measurement, then invoked inside native FFI brackets.
-  No unsafe closure cast or interpreted-to-native FFI call is used. Native
-  declaration-result packaging costs 31 words and remains visible. Exact
-  additional interpreter words are 5*n for retained ref/cons lists and n for
-  arrays, including their separate one-word header. Repeated full GC does not
-  recount retained interpreted objects. That historical run has no branch
-  diagnostics and cannot prove coverage of both interpreter branches.
-- Actual native allocation failures in a separate process. `--maxheap=96`
-  alone is NOT a hard limit: memmgr.cpp explicitly allows a large object to
-  exceed the target. The final fixture additionally sets/rechecks a one-shot
-  RLIMIT_AS at current virtual bytes + 64MiB, outside the bracket, never
-  increasing an existing soft limit. Dynamic 128/192MiB requests then fail
-  twice each, with actual RTS exhaustion output and Thread.Interrupt caught
-  only after action entry. Attributes are restored and a rooted sentinel is
-  unchanged. Each failed bracket equals the prebuilt manual-interrupt
-  control's four native words; the requested object is not counted. Exact
-  successful-array slopes recover after every failure. This does not validate
-  RTS, interpreter or code-space failure branches.
+Worker controls (`worker_selftest.sml`, 22 brackets): four precreated ML
+workers with exact aggregate escaping-ref slopes, no-op/retirement/retained-GC
+deltas of four native words, and actual retirement (`isActive=false`).
 
-Development receipts retain static-loading/bootstrap errors, a crashing
-interpreted generic-FFI attempt, and the rejected maxheap-only oversized
-success. They are not admitted allocation controls. Using native-bracketed
-precompiled bytecode entries avoids the unsupported hybrid-FFI path without
-changing the runtime or production HOL.
+Hybrid bytecode controls (`interpreter_selftest.sml`, 47 brackets): a freshly
+source-bootstrapped bytecode compiler and basis (RootInterpreted.ML,
+BuildAll.sml recipe); typed `CompilerBody.compiler` entries compiled before
+measurement and run inside native FFI brackets. Native result packaging costs
+31 words and stays visible. Exact interpreter words are 5*n for retained ref
+lists and n+1 for arrays; repeated full GC does not recount retained objects;
+fast and slow bytecode successes sum to the original interpreter category.
 
-The separate `../evidence/task29/managed-branches/` receipt adds 16 brackets
-without replacing those 31 small bytecode brackets. Both retained-ref and array
-series at 65536/131072 elements execute BOTH successful bytecode branches.
-Every diagnostic endpoint reconciles with the original interpreter category;
-all original raw vectors repeat exactly, despite different branch schedules.
-Ref storage is exactly 5*n interpreter words, arrays n+1; 31 native entry-result
-words remain counted. No-op and empty/live GC controls have zero interpreter
-increments. Large retained results are consumed before and after GC. Synthetic
-C tests separately cover diagnostic coherence/concurrency, all saturation bits,
-independence from original overflow, and both snapshots' buffer/no-allocation
-contracts. Those synthetic increments are not allocated HOL words.
+Native failure controls (`failure_selftest.sml`, 35 brackets): `--maxheap`
+alone is soft (memmgr.cpp lets a large object exceed it), so a one-shot
+verified `RLIMIT_AS = current virtual bytes + 64 MiB` is set after every
+closure exists. 128/192 MiB native requests then fail with the actual RTS
+exhaustion line, the Interrupt is caught, attributes are restored, the rooted
+sentinel is unchanged, each failed bracket equals the prebuilt manual
+interrupt's raw vector (the requested object is not counted), and exact
+successful-array slopes recover.
 
-Coverage is still incomplete: RTS/interpreter/code failures, foreign-thread
-attachment, lower-level refill/GC-retry and remaining slow paths, compact32
-and prebuilt compiler/image lineage are not established.
-These remain explicit prerequisite checks before full matrix acceptance,
-not claims inferred from successful narrower controls.
+Path controls (this section's subject; `path_selftest.sml`,
+`interpreter_path_selftest.sml` with `interpreter_path_body.sml` and
+`interpreter_path_host.sml`, `failure_path_selftest.sml`, `PathThreads.sml`;
+schema
+`../path_schema.py`; unit tests `../test_allocator_paths.py` and
+`../test_allocator_path_guards.py`, which use only in-test synthetic
+fixtures):
 
-In particular:
+- `path-controls.exe` (22 brackets): loops of native arrays, RTS big-integer
+  shifts and 8 MiB RTS shifts, two rounds each, with no-op warmups. Exact raw
+  slopes (native k*(s+1) words, RTS k*(limbs+2)) while the path counters show
+  the native and RTS refill branches, success-after-GC, and the large-object
+  area (every 8 MiB shift is exactly one large-object reservation). Native
+  FAS-level counts are not per-operation (native code allocates inline), so the
+  native exactness is the raw slope, the branch presence is the path counters.
+- `interpreter-path-controls.exe` (33 brackets): the same for the bytecode
+  interpreter (retained arrays of 0 to 2M words), with the path counters equal
+  to the branch slow count/words; then, under the verified RLIMIT_AS, two
+  16M/24M-word interpreted array requests, two rounds, that fail with the
+  actual RTS exhaustion line. An exception raised by the bytecode interpreter
+  cannot propagate into the native frames above it (a pre-existing hybrid-mode
+  limit noted in bytecode.cpp), so the Interrupt is caught inside interpreted
+  code by a wrapper whose exact cost is measured by its own no-allocation
+  bracket; each failed request must equal that wrapper's raw vector and
+  branch vector and have exactly one interpreter FAS failure and one failed
+  QuickGC. Recovery brackets equal the wrapper plus exactly n+1 words.
+- `failure-path-controls.exe` (40 brackets, `-H 32 --gcthreads=1`): three
+  failing kinds, each twice, followed by exact recovery.
+  - RTS: `IntInf.<<` of 2^30 and 1.5*2^30 bits (128/192 MiB of limbs) fails
+    with the RTS exhaustion line, exactly one RTS FAS failure, a failed
+    QuickGC, no success counters and the manual-interrupt raw vector. Each
+    is followed by exact recovery shifts (3 and 130 RTS words).
+  - Native: `Array.array (16777216, _)` (128 MiB) fails likewise with exactly
+    one native FAS failure, then an exact 1000-element recovery. This
+    executes counter 18 of the path ABI.
+  - Code space: on AArch64 the code area is a reserved 2 GiB region, so
+    RLIMIT_AS cannot fail it. Instead `PolyCopyByteVecToClosure` receives an
+    *uncleared* (never touched) byte vector of 2.5 GiB allocated before the
+    limit, one size because any request beyond the region fails the same way.
+    `MemMgr::AllocCodeSpace` returns 0 because the request exceeds the
+    region, not because of the OS limit, and the dedicated path counter is
+    exactly one with every FAS failure counter and both QuickGC counters
+    zero. The `Fail "Insufficient memory"` that ML then sees additionally
+    depends on the following `QuickGC` failing under RLIMIT_AS; were it to
+    succeed the runtime would retry, possibly without end, and only the
+    process-group timeout would stop it. What is proved: one hooked failed
+    code-space request per failed attempt, and no charge for it. It is not
+    shown that a code request succeeds after a GC.
+    The vector is never copied and no code object is installed; do not pass
+    such a vector to a successful copy (a zero-filled code object crashes
+    the next full GC). The no-allocation control raises an exception packet
+    through the same runtime call with a word object where a byte vector is
+    required (`Fail "Not byte data area"`), measured before the limit and
+    under it. Every failed code request must have exactly that control's raw
+    vector, which has no code words, so the requested 335 million words are
+    not charged. Recovery is a real compiler run whose raw vector must equal
+    the pre-failure vector, repeated after every failure.
+  - Everything the fake closure and vectors need is created before any
+    bracket, including the runtime call's entry point (its first use
+    allocates code), so no bracket contains a successful code allocation.
+    The fake closure and the word-object vector are made with
+    `RunCall.allocateWordMemory`/`allocateByteMemory` and typed as a closure
+    and byte vector, as the compiler's own `CodeArray.ML` does. These casts
+    are control-only, confined to this isolated failure process, and the
+    objects only reach the copy call, which fails before using them.
 
-- Standard Poly/ML-created threads enter via `EnterPolyCode`/`SetMemRegisters`.
-  Foreign-created-thread callback attachment follows a separate pre-existing
-  initialization path (`processes.cpp:1166-1232`,
-  `arm64.cpp:1053-1072`). Source review found a pre-existing null `proc`
-  dereference via `InitStackFrame(taskData, 0)` and no `SetMemRegisters`
-  before callback assembly reloads the heap registers on that path.
-  Foreign-created-thread attachment is explicitly unsupported, not merely
-  presumed safe because the counter uses a mutex. It needs a separate runtime
-  repair and controls if used. No callback initialization fix is smuggled into
-  this allocator experiment.
-- Arbitrary prebuilt ML images must use the reviewed native allocation-check
-  convention. A matching version string alone does not prove that. Seal their
-  provenance and check representative allocation disassembly. The supplied
-  source manifest does not prove installed binary provenance.
-- The C snapshot function performs no managed allocation. Generic ML FFI
-  construction, argument packing, result conversion, tuples, pointer boxing,
-  reading uint64 into large integers, and printing may allocate. Construct
-  wrappers and C buffers before the bracket; decode/format after it. A start
-  call's return-glue costs and an end call's argument-glue costs can still fall
-  inside the interval. The actual steady no-op FFI bracket measured four
-  native words; the first warmup measured eight total words. Both raw results
-  are preserved. This is not a universal calibration or zero-overhead wrapper.
-  The direct C ABI's no-allocation control is a separate check.
-- Forcing every native allocation through a trap changes performance and can
-  change scheduling, asynchronous activity and GC behavior. The lock is also
-  intentionally expensive. All real mutator allocations caused by the
-  instrumented process count. This is an allocation experiment, not timing
-  evidence interchangeable with an uninstrumented runtime.
+Each path launcher also records the OS thread inventory before and after
+(count and sorted names, which must be identical). The sealed shims'
+undefined imports are checked against an exact allowlist, so they import no
+thread or process creation symbol.
 
-## Validation checklist (only executed receipt checks are established)
+Not established: compact32 and callbacks from foreign-created threads (out of
+scope, see above; the latter follow a separate initialization path,
+`processes.cpp:1166-1232`, `arm64.cpp:1053-1072`, with a pre-existing null
+`proc` dereference that this experiment deliberately does not repair; the
+foreign-thread counter only reports an entry); arbitrary prebuilt ML images
+(they must use the reviewed native allocation convention; this driver builds
+its own compiler and HOL from the sealed source); a general claim that every
+allocation path was executed; and any timing. Forcing every native allocation
+through a trap and the lock change performance and scheduling: this is an
+allocation experiment, not timing evidence interchangeable with an
+uninstrumented runtime.
+
+The C snapshot functions perform no managed allocation. Generic ML FFI
+construction, argument packing, result conversion and printing may allocate:
+construct wrappers and C buffers before the bracket, decode after it. A start
+call's return glue and an end call's argument glue can fall inside the
+interval; the steady native no-op bracket measures four native words, its first
+warmup eight. Never subtract these from arbitrary workloads.
+
+## Validation checklist for the TASK29B matrix
 
 1. Verify pristine seals; apply only to an authorized separate source tree;
-   verify patched seals. Seal build configuration, compact32 selection,
-   bootstrap compiler/images, tool versions, linker commands/options, libc,
-   dependency hashes, runtime binary/library hashes and actual process maps.
-2. Check the exported `PolyManagedAllocSnapshotV1` symbol comes from the same
-   runtime instance executing HOL. Test ABI/version, word bytes, byte layout,
-   null/short-buffer rejection, unaligned buffer, and unchanged buffer on error.
-3. Test known retained native records/refs, bytevectors/strings of both payload
-   parities, boxed real/word values, grouped allocations, variable-size and
-   large-object allocations, and both within-segment/refill/GC-retry paths.
-   Consume results; prevent optimization from removing temporary allocations.
-4. Exercise RTS bignums/strings/reals/exception construction and interpreter
-   allocations (both fast and slow). Assert exact physical reservation formulas
-   per allocator path, not just positivity or profiler displayed totals.
-5. Compile known functions to exercise staging heap plus code space, code-area
-   reuse/new-area/retry and compact32 alignment. Separate code and heap deltas;
-   observe already allocated mutable code locking does not reserve it again.
-6. Force minor/full GC with retained/dead results; verify existing allocations
-   are not recounted. Account for any actual ML/RTS allocations of the GC-call
-   wrapper rather than requiring its entire bracket to be magically zero.
-   Fail allocation in a bounded throwaway process: the failed request must not
-   count, but any successful exception allocations must. Check that trap recovery
-   did not count the reserve/undo twice.
-7. Join multiple allocating ML threads and compare deterministic aggregate
-   known-size totals; exercise simultaneous snapshots, worker exit, and GC.
-   Check every overflow-free snapshot has total = category sum. Validate
-   foreign-created-thread callbacks separately if they are in scope.
-8. Exercise saturation boundary arithmetic and total-only overflow in a private
-   C/RTS test harness. Such injected arithmetic tests are **not actual allocator
-   evidence**. No public injection/reset FFI is included. Check sticky flags and
-   host byte-conversion overflow rejection.
-9. Test the real preconstructed HOL/ML FFI bracket with no operation, known
-   escaping allocations, and GC controls. Keep startup, rule construction,
-   complete operation and ordinary application brackets distinct. Both compared
-   versions must use the same sealed runtime/options/dependencies.
-10. Only after those pass, run every TASK29B case and size, baseline-baseline
-    controls, and at least ten fresh paired AB/BA observations. Preserve raw
-    words and bytes, code/heap splits, flags, endpoints, adjacent slopes and
-    zero-size constants. Do not mix instrumented and uninstrumented evidence.
+   verify patched seals; seal configuration (compact32 refused), tools,
+   linker commands, libraries, runtime binary and actual process maps.
+   Run the controls from a clean committed checkout that equals the
+   candidate outside the performance area; the receipt records it.
+2. Check the exported snapshot symbols come from the same runtime instance
+   executing HOL; ABI/version, word bytes, layout, null/short buffer.
+3. Run every launcher above; admit only a receipt whose exits are zero, whose
+   timeouts are finite and unexpired, and whose schemas pass.
+4. Only then run every TASK29B case and size, baseline-baseline controls and
+   at least ten fresh paired AB/BA observations on the same sealed runtime.
+   Preserve raw words and bytes, code/heap splits, flags, endpoints, adjacent
+   slopes and zero-size constants. Do not mix instrumented and uninstrumented
+   evidence.
 
 The acceptance gap is not repaired by profiler sums, live-graph words, RSS,
 synthetic counter increments, or a successfully replayed source patch.

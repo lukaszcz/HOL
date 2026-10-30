@@ -1,7 +1,8 @@
 /* Actual OS address-space limit for the separate failure-controls process.
  * Link INTO bracket.so, not a second runtime/shim. Call only outside measured
- * brackets, after building every FFI closure and warming a full GC. The Poly/ML
- * --maxheap switch alone is soft: AllocHeapSpace permits oversized objects.
+ * brackets, after building every FFI closure and warming a full GC. The
+ * Poly/ML --maxheap switch alone is soft: AllocHeapSpace permits oversized
+ * objects.
  * No allocator counter access, runtime patches, or requested-size allocation.
  * Single controlling thread; this API is deliberately one-shot.
  */

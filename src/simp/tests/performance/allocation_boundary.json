@@ -1,0 +1,79 @@
+{
+  "schema": "task29b-boundary-v2",
+  "prefixes": [
+    {
+      "path": "help/Docfiles/",
+      "reason": "reference pages; in no build sequence, not a module input"
+    },
+    {
+      "path": "src/boss/",
+      "reason": "built after src/simp/src in upto-parallel; not loaded"
+    },
+    {
+      "path": "src/integer/",
+      "reason": "not in upto-parallel (parallel_builds/core); not loaded"
+    },
+    {
+      "path": "src/list/",
+      "reason": "built after src/simp/src in upto-parallel; not loaded"
+    },
+    {
+      "path": "src/num/arith/",
+      "reason": "built after src/simp/src in upto-parallel; not loaded"
+    },
+    {
+      "path": "src/pred_set/",
+      "reason": "built after src/simp/src in upto-parallel; not loaded"
+    },
+    {
+      "path": "src/real/",
+      "reason": "not in upto-parallel (parallel_builds/core); not loaded"
+    },
+    {
+      "path": "src/simp/tests/",
+      "reason": "tests and evidence; fixtures are the harness's own"
+    }
+  ],
+  "files": [
+    {
+      "path": "CLAUDE.md",
+      "blob": "c65fa5ddad678f3a2b58c989acb40f711a052c4f",
+      "reason": "agent notes; not built"
+    },
+    {
+      "path": "holproject.toml",
+      "blob": "b450ad5d53b7f67140af92a399a6835cd898a85d",
+      "reason": "adds h4pedant line-length entries; only it reads them"
+    },
+    {
+      "path": "src/1/ThmAttribute.sig",
+      "blob": "f6dee4ff48c8c78ebf03c5cf28812c021659c2bf",
+      "reason": "adds two read-only lookups; no value changes"
+    },
+    {
+      "path": "src/1/ThmAttribute.sml",
+      "blob": "09d0cb7d2923adbdcb1d8c0e0bc0c26e3bfa3af0",
+      "reason": "adds two lookups; existing functions unchanged"
+    },
+    {
+      "path": "src/1/selftest.sml",
+      "blob": "ae2b0618aa6051955788f792263ff02a651c666d",
+      "reason": "selftest.exe only; the heap does not load it"
+    },
+    {
+      "path": "src/portableML/rawtheory/mktool.ML",
+      "blob": "40eb8fb07b6f0278a9525b4704896a5958652390",
+      "reason": "links the standalone theorytool; not in the heap"
+    },
+    {
+      "path": "src/simp/README",
+      "blob": "247e81b849089edb241969d2f46c2aca5bd0c017",
+      "reason": "documentation"
+    },
+    {
+      "path": "tools/sequences/base-hol",
+      "blob": "c811316db425036841ef28726b1d9a95c4b04f2f",
+      "reason": "adds a selftest-only (!) dir after the heap; no -t"
+    }
+  ]
+}

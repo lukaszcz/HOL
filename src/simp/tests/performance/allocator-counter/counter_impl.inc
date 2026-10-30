@@ -20,6 +20,12 @@ uint64_t managedAllocOverflow = 0;
 // Fast count/words, slow count/words. Independent saturation and flags.
 uint64_t managedInterpreterAllocCounts[4] = { 0, 0, 0, 0 };
 uint64_t managedInterpreterAllocOverflow = 0;
+// Lower-level path diagnostics: see PolyManagedAllocPathSnapshotV1.
+const unsigned managedPathCounters = 28;
+uint64_t managedPathCounts[managedPathCounters];
+uint64_t managedPathOverflow = 0;
+// Constant-initialised: no dynamic TLS constructor or ML allocation.
+thread_local unsigned managedFindCaller = 0;
 
 void LockManagedAllocation()
 {
@@ -73,6 +79,62 @@ void RecordManagedInterpreterAllocation(bool slow, uint64_t words)
     UnlockManagedAllocation();
 }
 
+void ManagedSetFindCaller(ManagedAllocKind caller)
+{
+    managedFindCaller = (unsigned)caller;
+}
+
+static unsigned ManagedFindCallerIndex()
+{
+    if (managedFindCaller < ManagedAllocNative ||
+        managedFindCaller > ManagedAllocInterpreter) abort();
+    return managedFindCaller - ManagedAllocNative;
+}
+
+void RecordManagedFindSuccess(ManagedFindOutcome outcome, uint64_t words,
+                              bool afterGC)
+{
+    if (words == 0) return;
+    if (outcome < ManagedFindSegment || outcome > ManagedFindRefill) abort();
+    const unsigned n = ManagedFindCallerIndex();
+    LockManagedAllocation();
+    AddSaturating(managedPathCounts, managedPathOverflow,
+                  6 * n + 2 * (unsigned)outcome + (afterGC ? 1 : 0), 1);
+    AddSaturating(managedPathCounts, managedPathOverflow, 24 + n, words);
+    UnlockManagedAllocation();
+}
+
+void RecordManagedFindFailure(uint64_t words)
+{
+    if (words == 0) return;
+    const unsigned n = ManagedFindCallerIndex();
+    LockManagedAllocation();
+    AddSaturating(managedPathCounts, managedPathOverflow, 18 + n, 1);
+    UnlockManagedAllocation();
+}
+
+void RecordManagedQuickGC(bool succeeded)
+{
+    LockManagedAllocation();
+    AddSaturating(managedPathCounts, managedPathOverflow,
+                  succeeded ? 21 : 22, 1);
+    UnlockManagedAllocation();
+}
+
+void RecordManagedCodeFailure()
+{
+    LockManagedAllocation();
+    AddSaturating(managedPathCounts, managedPathOverflow, 23, 1);
+    UnlockManagedAllocation();
+}
+
+void RecordManagedForeignThread()
+{
+    LockManagedAllocation();
+    AddSaturating(managedPathCounts, managedPathOverflow, 27, 1);
+    UnlockManagedAllocation();
+}
+
 extern "C" __attribute__((visibility("default")))
 int PolyManagedAllocSnapshotV1(void *out, size_t bytes)
 {
@@ -102,6 +164,24 @@ int PolyManagedInterpreterAllocSnapshotV1(void *out, size_t bytes)
     for (unsigned i = 0; i < 4; i++)
         snapshot[i + 3] = managedInterpreterAllocCounts[i];
     snapshot[7] = 0;
+    UnlockManagedAllocation();
+    memcpy(out, snapshot, sizeof(snapshot));
+    return 0;
+}
+
+extern "C" __attribute__((visibility("default")))
+int PolyManagedAllocPathSnapshotV1(void *out, size_t bytes)
+{
+    if (out == 0 || bytes < POLY_MANAGED_PATH_ALLOC_SNAPSHOT_BYTES_V1)
+        return -1;
+    uint64_t snapshot[POLY_MANAGED_PATH_ALLOC_SNAPSHOT_WORDS_V1];
+    memset(snapshot, 0, sizeof(snapshot));
+    LockManagedAllocation();
+    snapshot[0] = 1;
+    snapshot[1] = sizeof(PolyWord);
+    snapshot[2] = managedPathOverflow;
+    for (unsigned i = 0; i < managedPathCounters; i++)
+        snapshot[i + 3] = managedPathCounts[i];
     UnlockManagedAllocation();
     memcpy(out, snapshot, sizeof(snapshot));
     return 0;

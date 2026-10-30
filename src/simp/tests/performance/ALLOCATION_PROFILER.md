@@ -14,12 +14,13 @@ python3 -B src/simp/tests/performance/allocation_profiler_probe.py \
   --authorize-runtime-probe --output NEW_RECEIPT.json
 ```
 
-On this host prefix that command with the existing
-`sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh`, which binds
-this checkout at its configured historical path. Alternatively, explicitly run
-`profiler-loss-control` in the performance `Holmakefile` with a new
-`PERFORMANCE_CHECK_OUTPUT` directory. This target is not implicit in `check`:
-invoking a private runtime ABI requires the exact reviewed binary.
+The checkout must be bound at its configured path (on hosts where it is
+mounted elsewhere, run the command through the host's binding wrapper).
+Alternatively, explicitly run `profiler-loss-control` in the performance
+`Holmakefile` with a new `PERFORMANCE_CHECK_OUTPUT` directory. This target is
+not implicit in `check`: invoking a private runtime ABI requires the exact
+reviewed binary. The receipt is written to the output path the caller gives;
+nothing is written into the repository.
 
 ## What executes
 
@@ -59,14 +60,14 @@ allocated words. This does not establish how frequently real TASK29 workloads
 hit that path, nor validate the other profile-coverage issues. No partial
 instrument or guessed correction factor is accepted as a counter.
 
-## Evidence and limitations
+## Receipt and limitations
 
-`evidence/task29/profiler-loss/receipt.json.gz` retains the fresh execution,
-all six outputs, five testutils checks, compiler version, runtime/tool/fixture
-seals, installed-symbol disassembly, command lines and exits. The driver keeps
-failed command receipts before rejecting them. Missing, duplicate, reordered,
-malformed or semantically different controls fail closed; eight Python tests
-exercise those guards and the exact-library admission rule. Final linked
+The receipt retains the execution, all six outputs, the testutils checks,
+compiler version, runtime/tool/fixture seals, installed-symbol disassembly,
+command lines and exits. The driver keeps failed command receipts before
+rejecting them. Missing, duplicate, reordered, malformed or semantically
+different controls fail closed; the Python tests exercise those guards and
+the exact-library admission rule on synthetic data. Final linked
 library resolutions/bytes and source/heap/tool seals are rechecked. Temporary
 sources, executables and DSO are removed on success or failure.
 
