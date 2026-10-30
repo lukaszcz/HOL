@@ -520,6 +520,64 @@ struct
             name ^ ")) (define @var_word () (_ @s #b0)) ", fp, true)]
     end
 
+  (* Reverse declaration order: an ordinary descriptor can arrive after
+     private allocation. Repeated @var/declaration/binder occurrences must
+     agree, but cannot acquire private identity, nor alias another ordinary
+     descriptor via the collision's renamed image. *)
+  fun later_source_freshness () =
+    let
+      fun check mode =
+        let
+          val prefix = "%%genvar%%"
+          val probe = #1 (Term.dest_var (Term.genvar ``:word1``))
+          val serial = valOf (Int.fromString
+            (String.extract (probe, String.size prefix, NONE)))
+          val name = prefix ^ Int.toString (serial + 1)
+          fun var name = "(@var \"" ^ name ^ "\" (_ BitVec 1))"
+          val declaration = if mode = "declaration" then
+              "(declare-const " ^ name ^ " (_ BitVec 1)) " else ""
+          val ordinary = if mode = "declaration" then name else var name
+          val binder = if mode = "binder" then
+              "(lambda ((" ^ name ^ " (_ BitVec 1))) " ^ name ^ ")"
+            else "(lambda (@list " ^ var name ^ ") " ^ var name ^ ")"
+          val proof = parse_cpc_proof_string
+            ("((declare-const x (_ FloatingPoint 3 5)) " ^
+             "(define @private () (@fp.SIGN (_ BitVec 1) x)) " ^
+             declaration ^
+             "(define @ordinary () " ^ ordinary ^ ") " ^
+             "(define @again () " ^ ordinary ^ ") " ^
+             "(define @different () " ^ var (name ^ "'") ^ ") " ^
+             "(define @identity () " ^ binder ^ ") " ^
+             "(assume @p1 (= @private @private)) " ^
+             "(assume @p2 (= @ordinary @again)) " ^
+             "(assume @p3 (= @different @different)) " ^
+             "(assume @p4 (= @identity @identity)))")
+          fun equation (CPC_Proof.ASSUME (_, {term,...})) =
+                boolSyntax.dest_eq term
+            | equation _ = raise Fail "missing late ordinary ASSUME"
+          val (marker, ordinary, different, abstraction) =
+            case CPC_Proof.proof_commands proof of
+              [first,second,third,fourth] =>
+                let val (left,right) = equation second
+                in require "repeated late descriptor changed identity"
+                     (Term.aconv left right);
+                   (reflexive_marker first,left,#1 (equation third),
+                    #1 (equation fourth)) end
+            | _ => raise Fail "wrong late descriptor command count"
+          val _ = require "late collision fixture missed private name"
+            (#1 (Term.dest_var marker) = name)
+          val _ = require "later ordinary descriptor aliases private marker"
+            (not (Term.aconv marker ordinary) andalso
+             not (P.is_cpc_fp_private_marker ordinary))
+          val _ = require "renamed ordinary aliases a later descriptor"
+            (not (Term.aconv ordinary different) andalso
+             not (P.is_cpc_fp_private_marker different))
+          val (bound,body) = Term.dest_abs abstraction
+        in require "late binder lost ordinary identity or binding"
+             (Term.aconv bound ordinary andalso Term.aconv body ordinary
+              andalso not (Term.free_in ordinary abstraction)) end
+    in List.app check ["@var", "declaration", "binder"] end
+
   (* Same TASK19 construction as the resource tests: on the standard
      kernel, insert the shared residue lazily using a tiny Beta theorem.
      Never open, FVL, or structurally compare the resulting large binder. *)
@@ -628,6 +686,180 @@ struct
     in exact expected [] reflexive; no_private reflexive;
        require "nested explicit elimination did not use one input INST"
          (#inst_calls statistics = 1) end
+
+  (* Exercise the normalization API without kernel INST or FP lowering:
+     either would obscure whether the witness builder itself unfolds an
+     actual shared operand. Count only bounded DAG observations, never the
+     exponentially large printed term or an unfolded equality comparison. *)
+  fun shared_witness_normalization dependent () =
+    let
+      val x = ``task46_shared_x : (3,5) smtfp``
+      val y = ``task46_shared_y : (3,5) smtfp``
+      val inner = Term.genvar ``:word1``
+      val outer = Term.genvar ``:word1``
+      val leaf = if dependent then
+          ``smtfp_bits ^inner 0w 0w : (3,5) smtfp``
+        else y
+      val add = Term.rator (Term.rator ``smtfp_add RNE ^y ^y``)
+      fun shared 0 = leaf
+        | shared n = let val child = shared (n - 1)
+                     in Term.mk_comb (Term.mk_comb (add, child), child) end
+      val operand = shared 24
+      val bindings : P.cpc_fp_private_binding list =
+        [{marker=outer,kind="@fp.INF",source=operand},
+         {marker=inner,kind="@fp.SIGN",source=x}]
+      val substitutions = Timeout.apply (Time.fromSeconds 10)
+        R.cpc_fp_private_substitutions bindings
+      val (outer_image, inner_image) = case substitutions of
+          [{redex=first,residue=left},{redex=second,residue=right}] =>
+            (require "witness normalization reordered assignments"
+               (Term.aconv first outer andalso Term.aconv second inner);
+             (left, right))
+        | _ => raise Fail "wrong shared witness substitution count"
+      val _ = require "wrong older witness in shared normalization"
+        (Term.aconv inner_image ``(smtfp_rep ^x).Sign``)
+      val retained = ref false
+      val remaining = ref false
+      val additions = ref 0
+      val normalized_leaf = ref false
+      val expected_leaf = if dependent then
+          ``smtfp_bits ^inner_image 0w 0w : (3,5) smtfp`` else y
+      fun inspect term =
+        (if Portable.pointer_eq (term, operand) then retained := true else ();
+         if Term.is_var term andalso Term.aconv term inner then
+           remaining := true else ();
+         if Term.is_comb term andalso
+            Term.aconv (Term.rator term) add then
+           additions := !additions + 1 else ();
+         (* Only compare at the constant-size leaf, not at shared roots. *)
+         if Term.is_var term then
+           (if Term.aconv term expected_leaf then normalized_leaf := true
+            else ())
+         else if Term.is_comb term then
+           let val (head, arguments) = boolSyntax.strip_comb term in
+             if Term.is_const head andalso
+                #Name (Term.dest_thy_const head) = "smtfp_bits" andalso
+                length arguments = 3 andalso Term.aconv term expected_leaf
+             then normalized_leaf := true else ()
+           end
+         else ())
+      val scan = SmtResource.bounded_structure_with_inspector inspect
+        200 outer_image
+    in
+      require "shared witness normalization expanded the source DAG"
+        (#complete scan andalso
+         SmtResource.dag_nodes_up_to 200 outer_image <= 200);
+      require "shared normalization lost its source or leaf"
+        (!normalized_leaf andalso !additions = 24);
+      require "shared normalization left an older marker" (not (!remaining));
+      require "unrelated normalization rebuilt the original source"
+        (dependent orelse !retained)
+    end
+
+  fun binder_witness_normalization () =
+    let
+      val x = ``task46_capture_x : (3,5) smtfp``
+      val y = ``task46_capture_y : (3,5) smtfp``
+      val inner = Term.genvar ``:word1``
+      val outer = Term.genvar ``:word1``
+      val bits = ``smtfp_bits ^inner 0w 0w : (3,5) smtfp``
+      val image = ``(smtfp_rep ^x).Sign``
+      fun normalized operand =
+        case R.cpc_fp_private_substitutions
+          [{marker=outer,kind="@fp.INF",source=operand},
+           {marker=inner,kind="@fp.SIGN",source=x}] of
+          [{redex=_,residue=result}, _] => result
+        | _ => raise Fail "wrong binder witness substitution count"
+      (* The older image introduces free x underneath a source binder x.
+         Comparison is against an independently built, tiny expected term. *)
+      val operand = Term.mk_comb (Term.mk_abs (x, bits), y)
+      val fresh = Term.genvar (Term.type_of x)
+      val expected = Term.mk_comb
+        (Term.mk_abs (fresh,
+          ``smtfp_bits ^image 0w 0w : (3,5) smtfp``), y)
+      val _ = require "witness normalization captured a free source variable"
+        (Term.aconv (normalized operand) (witness expected))
+      (* An occurrence bound by the same descriptor is not a dependency. *)
+      val shadowed = Term.mk_comb
+        (Term.mk_abs (inner, bits), ``0w : word1``)
+      val _ = require
+        "witness normalization substituted a bound marker descriptor"
+        (Term.aconv (normalized shadowed) (witness shadowed))
+      (* The selected binder adapter admits full output before native
+         closure. Check a shared image within the unchanged legacy bound;
+         large application-only images have no such raw binder bound. *)
+      val add = Term.rator (Term.rator ``smtfp_add RNE ^y ^y``)
+      fun shared 0 = y
+        | shared n = let val child = shared (n - 1)
+                     in Term.mk_comb (Term.mk_comb (add, child), child) end
+      val large = shared 8
+      val bindings : P.cpc_fp_private_binding list =
+        [{marker=outer,kind="@fp.INF",source=operand},
+         {marker=inner,kind="@fp.SIGN",source=large}]
+      val images = Timeout.apply (Time.fromSeconds 10)
+        R.cpc_fp_private_substitutions bindings
+      val (image, older) = case images of
+          [{redex=_,residue=result},{redex=_,residue=older}] =>
+            (result, older)
+        | _ => raise Fail "missing binder-sharing witness"
+      val retained = ref false
+      val scan = SmtResource.bounded_structure_with_inspector
+        (fn term => if Portable.pointer_eq (term, large) then
+          retained := true else ()) 200 older
+      (* The normalization timeout above is the binder cost assertion.
+         Do NOT open its result to diagnose sharing: stock dest_abs itself
+         unfolds a large raw body. Inspect that boundary opaquely. *)
+      val has_binder = ref false
+      val outer_scan = SmtResource.bounded_structure_with_children
+        (fn term => if Term.is_comb term then
+           let val (left,right) = Term.dest_comb term in [left,right] end
+         else [])
+        (fn term => if Term.is_abs term then has_binder := true else ())
+        200 image
+      val exhausted = Timeout.apply (Time.fromSeconds 10) (fn () =>
+        Exn.capture R.cpc_fp_private_substitutions
+          [{marker=outer,kind="@fp.INF",source=operand},
+           {marker=inner,kind="@fp.SIGN",source=shared 20}]) ()
+      val expected_diagnostic = SmtResource.term_size_diagnostic_for
+        "BitVector" "binder-opening"
+        (SmtResource.max_bv_replay_term_nodes + 1)
+      val _ = require "binder output lost the legacy first diagnostic"
+        (case exhausted of Exn.Exn (Feedback.HOL_ERR detail) =>
+           SmtResource.is_resource_gate detail andalso
+           Feedback.top_function_of detail = "check_term_size" andalso
+           Feedback.message_of detail = expected_diagnostic
+         | _ => false)
+    in require "binder closing expanded an inserted shared witness"
+         (#complete scan andalso !retained andalso
+          #complete outer_scan andalso !has_binder) end
+
+  fun unused_opaque_witness () =
+    Timeout.apply (Time.fromSeconds 10) (fn () =>
+      let
+        val x = Term.mk_var ("task46_unused_x", Type.bool)
+        val y = Term.mk_var ("task46_unused_y", Type.bool)
+        fun shared 0 = x
+          | shared n = let val child = shared (n - 1)
+                       in boolSyntax.mk_conj (child,child) end
+        val body = shared 24
+        val binder = if Thm.kernelid = "expknl" then Term.mk_abs (y,body)
+          else boolSyntax.rhs (Thm.concl (Thm.Beta (Thm.REFL
+            (Term.mk_comb (Term.mk_abs (x,Term.mk_abs (y,x)),body)))))
+        val unused = Term.genvar ``:word1``
+        val used = Term.genvar ``:word1``
+        val source = ``task46_used_x : (3,5) smtfp``
+        (* An unused explicit operand need not even be a supported FP
+           source: it must not be inspected or have a witness constructed. *)
+        val bindings : P.cpc_fp_private_binding list =
+          [{marker=unused,kind="@fp.SIGN",source=binder},
+           {marker=used,kind="@fp.INF",source=source}]
+        val theorem = R.instantiate_cpc_fp_private_bindings bindings
+          (Thm.REFL used)
+        val image = witness source
+      in exact (boolSyntax.mk_eq (image,image)) [] theorem;
+         exact boolSyntax.T []
+           (R.instantiate_cpc_fp_private_bindings bindings boolTheory.TRUTH)
+      end) ()
 
   fun raw_self () =
     let val target = ``task46_deferred_p:bool``
@@ -769,10 +1001,20 @@ struct
        shared_source_freshness;
      test "CPC parsed @var and binder atoms cannot alias private markers"
        parsed_source_freshness;
+     test "CPC later ordinary declarations and binders remain disjoint"
+       later_source_freshness;
      test "CPC source freshness retains lazy legacy binder-opening gate"
        binder_source_freshness;
      test "CPC nested explicit replacements normalize before one input INST"
        nested_explicit;
+     test "CPC unrelated private witness retains the actual shared operand"
+       (shared_witness_normalization false);
+     test "CPC nested private witness preserves dependency DAG sharing"
+       (shared_witness_normalization true);
+     test "CPC witness binders preserve capture/shadowing and shared images"
+       binder_witness_normalization;
+     test "CPC unused opaque witness is pruned before normalization"
+       unused_opaque_witness;
      test "CPC raw-self deferred cache entry remains unclosed" raw_self;
      test "CPC genuine two-step deferred dependency cycle remains unclosed"
        dependency_cycle;

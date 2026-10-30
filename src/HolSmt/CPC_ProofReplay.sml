@@ -20825,6 +20825,10 @@ in
      not repeatedly traverse a large Skolem term.  Eliminate all such
      abbreviations in one checked kernel instantiation before any deferred
      FP premise is discharged. *)
+  local
+    structure G = SmtReplayGraph
+    structure R = SmtReplayResolve
+  in
   fun cpc_fp_private_substitutions bindings =
     let
       fun unary theory name argument =
@@ -20883,19 +20887,128 @@ in
             raise ERR "instantiate_cpc_fp_private_markers"
               (kind ^ " witness has the wrong type")
         in {redex = marker, residue = replacement} end
-      (* The parser records outer components before their older operands.
-         Normalize that finite assignment DAG before the one input INST:
-         simultaneous substitution alone leaves an inner marker in an outer
-         witness. These are witness recipes, not instantiated input proofs. *)
-      fun normalize (binding, substitutions) =
-        let val {redex,residue} = witness binding
-        in {redex=redex,residue=Term.subst substitutions residue} ::
-           substitutions end
-    in List.foldr normalize [] bindings end
+      (* Resolve the finite witness-assignment DAG, not native expanded
+         terms. Import has no application-DAG cutoff; abstractions alone
+         use the legacy binder-opening bound before any dest_abs. The
+         existing resolver memoizes constructors without per-node FV sets.
+         The binder adapter bounds inputs, resolved free images and output
+         before native closure. This is not an unbounded binder-substitution
+         path; no cut substitution scans a large witness image. *)
+      fun compact () =
+        let
+          val graph = G.new ()
+          val root = G.root_scope graph
+          (* Declare flexibility BEFORE importing any source references.
+             Lexical binder bindings still shadow these aliases. *)
+          val declarations = List.map
+            (fn ({marker,...} : CPC_ProofParser.cpc_fp_private_binding) =>
+              (marker,G.variable graph root G.SolverFlexible marker)) bindings
+          val scope = G.new_scope graph root declarations
+          val limit = SmtResource.max_bv_replay_term_nodes
+          val opened = ref (Redblackmap.mkDict Int.compare)
+          fun admit node = case Redblackmap.peek (!opened,G.node_id node) of
+              SOME result => result
+            | NONE =>
+                let
+                  val result = case G.view graph node of
+                      G.OpaqueRetained =>
+                        let
+                          val term = G.representative graph node
+                          val _ = case SmtReplayImport.bounded_raw_size limit
+                              term of SOME _ => ()
+                            | NONE => SmtResource.check_term_size_for
+                                "BitVector" "binder-opening" (limit+1)
+                        in #node (G.admit_binder graph scope limit term) end
+                    | G.Application (operator,operand) =>
+                        let val left = admit operator
+                            val right = admit operand
+                        in if left = operator andalso right = operand then
+                             node
+                           else G.application graph scope (left,right) end
+                    | _ => node
+                  val _ = opened := Redblackmap.insert
+                    (!opened,G.node_id node,result)
+                in result end
+          fun import term = admit (#node (G.import_with_policy graph scope
+            SmtReplayResourcePolicy.Uncapped term))
+          val operands = List.map
+            (fn ({source,...} : CPC_ProofParser.cpc_fp_private_binding) =>
+              import source) bindings
+          val assignments = ListPair.map
+            (fn ((_,variable),binding) =>
+              {variable=variable,residue=import (#residue (witness binding))})
+            (declarations,bindings)
+          fun binder {node,resolve} =
+            SOME (#1 (SmtReplayUnifyBinder.normalize_raw graph scope
+              {node=node,resolve=resolve,limit=limit}))
+            handle Feedback.HOL_ERR detail =>
+              if Feedback.top_structure_of detail = "SmtReplayUnifyBinder"
+                 andalso Feedback.top_function_of detail = "admission"
+                 andalso List.exists (fn message =>
+                   message = Feedback.message_of detail)
+                   ["bounded binder operand/output exhausted",
+                    "bounded binder output exhausted"] then
+                (SmtResource.check_term_size_for
+                   "BitVector" "binder-opening" (limit+1); NONE)
+              else raise Feedback.HOL_ERR detail
+          val resolution = case R.prepare_using graph scope binder
+              {flexible=List.map #2 declarations,assignments=assignments,
+               roots=operands,preserved=[]} of
+              R.Resolved result => result
+            | R.Refused _ => raise ERR "instantiate_cpc_fp_private_markers"
+                "private FP witness DAG could not be resolved"
+          fun normalized
+              (binding : CPC_ProofParser.cpc_fp_private_binding,operand) =
+            let val resolved = R.node resolution operand
+            in witness {marker= #marker binding,kind= #kind binding,
+              (* Preserve the exact native operand on independent paths. *)
+              source=if resolved = operand then #source binding
+                     else G.representative graph resolved} end
+        in ListPair.map normalized (bindings,operands) end
+    in case bindings of
+        [] => []
+      | [binding] => [witness binding]
+      | _ => compact ()
+    end
+  end
 
-  fun instantiate_cpc_fp_private_bindings bindings theorem =
-    let val substitutions = cpc_fp_private_substitutions bindings in
-      if List.null substitutions then theorem
+  fun instantiate_cpc_fp_private_bindings
+      (bindings : CPC_ProofParser.cpc_fp_private_binding list) theorem =
+    if List.null bindings then theorem else
+    let
+      (* Definitions may be unused in the actual proof. Select the required
+         witness closure before opening any operand, especially an unused
+         opaque binder. Use the same DAG/binder scan and first diagnostic
+         as final private-Hyp exclusion, not a new admission policy. *)
+      val required = ref Term.empty_varset
+      val declarations = HOLset.addList
+        (Term.empty_varset,List.map #marker bindings)
+      fun collect term =
+        let val scan = SmtResource.bounded_structure_with_inspector
+              (fn variable => if Term.is_var variable andalso
+                  HOLset.member (declarations,variable) then
+                    required := HOLset.add (!required,variable) else ())
+              SmtResource.max_bitblast_term_nodes term
+        in if #complete scan then () else
+          raise ERR "instantiate_cpc_fp_unbound_markers"
+            "private FP marker scan exceeded the DAG resource limit"
+        end
+      val _ = List.app collect (Thm.concl theorem :: Thm.hyp theorem)
+      fun discover pending selected =
+        let val (needed,rest) = List.partition
+              (fn {marker,...} => HOLset.member (!required,marker)) pending
+        in if List.null needed then selected else
+          (if List.null rest then () else
+             List.app (collect o #source) needed;
+           discover rest (needed @ selected)) end
+      val selected = discover bindings []
+      (* Keep declaration order, including for the single-binding path. *)
+      val selected_markers = HOLset.addList
+        (Term.empty_varset,List.map #marker selected)
+      val substitutions = cpc_fp_private_substitutions
+        (List.filter (fn {marker,...} =>
+          HOLset.member (selected_markers,marker)) bindings)
+    in if List.null substitutions then theorem
       else observed_inst substitutions theorem
     end
 

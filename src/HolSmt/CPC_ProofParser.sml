@@ -205,11 +205,37 @@ local
     handle Redblackmap.NotFound => NONE
 
   val cpc_fp_private_parse_avoid = ref ([] : Term.term list)
+  val cpc_fp_private_allocated = ref Term.empty_varset
+  val cpc_source_variables = ref (Redblackmap.mkDict Term.var_compare)
+  val cpc_source_images = ref Term.empty_varset
+  val cpc_reserved_source_scope = ref ([] : Term.term list)
+
+  (* A proof-local @var/declaration/binder can be printed AFTER a private
+     allocation with that allocation's exact HOL descriptor. Preserve the
+     ordinary descriptor's identity in a separate namespace in either
+     declaration order. Original query variables are already reserved by
+     the Source scope and therefore never require renaming here. Store all
+     ordinary identities (not just collisions), so a later descriptor also
+     cannot alias an earlier collision's renamed image. *)
   fun cpc_source_variable specification =
-    let val variable = Term.mk_var specification
-        val _ = cpc_fp_private_parse_avoid :=
-          variable :: !cpc_fp_private_parse_avoid
-    in variable end
+    let val original = Term.mk_var specification in
+      case Redblackmap.peek (!cpc_source_variables, original) of
+        SOME variable => variable
+      | NONE =>
+          let
+            val occupied = !cpc_fp_private_parse_avoid
+            val variable =
+              if HOLset.member (!cpc_fp_private_allocated, original) orelse
+                 HOLset.member (!cpc_source_images, original)
+              then Term.variant occupied original
+              else original
+            val _ = cpc_source_variables := Redblackmap.insert
+              (!cpc_source_variables, original, variable)
+            val _ = cpc_source_images :=
+              HOLset.add (!cpc_source_images, variable)
+            val _ = cpc_fp_private_parse_avoid := variable :: occupied
+          in variable end
+    end
 
   val cpc_cfg : SmtLib_Parser.parser_cfg = {
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
@@ -346,11 +372,18 @@ local
          declarations and earlier private allocations are reserved directly.
          Do not rescan a constructed witness operand (possibly an opaque
          binder) just to rediscover those names. *)
-      val marker = Term.variant
-        ((!cpc_fp_private_source_avoid) () @ !cpc_fp_private_parse_avoid)
-        (Term.genvar ty)
-      val _ = cpc_fp_private_parse_avoid :=
-        marker :: !cpc_fp_private_parse_avoid
+      val sources = (!cpc_fp_private_source_avoid) ()
+      (* Source scopes memoize this exact variable list. Retain it once,
+         not once per marker (which would grow avoids quadratically). *)
+      val avoided =
+        if Portable.pointer_eq (sources,!cpc_reserved_source_scope) then
+          !cpc_fp_private_parse_avoid
+        else sources @ !cpc_fp_private_parse_avoid
+      val _ = cpc_reserved_source_scope := sources
+      val marker = Term.variant avoided (Term.genvar ty)
+      val _ = cpc_fp_private_parse_avoid := marker :: avoided
+      val _ = cpc_fp_private_allocated :=
+        HOLset.add (!cpc_fp_private_allocated, marker)
     in marker end
 
   fun add_term (dicts_ref : dicts ref) name tm =
@@ -2347,9 +2380,8 @@ local
         else []
       val range = parse_cpc_type get_token tydict
       val _ = Library.expect_token ")" (get_token ())
-      val tm = Term.mk_var
+      val tm = cpc_source_variable
         (name, boolSyntax.list_mk_fun (domain, range))
-      val _ = cpc_fp_private_avoid_terms [tm]
       fun parse _ indices args =
         if not (List.null indices) orelse
            (parse_domain andalso
@@ -3829,6 +3861,10 @@ in
       val _ = cpc_fp_private_bindings_ref := []
       val _ = cpc_fp_private_unbound_markers_ref := []
       val _ = cpc_fp_private_parse_avoid := []
+      val _ = cpc_fp_private_allocated := Term.empty_varset
+      val _ = cpc_source_variables := Redblackmap.mkDict Term.var_compare
+      val _ = cpc_source_images := Term.empty_varset
+      val _ = cpc_reserved_source_scope := []
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
       val _ = cpc_term_intern :=
         Array.array (term_intern_bucket_count, [])
