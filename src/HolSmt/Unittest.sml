@@ -33378,6 +33378,7 @@ let
     ("sequence_named_obligations", SmtReplaySequenceTests.run),
     ("string_named_obligations", SmtReplayStringTests.run),
     ("bag_named_obligations", bag_named_obligations),
+    ("public_wrapper_finalization", SmtPublicWrapperTests.run),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
     ("cpc_deferred_graph_closure", CPC_DeferredGraphTests.run),
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
