@@ -61,6 +61,14 @@ struct
     let val {Thy,Tyop,...} = Type.dest_thy_type ty
     in Thy = "smtstring" andalso (Tyop = "smtstr" orelse Tyop = "reglan") end
 
+  (* Pure FP/rounding equations have no numeric or datatype child. They
+     still need injective graph-variable names in generic rule workers. *)
+  fun fp_type ty =
+    not (Type.is_vartype ty) andalso
+    let val {Thy,Tyop,...} = Type.dest_thy_type ty
+    in Thy = "smtfloat" andalso
+       (Tyop = "smtfp" orelse Tyop = "smt_rounding") end
+
   fun bag_head graph node = case G.view graph node of
       G.Constant _ =>
         SmtBagProve.has_native_bag_encoding (G.representative graph node)
@@ -78,6 +86,7 @@ struct
        Term.same_const (G.representative graph node) combinSyntax.update_tm
      | _ => false)) orelse bag_head graph node orelse
     string_type (G.type_of graph node) orelse
+    fp_type (G.type_of graph node) orelse
     datatype_type (G.type_of graph node)) graph
 
   (* Native Seq is list-valued; String retains its separate carrier. Only

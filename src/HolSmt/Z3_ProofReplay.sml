@@ -7001,16 +7001,7 @@ local
              else ();
              List.app collect (SmtResource.term_children term))
         val _ = collect target
-        fun canonical_fact source =
-          let
-            val base = Drule.ISPECL [source]
-              (Drule.GEN_ALL
-                smtfloatReplayRoundingTheory.smtfp_rep_canonical_fields)
-            val beta = Conv.TOP_DEPTH_CONV Thm.BETA_CONV
-              (Thm.concl base)
-              handle Conv.UNCHANGED => Thm.REFL (Thm.concl base)
-          in Thm.EQ_MP beta base end
-        val facts = List.map canonical_fact (!fp_sources) @
+        val facts = List.map SmtFpProve.canonical_fields (!fp_sources) @
           List.map (fn mode => Thm.SPEC mode
             smtfloatReplayRoundingTheory.smtfp_rounding_onehot)
             (!rounding_sources)

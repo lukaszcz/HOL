@@ -33352,6 +33352,7 @@ let
     ("smtlib_graph_scalar_recipes_success", SmtLib_GraphScalarTests.run),
     ("smtlib_graph_structured_recipes", SmtLib_GraphStructuredTests.run),
     ("z3_graph_scoped_let_parser", Z3_GraphParserTests.run),
+    ("fp_named_obligations", SmtReplayFpTests.run),
     ("arithmetic_named_obligations", SmtReplayArithmeticTests.run),
     ("structured_named_obligations", SmtReplayStructuredTests.run),
     ("sequence_named_obligations", SmtReplaySequenceTests.run),

@@ -11,29 +11,57 @@ struct
 
   fun profile name f x = Profile.profile_with_exn_name name f x
 
-  fun type_mentions_fp ty =
-    if Type.is_vartype ty then
-      false
-    else
-      let
-        val {Thy, Tyop, Args} = Type.dest_thy_type ty
-      in
-        (Thy = "smtfloat" andalso
-          (Tyop = "smtfp" orelse Tyop = "smt_rounding")) orelse
-        List.exists type_mentions_fp Args
-      end
+  (* Dispatch is not Type admission. A bounded physical hot cache avoids
+     expanding shared annotation suffixes without an unbounded linear lookup
+     over independent annotations. Misses use the original syntax query:
+     no new refusal, structural Type comparison or proof inference. *)
+  fun new_type_mentions_fp () =
+    let
+      val seen = ref ([] : (Type.hol_type * bool) list)
+      fun visit ty =
+        if Type.is_vartype ty then false else
+          let val {Thy, Tyop, Args} = Type.dest_thy_type ty
+          in
+            if Thy = "smtfloat" andalso
+                (Tyop = "smtfp" orelse Tyop = "smt_rounding") then true
+            else if null Args then false
+            else case SmtResource.recent_pointer_lookup seen ty of
+              SOME result => result
+            | NONE =>
+                let val result = List.exists visit Args
+                    val _ = seen := (ty,result) ::
+                      List.take (!seen,Int.min (7,length (!seen)))
+                in result end
+          end
+    in visit end
 
-  fun is_fp_theory_term tm =
-    type_mentions_fp (Term.type_of tm) orelse
+  fun type_mentions_fp ty = new_type_mentions_fp () ty
+
+  fun is_fp_theory_term_using mentions tm =
+    mentions (Term.type_of tm) orelse
     (Term.is_const tm andalso
       let val {Thy, ...} = Term.dest_thy_const tm
       in Thy = "smtfloat" end)
+
+  fun is_fp_theory_term tm =
+    is_fp_theory_term_using (new_type_mentions_fp ()) tm
 
   (* Dispatch examines both the types and the constants below an equation.
      The type check is essential for a rewrite between proof-local FP
      variables, where no smtfloat constant need occur. *)
   fun has_fp_theory_term t =
-    SmtResource.contains is_fp_theory_term t
+    SmtResource.contains
+      (is_fp_theory_term_using (new_type_mentions_fp ())) t
+
+  (* Close the generic beta redexes BEFORE specializing Types or inserting
+     an FP source. A source may be a SELECT with an opaque/shared body; its
+     interior must not become a TOP_DEPTH_CONV operand. *)
+  val canonical_fields_schema = Conv.CONV_RULE
+    (Conv.TOP_DEPTH_CONV Thm.BETA_CONV)
+    smtfloatReplayRoundingTheory.smtfp_rep_canonical_fields
+
+  fun canonical_fields source =
+    Drule.ISPECL [source] (Drule.GEN_ALL canonical_fields_schema)
 
   fun unsupported t =
     raise ERR "unsupported"
