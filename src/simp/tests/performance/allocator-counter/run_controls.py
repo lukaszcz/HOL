@@ -73,6 +73,8 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--authorize-experimental-runtime", action="store_true")
+    parser.add_argument("--bootstrap-hol", action="store_true",
+                        help="rebuild native compiler and HOL without caches")
     args = parser.parse_args(argv)
     if not args.authorize_experimental_runtime or args.timeout <= 0:
         parser.error("authorization and positive timeout required")
@@ -132,6 +134,12 @@ def main(argv=None):
                     ["ldd", str(repo / "bin/hol")]))
                 with tempfile.TemporaryDirectory(prefix="task29-counter-") as tmp:
                     dst = Path(tmp)
+                    if args.bootstrap_hol:
+                        from bootstrap_probe import build_native_hol
+                        report["lineage"] = {}
+                        repo = build_native_hol(args.source, dst, repo, env,
+                                                run, report["lineage"])
+                        env["HOLDIR"] = str(repo)
                     # Standalone arithmetic tests inject synthetic increments only.
                     for name in ("arithmetic_test.cpp", "counter_impl.inc",
                                  "managed_alloc_counter.h"):
