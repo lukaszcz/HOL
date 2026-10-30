@@ -319,10 +319,17 @@ struct
       (formula check (Thm.concl th);List.app check (Thm.hyp th);th)
     fun preflight check th tm =
       let
-        val _ = check tm
         val _ = rule check th
         val left = boolSyntax.lhs
           (#2 (boolSyntax.strip_imp (Thm.concl th)))
+        (* Ho_Net is intentionally untyped. Reject a Type-incompatible
+           wildcard (notably unit's v=()) before rescanning a whole raw
+           target suffix. Admit BOTH annotations before native Type work;
+           an actual term match still gets full operand admission below. *)
+        val _ = List.app (fn t => check
+          (Term.mk_var ("__smt_bag_annotation",Term.type_of t))) [left,tm]
+        val _ = Type.match_type (Term.type_of left) (Term.type_of tm)
+        val _ = check tm
         val rigid = Thm.hyp_frees th
         val types = HOLset.listItems (Thm.hyp_tyvars th)
         val (sigma,types) = HolKernel.ho_match_term types rigid left tm
@@ -769,14 +776,35 @@ struct
                       SmtReplayImport.dest_abs_preserving_names
                     fun rhs th = boolSyntax.rhs (Thm.concl th)
                     fun checked th = (ignore (rule admit th);th)
-                    fun refl term = (admit term;Thm.REFL term)
+                    fun equality_type term =
+                      let val ty = Term.type_of term
+                      in admit (Term.mk_var ("__smt_bag_annotation",
+                           Type.mk_type ("fun",[ty,
+                             Type.mk_type ("fun",[ty,Type.bool])]))) end
+                    fun refl term =
+                      (admit term;equality_type term;Thm.REFL term)
                     fun combine (left,right) =
                       let val l = boolSyntax.lhs (Thm.concl left)
                           val r = boolSyntax.lhs (Thm.concl right)
+                          val input = Term.mk_comb (l,r)
                           val _ = List.app admit
-                            [Term.mk_comb (l,r),
-                             Term.mk_comb (rhs left,rhs right)]
+                            [input,Term.mk_comb (rhs left,rhs right)]
+                          val _ = equality_type input
                       in checked (Thm.MK_COMB (left,right)) end
+                    fun apply_function f law =
+                      let val input = Term.mk_comb
+                            (f,boolSyntax.lhs (Thm.concl law))
+                          val _ = List.app admit
+                            [f,input,Term.mk_comb (f,rhs law)]
+                          val _ = equality_type input
+                      in checked (Thm.AP_TERM f law) end
+                    fun apply_argument law x =
+                      let val input = Term.mk_comb
+                            (boolSyntax.lhs (Thm.concl law),x)
+                          val _ = List.app admit
+                            [x,input,Term.mk_comb (rhs law,x)]
+                          val _ = equality_type input
+                      in checked (Thm.AP_THM law x) end
                     (* Do not insert a large closure into a whole operand
                        and THEN beta-reduce it: that administrative redex
                        can exceed an otherwise fitting source's allowance.
@@ -840,8 +868,16 @@ struct
                                  (q,witness,equation,opaque))
                           in q end
                     val saved = ref (Redblackmap.mkDict compare_leaf)
-                    fun convert term =
-                      let val _ = admit term
+                    (* NONE is unchanged syntax, not a reflexivity proof.
+                       Visit it once without reflecting/admitting every
+                       suffix. Only a changed parent's congruence demands
+                       reflection of an unchanged child. In particular an
+                       unrelated context needs no intermediate equality at
+                       its element/function Types. *)
+                    fun convert term = case conversion term of
+                        SOME law => law | NONE => refl term
+                    and conversion term =
+                      let val _ = tick ()
                           (* Only bounded compact keys, never realized
                              suffixes, enter this conversion memo. *)
                           val cacheable = small term
@@ -851,9 +887,11 @@ struct
                       | NONE =>
                         let
                           val (head,args) = boolSyntax.strip_comb term
-                          val result = case Redblackmap.peek (!names,head) of
+                          val result = case if Term.is_var head then
+                              Redblackmap.peek (!names,head) else NONE of
                             SOME n =>
-                              let val q = name n
+                              let val _ = admit term
+                                  val q = name n
                                   val (_,_,equation,opaque) = valOf
                                     (Redblackmap.peek (!definitions,id n))
                                   val arg_bridges = List.map convert args
@@ -891,38 +929,64 @@ struct
                                   val applied = List.foldl
                                     (fn (arg,f) => combine (f,refl arg))
                                     expanded back
-                              in checked (Thm.TRANS prefix applied) end
+                              in SOME (checked
+                                   (Thm.TRANS prefix applied)) end
                           | NONE =>
-                              if Term.is_comb term then
-                                let val (f,x) = Term.dest_comb term
-                                in combine (convert f,convert x) end
-                              else if Term.is_abs term then
-                                let val (old,b) = open_abs term
-                                    (* Small source leaves can bind a name
-                                       which genvar subsequently selected.
-                                       Keep those bound occurrences lexical,
-                                       never interpret them as graph holes. *)
-                                    val v = Term.variant
-                                      (!avoids @ Term.free_vars b) old
-                                    val _ = avoids := v :: !avoids
-                                    val _ = admit b
-                                    val renamed = Term.subst
-                                      [{redex=old,residue=v}] b
-                                    val _ = admit renamed
-                                    val body = convert renamed
-                                    val _ = admit (Term.mk_abs (v,rhs body))
-                                in checked (Thm.ABS v body) end
-                              else refl term
+                              let
+                                fun abstraction () =
+                                  if not (Term.is_abs head) then NONE else
+                                  let val _ = admit head
+                                      val (old,b) = open_abs head
+                                      (* Source binders stay lexical, never
+                                         interpreted as graph holes. *)
+                                      val v = Term.variant
+                                        (!avoids @ Term.free_vars b) old
+                                      val _ = avoids := v :: !avoids
+                                      val _ = admit b
+                                      val renamed = Term.subst
+                                        [{redex=old,residue=v}] b
+                                      val _ = admit renamed
+                                  in case conversion renamed of NONE => NONE
+                                    | SOME body =>
+                                      let val input = Term.mk_abs
+                                            (v,boolSyntax.lhs
+                                              (Thm.concl body))
+                                          val _ = List.app admit
+                                            [input,Term.mk_abs (v,rhs body)]
+                                          val _ = equality_type input
+                                      in SOME (checked (Thm.ABS v body)) end
+                                  end
+                                (* Strip each application spine only once,
+                                   including unchanged many-argument heads. *)
+                                fun application (x,(f,bridge)) =
+                                  let val arg = conversion x
+                                      val input = Term.mk_comb (f,x)
+                                      val result = case (bridge,arg) of
+                                          (NONE,NONE) => NONE
+                                        | (NONE,SOME law) =>
+                                            SOME (apply_function f law)
+                                        | (SOME law,NONE) =>
+                                            SOME (apply_argument law x)
+                                        | (SOME l,SOME r) =>
+                                            SOME (combine (l,r))
+                                  in (input,result) end
+                              in #2 (List.foldl application
+                                   (head,abstraction ()) args) end
                           val _ = if cacheable then saved :=
                             Redblackmap.insert (!saved,term,result) else ()
                         in result end end
                     val left = convert l val right = convert r
-                    val contexts = List.map
-                      (convert o Thm.concl) context
+                    (* Only actual compact Hyp require transport. Unused
+                       context still passed all source/pattern gates and
+                       participated in discovery in its original order. *)
+                    val contexts = List.mapPartial (fn (law,abstract) =>
+                      if List.exists (Term.aconv (Thm.concl abstract))
+                          (Thm.hyp proof) then
+                        SOME (law,convert (Thm.concl abstract)) else NONE)
+                      (ListPair.zip (facts,context))
                     val _ = if Term.aconv (rhs left) tm andalso
-                        ListPair.allEq (fn (source,bridge) =>
-                          Term.aconv (Thm.concl source) (rhs bridge))
-                          (facts,contexts)
+                        List.all (fn (source,bridge) =>
+                          Term.aconv (Thm.concl source) (rhs bridge)) contexts
                       then () else raise Conv.UNCHANGED
                     val result = checked (Thm.TRANS (Thm.SYM left)
                       (Thm.TRANS proof right))
@@ -932,8 +996,7 @@ struct
                          then checked (Drule.PROVE_HYP
                            (Thm.EQ_MP (Thm.SYM bridge) law) result)
                          else result end
-                    val result = List.foldl discharge result
-                      (ListPair.zip (facts,contexts))
+                    val result = List.foldl discharge result contexts
                     fun close ((_,(q,witness,equation,_)),result) =
                       if not (List.exists (Term.aconv equation)
                           (Thm.hyp result)) then result else

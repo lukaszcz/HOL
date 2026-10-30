@@ -33131,6 +33131,184 @@ fun cpc_long_refutation_widening_success () =
       in check_oracle_tags "CPC long refutation widening" theorem end
   in check false; check true end
 
+(* Task42 review-realization: these are unrelated context facts, not the
+   named dependent fields covered by SmtReplayBagTests.dependent_context. *)
+fun bag_realization_admission_success () =
+let
+  val cap = 200000
+  val x = ``review_x:bool``
+  val join = ``review_join:bool -> bool -> bool``
+  fun shared 0 = x
+    | shared n = let val child = shared (n-1)
+                 in Term.list_mk_comb (join,[child,child]) end
+  val abstraction = Term.mk_abs
+    (x,Term.list_mk_comb (``review_k:bool -> bool -> bool``,[x,shared 7]))
+  val fact = ``BAG_IN review_q (review_b:bool -> num)``
+  val target = boolSyntax.mk_conj
+    (Term.mk_comb (``review_h:(bool -> bool) -> bool``,abstraction),fact)
+  val context =
+    [``!f:bool -> bool. (review_h:(bool -> bool) -> bool) f =
+         (review_g:(bool -> bool) -> (bool -> bool) -> bool) f f``,
+     ``!p:bool -> bool. (review_g:(bool -> bool) -> (bool -> bool) -> bool)
+         (\x:bool. (review_k:bool -> bool -> bool) x (p x))
+         (\x:bool. (review_k:bool -> bool -> bool) x (p x))``,fact]
+  fun legacy_at facts goal =
+    SmtResource.with_resource_step_time "Bag" "contextual" (fn () =>
+      (SmtResource.check_resource_goal "Bag" "contextual" goal;
+       Tactical.TAC_PROOF ((facts,goal),
+         Tactical.THEN (Tactical.REPEAT Tactic.COND_CASES_TAC,
+           Tactical.THEN (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+             intLib.ARITH_TAC))))) ()
+  fun legacy facts = legacy_at facts target
+  fun compare_at goal facts expected actual =
+    (SmtReplayBagTests.exact goal (Thm.hyp expected) actual;
+     SmtReplayBagTests.same_tags expected actual;
+     assert (List.all (fn h => List.exists (Term.aconv h) facts)
+       (Thm.hyp actual), "bag realization introduced a private hypothesis"))
+  fun compare facts = compare_at target facts
+  fun checker observe =
+    SmtReplayArithmetic.new_term_check {limit=cap,observe=observe}
+  fun prove_at admit facts goal =
+    SmtBagProve.bag_contextual_prove_with_admission admit facts goal
+  fun prove admit facts = prove_at admit facts target
+  val _ = assert (Term.term_size target = 524,
+    "bag review-realization source fixture changed")
+
+  (* An unused P y must not be reflected at all: REFL P would demand
+     an equality Type larger than the source predicate Type. Even when
+     that Type does not fit, the original context must remain supported. *)
+  val y = Term.mk_var ("review_y",``:'review_gate``)
+  val predicate = Term.mk_var ("review_P",
+    Type.mk_type ("fun",[Term.type_of y,Type.bool]))
+  val extra_typed = Term.mk_comb (predicate,y)
+  val forbidden = Term.rator (Term.rator
+    (boolSyntax.mk_eq (predicate,predicate)))
+  val forbidden_type = Term.type_of forbidden
+  exception EqualityType of unit ref
+  val token = ref ()
+  val seen = ref false
+  val after = ref 0
+  val bounded = checker (fn () => ())
+  fun operator_check term =
+    if !seen then (after := !after+1;bounded term)
+    else if Term.type_of term = forbidden_type then
+      (seen := true;raise EqualityType token)
+    else bounded term
+  val typed_context = context @ [extra_typed]
+  val expected = legacy typed_context
+  val _ = compare typed_context expected (prove operator_check typed_context)
+  val _ = assert (not (!seen) andalso !after=0,
+    "bag realization reflected an unused context operand")
+  val _ = assert
+    ((case Exn.capture operator_check forbidden of
+        Exn.Exn (EqualityType identity) => identity=token | _ => false),
+     "bag unused-context equality Type control did not reject")
+
+  (* P is now an unchanged sibling of a demanded dependent alpha field.
+     AP_TERM must avoid reflecting P even on this USED context route.
+     A genuinely demanded field reflection must still admit its new
+     annotation BEFORE REFL, preserving the first error without retry. *)
+  val element = ``review_element:bool -> 'review_gate``
+  val merge = ``review_merge:'review_gate -> 'review_gate -> 'review_gate``
+  fun payload 0 = Term.mk_comb (element,x)
+    | payload n = let val child = payload (n-1)
+                  in Term.list_mk_comb (merge,[child,child]) end
+  val typed_abstraction = Term.mk_abs (x,Term.list_mk_comb
+    (``review_k:bool -> bool -> bool``,
+      [x,Term.mk_comb (predicate,payload 7)]))
+  val typed_goal = boolSyntax.mk_conj
+    (Term.mk_comb (``review_h:(bool -> bool) -> bool``,typed_abstraction),fact)
+  val typed_laws =
+    [hd context,
+     ``!p:bool -> 'review_gate.
+         (review_g:(bool -> bool) -> (bool -> bool) -> bool)
+           (\x:bool. (review_k:bool -> bool -> bool) x
+             ((review_P:'review_gate -> bool) (p x)))
+           (\x:bool. (review_k:bool -> bool -> bool) x
+             ((review_P:'review_gate -> bool) (p x)))``,fact]
+  val _ = seen := false
+  val _ = after := 0
+  val _ = compare_at typed_goal typed_laws (legacy_at typed_laws typed_goal)
+    (prove_at operator_check typed_laws typed_goal)
+  val _ = assert (not (!seen), "bag reflected an unchanged typed sibling")
+  val required_type = Term.type_of (Term.rator (Term.rator
+    (boolSyntax.mk_eq (element,element))))
+  fun required_check term =
+    if !seen then (after := !after+1;bounded term)
+    else if Term.is_var term andalso
+        #1 (Term.dest_var term) = "__smt_bag_annotation" andalso
+        Term.type_of term = required_type then
+      (seen := true;raise EqualityType token)
+    else bounded term
+  val result = Exn.capture
+    (fn () => prove_at required_check typed_laws typed_goal) ()
+  val _ = assert
+    (!seen andalso !after=0 andalso
+     (case result of Exn.Exn (EqualityType identity) => identity=token
+       | _ => false),
+     "bag reflection bypassed equality Type admission or retried its error")
+  val recovered = prove_at (checker (fn () => ())) typed_laws typed_goal
+  val _ = compare_at typed_goal typed_laws
+    (legacy_at typed_laws typed_goal) recovered
+
+  (* This actual large Type fits the original primitive cap in the unused
+     source, while reflecting its predicate would exceed that SAME cap. *)
+  fun type_tree 0 = Type.bool
+    | type_tree n = let val child = type_tree (n-1)
+                    in Type.mk_type ("fun",[child,child]) end
+  val large_y = Term.mk_var ("review_large_y",type_tree 19)
+  val large_p = Term.mk_var ("review_large_P",Type.mk_type
+    ("fun",[Term.type_of large_y,Type.bool]))
+  val large_context = context @ [Term.mk_comb (large_p,large_y)]
+  val _ = compare large_context (legacy large_context)
+    (prove (checker (fn () => ())) large_context)
+  val large_equality = Term.rator (Term.rator
+    (boolSyntax.mk_eq (large_p,large_p)))
+  val _ = assert
+    ((case Exn.capture (checker (fn () => ())) large_equality of
+        Exn.Exn (Feedback.HOL_ERR detail) => SmtResource.is_resource_gate detail
+      | _ => false), "large equality Type control did not exceed original cap")
+
+  (* A fresh genuine checker per sample counts both raw/Type visits and
+     callback calls. Subtract fixed dependent-goal work: a large baseline
+     must not hide quadratic rescanning of unchanged unrelated suffixes. *)
+  val step = ``review_step:bool -> bool``
+  fun spine 0 = ``review_free:bool``
+    | spine n = Term.mk_comb (step,spine (n-1))
+  fun work_context 0 = context
+    | work_context n = context @
+        [Term.mk_comb (``review_Q:bool -> bool``,spine n)]
+  fun work n =
+    let
+      val facts = work_context n
+      val expected = legacy facts
+      val calls = ref (0:IntInf.int)
+      val visits = ref (0:IntInf.int)
+      val bounded = checker (fn () => visits := !visits+1)
+      fun admit term = (calls := !calls+1;bounded term)
+      val actual = prove admit facts
+      val _ = compare facts expected actual
+    in (!calls,!visits) end
+  val (base_calls,base_visits) = work 0
+  val (small_calls,small_visits) = work 512
+  val (large_calls,large_visits) = work 1024
+  fun linear (baseline:IntInf.int) small large =
+    let val first = small-baseline
+        val second = large-baseline
+    in first > 0 andalso second > 0 andalso second <= 3*first end
+  val _ = assert (linear base_calls small_calls large_calls andalso
+                  linear base_visits small_visits large_visits,
+    "unrelated bag context exceeded local 2x-growth Work allowance")
+  val _ = print ("BAG_UNRELATED_WORK calls=" ^
+    String.concatWith "/" (List.map IntInf.toString
+      [base_calls,small_calls,large_calls]) ^ " visits=" ^
+    String.concatWith "/" (List.map IntInf.toString
+      [base_visits,small_visits,large_visits]) ^ "\n")
+in () end
+
+fun bag_named_obligations () =
+  (SmtReplayBagTests.run ();bag_realization_admission_success ())
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -33142,7 +33320,7 @@ let
     ("structured_named_obligations", SmtReplayStructuredTests.run),
     ("sequence_named_obligations", SmtReplaySequenceTests.run),
     ("string_named_obligations", SmtReplayStringTests.run),
-    ("bag_named_obligations", SmtReplayBagTests.run),
+    ("bag_named_obligations", bag_named_obligations),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", CPC_GraphParserTests.run),

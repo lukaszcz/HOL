@@ -179,6 +179,16 @@ struct
     (fragment,index_fragment fragment))
     (simpLib.ssfrags_of (bossLib.srw_ss ()))
 
+  (* Fixed std_ss conversion keys use bool (BETA/UNWIND) and arithmetic
+     (REDUCE). Its remaining fragments contain source rewrites. A namespace
+     superset is only a cheap proof of a miss, never matching authority. *)
+  val standard_rewrite_theories = Lib.mk_set ("bool" :: "arithmetic" ::
+    List.concat (List.map (fn fragment => List.concat
+      (List.map (fn law => List.map (#Thy o Term.dest_thy_const)
+        (HolKernel.find_terms Term.is_const (Thm.concl law)))
+        (simpLib.frag_rewrites fragment)))
+      (simpLib.ssfrags_of numLib.std_ss)))
+
   fun index_sources (fragment,sources) =
     let
       val index = case List.find (fn (saved,_) =>
@@ -669,6 +679,23 @@ struct
         end
       val standard = simpLib.traversedata_for_ss numLib.std_ss
       val ordinary = Traverse.dest_reducer (hd (#rewriters standard))
+      (* Bag's preflight route has no local conversion. Its exported net
+         already includes arbitrary user rewrite heads. On a net miss the
+         fixed std_ss can only rewrite an abstraction-headed beta redex or
+         a constant from its own rule/conversion namespaces. In particular
+         it cannot rewrite an unrelated free function or user constructor.
+         Keep this conservative namespace test local to that route: the
+         other adapters may supply arbitrary local conversions.
+
+         BOOL/UNWIND conversions use bool; REDUCE uses arithmetic (including
+         its numeral operators). All other std_ss fragments contain only
+         rewrites. Include EVERY namespace in those current source laws,
+         not a finite grammar of permitted operands or successful rules. *)
+      fun ordinary_head tm =
+        let val head = #1 (boolSyntax.strip_comb tm)
+        in Term.is_abs head orelse
+          (Term.is_const head andalso Lib.mem
+            (#Thy (Term.dest_thy_const head)) standard_rewrite_theories) end
       fun checked_solver solver assumptions condition =
         (List.app admit assumptions;admit condition;
          solver assumptions condition)
@@ -676,6 +703,8 @@ struct
           (interrupted := SOME primary;raise Portable.Interrupt)
       fun ordinary_step solver stack tm =
         let
+          val _ = case preflight of NONE => () | SOME _ =>
+            if ordinary_head tm then admit tm else raise Conv.UNCHANGED
           val result = #apply ordinary
             {solver=checked_solver solver,conv=fn _ => Conv.NO_CONV,
              context= #initial ordinary,stack=stack,
@@ -692,7 +721,10 @@ struct
         in result end
       fun rewrite solver stack tm =
         let
-          val _ = admit tm
+          val _ = case preflight of NONE => admit tm | SOME _ => ()
+          val selected = candidates tm
+          val _ = case preflight of NONE => ()
+            | SOME _ => admit boolSyntax.T
           fun full_equality () = Conv.CHANGED_CONV (#equality lists) tm
           fun equality () =
             #closed_equality lists tm handle Feedback.HOL_ERR _ =>
@@ -701,7 +733,9 @@ struct
             #normalise lists tm handle Feedback.HOL_ERR _ => equality ()
               | Conv.UNCHANGED => equality ()
           fun local_step () =
-            let val result = local_conversion tm
+            let val _ = case preflight of NONE => ()
+                  | SOME _ => raise Conv.UNCHANGED
+                val result = local_conversion tm
                 val _ = admit_conversion result
             in result end
             handle Feedback.HOL_ERR _ =>
@@ -717,7 +751,7 @@ struct
             | attempt (conv::rest) = conv solver stack tm
                 handle Feedback.HOL_ERR _ => attempt rest
                      | Conv.UNCHANGED => attempt rest
-        in attempt (candidates tm) end
+        in attempt selected end
         handle AdmissionFailure primary =>
           (* Traverse.mapfilter2 discards arbitrary reducer exceptions, but
              propagates Interrupt. Abort immediately and restore the exact
