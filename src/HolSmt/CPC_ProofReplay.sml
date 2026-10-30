@@ -20978,20 +20978,43 @@ in
     let
       (* Definitions may be unused in the actual proof. Select the required
          witness closure before opening any operand, especially an unused
-         opaque binder. Use the same DAG/binder scan and first diagnostic
-         as final private-Hyp exclusion, not a new admission policy. *)
+         opaque binder. Retain the exact DAG/binder admission scan and first
+         diagnostic of final private-Hyp exclusion. A bound alias must not
+         select its explicit operand. Dependency metadata grants no proof. *)
       val required = ref Term.empty_varset
       val declarations = HOLset.addList
         (Term.empty_varset,List.map #marker bindings)
       fun collect term =
-        let val scan = SmtResource.bounded_structure_with_inspector
-              (fn variable => if Term.is_var variable andalso
-                  HOLset.member (declarations,variable) then
-                    required := HOLset.add (!required,variable) else ())
-              SmtResource.max_bitblast_term_nodes term
-        in if #complete scan then () else
-          raise ERR "instantiate_cpc_fp_unbound_markers"
-            "private FP marker scan exceeded the DAG resource limit"
+        let
+          val candidates = ref Term.empty_varset
+          val has_binder = ref false
+          fun add found variable =
+            if Term.is_var variable andalso
+               HOLset.member (declarations,variable) then
+              found := HOLset.add (!found,variable) else ()
+          val limit = SmtResource.max_bitblast_term_nodes
+          val scan = SmtResource.bounded_structure_with_inspector
+            (fn node => (add candidates node;
+              if Term.is_abs node then has_binder := true else ())) limit term
+          val _ = if #complete scan then () else
+            raise ERR "instantiate_cpc_fp_unbound_markers"
+              "private FP marker scan exceeded the DAG resource limit"
+          (* Keep admission on the ORIGINAL syntax. Alpha-renaming bound
+             aliases can rebuild shared bodies and change that DAG metric.
+             Only on binder paths with candidates, prune abstractions from
+             a second DAG walk and use stock FVL on those already raw-
+             bounded operands. No new binder is opened or admitted here;
+             the pruned walk cannot exceed the original node allowance. *)
+          fun children node =
+            if Term.is_abs node then
+              (HOLset.foldl (fn (variable,()) => add required variable) ()
+                 (Term.FVL [node] Term.empty_varset); [])
+            else SmtResource.term_children node
+        in
+          if !has_binder andalso not (HOLset.isEmpty (!candidates)) then
+            ignore (SmtResource.bounded_structure_with_children children
+              (add required) limit term)
+          else required := HOLset.union (!required,!candidates)
         end
       val _ = List.app collect (Thm.concl theorem :: Thm.hyp theorem)
       fun discover pending selected =

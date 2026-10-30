@@ -861,6 +861,161 @@ struct
            (R.instantiate_cpc_fp_private_bindings bindings boolTheory.TRUTH)
       end) ()
 
+  (* Discovery, not just normalization, must respect a parsed private
+     alias used as a binder. Its unused operand is correctly typed but
+     cannot pass the raw binder-opening gate. This combines the previously
+     separate shadowing and unused-opaque controls. *)
+  fun bound_opaque_dependency () =
+    Timeout.apply (Time.fromSeconds 30) (fn () =>
+      let
+        val fp = "(fp #b0 #b000 #b0000)"
+        fun alias i = "@shared" ^ Int.toString i
+        fun definitions 0 = "(define " ^ alias 0 ^ " () true) "
+          | definitions n = definitions (n-1) ^ "(define " ^ alias n ^
+              " () (and " ^ alias (n-1) ^ " " ^ alias (n-1) ^ ")) "
+        val proof = parse_cpc_proof_string ("(" ^ definitions 21 ^
+          "(define @y () (@var \"opaque_y\" Bool)) " ^
+          "(define @huge () (forall (@list @y) " ^ alias 21 ^ ")) " ^
+          "(define @inner () (@fp.SIGN (_ BitVec 1) " ^
+            "(ite @huge " ^ fp ^ " " ^ fp ^ "))) " ^
+          "(define @shadow () (forall (@list @inner) (= @inner @inner))) " ^
+          "(define @outer () (@fp.INF (_ BitVec 1) " ^
+            "(ite @shadow " ^ fp ^ " " ^ fp ^ "))) " ^
+          "(assume @a (= @outer @outer)))")
+        val outer = case CPC_Proof.proof_commands proof of
+            [command] => reflexive_marker command
+          | _ => raise Fail "wrong bound-dependency command count"
+        val bindings = P.cpc_fp_private_bindings ()
+        val needed = List.filter (fn {marker,...} =>
+          Term.aconv marker outer) bindings
+        val _ = require "bound dependency fixture lost a binding"
+          (length bindings = 2 andalso length needed = 1)
+        val reference = R.instantiate_cpc_fp_private_bindings needed
+          (Thm.REFL outer)
+        val theorem = R.instantiate_cpc_fp_private_bindings bindings
+          (Thm.REFL outer)
+        val _ = exact (Thm.concl reference) [] theorem
+        (* Bound aliases in the actual input Goal/Hyp are not free either.
+           No witness, normalization, or input INST is needed here. *)
+        val inner = #marker (valOf (List.find (fn {marker,...} =>
+          not (Term.aconv marker outer)) bindings))
+        val closed = boolSyntax.mk_forall
+          (inner,boolSyntax.mk_eq (inner,inner))
+        val source = Thm.ASSUME closed
+        val (unchanged,statistics) = R.with_operation_statistics (fn () =>
+          R.instantiate_cpc_fp_private_bindings bindings source)
+        (* The same operand MUST retain the original refusal when its
+           marker really is free, rather than bound in the outer source. *)
+        val refused = Exn.capture
+          (R.instantiate_cpc_fp_private_bindings bindings) (Thm.REFL inner)
+        val diagnostic = SmtResource.term_size_diagnostic_for
+          "BitVector" "binder-opening"
+          (SmtResource.max_bv_replay_term_nodes + 1)
+      in exact closed [closed] unchanged;
+         require "bound-only input caused a witness INST"
+           (#inst_calls statistics = 0);
+         require "required opaque dependency lost its original diagnostic"
+           (case refused of Exn.Exn (Feedback.HOL_ERR detail) =>
+              SmtResource.is_resource_gate detail andalso
+              Feedback.top_function_of detail = "check_term_size" andalso
+              Feedback.message_of detail = diagnostic
+            | _ => false)
+      end) ()
+
+  (* An identical body can be reached both freely and under a shadowing
+     binder. Neither visitation order may hide its free dependency; a
+     different-typed namesake must not shadow it either. *)
+  fun mixed_free_bound_dependencies () =
+    let
+      val inner = Term.genvar ``:word1``
+      val outer = Term.genvar ``:word1``
+      val x = ``task46_dependency_x : (3,5) smtfp``
+      val bits = ``smtfp_bits ^inner 0w 0w : (3,5) smtfp``
+      val shadowed = Term.mk_comb
+        (Term.mk_abs (inner,bits), ``0w : word1``)
+      val namesake = Term.mk_var (#1 (Term.dest_var inner),Type.bool)
+      val typed = Term.mk_comb (Term.mk_abs (namesake,bits),boolSyntax.T)
+      val nested = Term.mk_comb (Term.mk_abs (namesake,typed),boolSyntax.T)
+      val add = Term.rator (Term.rator ``smtfp_add RNE ^x ^x``)
+      fun check (left,right) =
+        let
+          val operand = Term.mk_comb (Term.mk_comb (add,left),right)
+          val bindings : P.cpc_fp_private_binding list =
+            [{marker=outer,kind="@fp.INF",source=operand},
+             {marker=inner,kind="@fp.SIGN",source=x}]
+          val image = ``(smtfp_rep ^x).Sign``
+          val expected = witness (Term.subst
+            [{redex=inner,residue=image}] operand)
+          val theorem = R.instantiate_cpc_fp_private_bindings bindings
+            (Thm.REFL outer)
+          val hyp = boolSyntax.mk_eq (inner,inner)
+          val source = Thm.CONJ (Thm.REFL outer) (Thm.ASSUME hyp)
+          val expected_hyp = boolSyntax.mk_eq (image,image)
+          val result = R.instantiate_cpc_fp_private_bindings bindings source
+        in exact (boolSyntax.mk_eq (expected,expected)) [] theorem;
+           exact (boolSyntax.mk_conj
+             (boolSyntax.mk_eq (expected,expected),expected_hyp))
+             [expected_hyp] result
+        end
+    in List.app check [(shadowed,bits),(bits,shadowed),
+         (shadowed,typed),(shadowed,nested)] end
+
+  fun bound_alias_names () =
+    Timeout.apply (Time.fromSeconds 10) (fn () =>
+      let
+        val first = Term.mk_var ("task46_bound",``:word1``)
+        val second = Term.mk_var ("task46_bound'",``:word1``)
+        val free = Term.mk_var ("task46_bound''",Type.bool)
+        val x = ``task46_dependency_x : (3,5) smtfp``
+        val bindings : P.cpc_fp_private_binding list =
+          [{marker=first,kind="@fp.SIGN",source=x},
+           {marker=second,kind="@fp.SIGN",source=x}]
+        fun wide 0 index =
+              Term.mk_var ("task46_wide" ^ Int.toString index,Type.bool)
+          | wide n index = boolSyntax.mk_conj
+              (wide (n-1) (2*index),wide (n-1) (2*index+1))
+        val body = boolSyntax.mk_conj
+          (boolSyntax.mk_eq (first,first),boolSyntax.mk_conj
+            (boolSyntax.mk_forall (second,
+               boolSyntax.mk_eq (second,second)),
+             boolSyntax.mk_conj (free,wide 11 0)))
+        val goal = boolSyntax.mk_forall (first,body)
+        val source = Thm.ASSUME goal
+        val (theorem,statistics) = R.with_operation_statistics (fn () =>
+          R.instantiate_cpc_fp_private_bindings bindings source)
+      in exact goal [goal] theorem;
+         require "alpha-opening selected an apostrophized declaration"
+           (#inst_calls statistics = 0)
+      end) ()
+
+  fun bound_alias_sharing () =
+    Timeout.apply (Time.fromSeconds 15) (fn () =>
+      let
+        val marker = Term.genvar ``:word1``
+        val leaf = boolSyntax.mk_eq (marker,marker)
+        fun shared 0 = leaf
+          | shared n = let val child = shared (n-1)
+                       in boolSyntax.mk_conj (child,child) end
+        (* Standard dest_abs itself unfolds, so its original DAG admission
+           has a smaller supported range. Experimental dest_abs retains
+           this shared body; alpha-renaming it must not change admission. *)
+        val depth = if Thm.kernelid = "expknl" then 17 else 10
+        val goal = boolSyntax.mk_forall (marker,shared depth)
+        val bindings : P.cpc_fp_private_binding list =
+          [{marker=marker,kind="@fp.SIGN",
+            source=``task46_dependency_x : (3,5) smtfp``}]
+        val scan = SmtResource.bounded_structure
+          SmtResource.max_bitblast_term_nodes goal
+        val _ = require "shared binder fixture exceeds original admission"
+          (#complete scan)
+        val source = Thm.ASSUME goal
+        val (theorem,statistics) = R.with_operation_statistics (fn () =>
+          R.instantiate_cpc_fp_private_bindings bindings source)
+      in exact goal [goal] theorem;
+         require "shared bound alias selected its unused witness"
+           (#inst_calls statistics = 0)
+      end) ()
+
   fun raw_self () =
     let val target = ``task46_deferred_p:bool``
         val raw = Thm.ASSUME target
@@ -1015,6 +1170,14 @@ struct
        binder_witness_normalization;
      test "CPC unused opaque witness is pruned before normalization"
        unused_opaque_witness;
+     test "CPC bound private alias does not open its unused opaque operand"
+       bound_opaque_dependency;
+     test "CPC mixed free/bound dependencies preserve Goal/Hyp and types"
+       mixed_free_bound_dependencies;
+     test "CPC bound-alias opening avoids declaration/free names and width"
+       bound_alias_names;
+     test "CPC bound-alias discovery preserves original shared DAG admission"
+       bound_alias_sharing;
      test "CPC raw-self deferred cache entry remains unclosed" raw_self;
      test "CPC genuine two-step deferred dependency cycle remains unclosed"
        dependency_cycle;
