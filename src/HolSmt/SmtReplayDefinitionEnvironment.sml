@@ -252,18 +252,24 @@ struct
          | _ => false)
       fun variable_pair ({variable,residue,...} : definition) =
         flexible variable andalso flexible residue
-      val supported = case selection of Empty => true | Leaf _ => true
-        | _ => List.all variable_pair definitions
-      fun declined () =
-        {outcome = RequiresWitness selection,reflexive_sources = []}
+      val reflexive = List.filter
+        (fn ({variable,residue,...} : definition) => variable = residue)
+        definitions
+      val ordinary = List.filter
+        (fn ({variable,residue,...} : definition) => variable <> residue)
+        definitions
+      (* Reflexivity is a closed obligation, not a dependency edge. Decide
+         the remaining portfolio after removing just those exact Sources. *)
+      val Environment {selection = remaining_selection,...} =
+        prepare graph {scope = scope,allocated = allocated,
+        sources = sources,needed = List.filter (fn node => not (List.exists
+          (fn (row : definition) => #stored row = node) reflexive)) needed,
+        roots = roots}
+      val supported = case remaining_selection of
+          Empty => true | Leaf _ => true
+        | _ => List.all variable_pair ordinary
       fun run () =
         let
-          val reflexive = List.filter
-            (fn ({variable,residue,...} : definition) => variable = residue)
-            definitions
-          val ordinary = List.filter
-            (fn ({variable,residue,...} : definition) => variable <> residue)
-            definitions
           val source_ids = Redblackset.addList
             (set (),List.map G.node_id sources)
           fun validate_law ((node,proof),permitted) =
@@ -308,14 +314,31 @@ struct
           val stable = List.filter (fn node =>
             not (member selected node) andalso not (member permitted node))
             relevant
-          val outcome = case U.unify graph {scope = scope,
+          val outcome = if not supported then RequiresWitness selection
+            else case U.unify_with_binders graph
+              (fn (left,right) => Option.map
+                SmtReplayUnifyBinder.assignments
+                (SmtReplayUnifyBinder.discover_raw graph scope
+                  {left=left,right=right,flexible=allocated,limit=limit}))
+              {scope = scope,binders=[],
               flexible = allocated,equations = List.map
                 (fn ({variable,residue,...} : definition) =>
                   (variable,residue)) definitions} of
               U.NoMatch failure => UnificationRefused failure
             | U.Unified result =>
                 (U.validate_result graph scope result;
-                 case R.prepare graph scope {flexible = allocated,
+                 case R.prepare_using graph scope
+                     (fn {node,resolve} =>
+                       let
+                         val (normalized,_) =
+                           SmtReplayUnifyBinder.normalize_raw graph scope
+                             {node=node,resolve=resolve,limit=limit}
+                         (* Reuse bounded alpha admission across separately
+                            cloned lexical frames. IDs alone cannot identify
+                            two normalized lambda spellings. *)
+                       in SOME (#node (G.admit_binder graph scope limit
+                         (G.representative graph normalized))) end)
+                     {flexible = allocated,
                      assignments = U.assignments result,
                      roots = roots @ sources @ U.roots result,
                      preserved = preserved @ stable} of
@@ -324,7 +347,7 @@ struct
                      (R.record_assignment_sources resolution
                        (List.map #stored ordinary)))
         in {outcome = outcome,reflexive_sources = reflexive_sources} end
-    in if supported then run () else declined () end
+    in run () end
   fun resolve_checked_variables env request =
     resolve_checked_variables_internal false env request
   fun resolve_needed_checked_variables env request =

@@ -11,7 +11,8 @@ struct
     {graph : G.graph, scope : G.scope, allocated : G.node list,
      sources : G.node list,
      needed : G.node list, definitions : G.node list,
-     obligations : obligation list,limit : int}
+     obligations : obligation list,limit : int,
+     complete : {roots : G.node list,epoch : int,symbols : int} option}
   datatype task = Enter of G.node | Leave of G.node
   fun empty () = Redblackmap.mkDict Int.compare
   fun boolean value = if value then boolSyntax.T else boolSyntax.F
@@ -159,8 +160,21 @@ struct
   fun active (Plan {graph,scope,allocated,sources,needed,definitions,...}) =
     (G.validate_scope graph scope;
      List.app (visible graph scope) (allocated @ sources @ needed @ definitions))
+  (* A sealed count-only bound also measures genuine opaque/lazy binders.
+     Its body projection is NEVER a binding, FV or proof endpoint view. *)
+  fun bounded_native limit term =
+    case SmtReplayImport.bounded_raw_size_with_bound
+        {limit = limit,observe = fn () => ()} term of
+      NONE => false
+    | SOME bound => let
+        val {raw_upper,inc_upper} =
+          SmtReplayImport.raw_bound_data bound term
+        val maximum = IntInf.fromInt limit
+      in raw_upper <= maximum andalso inc_upper <= maximum end
+
   fun prepare_portfolio graph
-      {scope,allocated,sources,needed,definitions,recorded,characters,limit} =
+      {scope,allocated,sources,needed,definitions,recorded,characters,
+       complete,limit} =
     let
       val _ = G.validate_scope graph scope
       val _ = if limit > 0 then () else
@@ -262,7 +276,33 @@ struct
       val candidates = List.filter (fn node => not (oriented node) andalso
         (not recorded orelse
          Redblackset.member (definition_ids,G.node_id node))) needed
-      val obligations = List.mapPartial obligation candidates
+      (* The complete route has no predicted normal form and no operator
+         whitelist. Admit the WHOLE portfolio before any evaluation/type
+         callback, even when a late Source will not evaluate to T. Unknown
+         graph metrics require a genuine bounded native count, not closure
+         or groundness inferred from an opaque node. *)
+      val completed = if not complete then NONE else let
+          fun admit_original root =
+            let
+              val raw = G.unfolded_nodes graph G.RawNodes limit root
+              val inc = G.unfolded_nodes graph G.BinderInclusiveNodes
+                limit root
+              fun within NONE = true
+                | within (SOME size) = size <= limit
+              val known = Option.isSome raw andalso Option.isSome inc
+            in if within raw andalso within inc andalso
+                (known orelse bounded_native limit
+                  (G.representative graph root)) then () else
+              raise ERR "prepare"
+                "original complete ground Source exceeds limit" end
+          val _ = List.app admit_original candidates
+          (* T is fixed BEFORE EVAL, never guessed from its normal form. *)
+          val _ = if bounded_native limit boolSyntax.T then () else
+            raise ERR "prepare" "complete ground result exceeds limit"
+        in SOME {roots = candidates,epoch = Type.type_epoch (),
+          symbols = Term.term_epoch ()} end
+      val obligations = if complete then [] else
+        List.mapPartial obligation candidates
       (* Every successful step is built from literal, constant, variable and
          application nodes. Literal predicates expose only injection/negation
          and numeral constructors, never abstractions. The explicit walk
@@ -294,21 +334,21 @@ struct
       val _ = List.app admit obligations
     in Plan {graph = graph,scope = scope,allocated = allocated,
       sources = sources,needed = needed,definitions = definitions,
-      obligations = obligations,limit = limit} end
+      obligations = obligations,limit = limit,complete = completed} end
 
   (* Compatibility route retains its historical broad Source portfolio.
      It is not an exact legacy definition-category producer. *)
   fun prepare graph {scope,allocated,sources,needed,limit} =
     prepare_portfolio graph {scope = scope,allocated = allocated,
       sources = sources,needed = needed,definitions = [],recorded = false,
-      characters = false,limit = limit}
+      characters = false,complete = false,limit = limit}
   (* The caller must supply retained original definition occurrences; Source
      membership alone checks identity, not parser provenance. No new parser
      or old Z3 entry route is silently given that authority. *)
   fun prepare_recorded graph {scope,allocated,sources,needed,definitions,limit} =
     prepare_portfolio graph {scope = scope,allocated = allocated,
       sources = sources,needed = needed,definitions = definitions,
-      recorded = true,characters = false,limit = limit}
+      recorded = true,characters = false,complete = false,limit = limit}
 
   (* Separate opt-in route. It retains the same original definition-only
      needed portfolio and does not install a new parser/category authority. *)
@@ -316,14 +356,23 @@ struct
       {scope,allocated,sources,needed,definitions,limit} =
     prepare_portfolio graph {scope = scope,allocated = allocated,
       sources = sources,needed = needed,definitions = definitions,
-      recorded = true,characters = true,limit = limit}
+      recorded = true,characters = true,complete = false,limit = limit}
+
+  (* Opt-in bounded full-original EVAL, including open identities. Neither
+     parser/category authority nor the old nodewise routes are changed. *)
+  fun prepare_complete_recorded graph
+      {scope,allocated,sources,needed,definitions,limit} =
+    prepare_portfolio graph {scope = scope,allocated = allocated,
+      sources = sources,needed = needed,definitions = definitions,
+      recorded = true,characters = false,complete = true,limit = limit}
 
   fun clean proof =
     let val (tags,_) = Tag.dest_tag (Thm.tag proof) in
       List.null (Thm.hyp proof) andalso
       List.null (Tag.axioms_of (Thm.tag proof)) andalso
       List.all (fn tag => tag = "DISK_THM") tags end
-  fun execute (plan as Plan {graph,obligations,limit,...}) {check_type} =
+  fun execute_nodewise (plan as Plan {graph,obligations,limit,...})
+      {check_type} =
     let
       val _ = active plan
       val _ = List.app (fn ({steps,...} : obligation) =>
@@ -433,4 +482,110 @@ struct
       val result = List.mapPartial run obligations
       val _ = active plan
     in result end
+
+  fun execute_complete
+      (plan as Plan {graph,scope,limit,...}) {roots,epoch,symbols}
+      {check_type} =
+    let
+      fun guard () =
+        (G.validate_scope graph scope;
+         if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
+         then () else raise ERR "execute" "complete declarations retired")
+      fun check ty = (guard ();check_type ty;guard ())
+      (* Every original raw AND inclusive metric was admitted in prepare.
+         Count-only projection now checks all annotation incidences, including
+         each binder's range before standard count_body's REFL/Beta. Marker
+         names are irrelevant: this walk supplies no semantic/FV evidence. *)
+      fun annotations original =
+        let
+          fun walk [] _ = ()
+            | walk (term :: rest) count =
+                if count >= limit then
+                  raise ERR "execute" "complete operand changed size"
+                else let
+                  val ty = Term.type_of term
+                  val _ = check ty
+                in if Term.is_comb term then
+                    let val (f,x) = Term.dest_comb term in
+                      walk (f :: x :: rest) (count+1) end
+                  else if Term.is_abs term then
+                    let
+                      val (domain,range) = Type.dom_rng ty
+                      val _ = check domain
+                      val _ = check range
+                    in walk (SmtReplayImport.count_body term :: rest)
+                      (count+1) end
+                  else walk rest (count+1)
+                end
+        in walk [original] 0 end
+      val _ = active plan
+      val _ = guard ()
+      (* Complete this callback phase for the whole portfolio before EVAL.
+         Caller exceptions are outside the ordinary conversion-failure path. *)
+      val _ = List.app (fn root =>
+        (visible graph scope root;annotations (G.representative graph root)))
+        roots
+      val _ = if null roots then () else annotations boolSyntax.T
+      val _ = active plan
+      val _ = guard ()
+      fun evaluate source = SOME (bossLib.EVAL source)
+        handle Conv.UNCHANGED => NONE
+             | Feedback.HOL_ERR error =>
+                 if SmtResource.is_resource_gate error then
+                   raise Feedback.HOL_ERR error else NONE
+      fun align source theorem =
+        (* Both actual endpoints and the expected source/T endpoints have
+           already been admitted. The equality adds only a fixed wrapper.
+           ALPHA checks syntax, never beta/eta or a semantic search. *)
+        let val expected = boolSyntax.mk_eq (source,boolSyntax.T)
+        in Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) expected) theorem end
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error else raise Declined
+      fun run root =
+        let
+          val _ = guard ()
+          val _ = visible graph scope root
+          val source = G.representative graph root
+        in case evaluate source of NONE => NONE
+          | SOME evaluated => let
+              val _ = guard ()
+              val _ = if clean evaluated andalso
+                boolSyntax.is_eq (Thm.concl evaluated) then ()
+                else raise Declined
+              val (left,right) = boolSyntax.dest_eq (Thm.concl evaluated)
+              (* A non-T result is ordinary, not an invitation to discover or
+                 admit its normal form as another evaluation operand. *)
+              val _ = if bool_value right = SOME true then ()
+                else raise Declined
+              val _ = if Portable.pointer_eq (left,source) then () else
+                if bounded_native limit left then annotations left
+                else raise Declined
+              val _ = guard ()
+              val theorem = Drule.EQT_ELIM (align source evaluated)
+              val _ = if clean theorem andalso Portable.pointer_eq
+                  (Thm.concl theorem,source) then () else
+                raise ERR "execute" "closed original complete Source differs"
+            in SOME (root,theorem) end
+        end handle Declined => NONE
+      (* Duplicate occurrences retain their slots, but fixed computation
+         and its checked witness are shared within this one execution. *)
+      val result = case roots of [] => [] | _ =>
+        let
+          val proofs = ref (empty ())
+          fun once root = case Redblackmap.peek (!proofs,G.node_id root) of
+              SOME result => result
+            | NONE => let
+                val result = run root
+                val _ = proofs := Redblackmap.insert
+                  (!proofs,G.node_id root,result)
+              in result end
+        in List.mapPartial once roots end
+      val _ = guard ()
+      val _ = active plan
+    in result end
+
+  fun execute (plan as Plan {complete,...}) checks =
+    case complete of NONE => execute_nodewise plan checks
+      | SOME portfolio => execute_complete plan portfolio checks
 end

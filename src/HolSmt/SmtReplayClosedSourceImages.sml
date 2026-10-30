@@ -32,7 +32,11 @@ struct
               Portable.pointer_eq (Thm.concl proof,
                 G.representative graph original) then () else
             raise ERR "prepare" "original law is not exact closed and clean"
-          val variables = case G.free_variable_nodes graph original of
+          (* An unchanged exact closed Source needs no image, substitution,
+             binder opening or native operand admission. R already checked
+             its preservation, including any recorded opaque Source view. *)
+          val variables = if original = current then [] else
+            case G.free_variable_nodes graph original of
               SOME nodes => nodes
             | NONE => raise ERR "prepare" "unknown closed-law dependencies"
           fun participating node = if R.node resolution node = node then NONE
@@ -40,9 +44,9 @@ struct
                 SOME (node,R.node resolution node)
               | _ => raise ERR "prepare" "changed non-solver law variable"
           val substitutions = List.mapPartial participating variables
-          val roots = original :: current ::
-            List.concat (List.map (fn (left,right) => [left,right])
-              substitutions)
+          val roots = if original = current then [] else
+            original :: current :: List.concat
+              (List.map (fn (left,right) => [left,right]) substitutions)
         in (index,original,current,proof,substitutions,roots) end
       val plans = List.map plan laws
       val roots = List.concat (List.map #6 plans)

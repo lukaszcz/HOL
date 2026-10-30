@@ -110,12 +110,6 @@ local
     with_expected_instantiation_fallback Library.gen_instantiation
       fallback input
 
-  structure Definition_Graph = Graph(
-    type key = Term.term
-    val ord = Term.var_compare
-    val pp = fn _ => HOLPP.add_string "<proof-variable>"
-  )
-
   (***************************************************************************)
   (* functions that manipulate/access "global" state                         *)
   (***************************************************************************)
@@ -7982,57 +7976,12 @@ local
      definitions), which might occur in a naive attempt at removing these
      definitions. Therefore, a more careful implementation is warranted.
 
-     In general, the variable references can form a directed acyclic graph. For
-     efficiency purposes (explained later), we first find a variable that is not
-     referenced in any definition of the other variables.
-
-     In the above example, one such variable could be `z2` or `z3` (we'll pick
-     `z2` for this example), but not `z1`, since it is referenced in one of the
-     definitions of `z2`.
-
-     We then perform the following:
-
-     1. Gather all definitions of this variable. In this example, the
-     definitions for ``z2`` would be:
-
-     z2 = z1 + 2
-     z2 = x + 1 + 2
-
-     2. Instantiate the variable with one of its definitions (chosen
-     arbitrarily). In this example, it could result in the following hypotheses:
-
-     z1 + 2 = z1 + 2
-     z1 + 2 = x + 1 + 2
-
-     3. For each of these hypotheses, we create a theorem proving the hypothesis
-     so that we can remove it with Drule.PROVE_HYP. To prove such a theorem,
-     first we unify the terms on both sides of the equality, such that we obtain
-     new definitions for the variables in these hypotheses. For the first one,
-     no new definitions are needed, which means such a theorem can be proven
-     with REFL. For the second one, we get:
-
-     z1 = x + 1
-
-     We can then substitute `z1` with `x + 1`, then use REFL to prove the
-     theorem. This is implemented in `Library.gen_instantiation`. Note that this
-     theorem will have `z1 = x + 1` in its set of hypotheses, which
-     Drule.PROVE_HYP then adds to the set of hypotheses of `thm`.
-
-     However, this new hypothesis will be removed later when we process `z1`.
-     Often, these additional hypotheses are identical to pre-existing ones, so
-     they get deduplicated when added to the set of hypotheses of `thm`. By
-     processing variables in this specific order, we thus avoid doing a lot of
-     repeated work of removing the same definitions over and over again.
-
-     Once all the definitions of the variable we've chosen are removed, we
-     recurse into this same function, with the new set of definitions that are
-     to be removed (corresponding to one less variable). Note that in general,
-     at no point we needed to fully expand a definition (unless it's already
-     expanded).  Initial aggregate dependency summaries are computed once per
-     elimination pass.  A pass with no ordinary leaf performs an optional
-     second per-RHS summary pass for the SCC graph.  Recursive passes can
-     therefore rescan surviving definitions, giving a quadratic number of
-     summary computations in the number of definitions in the worst case. *)
+     Resolve assignments on an owned syntax DAG, not on successive realized
+     theorems. Duplicate definitions are simultaneous unification obligations;
+     checked packed-word witnesses handle the exceptional anchored SCCs.
+     Prepare every exact stored-orientation image before the single global
+     INST. Ordinary acyclic assignments have no unfolded-size admission: the
+     tricky shared chains above are small DAGs, not small expanded trees. *)
 
   fun prove_self_word_identity
       (definition, lhs, rhs, self_dependent, _) =
@@ -8184,250 +8133,219 @@ local
                   end
             end) ()
 
+  local
+    structure G = SmtReplayGraph
+    structure E = SmtReplayDefinitionEnvironment
+    structure R = SmtReplayResolve
+    structure Packed = SmtReplayPackedSCC
+  in
   fun remove_definitions (defs, var_set, thm): Thm.thm =
   let
-    (* Replay state remembers definitions established by earlier steps even
-       when the final theorem no longer depends on them.  Definition
-       elimination concerns theorem hypotheses, not the historical state. *)
+    (* Historical unused definitions confer no assignment permission. *)
     val defs = HOLset.intersection (defs, Thm.hypset thm)
   in
-    if HOLset.isEmpty defs then
-      thm
-    else
-      let
-        (* Discharging a ground definition is an optimization, not an
-           obligation: anything left behind stays an ordinary hypothesis for
-           `remove_hyps` to deal with, exactly as it did before this shortcut
-           existed.  A definition that does not evaluate is therefore skipped
-           rather than failing the whole replay. *)
-        fun prove_ground_def def =
-          let
-            val thm = bossLib.EVAL def
-          in
-            if boolSyntax.is_eq (Thm.concl thm) andalso
-               Lib.snd (boolSyntax.dest_eq (Thm.concl thm)) ~~ boolSyntax.T
-            then SOME (Drule.EQT_ELIM thm)
-            else NONE
-          end
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else NONE
-        fun is_var_def def = Option.isSome
-          (oriented_definition_parts var_set def)
-        val (ground_defs, defs) =
-          List.partition (not o is_var_def) (HOLset.listItems defs)
-        fun discharge_ground_def (def, thm) =
-          case prove_ground_def def of
-            SOME def_thm => Drule.PROVE_HYP def_thm thm
-          | NONE => thm
-        val thm = HOLset.foldl discharge_ground_def
-          thm (HOLset.addList (Term.empty_tmset, ground_defs))
-        (* Substituting fpa2bv's per-bit definitions can turn its packed-word
-           definition into the cyclic-looking but valid identity
-           [w = v2w (GENLIST (flip word_bit w) ...)].  Only a definition that
-           actually references its own name can have this role. *)
-        (* Compute the initial aggregate RHS summary once for each definition
-           in this pass.  Its self bit is retained in the compact entry; the
-           full set is immediately folded into the aggregate only when that
-           definition remains.  The cycle-only SCC fallback below may make one
-           additional summarized pass. *)
-        fun process_definition
-            (definition, (remaining, theorem, referenced)) =
-          with_definition_dependency var_set definition
-          (fn (entry, dependencies) =>
-            case prove_self_word_identity entry of
-              SOME identity =>
-                (remaining, Drule.PROVE_HYP identity theorem, referenced)
-            | NONE =>
-                (entry :: remaining, theorem,
-                 HOLset.union (dependencies, referenced)))
-        val (entries, thm, ref_set) = List.foldl process_definition
-          ([], thm, Term.empty_tmset) defs
-      in
-        if List.null entries then thm
-        else
-      let
-        (* Retain both the exact stored equality and its oriented name/residue.
-           The exact orientation is needed after [INST]: reverse definitions
-           become [residue = inst], whereas the generated discharge theorem is
-           naturally proved as [inst = residue]. *)
-        val lhs_l = List.map (fn (_, lhs, _, _, _) => lhs) entries
-        (* `ref_set` contains variables referenced by remaining definitions. *)
-        (* `def_set` will contain the set of all variables being defined.
-           It should always be a subset of `var_set`. *)
-        val def_set = List.foldl (Lib.flip HOLset.add) Term.empty_tmset lhs_l
-
-        (* `unref_set` will contain the set of all the variables being defined
-           but not being referenced *)
-        val unref_set = HOLset.difference (def_set, ref_set)
-
-        (* The initial summaries above identify ordinary DAG leaves without
-           retaining one set per definition.  Only when no leaf exists, build
-           temporary per-RHS summaries and an SCC graph.  A packed fpa2bv word
-           may participate in the benign cycle
-           [k = pack x], [k = v2w bs], [b_i = bit i k].  If no ordinary DAG
-           leaf exists, select a multiply-defined packed word with no direct
-           self-definition and an anchor RHS outside the candidate variable's
-           own SCC.  The checked word-list family below then breaks the cycle
-           into Boolean definitions. *)
-        fun cycle_selection () =
-          let
-            fun summarize (entry as (_, _, residue, _, _)) =
-              (entry, HOLset.intersection
-                (replay_free_variables "remove_definitions" residue, def_set))
-            val summaries = List.map summarize entries
-            val graph = HOLset.foldl
-              (fn (name, graph) =>
-                Definition_Graph.new_node (name, ()) graph)
-              Definition_Graph.empty def_set
-            fun add_dependencies
-                (((_, name, _, _, _), dependencies), graph) =
-              HOLset.foldl
-                (fn (dependency, graph) =>
-                  Definition_Graph.add_edge (name, dependency) graph)
-                graph dependencies
-            val graph = List.foldl add_dependencies graph summaries
-            val components = Definition_Graph.strong_conn graph
-            fun own_component var = Option.valOf
-              (List.find (List.exists (fn member => Term.term_eq member var))
-                components)
-            fun classify (var, (candidates, preferred, direct_self_count)) =
-              let
-                val component = own_component var
-                val definitions = List.filter
-                  (fn ((_, lhs, _, _, _), _) => Term.term_eq lhs var)
-                  summaries
-                val directly_self_dependent = List.exists
-                  (fn ((_, _, _, self_dependent, _), _) => self_dependent)
-                  definitions
-                fun outside_own_component (_, dependencies) =
-                  List.all
-                    (fn member => not (HOLset.member (dependencies, member)))
-                    component
-                val independent =
-                  if directly_self_dependent orelse
-                     List.length definitions <= 1 then NONE
-                  else List.find outside_own_component definitions
-                val (candidates, preferred) =
-                  case independent of
-                    SOME ((_, _, residue, _, _), _) =>
-                      (HOLset.add (candidates, var),
-                       (var, residue) :: preferred)
-                  | NONE => (candidates, preferred)
-              in
-                (candidates, preferred,
-                 if directly_self_dependent then direct_self_count + 1
-                 else direct_self_count)
-              end
-          in
-            HOLset.foldl classify (Term.empty_tmset, [], 0) def_set
-          end
-        val cycle_selection =
-          if HOLset.isEmpty unref_set then
-            SOME (cycle_selection ())
-          else NONE
-        val elimination_set =
-          case cycle_selection of
-            SOME (duplicate_set, _, _) => duplicate_set
-          | NONE => unref_set
-        val () =
-          if HOLset.isEmpty elimination_set then
+    if HOLset.isEmpty defs then thm
+    else let
+      val originals = HOLset.listItems defs
+      fun is_oriented definition = Option.isSome
+        (oriented_definition_parts var_set definition)
+      (* Preserve the checked self-word route, including its profile and
+         resource diagnostic, before general simultaneous unification. *)
+      fun identity (definition, (entries, laws)) =
+        with_definition_dependency var_set definition
+          (fn (entry, _) => case prove_self_word_identity entry of
+              SOME proof => (entries, (definition, proof) :: laws)
+            | NONE => (entry :: entries, laws))
+      val (entries, identities) = List.foldl identity ([], [])
+        (List.filter is_oriented originals)
+      val active = HOLset.addList (Term.empty_tmset,
+        List.map (fn (definition, _, _, _, _) => definition) entries)
+      val graph = G.new ()
+      val base = G.root_scope graph
+      val variables = HOLset.listItems var_set
+      val allocated = List.map (G.variable graph base G.SolverFlexible)
+        variables
+      val scope = G.new_scope graph base (ListPair.zip (variables, allocated))
+      (* This is the legacy uncapped application-DAG import contract, NOT a
+         bound on the expanded images of ordinary acyclic definitions. *)
+      val dag_limit = Option.valOf Int.maxInt
+      val imported = List.map G.execute_import
+        (G.plan_imports graph scope dag_limit originals)
+      (* Unaffected binders must have known dependencies too. Retain the old
+         bounded binder admission; do not treat an opaque binder as closed. *)
+      val opened = ref (Redblackmap.mkDict Int.compare)
+      fun open_node node =
+        case Redblackmap.peek (!opened, G.node_id node) of
+          SOME saved => saved
+        | NONE => let
+            val saved = case G.view graph node of
+                G.Application (left, right) =>
+                  G.application graph scope (open_node left, open_node right)
+              | G.OpaqueRetained =>
+                  let val term = G.representative graph node
+                      val limit = Option.valOf
+                        (dependency_binder_admission term)
+                  in #node (G.admit_binder graph scope limit term) end
+              | _ => node
+            val () = opened := Redblackmap.insert
+              (!opened, G.node_id node, saved)
+          in saved end
+      val nodes = List.map (open_node o #node) imported
+      val sources = List.take (nodes, List.length originals)
+      val needed = List.mapPartial (fn (original, node) =>
+        if HOLset.member (active, original) then SOME node else NONE)
+        (ListPair.zip (originals, sources))
+      val needed_ids = Redblackset.addList (Redblackset.empty Int.compare,
+        List.map G.node_id needed)
+      (* Only definition operands enter discovery/admission. Compatibility
+         applies the one final substitution to the ordinary theorem below;
+         unrelated retained binders gain no new opening quota. The public
+         remove_hyps/goal checks retain their original authority. *)
+      val roots = nodes @ allocated
+      fun exact node proof = Thm.EQ_MP
+        (Thm.ALPHA (Thm.concl proof) (G.representative graph node)) proof
+      val identity_table = List.foldl (fn ((term, proof), table) =>
+        Redblackmap.insert (table, term, proof))
+        (Redblackmap.mkDict Term.compare) identities
+      val identity_laws = List.mapPartial (fn (original, node) =>
+        Option.map (fn proof => (node, exact node proof))
+          (Redblackmap.peek (identity_table, original)))
+        (ListPair.zip (originals, sources))
+      (* Optional whole-original EVAL, including nonclosed/nonoriented
+         identities. Failure to evaluate leaves an ordinary hypothesis.
+         The legacy route has no new finite ground-operand policy. *)
+      val ground_plan = SmtReplayGroundDefinitions.prepare_complete_recorded
+        graph {scope = scope, allocated = allocated, sources = sources,
+          needed = sources, definitions = sources, limit = dag_limit - 1}
+      val ground_laws = SmtReplayGroundDefinitions.execute ground_plan
+        {check_type = fn _ => ()}
+      val laws = identity_laws @ ground_laws
+      val environment = E.prepare graph
+        {scope = scope, allocated = allocated, sources = sources,
+         needed = needed, roots = roots}
+      val admission = {metric = G.RawNodes,
+        limit = SmtResource.max_bv_replay_term_nodes,
+        check_type = fn _ => ()}
+      val checked = E.resolve_needed_checked_variables environment
+        {preserved = [], laws = laws, admission = admission}
+      val laws = laws @ #reflexive_sources checked
+      fun cycle_error selection =
+        let
+          val (count, names, self) = case selection of
+              E.Unresolved {definitions, variables, direct_self} =>
+                (definitions, variables, direct_self)
+            | _ => let
+                val names = HOLset.addList (Term.empty_tmset,
+                  List.map (fn (_, name, _, _, _) => name) entries)
+                val self = HOLset.addList (Term.empty_tmset,
+                  List.mapPartial (fn (_, name, _, dependent, _) =>
+                    if dependent then SOME name else NONE) entries)
+              in (List.length entries, HOLset.numItems names,
+                  HOLset.numItems self) end
+        in raise ERR "remove_definitions"
+          ("no unreferenced variables; definition_count=" ^
+           Int.toString count ^ "; defined_variable_count=" ^
+           Int.toString names ^ "; direct_self_candidate_count=" ^
+           Int.toString self) end
+      fun unification_error () = raise ERR "remove_definitions"
+        "compact definition unification declined"
+      fun resolution_error () = raise ERR "remove_definitions"
+        "compact definition resolution requires binder/scope admission"
+      (* Preserve the public BV resource gate before entering the packed
+         adapter's stricter metadata admission or any fixed-law proof. This
+         is only admission: Packed still checks every family and anchor.
+         Ordinary (even malformed packed) leaves never enter this fallback
+         if simultaneous unification already resolved them. *)
+      fun packed_gate () =
+        let
+          val groups = List.foldl (fn (row : E.definition, table) =>
+            let val id = G.node_id (#variable row)
+                val previous = Option.getOpt
+                  (Redblackmap.peek (table, id), [])
+            in Redblackmap.insert (table, id, row :: previous) end)
+            (Redblackmap.mkDict Int.compare) (E.definitions environment)
+          fun gate_rows (_, rows : E.definition list, ()) =
             let
-              val direct_self_count =
-                case cycle_selection of
-                  SOME (_, _, count) => count
-                | NONE => 0
-            in
-              raise ERR "remove_definitions"
-                ("no unreferenced variables; definition_count=" ^
-                 Int.toString (List.length entries) ^
-                 "; defined_variable_count=" ^
-                 Int.toString (HOLset.numItems def_set) ^
-                 "; direct_self_candidate_count=" ^
-                 Int.toString direct_self_count)
-            end
-          else
-            ()
-
-        (* Pick an arbitrary eliminable variable. *)
-        val var = Option.valOf
-          (HOLset.find (fn _ => true) elimination_set)
-
-        (* Get all the variable's definitions *)
-        fun filter_def (_, name, residue, _, name_on_left) =
-          if Term.term_eq name var then SOME (residue, name_on_left) else NONE
-        val defs_to_remove = List.mapPartial filter_def entries
-
-        (* An ordinary leaf can use either definition.  In the exceptional
-           duplicate-cycle branch, use the checked residue with no dependency
-           from the candidate variable's own SCC; choosing the packed vector
-           instead would turn its bit definitions into self-cycles. *)
-        val inst =
-          case cycle_selection of
-            NONE => Lib.fst (List.hd defs_to_remove)
-          | SOME (_, preferred, _) =>
-              Lib.snd (Option.valOf
-                (List.find (fn (name, _) => Term.term_eq name var) preferred))
-
-        (* For an ordinary leaf, preserve the established unifier-first route.
-           Only the SCC duplicate branch tries the complete packed-word family
-           first, preventing a still-flexible anchor from being redefined as
-           the vector and merely renaming the same cycle. *)
-        fun syntax_decline _ = raise ERR "word_list_instantiation"
-          "definition is not an independent packed-word family"
-        fun checked_family (name_on_left, left, right) =
-          case checked_word_list_definition var_set
-              (name_on_left, left, right) of
-            SOME theorem => theorem
-          | NONE => syntax_decline ()
-        fun ordinary_first (name_on_left, left, right) =
-          with_expected_instantiation_fallback
-            (fn input => align_instantiated_definition_hypothesis
-              (name_on_left, left, right, Library.gen_instantiation input))
-            (fn (left, right, _) =>
-              checked_family (name_on_left, left, right))
-            (left, right, var_set)
-        fun ordinary_after_family (name_on_left, left, right) =
-          with_expected_instantiation_fallback
-            (fn input => align_instantiated_definition_hypothesis
-              (name_on_left, left, right, Library.gen_instantiation input))
-            syntax_decline (left, right, var_set)
-        fun prove_definition (residue, name_on_left) =
-          if Portable.pointer_eq (inst, residue) then
-            align_instantiated_definition_hypothesis
-              (name_on_left, inst, residue, Thm.REFL inst)
-          else
-            case cycle_selection of
-              NONE => ordinary_first (name_on_left, inst, residue)
-            | SOME _ =>
-                (case checked_word_list_definition var_set
-                    (name_on_left, inst, residue) of
-                   SOME theorem => theorem
-                 | NONE =>
-                     ordinary_after_family (name_on_left, inst, residue))
-        val hyp_thms = List.map
-          prove_definition defs_to_remove
-
-        (* Build every discharge theorem before traversing the global theorem
-           with INST.  Only then remove the exact post-INST hypotheses. *)
-        val thm = Thm.INST [var |-> inst] thm
-        fun remove_hyp (hyp_thm, thm) = Drule.PROVE_HYP hyp_thm thm
-        val thm = List.foldl remove_hyp thm hyp_thms
-
-        (* Compute the new set of definitions to remove when recursing.
-           Basically, it's all the definitions in `thm`, i.e. all hypotheses of
-           the form ``var = def``, where ``var`` is in `var_set` *)
-        fun is_definition hyp = Option.isSome
-          (oriented_definition_parts var_set hyp)
-        fun add_def (hyp, set) =
-          if is_definition hyp then HOLset.add (set, hyp) else set
-        val new_defs = HOLset.foldl add_def Term.empty_tmset (Thm.hypset thm)
-      in
-        (* Recurse to remove the remaining variables' definitions *)
-        remove_definitions (new_defs, var_set, thm)
-      end
-      end
+              fun vector (row : E.definition) = bitstringSyntax.is_v2w
+                (G.representative graph (#residue row))
+              val anchor = List.find (not o vector) rows
+              fun gate row = case anchor of NONE => () | SOME anchor =>
+                if not (vector row) then () else
+                  SmtResource.with_resource_step_time "BitVector"
+                    "remove-definitions-word-list-instantiation"
+                    (fn () => SmtResource.check_resource_goal "BitVector"
+                      "remove-definitions-word-list-instantiation"
+                      (boolSyntax.mk_eq
+                        (G.representative graph (#residue anchor),
+                         G.representative graph (#residue row)))) ()
+            in List.app gate rows end
+        in Redblackmap.foldl gate_rows () groups end
+      fun packed () =
+        let
+          val () = packed_gate ()
+          val request = {scope = scope, allocated = allocated,
+            sources = sources, needed = needed, roots = roots,
+            preserved = [], laws = laws, admission = admission}
+          fun finish outcome = case outcome of
+              Packed.Resolved {resolution, images, ...} => (resolution, images)
+            | Packed.RequiresWitness selection => cycle_error selection
+            | Packed.UnificationRefused _ => unification_error ()
+            | Packed.ResolutionRefused _ => resolution_error ()
+        in case Packed.resolve graph request of
+            Packed.Resolved result =>
+              (#resolution result, #images result)
+          | Packed.ResolutionRefused _ => resolution_error ()
+          | _ => finish (Packed.resolve_with_fresh_bits graph request)
+        end
+      val (resolution, images) = case #outcome checked of
+          E.Resolved resolution => (resolution, [])
+        | E.RequiresWitness (selection as E.Unresolved _) =>
+            cycle_error selection
+        | E.RequiresWitness _ => packed ()
+        (* The old unifier-first leaf route could also request a checked
+           packed family with fresh per-bit definitions. No exception is
+           swallowed to obtain that fallback. *)
+        | E.UnificationRefused _ => packed ()
+        | E.ResolutionRefused _ => resolution_error ()
+      val () = R.validate graph scope resolution
+      val substitutions = List.mapPartial (fn (variable, node) =>
+        let val resolved = R.node resolution node
+        in if resolved = node then NONE
+           else SOME (variable |-> G.representative graph resolved) end)
+        (ListPair.zip (variables, allocated))
+      val image_table = List.foldl (fn ((index, proof), table) =>
+        Redblackmap.insert (table, index, proof))
+        (Redblackmap.mkDict Int.compare) images
+      val law_table = List.foldl (fn ((node, proof), table) =>
+        Redblackmap.insert (table, G.node_id node, proof))
+        (Redblackmap.mkDict Int.compare) laws
+      fun witness (index, source) =
+        let
+          val current = R.node resolution source
+          fun reflexivity () =
+            let
+              val target = G.representative graph current
+              val (left, right) = boolSyntax.dest_eq target
+              val () = if Term.term_eq left right then () else
+                raise ERR "remove_definitions"
+                  "resolved stored assignment is not reflexive"
+            in exact current (Thm.REFL left) end
+        in case Redblackmap.peek (image_table, index) of
+            SOME proof => SOME (exact current proof)
+          | NONE => case Redblackmap.peek (law_table, G.node_id source) of
+              SOME proof => SOME (exact current
+                (Thm.INST substitutions proof))
+            | NONE => if Redblackset.member (needed_ids, G.node_id source)
+                then SOME (reflexivity ()) else NONE
+        end
+      (* No realized-theorem elimination loop: even closed-law and packed
+         images are prepared before this one traversal of the input theorem. *)
+      val hyp_thms = List.mapPartial witness
+        (ListPair.zip (List.tabulate (List.length sources, Lib.I), sources))
+      val result = Thm.INST substitutions thm
+    in List.foldl (fn (proof, result) => Drule.PROVE_HYP proof result)
+      result hyp_thms end
+  end
   end
 
   (* Finalization may reconcile only beta/eta spelling differences with an

@@ -33500,6 +33500,7 @@ let
       symbolic_positive_power_transfer_success),
     ("num_floor_ceiling_total_transfer_success",
       num_floor_ceiling_total_transfer_success),
+    ("z3_definition_closure", Z3_DefinitionClosureTests.run),
     ("remove_definitions_no_defs", fn () => remove_defs_test remove_defs_no_defs),
     ("remove_definitions_dup", fn () => remove_defs_test remove_defs_dup),
     ("remove_definitions_tricky1", fn () => remove_defs_test remove_defs_tricky1),

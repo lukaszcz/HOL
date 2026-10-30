@@ -27,11 +27,28 @@ sig
     {scope : SmtReplayGraph.scope, allocated : SmtReplayGraph.node list,
      sources : SmtReplayGraph.node list, needed : SmtReplayGraph.node list,
      definitions : SmtReplayGraph.node list, limit : int} -> plan
-  (* Fixed public EVAL is called only on admitted local operator spines,
+  (* Opt-in complete original-EVAL portfolio, with the same definition-only
+     needed occurrence/category and allocated-endpoint exclusions. Both raw
+     and binder-inclusive original operands and the fixed expected result T
+     are bounded before execution/type callbacks. Unknown graph sizes use
+     genuine public bounded native admission, including opaque binders; no
+     FV/groundness fact is inferred. execute uses fixed bossLib.EVAL once per
+     distinct admitted Source (including nonoriented open identities), while
+     preserving the ordered duplicate occurrences and their shared witness.
+     False, unevaluated and ordinary EVAL HOL_ERR outcomes stay ordinary;
+     resource/caller errors propagate. No new policy or implicit cap. *)
+  val prepare_complete_recorded : SmtReplayGraph.graph ->
+    {scope : SmtReplayGraph.scope, allocated : SmtReplayGraph.node list,
+     sources : SmtReplayGraph.node list, needed : SmtReplayGraph.node list,
+     definitions : SmtReplayGraph.node list, limit : int} -> plan
+  (* For the old preparations, fixed public EVAL is called only on admitted
+     local operator spines,
      after child results are joined by checked MK_COMB. False/unevaluated
      ordinary HOL_ERR outcomes stay ordinary; resource errors propagate.
      Every returned proof is CLOSED/clean with exact original Source pointer.
-     This is an unfinished Boolean/natural/integer lowering, not full legacy EVAL. *)
+     The old lowering remains unfinished, not full legacy EVAL.
+     prepare_complete_recorded instead admits and evaluates whole originals,
+     without nodewise prediction, SUBST_CONV or a semantic search. *)
   val execute : plan ->
     {check_type : Type.hol_type -> unit} ->
     (SmtReplayGraph.node * Thm.thm) list

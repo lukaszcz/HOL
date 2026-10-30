@@ -137,7 +137,27 @@ struct
                       else G.application graph scope (left,right) end
                 | G.OpaqueRetained =>
                     if Redblackmap.numItems substitutions = 0 then original
-                    else raise Refusal NeedsBinderAdmission
+                    else let
+                      (* A prior exact Source opening can certify that this
+                         retained spelling is independent. Do not reopen it,
+                         or replace its original occurrence/representative. *)
+                      val opened = G.cached_opened_view graph scope original
+                        handle Feedback.HOL_ERR error =>
+                          if Feedback.top_structure_of error =
+                              "SmtReplayGraph" andalso
+                              Feedback.top_function_of error =
+                              "cached_opened_view" andalso
+                              Feedback.message_of error =
+                              "missing discovered record" then
+                            raise Refusal NeedsBinderAdmission
+                          else raise Feedback.HOL_ERR error
+                      val free = case G.free_variable_nodes graph
+                          (#node opened) of SOME nodes => nodes
+                        | NONE => raise Refusal NeedsBinderAdmission
+                    in if List.exists (fn variable => Redblackmap.inDomain
+                        (substitutions,G.node_id variable)) free then
+                         raise Refusal NeedsBinderAdmission
+                       else original end
                 | G.AdmittedBinder _ =>
                     let
                       val variables = case G.free_variable_nodes graph original

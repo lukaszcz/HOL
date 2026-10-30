@@ -52,6 +52,30 @@ struct
                 "actual word insertion before finite word-list expansion"
             else walk rest (count+1)
     in walk [conclusion] 0 end
+  (* Match the checked definition environment's bounded binder composition
+     in both packed workers, including alpha canonicalization. *)
+  fun unify_bounded graph scope allocated limit equations =
+    U.unify_with_binders graph
+      (fn (left,right) => Option.map SmtReplayUnifyBinder.assignments
+        (SmtReplayUnifyBinder.discover_raw graph scope
+          {left=left,right=right,flexible=allocated,limit=limit}))
+      {scope=scope,binders=[],flexible=allocated,equations=equations}
+  fun prepare_bounded graph scope limit input =
+    R.prepare_using graph scope
+      (fn {node,resolve} =>
+        let
+          val (normalized,_) = SmtReplayUnifyBinder.normalize_raw graph scope
+            {node=node,resolve=resolve,limit=limit}
+        in SOME (#node (G.admit_binder graph scope limit
+          (G.representative graph normalized))) end) input
+  fun packed_operands (row : E.definition,anchor : E.definition,bit_rows) =
+    List.map (fn row : E.definition => #stored row) (row :: anchor :: bit_rows)
+  (* Fresh pairs may be generated obligations rather than original rows.
+     Only matching original bit definitions enter original type admission. *)
+  fun original_bit_rows by_name pairs =
+    List.concat (List.map (fn (bit,residue) => List.filter
+      (fn row : E.definition => #residue row = residue)
+      (get by_name (G.node_id bit))) pairs)
   datatype task = Enter of int | Leave of int
   (* The exact iterative SCC metadata algorithm used by the parent E. *)
   fun visit [] adjacency seen order = (seen,order)
@@ -89,10 +113,9 @@ struct
           SOME count => if count <= limit then count else raise ERR
             "resolve" "packed witness exceeds original graph limit"
         | NONE => raise ERR "resolve" "unknown packed witness size"
-      (* Original input admission precedes E's type queries and all new
-         constructor, numeric-width, theorem and caller type work. *)
-      val _ = List.app (fn node => ignore (size node))
-        (sources @ roots @ preserved @ allocated)
+      (* Only actual needed definitions enter the word worker. Historical
+         Sources and preserved original beta/eta syntax are not operands. *)
+      val _ = List.app (fn node => ignore (size node)) needed
       val env = E.prepare graph {scope = scope,allocated = allocated,
         sources = sources,needed = needed,roots = roots @ preserved}
       val rows = E.definitions env
@@ -246,14 +269,16 @@ struct
          raw (Thm.concl wordsTheory.word_bit);
          List.app schema families;
          List.app (check_type o G.type_of graph)
-           (G.reachable graph (sources @ roots @ preserved)))
-      fun run () = case U.unify graph {scope = scope,flexible = allocated,
-          equations = List.map (fn row : E.definition =>
-            (#variable row,#residue row)) ordinary} of
+           (G.reachable graph (List.concat (List.map
+             (fn (row,anchor,bit_rows,_) =>
+               packed_operands (row,anchor,bit_rows)) families))))
+      fun run () = case unify_bounded graph scope allocated limit
+          (List.map (fn row : E.definition =>
+            (#variable row,#residue row)) ordinary) of
           U.NoMatch failure => UnificationRefused failure
         | U.Unified unification =>
             (U.validate_result graph scope unification;
-             case R.prepare graph scope {flexible = allocated,
+             case prepare_bounded graph scope limit {flexible = allocated,
                assignments = U.assignments unification,
                roots = roots @ sources @ U.roots unification,
                preserved = preserved @ stable} of
@@ -339,10 +364,8 @@ struct
           SOME count => if count <= limit then count else raise ERR
             "resolve" "packed witness exceeds original graph limit"
         | NONE => raise ERR "resolve" "unknown packed witness size"
-      (* Original input admission precedes E's type queries and all new
-         constructor, numeric-width, theorem and caller type work. *)
-      val _ = List.app (fn node => ignore (size node))
-        (sources @ roots @ preserved @ allocated)
+      (* Match the conservative worker's actual-needed operand boundary. *)
+      val _ = List.app (fn node => ignore (size node)) needed
       val env = E.prepare graph {scope = scope,allocated = allocated,
         sources = sources,needed = needed,roots = roots @ preserved}
       val rows = E.definitions env
@@ -567,14 +590,16 @@ struct
          raw (Thm.concl wordsTheory.word_bit);
          List.app schema families;
          List.app (check_type o G.type_of graph)
-           (G.reachable graph (sources @ roots @ preserved)))
-      fun run () = case U.unify graph {scope = scope,flexible = allocated,
-          equations = List.map (fn row : E.definition =>
-            (#variable row,#residue row)) ordinary @ obligation_pairs} of
+           (G.reachable graph (List.concat (List.map
+             (fn (row,anchor,pairs,_) => packed_operands
+               (row,anchor,original_bit_rows by_name pairs)) families))))
+      fun run () = case unify_bounded graph scope allocated limit
+          (List.map (fn row : E.definition =>
+            (#variable row,#residue row)) ordinary @ obligation_pairs) of
           U.NoMatch failure => UnificationRefused failure
         | U.Unified unification =>
             (U.validate_result graph scope unification;
-             case R.prepare graph scope {flexible = allocated,
+             case prepare_bounded graph scope limit {flexible = allocated,
                assignments = U.assignments unification,
                roots = roots @ sources @ obligation_nodes @
                  U.roots unification,

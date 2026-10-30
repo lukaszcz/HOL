@@ -1285,7 +1285,7 @@ struct
                     val prepare = case recorded_law of NONE =>
                         SmtReplayGroundDefinitions.prepare graph
                       | SOME _ => fn args =>
-                          SmtReplayGroundDefinitions.prepare_recorded graph
+                          SmtReplayGroundDefinitions.prepare_complete_recorded graph
                             {scope = #scope args,allocated = #allocated args,
                              sources = #sources args,
                              needed = definition_needed,
@@ -1314,7 +1314,10 @@ struct
                 val checked = if use_variable_witnesses then
                     SOME (checked_variables plan actual_laws true)
                   else NONE
-                val packed = if not use_packed_scc then NONE else
+                val packed = if not use_packed_scc orelse
+                    (case checked of
+                       SOME {outcome = E.Resolved _,...} => true
+                     | _ => false) then NONE else
                   let
                     val (_,allocated) = List.foldl
                       (fn (node,(seen,nodes)) => case G.view graph node of
@@ -1332,18 +1335,19 @@ struct
                       else SmtReplayPackedSCC.resolve
                   in SOME (producer graph
                     {scope = scope,allocated = allocated,
-                     sources = source_nodes,needed = #needed actual,
+                     sources = source_nodes,needed = List.filter (fn node =>
+                       not (List.exists (fn (held,_) => held = node)
+                         actual_laws)) definition_needed,
                      roots = desired :: !roots,preserved = [desired],
-                     laws = actual_laws,admission = {metric = G.RawNodes,
+                     laws = actual_laws @ (case checked of NONE => []
+                       | SOME result => #reflexive_sources result),admission = {metric = G.RawNodes,
                        limit = SmtResource.max_bv_replay_term_nodes,
                        check_type = SmtWordGraph.admit_primitive_type types}})
                   end
                 val (resolution,packed_images) = case packed of
                     SOME (SmtReplayPackedSCC.Resolved result) =>
                       (#resolution result,#images result)
-                  | SOME _ => raise ERR "remove_definitions"
-                      "checked anchored packed SCC route declined"
-                  | NONE => (resolved (case checked of
+                  | _ => (resolved (case checked of
                       SOME result => #outcome result
                     | NONE => E.resolve_needed_with_closed_sources plan
                           {preserved = [desired],laws = actual_laws}),[])
@@ -1487,10 +1491,10 @@ struct
   fun replay_with_recorded_definitions_using recorded_law
       canonical_sources graph scope args =
     replay_with_sources_using_environment true true true true true
-      (SOME recorded_law) false false NONE NONE
+      (SOME recorded_law) true false NONE NONE
       canonical_sources NONE graph scope args
 
-  (* Separate opt-in. All six existing selectors keep packed SCC false. *)
+  (* Compatibility selectors retain their original portfolios. *)
   fun replay_with_needed_packed_scc_sources_using
       canonical_sources graph scope args =
     replay_with_sources_using_environment true true true false false
@@ -1504,6 +1508,21 @@ struct
     replay_with_sources_using_environment true true true false false
       NONE true true NONE NONE
       canonical_sources NONE graph scope args
+
+  (* Definition/category custody and exact beta/eta Source custody compose
+     before the same sparse freeze and one-shot realization. *)
+  fun replay_with_definition_closure_using recorded_law graph scope
+      {sources,proof,template_limit,local_law,nnf,views,admission} =
+    replay_with_sources_using_environment true true true true true
+      (SOME recorded_law) true false
+      (SOME (fn current => fn replay =>
+        Z3_GraphSourceReconcile.prepare graph current
+          {sources = sources,replay = replay,views = views,
+           admission = admission})) NONE
+      (SmtReplaySource.denied_goal_node sources ::
+       SmtReplaySource.assumption_nodes sources) NONE graph scope
+      {proof = proof,template_limit = template_limit,local_law = local_law,
+       nnf = nnf}
 
   fun replay_with_beta_eta_sources_using graph scope
       {sources,proof,template_limit,local_law,nnf,views,admission} =
@@ -1725,6 +1744,16 @@ struct
          SmtReplaySource.assumption_nodes sources) graph scope
         {proof = proof,template_limit = template_limit,local_law = local_law,
          nnf = nnf}
+      val _ = SmtReplaySource.check_contradiction sources theorem
+    in SmtReplaySource.close_contradiction sources theorem end
+
+  fun check_proof_with_definition_closure_using graph scope
+      {sources,proof,template_limit,local_law,recorded_law,nnf,views,admission} =
+    let
+      val theorem = replay_with_definition_closure_using recorded_law
+        graph scope {sources = sources,proof = proof,
+          template_limit = template_limit,local_law = local_law,nnf = nnf,
+          views = views,admission = admission}
       val _ = SmtReplaySource.check_contradiction sources theorem
     in SmtReplaySource.close_contradiction sources theorem end
 
