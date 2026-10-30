@@ -1016,6 +1016,54 @@ struct
            (#inst_calls statistics = 0)
       end) ()
 
+  (* Raw term bounds do not bound native type comparison. Repeated free
+     variables below a binder used to make experimental FVL unfold Tn
+     exponentially, even though the only private declaration is bound.
+     Also exercise the disposable FV class with a binder and a differently
+     typed namesake. Do not diagnose this fixture with native FV/aconv or
+     render its annotations: those would introduce the same type work. *)
+  fun unrelated_type_dependencies () =
+    let
+      fun shared_type 0 = Type.bool
+        | shared_type n = let val child = shared_type (n-1)
+                         in Type.mk_type ("fun",[child,child]) end
+      fun check depth namesake hypothesis =
+        let
+          val ty = shared_type depth
+          val marker = Term.genvar ``:word1``
+          val name = if namesake then #1 (Term.dest_var marker)
+                     else "task46_type_value"
+          val value = Term.mk_var (name,ty)
+          val predicate = Term.mk_var ("task46_type_predicate",
+            Type.mk_type ("fun",[ty,Type.bool]))
+          val atom = Term.mk_comb (predicate,value)
+          val body = boolSyntax.mk_conj (boolSyntax.mk_conj (atom,atom),
+            boolSyntax.mk_eq (marker,marker))
+          val bound = boolSyntax.mk_forall (marker,body)
+          (* This non-declaration binder must not delete a declaration's
+             class; the existing mixed-free/bound controls check selection
+             when that declaration is genuinely free. *)
+          val goal = if namesake then
+              boolSyntax.mk_conj (boolSyntax.mk_forall (value,bound),bound)
+            else bound
+          val source = if hypothesis then Thm.ASSUME goal else Thm.REFL goal
+          val bindings : P.cpc_fp_private_binding list =
+            [{marker=marker,kind="@fp.SIGN",
+              source=``task46_type_fp : (3,5) smtfp``}]
+          val (theorem,statistics) = Timeout.apply (Time.fromSeconds 3)
+            (fn () => R.with_operation_statistics (fn () =>
+              R.instantiate_cpc_fp_private_bindings bindings source)) ()
+        in
+          require "unrelated type discovery changed the input theorem"
+            (Portable.pointer_eq (theorem,source));
+          require "bound marker with unrelated types caused an input INST"
+            (#inst_calls statistics = 0);
+          clean theorem
+        end
+    in List.app (fn depth =>
+         (check depth false false; check depth false true;
+          check depth true false; check depth true true)) [20,24,28] end
+
   fun raw_self () =
     let val target = ``task46_deferred_p:bool``
         val raw = Thm.ASSUME target
@@ -1178,6 +1226,8 @@ struct
        bound_alias_names;
      test "CPC bound-alias discovery preserves original shared DAG admission"
        bound_alias_sharing;
+     test "CPC private discovery does not expand unrelated shared types"
+       unrelated_type_dependencies;
      test "CPC raw-self deferred cache entry remains unclosed" raw_self;
      test "CPC genuine two-step deferred dependency cycle remains unclosed"
        dependency_cycle;

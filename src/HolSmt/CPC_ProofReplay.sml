@@ -20984,6 +20984,21 @@ in
       val required = ref Term.empty_varset
       val declarations = HOLset.addList
         (Term.empty_varset,List.map #marker bindings)
+      (* Project the native FV accumulator onto these declarations. Each
+         private marker keeps its typed identity; all other variables share
+         one disposable class. In particular, FVL must not compare two
+         unrelated annotations: experimental Type.compare unfolds shared
+         types. Membership compares only against the finite private word
+         types, including for differently typed namesakes. Native binder
+         deletion can affect only its own class, never a private namesake.
+         This set is discovery metadata, not a theorem or an FV inventory. *)
+      fun dependency_compare (left,right) =
+        case (HOLset.member (declarations,left),
+              HOLset.member (declarations,right)) of
+          (true,true) => Term.var_compare (left,right)
+        | (true,false) => LESS
+        | (false,true) => GREATER
+        | (false,false) => EQUAL
       fun collect term =
         let
           val candidates = ref Term.empty_varset
@@ -21002,13 +21017,13 @@ in
           (* Keep admission on the ORIGINAL syntax. Alpha-renaming bound
              aliases can rebuild shared bodies and change that DAG metric.
              Only on binder paths with candidates, prune abstractions from
-             a second DAG walk and use stock FVL on those already raw-
-             bounded operands. No new binder is opened or admitted here;
+             a second DAG walk and use projected stock FVL on those already
+             raw-bounded operands. No new binder is opened or admitted here;
              the pruned walk cannot exceed the original node allowance. *)
           fun children node =
             if Term.is_abs node then
               (HOLset.foldl (fn (variable,()) => add required variable) ()
-                 (Term.FVL [node] Term.empty_varset); [])
+                 (Term.FVL [node] (HOLset.empty dependency_compare)); [])
             else SmtResource.term_children node
         in
           if !has_binder andalso not (HOLset.isEmpty (!candidates)) then
