@@ -3497,6 +3497,8 @@ class Measuring(Rig):
                 ("head", dict(good, head="e" * 40)),
                 ("tree", dict(good, tree_outside_performance="u" * 64)),
                 ("keys", dict(good, extra=1)),
+                ("products", dict(good, products="short")),
+                ("products type", dict(good, products=1)),
                 ("none", None)):
             with self.subTest(label):
                 changed = dict(recorded, checkout=value)
@@ -4167,11 +4169,18 @@ class Logged(unittest.TestCase):
     def test_a_child_with_no_standard_input_does_not_wait_for_one(self):
         with tempfile.TemporaryDirectory(prefix="timing-grid-log-") as tmp:
             log = Path(tmp) / "log"
-            found = a.run_logged(
-                ["/bin/sh", "-c", 'read line; echo "read [$line]"'], log,
-                [], 60, stdin=subprocess.DEVNULL)
+            real, given = subprocess.Popen, []
+
+            def spy(*args, **kw):
+                given.append(kw.get("stdin", "not given"))
+                return real(*args, **kw)
+            with patch.object(subprocess, "Popen", spy):
+                found = a.run_logged(
+                    ["/bin/sh", "-c", 'read line; echo "read [$line]"'], log,
+                    [], 60, stdin=subprocess.DEVNULL)
             self.assertEqual((found["exit"], found["timed_out"]), (0, False))
             self.assertEqual(log.read_text(), "read []\n")
+            self.assertEqual(given, [subprocess.DEVNULL])
 
     def test_the_default_is_the_inherited_standard_input(self):
         import inspect
