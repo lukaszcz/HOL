@@ -41,8 +41,8 @@ TABLE = tg.Table(
     seconds_by_case={c: LONG_SECONDS for c in cases.DELETIONS},
     fixed_seconds=True, pairs=PAIRS, samples=SAMPLES, engine=True,
     require_seed=True,
-    allocation="the separate gate of allocation_matrix.py --task task30; "
-    "history_theory_change is outside it (task30_cases.ALLOCATION_EXCLUDED)")
+    allocation="the separate gate of allocation_matrix.py --task task30, "
+    "all 24 cases at six sizes")
 ENGINE = tg.Grid(TABLE)
 
 

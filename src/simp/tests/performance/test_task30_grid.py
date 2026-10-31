@@ -73,12 +73,9 @@ class Table(unittest.TestCase):
         for value in counts["iterations"].values():
             self.assertEqual(value & (value - 1), 0)
 
-    def test_the_allocation_text_names_the_exclusion(self):
-        self.assertIn("history_theory_change", t30.TABLE.allocation)
-        self.assertEqual(sorted(cases.ALLOCATION_EXCLUDED),
-                         ["history_theory_change"])
-        self.assertEqual(set(cases.ALLOCATION_CASES) |
-                         set(cases.ALLOCATION_EXCLUDED), set(cases.CASES))
+    def test_the_allocation_text_names_the_task_selection(self):
+        self.assertIn("--task task30", t30.TABLE.allocation)
+        self.assertNotIn("outside", t30.TABLE.allocation)
 
 
 class Whole(ttg.Rig):

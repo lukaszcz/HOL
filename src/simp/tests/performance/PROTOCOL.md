@@ -302,10 +302,21 @@ has no disposition.
   counts of the maker and collector cases (`history_collectors`,
   `history_makers`) exactly and check the resulting simpset of every
   deletion; they do not count scans, and production records none. The
-  structural work is therefore gated by the allocation matrix
-  (`allocation_matrix.py --task task30`), which brackets setup, first and
-  steady operation and verification and compares exact allocation words and
-  their size slopes between the sides.
+  allocation matrix (`allocation_matrix.py --task task30`) brackets setup,
+  first and steady operation and verification of all 24 cases and compares
+  exact allocation words and their size slopes between the sides.
+- **`history_theory_change`.** The two gates cover different parts of this
+  case. The timing gate runs the real transition: `new_theory` in a `hol run`
+  process exports the theory, and the batch includes that cost. The
+  allocation gate covers the replay and the reparse under the restored
+  context, with no `new_theory`: the export has clock- and pid-dependent
+  words and writes below the working directory, which the sealed private
+  selection must not see change. The fixture sets `MatrixSupport.theoryChange`
+  to a no-op in `MatrixAllocation.sml`; the reparse is driven by the
+  `Context.restore` that drops the linked theory, and the verification still
+  requires the exact "bad theory name" error. `Globals.interactive` is not
+  set (it would delete the constants the fixture uses). So the cost of the
+  export itself has no allocation gate, only the timing gate.
 - **Pilot method for a new task.**
 
       python3 -B task30_grid.py pilot --output OUT/pilot \

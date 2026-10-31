@@ -7,6 +7,7 @@ Every guard in a table below must be killed by a mutation of that guard.
 from fractions import Fraction
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import unittest
@@ -1711,39 +1712,39 @@ class BoundaryPrefixes(unittest.TestCase):
 
 class TmpdirIsAPlace(unittest.TestCase):
     """TMPDIR (and the path length of the scratch tree below it) is a place
-    and not content only while no gated bracket reads an environment
-    variable or a path. The one path-sensitive call in a bracket is the
-    `new_theory` of `history_theory_change`: in a `hol run` process it
-    exports the theory (Theory.sml writes *Theory files into the working
-    directory, which is the sealed private selection) and builds
-    documentation paths from the working directory, so its words depend on
-    the path structure and not only on its length. That case is outside
-    every allocation task: gate.CASES and the TASK30 selection
-    (task30_cases.ALLOCATION_EXCLUDED)."""
+    and not content only while no bracket of the allocation fixture reads an
+    environment variable or a path. The one call of the cases that does is
+    the `new_theory` of `history_theory_change`: in a `hol run` process it
+    exports the theory, which writes *Theory files below the working
+    directory and builds words that depend on the clock and the process id.
+    MatrixAllocation.sml replaces it by a no-op (MatrixSupport.theoryChange),
+    so no allocation bracket reads a path; the timing gate keeps the real
+    transition. The case is in the TASK30 allocation gate."""
     CASE_NAME = "history_theory_change"
     SENSITIVE = ("new_theory", "export_theory", "getEnv", "OS.FileSys",
                  "FileSys.", "OS.Process", "Posix.", "TextIO.openIn",
                  "TextIO.openOut", "BinIO.open", "Paired.env", "Portable.pwd")
 
-    def test_the_path_sensitive_case_is_not_gated_while_tmpdir_is_a_place(
-            self):
-        if "tmpdir" in m.PLACE_KEYS:
-            self.assertNotIn(self.CASE_NAME, gate.CASES)
-            for task in m.TASKS.values():
-                self.assertNotIn(self.CASE_NAME, task.cases)
-        else:
-            self.skipTest("TMPDIR is content")
+    @staticmethod
+    def code(name):
+        return re.sub(r"\(\*.*?\*\)", "", (m.HERE / name).read_text(),
+                      flags=re.S)
 
-    def test_only_that_case_has_a_direct_path_token(self):
+    def test_the_case_is_gated_while_its_path_use_is_removed(self):
+        self.assertNotIn(self.CASE_NAME, gate.CASES)
+        self.assertIn(self.CASE_NAME, m.TASKS["task30"].cases)
+        self.assertIn("theoryChange := (fn _ => ())",
+                      self.code("MatrixAllocation.sml"))
+
+    def test_only_the_default_of_the_hook_has_a_direct_path_token(self):
         # A lexical scan of MatrixSupport.sml alone: it follows no callee.
-        text = (m.HERE / "MatrixSupport.sml").read_text()
-        start = text.index('| "%s" =>' % self.CASE_NAME)
-        end = text.index('| _ => raise Fail "unknown history case"', start)
-        self.assertIn("new_theory", text[start:end])  # the anchors hold
+        text = self.code("MatrixSupport.sml")
+        hook = "val theoryChange = ref (fn name => ignore (new_theory name))"
+        self.assertEqual(text.count(hook), 1)  # the anchor holds
+        text = text.replace(hook, "")
         for token in self.SENSITIVE:
-            outside = text[:start] + text[end:]
             with self.subTest(token):
-                self.assertNotIn(token, outside)
+                self.assertNotIn(token, text)
 
 
 class Inputs(unittest.TestCase):
@@ -1785,7 +1786,7 @@ class Inputs(unittest.TestCase):
         self.assertGreaterEqual(counts["repeats"], 3)
 
     def test_grid_is_27_cases_by_6_sizes(self):
-        self.assertEqual((len(m.CASES), len(m.SIZES), len(m.keys())),
+        self.assertEqual((len(gate.CASES), len(m.SIZES), len(m.keys())),
                          (27, 6, 162))
 
     def test_sides_are_distinct_with_equal_length_names(self):

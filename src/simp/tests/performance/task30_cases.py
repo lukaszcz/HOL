@@ -17,16 +17,3 @@ CASES = DELETIONS + (
     "history_remove", "history_force", "history_excluded",
     "history_bounded", "history_limit", "history_collectors",
     "history_makers", "history_theory_change")
-
-# In the timing gate but not in the allocation gate, with the reason. The
-# allocation gate treats TMPDIR and the scratch path length as a place, not
-# content (allocation_matrix.PLACE_KEYS); that holds only while no bracket
-# reads the environment or a path.
-ALLOCATION_EXCLUDED = {
-    "history_theory_change":
-        "new_theory exports the current theory: it writes *Theory files "
-        "into the working directory (the private selection, whose sealed "
-        "tree must not change during a cell) and builds documentation "
-        "paths from the working directory, so the words depend on the "
-        "path structure and not only on its length"}
-ALLOCATION_CASES = tuple(c for c in CASES if c not in ALLOCATION_EXCLUDED)

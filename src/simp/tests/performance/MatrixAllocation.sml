@@ -19,6 +19,10 @@
    endpoints are read from C storage afterwards and printed at the very end. *)
 open HolKernel Paired MatrixSupport
 val _ = new_theory "matrix_allocation"
+(* history_theory_change: the exported theory has clock- and pid-dependent
+   words and files below the working directory, so no transition is made;
+   the reparse comes from the Context.restore in the case itself. *)
+val _ = theoryChange := (fn _ => ())
 fun integer name = valOf (Int.fromString (Paired.env name))
 val label = Paired.env "PERF_CASE"
 val size = integer "PERF_SIZE"

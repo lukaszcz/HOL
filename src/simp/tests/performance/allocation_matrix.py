@@ -47,34 +47,7 @@ ITERATIONS = HERE / "allocation_iterations.json"
 BOUNDARY = HERE / "allocation_boundary.json"
 SCHEMA = "task29b-matrix-v2"
 CONTROLS_SCHEMA = "task29-managed-counter-controls-v4"
-CASES, SIZES = gate.CASES, a.SIZES
-
-
-class Task:
-    """Which cases a grid measures and where its steady counts stand. The
-    default task is TASK29B's; a header names another only by `task`."""
-
-    def __init__(self, name, label, cases, iterations, excluded=None):
-        self.name, self.label, self.cases = name, label, tuple(cases)
-        self.iterations, self.excluded = iterations, dict(excluded or {})
-
-
-DEFAULT_TASK = "task29b"
-TASKS = {
-    DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
-    "task30": Task("task30", "TASK30", task30_cases.ALLOCATION_CASES,
-                   HERE / "allocation_iterations_task30.json",
-                   task30_cases.ALLOCATION_EXCLUDED)}
-
-
-def task_named(name):
-    sc.require(name in TASKS, "unknown task: %r" % (name,))
-    return TASKS[name]
-
-
-def task_of(header):
-    """The task a grid header (or inventory) belongs to."""
-    return task_named(header.get("task", DEFAULT_TASK))
+SIZES = a.SIZES
 PAIRS = 10  # acceptance minimum; fewer pairs is a smoke only
 # Job directories are named "j%02d" (make_job): more would give some private
 # paths, hence PAIR_PRIVATE, another length than the rest of the grid.
@@ -120,6 +93,32 @@ PATH_LAUNCHERS = (
     ("path", "native-rts", "path-controls.exe"),
     ("interpreter_path", "interpreter", "interpreter-path-controls.exe"),
     ("failure_path", "failure", "failure-path-controls.exe"))
+
+
+class Task:
+    """Which cases a grid measures and where its steady counts stand. The
+    default task is TASK29B's; a header names another only by `task`."""
+
+    def __init__(self, name, label, cases, iterations):
+        self.name, self.label = name, label
+        self.cases, self.iterations = tuple(cases), iterations
+
+
+DEFAULT_TASK = "task29b"
+TASKS = {
+    DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
+    "task30": Task("task30", "TASK30", task30_cases.CASES,
+                   HERE / "allocation_iterations_task30.json")}
+
+
+def task_named(name):
+    sc.require(name in TASKS, "unknown task: %r" % (name,))
+    return TASKS[name]
+
+
+def task_of(header):
+    """The task a grid header (or inventory) belongs to."""
+    return task_named(header.get("task", DEFAULT_TASK))
 
 
 def keys(task=None):
@@ -420,6 +419,13 @@ class Grid:
         self.header = {}
         self.task = task_named(getattr(args, "task", DEFAULT_TASK))
 
+    def bind_harness(self, candidate):
+        """The harness binding of this grid's task, with the input and
+        fixture files it covers."""
+        inputs, fixtures = harness_files(self.task)
+        return (harness_binding(HERE.parents[3], candidate, inputs, fixtures),
+                inputs, fixtures)
+
     def run(self, command, cwd=None, runtime_env=None):
         env = self.env if runtime_env is None else runtime_env
         receipt = loading.execute(command, cwd or self.hol, env,
@@ -478,9 +484,7 @@ class Grid:
         # that is not what its commit says, before anything is built.
         self.boundary = bd.resolve(self.repo, args.baseline, args.candidate,
                                    pr.HOL_SEQUENCE, BOUNDARY)
-        inputs, fixtures = harness_files(self.task)
-        self.harness = harness_binding(HERE.parents[3], args.candidate,
-                                       inputs, fixtures)
+        self.harness, inputs, fixtures = self.bind_harness(args.candidate)
         self.env = dict(
             PATH=pr.PATH, HOME="/nonexistent",
             TMPDIR=os.environ.get("TMPDIR", "/tmp"), HOLDIR=str(self.hol),

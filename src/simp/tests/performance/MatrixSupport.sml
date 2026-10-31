@@ -46,6 +46,14 @@ struct
      proof checker always needs an explicit reflexivity theorem instead. *)
   fun SIMP_CONV ss ths = Conv.QCONV (simpLib.SIMP_CONV ss ths)
   val rawStorage = ref (fn () => ())
+  (* The theory-graph change of history_theory_change. In a `hol run` process
+     (Globals.interactive is false) new_theory exports the current theory:
+     it writes *Theory files below the working directory and its words
+     depend on the clock and the process id. A harness that counts words
+     replaces it (MatrixAllocation.sml): the reparse the case verifies comes
+     from the Context.restore that drops the linked theory, not from the
+     new one. *)
+  val theoryChange = ref (fn name => ignore (new_theory name))
   val makerCalls = ref 0
   val collectorCalls = ref 0
   fun maker rw = (makerCalls := !makerCalls + 1; [rw])
@@ -367,7 +375,7 @@ struct
           val from = source -* ["matrix_ephemeral.missing"]
           val present = Context.snapshot ()
           val _ = Context.restore saved
-          val _ = new_theory "matrix_changed"
+          val _ = (!theoryChange) "matrix_changed"
           val changed = Context.snapshot ()
           val slot = ref (Exn.capture replay from)
           fun verify () = let

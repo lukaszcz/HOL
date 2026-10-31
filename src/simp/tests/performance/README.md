@@ -39,8 +39,9 @@ cells): `pilot` and `predeclare` produce the develop-only batch counts that
 are committed as `task30_iterations.json` before any candidate observation,
 `run`, `extend` and `replay` follow TASK29A, and the exit status is zero only
 when every cell passes. The exact-allocation counterpart is
-`allocation_matrix.py run --task task30` (23 cases; `history_theory_change`
-is outside it, see `TASK_29B_allocation_counter.md`).
+`allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
+`history_theory_change` the allocation fixture makes no `new_theory`
+transition, see `PROTOCOL.md` and `TASK_29B_allocation_counter.md`).
 
 Fresh post-workload actual object/code/pool diagnostics are documented in
 [`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md). The subsequent

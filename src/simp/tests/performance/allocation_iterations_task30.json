@@ -140,6 +140,12 @@
   "history_makers-10": 32,
   "history_makers-100": 32,
   "history_makers-1000": 16,
-  "history_makers-10000": 8
+  "history_makers-10000": 8,
+  "history_theory_change-0": 32,
+  "history_theory_change-1": 32,
+  "history_theory_change-10": 32,
+  "history_theory_change-100": 32,
+  "history_theory_change-1000": 16,
+  "history_theory_change-10000": 8
  }
 }

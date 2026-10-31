@@ -311,23 +311,20 @@ default and is chosen by the caller outside the repository.
   resume therefore requires `len(tmpdir)` equal, and the length of the
   resolved private runtime path too, which a symlinked `TMPDIR` can change
   alone; the final replay refuses cells recorded at lengths that differ. The
-  argument has a limit: no gated bracket (the 27 cases of
-  `task29_gate.CASES`, and the 23 allocation cases of
-  `task30_cases.ALLOCATION_CASES`) reads an environment variable or a path.
-  The one path-sensitive call in a bracket is `new_theory` in the
-  `history_theory_change` case of `MatrixSupport.sml`. In a `hol run`
-  process (`Globals.interactive` is false) it takes the non-interactive
-  path of `Theory.sml`, which exports the current theory: it writes the
-  `*Theory` files into the working directory, which is the sealed private
-  selection that must not change during a cell, and builds documentation
-  paths (`parent_doc_url`) from the working directory. Its words therefore
-  depend on the path structure (the arc lengths and the position relative
-  to `HOLDIR`), not only on the path length, and its files change the
-  private tree. Equal scratch path lengths do not make it a gated case.
-  That case is outside every allocation task (it stays in the timing
-  gate); gating it would need the fixture to avoid the export and a
-  measured check that two scratch places of one length give equal words. The
-  rest of the environment
+  reason this holds is that no bracket reads a path: no gated bracket (the 27
+  cases of `task29_gate.CASES` and the 24 cases of `task30_cases.CASES`)
+  reads an environment variable or a path. The one call that would is `new_theory` in the
+  `history_theory_change` case of `MatrixSupport.sml`: in a `hol run`
+  process (`Globals.interactive` is false) it exports the current theory,
+  which writes the `*Theory` files below the working directory (the sealed
+  private selection, which must not change during a cell) and builds
+  documentation paths (`parent_doc_url`) from it, and its export has words
+  that depend on the clock and on the process id. The allocation fixture
+  therefore makes no transition there: `MatrixAllocation.sml` sets
+  `MatrixSupport.theoryChange` to a no-op, and the reparse the case verifies
+  comes from the `Context.restore` that drops the theory the case linked
+  (`filter_net_by_names` then raises "bad theory name"). The timing gate
+  keeps the real `new_theory`. The rest of the environment
   is content, `HOLDIR` included: it names the toolchain, which `--toolchain`
   identifies by path and whose products are sealed by that path. A changed
   `PATH`, compiler path or toolchain is a different grid.

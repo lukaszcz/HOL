@@ -34,17 +34,13 @@ class Selection(unittest.TestCase):
         self.assertEqual(m.TASKS["task29b"].cases, tuple(gate.CASES))
         self.assertEqual(m.TASKS["task29b"].iterations, m.ITERATIONS)
 
-    def test_task30_is_every_task30_case_but_the_named_exclusion(self):
+    def test_task30_is_every_task30_case(self):
         self.assertEqual(len(cases.CASES), 24)
-        self.assertEqual(len(TASK30.cases), 23)
-        self.assertEqual(set(TASK30.cases) | set(TASK30.excluded),
-                         set(cases.CASES))
-        self.assertFalse(set(TASK30.cases) & set(TASK30.excluded))
-        self.assertEqual(sorted(TASK30.excluded), ["history_theory_change"])
-        self.assertTrue(all(len(reason) > 40 for reason in
-                            TASK30.excluded.values()))
-        self.assertEqual(len(m.keys(TASK30)), 138)
+        self.assertEqual(TASK30.cases, cases.CASES)
+        self.assertEqual(len(m.keys(TASK30)), 144)
         self.assertFalse(set(TASK30.cases) & set(gate.CASES))
+        self.assertFalse(hasattr(TASK30, "excluded"))
+        self.assertFalse(hasattr(cases, "ALLOCATION_EXCLUDED"))
 
     def test_the_cases_are_the_matrix_exclusion_and_history_cases(self):
         matrix = [c for c in ms.EXPECTED_CASES
@@ -60,7 +56,8 @@ class Selection(unittest.TestCase):
 
     def test_sizes_are_the_gate_sizes(self):
         for case in cases.CASES:
-            self.assertEqual(tuple(ms.SIZE_SETS["rules"]), m.SIZES)
+            sizes = ms.SIZE_SETS[ms.EXPECTED_CASES[case]["sizes"]]
+            self.assertEqual(tuple(sizes), m.SIZES, case)
 
     def test_unknown_tasks_are_refused(self):
         with self.assertRaisesRegex(sc.InvalidAllocation, "unknown task"):
@@ -70,15 +67,16 @@ class Selection(unittest.TestCase):
         self.assertIs(m.task_of({}), m.TASKS["task29b"])
         self.assertIs(m.task_of(dict(task="task30")), TASK30)
 
-    def test_the_excluded_case_stays_unmeasurable_by_name(self):
-        for name in ("history_theory_change-0", "history_theory_change-10"):
-            self.assertNotIn(name, {m.name_of(*k) for k in m.keys(TASK30)})
+    def test_the_theory_change_case_is_gated_at_every_size(self):
+        found = {m.name_of(*k) for k in m.keys(TASK30)}
+        for size in m.SIZES:
+            self.assertIn("history_theory_change-%d" % size, found)
 
 
 class Counts(unittest.TestCase):
     def test_the_committed_counts_follow_the_fixed_rule(self):
         counts = m.load_iterations(task=TASK30)
-        self.assertEqual(len(counts["steady"]), 138)
+        self.assertEqual(len(counts["steady"]), 144)
         self.assertEqual(counts["repeats"], 4)
         base = a.load(m.ITERATIONS)
         self.assertEqual((counts["schema"], counts["rule"]),
@@ -89,11 +87,16 @@ class Counts(unittest.TestCase):
                              16 if size == 1000 else 8, key)
 
     def test_the_rule_is_the_one_of_the_other_counts(self):
-        base = a.load(m.ITERATIONS)["steady"]
-        other = m.load_iterations(task=TASK30)["steady"]
-        for key in set(base) & set(other):
-            self.assertEqual(base[key], other[key])
-        self.assertFalse(set(base) & set(other))
+        base = a.load(m.ITERATIONS)
+        other = a.load(TASK30.iterations)
+        self.assertEqual((base["rule"], base["repeats"]),
+                         (other["rule"], other["repeats"]))
+        for counts in (base, other):
+            for key, value in counts["steady"].items():
+                size = int(key.rsplit("-", 1)[1])
+                self.assertEqual(value, 32 if size <= 100 else
+                                 16 if size == 1000 else 8, key)
+        self.assertFalse(set(base["steady"]) & set(other["steady"]))
 
     def test_counts_of_another_task_are_refused(self):
         with self.assertRaisesRegex(sc.InvalidAllocation, "incomplete"):
@@ -108,7 +111,7 @@ class Counts(unittest.TestCase):
             for steady in (
                     {k: v for k, v in good["steady"].items()
                      if k != "history_makers-10"},
-                    dict(good["steady"], **{"history_theory_change-0": 32})):
+                    dict(good["steady"], **{"frag_create-0": 32})):
                 path.write_text(json.dumps(dict(good, steady=steady)))
                 with self.assertRaisesRegex(sc.InvalidAllocation,
                                             "incomplete"):
@@ -168,8 +171,43 @@ class Binding(unittest.TestCase):
         self.assertEqual(m.Grid(args).task.name, "task29b")
 
     def test_the_prepared_grid_binds_the_harness_of_its_task(self):
-        source = Path(m.__file__).read_text()
-        self.assertEqual(source.count("harness_files(self.task)"), 1)
+        repo = a.HERE.parents[3]
+        for name in ("task29b", "task30"):
+            bound = []
+            with mock.patch.object(
+                    m, "harness_binding",
+                    lambda root, candidate, inputs, fixtures:
+                    bound.append((candidate, sorted(
+                        p.name for p in inputs))) or dict(bound=name)):
+                grid = m.Grid(argparse.Namespace(
+                    pairs=2, repo=repo, task=name))
+                binding, inputs, fixtures = grid.bind_harness("c" * 40)
+                self.assertEqual(binding, dict(bound=name))
+                self.assertEqual(
+                    (inputs, fixtures),
+                    m.harness_files(m.TASKS[name]))
+            (candidate, inputs), = bound
+            self.assertEqual(candidate, "c" * 40)
+            ours = m.TASKS[name].iterations.name
+            self.assertIn(ours, inputs)
+            for other in m.TASKS.values():
+                if other.iterations.name != ours:
+                    self.assertNotIn(other.iterations.name, inputs)
+
+    def test_the_digest_of_a_task29b_header_is_that_of_294bb61c3(self):
+        # Computed with the grid_digest of 294bb61c3 on this header.
+        self.assertEqual(m.GRID_KEYS, (
+            "schema", "baseline", "candidate", "pairs", "runtime", "shim",
+            "repo", "toolchain_head", "toolchain_products", "tools",
+            "inputs", "controls", "sources", "revisions", "fixtures",
+            "word_bytes", "canary", "iterations", "environment", "boundary",
+            "harness"))
+        header = {k: "v-" + k for k in m.GRID_KEYS}
+        header.update(pairs=10, iterations={"steady": {"a-0": 32}})
+        golden = ("e5fa929004e714b8425ef7bf51f44a98"
+                  "f750b3bbfbfcb4eb97f3c22da9ac3027")
+        self.assertEqual(m.grid_digest(header), golden)
+        self.assertEqual(m.grid_digest(dict(header, task="task29b")), golden)
 
     def test_assembly_takes_the_cases_of_the_task(self):
         cell = {("exclude_empty", 0)}
@@ -231,11 +269,27 @@ class Run(grid_tests.Bed):
         args = type("Args", (), {"output": self.out})
         self.assertEqual(self.quiet(m.replay, args), 2)
 
-    def test_the_excluded_case_cannot_be_measured(self):
+    def test_the_theory_change_case_is_a_task30_cell(self):
+        self.patched30()
+        code = self.quiet(m.run, grid_tests.arguments(
+            self.out, ["history_theory_change-0",
+                       "history_theory_change-10000"], task="task30"))
+        self.assertEqual(code, 2)
+        inventory = a.load(self.out / "inventory.json")
+        self.assertEqual(sorted((r["case"], r["size"])
+                                for r in inventory["runs"]),
+                         [("history_theory_change", 0),
+                          ("history_theory_change", 10000)])
+        steady = m.load_iterations(task=TASK30)["steady"]
+        self.assertEqual({r["size"]: r["steady"] for r in inventory["runs"]},
+                         {0: steady["history_theory_change-0"],
+                          10000: steady["history_theory_change-10000"]})
+
+    def test_the_theory_change_case_is_not_a_task29b_cell(self):
         self.patched30()
         with self.assertRaisesRegex(sc.InvalidAllocation, "unknown"):
             self.quiet(m.run, grid_tests.arguments(
-                self.out, ["history_theory_change-0"], task="task30"))
+                self.out, ["history_theory_change-0"]))
 
     def test_task29b_cells_are_not_task30_cells(self):
         self.patched30()
@@ -302,25 +356,69 @@ class Fixture(unittest.TestCase):
             self.assertIn('"%s"' % case, support)
 
 
-class PathSensitivity(unittest.TestCase):
-    """Why history_theory_change is outside the allocation gate."""
+def code(text):
+    """SML source without its comments."""
+    return re.sub(r"\(\*.*?\*\)", "", text, flags=re.S)
 
-    def test_the_only_path_sensitive_case_is_the_excluded_one(self):
-        text = (m.HERE / "MatrixSupport.sml").read_text()
-        start = text.index('| "history_theory_change" =>')
-        end = text.index('| _ => raise Fail "unknown history case"', start)
-        self.assertIn("new_theory", text[start:end])
-        outside = text[:start] + text[end:]
-        for token in ("new_theory", "export_theory", "getEnv", "OS.FileSys",
-                      "FileSys.", "OS.Process", "Posix.", "TextIO.openIn",
-                      "TextIO.openOut", "BinIO.open", "Portable.pwd"):
+
+class TheoryChange(unittest.TestCase):
+    """history_theory_change in the allocation gate: the fixture makes no
+    theory transition there, and the timing gate keeps the real one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.support = code((m.HERE / "MatrixSupport.sml").read_text())
+        cls.allocation = code((m.HERE / "MatrixAllocation.sml").read_text())
+        cls.timing = code((m.HERE / "MatrixPerformance.sml").read_text())
+        start = cls.support.index('| "history_theory_change" =>')
+        end = cls.support.index('| _ => raise Fail "unknown history case"',
+                                start)
+        cls.case = cls.support[start:end]
+
+    def test_the_case_goes_through_the_hook(self):
+        self.assertIn('(!theoryChange) "matrix_changed"', self.case)
+        self.assertNotIn("new_theory", self.case)
+
+    def test_the_hook_defaults_to_the_real_transition(self):
+        self.assertEqual(re.findall(r"new_theory[^\n]*", self.support),
+                         ["new_theory name))"])
+        self.assertIn("val theoryChange = ref (fn name => ignore "
+                      "(new_theory name))", self.support)
+
+    def test_the_allocation_fixture_removes_it_before_any_bracket(self):
+        replaced = self.allocation.index(
+            "val _ = theoryChange := (fn _ => ())")
+        self.assertLess(self.allocation.index("open HolKernel Paired "
+                                              "MatrixSupport"), replaced)
+        self.assertLess(replaced, self.allocation.index("fun bracket"))
+        self.assertEqual(re.findall(r"new_theory[^\n]*", self.allocation),
+                         ['new_theory "matrix_allocation"'])
+
+    def test_the_timing_fixture_keeps_the_real_transition(self):
+        self.assertNotIn("theoryChange", self.timing)
+        self.assertEqual(re.findall(r"new_theory[^\n]*", self.timing),
+                         ['new_theory "matrix_performance"'])
+
+    def test_the_reparse_is_still_verified_exactly(self):
+        for token in ('Exn.Exn (HOL_ERR e)',
+                      'Feedback.top_function_of e = "-*"',
+                      '"bad theory name: matrix_ephemeral"',
+                      "Context.restore saved"):
+            self.assertIn(token, self.case)
+
+    def test_the_interactive_flag_is_never_set(self):
+        # zapCT would delete the constants the fixture relies on.
+        for text in (self.support, self.allocation, self.timing):
+            self.assertNotIn("Globals.interactive", text)
+            self.assertNotIn("interactive :=", text)
+
+    def test_the_support_reads_no_path_or_environment(self):
+        for token in ("export_theory", "getEnv", "OS.FileSys", "FileSys.",
+                      "OS.Process", "Posix.", "TextIO.openIn",
+                      "TextIO.openOut", "BinIO.open", "Paired.env",
+                      "Portable.pwd"):
             with self.subTest(token):
-                self.assertNotIn(token, outside)
-
-    def test_the_gate_never_contains_it(self):
-        self.assertNotIn("history_theory_change", gate.CASES)
-        self.assertNotIn("history_theory_change", TASK30.cases)
-        self.assertIn("history_theory_change", cases.CASES)
+                self.assertNotIn(token, self.support)
 
 
 if __name__ == "__main__":
