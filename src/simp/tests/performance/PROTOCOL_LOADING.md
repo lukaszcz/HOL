@@ -154,7 +154,7 @@ are not identities. PATH's `poly --version` is separately archived compiler
 provenance, queried under the same environment/timeout; it is not proof of
 HOL's linked runtime version. This is local consistency checking, not hostile
 producer authentication or protection against concurrent changes restored
-between checks; the exclusive-window requirement still applies.
+between checks.
 
 Compressed unique
 process receipts retain raw output, complete ordered protocol and actual loaded

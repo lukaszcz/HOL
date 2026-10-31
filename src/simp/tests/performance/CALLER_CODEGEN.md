@@ -4,8 +4,8 @@
 callers, rather than treating an older simpLib-only listing as their code.
 It does **not** approve timing, cumulative allocation or TASK29.
 
-From the repository root, in an exclusive build/measurement window (W is the
-existing `compatibility/evidence/task26/root-wrapper.sh`):
+From the repository root, with no other build or measurement in this checkout
+(W is the existing `compatibility/evidence/task26/root-wrapper.sh`):
 
 ```sh
 W python3 -B src/simp/tests/performance/caller_codegen.py \

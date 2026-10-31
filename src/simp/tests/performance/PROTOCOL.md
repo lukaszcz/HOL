@@ -7,8 +7,8 @@ measurements also need the corresponding source/layout/callback work audit.
 
 ## Isolated-source front end
 
-From the repository root, after an exclusive build/measurement window has been
-agreed with the coordinator:
+From the repository root. The host is shared and no exclusive window is
+required; a checkout's own builds and measurements stay serial, under its lock:
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -893,8 +893,8 @@ has no disposition.
       python3 -B task30_grid.py verify-counts --grid OUT/pilot \
           --counts OUT/task30_iterations.json
 
-  The pilot needs the exclusive measurement window, like `run`, and the
-  checkout above. `OUT/pilot/inventory.json` lists every archive and its
+  The pilot needs the checkout above and runs serially under its lock, like
+  `run`. `OUT/pilot/inventory.json` lists every archive and its
   calibration counts. Review the counts file, then copy it to
   `task30_iterations.json` and commit it before the candidate is measured
   (that commit is the candidate Y); `--resume` continues an interrupted pilot
@@ -987,8 +987,8 @@ has no disposition.
   candidate to that of the timing grid; `close` does.
 - **Cost.** The grid is 144 cells at 20 pairs and two slots per pair, each
   slot a fresh process with its batch (0.3 s, or 1.0 s for the ten direct
-  deletions at every size, including 10000): about two to three days of
-  exclusive window for the first stage, plus a second stage for the cells the
+  deletions at every size, including 10000): about two to three days for
+  the first stage, plus a second stage for the cells the
   control leaves open.
 - **Other tables.** `task29a_grid.py` gains `pilot`, `verify-counts` and the
   class report with the engine; its recorded runs and the TASK29B allocation
