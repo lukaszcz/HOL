@@ -313,9 +313,10 @@ default and is chosen by the caller outside the repository.
   alone; the final replay refuses cells recorded at lengths that differ. The
   reason this holds is that no bracket reads a path: no gated bracket (the 27
   cases of `task29_gate.CASES` and the 24 cases of `task30_cases.CASES`)
-  reads an environment variable or a path. The one call that would is `new_theory` in the
-  `history_theory_change` case of `MatrixSupport.sml`: in a `hol run`
-  process (`Globals.interactive` is false) it exports the current theory,
+  reads an environment variable or a path. The one call that would is
+  `new_theory` in the `history_theory_change` case of `MatrixSupport.sml`:
+  in a `hol run` process (`Globals.interactive` is false) it exports the
+  current theory,
   which writes the `*Theory` files below the working directory (the sealed
   private selection, which must not change during a cell) and builds
   documentation paths (`parent_doc_url`) from it, and its export has words

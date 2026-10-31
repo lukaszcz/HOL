@@ -273,19 +273,56 @@ has no disposition.
   chosen before any candidate observation from develop-only processes.
   `pilot` runs, for each cell, a baseline-versus-baseline experiment
   (`--pairs`, `--samples`, default ten and three) with free calibration and
-  archives it losslessly; no candidate and no layout seed take part.
-  `predeclare --grid PILOT --output FILE` writes
-  `HEADROOM * max(final calibration count)` rounded to a power of two (the
-  rule of TASK29A, `HEADROOM` 2) for each cell, with the per-cell batch
-  seconds, and refuses to overwrite. The file is reviewed and committed
-  before the first candidate observation; a run refuses counts that differ
-  from the table's cells or seconds, and every replay checks them against
-  the committed file.
+  archives it losslessly; no candidate and no layout seed take part. The
+  baseline must be the table's (`task30_grid.py` names it). Beside
+  `inventory.json` it publishes `variability.json`: for each cell the median
+  and 95% interval of every metric's paired ratio, and for the gated metrics
+  whether the interval lies in the equivalence window, so that the host's
+  noise is on record before any candidate is measured. A cell that fails is
+  kept as `<cell>.json.xz.failed-N` and is measured again by `--resume`.
+- **The counts file is the predeclaration.**
+  `predeclare --grid PILOT --output FILE --layout-seed SEED --pairs P
+  --samples S` (pairs and samples default to the table's; the seed is
+  required) writes `HEADROOM * max(final calibration count)` for each cell
+  (the calibration counts are powers of two, as a batch count must be;
+  `HEADROOM` 2) and refuses to overwrite. The file also carries the baseline,
+  the rule, each cell's batch seconds, the layout seed, pairs and samples of
+  the run, the seal of the pilot's driver, the seal of the pilot's inventory
+  and the seal of every cell's archive. `verify-counts --grid PILOT
+  [--counts FILE]` re-derives the file from the pilot's archives and its own
+  settings and refuses any difference (the pilot's code need not be the
+  current code for that). The file is reviewed and committed before the first
+  candidate observation.
+- **What `run` takes from the counts file.** The counts must be the table's
+  file, byte for byte, and the baseline of the counts, of the table and of
+  `--baseline` must agree; a candidate equal to the baseline is refused. The
+  layout seed, pairs and samples come from the file, and a different explicit
+  `--layout-seed`, `--pairs` or `--samples` is refused (the second-stage
+  seed `SEED-ext` must be valid too, so the seed is at most 60 characters).
+  The candidate's own tree must hold the file as it is (same git blob), and
+  the inventory records the commit that introduced it as `counts_commit`: the
+  counts were committed no later than the candidate, and so before it could be
+  measured. `inventory["seconds"]` is only the table's default; the seconds of
+  a cell are those in `iterations.seconds`. Every replay checks the header
+  against the committed counts file.
 - **Batch seconds.** A table gives all cells one calibration target and may
   name a longer one for cases whose single operation is tiny, so that a
   batch stands clear of the per-batch overhead (the ten direct deletions of
   TASK30 use 1 s, the others 0.3 s). The seconds are part of the counts
   file, checked by `run`, and used again by `replay`.
+- **Source identity.** The operations of TASK30 run through source files
+  that the candidate may have changed: `task30_cases.SOURCES` lists them
+  (`simpLib`, `Ho_Net`, `BoundedRewrites`, `Traverse`, `Travrules`,
+  `Opening`, `Cond_rewr`, `Trace` and `markerLib`, each `.sml` and `.sig`).
+  `run` records the git blob of each file at the baseline and at the
+  candidate in the inventory and prints every file that differs
+  (`SOURCE-DIFFERS path`). Such a grid is never a pass: its decisions name
+  the files in `source_identity` and a status that would be `pass` becomes
+  `inconclusive`, whatever the cells say. `replay` and the second stage
+  re-verify the record against git. This is the evidence for "no extra
+  source scan": neither gate sees a scan that allocates nothing and costs a
+  few percent, so the identity of the code on the path, not a measurement,
+  shows that no scan was added there. A scan elsewhere is outside this list.
 - **Decisions.** `run` prints, and the exit status reflects, five separate
   lists: pass; *fail*; *inconclusive*; *control-limited* (every open metric
   is inconclusive only because its B/B control is outside the window);
@@ -301,7 +338,9 @@ has no disposition.
   being gated and whatever it needs. The fixtures assert the callback
   counts of the maker and collector cases (`history_collectors`,
   `history_makers`) exactly and check the resulting simpset of every
-  deletion; they do not count scans, and production records none. The
+  deletion; `exclude_dproc` and `exclude_mixed` assert that the deletion
+  calls no maker and no collector (zero of each: `-*` runs neither). They do
+  not count scans, and production records none. The
   allocation matrix (`allocation_matrix.py --task task30`) brackets setup,
   first and steady operation and verification of all 24 cases and compares
   exact allocation words and their size slopes between the sides.
@@ -322,23 +361,50 @@ has no disposition.
       python3 -B task30_grid.py pilot --output OUT/pilot \
           --authorize-measurements
       python3 -B task30_grid.py predeclare --grid OUT/pilot \
+          --layout-seed SEED --pairs 20 --samples 5 \
           --output OUT/task30_iterations.json
+      python3 -B task30_grid.py verify-counts --grid OUT/pilot \
+          --counts OUT/task30_iterations.json
 
   The pilot needs the exclusive measurement window, like `run`.
   `OUT/pilot/inventory.json` lists every archive and its calibration counts.
   Review the counts file, then copy it to `task30_iterations.json` and commit
-  it with the table before the candidate is measured.
+  it before the candidate is measured; `--resume` continues an interrupted
+  pilot as it does a run.
 - **Grid.**
 
-      python3 -B task30_grid.py run --candidate SHA --layout-seed SEED \
-          --pairs 20 --samples 5 --output OUT/grid --authorize-measurements
+      python3 -B task30_grid.py run --candidate SHA --output OUT/grid \
+          --authorize-measurements
       python3 -B task30_grid.py extend --grid OUT/grid --output OUT/stage2 \
           --authorize-measurements
       python3 -B task30_grid.py replay --output OUT/stage2
 
-  A first stage without `--layout-seed` is refused for TASK30. `--resume`
-  continues an interrupted `run` or `extend`; `replay --partial` replays the
-  finished cells of an interrupted one.
+  `run` takes the layout seed, pairs and samples from the counts file and is
+  refused without a seed. `--resume` continues an interrupted `run`, `extend`
+  or `pilot`; `replay --partial` replays the finished cells of an
+  interrupted one. `replay` of a pilot is refused: a pilot is checked by
+  `verify-counts`.
+- **A cell that is too short.** A cell rejected as "fixed calibration too
+  short" is a non-pass and blocks the grid. The only route is a new committed
+  counts revision that multiplies that cell's count by 4 for baseline and
+  candidate alike, and a full rerun of that cell's pairs; the first result
+  stays published. No code changes for it: the ordinary exclusion path
+  (`simpLib`) is identical to develop (see source identity), so a candidate
+  that runs twice as fast as the baseline is not expected, and a count that
+  proves too short is a property of the pilot.
+- **Allocation gate prerequisite.** A TASK30 allocation run
+  (`allocation_matrix.py run --task task30`) needs a controls receipt taken
+  at the candidate: `acceptance.py` and `task30_cases.py` are harness inputs
+  of that gate, so a receipt of an earlier harness, or a TASK29B run resumed
+  across them, is refused.
+- **Cost.** The grid is 144 cells at 20 pairs and two slots per pair, each
+  slot a fresh process with its batch (0.3 s, or 1.0 s for the ten direct
+  deletions at every size, including 10000): about two to three days of
+  exclusive window for the first stage, plus a second stage for the cells the
+  control leaves open.
+- **Other tables.** `task29a_grid.py` gains `pilot`, `verify-counts` and the
+  class report with the engine; its recorded runs and the TASK29B allocation
+  schema names (`task29b-*`, kept by the TASK30 gate) are unaffected.
 
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived
