@@ -5492,11 +5492,23 @@ class Terminated(unittest.TestCase):
     of the attempt is judged. The assertions are about what the driver
     did: nothing here kills the cell before they are made."""
 
-    def cleanup(self, child, pids):
+    def cleanup(self, child, marks, pids):
         """After the assertions: what a failed test left running."""
         if child.poll() is None:
-            child.kill()
-            child.wait()
+            # SIGTERM first: a live driver takes its own path, which
+            # kills a cell whose mark was never read.
+            child.terminate()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+        # Marks written but not read by a wait that failed first.
+        for name in ("grandchild", "cell")[len(pids):]:
+            try:
+                pids.append(int((marks / name).read_text()))
+            except (FileNotFoundError, ValueError):
+                break
         for pid in pids:
             if alive(pid):
                 with contextlib.suppress(ProcessLookupError):
@@ -5532,69 +5544,71 @@ class Terminated(unittest.TestCase):
             time.sleep(0.01)
 
     def terminate(self, number, nested=False):
-        with tempfile.TemporaryDirectory(prefix="timing-grid-signal-") as t:
-            marks = Path(t)
-            env = {k: v for k, v in os.environ.items()
-                   if k not in ("HOL4_PERF_LOCK_FDS", "NESTED")}
-            env["TMPDIR"] = t  # the child's rig is removed with `marks`
-            if nested:
-                env["NESTED"] = "1"
-            pids = []
-            with (marks / "child.log").open("w") as log:
-                child = subprocess.Popen(
-                    [sys.executable, "-B", "-c", CHILD, t],
-                    cwd=Path(__file__).parent, env=env, stdout=log,
-                    stderr=subprocess.STDOUT,
-                    # Whatever the suite inherited (a run under `nohup`
-                    # ignores SIGHUP), the signal under test is at its
-                    # default here.
-                    preexec_fn=lambda: signal.signal(number,
-                                                     signal.SIG_DFL))
-            self.addCleanup(self.cleanup, child, pids)
-            self.await_pids(child, marks, pids)
-            for pid in pids:
-                self.assertTrue(alive(pid))
-            if nested:
-                # `setsid` is exec'd after the marks are written: the
-                # signal must not land while it is still in the cell's
-                # group.
-                self.await_session(pids[0])
-            child.send_signal(number)
-            code = child.wait(timeout=60)
-            log = (marks / "child.log").read_text()
-            # It died of the interrupt, not of the signal.
-            self.assertNotIn(code, (0, -number), log)
-            self.assertIn("KeyboardInterrupt", log)
+        # Removed after `cleanup`, which may still read its marks.
+        t = tempfile.mkdtemp(prefix="timing-grid-signal-")
+        self.addCleanup(shutil.rmtree, t, True)
+        marks = Path(t)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("HOL4_PERF_LOCK_FDS", "NESTED")}
+        env["TMPDIR"] = t  # the child's rig is removed with `marks`
+        if nested:
+            env["NESTED"] = "1"
+        pids = []
+        with (marks / "child.log").open("w") as log:
+            child = subprocess.Popen(
+                [sys.executable, "-B", "-c", CHILD, t],
+                cwd=Path(__file__).parent, env=env, stdout=log,
+                stderr=subprocess.STDOUT,
+                # Whatever the suite inherited (a run under `nohup`
+                # ignores SIGHUP), the signal under test is at its
+                # default here, and SIGTERM, which `cleanup` sends.
+                preexec_fn=lambda: [signal.signal(n, signal.SIG_DFL)
+                                    for n in {number, signal.SIGTERM}])
+        self.addCleanup(self.cleanup, child, marks, pids)
+        self.await_pids(child, marks, pids)
+        for pid in pids:
+            self.assertTrue(alive(pid))
+        if nested:
+            # `setsid` is exec'd after the marks are written: the
+            # signal must not land while it is still in the cell's
+            # group.
+            self.await_session(pids[0])
+        child.send_signal(number)
+        code = child.wait(timeout=60)
+        log = (marks / "child.log").read_text()
+        # It died of the interrupt, not of the signal.
+        self.assertNotIn(code, (0, -number), log)
+        self.assertIn("KeyboardInterrupt", log)
+        deadline = time.monotonic() + 10
+        while any(alive(pid) for pid in pids) and \
+                time.monotonic() < deadline:
+            time.sleep(0.05)
+        where = json.loads((marks / "where.json").read_text())
+        if nested:
+            # The cell's group is killed; the process it started in a
+            # session of its own is not, and keeps the lock.
+            self.assertEqual([alive(pid) for pid in pids], [True, False])
+            with patch.dict(os.environ), self.assertRaisesRegex(
+                    a.Blocked, "lock busy"):
+                with a.serial_lock(where["repo"]):
+                    pass
+            os.kill(pids[0], signal.SIGKILL)
             deadline = time.monotonic() + 10
-            while any(alive(pid) for pid in pids) and \
-                    time.monotonic() < deadline:
+            while alive(pids[0]) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            where = json.loads((marks / "where.json").read_text())
-            if nested:
-                # The cell's group is killed; the process it started in a
-                # session of its own is not, and keeps the lock.
-                self.assertEqual([alive(pid) for pid in pids], [True, False])
-                with patch.dict(os.environ), self.assertRaisesRegex(
-                        a.Blocked, "lock busy"):
-                    with a.serial_lock(where["repo"]):
-                        pass
-                os.kill(pids[0], signal.SIGKILL)
-                deadline = time.monotonic() + 10
-                while alive(pids[0]) and time.monotonic() < deadline:
-                    time.sleep(0.05)
-            else:
-                self.assertEqual([alive(pid) for pid in pids],
-                                 [False, False])
-            with patch.dict(os.environ), a.serial_lock(where["repo"]):
-                pass  # the lock is free
-            ledger = Path(where["repo"]) / ".agent-files" / "evidence" / \
-                "toy" / "attempts.jsonl"
-            lines = [json.loads(x) for x in ledger.read_text().splitlines()]
-            self.assertEqual([(x["event"], x.get("status")) for x in lines],
-                             [("open", None), ("close", "checkout-changed")])
-            inventory = json.loads(
-                (Path(where["out"]) / "inventory.json").read_text())
-            self.assertIn("tracked file", inventory["checkout_changed"])
+        else:
+            self.assertEqual([alive(pid) for pid in pids],
+                             [False, False])
+        with patch.dict(os.environ), a.serial_lock(where["repo"]):
+            pass  # the lock is free
+        ledger = Path(where["repo"]) / ".agent-files" / "evidence" / \
+            "toy" / "attempts.jsonl"
+        lines = [json.loads(x) for x in ledger.read_text().splitlines()]
+        self.assertEqual([(x["event"], x.get("status")) for x in lines],
+                         [("open", None), ("close", "checkout-changed")])
+        inventory = json.loads(
+            (Path(where["out"]) / "inventory.json").read_text())
+        self.assertIn("tracked file", inventory["checkout_changed"])
 
     def test_sigterm_is_judged_like_an_interrupt(self):
         self.terminate(signal.SIGTERM)
@@ -5633,8 +5647,10 @@ class Terminated(unittest.TestCase):
                     [sys.executable, "-B", "-c", code, t],
                     cwd=Path(__file__).parent, stdout=log,
                     stderr=subprocess.STDOUT,
-                    preexec_fn=lambda: signal.signal(signal.SIGHUP,
-                                                     signal.SIG_IGN))
+                    # SIGTERM is at its default, whatever was inherited.
+                    preexec_fn=lambda: [
+                        signal.signal(signal.SIGHUP, signal.SIG_IGN),
+                        signal.signal(signal.SIGTERM, signal.SIG_DFL)])
             self.addCleanup(lambda: child.poll() is None and child.kill())
             deadline = time.monotonic() + 60
             while not (marks / "ready").exists():
