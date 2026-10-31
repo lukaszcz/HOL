@@ -1063,10 +1063,14 @@ struct
      not these optional runtime caches. assemble_internal checks theorem
      (hence active) before reading assembly; deferred native programmes
      capture their law/tree before retirement and never consult it again.
-     Both constructors prepay the two cache writes before projection rules;
-     keep retirement callback-free and debit-free, even on retired Work. *)
-  fun retire_block (Block {primitive_metadata,assembly,realized,...}) =
-    (primitive_metadata := NONE;assembly := NONE;realized := true)
+     Constructors prepay the cache writes and table dispatch before
+     projection rules (policy also pays the store release call/write).
+     Keep retirement callback-free and debit-free, even on retired Work. *)
+  fun retire_block (Block {nodes,primitive_metadata,assembly,realized,...}) =
+    (primitive_metadata := NONE;assembly := NONE;
+     (case nodes of PolicyFixedTable {profiles,...} =>
+        SmtReplayNamedContext.clear_profile_store profiles | _ => ());
+     realized := true)
 
   fun active_finite (Block {graph, scope, realized, owned_frame, ...}) =
     ((case owned_frame of NONE => () | SOME (work,frame) =>
@@ -1749,8 +1753,8 @@ struct
         (fn (index,term,table) => Redblackmap.insert (table,term,
           index :: Option.getOpt (Redblackmap.peek (table,term),[])))
         (Redblackmap.mkDict Term.compare) leaf_terms)
-      (* Prepay retire_block's two additional cache writes. *)
-      val _ = case metered of NONE => () | SOME work => W.spend work 2
+      (* Prepay retire_block's two cache writes and table dispatch. *)
+      val _ = case metered of NONE => () | SOME work => W.spend work 3
       val projections =
         if sparse then Vector.map SmtReplayRuleObservation.ASSUME leaf_terms
         else Vector.fromList
@@ -21683,8 +21687,9 @@ struct
             SOME _=>() | NONE=>raise ERR "policy_native_freeze"
               "prospective compact context bound changed"
         val _=valid ()
-        (* Prepay retire_block before the first projection rule. *)
-        val _=W.spend_policy expected 2
+        (* Prepay two cache writes, table dispatch and profile-store
+           release call/write before the first projection rule. *)
+        val _=W.spend_policy expected 5
         val projections=Vector.fromList
           (project tree (SmtReplayRuleObservation.ASSUME context))
         val _=valid ()

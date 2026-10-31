@@ -51,6 +51,8 @@ sig
      A cache grants no native allowance, theorem, Source or scoped port. *)
   type profile_store
   val empty_profile_store_using : (IntInf.int -> unit) -> profile_store
+  (* Owner-prepaid O(1) release only: no guard, debit or callback. *)
+  val clear_profile_store : profile_store -> unit
   val inspector_with_store : admission -> profile_store ->
     {profile:Term.term -> profile}
   val prepare_fixed : admission -> ('node -> Term.term) ->

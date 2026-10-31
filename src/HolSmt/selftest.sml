@@ -84856,7 +84856,7 @@ val _ = run_postlude 434 "replay-work-order-accounting-14"
   SmtReplayWorkOrderTests.run
 val _ = run_postlude 435 "replay-prepared-primitive-work-5"
   SmtReplayPrimitiveWorkTests.run
-val _ = run_postlude 436 "replay-completed-state-release-1"
+val _ = run_postlude 436 "replay-completed-state-release-8"
   SmtReplayStateTests.run
 
 val () =

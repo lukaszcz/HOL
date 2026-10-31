@@ -802,6 +802,7 @@ struct
   type profile_store=profile_cache option ref
   fun empty_profile_store_using (pay:IntInf.int -> unit)=
     (pay 1;ref NONE:profile_store)
+  fun clear_profile_store (store:profile_store)=store:=NONE
   datatype dependency = Dependency of int * dependency_body
   and dependency_body = Leaves of int list | Union of dependency list
   datatype 'node block = Block of
