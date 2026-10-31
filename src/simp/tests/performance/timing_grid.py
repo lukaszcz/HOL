@@ -20,12 +20,19 @@ own explicit, separately reviewed table (see task29a_grid.py).
 
 Every step of `Grid` is looked up on its `hooks` object (the grid itself by
 default), so a task module can wrap or replace a step by defining it.
+
+A table with `fixed_seconds` keeps its predeclaration in one committed counts
+file: the batch counts, the seconds of each cell, the layout seed, the pairs
+and samples, and the seals of the pilot that produced them. `run` takes them
+from that file, refuses other values, and refuses a candidate whose history
+does not contain the file; `verify-counts` re-derives the file from its pilot.
 """
 import argparse
 import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 
@@ -54,20 +61,29 @@ class Table:
         for the cases that name it (tiny operations).
     pairs, samples: defaults of a grid; pilot_pairs, pilot_samples: of a
         pilot (the protocol minimum is ten pairs and three samples).
-    fixed_seconds: the counts file names each cell's seconds and a run must
-        use the table's (a task whose runs predate this keeps --batch-seconds
-        free).
-    drivers, acceptance, layout_acceptance: seals of earlier code whose
-        recorded runs must still replay.
+    baseline: the commit every B/B control and every comparison starts from;
+        the counts, the pilot and the run must all name it.
+    fixed_seconds: the counts file is the predeclaration (see the module
+        docstring): it names each cell's seconds, the layout seed, pairs and
+        samples, and a run uses those and no others (a task whose runs
+        predate this keeps --batch-seconds, --pairs and --samples free).
+    drivers, acceptance, layout_acceptance, engines: seals of earlier code
+        whose recorded runs must still replay.
     engine: seal this module too (a task whose runs predate it does not).
+    sealed: files of the directory `home` (names) whose seals every
+        inventory records, with sealed_history their earlier seals by name.
+    sources: files of the repository (paths) whose git blobs must be the
+        same at the baseline and at the candidate; a run records them and a
+        difference is never a pass.
     require_seed: refuse a first stage without layout randomization."""
 
     def __init__(self, name, label, cases, driver, counts, *, seconds=0.3,
                  seconds_by_case=None, fixed_seconds=False, pairs=10,
                  samples=3, pilot_pairs=10, pilot_samples=3, headroom=2,
-                 target=TARGET, max_pairs=MAX_PAIRS, drivers=(),
-                 acceptance=(), layout_acceptance=(), engine=True,
-                 require_seed=True,
+                 target=TARGET, max_pairs=MAX_PAIRS, baseline=a.BASE,
+                 drivers=(), acceptance=(), layout_acceptance=(),
+                 engine=True, engines=(), sealed=(), sealed_history=None,
+                 sources=(), home=a.HERE, require_seed=True,
                  allocation="exact allocation is the separate gate of "
                  "allocation_matrix.py; not part of this timing gate"):
         extra = seconds_by_case or {}
@@ -77,6 +93,8 @@ class Table:
         a.require(set(extra) <= set(cases) and all(
             0.1 <= v <= 60 for v in [seconds, *extra.values()]),
             "invalid batch seconds")
+        history = sealed_history or {}
+        a.require(set(history) <= set(sealed), "history of an unsealed file")
         self.name, self.label, self.cases = name, label, tuple(cases)
         self.driver, self.counts = Path(driver), Path(counts)
         self.seconds, self.seconds_by_case = seconds, dict(extra)
@@ -84,9 +102,14 @@ class Table:
         self.pairs, self.samples, self.headroom = pairs, samples, headroom
         self.pilot_pairs, self.pilot_samples = pilot_pairs, pilot_samples
         self.target, self.max_pairs = target, max_pairs
+        self.baseline = baseline
         self.drivers, self.acceptance = tuple(drivers), tuple(acceptance)
         self.layout_acceptance = tuple(layout_acceptance)
-        self.engine, self.require_seed = engine, require_seed
+        self.engine, self.engines = engine, tuple(engines)
+        self.sealed = tuple(sealed)
+        self.sealed_history = {k: tuple(v) for k, v in history.items()}
+        self.sources, self.require_seed = tuple(sources), require_seed
+        self.home = Path(home)
         self.allocation = allocation
 
     def keys(self):
@@ -105,8 +128,10 @@ class Table:
                 if self.fixed_seconds else {})
 
     def code(self):
-        return ("driver", "engine", "acceptance") if self.engine else (
-            "driver", "acceptance")
+        """Header fields naming the code of a run."""
+        return (("driver", "engine", "acceptance") if self.engine else
+                ("driver", "acceptance")) + (("sealed",) if self.sealed
+                                             else ())
 
     def schema(self, kind):
         return "%s-%s-v1" % (self.name, kind)
@@ -125,6 +150,40 @@ def canonical(value):
     differently ("10" < "2")."""
     return json.dumps(json.loads(json.dumps(value, allow_nan=False)),
                       sort_keys=True)
+
+
+def set_aside(path, kind):
+    """Keep a file that is not evidence of its cell under another name
+    (`<name>.<kind>-N`), so the cell can be measured again."""
+    number = 1
+    while True:
+        target = path.with_name("%s.%s-%d" % (path.name, kind, number))
+        if not target.exists():
+            path.rename(target)
+            return target
+        number += 1
+
+
+def git_blob(repo, rev, path):
+    """Git blob of `path` at commit `rev`, or None when it has no such
+    file."""
+    try:
+        found = subprocess.run(
+            ["git", "-C", str(repo), "ls-tree", rev, "--", path], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError:
+        raise ValueError("unknown revision: " + rev) from None
+    fields = found.stdout.split()
+    return fields[2] if len(fields) >= 3 and fields[1] == "blob" else None
+
+
+def git_introduced(repo, rev, path):
+    """The commit that last changed `path` in the history of `rev`: the one
+    that introduced the content `rev` has."""
+    commit = a.git(repo, "log", "-1", "--format=%H", rev, "--", path)
+    a.require(commit and git_blob(repo, commit, path) ==
+              git_blob(repo, rev, path), "no commit introduces " + path)
+    return commit
 
 
 def status_code(decisions):
@@ -175,13 +234,16 @@ def classify(decisions):
 
 
 def class_report(label, decisions):
-    """Printed outcome: the counts, then every cell that is not a pass."""
+    """Printed outcome: the counts, then every cell that is not a pass and
+    every source file that differs."""
     cells = classify(decisions)
     lines = ["%s grid: %s (%s)" % (label, decisions["status"], ", ".join(
         "%s %d" % (k.replace("_", "-"), len(cells[k])) for k in CLASSES))]
     for kind in CLASSES[1:]:
         lines += ["%s %s" % (kind.replace("_", "-").upper(), name)
                   for name in cells[kind]]
+    lines += ["SOURCE-DIFFERS " + path for path in
+              decisions.get("source_identity", {}).get("differing", [])]
     return lines
 
 
@@ -205,9 +267,10 @@ class Hooks:
 class Grid:
     """The engine for one table. Methods call each other through `h`."""
 
-    def __init__(self, table, hooks=None):
+    def __init__(self, table, hooks=None, doc=None):
         self.t = table
         self.h = self if hooks is None else hooks
+        self.doc = __doc__ if doc is None else doc
 
     # Cells and counts ------------------------------------------------
 
@@ -233,23 +296,48 @@ class Grid:
 
     def check_pilot_settings(self, inventory):
         """Counts follow the pilot's batch seconds; a pilot made with other
-        seconds than this table predeclares says nothing about its cells."""
-        if "seconds_by_case" not in inventory:
-            return  # a historical grid, not a pilot
+        seconds than this table predeclares says nothing about its cells.
+        A table without fixed seconds takes the counts of a historical
+        grid, which is no pilot."""
         t = self.t
+        a.require(inventory["baseline"] == t.baseline,
+                  "pilot of another baseline")
+        if not t.fixed_seconds:
+            return
+        a.require(inventory["schema"] == t.schema("pilot"),
+                  "pilot of another task")
         a.require(inventory["seconds"] == t.seconds and
                   inventory["seconds_by_case"] == t.seconds_by_case,
                   "pilot batch seconds differ from the table")
-        a.require(inventory["schema"] == t.schema("pilot"),
-                  "pilot of another task")
 
-    def predeclare(self, grid):
+    def predeclare(self, grid, layout_seed=None, pairs=None, samples=None,
+                   rederive=False):
         """Per-cell counts from the develop-only (B/B) processes of a pilot
-        or of a historical grid, before any candidate observation."""
+        or of a historical grid, before any candidate observation. A table
+        with fixed seconds also predeclares the layout seed, pairs and
+        samples of its run, and records the seals of the pilot, so that the
+        file can be derived again (`rederive`: the pilot's code need not be
+        the current one then)."""
         t = self.t
         inventory = a.load(grid / "inventory.json")
         self.h.check_pilot_settings(inventory)
-        table = {}
+        if t.fixed_seconds:
+            if not rederive:
+                self.h.check_code(inventory, False)
+            pairs = t.pairs if pairs is None else pairs
+            samples = t.samples if samples is None else samples
+            a.require(pairs >= 10 and samples >= 3,
+                      "pairs and samples below the protocol minimum")
+            a.require(layout_seed is not None or not t.require_seed,
+                      "%s needs layout randomization (--layout-seed)"
+                      % t.label)
+            if layout_seed is not None:
+                self.h.check_seed(layout_seed)
+        else:
+            a.require(layout_seed is None and pairs is None and
+                      samples is None, "settings are predeclared with the "
+                      "counts of a pilot only")
+        table, archives = {}, {}
         with tempfile.TemporaryDirectory(
                 prefix="%s-counts-" % t.name) as scratch:
             for row in inventory["runs"]:
@@ -261,6 +349,7 @@ class Grid:
                 folder = Path(scratch) / row["archive"]
                 a.require(bundle.unpack(archive, folder) == row["files"],
                           "changed archive file count")
+                archives[name] = row["seal"]
                 table[name] = batch_iterations(
                     t.headroom * max(self.h.calibration_counts(
                         folder, case, size)))
@@ -272,8 +361,29 @@ class Grid:
                       rule="HEADROOM * max develop calibration count in B/B",
                       iterations=table)
         if t.fixed_seconds:
-            result["seconds"] = t.seconds_map()
+            result.update(
+                seconds=t.seconds_map(), layout_seed=layout_seed,
+                pairs=pairs, samples=samples,
+                pilot=dict(inventory=a.seal(grid / "inventory.json"),
+                           archives=archives))
         return result
+
+    def verify_counts(self, args):
+        """The counts file is what `predeclare` makes of its pilot."""
+        t = self.t
+        found = a.load(args.counts or t.counts)
+        expected = self.h.predeclare(
+            args.grid.resolve(), found.get("layout_seed"), found.get("pairs"),
+            found.get("samples"), True)
+        a.require(canonical(found) == canonical(expected),
+                  "counts differ from their pilot")
+        print("%s counts match their pilot" % t.label)
+        return 0
+
+    def check_seed(self, seed):
+        """A layout seed, and the seed of its second stage, are valid."""
+        layout_seed(seed)
+        layout_seed(seed + "-ext")
 
     def locked(self, repo):
         """The host/repository lock for a batch, children inheriting it."""
@@ -294,22 +404,35 @@ class Grid:
                 return self.lock.__exit__(*exc)
         return Held()
 
+    def code_now(self):
+        """The seals of the code of this table as it stands."""
+        t = self.t
+        now = dict(driver=a.seal(t.driver), acceptance=a.seal(a.__file__))
+        if t.engine:
+            now["engine"] = a.seal(__file__)
+        if t.sealed:
+            now["sealed"] = {n: a.seal(t.home / n) for n in t.sealed}
+        return now
+
     def pilot_inventory(self, args):
         t = self.t
         return dict(
             schema=t.schema("pilot"), baseline=args.baseline,
             seconds=t.seconds, seconds_by_case=t.seconds_by_case,
             pairs=args.pairs, samples=args.samples, outliers="none removed",
-            runs=[], driver=a.seal(t.driver), acceptance=a.seal(a.__file__),
-            engine=a.seal(__file__))
+            runs=[], **self.h.code_now())
 
     def pilot(self, args):
         """Develop-only experiments (baseline in both slots) with free
         calibration, one per cell, archived losslessly. Their calibration
-        counts, and nothing a candidate does, set the predeclared counts."""
+        counts, and nothing a candidate does, set the predeclared counts.
+        The baseline-versus-baseline variability of each cell is published
+        beside them in variability.json."""
         t = self.t
         a.require(args.pairs >= 10 and args.samples >= 3,
                   "pilot needs at least ten pairs and three samples")
+        a.require(args.baseline == t.baseline,
+                  "pilot baseline differs from the table's")
         root = args.output.resolve()
         inventory = self.h.pilot_inventory(args)
         done = {}
@@ -322,6 +445,7 @@ class Grid:
                 a.require(a.seal(a.safe_child(root, row["archive"])) ==
                           row["seal"], "changed archive")
                 done[row["case"], row["size"]] = row
+            self.h.sweep(root, [row["archive"] for row in old["runs"]])
             inventory["runs"] = old["runs"]
         else:
             root.mkdir(parents=True, exist_ok=False)
@@ -334,6 +458,9 @@ class Grid:
                     self.h.pilot_cell(root, inventory, case, size, args, fds)
         finally:
             checkpoint(root / "inventory.json", inventory)
+            checkpoint(root / "variability.json", {
+                "%s-%d" % (r["case"], r["size"]): r["variability"]
+                for r in inventory["runs"]})
         return 0
 
     def pilot_cell(self, root, inventory, case, size, args, fds):
@@ -355,35 +482,68 @@ class Grid:
                 fds, None)
             archive = root / (name + ".json.xz")
             files = self.h.archive(folder, archive, scratch)
-            a.require(command["exit"] == 0 and not command["timed_out"],
-                      "pilot runner failed: " + name)
-            self.h.check_pilot(control, options, case, size)
-            counts = self.h.calibration_counts(folder, case, size)
+            try:
+                a.require(command["exit"] == 0 and not command["timed_out"],
+                          "pilot runner failed: " + name)
+                found = self.h.check_pilot(control, options, case, size)
+                counts = self.h.calibration_counts(folder, case, size)
+            except BaseException:
+                set_aside(archive, "failed")  # evidence, but of no cell
+                raise
             inventory["runs"].append(dict(
                 case=case, size=size, archive=archive.name,
-                seal=a.seal(archive), files=files,
-                counts=sorted(counts)))
+                seal=a.seal(archive), files=files, counts=sorted(counts),
+                variability=self.h.variability(found)))
             checkpoint(root / "inventory.json", inventory)
             print("END %s max_count=%d" % (name, max(counts)), flush=True)
 
     def check_pilot(self, control, options, case, size):
-        a.analyze(control, case=case, size=size, baseline=options.baseline,
-                  candidate=options.baseline, pairs=options.pairs,
-                  samples=options.samples, seconds=options.batch_seconds,
-                  policy=a.EQUIVALENCE_POLICY)
+        return a.analyze(
+            control, case=case, size=size, baseline=options.baseline,
+            candidate=options.baseline, pairs=options.pairs,
+            samples=options.samples, seconds=options.batch_seconds,
+            policy=a.EQUIVALENCE_POLICY)
+
+    def variability(self, analysis):
+        """What a baseline-versus-baseline cell says about the host: the
+        median and 95% interval of each metric's paired ratio, and for a
+        gated metric whether the interval lies in the equivalence window."""
+        found = {}
+        for metric, value in analysis["metrics"].items():
+            ci = value.get("paired_ratio_bootstrap_95_percent")
+            found[metric] = dict(median=value.get("median_paired_ratio"),
+                                 ci95=ci)
+            margin = value.get("margin")
+            if margin:
+                found[metric]["in_window"] = bool(ci) and (
+                    1 / (1 + margin) <= ci[0] and ci[1] <= 1 + margin)
+        return found
+
+    def sweep(self, root, kept):
+        """Clear what a stopped run left in its output: an unfinished
+        archive is no evidence, and a complete archive that no row names is
+        set aside, so that its cell can be measured again."""
+        for path in [*root.glob("*.partial"), *root.glob("*.partial.xz")]:
+            path.unlink()
+        for path in root.glob("*.json.xz"):
+            if path.name not in kept:
+                set_aside(path, "unrecorded")
 
     def archive(self, folder, archive, scratch):
         """Pack a cell and verify every original byte before the scratch
-        tree goes: a replay defect must not lose unique observations."""
-        files = bundle.pack(folder, archive)
+        tree goes: a replay defect must not lose unique observations. The
+        archive appears under its name only when it is complete."""
+        partial = archive.with_name(archive.name + ".partial.xz")
+        files = bundle.pack(folder, partial)
         restored = Path(scratch) / "roundtrip"
-        a.require(bundle.unpack(archive, restored) == files,
+        a.require(bundle.unpack(partial, restored) == files,
                   "transport count mismatch")
         for path in folder.rglob("*"):
             if path.is_file():
                 a.require(a.seal(path) == a.seal(
                     restored / path.relative_to(folder)),
                     "transport changed original bytes")
+        partial.replace(archive)
         return files
 
     # Decisions -------------------------------------------------------
@@ -472,7 +632,7 @@ class Grid:
                 self.h.check_report(
                     folder, report, inventory["baseline"],
                     inventory["candidate"],
-                    self.cell_seconds(inventory, name), *key,
+                    self.h.cell_seconds(inventory, name), *key,
                     row["iterations"],
                     row.get("pairs", inventory["pairs"]),
                     inventory["samples"], inventory.get("layout_seed"))
@@ -494,6 +654,7 @@ class Grid:
         a.require(not (root / "decisions.json").exists(),
                   "run already complete")
         self.h.check_header(old)
+        self.h.sweep(root, [row["archive"] for row in old["runs"]])
         ignored = ("runs", "resumed") + code
         a.require({k: v for k, v in old.items() if k not in ignored} ==
                   {k: v for k, v in inventory.items() if k not in ignored},
@@ -521,7 +682,7 @@ class Grid:
                     ms.get_case(case, size)
                     name = "%s-%d" % (case, size)
                     count = counts[name]
-                    seconds = self.cell_seconds(inventory, name)
+                    seconds = self.h.cell_seconds(inventory, name)
                     print("START %s N=%d pairs=%d seconds=%s" % (
                         name, count, pairs, seconds), flush=True)
                     self.h.measure_cell(root, inventory, case, size, pairs,
@@ -564,6 +725,78 @@ class Grid:
                 name, a.report_exit_status(report), report["success"]),
                 flush=True)
 
+    def settings(self, args, counts):
+        """(pairs, samples, layout seed) of a run. A table with fixed
+        seconds takes them from the counts file and refuses other explicit
+        values; another keeps the command line's."""
+        t = self.t
+        if not t.fixed_seconds:
+            return (t.pairs if args.pairs is None else args.pairs,
+                    t.samples if args.samples is None else args.samples,
+                    args.layout_seed)
+        for key in ("pairs", "samples", "layout_seed"):
+            given = getattr(args, key)
+            a.require(given is None or given == counts[key],
+                      "--%s differs from the predeclared counts"
+                      % key.replace("_", "-"))
+        return counts["pairs"], counts["samples"], counts["layout_seed"]
+
+    def repo_path(self, repo, path):
+        """`path` as the repository names it."""
+        try:
+            return Path(path).resolve().relative_to(
+                Path(repo).resolve()).as_posix()
+        except ValueError:
+            raise ValueError("%s is outside the repository" % path) from None
+
+    def counts_commit(self, repo, candidate, path):
+        """The commit that introduced the counts file: the file in use is,
+        byte for byte, what the candidate's history holds, so the counts
+        were committed before the candidate could be measured."""
+        name = self.repo_path(repo, path)
+        a.require(git_blob(repo, candidate, name) ==
+                  a.git(repo, "hash-object", str(path)),
+                  "the counts file is not committed in the candidate's "
+                  "history: " + name)
+        return git_introduced(repo, candidate, name)
+
+    def source_record(self, repo, baseline, candidate):
+        """The git blob of each source file of the table at the baseline
+        and at the candidate."""
+        record = {}
+        for path in self.t.sources:
+            base = git_blob(repo, baseline, path)
+            a.require(base is not None,
+                      "source file absent at the baseline: " + path)
+            record[path] = dict(baseline=base,
+                                candidate=git_blob(repo, candidate, path))
+        return record
+
+    def check_sources(self, inventory, repo=None):
+        """The recorded source identity is what git says it is."""
+        if not self.t.sources:
+            return
+        repo = a.HERE.parents[3] if repo is None else repo
+        a.require(inventory.get("sources") == self.h.source_record(
+            repo, inventory["baseline"], inventory["candidate"]),
+            "changed source identity")
+
+    def with_sources(self, decisions, inventory):
+        """A source file that differs between the baseline and the candidate
+        is named in the decisions, and no grid with one passes: the cost of
+        a scan that allocates nothing is invisible to every other gate."""
+        if "sources" not in inventory:
+            return decisions
+        record = inventory["sources"]
+        decisions["source_identity"] = dict(
+            files=sorted(record), differing=sorted(
+                p for p, r in record.items()
+                if r["baseline"] != r["candidate"]))
+        if decisions["source_identity"]["differing"] and \
+                decisions["status"] == "pass":
+            decisions["status"] = "inconclusive"
+        return decisions
+
     def run(self, args):
         t = self.t
         root = args.output.resolve()
@@ -573,31 +806,49 @@ class Grid:
         a.require(set(counts["iterations"]) == set(t.names()) and
                   counts.get("seconds", {}) == t.seconds_map(),
                   "predeclared counts do not match the table")
+        a.require(a.seal(args.iterations) == a.seal(t.counts),
+                  "changed predeclared counts")
+        a.require(counts["baseline"] == args.baseline == t.baseline,
+                  "baseline differs from the table's or its counts'")
+        a.require(args.candidate != args.baseline,
+                  "the candidate is the baseline")
         a.require(not t.fixed_seconds or args.batch_seconds == t.seconds,
                   "batch seconds differ from the table")
-        a.require(args.layout_seed is not None or not t.require_seed,
+        a.require(not t.fixed_seconds or all(k in counts for k in (
+            "pairs", "samples", "layout_seed")),
+            "predeclared counts do not match the table")
+        pairs, samples, seed = self.h.settings(args, counts)
+        a.require(seed is not None or not t.require_seed,
                   "%s needs layout randomization (--layout-seed)" % t.label)
         inventory = dict(
             schema=t.schema("experiment"), baseline=args.baseline,
             candidate=args.candidate, seconds=args.batch_seconds,
-            pairs=args.pairs, samples=args.samples,
-            outliers="none removed", policy=a.EQUIVALENCE_POLICY,
-            iterations=counts, iterations_seal=a.seal(args.iterations),
-            runs=[], driver=a.seal(t.driver), acceptance=a.seal(a.__file__))
-        if t.engine:
-            inventory["engine"] = a.seal(__file__)
-        if args.layout_seed is not None:
-            inventory["layout_seed"] = layout_seed(args.layout_seed)
+            pairs=pairs, samples=samples, outliers="none removed",
+            policy=a.EQUIVALENCE_POLICY, iterations=counts,
+            iterations_seal=a.seal(args.iterations), runs=[],
+            **self.h.code_now())
+        if seed is not None:
+            self.h.check_seed(seed)
+            inventory["layout_seed"] = layout_seed(seed)
+        if t.fixed_seconds:
+            inventory["counts_commit"] = self.h.counts_commit(
+                args.repo, args.candidate, t.counts)
+        if t.sources:
+            inventory["sources"] = self.h.source_record(
+                args.repo, args.baseline, args.candidate)
+            for path, found in inventory["sources"].items():
+                if found["baseline"] != found["candidate"]:
+                    print("SOURCE-DIFFERS " + path, flush=True)
         keys = t.keys()
         if args.only:
             keys = [k for k in keys if "%s-%d" % k in args.only]
             a.require(len(keys) == len(args.only), "unknown --only cell")
         reports = self.h.begin(root, inventory, args.resume)
-        self.h.measure(root, inventory, [k + (args.pairs,) for k in keys],
+        self.h.measure(root, inventory, [k + (pairs,) for k in keys],
                        args, reports)
         if args.only:
             return 2
-        decisions = self.h.summary(reports)
+        decisions = self.h.with_sources(self.h.summary(reports), inventory)
         a.save(root / "decisions.json", decisions)
         return self.h.status_code(decisions)
 
@@ -641,36 +892,73 @@ class Grid:
                 plan.append([*key, extra])
         return plan
 
-    def check_header(self, inventory):
+    def check_code(self, code, seeded):
+        """The seals of one code record (an inventory or a resumption) are
+        those of this table's code now or of the earlier code it names."""
         t = self.t
         layout = [a.seal(a.__file__)] + list(t.layout_acceptance)
-        drivers = [a.seal(t.driver)] + list(t.drivers)
+        a.require(code["driver"] in [a.seal(t.driver)] + list(t.drivers),
+                  "changed driver")
+        a.require(not t.engine or code["engine"] in
+                  [a.seal(__file__)] + list(t.engines), "changed engine")
+        a.require(code["acceptance"] in layout + list(t.acceptance),
+                  "changed acceptance")
+        a.require(not seeded or code["acceptance"] in layout,
+                  "layout seed needs a layout-seeded acceptance")
+        sealed = code.get("sealed", {})
+        a.require(set(sealed) == set(t.sealed), "changed sealed files")
+        for name, seal in sealed.items():
+            a.require(seal in [a.seal(t.home / name),
+                               *t.sealed_history.get(name, ())],
+                      "changed " + name)
+
+    def check_header(self, inventory):
+        t = self.t
+        seeded = inventory.get("layout_seed") is not None
         for code in [inventory] + inventory.get("resumed", []):
-            a.require(code["driver"] in drivers, "changed driver")
-            a.require(not t.engine or code["engine"] == a.seal(__file__),
-                      "changed engine")
-            a.require(code["acceptance"] in layout + list(t.acceptance),
-                      "changed acceptance")
-            a.require(inventory.get("layout_seed") is None or
-                      code["acceptance"] in layout,
-                      "layout seed needs a layout-seeded acceptance")
+            self.h.check_code(code, seeded)
         a.require(inventory["policy"] == a.EQUIVALENCE_POLICY,
                   "changed policy")
-        a.require(inventory["iterations"] == a.load(t.counts),
+        counts = a.load(t.counts)
+        a.require(inventory["iterations"] == counts,
                   "changed predeclared counts")
+        base = inventory["baseline"]
+        a.require(base == t.baseline and counts["baseline"] == base,
+                  "changed baseline")
+        if t.fixed_seconds:
+            settings = ["pairs", "samples"]
+            if inventory["schema"] == t.schema("experiment"):
+                settings.append("layout_seed")
+            a.require(all(inventory.get(k) == counts[k] for k in settings),
+                      "settings differ from the predeclared counts")
+            a.require(isinstance(inventory.get("counts_commit"), str) and
+                      len(inventory["counts_commit"]) == 40,
+                      "no commit of the predeclared counts")
+        a.require(("sources" in inventory) == bool(t.sources) and
+                  sorted(inventory.get("sources", t.sources)) ==
+                  sorted(t.sources), "changed source files")
 
-    def replay_grid(self, root):
+    def replay_grid(self, root, repo=None):
         """A complete first-stage grid and its recorded decisions."""
         t = self.t
         inventory = a.load(root / "inventory.json")
-        a.require(inventory["schema"] == t.schema("experiment"),
-                  "not a first-stage grid")
+        self.h.check_experiment(inventory)
         self.h.check_header(inventory)
+        self.h.check_sources(inventory, repo)
         reports = self.h.replay_rows(root, inventory)
-        decisions = self.h.summary(reports)
+        decisions = self.h.with_sources(self.h.summary(reports), inventory)
         a.require(decisions == a.load(root / "decisions.json"),
                   "changed %s decisions" % t.label)
         return inventory, reports, decisions
+
+    def check_experiment(self, inventory):
+        """Only a first-stage run replays like one; a pilot has no
+        decisions and replays through `verify-counts`."""
+        t = self.t
+        a.require(inventory["schema"] != t.schema("pilot"),
+                  "a pilot is checked by verify-counts, not replayed")
+        a.require(inventory["schema"] == t.schema("experiment"),
+                  "not a first-stage grid")
 
     def extension_inventory(self, grid, root, inventory):
         t = self.t
@@ -679,23 +967,22 @@ class Grid:
                   "extension needs a layout-randomized grid")
         header = {k: inventory[k] for k in (
             "baseline", "candidate", "seconds", "pairs", "samples",
-            "outliers", "policy", "iterations", "iterations_seal")}
+            "outliers", "policy", "iterations", "iterations_seal",
+            "counts_commit", "sources") if k in inventory}
         result = dict(header, schema=t.schema("extension"),
                       grid=os.path.relpath(grid, root),
                       grid_inventory=a.seal(grid / "inventory.json"),
                       grid_decisions=a.seal(grid / "decisions.json"),
                       layout_seed=layout_seed(seed + "-ext"),
                       target=t.target, max_pairs=t.max_pairs, runs=[],
-                      driver=a.seal(t.driver),
-                      acceptance=a.seal(a.__file__))
-        if t.engine:
-            result["engine"] = a.seal(__file__)
+                      **self.h.code_now())
         return result
 
     def combined(self, stage1, stage2, plan, inventory):
         a.require(set(stage2) == {(c, s) for c, s, _ in plan},
                   "incomplete remeasurement")
-        decisions = self.h.summary({**stage1, **stage2})
+        decisions = self.h.with_sources(
+            self.h.summary({**stage1, **stage2}), inventory)
         decisions["remeasured"] = dict(
             plan=plan, target=inventory["target"],
             max_pairs=inventory["max_pairs"], seed=inventory["layout_seed"],
@@ -705,7 +992,7 @@ class Grid:
     def extend(self, args):
         t = self.t
         grid, root = args.grid.resolve(), args.output.resolve()
-        first, stage1, _ = self.h.replay_grid(grid)
+        first, stage1, _ = self.h.replay_grid(grid, args.repo)
         inventory = self.h.extension_inventory(grid, root, first)
         plan = self.h.extension_plan(stage1, first["pairs"])
         inventory["plan"] = plan
@@ -721,8 +1008,12 @@ class Grid:
     def replay(self, args):
         t = self.t
         root = args.output.resolve()
+        repo = getattr(args, "repo", None)
         inventory = a.load(root / "inventory.json")
+        if inventory["schema"] != t.schema("extension"):
+            self.h.check_experiment(inventory)
         self.h.check_header(inventory)
+        self.h.check_sources(inventory, repo)
         if inventory["schema"] == t.schema("extension"):
             grid = (root / inventory["grid"]).resolve()
             a.require(a.seal(grid / "inventory.json") ==
@@ -730,7 +1021,7 @@ class Grid:
                       a.seal(grid / "decisions.json") ==
                       inventory["grid_decisions"],
                       "changed first-stage grid")
-            first, stage1, _ = self.h.replay_grid(grid)
+            first, stage1, _ = self.h.replay_grid(grid, repo)
             a.require(inventory == dict(
                 self.h.extension_inventory(grid, root, first),
                 plan=self.h.extension_plan(stage1, first["pairs"]),
@@ -765,7 +1056,7 @@ class Grid:
             print("%s partial run: %d of %d cells replayed; no grid "
                   "decision" % (t.label, len(reports), len(t.keys())))
             return 2
-        decisions = self.h.summary(reports)
+        decisions = self.h.with_sources(self.h.summary(reports), inventory)
         a.require(decisions == a.load(root / "decisions.json"),
                   "changed %s decisions" % t.label)
         print("%s archives and decisions replayed: %s" % (
@@ -776,7 +1067,7 @@ class Grid:
 
     def parser(self):
         t = self.t
-        parser = argparse.ArgumentParser(description=__doc__)
+        parser = argparse.ArgumentParser(description=self.doc)
         sub = parser.add_subparsers(dest="action", required=True)
         repo = a.HERE.parents[3]
 
@@ -797,6 +1088,17 @@ class Grid:
             "predeclare", help="counts file from a pilot or earlier grid")
         counts.add_argument("--grid", type=Path, required=True)
         counts.add_argument("--output", type=Path, required=True)
+        counts.add_argument("--layout-seed",
+                            help="layout seed of the run (fixed seconds)")
+        counts.add_argument("--pairs", type=int,
+                            help="pairs of the run (default of the table)")
+        counts.add_argument("--samples", type=int,
+                            help="samples of the run (default of the table)")
+        again = sub.add_parser(
+            "verify-counts", help="counts file against its pilot")
+        again.add_argument("--grid", type=Path, required=True)
+        again.add_argument("--counts", type=Path,
+                           help="default: the table's counts file")
         execute = sub.add_parser("run")
         execute.add_argument("--output", type=Path, required=True)
         execute.add_argument("--iterations", type=Path, default=t.counts)
@@ -804,8 +1106,8 @@ class Grid:
         execute.add_argument("--candidate", required=True)
         execute.add_argument("--batch-seconds", type=float,
                              default=t.seconds)
-        execute.add_argument("--pairs", type=int, default=t.pairs)
-        execute.add_argument("--samples", type=int, default=t.samples)
+        execute.add_argument("--pairs", type=int)
+        execute.add_argument("--samples", type=int)
         execute.add_argument("--layout-seed",
                              help="randomize code layout per fresh process")
         execute.add_argument("--only", action="append",
@@ -824,6 +1126,7 @@ class Grid:
         settings(more)
         check = sub.add_parser("replay")
         check.add_argument("--output", type=Path, required=True)
+        check.add_argument("--repo", type=Path, default=repo)
         check.add_argument("--partial", action="store_true",
                            help="interrupted run: replay cells, no decision")
         return parser, sub
@@ -851,8 +1154,12 @@ class Grid:
         if args.action == "predeclare":
             a.require(not args.output.exists(),
                       "refusing to overwrite counts")
-            a.save(args.output, self.h.predeclare(args.grid.resolve()))
+            a.save(args.output, self.h.predeclare(
+                args.grid.resolve(), args.layout_seed, args.pairs,
+                args.samples))
             return 0
+        if args.action == "verify-counts":
+            return self.h.verify_counts(args)
         if args.action in ("pilot", "run", "extend"):
             a.require(args.authorize_measurements,
                       "exclusive window required")

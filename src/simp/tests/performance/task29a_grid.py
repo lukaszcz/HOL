@@ -58,13 +58,11 @@ ACCEPTANCE = [dict(bytes=37287, sha256="343dfc5d009e8851f0db990bc484bdb2"
 LAYOUT_ACCEPTANCE = [dict(bytes=37709,
                           sha256="ad4a4392e24295fff3901b3540115f86"
                                  "86e72d24f08826220a6f0811bc647807"),
-                     # The same with the matrix command in a function
-                     # (294bb61c3); runs recorded after the lock move.
+                     # The same with its lock moved out of /tmp
+                     # (294bb61c3, 9ee8d00bd); runs recorded after that.
                      dict(bytes=37897,
                           sha256="2ddffc08c6ef5e931688822d593308f5"
                                  "652b0232e37c0b3d94dae246663b5ee1")]
-# Header fields naming the code; a resume may change them (see begin).
-CODE = ("driver", "acceptance")
 # The engine is not sealed here: the recorded runs predate it.
 TABLE = tg.Table(
     "task29a", "TASK29A", gate.CASES, __file__, COUNTS, pairs=PAIRS,
@@ -77,16 +75,16 @@ STEPS = ("check_header", "replay_rows", "measure", "summary", "replay_grid",
          "begin", "check_report", "combined", "extension_pairs",
          "extension_plan", "extension_inventory", "status_code",
          "unpack_report", "predeclare", "run", "extend", "replay")
-ENGINE = tg.Grid(TABLE)
+ENGINE = tg.Grid(TABLE, doc=__doc__)
 ENGINE.h = tg.Hooks(sys.modules[__name__], ENGINE)
 checkpoint = tg.checkpoint
 canonical = tg.canonical
 status_code = tg.status_code
 
 
-def predeclare(grid):
+def predeclare(grid, *settings):
     """Per-cell counts from the historical B/B (develop/develop) processes."""
-    return ENGINE.predeclare(grid)
+    return ENGINE.predeclare(grid, *settings)
 
 
 def check_report(folder, report, baseline, candidate, seconds, case, size,
@@ -138,9 +136,9 @@ def check_header(inventory):
     return ENGINE.check_header(inventory)
 
 
-def replay_grid(root):
+def replay_grid(root, repo=None):
     """A complete first-stage grid and its recorded decisions."""
-    return ENGINE.replay_grid(root)
+    return ENGINE.replay_grid(root, repo)
 
 
 def extension_inventory(grid, root, inventory):
@@ -157,8 +155,6 @@ def extend(args):
 
 def replay(args):
     return ENGINE.replay(args)
-
-
 
 
 # Policy-owner disposition of a complete two-stage grid (2026-10-30). It

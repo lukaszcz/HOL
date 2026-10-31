@@ -26,6 +26,9 @@ CASES = ("exclude_empty", "exclude_missing")
 LONG = 1.0
 SIZES = ms.SIZE_SETS["rules"]
 CANDIDATE = "c" * 40
+SOURCES = ("src/one.sml", "src/two.sml")
+SEALED = ("one.txt", "two.txt")
+COMMIT = "1" * 40
 GOOD = (0.99, 1.01)
 WIDE = (0.95, 1.06)
 
@@ -50,7 +53,12 @@ class Rig(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         self.driver = self.root / "toy_grid.py"
         self.driver.write_text("# the toy driver\n")
-        self.counts = self.root / "toy_iterations.json"
+        self.counts = self.repo / "toy_iterations.json"
+        self.committed, self.differ = True, set()
+        self.sealed_dir = self.root / "sealed"
+        self.sealed_dir.mkdir()
+        for name in SEALED:
+            (self.sealed_dir / name).write_text("sealed " + name)
         self.table = self.make_table()
         self.counts.write_text(json.dumps(self.counts_value(self.table)))
         self.grid = tg.Grid(self.table)
@@ -60,7 +68,9 @@ class Rig(unittest.TestCase):
         self.protocol_failure = lambda case, size: False
         self.explode_at = None
         for target, stand_in in ((a, ("run", self.fake_run)),
-                                 (a, ("analyze", self.fake_analyze))):
+                                 (a, ("analyze", self.fake_analyze)),
+                                 (tg, ("git_blob", self.fake_blob)),
+                                 (tg, ("git_introduced", self.fake_commit))):
             patcher = patch.object(target, stand_in[0], stand_in[1])
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -68,7 +78,8 @@ class Rig(unittest.TestCase):
     def make_table(self, cases=CASES, **kw):
         options = dict(seconds=0.3, seconds_by_case={CASES[0]: LONG},
                        fixed_seconds=True, pairs=self.pairs,
-                       samples=self.samples)
+                       samples=self.samples, sources=SOURCES,
+                       sealed=SEALED, home=self.sealed_dir)
         options.update(kw)
         return tg.Table("toy", "TOY", cases, self.driver, self.counts,
                         **options)
@@ -81,11 +92,29 @@ class Rig(unittest.TestCase):
                      iterations={"%s-%d" % k: 64 * (1 + i % 3)
                                  for i, k in enumerate(keys)})
         if table.fixed_seconds:
-            value["seconds"] = table.seconds_map()
+            value.update(seconds=table.seconds_map(), layout_seed="s0",
+                         pairs=table.pairs, samples=table.samples)
         value.update(kw)
         return value
 
     # Stand-ins -------------------------------------------------------
+
+    def fake_blob(self, repo, rev, path):
+        """Git blobs: the counts file as committed (or not), the sources
+        the same at both commits except those in `differ`."""
+        if len(rev) != 40:
+            raise ValueError("unknown revision: " + rev)
+        if path == "toy_iterations.json":
+            if isinstance(self.committed, str):
+                return self.committed
+            return a.git(repo, "hash-object", str(self.counts)) \
+                if self.committed else None
+        return ("f" if rev == CANDIDATE and path in self.differ
+                else "0") * 40
+
+    def fake_commit(self, repo, rev, path):
+        a.require(self.fake_blob(repo, rev, path), "no commit: " + path)
+        return COMMIT
 
     def analysis(self, case, size, control, pairs, seed):
         ci = (self.control if control else self.candidate)(
@@ -150,12 +179,20 @@ class Rig(unittest.TestCase):
             code = self.grid.main(argv, **kw)
         return code, out.getvalue()
 
-    def first(self, name="grid", extra=(), seed="s0", pairs=None):
+    def rewrite(self, **kw):
+        """Change fields of the toy counts file."""
+        value = json.loads(self.counts.read_text())
+        value.update(kw)
+        self.counts.write_text(json.dumps(value))
+
+    def first(self, name="grid", extra=(), seed=None, pairs=None):
+        """A first stage with the settings of the counts file, unless the
+        command line is made to name them."""
         out = self.root / name
-        argv = self.argv(
-            "run", out, "--candidate", CANDIDATE, "--pairs",
-            str(pairs or self.pairs), "--samples", str(self.samples),
-            "--authorize-measurements", *extra)
+        argv = self.argv("run", out, "--candidate", CANDIDATE,
+                         "--authorize-measurements", *extra)
+        if pairs is not None:
+            argv += ["--pairs", str(pairs)]
         if seed is not None:
             argv += ["--layout-seed", seed]
         code, text = self.go(argv)
@@ -246,11 +283,12 @@ class FirstStage(Rig):
         self.assertEqual(status, 1)
 
     def test_layout_randomization_is_required(self):
+        self.rewrite(layout_seed=None)
         with self.assertRaisesRegex(ValueError, "needs layout randomiza"):
-            self.first(seed=None)
+            self.first()
         self.assertEqual(self.calls, 0)
         self.table.require_seed = False
-        out, status, _ = self.first(name="unseeded", seed=None)
+        out, status, _ = self.first(name="unseeded")
         self.assertEqual(status, 0)
 
     def test_counts_must_match_the_table(self):
@@ -416,12 +454,10 @@ class Resume(Rig):
         self.explode_at = None
         return self.root / "grid"
 
-    def resume(self, out, **kw):
-        argv = self.argv(
-            "run", out, "--candidate", CANDIDATE, "--pairs", "10",
-            "--samples", "3", "--authorize-measurements", "--layout-seed",
-            kw.get("seed", "s0"), "--resume")
-        return self.go(argv)
+    def resume(self, out, *extra):
+        return self.go(self.argv(
+            "run", out, "--candidate", CANDIDATE, "--authorize-measurements",
+            "--resume", *extra))
 
     def test_finished_cells_are_kept_and_the_rest_measured(self):
         out = self.interrupted()
@@ -446,18 +482,14 @@ class Resume(Rig):
 
     def test_resume_refuses_other_settings(self):
         out = self.interrupted()
+        for option in (("--pairs", "20"), ("--layout-seed", "s1")):
+            with self.assertRaisesRegex(
+                    ValueError, "differs from the predeclared"):
+                self.resume(out, *option)
         with self.assertRaisesRegex(ValueError, "different settings"):
             self.go(self.argv(
-                "run", out, "--candidate", CANDIDATE, "--pairs", "20",
-                "--samples", "3", "--authorize-measurements",
-                "--layout-seed", "s0", "--resume"))
-        with self.assertRaisesRegex(ValueError, "different settings"):
-            self.resume(out, seed="s1")
-        with self.assertRaisesRegex(ValueError, "different settings"):
-            self.go(self.argv(
-                "run", out, "--candidate", "d" * 40, "--pairs", "10",
-                "--samples", "3", "--authorize-measurements",
-                "--layout-seed", "s0", "--resume"))
+                "run", out, "--candidate", "d" * 40,
+                "--authorize-measurements", "--resume"))
 
     def test_resume_refuses_changed_counts_and_a_completed_run(self):
         out = self.interrupted()
@@ -511,7 +543,8 @@ class Resume(Rig):
         self.assertEqual(header["driver"], known[0])
         self.assertEqual(header["resumed"], [dict(
             driver=a.seal(self.driver), engine=a.seal(tg.__file__),
-            acceptance=a.seal(a.__file__), after=3)])
+            acceptance=a.seal(a.__file__),
+            sealed=self.grid.code_now()["sealed"], after=3)])
         status, _ = self.go(self.replay_argv(out))
         self.assertEqual(status, 0)
         self.grid.t.drivers = ()
@@ -595,7 +628,8 @@ class Replay(Rig):
         (out / "inventory.json").write_text(json.dumps(inventory))
 
     def test_every_analysis_uses_the_grids_layout_seed(self):
-        out, _, _ = self.first(seed="abc")
+        self.rewrite(layout_seed="abc")
+        out, _, _ = self.first()
         seed = self.inventory(out)["layout_seed"]
         self.assertTrue(seed)
         self.assertEqual({r["seed"] for r in self.analyses}, {seed})
@@ -725,6 +759,24 @@ class SecondStage(Rig):
         with self.assertRaisesRegex(ValueError, "changed extension plan"):
             self.go(self.replay_argv(ext))
 
+    def test_the_second_stage_uses_the_cells_own_seconds(self):
+        self.control = (lambda case, size, pairs, seed:
+                        GOOD if pairs >= 60 or (case, size) != (CASES[0], 10)
+                        else WIDE)
+        grid, _, _ = self.first()
+        self.runs.clear()
+        self.analyses.clear()
+        status, _ = self.stage(grid)
+        self.assertEqual(status, 0)
+        run, = self.runs
+        self.assertEqual((run["case"], run["size"]), ([CASES[0]], [10]))
+        self.assertEqual(run["batch_seconds"], LONG)
+        self.analyses.clear()
+        self.go(self.replay_argv(self.root / "ext"))
+        self.assertEqual({(r["seconds"], r["pairs"]) for r in self.analyses
+                          if r["case"] == CASES[0] and r["size"] == 10},
+                         {(LONG, 20), (LONG, tg.MAX_PAIRS)})
+
     def test_a_changed_first_stage_is_refused(self):
         self.control = self.wide_unless_long
         grid, _, _ = self.first()
@@ -771,7 +823,8 @@ class SecondStage(Rig):
 
     def test_a_grid_without_a_seed_has_no_second_stage(self):
         self.table.require_seed = False
-        grid, _, _ = self.first(seed=None)
+        self.rewrite(layout_seed=None)
+        grid, _, _ = self.first()
         with self.assertRaisesRegex(ValueError, "layout-randomized"):
             self.stage(grid)
 
@@ -990,7 +1043,7 @@ class Pilot(Rig):
     def test_predeclared_counts_come_from_the_pilot_alone(self):
         self.pilot()
         out = self.root / "counts.json"
-        status, _ = self.go(["predeclare", "--grid",
+        status, _ = self.go(["predeclare", "--layout-seed", "s0", "--grid",
                              str(self.root / "pilot"), "--output",
                              str(out)])
         self.assertEqual(status, 0)
@@ -1010,18 +1063,16 @@ class Pilot(Rig):
         self.assertEqual(status, 0)
 
     def expected(self, case, size):
-        count = 1
-        while count < 2 * self.max_count(case, size):
-            count *= 2
-        return count
+        """Twice the largest develop count, itself a power of two."""
+        return 2 * self.max_count(case, size)
 
     def test_predeclare_never_overwrites(self):
         self.pilot()
         out = self.root / "counts.json"
         out.write_text("{}")
         with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
-            self.go(["predeclare", "--grid", str(self.root / "pilot"),
-                     "--output", str(out)])
+            self.go(["predeclare", "--layout-seed", "s0", "--grid",
+                     str(self.root / "pilot"), "--output", str(out)])
 
     def test_predeclare_refuses_a_pilot_of_other_seconds_or_tasks(self):
         self.pilot()
@@ -1034,7 +1085,7 @@ class Pilot(Rig):
             with self.subTest(change):
                 path.write_text(json.dumps(dict(json.loads(good), **change)))
                 with self.assertRaisesRegex(ValueError, message):
-                    self.go(["predeclare", "--grid",
+                    self.go(["predeclare", "--layout-seed", "s0", "--grid",
                              str(self.root / "pilot"), "--output",
                              str(self.root / "c.json")])
 
@@ -1044,14 +1095,12 @@ class Pilot(Rig):
         good = json.loads(path.read_text())
         path.write_text(json.dumps(dict(good, runs=good["runs"][:-1])))
         with self.assertRaisesRegex(ValueError, "incomplete predeclared"):
-            self.go(["predeclare", "--grid", str(self.root / "pilot"),
-                     "--output", str(self.root / "c.json")])
+            self.declare("--layout-seed", "s0")
         path.write_text(json.dumps(good))
         archive = self.root / "pilot" / good["runs"][0]["archive"]
         archive.write_bytes(archive.read_bytes() + b"x")
         with self.assertRaisesRegex(ValueError, "changed archive"):
-            self.go(["predeclare", "--grid", str(self.root / "pilot"),
-                     "--output", str(self.root / "c.json")])
+            self.declare("--layout-seed", "s0")
 
     def test_a_pilot_needs_the_protocol_minimum_and_an_exact_pin(self):
         with self.assertRaisesRegex(ValueError, "at least ten pairs"):
@@ -1153,7 +1202,7 @@ class Pilot(Rig):
             with self.subTest(label):
                 path.write_text(json.dumps(dict(good, runs=changed)))
                 with self.assertRaisesRegex(ValueError, message):
-                    self.go(["predeclare", "--grid",
+                    self.go(["predeclare", "--layout-seed", "s0", "--grid",
                              str(self.root / "pilot"), "--output",
                              str(self.root / "c.json")])
 
@@ -1173,6 +1222,589 @@ class Pilot(Rig):
         self.pilot(name="again", extra=("--pairs", "13", "--samples", "5"))
         found = self.analyses[-1]
         self.assertEqual((found["pairs"], found["samples"]), (13, 5))
+
+    def declare(self, *extra, grid="pilot", out="c.json"):
+        argv = ["predeclare", "--grid", str(self.root / grid), "--output",
+                str(self.root / out), *extra]
+        return self.go(argv)
+
+    def test_the_counts_file_is_the_predeclaration(self):
+        self.pilot()
+        self.declare("--layout-seed", "q1", "--pairs", "12", "--samples",
+                     "4")
+        value = json.loads((self.root / "c.json").read_text())
+        pilot = self.root / "pilot"
+        inventory = self.inventory(pilot)
+        self.assertEqual((value["layout_seed"], value["pairs"],
+                          value["samples"], value["baseline"]),
+                         ("q1", 12, 4, a.BASE))
+        self.assertEqual(value["source"], inventory["driver"])
+        self.assertEqual(value["pilot"]["inventory"],
+                         a.seal(pilot / "inventory.json"))
+        self.assertEqual(
+            value["pilot"]["archives"],
+            {"%s-%d" % (r["case"], r["size"]): r["seal"]
+             for r in inventory["runs"]})
+        self.declare("--layout-seed", "q1", out="d.json")
+        # Pairs and samples default to the table's.
+        value = json.loads((self.root / "d.json").read_text())
+        self.assertEqual((value["pairs"], value["samples"]), (10, 3))
+
+    def test_the_settings_of_the_run_are_checked_when_predeclared(self):
+        self.pilot()
+        with self.assertRaisesRegex(ValueError, "needs layout random"):
+            self.declare(out="e.json")
+        for option, value, message in (
+                ("--pairs", "9", "protocol minimum"),
+                ("--samples", "2", "protocol minimum"),
+                ("--layout-seed", "a b", "layout seed"),
+                ("--layout-seed", "a" * 61, "layout seed")):
+            with self.subTest(option + value), \
+                    self.assertRaisesRegex(ValueError, message):
+                self.declare("--layout-seed", "s0", option, value,
+                             out="f.json")
+        self.assertFalse((self.root / "f.json").exists())
+
+    def test_a_pilot_is_the_only_source_of_a_fixed_table(self):
+        self.pilot()
+        path = self.root / "pilot" / "inventory.json"
+        good = json.loads(path.read_text())
+        for label, change, message in (
+                ("schema", dict(schema="toy-experiment-v1"),
+                 "pilot of another task"),
+                ("baseline", dict(baseline="e" * 40),
+                 "pilot of another baseline")):
+            with self.subTest(label):
+                path.write_text(json.dumps(dict(good, **change)))
+                with self.assertRaisesRegex(ValueError, message):
+                    self.declare("--layout-seed", "s0")
+        path.write_text(json.dumps(good))
+
+    def test_predeclare_checks_the_code_of_the_pilot(self):
+        self.pilot()
+        self.driver.write_text("# the toy driver, changed\n")
+        with self.assertRaisesRegex(ValueError, "changed driver"):
+            self.declare("--layout-seed", "s0")
+        (self.sealed_dir / "one.txt").write_text("edited")
+        self.driver.write_text("# the toy driver\n")
+        with self.assertRaisesRegex(ValueError, "changed one.txt"):
+            self.declare("--layout-seed", "s0")
+
+    def test_a_table_without_fixed_seconds_takes_no_settings(self):
+        self.pilot()
+        self.table.fixed_seconds = False
+        for option, value in (("--layout-seed", "s0"), ("--pairs", "10"),
+                              ("--samples", "3")):
+            with self.subTest(option), self.assertRaisesRegex(
+                    ValueError, "predeclared with the counts of a pilot"):
+                self.declare(option, value)
+
+    def test_verify_counts_rederives_the_file_from_its_pilot(self):
+        self.pilot()
+        self.declare("--layout-seed", "s0")
+        self.counts.write_text((self.root / "c.json").read_text())
+        status, text = self.go(["verify-counts", "--grid",
+                                str(self.root / "pilot")])
+        self.assertEqual((status, text), (0, "TOY counts match their "
+                                             "pilot\n"))
+        # Later changes to the code do not change what the pilot made.
+        self.driver.write_text("# the toy driver, changed\n")
+        status, _ = self.go(["verify-counts", "--grid",
+                             str(self.root / "pilot"), "--counts",
+                             str(self.root / "c.json")])
+        self.assertEqual(status, 0)
+
+    def test_verify_counts_refuses_a_file_the_pilot_did_not_make(self):
+        self.pilot()
+        self.declare("--layout-seed", "s0")
+        value = json.loads((self.root / "c.json").read_text())
+        for label, changed in (
+                ("count", dict(value, iterations=dict(
+                    value["iterations"], **{"exclude_empty-0": 1024}))),
+                ("pairs", dict(value, pairs=9)),
+                ("baseline", dict(value, baseline="e" * 40)),
+                ("seal", dict(value, pilot=dict(
+                    value["pilot"], inventory=a.seal(self.driver))))):
+            with self.subTest(label):
+                (self.root / "d.json").write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    self.go(["verify-counts", "--grid",
+                             str(self.root / "pilot"), "--counts",
+                             str(self.root / "d.json")])
+        (self.root / "d.json").write_text(json.dumps(dict(
+            value, iterations=dict(value["iterations"],
+                                   **{"exclude_empty-0": 1024}))))
+        with self.assertRaisesRegex(ValueError, "counts differ from their"):
+            self.go(["verify-counts", "--grid", str(self.root / "pilot"),
+                     "--counts", str(self.root / "d.json")])
+
+    def test_a_pilot_is_not_replayed_as_a_grid(self):
+        self.pilot()
+        with self.assertRaisesRegex(ValueError, "verify-counts"):
+            self.go(self.replay_argv(self.root / "pilot"))
+
+    def test_the_pilot_baseline_is_the_tables(self):
+        with self.assertRaisesRegex(ValueError, "pilot baseline differs"):
+            self.pilot(extra=("--baseline", "e" * 40))
+        self.assertEqual(self.launched, [])
+
+    def test_the_variability_of_every_cell_is_published(self):
+        self.control = lambda case, size, pairs, seed: (
+            WIDE if (case, size) == (CASES[1], 10) else GOOD)
+        self.pilot()
+        found = json.loads(
+            (self.root / "pilot" / "variability.json").read_text())
+        self.assertEqual(set(found), set(self.table.names()))
+        good, wide = found["%s-0" % CASES[0]], found["%s-10" % CASES[1]]
+        self.assertEqual(good["cpu"], dict(
+            median=1.0, ci95=list(GOOD), in_window=True))
+        self.assertIs(wide["wall"]["in_window"], False)
+        self.assertNotIn("in_window", good["gc"])
+        inventory = self.inventory(self.root / "pilot")
+        self.assertEqual(inventory["runs"][0]["variability"],
+                         found[self.table.names()[0]])
+
+    def test_a_failed_cell_keeps_its_archive_aside_and_is_measured_again(
+            self):
+        real = a.analyze
+        calls = []
+
+        def failing(*args, **kw):
+            calls.append(1)
+            if len(calls) == 3:
+                raise ValueError("failed experiment")
+            return real(*args, **kw)
+        with patch.object(a, "analyze", failing):
+            with self.assertRaisesRegex(ValueError, "failed experiment"):
+                self.pilot()
+        out = self.root / "pilot"
+        self.assertEqual(len(self.inventory(out)["runs"]), 2)
+        self.assertEqual(len(list(out.glob("*.json.xz.failed-1"))), 1)
+        self.assertEqual(len(list(out.glob("*.json.xz"))), 2)
+        self.launched.clear()
+        status, _ = self.pilot(extra=("--resume",))
+        self.assertEqual(status, 0)
+        self.assertEqual(len(self.launched), 10)
+        self.assertEqual(len(list(out.glob("*.json.xz"))), 12)
+        self.assertEqual(len(list(out.glob("*.failed-1"))), 1)
+
+    def test_a_pilot_resume_clears_what_a_stop_left(self):
+        out = self.interrupted()
+        for name in ("x.json.xz.partial.xz", "y.partial"):
+            (out / name).write_text("half")
+        stray = out / ("%s-100.json.xz" % CASES[1])
+        stray.write_bytes(b"unrecorded")
+        status, _ = self.pilot(extra=("--resume",))
+        self.assertEqual(status, 0)
+        self.assertEqual(list(out.glob("*.partial*")), [])
+        self.assertEqual((out / (stray.name + ".unrecorded-1")).read_bytes(),
+                         b"unrecorded")
+        self.assertEqual(len(self.inventory(out)["runs"]), 12)
+
+
+class Predeclared(Rig):
+    """The counts file is the predeclaration, bound to its baseline."""
+
+    def test_a_run_takes_its_settings_from_the_counts_file(self):
+        self.rewrite(layout_seed="q1", pairs=12, samples=4)
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        self.assertEqual({(o["pairs"], o["samples"], o["layout_seed"])
+                          for o in self.runs}, {(12, 4, "q1")})
+        header = self.inventory(out)
+        self.assertEqual((header["pairs"], header["samples"],
+                          header["layout_seed"]), (12, 4, "q1"))
+        self.assertEqual(header["counts_commit"], COMMIT)
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+
+    def test_other_explicit_settings_are_refused(self):
+        for option, value in (("--pairs", "11"), ("--samples", "4"),
+                              ("--layout-seed", "s9")):
+            with self.subTest(option), self.assertRaisesRegex(
+                    ValueError, "%s differs from the predeclared" % option):
+                self.first(name="g" + option, extra=(option, value))
+        self.assertEqual(self.calls, 0)
+        out, status, _ = self.first(extra=(
+            "--pairs", "10", "--samples", "3", "--layout-seed", "s0"))
+        self.assertEqual(status, 0)
+
+    def test_a_run_refuses_counts_other_than_the_tables(self):
+        other = self.root / "other.json"
+        value = json.loads(self.counts.read_text())
+        value["iterations"]["exclude_empty-0"] *= 2
+        other.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "changed predeclared"):
+            self.first(extra=("--iterations", str(other)))
+        self.assertEqual(self.calls, 0)
+
+    def test_the_baseline_is_the_tables_and_the_counts(self):
+        with self.assertRaisesRegex(ValueError, "baseline differs"):
+            self.first(extra=("--baseline", "e" * 40))
+        self.rewrite(baseline="e" * 40)
+        with self.assertRaisesRegex(ValueError, "baseline differs"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_the_candidate_is_not_the_baseline(self):
+        with self.assertRaisesRegex(ValueError, "candidate is the baseline"):
+            self.go(self.argv("run", self.root / "x", "--candidate", a.BASE,
+                              "--authorize-measurements"))
+        self.assertEqual(self.calls, 0)
+
+    def test_replay_refuses_another_baseline(self):
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        for label, changed in (
+                ("inventory", dict(header, baseline="e" * 40)),
+                ("counts", dict(header, iterations=dict(
+                    header["iterations"], baseline="e" * 40)))):
+            with self.subTest(label):
+                (out / "inventory.json").write_text(json.dumps(changed))
+                with self.assertRaisesRegex(
+                        ValueError, "changed baseline|changed predeclared"):
+                    self.go(self.replay_argv(out))
+        self.table.baseline = "e" * 40
+        (out / "inventory.json").write_text(json.dumps(header))
+        with self.assertRaisesRegex(ValueError, "changed baseline"):
+            self.go(self.replay_argv(out))
+
+    def test_the_counts_must_be_committed_where_the_candidate_has_them(self):
+        self.committed = False
+        with self.assertRaisesRegex(ValueError, "not committed"):
+            self.first()
+        self.committed = "9" * 40  # another version of the file
+        with self.assertRaisesRegex(ValueError, "not committed"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_the_header_keeps_the_commit_and_the_settings(self):
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        for label, changed, message in (
+                ("commit", {k: v for k, v in header.items()
+                            if k != "counts_commit"}, "no commit"),
+                ("pairs", dict(header, pairs=11), "settings differ"),
+                ("seed", dict(header, layout_seed="s9"),
+                 "settings differ")):
+            with self.subTest(label):
+                (out / "inventory.json").write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, message):
+                    self.go(self.replay_argv(out))
+
+    def test_the_second_stage_seed_must_be_valid_before_any_cell(self):
+        self.rewrite(layout_seed="a" * 61)
+        with self.assertRaisesRegex(ValueError, "layout seed"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_the_second_stage_keeps_the_counts_commit(self):
+        self.control = lambda case, size, pairs, seed: (
+            WIDE if (case, size) == (CASES[1], 100) else GOOD)
+        grid, _, _ = self.first()
+        self.go(self.argv("extend", self.root / "ext", "--grid", str(grid),
+                          "--authorize-measurements"))
+        header = self.inventory(self.root / "ext")
+        self.assertEqual(header["counts_commit"], COMMIT)
+        self.assertEqual(header["sources"], self.inventory(grid)["sources"])
+        self.assertEqual(self.go(self.replay_argv(self.root / "ext"))[0], 2)
+
+
+class CodeSeals(Rig):
+    """Engines, sealed files and the history of their seals."""
+
+    def header(self):
+        out, _, _ = self.first()
+        return self.inventory(out)
+
+    def test_an_earlier_engine_is_refused_unless_the_table_names_it(self):
+        header = self.header()
+        old = dict(bytes=1, sha256="0" * 64)
+        changed = dict(header, engine=old)
+        with self.assertRaisesRegex(ValueError, "changed engine"):
+            self.grid.check_header(changed)
+        self.table.engines = (old,)
+        self.grid.check_header(changed)
+        with self.assertRaisesRegex(ValueError, "changed engine"):
+            self.grid.check_header(dict(header, resumed=[dict(
+                header, engine=dict(bytes=2, sha256="1" * 64), after=1)]))
+
+    def test_sealed_files_are_recorded_and_checked(self):
+        header = self.header()
+        self.assertEqual(set(header["sealed"]), set(SEALED))
+        self.assertEqual(header["sealed"]["one.txt"],
+                         a.seal(self.sealed_dir / "one.txt"))
+        self.grid.check_header(header)
+        (self.sealed_dir / "one.txt").write_text("edited")
+        with self.assertRaisesRegex(ValueError, "changed one.txt"):
+            self.grid.check_header(header)
+        self.table.sealed_history = {"one.txt": (
+            header["sealed"]["one.txt"],)}
+        self.grid.check_header(header)
+
+    def test_the_sealed_names_are_those_of_the_table(self):
+        header = self.header()
+        with self.assertRaisesRegex(ValueError, "changed sealed files"):
+            self.grid.check_header(dict(header, sealed={
+                "one.txt": header["sealed"]["one.txt"]}))
+        with self.assertRaisesRegex(ValueError, "changed sealed files"):
+            self.grid.check_header({k: v for k, v in header.items()
+                                    if k != "sealed"})
+
+    def test_a_sealed_change_across_a_resume_is_recorded(self):
+        self.explode_at = 4
+        with self.assertRaises(RuntimeError):
+            self.first()
+        self.explode_at = None
+        out = self.root / "grid"
+        known = a.seal(self.sealed_dir / "one.txt")
+        (self.sealed_dir / "one.txt").write_text("edited")
+        self.table.sealed_history = {"one.txt": (known,)}
+        status, _ = self.go(self.argv(
+            "run", out, "--candidate", CANDIDATE, "--resume",
+            "--authorize-measurements"))
+        self.assertEqual(status, 0)
+        header = self.inventory(out)
+        self.assertEqual(header["sealed"]["one.txt"], known)
+        self.assertEqual(header["resumed"][0]["sealed"]["one.txt"],
+                         a.seal(self.sealed_dir / "one.txt"))
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+
+    def test_the_history_belongs_to_sealed_files(self):
+        with self.assertRaisesRegex(ValueError, "history of an unsealed"):
+            self.make_table(sealed_history={"three.txt": ()})
+
+
+class SourceIdentity(Rig):
+    """A source file that differs from the baseline is never a pass."""
+
+    def test_the_sources_are_recorded_at_both_commits(self):
+        out, status, text = self.first()
+        self.assertEqual(status, 0)
+        record = self.inventory(out)["sources"]
+        self.assertEqual(sorted(record), sorted(SOURCES))
+        self.assertEqual(record["src/one.sml"],
+                         dict(baseline="0" * 40, candidate="0" * 40))
+        decisions = json.loads((out / "decisions.json").read_text())
+        self.assertEqual(decisions["source_identity"], dict(
+            files=sorted(SOURCES), differing=[]))
+        self.assertNotIn("SOURCE-DIFFERS", text)
+
+    def test_a_differing_file_is_named_and_the_grid_is_no_pass(self):
+        self.differ = {"src/two.sml"}
+        out, status, text = self.first()
+        self.assertEqual(status, 2)
+        decisions = json.loads((out / "decisions.json").read_text())
+        self.assertEqual(decisions["status"], "inconclusive")
+        self.assertEqual(decisions["source_identity"]["differing"],
+                         ["src/two.sml"])
+        # Named when the run starts, and again with the outcome.
+        self.assertEqual(text.count("SOURCE-DIFFERS src/two.sml"), 2)
+        self.assertLess(text.index("SOURCE-DIFFERS"), text.index("START"))
+        self.assertIn("TOY grid: inconclusive (pass 12, fail 0", text)
+
+    def test_a_fail_stays_a_fail_beside_a_differing_file(self):
+        self.differ = {"src/one.sml"}
+        self.candidate = lambda case, size, pairs, seed: (1.04, 1.08)
+        out, status, _ = self.first()
+        self.assertEqual(status, 1)
+
+    def test_replay_verifies_the_recorded_identity_again(self):
+        self.differ = {"src/two.sml"}
+        out, _, _ = self.first()
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 2)
+        self.assertIn("SOURCE-DIFFERS src/two.sml", text)
+        self.differ = set()
+        with self.assertRaisesRegex(ValueError, "changed source identity"):
+            self.go(self.replay_argv(out))
+        self.differ = {"src/two.sml"}
+        header = self.inventory(out)
+        header["sources"]["src/two.sml"]["candidate"] = "0" * 40
+        (out / "inventory.json").write_text(json.dumps(header))
+        with self.assertRaisesRegex(ValueError, "changed source identity"):
+            self.go(self.replay_argv(out))
+
+    def test_the_decisions_cannot_hide_a_differing_file(self):
+        self.differ = {"src/two.sml"}
+        out, _, _ = self.first()
+        path = out / "decisions.json"
+        decisions = json.loads(path.read_text())
+        decisions["status"] = "pass"
+        decisions["source_identity"]["differing"] = []
+        path.write_text(json.dumps(decisions))
+        with self.assertRaisesRegex(ValueError, "changed TOY decisions"):
+            self.go(self.replay_argv(out))
+
+    def test_a_source_absent_at_the_baseline_is_an_error(self):
+        real = self.fake_blob
+        with patch.object(tg, "git_blob", lambda repo, rev, path: None
+                          if rev == a.BASE and path == "src/two.sml"
+                          else real(repo, rev, path)):
+            with self.assertRaisesRegex(ValueError, "absent at the base"):
+                self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_the_record_belongs_to_the_table(self):
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        no_sources = {k: v for k, v in header.items() if k != "sources"}
+        with self.assertRaisesRegex(ValueError, "changed source files"):
+            self.grid.check_header(no_sources)
+        self.table.sources = ()
+        with self.assertRaisesRegex(ValueError, "changed source files"):
+            self.grid.check_header(header)
+        self.grid.check_header(no_sources)
+
+    def test_a_table_without_sources_records_none(self):
+        self.table.sources = ()
+        out, status, text = self.first()
+        self.assertEqual(status, 0)
+        self.assertNotIn("sources", self.inventory(out))
+        decisions = json.loads((out / "decisions.json").read_text())
+        self.assertNotIn("source_identity", decisions)
+
+    def test_the_second_stage_carries_the_identity(self):
+        self.differ = {"src/two.sml"}
+        self.control = lambda case, size, pairs, seed: (
+            WIDE if (case, size) == (CASES[1], 100) and pairs < 60
+            else GOOD)
+        grid, _, _ = self.first()
+        status, text = self.go(self.argv(
+            "extend", self.root / "ext", "--grid", str(grid),
+            "--authorize-measurements"))
+        self.assertEqual(status, 2)
+        decisions = json.loads((self.root / "ext" /
+                                "decisions.json").read_text())
+        self.assertEqual(decisions["source_identity"]["differing"],
+                         ["src/two.sml"])
+        self.assertIn("SOURCE-DIFFERS src/two.sml", text)
+        self.assertEqual(self.go(self.replay_argv(self.root / "ext"))[0], 2)
+
+
+class Hygiene(Rig):
+    """What a stopped run leaves behind is never evidence."""
+
+    def interrupted(self):
+        self.explode_at = 4
+        with self.assertRaises(RuntimeError):
+            self.first()
+        self.explode_at = None
+        return self.root / "grid"
+
+    def resume(self, out):
+        return self.go(self.argv(
+            "run", out, "--candidate", CANDIDATE, "--resume",
+            "--authorize-measurements"))
+
+    def test_an_unfinished_archive_is_swept_on_resume(self):
+        out = self.interrupted()
+        for name in ("x.json.partial", "x.json.partial.xz"):
+            (out / name).write_text("half")
+        status, _ = self.resume(out)
+        self.assertEqual(status, 0)
+        self.assertEqual(list(out.glob("*.partial*")), [])
+
+    def test_an_unrecorded_archive_is_set_aside_not_trusted(self):
+        out = self.interrupted()
+        stray = out / ("%s-100.json.xz" % CASES[1])
+        stray.write_bytes(b"not a recorded archive")
+        status, text = self.resume(out)
+        self.assertEqual(status, 0)
+        self.assertEqual(text.count("START "), 9)
+        self.assertEqual((out / (stray.name + ".unrecorded-1")).read_bytes(),
+                         b"not a recorded archive")
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+
+    def test_the_archive_appears_only_when_it_is_complete(self):
+        calls = []
+
+        def broken(archive, output):
+            calls.append(Path(archive).name)
+            raise RuntimeError("interrupted")
+        with patch.object(tg.bundle, "unpack", broken), \
+                self.assertRaises(RuntimeError):
+            self.first()
+        out = self.root / "grid"
+        self.assertEqual(list(out.glob("*.json.xz")), [])
+        self.assertEqual([p.name for p in out.glob("*.partial.xz")],
+                         ["%s-0.json.xz.partial.xz" % CASES[0]])
+        self.assertEqual(calls, ["%s-0.json.xz.partial.xz" % CASES[0]])
+
+
+class Helpers(unittest.TestCase):
+    def test_set_aside_numbers_its_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.json.xz"
+            for number in (1, 2):
+                path.write_text(str(number))
+                tg.set_aside(path, "failed")
+                self.assertFalse(path.exists())
+            self.assertEqual((Path(tmp) / "c.json.xz.failed-1").read_text(),
+                             "1")
+            self.assertEqual((Path(tmp) / "c.json.xz.failed-2").read_text(),
+                             "2")
+
+
+class Git(unittest.TestCase):
+    """The git helpers and the counts commit, on a private repository."""
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=t", "-c",
+             "user.email=t@example.org", *args], check=True, text=True,
+            stdout=subprocess.PIPE).stdout.strip()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="timing-grid-git-")
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name)
+        self.git("init", "-q")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "f.txt").write_text("one\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "first")
+        self.first = self.git("rev-parse", "HEAD")
+        (self.repo / "counts.json").write_text("{}\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "counts")
+        self.second = self.git("rev-parse", "HEAD")
+        (self.repo / "other.txt").write_text("x\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "later")
+        self.third = self.git("rev-parse", "HEAD")
+        self.grid = tg.Grid(tg.Table("toy", "TOY", CASES, "d.py",
+                                     self.repo / "counts.json"))
+
+    def test_a_blob_is_the_git_object_or_none(self):
+        self.assertEqual(tg.git_blob(self.repo, self.third, "src/f.txt"),
+                         self.git("hash-object", "src/f.txt"))
+        self.assertIsNone(tg.git_blob(self.repo, self.first, "counts.json"))
+        with self.assertRaisesRegex(ValueError, "unknown revision"):
+            tg.git_blob(self.repo, "f" * 40, "src/f.txt")
+
+    def test_the_introducing_commit_is_the_last_to_change_the_file(self):
+        self.assertEqual(tg.git_introduced(
+            self.repo, self.third, "counts.json"), self.second)
+        (self.repo / "counts.json").write_text("{\"a\": 1}\n")
+        self.git("commit", "-q", "-a", "-m", "revised")
+        fourth = self.git("rev-parse", "HEAD")
+        self.assertEqual(tg.git_introduced(
+            self.repo, fourth, "counts.json"), fourth)
+        self.assertEqual(tg.git_introduced(
+            self.repo, self.third, "counts.json"), self.second)
+
+    def test_the_counts_file_must_be_what_the_candidate_holds(self):
+        counts = self.repo / "counts.json"
+        self.assertEqual(self.grid.counts_commit(
+            self.repo, self.third, counts), self.second)
+        with self.assertRaisesRegex(ValueError, "not committed"):
+            self.grid.counts_commit(self.repo, self.first, counts)
+        counts.write_text("{\"edited\": 1}\n")
+        with self.assertRaisesRegex(ValueError, "not committed"):
+            self.grid.counts_commit(self.repo, self.third, counts)
+        outside = Path(self.tmp.name).parent / "elsewhere.json"
+        with self.assertRaisesRegex(ValueError, "outside the repository"):
+            self.grid.counts_commit(self.repo, self.third, outside)
 
 
 class Tables(unittest.TestCase):

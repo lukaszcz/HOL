@@ -96,7 +96,8 @@ class Resume(unittest.TestCase):
                                         False), {})
             with self.assertRaises(FileExistsError):
                 grid.begin(root, copy.deepcopy(inventory), False)
-            recorded = dict(inventory, runs=[dict(case="c")])
+            recorded = dict(inventory, runs=[
+                dict(case="c", archive="c.json.xz")])
             a.save(root / "inventory.json", recorded)
             resumed = copy.deepcopy(inventory)
             with patch.object(grid, "replay_rows",
@@ -112,7 +113,7 @@ class Resume(unittest.TestCase):
 
     def test_resume_records_changed_code(self):
         old = dict(schema="x", pairs=20, driver="d0", acceptance="a0",
-                   runs=[dict(case="c")])
+                   runs=[dict(case="c", archive="c.json.xz")])
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(grid, "replay_rows", return_value={}):
             root = Path(tmp)
@@ -140,7 +141,8 @@ class Resume(unittest.TestCase):
         self.checked.stop()
         header = dict(driver=a.seal(grid.__file__),
                       acceptance=grid.LAYOUT_ACCEPTANCE[0],
-                      layout_seed="s", policy=a.EQUIVALENCE_POLICY,
+                      layout_seed="s", baseline=a.BASE,
+                      policy=a.EQUIVALENCE_POLICY,
                       iterations=a.load(grid.COUNTS))
         grid.check_header(header)
         grid.check_header(dict(header, resumed=[dict(
@@ -185,7 +187,8 @@ class TwoStage(unittest.TestCase):
                 a.save(first_root / name, {})
             ext = Path(tmp) / "ext"
             args = grid.argparse.Namespace(grid=first_root, output=ext,
-                                           resume=False, partial=False)
+                                           resume=False, partial=False,
+                                           repo=None)
             with patch.object(grid, "replay_grid",
                               return_value=(first, stage1, {})), \
                     patch.object(grid, "measure", side_effect=measure), \
