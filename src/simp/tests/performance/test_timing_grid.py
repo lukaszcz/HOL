@@ -1681,6 +1681,121 @@ class SourceIdentity(Rig):
         self.assertEqual(self.go(self.replay_argv(self.root / "ext"))[0], 2)
 
 
+class ReviewedDifferences(Rig):
+    """A pinned file that differs is published, not refused."""
+    PIN = dict(blob="f" * 40, reason="A reviewed change of two.")
+
+    def make_table(self, **kw):
+        kw.setdefault("pinned", {"src/two.sml": self.PIN})
+        return super().make_table(**kw)
+
+    def test_a_pinned_blob_is_published_and_no_failure(self):
+        self.differ = {"src/two.sml"}
+        out, status, text = self.first()
+        self.assertEqual(status, 0)
+        decisions = json.loads((out / "decisions.json").read_text())
+        self.assertEqual(decisions["status"], "pass")
+        self.assertEqual(decisions["source_identity"], dict(
+            files=sorted(SOURCES), differing=[],
+            reviewed={"src/two.sml": self.PIN}))
+        self.assertNotIn("SOURCE-DIFFERS", text)
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+
+    def test_another_file_beside_a_pinned_one_still_differs(self):
+        self.differ = {"src/one.sml", "src/two.sml"}
+        out, status, text = self.first()
+        self.assertEqual(status, 2)
+        identity = json.loads(
+            (out / "decisions.json").read_text())["source_identity"]
+        self.assertEqual(identity["differing"], ["src/one.sml"])
+        self.assertEqual(sorted(identity["reviewed"]), ["src/two.sml"])
+        self.assertIn("SOURCE-DIFFERS src/one.sml", text)
+        self.assertNotIn("SOURCE-DIFFERS src/two.sml", text)
+
+    def test_another_blob_of_a_pinned_file_behaves_as_without_a_pin(self):
+        self.differ = {"src/two.sml"}
+        self.table.pinned = {"src/two.sml": dict(self.PIN, blob="e" * 40)}
+        out, status, text = self.first()
+        self.assertEqual(status, 2)
+        decisions = json.loads((out / "decisions.json").read_text())
+        self.assertEqual(decisions["status"], "inconclusive")
+        self.assertEqual(decisions["source_identity"]["differing"],
+                         ["src/two.sml"])
+        self.assertEqual(decisions["source_identity"]["reviewed"], {})
+        self.assertEqual(text.count("SOURCE-DIFFERS src/two.sml"), 2)
+
+    def test_a_pin_on_an_identical_file_is_a_table_error(self):
+        with self.assertRaisesRegex(ValueError, "identical to the base"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_pin_outside_the_sources_is_a_table_error(self):
+        with self.assertRaisesRegex(ValueError, "pin outside the sources"):
+            self.make_table(pinned={"src/three.sml": self.PIN})
+
+    def test_a_malformed_pin_is_a_table_error(self):
+        for pin in (dict(blob="f" * 40), dict(self.PIN, blob="f" * 39),
+                    dict(self.PIN, reason=" ")):
+            with self.assertRaisesRegex(ValueError, "malformed pin"):
+                self.make_table(pinned={"src/two.sml": pin})
+
+    def test_a_table_without_pins_publishes_none(self):
+        self.table.pinned = {}
+        self.differ = {"src/two.sml"}
+        out, _, _ = self.first()
+        identity = json.loads(
+            (out / "decisions.json").read_text())["source_identity"]
+        self.assertNotIn("reviewed", identity)
+
+    def test_replay_derives_the_decisions_again(self):
+        self.differ = {"src/two.sml"}
+        out, _, _ = self.first()
+        path = out / "decisions.json"
+        recorded = json.loads(path.read_text())
+        for tamper in (
+                lambda d: d["source_identity"]["reviewed"].clear(),
+                lambda d: d["source_identity"]["reviewed"][
+                    "src/two.sml"].update(reason="Nothing to see."),
+                lambda d: d["source_identity"].update(
+                    differing=["src/two.sml"])):
+            decisions = json.loads(json.dumps(recorded))
+            tamper(decisions)
+            path.write_text(json.dumps(decisions))
+            with self.assertRaisesRegex(ValueError, "changed TOY decisions"):
+                self.go(self.replay_argv(out))
+        path.write_text(json.dumps(recorded))
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        # The pin is the table's: a replay under another pin differs.
+        self.table.pinned = {"src/two.sml": dict(self.PIN, blob="e" * 40)}
+        with self.assertRaisesRegex(ValueError, "changed TOY decisions"):
+            self.go(self.replay_argv(out))
+
+    def test_the_second_stage_carries_the_reviewed_difference(self):
+        self.differ = {"src/two.sml"}
+        self.control = lambda case, size, pairs, seed: (
+            WIDE if (case, size) == (CASES[1], 100) and pairs < 60
+            else GOOD)
+        grid, _, _ = self.first()
+        status, text = self.go(self.argv(
+            "extend", self.root / "ext", "--grid", str(grid),
+            "--authorize-measurements"))
+        self.assertEqual(status, 0)
+        identity = json.loads((self.root / "ext" /
+                               "decisions.json").read_text())[
+            "source_identity"]
+        self.assertEqual(identity["differing"], [])
+        self.assertEqual(identity["reviewed"], {"src/two.sml": self.PIN})
+        self.assertNotIn("SOURCE-DIFFERS", text)
+        self.assertEqual(self.go(self.replay_argv(self.root / "ext"))[0], 0)
+        decisions = json.loads((self.root / "ext" /
+                                "decisions.json").read_text())
+        decisions["source_identity"]["reviewed"].clear()
+        (self.root / "ext" / "decisions.json").write_text(
+            json.dumps(decisions))
+        with self.assertRaisesRegex(ValueError, "changed TOY decisions"):
+            self.go(self.replay_argv(self.root / "ext"))
+
+
 class Hygiene(Rig):
     """What a stopped run leaves behind is never evidence."""
 

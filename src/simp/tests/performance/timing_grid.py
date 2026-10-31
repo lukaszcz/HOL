@@ -75,6 +75,11 @@ class Table:
     sources: files of the repository (paths) whose git blobs must be the
         same at the baseline and at the candidate; a run records them and a
         difference is never a pass.
+    pinned: reviewed differences among the sources, {path: dict(blob=,
+        reason=)}: a source that differs from the baseline is accepted
+        (published, not a failure) only when its candidate blob is the
+        pinned one. A pin outside `sources`, or on a file that does not
+        differ from the baseline, is an error.
     require_seed: refuse a first stage without layout randomization."""
 
     def __init__(self, name, label, cases, driver, counts, *, seconds=0.3,
@@ -83,7 +88,7 @@ class Table:
                  target=TARGET, max_pairs=MAX_PAIRS, baseline=a.BASE,
                  drivers=(), acceptance=(), layout_acceptance=(),
                  engine=True, engines=(), sealed=(), sealed_history=None,
-                 sources=(), home=a.HERE, require_seed=True,
+                 sources=(), pinned=None, home=a.HERE, require_seed=True,
                  allocation="exact allocation is the separate gate of "
                  "allocation_matrix.py; not part of this timing gate"):
         extra = seconds_by_case or {}
@@ -93,6 +98,13 @@ class Table:
         a.require(set(extra) <= set(cases) and all(
             0.1 <= v <= 60 for v in [seconds, *extra.values()]),
             "invalid batch seconds")
+        pins = pinned or {}
+        a.require(set(pins) <= set(sources), "pin outside the sources")
+        a.require(all(
+            isinstance(v, dict) and sorted(v) == ["blob", "reason"] and
+            isinstance(v["blob"], str) and len(v["blob"]) == 40 and
+            isinstance(v["reason"], str) and v["reason"].strip()
+            for v in pins.values()), "malformed pin")
         history = sealed_history or {}
         a.require(set(history) <= set(sealed), "history of an unsealed file")
         self.name, self.label, self.cases = name, label, tuple(cases)
@@ -109,6 +121,7 @@ class Table:
         self.sealed = tuple(sealed)
         self.sealed_history = {k: tuple(v) for k, v in history.items()}
         self.sources, self.require_seed = tuple(sources), require_seed
+        self.pinned = {k: dict(v) for k, v in pins.items()}
         self.home = Path(home)
         self.allocation = allocation
 
@@ -781,17 +794,36 @@ class Grid:
             repo, inventory["baseline"], inventory["candidate"]),
             "changed source identity")
 
+    def source_identity(self, record):
+        """The files of the record, those that differ from the baseline
+        and are not a reviewed pinned revision, and (for a table with
+        pins) the reviewed ones with their reasons. A pin on a file the
+        candidate leaves as the baseline has it is an error. Only the
+        candidate blob a pin names is accepted: any other revision of the
+        file differs as it would without a pin."""
+        pins = self.t.pinned
+        for path in pins:
+            a.require(record[path]["baseline"] != record[path]["candidate"],
+                      "pinned source identical to the baseline: " + path)
+        accepted = sorted(
+            p for p in pins if record[p]["candidate"] == pins[p]["blob"])
+        identity = dict(files=sorted(record), differing=sorted(
+            p for p, r in record.items() if r["baseline"] != r["candidate"]
+            and p not in accepted))
+        if pins:
+            identity["reviewed"] = {p: dict(pins[p]) for p in accepted}
+        return identity
+
     def with_sources(self, decisions, inventory):
         """A source file that differs between the baseline and the candidate
         is named in the decisions, and no grid with one passes: the cost of
-        a scan that allocates nothing is invisible to every other gate."""
+        a scan that allocates nothing is invisible to every other gate. A
+        reviewed difference (a table's pin) is published beside them with
+        its reason and does not affect the status."""
         if "sources" not in inventory:
             return decisions
-        record = inventory["sources"]
-        decisions["source_identity"] = dict(
-            files=sorted(record), differing=sorted(
-                p for p, r in record.items()
-                if r["baseline"] != r["candidate"]))
+        decisions["source_identity"] = self.h.source_identity(
+            inventory["sources"])
         if decisions["source_identity"]["differing"] and \
                 decisions["status"] == "pass":
             decisions["status"] = "inconclusive"
@@ -836,9 +868,9 @@ class Grid:
         if t.sources:
             inventory["sources"] = self.h.source_record(
                 args.repo, args.baseline, args.candidate)
-            for path, found in inventory["sources"].items():
-                if found["baseline"] != found["candidate"]:
-                    print("SOURCE-DIFFERS " + path, flush=True)
+            for path in self.h.source_identity(
+                    inventory["sources"])["differing"]:
+                print("SOURCE-DIFFERS " + path, flush=True)
         keys = t.keys()
         if args.only:
             keys = [k for k in keys if "%s-%d" % k in args.only]

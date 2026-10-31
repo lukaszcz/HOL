@@ -90,6 +90,16 @@ class Table(unittest.TestCase):
                                         "sealed"))
         self.assertIn("task30_cases.py", table.sealed)
 
+    def test_the_pins_are_the_two_reviewed_cond_rewr_files(self):
+        table = t30.TABLE
+        self.assertEqual(table.pinned, cases.PINNED)
+        self.assertEqual(sorted(cases.PINNED), [
+            "src/simp/src/Cond_rewr.sig", "src/simp/src/Cond_rewr.sml"])
+        for path, pin in cases.PINNED.items():
+            self.assertIn(path, cases.SOURCES)
+            self.assertRegex(pin["blob"], "^[0-9a-f]{40}$")
+            self.assertTrue(pin["reason"].endswith("."), path)
+
     def test_the_allocation_text_names_the_task_selection(self):
         self.assertIn("--task task30", t30.TABLE.allocation)
         self.assertNotIn("outside", t30.TABLE.allocation)
@@ -104,11 +114,23 @@ class Whole(ttg.Rig):
         table.driver, table.counts = self.driver, self.counts
         return table
 
+    def fake_blob(self, repo, rev, path):
+        """As the rig's, but the candidate holds each pinned file at its
+        pinned blob, as the table requires."""
+        if rev == ttg.CANDIDATE and path in cases.PINNED:
+            return cases.PINNED[path]["blob"]
+        return super().fake_blob(repo, rev, path)
+
     def test_a_clean_grid_runs_144_cells_and_passes(self):
         out, code, text = self.first()
         self.assertEqual(code, 0)
         self.assertEqual(len(self.runs), 144)
         self.assertIn("TASK30 grid: pass (pass 144, fail 0", text)
+        self.assertNotIn("SOURCE-DIFFERS", text)
+        identity = json.loads(
+            (out / "decisions.json").read_text())["source_identity"]
+        self.assertEqual(identity["differing"], [])
+        self.assertEqual(identity["reviewed"], cases.PINNED)
         by_case = {}
         for options in self.runs:
             by_case.setdefault(options["case"][0], set()).add(

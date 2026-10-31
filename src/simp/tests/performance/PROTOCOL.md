@@ -323,6 +323,18 @@ has no disposition.
   source scan": neither gate sees a scan that allocates nothing and costs a
   few percent, so the identity of the code on the path, not a measurement,
   shows that no scan was added there. A scan elsewhere is outside this list.
+  A reviewed difference may be pinned: `task30_cases.PINNED` maps a path
+  of the list to the exact candidate blob and the reason. A file that
+  differs is accepted only when its candidate blob is the pinned one; it is
+  then published under `source_identity.reviewed` with its reason, prints no
+  `SOURCE-DIFFERS` and does not change the status. Any other blob of it, and
+  any other file, behaves as above; a pin on a file identical to the
+  baseline or outside the list is an error. `replay` and the second stage
+  re-derive it, so the record is not trusted. The one reviewed difference
+  is `Cond_rewr.sml`/`.sig`: the rewrite-tracking helper moves to
+  `SimpTracking` (aliased as `note_rewrite`, `with_tracking`) and
+  `is_var_perm` is exported; `mk_cond_rewrs` and `COND_REWR_CONV` are
+  textually unchanged and no loop is added.
 - **Decisions.** `run` prints, and the exit status reflects, five separate
   lists: pass; *fail*; *inconclusive*; *control-limited* (every open metric
   is inconclusive only because its B/B control is outside the window);

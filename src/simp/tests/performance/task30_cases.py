@@ -36,3 +36,19 @@ SOURCES = (
     "src/simp/src/Cond_rewr.sml", "src/simp/src/Cond_rewr.sig",
     "src/simp/src/Trace.sml",
     "src/marker/markerLib.sml", "src/marker/markerLib.sig")
+
+# Differences from the baseline in SOURCES that were reviewed and are
+# accepted: each path maps to the exact candidate git blob (at the commit
+# that introduced the pin) and the reason. The timing gate publishes them in
+# its decisions and does not count them as a failure of source identity; any
+# other revision of the file, or any other differing file, still does.
+PINNED = {
+    "src/simp/src/Cond_rewr.sml": dict(
+        blob="a67c08102a6467765eba4febfb89c2e0c032b821",
+        reason="Moves the rewrite-tracking helper to SimpTracking and "
+        "aliases note_rewrite and with_tracking, leaving mk_cond_rewrs and "
+        "COND_REWR_CONV textually unchanged and adding no loop."),
+    "src/simp/src/Cond_rewr.sig": dict(
+        blob="ece2594285431754f43b3a293a6c0dd24dd70fbd",
+        reason="Exports the existing is_var_perm and adds comments."),
+}

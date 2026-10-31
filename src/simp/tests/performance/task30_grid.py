@@ -16,7 +16,8 @@ candidate observation; it names the baseline, the seals of the pilot and each
 cell's batch seconds, and `run` takes every setting from it. The ten direct
 deletions are tiny operations; their batches are calibrated to a longer time.
 A candidate whose source files on the path of these operations (see
-task30_cases.SOURCES) differ from the baseline's never passes.
+task30_cases.SOURCES) differ from the baseline's never passes, unless the
+file is a reviewed difference pinned in task30_cases.PINNED.
 
 The exit status is zero only when every cell passes. Failed, inconclusive,
 control-limited and protocol-failed cells are listed separately and none is
@@ -49,7 +50,7 @@ TABLE = tg.Table(
     engines=(), sealed=("task30_cases.py", "task29_gate.py",
                         "matrix_schema.py", "performance_schema.py",
                         "evidence_bundle.py"),
-    sources=cases.SOURCES, require_seed=True,
+    sources=cases.SOURCES, pinned=cases.PINNED, require_seed=True,
     allocation="the separate gate of allocation_matrix.py --task task30, "
     "all 24 cases at six sizes")
 ENGINE = tg.Grid(TABLE, doc=__doc__)
