@@ -16,6 +16,7 @@ import allocation_analysis as an
 import allocation_matrix as m
 import allocation_schema as sc
 import allocation_testbed as tb
+import task29_gate as gate
 from allocation_testbed import (CASE, LIB, ALIAS, STEADY, experiment,
                                 observation, process_events)
 
@@ -831,6 +832,17 @@ def rec_product(record):
             info["related_products"][product]["bytes"] += 1
 
 
+def rec_logical(suffix, name):
+    """The path loaded by another name (`@REPO@` stands for the toolchain),
+    the file it is, and its products unchanged."""
+    def change(record):
+        for raw in [r for r in record["paths"] if r.endswith(suffix)]:
+            new = name.replace("@REPO@", str(Path(raw).parents[1]))
+            record["paths"][new] = record["paths"].pop(raw)
+            record["stdout"] = record["stdout"].replace(raw, new)
+    return change
+
+
 def rec_related(suffix, product):
     """An extra related product (a file beside the source) of a path."""
     def change(record):
@@ -891,7 +903,7 @@ CELL_GUARDS = [
     ("env base HOME", {}, rec_env("HOME", "/root"), None, "environment"),
     ("env base PATH", {}, rec_env("PATH", "/usr/bin"), None, "environment"),
     ("env base PATH of the caller", {},
-     rec_env("PATH", "/home/x/.local/bin:" + m.PATH), None, "environment"),
+     rec_env("PATH", "/home/x/.local/bin:" + m.pr.PATH), None, "environment"),
     ("env place TMPDIR", {}, rec_env("TMPDIR", "/elsewhere"), None,
      "environment"),
     ("env place TMPDIR missing", {}, rec_env("TMPDIR", None), None,
@@ -994,6 +1006,18 @@ CELL_GUARDS = [
     ("shared product under a boundary prefix", {},
      rec_related("Heap1.sml", "@REPO@/src/boss/bossLib.uo"), None,
      "boundary prefix src/boss/"),
+    ("shared product outside the toolchain", {},
+     rec_related("Heap1.sml", "/elsewhere/bossLib.uo"), None,
+     "outside the toolchain: /elsewhere/bossLib.uo"),
+    ("loaded by a name under a boundary prefix", {},
+     rec_logical("Heap1.sml", "@REPO@/src/boss/Heap1.sml"), None,
+     "boundary prefix src/boss/: .*/src/boss/Heap1.sml"),
+    ("loaded by a name under a prefix through a dotdot", {},
+     rec_logical("Heap1.sml", "@REPO@/src/x/../boss/Heap1.sml"), None,
+     "boundary prefix src/boss/"),
+    ("loaded by a name outside the toolchain", {},
+     rec_logical("Heap1.sml", "/elsewhere/Heap1.sml"), None,
+     "outside the toolchain: /elsewhere/Heap1.sml"),
     ("shared input differs", {}, rec_sha("Heap1.sml"), None,
      "shared input changed"),
     ("shared product differs", {}, rec_product, None,
@@ -1081,6 +1105,20 @@ class Replay(unittest.TestCase):
                     m.write_receipt(folder, "meta", meta)
                 with self.assertRaisesRegex(sc.InvalidAllocation, message):
                     m.cell_data(folder, sb.bind())
+
+    def test_a_name_is_judged_as_normalized(self):
+        # not under src/boss/ although the name passes through it
+        for name in ("@REPO@/src/boss/../Heap1.sml",
+                     "@REPO@/src/./Heap1.sml"):
+            with self.subTest(name):
+                sb = tb.Sandbox(Path(self.tmp.name) / ("n%d" % len(name)),
+                                pairs=4)
+                folder = Path(sb.root) / "cell"
+                sb.write_cell(folder)
+                for path in folder.rglob("pair-*.json.gz"):
+                    tb.rewrite(path, rec_logical("Heap1.sml", name))
+                self.assertEqual(m.cell_data(folder, sb.bind())[0]["pairs"],
+                                 4)
 
     def test_missing_extra_and_duplicate_processes_rejected(self):
         sb = tb.Sandbox(Path(self.tmp.name) / "p", pairs=4)
@@ -1481,6 +1519,57 @@ class GridReplay(unittest.TestCase):
                                             "without the places"):
                     m.finish(self.root, dict(inventory, runs=[other]))
 
+    def moved(self):
+        """Another TMPDIR of the length of this sandbox's."""
+        return self.sb.tmpdir[:-1] + ("Z" if self.sb.tmpdir[-1] != "Z"
+                                      else "Y")
+
+    def test_a_cell_measured_at_a_moved_tmpdir_replays_there(self):
+        # The cell ran, and its processes recorded TMPDIR, elsewhere than
+        # this session's header says: the row's own places bind it.
+        here, there = self.sb.tmpdir, self.moved()
+        self.sb.tmpdir = there
+        row = self.row()
+        self.sb.tmpdir = here
+        self.assertEqual(row["places"]["tmpdir"], there)
+        inventory = self.inventory([row])
+        self.assertEqual(inventory["tmpdir"], here)
+        m.finish(self.root, inventory)
+        # the row must say where the cell really ran ...
+        liar = dict(row, places=dict(row["places"], tmpdir=here))
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "different inputs"):
+            m.finish(self.root, dict(inventory, runs=[liar]))
+        # ... and a cell run at the header's place, with the header's
+        # place for a row, is no different
+        self.sb.tmpdir = there
+        inventory = self.inventory([row])
+        self.assertEqual(inventory["tmpdir"], there)
+        m.finish(self.root, inventory)
+
+    def test_cells_of_one_grid_ran_at_paths_of_one_length(self):
+        first = self.row(size=0)
+
+        def unresolved(**places):
+            """A rejected cell: kept with the places it ran at."""
+            return dict(first, size=1, rejected="boom", status="unresolved",
+                        places=dict(first["places"], **places))
+        place = first["places"]
+        m.finish(self.root, self.inventory([
+            first, unresolved(tmpdir=self.moved())]))
+        for key in ("tmpdir", "library"):
+            for text in (place[key] + "x", place[key][:-1]):
+                for rows in ([first, unresolved(**{key: text})],
+                             [unresolved(**{key: text}), first]):
+                    with self.subTest(key=key, text=text):
+                        with self.assertRaisesRegex(
+                                sc.InvalidAllocation,
+                                "paths of different lengths"):
+                            m.finish(self.root, self.inventory(rows))
+        # places other than these two may differ in length
+        m.finish(self.root, self.inventory([first, unresolved(
+            shim_path=place["shim_path"] + "x", aliases=[])]))
+
     def test_the_controls_receipt_is_kept_and_checked_again(self):
         inventory = self.grid()
         copy = self.root / "controls-receipt.json"
@@ -1608,10 +1697,46 @@ class BoundaryPrefixes(unittest.TestCase):
             with self.subTest(below):
                 self.assertIsNone(m.under_prefix(
                     repo, repo / below, self.PREFIXES))
-        # outside the toolchain is another check's business
-        self.assertIsNone(m.under_prefix(repo, Path("/src/boss/x"),
-                                         self.PREFIXES))
         self.assertIsNone(m.under_prefix(repo, repo / "src/boss/x", []))
+
+    def test_a_path_outside_the_toolchain_is_refused_not_passed(self):
+        repo = Path("/tc/hol")
+        for path in ("/src/boss/x", "/tc/hol2/src/boss/x", "/tc/x",
+                     "src/boss/x", "/tc"):
+            with self.subTest(path):
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "outside the toolchain"):
+                    m.under_prefix(repo, Path(path), self.PREFIXES)
+
+
+class TmpdirIsAPlace(unittest.TestCase):
+    """TMPDIR (and the path length of the scratch tree below it) is a place
+    and not content only while no gated bracket reads an environment
+    variable or a path. The one path-sensitive call in a bracket is the
+    `new_theory` of `history_theory_change` (Theory.sml reads the working
+    directory); that case is outside gate.CASES."""
+    CASE_NAME = "history_theory_change"
+    SENSITIVE = ("new_theory", "export_theory", "getEnv", "OS.FileSys",
+                 "FileSys.", "OS.Process", "Posix.", "TextIO.openIn",
+                 "TextIO.openOut", "BinIO.open", "Paired.env", "Portable.pwd")
+
+    def test_the_path_sensitive_case_is_not_gated_while_tmpdir_is_a_place(
+            self):
+        if "tmpdir" in m.PLACE_KEYS:
+            self.assertNotIn(self.CASE_NAME, gate.CASES)
+        else:
+            self.skipTest("TMPDIR is content")
+
+    def test_only_that_case_has_a_direct_path_token(self):
+        # A lexical scan of MatrixSupport.sml alone: it follows no callee.
+        text = (m.HERE / "MatrixSupport.sml").read_text()
+        start = text.index('| "%s" =>' % self.CASE_NAME)
+        end = text.index('| _ => raise Fail "unknown history case"', start)
+        self.assertIn("new_theory", text[start:end])  # the anchors hold
+        for token in self.SENSITIVE:
+            outside = text[:start] + text[end:]
+            with self.subTest(token):
+                self.assertNotIn(token, outside)
 
 
 class Inputs(unittest.TestCase):

@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -133,6 +134,12 @@ class ControlSchemaTests(unittest.TestCase):
 
 
 class IdentityTests(unittest.TestCase):
+    def setUp(self):
+        # main() makes the fixed PATH the process environment: undo that.
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_actual_symbol_and_single_process_mapping(self):
         with tempfile.TemporaryDirectory() as tmp:
             lib = Path(tmp) / "libpolyml.so.16.0.0"
@@ -152,6 +159,17 @@ class IdentityTests(unittest.TestCase):
     def test_authorization_required_before_build(self):
         with self.assertRaises(SystemExit):
             driver.main(["--output", "/nonexistent/forbidden.json"])
+
+    def test_the_controls_driver_runs_under_the_fixed_path(self):
+        os.environ["PATH"] = "/elsewhere:" + os.environ["PATH"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                driver.main(["--output", "/nonexistent/forbidden.json"])
+        self.assertEqual(os.environ["PATH"], pr.PATH)
+        os.environ["PATH"] = "/elsewhere"
+        self.assertEqual(driver.environment()["PATH"], pr.PATH)
+        self.assertEqual(driver.environment()["CC"],
+                         shutil.which("gcc", path=pr.PATH))
 
     def test_bootstrap_lineage_and_positive_timeout_are_required(self):
         base = ["--output", "/nonexistent/forbidden.json",
@@ -309,6 +327,26 @@ class ShimGuardTests(unittest.TestCase):
             scratch.mkdir()  # let the temporary directory clean up
 
 
+class FixedPathTests(unittest.TestCase):
+    def test_the_path_is_a_constant_of_system_directories(self):
+        self.assertEqual(pr.PATH, "/usr/local/bin:/usr/bin:/bin")
+
+    def test_a_driver_makes_it_the_process_environment(self):
+        with mock.patch.dict(os.environ, PATH="/elsewhere"):
+            pr.use_fixed_path()
+            self.assertEqual(os.environ["PATH"], pr.PATH)
+            self.assertEqual(
+                subprocess.run("echo $PATH", shell=True, text=True,
+                               stdout=subprocess.PIPE).stdout.strip(),
+                pr.PATH)
+
+
+# Spelled out, not read from the code under test: a tool dropped from
+# BUILD_TOOLS would otherwise vanish from the expectation too. git extracts
+# the measured sources.
+TOOLS = ("gcc", "g++", "make", "ldd", "nm", "ld", "as", "git")
+
+
 class ToolSealTests(unittest.TestCase):
     """The build tools a PATH resolves to are sealed, nothing else is
     consulted."""
@@ -319,7 +357,7 @@ class ToolSealTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for tool in pr.BUILD_TOOLS:
+        for tool in TOOLS:
             (self.bin / tool).write_text("tool " + tool + "\n")
             (self.bin / tool).chmod(0o755)
         for _, program in pr.COMPILER_PROGRAMS:
@@ -336,12 +374,12 @@ class ToolSealTests(unittest.TestCase):
     def test_tools_and_compiler_programs_are_sealed_and_run(self):
         env = dict(PATH=str(self.bin))
         seals = pr.seal_tools(env, self.runner)
-        wanted = {str(self.bin / t) for t in pr.BUILD_TOOLS} | {
+        wanted = {str(self.bin / t) for t in TOOLS} | {
             str(self.root / p) for _, p in pr.COMPILER_PROGRAMS}
         self.assertEqual(set(seals), wanted)
         for path, seal in seals.items():
             self.assertEqual(seal, pr.a.seal(path))
-        for tool in pr.BUILD_TOOLS:
+        for tool in TOOLS:
             self.assertIn([str(self.bin / tool), "--version"], self.ran)
         for compiler, program in pr.COMPILER_PROGRAMS:
             self.assertIn([compiler, "-print-prog-name=" + program],

@@ -5,6 +5,7 @@ installs or replaces a configured runtime; callers own the temporary tree.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -135,9 +136,22 @@ def harness_identity(repo, reference):
                 reference_commit=ref, tree_outside_performance=tree)
 
 
-BUILD_TOOLS = ("gcc", "g++", "make", "ldd", "nm", "ld", "as")
+# The one PATH of every process a driver starts, not the caller's. Drivers
+# make it their own environment on entry (use_fixed_path), so what they run
+# directly (git included) and what they pass an explicit environment to
+# resolve tools in the same directories, and the sealed tools are the ones
+# that ran.
+PATH = "/usr/local/bin:/usr/bin:/bin"
+BUILD_TOOLS = ("gcc", "g++", "make", "ldd", "nm", "ld", "as", "git")
 # Compiler programs the driver runs on the caller's behalf: (driver, name).
 COMPILER_PROGRAMS = (("gcc", "cc1"), ("g++", "cc1plus"), ("gcc", "collect2"))
+
+
+def use_fixed_path():
+    """First act of a driver entry point: from here on every subprocess,
+    whether or not it is given an explicit environment, resolves its
+    program on PATH."""
+    os.environ["PATH"] = PATH
 
 
 def seal_tools(env, run):

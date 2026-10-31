@@ -45,6 +45,7 @@ EXPECTED_GRID_KEYS = (
 PREFIXES = ("src/boss/", "help/Docfiles/")
 # Where a run's private runtime and shim stand: never compared on resume.
 EXPECTED_PLACE_KEYS = ("shim_path", "library", "aliases", "tmpdir")
+EXPECTED_LENGTH_KEYS = ("tmpdir", "library")
 RUNTIME = dict(sha256="r" * 64, bytes=7)
 TREE = "d" * 64  # invented: tree identity outside the performance area
 
@@ -189,6 +190,7 @@ class Sandbox:
     def __init__(self, root, pairs=10):
         root = Path(root)
         self.root, self.pairs = root, pairs
+        self.tmpdir = str(root)  # a place; cells may be made elsewhere
         self.repo = root / "hol"
         (self.repo / "sigobj").mkdir(parents=True)
         (self.repo / "src").mkdir()
@@ -265,11 +267,11 @@ class Sandbox:
 
     def base_environment(self):
         """The whole environment of the driver and its processes."""
-        return dict(self.content_environment(), TMPDIR=str(self.root))
+        return dict(self.content_environment(), TMPDIR=self.tmpdir)
 
     def content_environment(self):
         """What the header records as content: no place (TMPDIR)."""
-        return dict(PATH=m.PATH, HOME="/nonexistent", HOLDIR=str(self.repo),
+        return dict(PATH=m.pr.PATH, HOME="/nonexistent", HOLDIR=str(self.repo),
                     TERM="dumb", LC_ALL="C", TZ="UTC",
                     CONFIG_SITE="/dev/null", CC="/usr/bin/gcc",
                     CXX="/usr/bin/g++")
@@ -289,7 +291,7 @@ class Sandbox:
                            candidate=CAND_PIN),
             fixtures=self.fixtures(), word_bytes=sc.WORD_BYTES,
             canary=dict(array=sc.CANARY_ARRAY, words=sc.CANARY),
-            environment=self.content_environment(), tmpdir=str(self.root),
+            environment=self.content_environment(), tmpdir=self.tmpdir,
             boundary=dict(schema=bd.SCHEMA, changed=0,
                           manifest_prefixes=list(PREFIXES)),
             harness=dict(head=CAND_PIN, tree_outside_performance=TREE,

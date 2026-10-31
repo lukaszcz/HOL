@@ -19,6 +19,7 @@ sys.path.insert(0, str(HERE.parent))
 import acceptance as a
 import loading
 from prepare_patch import DEFAULT_SOURCE
+import private_runtime as pr
 
 
 def bootstrap_stages(text):
@@ -102,6 +103,7 @@ def build_native_hol(pristine, dst, repo, env, run, report):
 
 
 def main(argv=None):
+    pr.use_fixed_path()  # as the drivers: git and the tools resolve there
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--repo", type=Path, default=HERE.parents[4])

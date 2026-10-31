@@ -15,7 +15,6 @@ build lineage. The environment's HOLDIR is never consulted.
 import argparse
 import json
 from pathlib import Path
-import os
 import platform
 import shutil
 import sys
@@ -80,7 +79,7 @@ def arguments(argv):
 
 def environment():
     # Do not inherit configure/compiler/make/linker search overrides.
-    env = dict(PATH=os.environ["PATH"], HOME="/nonexistent", TMPDIR="/tmp",
+    env = dict(PATH=pr.PATH, HOME="/nonexistent", TMPDIR="/tmp",
                TERM="dumb", LC_ALL="C", TZ="UTC", CONFIG_SITE="/dev/null")
     for key, name in (("CC", "gcc"), ("CXX", "g++")):
         env[key] = shutil.which(name, path=env["PATH"]) or ""
@@ -246,6 +245,7 @@ def controls(args, patched, report, env, run, dst):
 
 
 def main(argv=None):
+    pr.use_fixed_path()
     args = arguments(argv)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)

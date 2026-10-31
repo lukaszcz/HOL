@@ -48,6 +48,9 @@ SCHEMA = "task29b-matrix-v2"
 CONTROLS_SCHEMA = "task29-managed-counter-controls-v4"
 CASES, SIZES = gate.CASES, a.SIZES
 PAIRS = 10  # acceptance minimum; fewer pairs is a smoke only
+# Job directories are named "j%02d" (make_job): more would give some private
+# paths, hence PAIR_PRIVATE, another length than the rest of the grid.
+MAX_JOBS = 100
 # Equal-length private directory names, also used as the process selection
 # label: neither a path nor a label length can change the startup words.
 # Two baseline copies form the control.
@@ -55,10 +58,6 @@ SIDES = {"baseline": "sel-b0", "control": "sel-b1", "candidate": "sel-c0"}
 EXPERIMENTS = {"candidate": ("baseline", "candidate"),
                "control": ("baseline", "control")}
 FIXTURES = ("MatrixAllocation.sml", "MatrixSupport.sml")
-# The one PATH of every process the driver starts: not the caller's. The
-# compilers and tools it resolves to are sealed (pr.seal_tools), so the
-# environment is the same content on any host that provides them.
-PATH = "/usr/local/bin:/usr/bin:/bin"
 # Selected modules every process elaborates privately (run_paired.validate
 # demands the same of the performance fixture).
 DIRECT_MODULES = ("Traverse", "simpLib")
@@ -73,11 +72,20 @@ GRID_KEYS = (
 # Path-valued header keys: where this run's private runtime and shim live
 # and where its scratch trees stand. They differ between a run and its
 # resume, so they are kept per run (in each cell's meta and inventory row)
-# and never compared; what stands at the first three is sealed by `runtime`
-# and `shim`. TMPDIR is a place and not content: the runtime reads it only
-# to place the backing file of its memory mappings (osmemunix.cpp), and the
-# counter counts requested reservations, not where they are backed.
+# and their values are never compared; what stands at the first three is
+# sealed by runtime and shim. TMPDIR is a place and not content: the runtime
+# reads it to place the backing file of its memory mappings (osmemunix.cpp;
+# tools-poly/poly/Mosml.sml reads it too), and the counter counts requested
+# reservations, not where they are backed. A place has a length, though. The
+# scratch tree stands below TMPDIR, so PAIR_PRIVATE, LD_LIBRARY_PATH and
+# TASK29_ALLOC_SHIM change length with it, and path length can change
+# startup words (see SIDES). A resume under a TMPDIR of another length would
+# give cells of one grid private paths of different lengths, and published
+# startup could differ between cells. So a resume needs the lengths of
+# LENGTH_KEYS equal. The library path is the resolved scratch tree, which a
+# symlinked TMPDIR can lengthen on its own.
 PLACE_KEYS = ("shim_path", "library", "aliases", "tmpdir")
+LENGTH_KEYS = ("tmpdir", "library")
 # The launchers whose stored process receipts a controls receipt must
 # replay under the current path schema: (receipt key, profile, program).
 PATH_LAUNCHERS = (
@@ -173,10 +181,18 @@ def row_binding(inventory, row):
     return binding(inventory, row["case"], row["size"], where)
 
 
+def place_lengths(where):
+    """Path lengths that must agree across cells of one grid."""
+    return {k: len(where[k]) if k in where else None for k in LENGTH_KEYS}
+
+
 def changed_settings(old, new):
-    """Grid keys by which two headers differ (paths excluded)."""
-    return [k for k in GRID_KEYS + ("acceptance_pairs",)
-            if old.get(k) != new[k]]
+    """Grid keys by which two headers differ (paths excluded, but not their
+    lengths: those are listed as `<key>-length`)."""
+    return ([k for k in GRID_KEYS + ("acceptance_pairs",)
+             if old.get(k) != new[k]] +
+            [k + "-length" for k in LENGTH_KEYS
+             if place_lengths(old).get(k) != place_lengths(new)[k]])
 
 
 def library_names(libraries):
@@ -428,7 +444,7 @@ class Grid:
         self.harness = harness_binding(HERE.parents[3], args.candidate,
                                        inputs, fixtures)
         self.env = dict(
-            PATH=PATH, HOME="/nonexistent",
+            PATH=pr.PATH, HOME="/nonexistent",
             TMPDIR=os.environ.get("TMPDIR", "/tmp"), HOLDIR=str(self.hol),
             TERM="dumb", LC_ALL="C", TZ="UTC", CONFIG_SITE="/dev/null")
         for key, name in (("CC", "gcc"), ("CXX", "g++")):
@@ -777,11 +793,13 @@ def check_protocol(receipt, meta, events):
 def under_prefix(repo, path, prefixes):
     """The manifest prefix a path of the toolchain lies under, or None. A
     prefix is a directory the subject cannot load from; a process that
-    loads a file there would make the boundary a false pass."""
+    loads a file there would make the boundary a false pass. A path outside
+    the toolchain is refused, never judged to be under no prefix."""
     try:
         below = Path(path).relative_to(repo).as_posix()
     except ValueError:
-        return None
+        raise sc.InvalidAllocation(
+            "shared input outside the toolchain: %s" % (path,))
     return next((p for p in prefixes if below.startswith(p)), None)
 
 
@@ -829,7 +847,11 @@ def check_receipt(receipt, meta, experiment):
             sc.require(physical.is_relative_to(repo) and not
                        physical.is_relative_to(repo / "src/simp"),
                        "shared input outside the toolchain: " + logical)
-            for product in (physical, *map(Path, info["related_products"])):
+            # The name it was loaded by, normalized (a symlink under a
+            # prefix is under it whatever it points to), the file it is and
+            # every product beside it.
+            for product in (Path(os.path.normpath(logical)), physical,
+                            *map(Path, info["related_products"])):
                 prefix = under_prefix(repo, product, meta["boundary_prefixes"])
                 sc.require(prefix is None,
                            "shared input under the boundary prefix %s: %s"
@@ -1046,6 +1068,9 @@ def finish(root, inventory):
         sc.require(row["status"] == cell_status(records[key]),
                    "changed cell outcome")
         print("REPLAY %s %d" % key, flush=True)
+    sc.require(len({json.dumps(place_lengths(r.get("places") or {}))
+                    for r in inventory["runs"]}) <= 1,
+               "cells measured at scratch paths of different lengths")
     return assemble(set(cells), records, observed, inventory["baseline"])
 
 
@@ -1184,7 +1209,7 @@ def toolchain(args):
     from bootstrap_probe import build_native_hol
     repo = args.repo.resolve(strict=True)
     root = args.toolchain.resolve()
-    env = dict(PATH=PATH, HOME="/nonexistent",
+    env = dict(PATH=pr.PATH, HOME="/nonexistent",
                TMPDIR=os.environ.get("TMPDIR", "/tmp"), TERM="dumb",
                LC_ALL="C", TZ="UTC", CONFIG_SITE="/dev/null")
     for key, name in (("CC", "gcc"), ("CXX", "g++")):
@@ -1221,6 +1246,9 @@ def toolchain(args):
 
 
 def main(argv=None):
+    # Every process this driver starts, git included, resolves its program
+    # on pr.PATH, not the caller's; the tools found there are sealed.
+    pr.use_fixed_path()
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -1262,6 +1290,8 @@ def main(argv=None):
     if args.action in ("run", "check-jobs"):
         sc.require(args.pairs >= 2 and args.jobs >= 1,
                    "need an AB and a BA pair and a positive job count")
+        sc.require(args.jobs <= MAX_JOBS,
+                   "--jobs above %d would lengthen a job path" % MAX_JOBS)
     return {"run": run, "replay": replay, "check-jobs": check_jobs,
             "toolchain": toolchain}[args.action](args)
 

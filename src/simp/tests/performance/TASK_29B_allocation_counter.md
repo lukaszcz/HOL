@@ -171,8 +171,11 @@ default and is chosen by the caller outside the repository.
   also requires that `src/proofman`, which deposits `bin/hol.state0`, is
   built at or before `src/simp/src`. A prefix is a claim that no process
   loads from it, and each process checks that claim: a shared file whose
-  physical path, or whose related product (`.uo`, `.ui`, `.dat`), lies under
-  a manifest prefix rejects the process, at run time and on replay. The
+  logical path (the name it was loaded by, normalized), physical path or
+  related product (`.uo`, `.ui`, `.dat`) lies under a manifest prefix
+  rejects the process, at run time and on replay. All of them must lie
+  inside the toolchain; one outside it is refused, not taken to be under no
+  prefix. The
   fixtures are not exempt because they are not shared: they are loaded from
   the private directories, bound to their candidate blobs by the harness. The
   resolved boundary (changed files per entry, the list of manifest prefixes,
@@ -283,21 +286,40 @@ default and is chosen by the caller outside the repository.
   the toolchain products and sources, the environment, the boundary and the
   harness, and re-replays the kept cells first. The driver files are keyed
   by path relative to the harness checkout, so the same commit checked out
-  elsewhere resumes. Every process runs under the one `PATH` constant of the
-  driver (`/usr/local/bin:/usr/bin:/bin`), not the caller's; the compilers
-  and build tools it resolves to (`gcc`, `g++`, `make`, `ldd`, `nm`, `ld`,
-  `as`, and the compiler programs behind the drivers) are sealed with the
-  other tools. What a resume ignores is only where things stand
-  (`PLACE_KEYS`: `shim_path`, `library` and `aliases` of this session's
-  private runtime and shim, and `tmpdir`): each kept cell records the places
-  it was measured at and is replayed against them, while the contents (the
-  runtime and shim seals, the libraries and tools by seal) stay in the grid
-  digest. `TMPDIR` is a place because the runtime reads it only to choose
-  where the backing file of its memory mappings lives, and the counter
-  counts requested reservations, not where they are backed. The rest of the
-  environment is content, `HOLDIR` included: it names the toolchain, which
-  `--toolchain` identifies by path and whose products are sealed by that
-  path. A changed `PATH`, compiler path or toolchain is a different grid.
+  elsewhere resumes. Every process runs under the one `PATH` constant of
+  `allocator-counter/private_runtime.py` (`/usr/local/bin:/usr/bin:/bin`),
+  not the caller's: the entry points of the matrix driver and of
+  `run_controls.py` make it `os.environ["PATH"]` before anything else, so
+  `git` (which extracts the measured sources) and every other subprocess
+  resolve their programs there. The compilers and build tools it resolves to
+  (`gcc`, `g++`, `make`, `ldd`, `nm`, `ld`, `as`, `git`, and the compiler
+  programs behind the drivers) are sealed with the other tools.
+  What a resume ignores is only where things stand (`PLACE_KEYS`:
+  `shim_path`, `library` and `aliases` of this session's private runtime and
+  shim, and `tmpdir`): each kept cell records the places it was measured at
+  and is replayed against them, while the contents (the runtime and shim
+  seals, the libraries and tools by seal) stay in the grid digest. `TMPDIR`
+  is a place because the runtime reads it to choose where the backing file
+  of its memory mappings lives (`tools-poly/poly/Mosml.sml` reads it too, to
+  name temporary files), and the counter counts requested reservations, not
+  where they are backed. A place has a length, though. The scratch tree
+  stands below `TMPDIR`, so `PAIR_PRIVATE`, `LD_LIBRARY_PATH` and
+  `TASK29_ALLOC_SHIM` change length with it, and path length can change
+  startup words (hence the equal-length selection labels). A resume under a
+  `TMPDIR` of another length would give cells of one grid private paths of
+  different lengths, and published startup could differ between cells. A
+  resume therefore requires `len(tmpdir)` equal, and the length of the
+  resolved private runtime path too, which a symlinked `TMPDIR` can change
+  alone; the final replay refuses cells recorded at lengths that differ. The
+  argument has a limit: no gated bracket (the 27 cases of
+  `task29_gate.CASES`) reads an environment variable or a path. The one
+  path-sensitive call in a bracket is `new_theory` in the
+  `history_theory_change` case of `MatrixSupport.sml` (`parent_doc_url` in
+  `Theory.sml` reads the working directory). That case is not gated; gating
+  it would make `TMPDIR` content, not a place. The rest of the environment
+  is content, `HOLDIR` included: it names the toolchain, which `--toolchain`
+  identifies by path and whose products are sealed by that path. A changed
+  `PATH`, compiler path or toolchain is a different grid.
 - **Acceptance baseline.** `decisions.json` records `acceptance_baseline`,
   true only when the `--baseline` of the run is the pinned develop commit of
   `acceptance.py`; any other baseline is measured and published, a definite

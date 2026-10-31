@@ -133,6 +133,18 @@ class Resolve(Repo):
                           found["prefixes"], found["files"]),
                          (0, 0, {}, []))
 
+    def test_every_manifest_prefix_is_listed_changed_or_not(self):
+        # The processes check "no file loaded under a prefix" against this
+        # list: a prefix nothing changed under still guards the boundary.
+        self.assertEqual(self.resolve(self.baseline)["manifest_prefixes"],
+                         ["doc/", "src/late/"])
+        found = self.resolve(self.candidate({"doc/a.md": "b\n"}))
+        self.assertEqual(found["prefixes"], {"doc/": 1})
+        self.assertEqual(found["manifest_prefixes"], ["doc/", "src/late/"])
+        data = manifest(prefixes=("src/late/", "doc/"))
+        self.assertEqual(self.resolve(self.baseline, data)[
+            "manifest_prefixes"], ["doc/", "src/late/"])
+
     def test_an_unreviewed_difference_is_refused_before_anything_else(self):
         for name in ("top.txt", "src/proofman/P.sml", "src/early/E.sml",
                      "src/thm/T.sml", "src/0/K.sml", "tools/x.sml",

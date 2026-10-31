@@ -418,6 +418,10 @@ class Placement(unittest.TestCase):
         self.sb = tb.Sandbox(self.root / "sb", pairs=2)
         self.products = self.sb.header()["toolchain_products"]
 
+    def moved_tmpdir(self):
+        """Another scratch place of the length of the sandbox's."""
+        return str(self.root / "sb")[:-2] + "s2"
+
     def made(self, **kw):
         grid = self.sb.real_grid(**kw)
         with grid.make():
@@ -433,6 +437,9 @@ class Placement(unittest.TestCase):
         self.assertEqual(sorted(m.PLACE_KEYS),
                          sorted(tb.EXPECTED_PLACE_KEYS))
         self.assertFalse(set(m.GRID_KEYS) & set(m.PLACE_KEYS))
+        self.assertEqual(sorted(m.LENGTH_KEYS),
+                         sorted(tb.EXPECTED_LENGTH_KEYS))
+        self.assertTrue(set(m.LENGTH_KEYS) <= set(m.PLACE_KEYS))
         _, header = self.made()
         self.assertTrue(set(m.GRID_KEYS) | set(m.PLACE_KEYS) <= set(header))
 
@@ -441,9 +448,9 @@ class Placement(unittest.TestCase):
         moved.write_bytes(self.sb.shim.read_bytes())
         _, here = self.made()
         _, there = self.made(
-            library="/elsewhere/task29b-x/libpolyml.so.16.0.0",
-            aliases=["/elsewhere/task29b-x/libpolyml.so.16"], shim=moved,
-            tmpdir="/elsewhere/a-longer-scratch-directory-name")
+            library="/elsewhr/libpolyml.so.16.0.0",
+            aliases=["/elsewhr/libpolyml.so.16"], shim=moved,
+            tmpdir=self.moved_tmpdir())
         for key in m.PLACE_KEYS:
             self.assertNotEqual(here[key], there[key], key)
         for key in m.GRID_KEYS:
@@ -470,7 +477,7 @@ class Placement(unittest.TestCase):
 
     def test_the_environment_but_for_the_scratch_place_is_content(self):
         _, here = self.made()
-        for key, value in (("PATH", "/home/x/bin:" + m.PATH),
+        for key, value in (("PATH", "/home/x/bin:" + m.pr.PATH),
                            ("CC", "/other/gcc"), ("HOLDIR", "/other/hol"),
                            ("HOME", "/root")):
             with self.subTest(key):
@@ -480,7 +487,7 @@ class Placement(unittest.TestCase):
                 self.assertNotEqual(m.grid_digest(here),
                                     m.grid_digest(there))
         # TMPDIR is where scratch trees stand, not a difference of content
-        _, there = self.made(tmpdir=self.root / "elsewhere-scratch")
+        _, there = self.made(tmpdir=self.moved_tmpdir())
         self.assertEqual(m.changed_settings(here, there), [])
         self.assertEqual(m.grid_digest(here), m.grid_digest(there))
         self.assertNotEqual(here["tmpdir"], there["tmpdir"])
@@ -514,8 +521,32 @@ class Placement(unittest.TestCase):
                     here, dict(here, **{key: "changed"})), [key])
         for key in m.PLACE_KEYS:
             with self.subTest(key):
+                changed = (["x" * len(v) for v in here[key]]
+                           if isinstance(here[key], list)
+                           else "x" * len(here[key]))
                 self.assertEqual(m.changed_settings(
-                    here, dict(here, **{key: "changed"})), [])
+                    here, dict(here, **{key: changed})), [])
+
+    def test_a_place_of_another_length_is_refused_on_resume(self):
+        _, here = self.made()
+        for key in m.LENGTH_KEYS:
+            for text in (here[key] + "x", here[key][:-1]):
+                with self.subTest(key=key, text=text):
+                    self.assertEqual(m.changed_settings(
+                        here, dict(here, **{key: text})), [key + "-length"])
+        # a path that moves into a symlinked directory of another length
+        # is seen in the resolved runtime path, with TMPDIR unchanged
+        self.assertEqual(m.changed_settings(here, dict(
+            here, library="/a/libpolyml.so.16.0.0")), ["library-length"])
+        # a header without the place at all is not equal in length
+        older = {k: v for k, v in here.items() if k != "tmpdir"}
+        self.assertEqual(m.changed_settings(older, here), ["tmpdir-length"])
+        self.assertEqual(m.changed_settings(older, dict(here, tmpdir="")),
+                         ["tmpdir-length"])
+        both = dict(here, tmpdir=here["tmpdir"] + "x",
+                    library=here["library"] + "x")
+        self.assertEqual(m.changed_settings(here, both),
+                         ["tmpdir-length", "library-length"])
         older = {k: v for k, v in here.items() if k != "harness"}
         self.assertEqual(m.changed_settings(older, here), ["harness"])
 
@@ -741,14 +772,35 @@ class Run(Bed):
                 super().__init__(args)
                 self.header.update(
                     shim_path="/n/bracket.so", aliases=["/n/lib.alias"],
-                    library="/n/libpolyml.so.16.0.0")
+                    library="/elsewhr/libpolyml.so.16.0.0",
+                    tmpdir=self.header["tmpdir"][:-2] + "s2")
         with mock.patch.object(m, "Grid", Elsewhere):
             self.quiet(m.run, arguments(self.out, CELLS[:1], resume=True))
         inventory = a.load(self.out / "inventory.json")
-        self.assertEqual(inventory["library"], "/n/libpolyml.so.16.0.0")
+        self.assertEqual(inventory["library"],
+                         "/elsewhr/libpolyml.so.16.0.0")
         self.assertEqual(inventory["runs"][0]["places"]["library"], tb.LIB)
         self.assertEqual(self.quiet(
             m.replay, type("Args", (), {"output": self.out})), 2)
+
+    def test_resume_at_places_of_another_path_length_is_refused(self):
+        self.patched()
+        self.run_cells(CELLS[:1])
+        before = (self.out / "inventory.json").read_bytes()
+        stub, _ = make_stub(self.sb)
+        for key, value in (("tmpdir", "/a-longer-scratch-directory"),
+                           ("library", "/n/libpolyml.so.16.0.0")):
+            class Elsewhere(stub):
+                def __init__(self, args, key=key, value=value):
+                    super().__init__(args)
+                    self.header[key] = value
+            with self.subTest(key), mock.patch.object(m, "Grid", Elsewhere):
+                with self.assertRaisesRegex(
+                        sc.InvalidAllocation,
+                        "resume with different settings: %s-length$" % key):
+                    self.quiet(m.run, arguments(self.out, CELLS[:2],
+                                                resume=True))
+        self.assertEqual((self.out / "inventory.json").read_bytes(), before)
 
     def test_resume_replays_the_kept_cells_first(self):
         self.patched()
@@ -1217,12 +1269,12 @@ class Preparation(unittest.TestCase):
         self.assertIsInstance(error, ZeroDivisionError)
         grid = self.last
         # not the caller's PATH, and the tools it resolves to are sealed
-        self.assertEqual(grid.env["PATH"], m.PATH)
+        self.assertEqual(grid.env["PATH"], m.pr.PATH)
         self.assertEqual(sealed, [grid.env])
         self.assertIn("/usr/bin/tool", grid.tools)
         self.assertEqual(grid.env["TMPDIR"], str(self.root / "tmp"))
         self.assertEqual(grid.env["CC"], shutil.which(
-            "gcc", path=m.PATH))
+            "gcc", path=m.pr.PATH))
         # keyed by path relative to the harness checkout
         files, _ = m.harness_files()
         self.assertEqual(sorted(grid.inputs), sorted(
@@ -1232,7 +1284,7 @@ class Preparation(unittest.TestCase):
             self.assertTrue((m.ROOT / name).is_file(), name)
 
     def test_the_driver_path_is_a_constant_of_system_directories(self):
-        self.assertEqual(m.PATH.split(":"),
+        self.assertEqual(m.pr.PATH.split(":"),
                          ["/usr/local/bin", "/usr/bin", "/bin"])
 
     def closed(self, grid):
@@ -1642,6 +1694,13 @@ class Toolchain(unittest.TestCase):
         self.assertEqual(found["lineage"], {"native_configuration": "config"})
         self.assertFalse((self.root / "lineage-failed.json").exists())
 
+    def test_the_standalone_probe_runs_under_the_fixed_path(self):
+        with mock.patch.dict(os.environ, PATH="/elsewhere:/bin"):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    self.probe.main(["--output", "/nonexistent/o.json"])
+            self.assertEqual(os.environ["PATH"], m.pr.PATH)
+
     def test_the_toolchain_builds_under_the_drivers_fixed_path(self):
         seen = []
 
@@ -1650,9 +1709,9 @@ class Toolchain(unittest.TestCase):
         with mock.patch.dict(os.environ, PATH="/elsewhere:/bin"), \
                 self.environment(build):
             m.toolchain(self.args())
-        self.assertEqual(seen[0]["PATH"], m.PATH)
+        self.assertEqual(seen[0]["PATH"], m.pr.PATH)
         self.assertEqual(a.load(self.root / "lineage.json")[
-            "environment"]["PATH"], m.PATH)
+            "environment"]["PATH"], m.pr.PATH)
 
     def test_failure_is_never_admitted_as_a_toolchain(self):
         def build(source, dst, repo, env, run, lineage):
@@ -1730,6 +1789,46 @@ class Toolchain(unittest.TestCase):
 
 
 class Command(unittest.TestCase):
+    def setUp(self):
+        # main() makes the fixed PATH the process environment: undo that.
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_every_entry_point_runs_under_the_fixed_path(self):
+        base = ["--output", "/o", "--candidate", tb.CAND_PIN, "--toolchain",
+                "/t", "--controls-receipt", "/c.json"]
+        fake = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, fake)
+        (fake / "git").write_text("#!/bin/sh\necho fake\n")
+        (fake / "git").chmod(0o755)
+        caller = "%s:%s" % (fake, os.environ["PATH"])
+        for action, handler, extra in (
+                ("run", "run", []), ("check-jobs", "check_jobs",
+                                     ["--cells", "a-0", "b-0"]),
+                ("replay", "replay", []), ("toolchain", "toolchain", [])):
+            args = [action] + (["--output", "/o"] if action == "replay"
+                               else ["--toolchain", "/t"] if
+                               action == "toolchain" else base) + extra
+            with self.subTest(action):
+                os.environ["PATH"] = caller
+                seen = []
+
+                def entry(parsed):
+                    seen.append((os.environ["PATH"], shutil.which("git")))
+                    return 0
+                with mock.patch.object(m, handler, entry):
+                    m.main(args)
+                self.assertEqual(seen, [(m.pr.PATH, shutil.which(
+                    "git", path=m.pr.PATH))])
+                self.assertNotEqual(seen[0][1], str(fake / "git"))
+        # even a command line that is refused finds PATH already fixed
+        os.environ["PATH"] = caller
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                m.main(["run"])
+        self.assertEqual(os.environ["PATH"], m.pr.PATH)
+
     def test_controls_receipt_is_required_and_forwarded(self):
         base = ["--output", "/o", "--candidate", tb.CAND_PIN, "--toolchain",
                 "/t"]
@@ -1757,6 +1856,22 @@ class Command(unittest.TestCase):
         with mock.patch.object(m, "run", lambda args: 0):
             with self.assertRaisesRegex(sc.InvalidAllocation, "positive"):
                 m.main(argv)
+
+    def test_more_jobs_than_two_digits_name_is_refused(self):
+        base = ["--output", "/o", "--candidate", tb.CAND_PIN, "--toolchain",
+                "/t", "--controls-receipt", "/c.json"]
+        for action, handler, extra in (
+                ("run", "run", []),
+                ("check-jobs", "check_jobs", ["--cells", "a-0", "b-0"])):
+            seen = []
+            with self.subTest(action), mock.patch.object(
+                    m, handler, lambda args: seen.append(args) or 0):
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "--jobs above 100"):
+                    m.main([action, *base, *extra, "--jobs", "101"])
+                self.assertEqual(seen, [])
+                m.main([action, *base, *extra, "--jobs", "100"])
+                self.assertEqual(len(seen), 1)
 
     def test_fewer_than_an_ab_and_a_ba_pair_is_refused(self):
         argv = ["run", "--output", "/o", "--candidate", tb.CAND_PIN,

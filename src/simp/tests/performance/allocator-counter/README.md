@@ -175,14 +175,16 @@ interpreter, failure, and the three path launchers. Each has a finite
 process-group timeout, stderr merged into stdout, and its own strict schema.
 Both the actual loaded process maps and the snapshot symbol's DSO must
 identify the private runtime; no second libpolyml is permitted.
-Compiler/linker tools, effective sanitized environments, configuration and
-build inputs, linked libraries, generated fixture products, raw
-commands/exits and endpoints are retained in the receipt, which is the only
-evidence; a completed run is **not** TASK29B matrix acceptance. All source,
-build and fixture copies are deleted afterwards, and the seals of inputs
-outside the temporary tree are rechecked after that. The driver never writes
-to the supplied pristine source, takes the performance/build serial lock, and
-must not run alongside benchmarks.
+Every process, git included, runs under the one fixed `PATH` of
+`private_runtime.py` (the driver sets it on entry), not the caller's.
+Compiler/linker tools and git, effective sanitized environments,
+configuration and build inputs, linked libraries, generated fixture
+products, raw commands/exits and endpoints are retained in the receipt,
+which is the only evidence; a completed run is **not** TASK29B matrix
+acceptance. All source, build and fixture copies are deleted afterwards,
+and the seals of inputs outside the temporary tree are rechecked after
+that. The driver never writes to the supplied pristine source, takes the
+performance/build serial lock, and must not run alongside benchmarks.
 
 Scope: compact32 (refused by `private_runtime.reject_compact32` and
 `path_schema.reject_compact32`) and callbacks from threads not created by the
