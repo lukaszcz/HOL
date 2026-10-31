@@ -84856,10 +84856,12 @@ val _ = run_postlude 434 "replay-work-order-accounting-14"
   SmtReplayWorkOrderTests.run
 val _ = run_postlude 435 "replay-prepared-primitive-work-5"
   SmtReplayPrimitiveWorkTests.run
+val _ = run_postlude 436 "replay-completed-state-release-1"
+  SmtReplayStateTests.run
 
 val () =
   let
-    val expected = 436
+    val expected = 437
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso

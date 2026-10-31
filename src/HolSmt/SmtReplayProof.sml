@@ -1058,6 +1058,16 @@ struct
     | specialize_closed (PolicyRealizedClosedFact _) _=
         raise ERR "specialize_closed" "policy specialization not implemented"
 
+  (* Only completed consumption/revocation retires a finite Block. Retained
+     Source receipts still need its immutable leaves/names and proof edges,
+     not these optional runtime caches. assemble_internal checks theorem
+     (hence active) before reading assembly; deferred native programmes
+     capture their law/tree before retirement and never consult it again.
+     Both constructors prepay the two cache writes before projection rules;
+     keep retirement callback-free and debit-free, even on retired Work. *)
+  fun retire_block (Block {primitive_metadata,assembly,realized,...}) =
+    (primitive_metadata := NONE;assembly := NONE;realized := true)
+
   fun active_finite (Block {graph, scope, realized, owned_frame, ...}) =
     ((case owned_frame of NONE => () | SOME (work,frame) =>
        let val data = Scope.description_for work frame
@@ -1739,6 +1749,8 @@ struct
         (fn (index,term,table) => Redblackmap.insert (table,term,
           index :: Option.getOpt (Redblackmap.peek (table,term),[])))
         (Redblackmap.mkDict Term.compare) leaf_terms)
+      (* Prepay retire_block's two additional cache writes. *)
+      val _ = case metered of NONE => () | SOME work => W.spend work 2
       val projections =
         if sparse then Vector.map SmtReplayRuleObservation.ASSUME leaf_terms
         else Vector.fromList
@@ -2479,7 +2491,7 @@ struct
         then node::rest else rest)) [] nodes end
 
   fun refreeze_needed_sources (old as Block
-      {graph,scope,nodes,leaves,template_limit,realized,leaf_index,...})
+      {graph,scope,nodes,leaves,template_limit,leaf_index,...})
       {roots,target,edge} =
     let
       val proof = theorem old edge
@@ -2494,7 +2506,7 @@ struct
       val used = Redblackset.addList (Redblackset.empty Int.compare,
         needed_leaves old edge)
       val original_sources = sources old
-      val _ = realized := true
+      val _ = retire_block old
       val closed_facts = Vector.foldri
         (fn (i,ClosedWitness fact,rest) =>
               if Redblackset.member (used,i) then fact::rest else rest
@@ -2541,7 +2553,7 @@ struct
      the immutable sparse theorem after checking its retained names/Hyp;
      separately cache its balanced, closed common-context assembly. *)
   fun refreeze_needed_sources_with_work expected
-      (old as Block {graph,scope,nodes,leaves,template_limit,realized,
+      (old as Block {graph,scope,nodes,leaves,template_limit,
         leaf_index,owned_names,...}) {roots,target,edge} =
     ((validate_block_for expected old;
       W.with_step expected (fn () =>
@@ -2620,7 +2632,7 @@ struct
         val _ = retained_source_guard expected source_frame
         val _ = validate_block_for expected next
         val _ = W.spend expected 1
-        val _ = realized := true
+        val _ = retire_block old
       in {block = next,edge = transferred} end))
      handle primary => (W.close expected;raise primary))
 
@@ -3846,7 +3858,7 @@ struct
 
   fun discharge_sources (old as Block
       {graph,scope,nodes,leaves,tree,context,source_count,
-       template_limit,realized,leaf_index,...}) {indices,body,edge} =
+       template_limit,leaf_index,...}) {indices,body,edge} =
     let
       val _ = if Option.isSome leaf_index then
           raise ERR "discharge_sources" "sparse local discharge is unsupported"
@@ -3937,7 +3949,7 @@ struct
           (SmtReplayRuleObservation.SYM equation) discharged
           | _ => raise ERR "discharge_sources" "missing implication bridge")
         (equation :: source_edges @ definition_edges)
-      val _ = realized := true
+      val _ = retire_block old
     in {block = next,target = target,edge = result} end
 
   (* Fixed owned local-Source discharge. Only this block's exact recorded
@@ -3945,7 +3957,7 @@ struct
      No fresh Source portfolio, caller theorem or expanded residue is used. *)
   fun discharge_sources_with_work expected
       (old as Block {graph,scope,nodes,leaves,tree,context,source_count,
-        template_limit,realized,leaf_index,owned_names,...})
+        template_limit,leaf_index,owned_names,...})
       {indices,body,edge} =
     ((primitive_work expected old;
       W.with_step expected (fn () =>
@@ -4158,7 +4170,7 @@ struct
           (List.tabulate (Vector.length next_leaves,Lib.I)))
         val _ = retained_source_guard expected source_frame
         val _ = validate_block_for expected next
-        val _ = realized := true
+        val _ = retire_block old
       in observe_proof graph #edges;{block = next,target = target,
         edge = Edge {owner = owner,theorem = result,dependencies = dependency}}
       end)) handle primary => (W.close expected;raise primary))
@@ -4166,7 +4178,7 @@ struct
   (* Cross-block witnesses already use retained endpoints and canonical
      source hypotheses. They are not instantiated or re-abstracted here. *)
   fun realize_internal (block as Block
-      {graph,scope,nodes,leaves,realized,leaf_index,...})
+      {graph,scope,nodes,leaves,leaf_index,...})
       resolution target
       edge supplied closed_images =
     let
@@ -4340,7 +4352,7 @@ struct
       val _ = if Portable.pointer_eq
           (Thm.concl result,G.representative graph target) andalso clean result
         then () else raise ERR operation "endpoint or tags changed"
-      val _ = realized := true
+      val _ = retire_block block
     in result end
 
   fun realize block target edge =
@@ -4654,7 +4666,7 @@ struct
      Open Hyp must be exact promoted Source slots. Old realization is literal
      and retains its existing sparse closed-witness restriction. *)
   fun prepare_source_cut_internal (block as Block
-      {graph,scope,nodes,leaves,realized,leaf_index,owned_frame,...})
+      {graph,scope,nodes,leaves,leaf_index,owned_frame,...})
       resolution target
       edge supplied closed_images =
     let
@@ -4834,7 +4846,7 @@ struct
           val _=if Portable.pointer_eq(Thm.concl result,endpoint)andalso
               clean result then ()else
             raise ERR operation "endpoint or tags changed"
-          val _=realized:=true
+          val _=retire_block block
         in result end
     in {run=run,endpoint=endpoint,hypotheses=hypotheses} end
 
@@ -21671,6 +21683,8 @@ struct
             SOME _=>() | NONE=>raise ERR "policy_native_freeze"
               "prospective compact context bound changed"
         val _=valid ()
+        (* Prepay retire_block before the first projection rule. *)
+        val _=W.spend_policy expected 2
         val projections=Vector.fromList
           (project tree (SmtReplayRuleObservation.ASSUME context))
         val _=valid ()
@@ -22153,15 +22167,16 @@ struct
           guard=valid,run=run,realized=realized} end)
      handle primary=>(W.close expected;raise primary))
 
-  fun execute_realization_with_policy expected saved =
-    ((let val {contexts,proof,substitution,guard,run,realized}=
+  fun execute_realization_with_policy expected
+      (saved as PolicyRealizationPlan {block,...}) =
+    ((let val {contexts,proof,substitution,guard,run,...}=
             preflight_realization expected saved
           val _=W.require_callback_free_return expected
           val instantiated=SmtReplaySimultaneousRealization.instantiate
             {guard=guard,error=ERR "policy_realize",contexts=contexts,
              proof=proof,substitution=substitution}
           val result=run instantiated
-          val _=realized:=true
+          val _=retire_block block
       in result end) handle primary=>(W.close expected;raise primary))
 
   (* Individually admitted plans over ONE private block. All laws close
@@ -22233,7 +22248,7 @@ struct
         val results=execute (List.map #run programmes) laws
         (* No requests means retirement of an unused block, not emission
            of a completed realized theorem (and needs no INST). *)
-        val _=realized:=true
+        val _=retire_block block
       in results end)
      handle primary=>(W.close expected;raise primary))
 
@@ -22854,7 +22869,7 @@ struct
      All proof instructions are modelled before the first callback/rule. *)
   fun discharge_sources_with_policy expected
       (old as Block {graph,scope,nodes,leaves,tree,context,source_count,
-        realized,owned_frame,...})
+        owned_frame,...})
       {indices,body,edge,ordinal,check_type} =
     ((let val(owner,native)=pp_owner expected old
           val contract= #contract owner
@@ -23183,7 +23198,7 @@ struct
         val dependency=new_dependency next
           (Leaves(List.tabulate(Vector.length next_leaves,Lib.I)))
         val _=valid ()val _=ignore(pp_owner expected next)
-        val _=realized:=true
+        val _=retire_block old
       in {block=next,target=target,
         edge=Edge {owner=next_owner,theorem=result,dependencies=dependency}}end)
       end)
@@ -23220,6 +23235,8 @@ struct
         fun valid()=(ignore(pp_owner expected left);
           ignore(pp_owner expected right))
         val _=valid()
+        (* Prepay the final alias check; each block funds one retirement. *)
+        val _=pay 1
         val graph= #graph owner val scope= #scope owner
         val originals=W.original_sources expected
         val prefix=SmtReplaySource.assumption_nodes originals @
@@ -23446,7 +23463,8 @@ struct
         val _=valid()val _=ignore(pp_owner expected next)
         val Block{realized=left_used,...}=left
         val Block{realized=right_used,...}=right
-        val _=left_used:=true val _=right_used:=true
+        val _=retire_block left
+        val _=if left_used=right_used then () else retire_block right
       in{block=next,left=a,right=b}end)
     end)handle primary=>(W.close expected;raise primary))
 
@@ -23909,8 +23927,7 @@ struct
      no replacement contract, integer Work projection or credit is used. *)
   fun retire_policy_block_for expected block =
     ((let val _=ignore(pp_owner expected block)
-          val Block{realized,...}=block
-      in realized:=true end)
+      in retire_block block end)
      handle primary=>(W.close expected;raise primary))
 
   (* Actual receipt ownership remains in this P specialization. *)
