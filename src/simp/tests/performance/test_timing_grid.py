@@ -4472,6 +4472,8 @@ class Checkout(unittest.TestCase):
         self.product.write_text("object")
         self.theory = built / "aTheory.dat"
         self.theory.write_text("theory data")
+        self.source = built / "aTheory.sml"
+        self.source.write_text("theory source")
         (self.repo / "sigobj" / "aTheory.uo").symlink_to(self.product)
         self.stamp = self.repo / ".agent-files" / "build-stamp.json"
         self.stamp.parent.mkdir()
@@ -4497,8 +4499,9 @@ class Checkout(unittest.TestCase):
                                            "tree_outside_performance"])
         self.assertEqual(stamped["head"], self.head)
         self.assertEqual(stamped["build"], list(tg.BUILD))
-        # bin/hol, bin/hol.state0, bin/Holmake, one link, one data file.
-        self.assertEqual(stamped["products"]["files"], 5)
+        # bin/hol, bin/hol.state0, bin/Holmake, one link, one data file and
+        # one theory source.
+        self.assertEqual(stamped["products"]["files"], 6)
         self.assertEqual(found["products"], stamped["products"]["sha256"])
 
     def test_the_head_must_be_the_commit_measured(self):
@@ -4583,7 +4586,14 @@ class Checkout(unittest.TestCase):
                                                "b.dat").write_text("x"),
                  lambda: (self.product.parent / "b.dat").unlink()),
                 ("removed theory data", self.theory.unlink,
-                 lambda: self.theory.write_text("theory data"))):
+                 lambda: self.theory.write_text("theory data")),
+                ("theory source", lambda: self.source.write_text("other"),
+                 lambda: self.source.write_text("theory source")),
+                ("added theory source", lambda: (self.product.parent /
+                                                 "b.sml").write_text("x"),
+                 lambda: (self.product.parent / "b.sml").unlink()),
+                ("removed theory source", self.source.unlink,
+                 lambda: self.source.write_text("theory source"))):
             with self.subTest(label):
                 change()
                 with self.assertRaisesRegex(ValueError, "differ from the "

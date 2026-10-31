@@ -491,9 +491,9 @@ STALE = "WARNING! WARNING!"
 # The products a measurement loads from the checkout besides the sources the
 # harness takes per side from git (the simplifier's, below src/simp/src): the
 # executable, the heap, the Holmake that compiles the fixtures, everything the
-# heap's libraries load from sigobj and the theory data files below
-# src/**/.hol/objs. The Poly/ML runtime and libraries are not here: each
-# cell's manifest records them among its tools.
+# heap's libraries load from sigobj, and the theory data files and the
+# theory sources below src/**/.hol/objs. The Poly/ML runtime and libraries are
+# not here: each cell's manifest records them among its tools.
 PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/Holmake")
 PREPARE = "run prepare at this commit"
 # A build from nothing takes the better part of an hour.
@@ -513,10 +513,11 @@ def file_sha256(path):
 
 def products_digest(repo):
     """The content of the shared products a measurement loads: `PRODUCTS`,
-    every file below sigobj (symlinks followed) and the theory data files
-    below src/**/.hol/objs, as the sha256 of their sorted names and content
-    seals. Times play no part. A product, or a link's target, outside the
-    repository is refused: the stamp binds this checkout's products only."""
+    every file below sigobj (symlinks followed), and the theory data files
+    and theory sources below src/**/.hol/objs, as the sha256 of their sorted
+    names and content seals. Times play no part. A product, or a link's
+    target, outside the repository is refused: the stamp binds this
+    checkout's products only."""
     repo = Path(repo)
     found = {name: repo / name for name in PRODUCTS}
     top = repo / "sigobj"
@@ -530,8 +531,9 @@ def products_digest(repo):
         for name in files:
             path = Path(folder) / name
             found[path.relative_to(repo).as_posix()] = path
-    for path in sorted((repo / "src").glob("**/.hol/objs/*.dat")):
-        found[path.relative_to(repo).as_posix()] = path
+    for suffix in ("dat", "sml"):
+        for path in sorted((repo / "src").glob("**/.hol/objs/*." + suffix)):
+            found[path.relative_to(repo).as_posix()] = path
     inside = Path(os.path.realpath(repo))
     digest = hashlib.sha256()
     for name in sorted(found):
@@ -569,8 +571,9 @@ def checkout_identity(repo, commit=None, stamp=None):
     the products digest. The simplifier's sources below src/simp/src are
     taken per side from git; the stamp binds the products named at
     `PRODUCTS` and `products_digest`: bin/hol, bin/hol.state0, bin/Holmake,
-    sigobj and the theory data files. It does not bind the Poly/ML runtime
-    and libraries, which each cell's manifest records among its tools.
+    sigobj, and the theory data files and sources. It does not bind the
+    Poly/ML runtime and libraries, which each cell's manifest records among
+    its tools.
     Holmake, not this module, judges whether a build is out of date: the
     comparison is of contents, so a commit that touches only the performance
     area, a checkout round trip to the same tree and a touched heap pass,
@@ -603,7 +606,8 @@ def checkout_identity(repo, commit=None, stamp=None):
     products = products_digest(repo)
     a.require(made["products"] == products,
               "the products (bin/hol, bin/hol.state0, bin/Holmake, sigobj, "
-              "the theory data files) differ from the stamped build: "
+              "the theory data files and sources) differ from the stamped "
+              "build: "
               + PREPARE)
     return dict(found, products=products["sha256"])
 
