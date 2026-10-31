@@ -14,7 +14,9 @@ struct
     {procedures : atom_procedure list,
      fallback : atom_procedure option,
      atom_index : term -> int option,
-     atom_cache : (int, thm) Redblackmap.dict ref}
+     atom_cache : (string * int * int, thm) Redblackmap.dict ref,
+     cache_generation : unit ref ref,
+     refresh_caches : unit -> unit}
 
   type metrics =
     {target_tree_nodes : int,
@@ -105,8 +107,106 @@ struct
       Portable.finally restore run ()
     end
 
-  fun cache_size (Context {atom_cache, ...}) =
-    Redblackmap.numItems (!atom_cache)
+  (* Immutable signature-table witnesses also detect Context.restore, which
+     need not advance retirement epochs. This only invalidates optional
+     hints; it is neither term validation nor proof admission. *)
+  fun cache_signature () =
+    let val current = Context.snapshot () in
+      (Context.typesig current, Context.termsig current)
+    end
+
+  fun cache_signature_matches (types, symbols) =
+    let val (current_types, current_symbols) = cache_signature () in
+      Portable.pointer_eq (types, current_types) andalso
+      Portable.pointer_eq (symbols, current_symbols)
+    end
+
+  (* Small publication hints must not dominate fresh/zero-reuse contexts.
+     Collision eviction affects retention only, never checked proving. *)
+  val live_bucket_count = 127
+  type live_memo =
+    {terms : Term.term list array, types : Type.hol_type list array}
+  fun new_live_memo () : live_memo =
+    {terms = Array.array (live_bucket_count, []),
+     types = Array.array (live_bucket_count, [])}
+
+  (* Bounded positive hints are optional publication checks, not admission.
+     Small pointer buckets avoid structural comparisons of shared Types. *)
+  fun live_check_with_hints (typesig, termsig) ({terms, types} : live_memo) =
+    let
+      exception Unknown
+      val remaining = ref SmtResource.max_bv_replay_term_nodes
+      fun spend amount =
+        if amount <= !remaining then remaining := !remaining - amount
+        else raise Unknown
+      fun known buckets bucket value =
+        List.exists (fn old => Portable.pointer_eq (value, old))
+          (Array.sub (buckets, bucket))
+      fun prefix 0 _ = []
+        | prefix _ [] = []
+        | prefix n (item :: rest) = item :: prefix (n - 1) rest
+      fun remember buckets bucket value =
+        Array.update (buckets, bucket,
+          value :: prefix 7 (Array.sub (buckets, bucket)))
+      fun live_type ty =
+        let
+          val _ = spend 1
+          val bucket = if Type.is_vartype ty then 0 else
+            KernelSig.epoch_of (#Tyop (Type.dest_thy_typeid ty))
+              mod live_bucket_count
+        in
+          if known types bucket ty then true
+          else
+            let
+              val live = Type.is_vartype ty orelse
+                let val {Tyop, Args, ...} = Type.dest_thy_typeid ty in
+                  KernelSig.uptodate_id typesig Tyop andalso
+                  List.all live_type Args
+                end
+              val _ = if live then remember types bucket ty else ()
+            in live end
+        end
+      fun live_term term =
+        let
+          val _ = spend 1
+          (* Publication hints tolerate eviction. A short sample avoids
+             duplicating the full structural index's deeper bucket work. *)
+          val bucket = SmtReplayImport.pointer_bucket 2 live_bucket_count term
+        in
+          if known terms bucket term then true
+          else
+            let
+              val live =
+                if Term.is_comb term then
+                  live_term (Term.rator term) andalso
+                  live_term (Term.rand term)
+                else if Term.is_var term then live_type (Term.type_of term)
+                else if Term.is_const term then
+                  let val {Name, Ty, ...} = Term.dest_thy_constid term in
+                    KernelSig.uptodate_id termsig Name andalso live_type Ty
+                  end
+                else
+                  (* Large binders are an optional miss. Never allow the
+                     publication walk to open an unbounded legacy body. *)
+                  (case SmtReplayImport.bounded_raw_size
+                      (Int.min (8192, !remaining)) term of
+                     NONE => raise Unknown
+                   | SOME nodes =>
+                       let
+                         val _ = spend nodes
+                         val (variable, body) =
+                           SmtReplayImport.dest_abs_preserving_names term
+                       in live_term variable andalso live_term body end)
+              val _ = if live then remember terms bucket term else ()
+            in live end
+        end
+    in fn term => live_term term handle Unknown => false end
+
+  fun new_cache_live_check () =
+    live_check_with_hints (cache_signature ()) (new_live_memo ())
+
+  fun cache_size (Context {atom_cache, refresh_caches, ...}) =
+    (refresh_caches (); Redblackmap.numItems (!atom_cache))
 
   (* Admission and proof reconstruction share this exact DAG-aware metric.
      In particular, String dispatch must not reject a compact shared term by
@@ -771,10 +871,31 @@ struct
   fun tree_nodes term = #tree_nodes (term_measure term)
   fun dag_nodes term = #dag_nodes (term_measure term)
 
-  fun make_context procedures fallback = Context
-    {procedures = procedures, fallback = fallback,
-     atom_index = new_cache_index SmtResource.max_bv_replay_term_nodes,
-     atom_cache = ref (Redblackmap.mkDict Int.compare)}
+  fun make_context procedures fallback =
+    let
+      fun order ((name, role, id), (name', role', id')) =
+        case String.compare (name, name') of
+          EQUAL => (case Int.compare (role, role') of
+              EQUAL => Int.compare (id, id') | result => result)
+        | result => result
+      fun fresh_index () =
+        new_cache_index SmtResource.max_bv_replay_term_nodes
+      val signature_witness = ref (cache_signature ())
+      val index = ref (fresh_index ())
+      val cache_generation = ref (ref ())
+      val atom_cache = ref (Redblackmap.mkDict order)
+      fun refresh_caches () =
+        if cache_signature_matches (!signature_witness) then () else
+          (cache_generation := ref ();
+           index := fresh_index ();
+           atom_cache := Redblackmap.mkDict order;
+           signature_witness := cache_signature ())
+    in Context
+      {procedures = procedures, fallback = fallback,
+       atom_index = fn term => (refresh_caches (); (!index) term),
+       atom_cache = atom_cache, cache_generation = cache_generation,
+       refresh_caches = refresh_caches}
+    end
 
   fun new_context procedures = make_context procedures NONE
 
@@ -1519,16 +1640,30 @@ struct
   val build_cnf_graph = build_cnf_graph_mode false
 
   type sat_context =
-    {proofs : (term * thm * int) list ref, nodes : int ref}
+    {proofs : (term * thm * int) list ref, nodes : int ref,
+     refresh_caches : unit -> unit}
 
-  fun new_sat_context () : sat_context = {proofs = ref [], nodes = ref 0}
+  fun new_sat_context () : sat_context =
+    let
+      val signature_witness = ref (cache_signature ())
+      val proofs = ref []
+      val nodes = ref 0
+      fun refresh_caches () =
+        if cache_signature_matches (!signature_witness) then () else
+          (proofs := []; nodes := 0;
+           signature_witness := cache_signature ())
+    in {proofs = proofs, nodes = nodes,
+        refresh_caches = refresh_caches} end
 
   fun cached_sat_proof (context : sat_context) target cost prove =
     let
+      val _ = #refresh_caches context ()
+      val signature_witness = cache_signature ()
       val maximum = SmtResource.max_skeleton_replay_dag_nodes
       val term_order = new_semantic_order ()
       fun validate theorem =
-        (if List.null (Thm.hyp theorem) then ()
+        (#refresh_caches context ();
+         if List.null (Thm.hyp theorem) then ()
          else raise ERR "cached_sat_proof" "SAT certificate has hypotheses";
          Library.check_oracle_tags "SmtSkeletonProve"
            "schematic SAT certificate" theorem;
@@ -1540,7 +1675,12 @@ struct
                 SOME theorem)
             else find rest (entry :: prior)
       fun retain theorem =
-        if cost > maximum then ()
+        (#refresh_caches context ();
+        (* Never publish a certificate captured across a signature change.
+           Its checked result can still satisfy this request. *)
+        if not (cache_signature_matches signature_witness) orelse
+           cost > maximum orelse
+           not (new_cache_live_check () (Thm.concl theorem)) then ()
         else
           let
             fun fit entries nodes =
@@ -1554,7 +1694,7 @@ struct
             #proofs context := (target, theorem, cost) ::
               List.rev oldest_first;
             #nodes context := nodes + cost
-          end
+          end)
       val theorem = case find (!(#proofs context)) [] of
           SOME theorem => phase "skeleton/schematic-certificate-hit"
             validate theorem
@@ -1562,8 +1702,9 @@ struct
                   in retain theorem; theorem end
     in theorem end
 
-  fun checked_graph_sat_prove_in context entries root =
+  fun checked_graph_sat_prove_in (context : sat_context) entries root =
     let
+      val _ = #refresh_caches context ()
       fun node_id (GraphNode {id, ...}) = id
       fun node_kind (GraphNode {kind, ...}) = kind
       fun node_representative (GraphNode {representative, ...}) =
@@ -1848,8 +1989,9 @@ struct
         [HOLset.addList (empty_terms, candidates)])
     end
 
-  fun propositional_prove_in context target =
+  fun propositional_prove_in (context : sat_context) target =
     let
+      val _ = #refresh_caches context ()
       val _ = Term.type_of target = Type.bool orelse
         raise ERR "propositional_prove" "target is not Boolean"
       val graph = phase "skeleton/propositional-cnf"
@@ -1953,8 +2095,9 @@ struct
      Theory operators stay uninterpreted: their arguments must be equal by
      congruence, not by an assumed theory identity.  Maximal Boolean islands
      are discharged once rather than lowering all surrounding word circuits. *)
-  fun congruence_prove_in context target =
+  fun congruence_prove_in (context : sat_context) target =
     let
+      val _ = #refresh_caches context ()
       val (left, right) = boolSyntax.dest_eq target
       val term_order = new_semantic_order ()
       val cache = ref (Redblackmap.mkDict
@@ -2014,9 +2157,26 @@ struct
     congruence_prove_in (new_sat_context ()) target
 
   fun prove_with_owners
-      (Context {procedures, fallback, atom_index, atom_cache}) owners
+      (Context {procedures, fallback, atom_index, atom_cache,
+                cache_generation, refresh_caches}) owners
       (target_measure : {tree_nodes : int, dag_nodes : int}) target =
     let
+      val _ = refresh_caches ()
+      val signature_witness = cache_signature ()
+      val generation_witness = !cache_generation
+      (* A callback may reset the index and then restore the signature.
+         Neither old IDs nor working_cache belong to that new generation. *)
+      fun reusable () =
+        (refresh_caches ();
+         generation_witness = !cache_generation andalso
+         cache_signature_matches signature_witness)
+      val live_check = ref (NONE : (term -> bool) option)
+      fun live theorem =
+        let
+          val check = case !live_check of SOME check => check
+            | NONE => let val check = new_cache_live_check ()
+                      in live_check := SOME check; check end
+        in check (Thm.concl theorem) end
       val _ =
         if Term.type_of target = Type.bool then ()
         else raise ERR "prove" "target is not Boolean"
@@ -2028,8 +2188,8 @@ struct
       val total_timer = Timer.startRealTimer ()
       (* Owner/node IDs are obligation-local, independent of any exhausted
          cross-obligation atom-cache index. Reindex legacy owner maps once. *)
-      val node_index = new_cache_index
-        SmtResource.max_bv_replay_term_nodes
+      val node_index = ref (new_cache_index
+        SmtResource.max_bv_replay_term_nodes)
       val term_order = new_semantic_order ()
       val owners = Redblackmap.foldl
         (fn (atom, owner, result) =>
@@ -2040,6 +2200,18 @@ struct
       val distinct_atoms = ref (HOLset.empty term_order)
       val calls = ref (Redblackmap.mkDict String.compare)
       val working_cache = ref (!atom_cache)
+      val local_signature = ref (cache_signature ())
+      val local_generation = ref (!cache_generation)
+      fun refresh_local () =
+        (refresh_caches ();
+         if !local_generation = !cache_generation andalso
+            cache_signature_matches (!local_signature) then () else
+           (working_cache := !atom_cache;
+            node_index := new_cache_index
+              SmtResource.max_bv_replay_term_nodes;
+            nodes := Redblackmap.mkDict Int.compare;
+            local_signature := cache_signature ();
+            local_generation := !cache_generation))
       val node_hits = ref 0
       val node_pointer_hits = ref 0
       val node_reanchor_attempts = ref 0
@@ -2069,7 +2241,11 @@ struct
               val {expand, ...} = procedure
               val _ = atom_requests := !atom_requests + 1
               val _ = distinct_atoms := HOLset.add (!distinct_atoms, atom)
-              val cache_key = atom_index atom
+              (* Explicit owners and fallback are distinct even if named
+                 alike. An atom ID alone does not identify its expansion. *)
+              val cache_key = if reusable () then Option.map
+                (fn id => (name, if required then 0 else 1, id))
+                (atom_index atom) else NONE
               fun prove () =
                 let
                   val timer = Timer.startRealTimer ()
@@ -2077,6 +2253,8 @@ struct
                   val expansion = Profile.profile_with_exn_name
                     ("th_lemma[general](atom:" ^ name ^ ")")
                     expand atom
+                  val _ = refresh_local ()
+                  val can_retain = reusable ()
                   val elapsed = Timer.checkRealTimer timer
                   val _ = atom_time := Time.+ (!atom_time, elapsed)
                 in
@@ -2090,7 +2268,9 @@ struct
                           (validate_theorem_with atom_index name atom theorem)
                         val _ = owned_atoms := !owned_atoms + 1
                         val _ = case cache_key of NONE => ()
-                          | SOME id => working_cache :=
+                          | SOME id =>
+                              if not can_retain orelse not (live theorem)
+                              then () else working_cache :=
                               Redblackmap.insert (!working_cache, id, theorem)
                         val _ = atom_proofs := !atom_proofs + 1
                       in
@@ -2115,7 +2295,8 @@ struct
       fun visit term =
         let
           val _ = skeleton_nodes := HOLset.add (!skeleton_nodes, term)
-          val cache_key = node_index term
+          val _ = refresh_local ()
+          val cache_key = (!node_index) term
           fun compute children =
             let
               val child_results = List.map visit children
@@ -2127,7 +2308,10 @@ struct
                       (List.map Lib.fst child_results))
                 else Thm.REFL term
               val result = (theorem, changed)
-              val _ = case cache_key of NONE => ()
+              (* Reindex after recursive callbacks; cache_key may belong
+                 to an index that refresh_local has discarded. *)
+              val _ = refresh_local ()
+              val _ = case (!node_index) term of NONE => ()
                 | SOME id => nodes :=
                     Redblackmap.insert (!nodes, id, (term, result))
             in
@@ -2353,7 +2537,7 @@ struct
          sat_seconds = sat_time,
          total_seconds = total_time,
          procedure_calls = procedure_calls}
-      val _ = atom_cache := !working_cache
+      val _ = if reusable () then atom_cache := !working_cache else ()
     in
       {theorem = theorem, metrics = metrics}
     end

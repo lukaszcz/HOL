@@ -5713,26 +5713,96 @@ local
       else legacy ()
     end
 
+  (* Installed only by a replay owner. Immutable snapshots also let graph
+     force rollback discard successful work from an aborted callback. *)
+  type word_graph_signature =
+    {epochs : int * int, types : int KernelSig.symboltable,
+     terms : Type_dtype.holty KernelSig.symboltable}
+
+  fun word_graph_signature () : word_graph_signature =
+    let val context = Context.live () in
+      {epochs = (Type.type_epoch (), Term.term_epoch ()),
+       types = Context.typesig context, terms = Context.termsig context}
+    end
+
+  fun same_word_graph_signature
+      (left : word_graph_signature, right : word_graph_signature) =
+    #epochs left = #epochs right andalso
+    Portable.pointer_eq (#types left, #types right) andalso
+    Portable.pointer_eq (#terms left, #terms right)
+
+  type word_graph_tautology_memo =
+    {owner : unit ref, signature_witness : word_graph_signature,
+     limit : int, count : int,
+     entries : (Term.term * Term.term * Thm.thm) list}
+  val max_word_graph_tautology_entries = 2048
   val word_graph_tautology_cache = ref
-    ([] : (Term.term * Term.term * Thm.thm) list)
+    (NONE : word_graph_tautology_memo option)
+
+  fun new_word_graph_tautology_cache limit =
+    if Library.no_fastpath () then NONE
+    else SOME {owner = ref (), signature_witness = word_graph_signature (),
+      limit = Int.max (0, limit), count = 0, entries = []}
+
+  (* Restoring a context can change tables without changing retirement
+     epochs. Fence before inspecting keys, including restored checkpoints. *)
+  fun live_word_graph_tautology_cache () =
+    case !word_graph_tautology_cache of
+      NONE => NONE
+    | SOME (memo as {owner, signature_witness, limit, ...}) =>
+        let val current = word_graph_signature () in
+          if same_word_graph_signature (signature_witness, current) then
+            SOME memo
+          else
+            let
+              val empty = SOME {owner = owner, signature_witness = current,
+                limit = limit, count = 0, entries = []}
+              val _ = word_graph_tautology_cache := empty
+            in empty end
+        end
+
+  fun prove_word_graph_tautology_using prove feature target =
+    if Library.no_fastpath () then prove feature target
+    else case live_word_graph_tautology_cache () of
+      NONE => prove feature target
+    | SOME {owner, signature_witness, entries, ...} =>
+        let
+          val (left, right) = boolSyntax.dest_eq target
+          fun same (saved_left, saved_right, _) =
+            Portable.pointer_eq (left, saved_left) andalso
+            Portable.pointer_eq (right, saved_right)
+        in
+          case List.find same entries of
+            SOME (_, _, theorem) => theorem
+          | NONE =>
+              let
+                val theorem = prove feature target
+                (* The worker may reenter this owner and publish work, or
+                   change owners/signatures. Never publish the old snapshot.
+                   Liveness only controls publication, not worker admission;
+                   its temporary hints cannot survive a signature restore. *)
+                val _ = case live_word_graph_tautology_cache () of
+                    NONE => ()
+                  | SOME {owner = current_owner,
+                      signature_witness = current_signature,
+                      limit, count, entries} =>
+                      if owner <> current_owner orelse
+                          not (same_word_graph_signature
+                            (signature_witness, current_signature)) orelse
+                          count >= limit orelse List.exists same entries orelse
+                          not (SmtReplayAttempt.new_live_check () target)
+                      then ()
+                      else word_graph_tautology_cache := SOME
+                        {owner = owner,
+                         signature_witness = current_signature,
+                         limit = limit, count = count + 1,
+                         entries = (left, right, theorem) :: entries}
+              in theorem end
+        end
 
   fun prove_word_graph_tautology feature target =
-    let
-      val (left, right) = boolSyntax.dest_eq target
-      fun same (saved_left, saved_right, _) =
-        Portable.pointer_eq (left, saved_left) andalso
-        Portable.pointer_eq (right, saved_right)
-    in
-      case List.find same (!word_graph_tautology_cache) of
-        SOME (_, _, theorem) => theorem
-      | NONE =>
-          let
-            val theorem =
-              prove_word_graph_tautology_uncached feature target
-            val _ = word_graph_tautology_cache :=
-              (left, right, theorem) :: !word_graph_tautology_cache
-          in theorem end
-    end
+    prove_word_graph_tautology_using
+      prove_word_graph_tautology_uncached feature target
 
   (* A CPC nary_cong certificate supplies one premise for each immediate
      argument of its source application.  Reconstruct that application spine
@@ -21470,8 +21540,77 @@ in
       HOLset.foldl discharge theorem extra
     end
 
-  fun check_proof_impl definitions (asl, g, proof : proof) =
+  (* The legacy receiver needs the same dynamic isolation as graph workers.
+     In particular a nested replay must not erase its caller's FP/literal
+     laws, and neither a normal exit nor an exception may retain this replay. *)
+  fun with_replay_memos_for limit action input =
     let
+      val literals = !resolution_literal_normalizations
+      val facts = !fp_canonical_fact_laws
+      val lowerings = !fp_atom_lowerings
+      val booleans = !fp_boolean_atom_normalizations
+      val bridges = !fp_atom_bridge_laws
+      val words = !word_graph_tautology_cache
+      fun restore () =
+        (resolution_literal_normalizations := literals;
+         fp_canonical_fact_laws := facts;
+         fp_atom_lowerings := lowerings;
+         fp_boolean_atom_normalizations := booleans;
+         fp_atom_bridge_laws := bridges;
+         word_graph_tautology_cache := words)
+      fun run () =
+        let
+          val _ = resolution_literal_normalizations :=
+            Redblackmap.mkDict Term.compare
+          val _ = fp_canonical_fact_laws := Redblackmap.mkDict Type.compare
+          val _ = fp_atom_lowerings := Redblackmap.mkDict Term.compare
+          val _ = fp_boolean_atom_normalizations :=
+            Redblackmap.mkDict Term.compare
+          val _ = fp_atom_bridge_laws := []
+          val _ = word_graph_tautology_cache :=
+            new_word_graph_tautology_cache limit
+        in action input end
+    in
+      (run () before restore ())
+      handle error => (restore (); raise error)
+    end
+
+  val with_replay_memos_for_test = with_replay_memos_for
+  val word_graph_tautology_using_for_test = prove_word_graph_tautology_using
+  val max_word_graph_tautology_entries_for_test =
+    max_word_graph_tautology_entries
+  fun word_graph_tautology_entries_for_test () =
+    case live_word_graph_tautology_cache () of NONE => 0
+    | SOME {count,...} => count
+
+  (* A closed fixture for checking all five legacy cells without exposing
+     mutable memo references to tests. The enclosing boundary removes seeds. *)
+  fun with_seeded_replay_memos_for_test action =
+    with_replay_memos_for 0 (fn () =>
+      let
+        val term = boolSyntax.T
+        val law = Thm.REFL term
+        val terms = Redblackmap.insert
+          (Redblackmap.mkDict Term.compare,term,law)
+        val facts = Redblackmap.insert
+          (Redblackmap.mkDict Type.compare,Type.bool,(term,law))
+        val bridges = [law]
+        val _ = resolution_literal_normalizations := terms
+        val _ = fp_canonical_fact_laws := facts
+        val _ = fp_atom_lowerings := terms
+        val _ = fp_boolean_atom_normalizations := terms
+        val _ = fp_atom_bridge_laws := bridges
+        fun retained () =
+          Portable.pointer_eq (!resolution_literal_normalizations,terms)
+          andalso Portable.pointer_eq (!fp_canonical_fact_laws,facts)
+          andalso Portable.pointer_eq (!fp_atom_lowerings,terms)
+          andalso Portable.pointer_eq (!fp_boolean_atom_normalizations,terms)
+          andalso Portable.pointer_eq (!fp_atom_bridge_laws,bridges)
+      in action retained end) ()
+
+  fun check_proof_impl definitions args =
+    with_replay_memos_for max_word_graph_tautology_entries
+      (fn (asl, g, proof : proof) => let
       val trace = OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
         orelse OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
       fun trace_check message =
@@ -21479,14 +21618,6 @@ in
           (Feedback.HOL_MESG ("CPC proof closure: " ^ message);
            TextIO.flushOut TextIO.stdOut)
         else ()
-      val _ = resolution_literal_normalizations :=
-        Redblackmap.mkDict Term.compare
-      val _ = fp_canonical_fact_laws :=
-        Redblackmap.mkDict Type.compare
-      val _ = fp_atom_lowerings := Redblackmap.mkDict Term.compare
-      val _ = fp_boolean_atom_normalizations :=
-        Redblackmap.mkDict Term.compare
-      val _ = fp_atom_bridge_laws := []
       val (state, thm) = replay_commands (initial_state definitions asl)
         (proof_commands proof)
       val _ = trace_check "replay complete"
@@ -21523,7 +21654,7 @@ in
              (List.map Library.term_to_string (HOLset.listItems allowed)))
     in
       thm
-    end
+    end) args
 
   fun check_proof_with_definitions definitions (args as (_, _, proof)) =
     CPC_ProofParser.with_cpc_fp_private_proof proof
@@ -21650,13 +21781,16 @@ in
       val owned_fp_lowerings = ref (Redblackmap.mkDict Term.compare)
       val owned_fp_booleans = ref (Redblackmap.mkDict Term.compare)
       val owned_fp_bridges = ref []
+      val owned_word_graph = ref
+        (new_word_graph_tautology_cache max_word_graph_tautology_entries)
       type force_checkpoint =
         {serial : int,state : state,statistics : int list,
          literals : (Term.term,Thm.thm) Redblackmap.dict,
          facts : (Type.hol_type,Term.term * Thm.thm) Redblackmap.dict,
          lowerings : (Term.term,Thm.thm) Redblackmap.dict,
          booleans : (Term.term,Thm.thm) Redblackmap.dict,
-         bridges : Thm.thm list}
+         bridges : Thm.thm list,
+         words : word_graph_tautology_memo option}
       val force_checkpoint = ref (NONE : force_checkpoint option)
       fun statistic_cells (state : state) =
         let val statistics = #cache_stats state in
@@ -21670,7 +21804,7 @@ in
              (statistic_cells (!committed)),
            literals = !owned_literals,facts = !owned_fp_facts,
            lowerings = !owned_fp_lowerings,booleans = !owned_fp_booleans,
-           bridges = !owned_fp_bridges}
+           bridges = !owned_fp_bridges,words = !owned_word_graph}
       fun checkpoint_force serial =
         force_checkpoint := SOME (capture_checkpoint serial)
       val invocation_checkpoint = if history_mode then
@@ -21682,7 +21816,8 @@ in
          owned_literals := #literals saved;owned_fp_facts := #facts saved;
          owned_fp_lowerings := #lowerings saved;
          owned_fp_booleans := #booleans saved;
-         owned_fp_bridges := #bridges saved)
+         owned_fp_bridges := #bridges saved;
+         owned_word_graph := #words saved)
       fun with_memos action =
         let
           val saved_literals = !resolution_literal_normalizations
@@ -21690,17 +21825,20 @@ in
           val saved_lowerings = !fp_atom_lowerings
           val saved_booleans = !fp_boolean_atom_normalizations
           val saved_bridges = !fp_atom_bridge_laws
+          val saved_words = !word_graph_tautology_cache
           fun restore () =
             (resolution_literal_normalizations := saved_literals;
              fp_canonical_fact_laws := saved_facts;
              fp_atom_lowerings := saved_lowerings;
              fp_boolean_atom_normalizations := saved_booleans;
-             fp_atom_bridge_laws := saved_bridges)
+             fp_atom_bridge_laws := saved_bridges;
+             word_graph_tautology_cache := saved_words)
           val _ = resolution_literal_normalizations := !owned_literals
           val _ = fp_canonical_fact_laws := !owned_fp_facts
           val _ = fp_atom_lowerings := !owned_fp_lowerings
           val _ = fp_boolean_atom_normalizations := !owned_fp_booleans
           val _ = fp_atom_bridge_laws := !owned_fp_bridges
+          val _ = word_graph_tautology_cache := !owned_word_graph
           fun run () =
             let
               val result = action ()
@@ -21709,6 +21847,7 @@ in
               val _ = owned_fp_lowerings := !fp_atom_lowerings
               val _ = owned_fp_booleans := !fp_boolean_atom_normalizations
               val _ = owned_fp_bridges := !fp_atom_bridge_laws
+              val _ = owned_word_graph := !word_graph_tautology_cache
               val _ = restore ()
             in result end
         in run () handle error => (restore ();raise error) end
@@ -21955,7 +22094,7 @@ in
                | NONE => ();
              (case invocation_checkpoint of SOME saved => restore_force saved
                 | NONE => ());
-             force_checkpoint := NONE;
+             force_checkpoint := NONE;owned_word_graph := NONE;
              open_invocation := false;current := NONE;forcing := NONE;
              clear_pending ();known := Redblackmap.mkDict String.compare;
              snapshots := [];
@@ -22166,7 +22305,7 @@ in
                   not (List.null (!snapshots)) then
                  raise ERR "graph_factory" "unfinished invocation lifecycle"
                else open_invocation := false;
-               force_checkpoint := NONE;
+               force_checkpoint := NONE;owned_word_graph := NONE;
                known := Redblackmap.mkDict String.compare)
           | CPC_GraphProofReplay.InvocationAbort => ()
           end
@@ -22259,7 +22398,8 @@ in
 
   fun check_graph_proof_with_definitions definitions
       {graph,scope,sources,proof} =
-    CPC_GraphProofReplay.check_contradiction_admitted_using
+    with_replay_memos_for max_word_graph_tautology_entries
+      CPC_GraphProofReplay.check_contradiction_admitted_using
       {graph = graph,scope = scope,sources = sources,proof = proof,
        preprocessing=NONE,work=NONE,clause_worker=NONE,
        ordinary_limit = SmtResource.max_bv_replay_term_nodes,
@@ -22271,7 +22411,8 @@ in
 
   fun prove_graph_proof_with_definitions definitions
       {graph,scope,sources,proof} =
-    CPC_GraphProofReplay.prove_admitted_using
+    with_replay_memos_for max_word_graph_tautology_entries
+      CPC_GraphProofReplay.prove_admitted_using
       {graph = graph,scope = scope,sources = sources,proof = proof,
        preprocessing=NONE,work=NONE,clause_worker=NONE,
        ordinary_limit = SmtResource.max_bv_replay_term_nodes,

@@ -20,19 +20,60 @@ struct
      word_schemas : proof_cache, bit_schemas : proof_cache,
      proof_schemas : proof_cache,
      schema_entries : int ref, local_law_reuse : bool,
-     sat_context : SmtSkeletonProve.sat_context}
+     sat_context : SmtSkeletonProve.sat_context,
+     cache_generation : unit ref ref,
+     cache_live_check : term -> bool,
+     refresh_caches : unit -> unit}
 
   fun new_context_with_local_laws local_law_reuse : context =
-    {normalized = ref (Redblackmap.mkDict Int.compare),
-     expanded = ref (Redblackmap.mkDict Int.compare), entries = ref 0,
-     proof_normalized = ref (Redblackmap.mkDict Int.compare),
-     proof_expanded = ref (Redblackmap.mkDict Int.compare),
-     index = SmtResource.new_bounded_term_index maximum,
-     word_schemas = ref (Redblackmap.mkDict Term.compare),
-     bit_schemas = ref (Redblackmap.mkDict Term.compare),
-     proof_schemas = ref (Redblackmap.mkDict Term.compare),
-     schema_entries = ref 0, local_law_reuse = local_law_reuse,
-     sat_context = SmtSkeletonProve.new_sat_context ()}
+    let
+      val signature_witness = ref (SmtSkeletonProve.cache_signature ())
+      val cache_generation = ref (ref ())
+      val live_hints = ref (NONE : SmtSkeletonProve.live_memo option)
+      val normalized = ref (Redblackmap.mkDict Int.compare)
+      val expanded = ref (Redblackmap.mkDict Int.compare)
+      val proof_normalized = ref (Redblackmap.mkDict Int.compare)
+      val proof_expanded = ref (Redblackmap.mkDict Int.compare)
+      val index = ref (SmtResource.new_bounded_term_index maximum)
+      val word_schemas = ref (Redblackmap.mkDict Term.compare)
+      val bit_schemas = ref (Redblackmap.mkDict Term.compare)
+      val proof_schemas = ref (Redblackmap.mkDict Term.compare)
+      val entries = ref 0 and schema_entries = ref 0
+      val sat_context = SmtSkeletonProve.new_sat_context ()
+      fun refresh_caches () =
+        if SmtSkeletonProve.cache_signature_matches (!signature_witness)
+        then () else
+          (cache_generation := ref ();
+           live_hints := NONE;
+           normalized := Redblackmap.mkDict Int.compare;
+           expanded := Redblackmap.mkDict Int.compare;
+           proof_normalized := Redblackmap.mkDict Int.compare;
+           proof_expanded := Redblackmap.mkDict Int.compare;
+           index := SmtResource.new_bounded_term_index maximum;
+           word_schemas := Redblackmap.mkDict Term.compare;
+           bit_schemas := Redblackmap.mkDict Term.compare;
+           proof_schemas := Redblackmap.mkDict Term.compare;
+           entries := 0; schema_entries := 0;
+           #refresh_caches sat_context ();
+           signature_witness := SmtSkeletonProve.cache_signature ())
+      fun cache_live_check term =
+        let
+          val _ = refresh_caches ()
+          val memo = case !live_hints of SOME memo => memo
+            | NONE => let val memo = SmtSkeletonProve.new_live_memo ()
+                      in live_hints := SOME memo; memo end
+        in SmtSkeletonProve.live_check_with_hints
+          (!signature_witness) memo term end
+    in
+      {normalized = normalized, expanded = expanded, entries = entries,
+       proof_normalized = proof_normalized, proof_expanded = proof_expanded,
+       index = fn term => (refresh_caches (); (!index) term),
+       word_schemas = word_schemas, bit_schemas = bit_schemas,
+       proof_schemas = proof_schemas, schema_entries = schema_entries,
+       local_law_reuse = local_law_reuse, sat_context = sat_context,
+       cache_generation = cache_generation,
+       cache_live_check = cache_live_check, refresh_caches = refresh_caches}
+    end
 
   fun new_context () = new_context_with_local_laws false
 
@@ -47,25 +88,32 @@ struct
      bit_schemas= #bit_schemas context,proof_schemas= #proof_schemas context,
      schema_entries= #schema_entries context,
      local_law_reuse= #local_law_reuse context,
-     sat_context= #sat_context context}
+     sat_context= #sat_context context,
+     cache_generation= #cache_generation context,
+     cache_live_check= #cache_live_check context,
+     refresh_caches= #refresh_caches context}
 
-  fun schema_lookup cache source =
+  fun schema_lookup (context : context) cache source =
+    (#refresh_caches context ();
     case Redblackmap.peek (!cache, source) of
       NONE => NONE
     | SOME theorem =>
-        SOME (SmtSkeletonProve.anchor_left source theorem, true)
+        SOME (SmtSkeletonProve.anchor_left source theorem, true))
 
   fun context_lookup (context : context) cache source =
+    (#refresh_caches context ();
     case (#index context) source of
       NONE => NONE
     | SOME id =>
         (case Redblackmap.peek (!cache, id) of
            NONE => NONE
          | SOME theorem =>
-             SOME (SmtSkeletonProve.anchor_left source theorem, true))
+             SOME (SmtSkeletonProve.anchor_left source theorem, true)))
 
   fun context_save (context : context) cache source (theorem, changed) =
-    if not changed orelse !(#entries context) >= maximum then ()
+    (#refresh_caches context ();
+    if not changed orelse !(#entries context) >= maximum orelse
+       not (#cache_live_check context (Thm.concl theorem)) then ()
     else
       case (#index context) source of NONE => () | SOME id =>
       if Option.isSome (Redblackmap.peek (!cache, id)) then () else let
@@ -76,7 +124,7 @@ struct
       in
         cache := Redblackmap.insert (!cache, id, theorem);
         #entries context := !(#entries context) + 1
-      end
+      end)
 
   type metrics =
     {input_nodes : int,
@@ -538,6 +586,26 @@ struct
       {word_conversion, bit_conversion, node_conversion, callback_failed}
       root =
     let
+      val _ = #refresh_caches context ()
+      val signature_witness = SmtSkeletonProve.cache_signature ()
+      (* After a callback changes signatures, discard local hints as well.
+         Rebuild local DAG memoization rather than disabling it: even this
+         fallback must not unfold shared graphs. Do not publish results from
+         this invocation into the retained caches after such a change. *)
+      val generation_witness = !(#cache_generation context)
+      val local_signature = ref signature_witness
+      val local_generation = ref generation_witness
+      val reset_local = ref (fn () => ())
+      fun reusable () =
+        (#refresh_caches context ();
+         if !local_generation = !(#cache_generation context) andalso
+            SmtSkeletonProve.cache_signature_matches (!local_signature)
+         then () else
+           ((!reset_local) ();
+            local_signature := SmtSkeletonProve.cache_signature ();
+            local_generation := !(#cache_generation context));
+         generation_witness = !(#cache_generation context) andalso
+         SmtSkeletonProve.cache_signature_matches signature_witness)
       val input_nodes = SmtResource.dag_nodes_up_to maximum root
       val _ = SmtResource.check_dag_size_for
         "Skeleton" "word-graph-input" input_nodes
@@ -800,12 +868,15 @@ struct
          normal forms.  Cache saturation affects reuse only, never admission. *)
       fun schema_conversion cache conversion schematic =
         let
-          val cache_laws = reuse orelse #local_law_reuse context
-          val cached = if cache_laws then schema_lookup cache schematic
+          val cache_laws = reusable () andalso
+            (reuse orelse #local_law_reuse context)
+          val cached = if cache_laws then
+              schema_lookup context cache schematic
             else NONE
           val theorem = case cached of SOME (theorem, _) =>
               (memo_hits := !memo_hits + 1; theorem)
             | NONE => Conv.QCONV conversion schematic
+          val can_retain = reusable ()
           (* Validate EVERY callback result before INST, including disabled
              reuse and saturated caches. Hyp is also an INST input. *)
           val _ = if List.null (Thm.hyp theorem) then ()
@@ -813,8 +884,10 @@ struct
           val _ = Library.check_oracle_tags "SmtWordGraph"
             "operator schema" theorem
           val theorem = SmtSkeletonProve.anchor_left schematic theorem
-          val _ = if not cache_laws orelse Option.isSome cached orelse
-              !(#schema_entries context) >= maximum then ()
+          val _ = if not can_retain orelse not cache_laws orelse
+              Option.isSome cached orelse
+              !(#schema_entries context) >= maximum orelse
+              not (#cache_live_check context (Thm.concl theorem)) then ()
             else
               (cache := Redblackmap.insert (!cache, schematic, theorem);
                #schema_entries context := !(#schema_entries context) + 1)
@@ -866,7 +939,8 @@ struct
           in instantiate_changed term schematic substitutions reduced end
         handle Conv.UNCHANGED => (Thm.REFL term, false)
 
-      val normalize_index = SmtResource.new_bounded_term_index maximum
+      val normalize_index = ref
+        (SmtResource.new_bounded_term_index maximum)
       val normalize_cache = ref
         (Redblackmap.mkDict Int.compare :
           (int, thm * bool) Redblackmap.dict)
@@ -874,19 +948,21 @@ struct
         (bucket_count, [] : (term * (thm * bool)) list)
 
       fun cached_normalization term =
+        let val _ = reusable () in
         case pointer_lookup normalize_physical term of
           SOME result => SOME result
         | NONE =>
             (case Option.mapPartial
                 (fn id => Redblackmap.peek (!normalize_cache, id))
-                (normalize_index term) of
-               NONE => if reuse then
+                ((!normalize_index) term) of
+               NONE => if reuse andalso reusable () then
                    context_lookup context (#normalized context) term
                  else NONE
              | SOME (theorem, changed) => SOME
                  (if changed then
                     (SmtSkeletonProve.anchor_left term theorem, true)
                   else (Thm.REFL term, false)))
+        end
 
       fun external_conversion source =
         let
@@ -895,6 +971,7 @@ struct
               admit_callback_template type_admission source else ()
           val theorem = Conv.QCONV node_conversion source
             handle Conv.UNCHANGED => Thm.REFL source
+          val _ = reusable ()
           val _ = if List.null (Thm.hyp theorem) then () else
             raise ERR "external_conversion" "operator schema has hypotheses"
           val _ = Library.check_oracle_tags "SmtWordGraph"
@@ -977,11 +1054,12 @@ struct
                       (Thm.TRANS children (Thm.TRANS first tail), true)
                     else (children, children_changed)
                   end
-              val _ = case normalize_index term of NONE => ()
+              val _ = reusable ()
+              val _ = case (!normalize_index) term of NONE => ()
                 | SOME id => normalize_cache :=
                     Redblackmap.insert (!normalize_cache, id, result)
               val _ = pointer_insert normalize_physical term result
-              val _ = if reuse then
+              val _ = if reuse andalso reusable () then
                   context_save context (#normalized context) term result
                 else ()
             in result end
@@ -1085,6 +1163,7 @@ struct
 
       fun expand_uncached term =
         let
+          val _ = reusable ()
           fun ordinary () =
             case pointer_lookup expand_cache term of
               SOME result => (memo_hits := !memo_hits + 1; result)
@@ -1176,10 +1255,11 @@ struct
         end
 
       and expand term =
+        let val _ = reusable () in
         case pointer_lookup expand_cache term of
           SOME result => (memo_hits := !memo_hits + 1; result)
         | NONE =>
-            (case (if reuse then
+            (case (if reuse andalso reusable () then
                      context_lookup context (#expanded context) term
                    else NONE) of
                SOME (theorem, changed) =>
@@ -1190,11 +1270,22 @@ struct
              | NONE =>
                  let
                    val result as (theorem, changed, _) = expand_uncached term
-                   val _ = if reuse then
+                   val _ = if reuse andalso reusable () then
                        context_save context (#expanded context) term
                          (theorem, changed)
                      else ()
                  in result end)
+        end
+
+      val _ = reset_local := (fn () =>
+        (normalize_index := SmtResource.new_bounded_term_index maximum;
+         normalize_cache := Redblackmap.mkDict Int.compare;
+         List.app (fn index =>
+           (Array.update (normalize_physical, index, []);
+            Array.update (expand_cache, index, [])))
+           (List.tabulate (bucket_count, fn index => index));
+         bit_cache := Redblackmap.mkDict
+           (pair_compare (Int.compare, Arbnum.compare))))
 
       val (normalized, normalization_changed) =
         SmtResource.profile_phase "word-graph-normalize"
@@ -1273,9 +1364,10 @@ struct
      frontiers. Successful proofs become graph recipes, not instantiated
      facts about actual operands. Revisit discovers generated projections
      and their successful dependencies BEFORE the one final freeze. *)
-  fun discover_using_in context reuse admission conversions graph scope
-      source =
+  fun discover_using_in (context : context) reuse admission conversions
+      graph scope source =
     let
+      val _ = #refresh_caches context ()
       val limit = SmtResource.max_bv_replay_term_nodes
       val calls = ref 0 and hits = ref 0 and visits = ref 0
       val projections = ref 0
@@ -1439,6 +1531,7 @@ struct
         case G.view graph node of G.Application _ => total+2 | _ => total)
         0 generated
       val final_nodes = G.dag_nodes graph [C.graph_result plan]
+      val _ = #refresh_caches context ()
     in (plan,
       {input_nodes=length source_nodes,visited_nodes= !visits,
        generated_nodes=length generated,generated_edges=edges,
@@ -1576,6 +1669,7 @@ struct
      together, THEN realize the original statement once. *)
   fun prove_discovered_in (context : context) graph scope plan =
     let
+      val _ = #refresh_caches context ()
       val source = C.graph_source plan
       val result = C.graph_result plan
       fun spine node args = case G.view graph node of
@@ -1657,6 +1751,7 @@ struct
      operand-interior definitions need to be assembled. *)
   fun prove_using_in (context : context) node_conversion target =
     let
+      val _ = #refresh_caches context ()
       val context = proof_context context
       val input = SmtResource.dag_nodes_up_to maximum target
       val _ = SmtResource.check_dag_size_for
@@ -1689,6 +1784,9 @@ struct
               (SmtReplayCanon.reflexive_equality_conv term
                handle Conv.UNCHANGED => callback term)
             else callback term
+          val _ = #refresh_caches context ()
+          val signature_witness = SmtSkeletonProve.cache_signature ()
+          val generation_witness = !(#cache_generation context)
           val theorem = case Redblackmap.peek (!(#proof_schemas context),
               template) of SOME theorem => theorem
             | NONE =>
@@ -1704,7 +1802,14 @@ struct
                   val law = SmtSkeletonProve.propositional_prove_in
                     (#sat_context context) residue
                   val theorem = Thm.EQ_MP (Thm.SYM normalized) law
-                  val _ = if !(#schema_entries context) >= maximum then () else
+                  val _ = #refresh_caches context ()
+                  val _ = if generation_witness <>
+                      !(#cache_generation context) orelse
+                      not (SmtSkeletonProve.cache_signature_matches
+                        signature_witness) orelse
+                      !(#schema_entries context) >= maximum orelse
+                      not (#cache_live_check context
+                        (Thm.concl theorem)) then () else
                     (#proof_schemas context := Redblackmap.insert
                        (!(#proof_schemas context),template,theorem);
                      #schema_entries context := !(#schema_entries context)+1)
@@ -1730,8 +1835,9 @@ struct
   (* Normalize a shared finite-word circuit once, retaining shared operator
      projection proofs, then replay a checked SAT certificate for its Boolean
      graph.  No theory atom is assumed true by the propositional stage. *)
-  fun prove_in context target =
+  fun prove_in (context : context) target =
     let
+      val _ = #refresh_caches context ()
       val source_maximum = SmtResource.max_bv_replay_term_nodes
       val _ = SmtResource.check_dag_size_with_limit
         "BitVector" "word-circuit-source" source_maximum

@@ -20548,22 +20548,24 @@ fun decline () = ignore (run memo "raw" p q);
 val _ = List.app (fn _ => case Exn.capture decline () of
     Exn.Exn (HolSatLib.SAT_satisfiable _) => ()
   | _ => die "ordinary SAT decline changed category") [(), ()];
-val _ = assert (!calls = 3, "ordinary SAT decline repeated the procedure");
+val _ = assert (!calls = 4 andalso #retained (#statistics memo ()) = 2,
+  "ordinary SAT exception was retained or skipped its second procedure");
 val old = ``!x:bool. x``;
 val renamed = ``!y:bool. y``;
 val _ = run memo "raw" old old;
 val _ = run memo "raw" renamed renamed;
-val _ = assert (!calls = 4, "alpha-equivalent schema was not reused");
+val _ = assert (!calls = 5, "alpha-equivalent schema was not reused");
 val numeric = ``(f:num -> bool) (x:num)``;
 val boolean = ``(f:bool -> bool) (x:bool)``;
 val _ = run memo "raw" numeric numeric;
 val _ = run memo "raw" boolean boolean;
-val _ = assert (!calls = 6, "colliding typed atoms shared the wrong schema");
+val _ = assert (!calls = 7, "colliding typed atoms shared the wrong schema");
 val _ = List.app (fn _ => case Exn.capture
     (fn () => run memo "raw" boolSyntax.T boolSyntax.F) () of
       Exn.Exn (HolSatLib.SAT_satisfiable _) => ()
     | _ => die "proof-only SAT decline changed its constructor") [(), ()];
-val _ = assert (!calls = 7, "proof-only SAT decline repeated its attempt");
+val _ = assert (!calls = 9 andalso #retained (#statistics memo ()) = 5,
+  "proof-only SAT exception was retained or skipped its second attempt");
 val counterexample_calls = ref 0;
 fun counterexample () = #run memo
   {procedure = "model", source = boolSyntax.T, target = boolSyntax.F,
@@ -20573,8 +20575,9 @@ val _ = List.app (fn _ => case Exn.capture counterexample () of
     Exn.Exn (HolSatLib.SAT_cex theorem) =>
       Library.check_oracle_tags "CpcAttempt" "counterexample" theorem
   | _ => die "model-producing SAT decline changed its constructor") [(), ()];
-val _ = assert (!counterexample_calls = 1,
-  "model-producing SAT decline repeated its attempt");
+val _ = assert (!counterexample_calls = 2 andalso
+  #retained (#statistics memo ()) = 5,
+  "model-producing SAT exception was retained or skipped its second attempt");
 val _ = List.app (fn (enabled, capacity) =>
   let val local_cache = cache enabled capacity
       val prior_calls = !calls
@@ -20595,6 +20598,13 @@ fun terminal exn classify =
         | _ => die "terminal attempt returned a theorem") [(), ()]
   in assert (!attempted = 2 andalso #retained (#statistics local_cache ()) = 0,
     "terminal exception was cached as an ordinary decline") end;
+val _ = terminal (HolSatLib.SAT_satisfiable ())
+  (fn HolSatLib.SAT_satisfiable _ => true | _ => false);
+(* Exception payloads are opaque, not schemas to validate or reconstruct. *)
+val opaque_cex = Thm.ASSUME q;
+val _ = terminal (HolSatLib.SAT_cex opaque_cex)
+  (fn HolSatLib.SAT_cex theorem => Portable.pointer_eq (theorem, opaque_cex)
+    | _ => false);
 val _ = terminal Interrupt (fn Interrupt => true | _ => false);
 val _ = terminal (Timeout.TIMEOUT Time.zeroTime)
   (fn Timeout.TIMEOUT _ => true | _ => false);
@@ -20770,6 +20780,264 @@ let
   val _ = assert (!owner_calls = 1 andalso
     (case result of SmtSkeletonProve.Declined => true | _ => false),
     "unadmitted alpha copy lost its required semantic owner")
+
+  fun epoch_cache () = SmtReplayAttempt.new
+    {enabled = true, capacity = 4, hash = fn _ => 0}
+  fun identity source = Thm.DISCH source (Thm.ASSUME source)
+  fun checked label theorem source =
+    (assert_no_hyps (label, theorem);
+     assert_concl_alpha (label, theorem, boolSyntax.mk_imp (source, source));
+     check_oracle_tags label theorem)
+  (* Shared binder leaves use bounded positive hints when publishing;
+     disabled and zero-capacity reuse perform no liveness traversal. *)
+  fun binder_shared 0 = ``!task49_bound:bool. task49_bound``
+    | binder_shared n = let val child = binder_shared (n - 1)
+                        in boolSyntax.mk_conj (child, child) end
+  val binder_dag = binder_shared 80
+  val _ = List.app (fn (enabled, capacity) =>
+    let
+      val memo = SmtReplayAttempt.new
+        {enabled = enabled, capacity = capacity, hash = fn _ => 0}
+      val theorem = #run memo
+        {procedure = "binder-dag", source = binder_dag, target = binder_dag,
+         prove = fn () => identity binder_dag}
+      val (source, target) = boolSyntax.dest_imp (Thm.concl theorem)
+    in assert (Portable.pointer_eq (source, binder_dag) andalso
+      Portable.pointer_eq (target, binder_dag) andalso
+      List.null (Thm.hyp theorem), "binder DAG lost checked endpoints") end)
+    [(true, 4), (false, 4), (true, 0)]
+
+  (* Standard mk_abs eagerly rebuilds; lazy Beta inserts a huge shared body
+     into a small existing binder without unfolding it during setup. The
+     optional cache must bypass it, not refuse the checked full result. *)
+  val huge_body = shared 80
+  val huge_variable = Term.mk_var ("task49_huge_bound", Type.bool)
+  val huge_abstraction =
+    if Thm.kernelid = "expknl" then Term.mk_abs (huge_variable, huge_body)
+    else
+      let
+        val marker = Term.mk_var ("task49_huge_marker", Type.bool)
+        val template = Term.mk_abs
+          (marker, Term.mk_abs (huge_variable, marker))
+      in boolSyntax.rhs (Thm.concl
+        (Thm.Beta (Thm.REFL (Term.mk_comb (template, huge_body))))) end
+  val huge_endpoint = Term.mk_comb
+    (Term.rator (``!task49_huge_bound:bool. T``), huge_abstraction)
+  val huge_memo = epoch_cache ()
+  val huge_calls = ref 0
+  val _ = List.app (fn _ =>
+    let
+      val theorem = #run huge_memo
+        {procedure = "huge-binder", source = huge_endpoint,
+         target = huge_endpoint, prove = fn () =>
+           (huge_calls := !huge_calls + 1; identity huge_endpoint)}
+      val (source, target) = boolSyntax.dest_imp (Thm.concl theorem)
+    in assert (Portable.pointer_eq (source, huge_endpoint) andalso
+      Portable.pointer_eq (target, huge_endpoint) andalso
+      List.null (Thm.hyp theorem), "huge binder lost checked endpoints") end)
+    [(), ()]
+  val _ = assert (!huge_calls = 2 andalso
+    #retained (#statistics huge_memo ()) = 0,
+    "huge binder was retained or bypassed the full checked procedure")
+
+  (* Construct the memo before the declaration. A fresh declaration does
+     not advance retirement epochs and must remain eligible for proving. *)
+  fun reload label declare retire endpoint =
+    let
+      val memo = epoch_cache ()
+      val calls = ref 0
+      fun run source = #run memo
+        {procedure = label, source = source, target = source,
+         prove = fn () => (calls := !calls + 1; identity source)}
+      val _ = declare ()
+      val old = endpoint ()
+      val _ = checked label (run old) old
+      val _ = retire ()
+      val _ = declare ()
+      val fresh = endpoint ()
+      val _ = checked label (run fresh) fresh
+      val _ = checked label (run fresh) fresh
+      val _ = assert (!calls = 2 andalso
+        #hits (#statistics memo ()) = 1 andalso
+        #retained (#statistics memo ()) = 1,
+        label ^ " retained old IDs or refused the reloaded declaration")
+      val _ = checked label (run old) old
+      val _ = checked label (run old) old
+      val _ = assert (!calls = 4 andalso
+        #retained (#statistics memo ()) = 1,
+        label ^ " skipped the retired-input worker or retained its result")
+      val _ = checked label (run fresh) fresh
+    in assert (!calls = 4 andalso #hits (#statistics memo ()) = 2,
+      label ^ " lost fresh same-name reuse after retired-input misses") end
+  val constant_name = "task49_attempt_reload_constant"
+  fun declare_constant () = Theory.new_constant (constant_name, Type.bool)
+  fun retire_constant () = Theory.delete_const constant_name
+  fun constant () = Term.mk_const (constant_name, Type.bool)
+  val constant_reload = Exn.capture (fn () =>
+    reload "constant reload" declare_constant retire_constant constant) ()
+  val _ = retire_constant ()
+  val _ = Exn.release constant_reload
+  val type_name = "task49_attempt_reload_type"
+  fun declare_type () = Theory.new_type (type_name, 0)
+  fun retire_type () = Theory.delete_type type_name
+  fun typed_endpoint () =
+    let val ty = Type.mk_type (type_name, []) in
+      Term.mk_comb
+        (Term.mk_var ("task49_predicate", Type.--> (ty, Type.bool)),
+         Term.mk_var ("task49_argument", ty))
+    end
+  val type_reload = Exn.capture (fn () =>
+    reload "type reload" declare_type retire_type typed_endpoint) ()
+  val _ = retire_type ()
+  val _ = Exn.release type_reload
+
+  (* Restoring a pre-declaration snapshot leaves retirement epochs equal,
+     but neither positive liveness hints nor owned IDs may cross branches.
+     Test direct restore and both user callback boundaries before a hit. *)
+  fun restored_branch label declare endpoint enabled capacity boundary =
+    let
+      val baseline = Context.snapshot ()
+      fun exercise () =
+        let
+          val restore_hash = ref false
+          val memo = SmtReplayAttempt.new
+            {enabled = enabled, capacity = capacity, hash = fn _ =>
+              (if !restore_hash then
+                 (restore_hash := false; Context.restore baseline)
+               else (); 0)}
+          val calls = ref 0
+          fun run procedure source prove = #run memo
+            {procedure = procedure, source = source, target = source,
+             prove = fn () => (calls := !calls + 1; prove ())}
+          fun stable source = run "restore" source (fn () => identity source)
+          val epochs = (Type.type_epoch (), Term.term_epoch ())
+          val _ = declare ()
+          val old = endpoint ()
+          val theorem = stable old
+          val _ = stable old
+          val prior = !calls
+          val _ = assert (epochs =
+            (Type.type_epoch (), Term.term_epoch ()),
+            label ^ " fixture advanced retirement epochs")
+          val _ = case boundary of
+              "hash" => restore_hash := true
+            | "prove" => ()
+            | _ => Context.restore baseline
+          val result =
+            if boundary = "prove" then
+              run "restore-in-prove" old
+                (fn () => (Context.restore baseline; theorem))
+            else stable old
+          val _ = checked label result old
+          val expected_calls = prior + 1
+          val _ = assert (!calls = expected_calls andalso
+            #retained (#statistics memo ()) = 0,
+            label ^ " reused retired ownership or skipped checked proving")
+          val _ = declare ()
+          val fresh = endpoint ()
+          val _ = checked label (stable fresh) fresh
+          val _ = checked label (stable fresh) fresh
+          val _ = checked label (stable old) old
+          val _ = checked label (stable old) old
+          val reuse = enabled andalso capacity > 0
+        in assert (!calls = expected_calls + (if reuse then 1 else 2) + 2
+          andalso #retained (#statistics memo ()) = (if reuse then 1 else 0),
+          label ^ " refused fresh input or retained a retired-input schema")
+        end
+    in Portable.finally (fn () => Context.restore baseline) exercise () end
+  fun restored_endpoints label declare endpoint =
+    (List.app (fn (enabled, capacity) =>
+       List.app (fn boundary => restored_branch label declare endpoint
+         enabled capacity boundary) ["direct", "prove"])
+       [(true, 4), (false, 4), (true, 0)];
+     restored_branch label declare endpoint true 4 "hash")
+  val _ = restored_endpoints "constant restore" declare_constant constant
+  val _ = restored_endpoints "type restore" declare_type typed_endpoint
+  fun binder_endpoint () = boolSyntax.mk_forall
+    (Term.mk_var ("task49_unused_bound", Type.mk_type (type_name, [])),
+     boolSyntax.T)
+  val _ = restored_endpoints "binder type restore" declare_type binder_endpoint
+
+  (* Hash and prove can visit A -> B -> A. Publication must compare with
+     the owner of the captured endpoint IDs, not the request's initial A. *)
+  fun restored_index_owner label declare =
+    let
+      val baseline = Context.snapshot ()
+      fun exercise () =
+        let
+          val change = ref true
+          val memo = SmtReplayAttempt.new
+            {enabled = true, capacity = 4, hash = fn _ =>
+              (if !change then (change := false; declare ()) else (); 0)}
+          val source = Term.mk_var ("task49_restore_index", Type.bool)
+          val theorem = #run memo
+            {procedure = label, source = source, target = source,
+             prove = fn () => (Context.restore baseline; identity source)}
+          val _ = checked label theorem source
+        in assert (#retained (#statistics memo ()) = 0,
+          label ^ " published IDs from the intermediate signature") end
+    in Portable.finally (fn () => Context.restore baseline) exercise () end
+  val _ = restored_index_owner "Term restored index" declare_constant
+  val _ = restored_index_owner "Type restored index" declare_type
+
+  (* Unrelated retirement inside prove invalidates optional reuse, not the
+     valid fresh result. Neither old entries nor pre-callback IDs survive. *)
+  fun callback_epoch label declare retire =
+    let
+      val _ = declare ()
+      val memo = epoch_cache ()
+      val source = Term.mk_var ("task49_callback_source", Type.bool)
+      val calls = ref 0
+      fun run procedure prove = #run memo
+        {procedure = procedure, source = source, target = source,
+         prove = prove}
+      fun stable () = (calls := !calls + 1; identity source)
+      val _ = run "seed" stable
+      val theorem = run "callback" (fn () => (retire (); stable ()))
+      val _ = checked label theorem source
+      val _ = assert (#retained (#statistics memo ()) = 0,
+        label ^ " published pre-callback IDs or kept an old schema")
+      val _ = run "callback" stable
+      val _ = run "callback" stable
+      val _ = assert (!calls = 3 andalso
+        #hits (#statistics memo ()) = 1 andalso
+        #retained (#statistics memo ()) = 1,
+        label ^ " failed to resume optional reuse in the new epoch")
+      val _ = declare ()
+      val payload = Thm.ASSUME source
+      val _ = case Exn.capture (fn () => run "exception" (fn () =>
+          (retire (); raise HolSatLib.SAT_cex payload))) () of
+          Exn.Exn (HolSatLib.SAT_cex theorem) => assert
+            (Portable.pointer_eq (theorem, payload),
+             label ^ " changed the epoch-changing exception payload")
+        | _ => die (label ^ " masked the epoch-changing SAT exception")
+    in assert (#retained (#statistics memo ()) = 0,
+      label ^ " retained facts after exceptional epoch change") end
+  val _ = callback_epoch "Term callback epoch"
+    declare_constant retire_constant
+  val _ = callback_epoch "Type callback epoch" declare_type retire_type
+
+  (* Successful callbacks cannot retire their own endpoints and then
+     publish a schema using the old declaration, even on a pointer match. *)
+  fun retired_callback label declare retire endpoint =
+    let
+      val _ = declare ()
+      val memo = epoch_cache ()
+      val source = endpoint ()
+      val theorem = identity source
+      val calls = ref 0
+      val result = #run memo
+        {procedure = label, source = source, target = source,
+         prove = fn () => (calls := !calls + 1; retire (); theorem)}
+      val _ = checked label result source
+    in
+      assert (!calls = 1 andalso #retained (#statistics memo ()) = 0,
+        label ^ " refused checked proving or retained retired endpoints")
+    end
+  val _ = retired_callback "Term retired callback"
+    declare_constant retire_constant constant
+  val _ = retired_callback "Type retired callback"
+    declare_type retire_type typed_endpoint
 in () end
 
 fun replay_compact_canon_boundary_success () =
@@ -29498,10 +29766,22 @@ let
             Exn.Exn exn => assert (expected exn, "graph failure changed category")
           | _ => die "invalid graph attempt succeeded") [(), ()]
     in !attempts end
+  val retained = #retained (#statistics memo ())
   val _ = assert (exceptional "decline"
     (fn HolSatLib.SAT_satisfiable _ => true | _ => false)
-    (fn () => raise HolSatLib.SAT_satisfiable ()) = 1,
-    "graph SAT decline repeated proof search")
+    (fn () => raise HolSatLib.SAT_satisfiable ()) = 2,
+    "graph SAT exception suppressed repeated proof search")
+  (* This payload is deliberately outside the frozen block. It must escape
+     untouched, without checked-edge validation or negative retention. *)
+  val opaque_cex = Thm.ASSUME
+    (Term.mk_var ("graph_attempt_opaque_cex", Type.bool))
+  val _ = assert (exceptional "counterexample"
+    (fn HolSatLib.SAT_cex theorem => Portable.pointer_eq (theorem, opaque_cex)
+      | _ => false)
+    (fn () => raise HolSatLib.SAT_cex opaque_cex) = 2,
+    "graph counterexample payload was checked, changed or retained")
+  val _ = assert (#retained (#statistics memo ()) = retained,
+    "graph exceptional outcomes changed retained successful schemas")
   val _ = assert (exceptional "terminal"
     (fn Timeout.TIMEOUT _ => true | _ => false)
     (fn () => raise Timeout.TIMEOUT Time.zeroTime) = 2,
@@ -29520,6 +29800,38 @@ let
   val _ = case Exn.capture (fn () => run "raw" source) () of
       Exn.Exn (HOL_ERR _) => ()
     | _ => die "graph attempt reused a realized proof block"
+
+  (* Check activity after a successful callback, even with reuse off. An
+     exceptional callback must instead escape unchanged, even if it retired
+     the block: a secondary ownership error must not mask its exception. *)
+  val _ = List.app (fn (enabled, exceptional) =>
+    let
+      val graph = SmtReplayGraph.new ()
+      val scope = SmtReplayGraph.root_scope graph
+      val node = #node (SmtReplayGraph.import graph scope 8192
+        (Term.mk_var ("graph_attempt_callback", Type.bool)))
+      val block = SmtReplayProof.freeze graph
+        {scope = scope, roots = [node], sources = [node],
+         template_limit = 10000}
+      val name = SmtReplayProof.name block node
+      val edge = SmtReplayProof.checked block
+        (Thm.DISCH name (Thm.ASSUME name))
+      val memo = SmtReplayAttempt.new_graph
+        {block = block, enabled = enabled, capacity = 8}
+      val result = Exn.capture (fn () => #run memo
+        {procedure = "retiring-callback", source = node, target = node,
+         prove = fn () =>
+           (ignore (SmtReplayProof.realize block node
+              (SmtReplayProof.source block 0));
+            if exceptional then raise HolSatLib.SAT_cex opaque_cex
+            else edge)}) ()
+      val correct = if exceptional then
+          (case result of Exn.Exn (HolSatLib.SAT_cex theorem) =>
+             Portable.pointer_eq (theorem, opaque_cex) | _ => false)
+        else (case result of Exn.Exn (HOL_ERR _) => true | _ => false)
+    in assert (correct andalso #retained (#statistics memo ()) = 0,
+      "graph retiring callback published an edge or masked its exception") end)
+    [(true, false), (false, false), (true, true), (false, true)]
 in () end
 
 local
@@ -33423,6 +33735,25 @@ in () end
 fun bag_named_obligations () =
   (SmtReplayBagTests.run ();bag_realization_admission_success ())
 
+fun run_cache_lifetime_unittests () =
+  List.app run_test
+    [("cache context lifetimes", SmtReplayCacheTests.context),
+     ("cache solver lifetimes", SmtReplayCacheTests.solvers),
+     ("attempt success and exception controls", replay_attempt_reuse_success),
+     ("indexed cache boundaries", replay_indexed_cache_boundaries_success),
+     ("graph attempt ownership", replay_graph_attempt_reuse_success),
+     ("skeleton structural atom cache",
+       skeleton_structural_atom_cache_exact_lhs_success),
+     ("skeleton structural node cache", skeleton_node_cache_metric_split_success),
+     ("Z3 proof-local cache", z3_def_axiom_proof_local_cache_success),
+     ("Z3 cache gate", z3_def_axiom_cache_gate_precedes_lookup),
+     ("Z3 cache cleanup", z3_def_axiom_cache_cleanup_precedence_success),
+     ("CPC repeated conclusion", cpc_cache_repeated_conclusion_bypasses_handler_success),
+     ("CPC popped scope", cpc_cache_popped_scope_is_rejected_success),
+     ("CPC derived preference", cpc_cache_prefers_derived_over_assumption_success),
+     ("CPC omitted conclusion", cpc_cache_omitted_conclusion_bypasses_success),
+     ("CPC cache atomicity", cpc_fastpath_error_and_cache_atomicity_contract)]
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -33481,6 +33812,8 @@ let
     ("replay_graph_crossblock_success", replay_graph_crossblock_success),
     ("replay_scoped_binder_closure_success",
       replay_scoped_binder_closure_success),
+    ("replay_cache_context_lifetimes", SmtReplayCacheTests.context),
+    ("replay_cache_solver_lifetimes", SmtReplayCacheTests.solvers),
     ("replay_attempt_reuse_success", replay_attempt_reuse_success),
     ("replay_indexed_cache_boundaries_success",
       replay_indexed_cache_boundaries_success),

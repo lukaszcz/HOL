@@ -1502,8 +1502,25 @@ local
      skeleton_attempts : int,
      entries : int,
      peak_entries : int}
+  type def_axiom_signature =
+    {epochs : int * int, types : int KernelSig.symboltable,
+     terms : Type_dtype.holty KernelSig.symboltable}
+
+  fun def_axiom_signature () : def_axiom_signature =
+    let val context = Context.live () in
+      {epochs = (Type.type_epoch (), Term.term_epoch ()),
+       types = Context.typesig context, terms = Context.termsig context}
+    end
+
+  fun same_def_axiom_signature
+      (left : def_axiom_signature, right : def_axiom_signature) =
+    #epochs left = #epochs right andalso
+    Portable.pointer_eq (#types left, #types right) andalso
+    Portable.pointer_eq (#terms left, #terms right)
+
   type def_axiom_cache_state =
     {limit : int,
+     signature_witness : def_axiom_signature ref,
      entries : (term, def_axiom_cache_entry) Redblackmap.dict ref,
      lookups : int ref,
      hits : int ref,
@@ -1529,6 +1546,7 @@ local
 
   fun new_def_axiom_cache limit : def_axiom_cache_state =
     {limit = Int.max (0, limit),
+     signature_witness = ref (def_axiom_signature ()),
      entries = ref (Redblackmap.mkDict Term.compare),
      lookups = ref 0,
      hits = ref 0,
@@ -1539,6 +1557,26 @@ local
      skeleton_attempts = ref 0,
      cardinality = ref 0,
      peak_cardinality = ref 0}
+
+  (* Nested replay boundaries deliberately share successful work. A dynamic
+     boundary is not, however, a declaration lifetime: Term.compare alone
+     cannot authorize reuse after either kernel signature changes. Table
+     pointers also catch snapshot restores with unchanged retirement epochs.
+     Drop old keys before comparing them, keeping cumulative statistics. *)
+  fun fence_def_axiom_cache (cache : def_axiom_cache_state) =
+    let val current = def_axiom_signature () in
+      if same_def_axiom_signature (!(#signature_witness cache), current)
+      then () else
+        (#entries cache := Redblackmap.mkDict Term.compare;
+         #cardinality cache := 0;
+         #signature_witness cache := current)
+    end
+
+  fun live_def_axiom_cache () =
+    if Library.no_fastpath () then NONE
+    else case !current_def_axiom_cache of
+      NONE => NONE
+    | SOME cache => (fence_def_axiom_cache cache; SOME cache)
 
   fun def_axiom_cache_statistics enabled
       ({limit, lookups, hits, misses, inserts, capacity_refusals,
@@ -1567,13 +1605,13 @@ local
     " def_cache_peak_entries=" ^ Int.toString peak_entries
 
   fun current_def_axiom_cache_statistics () =
-    case !current_def_axiom_cache of
+    case live_def_axiom_cache () of
       NONE => !last_def_axiom_cache_statistics
     | SOME cache => def_axiom_cache_statistics true cache
 
   fun current_def_axiom_cache_text () =
     def_axiom_cache_statistics_text
-      (case !current_def_axiom_cache of
+      (case live_def_axiom_cache () of
          NONE => empty_def_axiom_cache_statistics
        | SOME cache => def_axiom_cache_statistics true cache)
 
@@ -1598,7 +1636,8 @@ local
            def_axiom_cache_statistics true cache)
 
   fun with_def_axiom_cache_boundary_for limit replay input =
-    if !def_axiom_cache_boundary_depth > 0 then replay input
+    if !def_axiom_cache_boundary_depth > 0 then
+      (ignore (live_def_axiom_cache ()); replay input)
     else
       let
         val enabled = not (Library.no_fastpath ())
@@ -1669,7 +1708,7 @@ local
        NONE)
 
   fun probe_def_axiom_cache target =
-    case !current_def_axiom_cache of
+    case live_def_axiom_cache () of
       NONE => NONE
     | SOME cache =>
         let
@@ -1691,7 +1730,7 @@ local
         handle exn => note_def_axiom_cache_failure cache exn
 
   fun insert_def_axiom_cache target theorem =
-    case !current_def_axiom_cache of
+    case live_def_axiom_cache () of
       NONE => ()
     | SOME cache =>
         let
@@ -1701,7 +1740,10 @@ local
           val replacing = Option.isSome
             (Redblackmap.peek (!entries, target))
         in
-          if cardinality >= #limit cache andalso not replacing then
+          (* A miss still runs the complete worker for a stale input, but
+             its result must not become a stale hit on the next request. *)
+          if not (SmtReplayAttempt.new_live_check () target) then ()
+          else if cardinality >= #limit cache andalso not replacing then
             #capacity_refusals cache := !(#capacity_refusals cache) + 1
           else
             let
@@ -1721,7 +1763,7 @@ local
           else #failures cache := !(#failures cache) + 1
 
   fun note_def_axiom_skeleton_attempt () =
-    case !current_def_axiom_cache of
+    case live_def_axiom_cache () of
       NONE => ()
     | SOME cache => #skeleton_attempts cache :=
         !(#skeleton_attempts cache) + 1
@@ -3313,6 +3355,7 @@ local
               fun prove () =
                 let
                   val _ = note_def_axiom_skeleton_attempt ()
+                  val signature_witness = def_axiom_signature ()
                 in
                   case profile "def-axiom(1)(skeleton-worker)"
                       (SmtSkeletonProve.with_node_cache_observer
@@ -3327,7 +3370,12 @@ local
                       let
                         val theorem = #theorem result
                         val _ = record_skeleton_metrics (#metrics result)
-                        val _ = insert_def_axiom_cache target theorem
+                        (* A successful callback spanning retirement is not
+                           reusable work in either declaration lifetime. *)
+                        val _ = if same_def_axiom_signature
+                            (signature_witness, def_axiom_signature ()) then
+                          insert_def_axiom_cache target theorem
+                        else ignore (live_def_axiom_cache ())
                       in
                         theorem
                       end
