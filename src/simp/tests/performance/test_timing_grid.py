@@ -2335,6 +2335,62 @@ class Attempts(Rig):
         self.assertRegex(mine[2], r"status interrupted candidate %s "
                          r"checkout \S+$" % other)
 
+    def test_every_status_of_an_attempt_is_kept(self):
+        def append(event, **more):
+            tg.ledger_append(self.attempts, event=event, stage="first",
+                             attempt="z" * 32, candidate=CANDIDATE,
+                             counts_file="toy_iterations.json", counts="s",
+                             seed="s0", output="o", checkout="/here", **more)
+        found = lambda: tg.Ledger(self.attempts).attempts()
+        append("open")
+        self.assertEqual(found()[("z" * 32, "first")]["statuses"],
+                         ["interrupted"])
+        append("close", status="checkout-changed")
+        append("resume")
+        append("close", status="interrupted")
+        append("resume")
+        append("close", status="pass")
+        row = found()[("z" * 32, "first")]
+        self.assertEqual((row["statuses"], row["status"], row["resumed"]),
+                         (["checkout-changed", "interrupted", "pass"],
+                          "pass", 2))
+        append("resume")
+        row = found()[("z" * 32, "first")]
+        self.assertEqual((row["statuses"], row["status"]), (
+            ["checkout-changed", "interrupted", "pass", "interrupted"],
+            "interrupted"))
+
+    def test_replay_shows_the_close_of_a_resumed_attempt_and_its_places(self):
+        out = self.root / "grid"
+        self.explode_at = 4
+        with self.assertRaises(RuntimeError):
+            self.first()
+        self.explode_at = None
+        self.assertEqual(self.go(self.argv(
+            "run", out, "--candidate", CANDIDATE, "--resume",
+            "--authorize-measurements"))[0], 0)
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 0)
+        self.assertRegex(text, r"ATTEMPT \w+ first opened \S+ resumed 1 "
+                         r"status interrupted,pass candidate ")
+        # A resumption made in another checkout is named: one place for
+        # every checkout of a line, not of the opening alone.
+        tg.ledger_append(self.attempts, event="open", stage="first",
+                         attempt="a" * 32, candidate=CANDIDATE,
+                         counts_file="toy_iterations.json", counts="s",
+                         seed="s0", output="o", checkout="/A")
+        for event in ("resume", "close"):
+            tg.ledger_append(self.attempts, event=event, stage="first",
+                             attempt="a" * 32, candidate=CANDIDATE,
+                             counts_file="toy_iterations.json", counts="s",
+                             seed="s0", output="o", checkout="/B",
+                             **(dict(status="pass") if event == "close"
+                                else {}))
+        status, text = self.go(self.replay_argv(out))
+        self.assertIn("checkout /A,/B", text)
+        self.assertIn("LEDGER-CHECKOUTS: the attempts of this ledger were "
+                      "made in 3 different checkouts", text)
+
     def test_attempts_made_in_several_checkouts_are_named(self):
         out, _, _ = self.first()
         tg.ledger_append(self.attempts, event="open", stage="first",
@@ -3352,6 +3408,46 @@ class Measuring(Rig):
             ("open", None), ("close", "checkout-changed")])
         self.assertEqual(self.ledger()[-1]["stage"], "second")
 
+    def dead(self, argv):
+        """A command on a grid whose checkout changed is refused at once."""
+        calls, before = self.calls, self.attempts.read_bytes()
+        with self.assertRaisesRegex(ValueError, "checkout changed while "
+                                    "this grid ran.*dead"):
+            self.go(argv)
+        self.assertEqual((self.calls, self.attempts.read_bytes()),
+                         (calls, before))
+
+    def test_a_grid_whose_checkout_changed_is_dead_not_resumed_or_replayed(
+            self):
+        out = self.root / "grid"
+        with self.changing_after(2):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.first()
+        self.assertIn("not the one recorded",
+                      self.inventory(out)["checkout_changed"])
+        self.assertEqual(self.closing(), [
+            ("open", None), ("close", "checkout-changed")])
+        self.dead(self.argv("run", out, "--candidate", CANDIDATE,
+                            "--authorize-measurements", "--resume"))
+        self.dead(self.replay_argv(out))
+        self.dead(self.replay_argv(out, "--partial"))
+        # The route is a new grid, and the ledger keeps both attempts.
+        self.attempts.unlink()
+        self.assertEqual(self.first("again")[1], 0)
+
+    def test_a_second_stage_whose_checkout_changed_is_dead_too(self):
+        self.widen()
+        grid, _, _ = self.first()
+        with self.changing_after(2):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.go(self.extend_argv(grid))
+        ext = self.root / "ext"
+        self.assertIn("checkout_changed", self.inventory(ext))
+        self.dead(self.extend_argv(grid, "ext", "--resume"))
+        self.dead(self.replay_argv(ext))
+        # The first stage is still a grid (inconclusive: it was widened).
+        self.assertEqual(self.go(self.replay_argv(grid))[0], 2)
+
     def test_a_second_stage_compares_the_checkout_before_the_first_replay(
             self):
         self.widen()
@@ -3557,6 +3653,11 @@ class ChainRig(Rig):
     def prepare(self):
         return self.go(["prepare", "--repo", str(self.repo)])
 
+    def ledger_lines(self):
+        return [json.loads(line) for line in (
+            self.repo / ".agent-files" / "evidence" / "toy" /
+            "attempts.jsonl").read_text().splitlines()]
+
     def stamp(self):
         return (self.repo / ".agent-files" / "evidence" / "toy" /
                 "build-stamp.json")
@@ -3683,6 +3784,75 @@ class Chain(ChainRig):
         self.assertEqual(self.calls, 0)
 
     # prepare ------------------------------------------------------------
+
+    def changing_heap(self, call):
+        """The measurement of cell number `call` finds the heap replaced
+        (a build made in the window, an edit): the checkout, as git sees it,
+        is clean and unchanged."""
+        real = self.fake_run
+
+        def run(options):
+            report = real(options)
+            if self.calls == call:
+                (self.repo / "bin" / "hol.state0").write_text("another")
+            return report
+        return patch.object(a, "run", run)
+
+    def test_a_restamp_cannot_make_a_dead_grid_pass(self):
+        y = self.commit_counts()
+        with self.changing_heap(5):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.run_at(y)
+        out = self.root / "grid"
+        self.assertFalse((out / "decisions.json").exists())
+        self.assertIn("checkout_changed", self.inventory(out))
+        self.assertEqual(self.prepare()[0], 0)
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "checkout changed while "
+                                    "this grid ran"):
+            self.run_at(y, "grid", "--resume")
+        with self.assertRaisesRegex(ValueError, "checkout changed while "
+                                    "this grid ran"):
+            self.go(self.replay_argv(out))
+        self.assertEqual(self.calls, calls)
+        self.assertEqual(
+            [(x["event"], x.get("status")) for x in self.ledger_lines()],
+            [("open", None), ("close", "checkout-changed")])
+        # The route is a new grid, of the products that are there now.
+        self.assertEqual(self.run_at(y, "new")[0], 0)
+        self.assertNotEqual(self.inventory(out)["checkout"]["products"],
+                            self.inventory(self.root / "new")[
+                                "checkout"]["products"])
+
+    def test_a_restamp_between_a_stop_and_its_resume_is_refused(self):
+        y = self.commit_counts()
+        self.explode_at = 5
+        with self.assertRaises(RuntimeError):
+            self.run_at(y)
+        self.explode_at = None
+        (self.repo / "bin" / "hol.state0").write_text("another")
+        self.assertEqual(self.prepare()[0], 0)
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "different settings"):
+            self.run_at(y, "grid", "--resume")
+        self.assertEqual(self.calls, calls)
+
+    def test_a_restamp_between_the_stages_is_refused(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        y = self.commit_counts()
+        self.assertEqual(self.run_at(y)[0], 2)
+        (self.repo / "bin" / "hol.state0").write_text("another")
+        self.assertEqual(self.prepare()[0], 0)
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "not the one the first "
+                                    "stage was measured in"):
+            self.go(self.argv("extend", self.root / "ext", "--grid",
+                              str(self.root / "grid"),
+                              "--authorize-measurements"))
+        self.assertEqual(self.calls, calls)
+        self.assertFalse((self.root / "ext").exists())
 
     def test_prepare_runs_the_real_build_in_the_root_and_stamps(self):
         y = self.commit_counts()

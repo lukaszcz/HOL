@@ -394,8 +394,11 @@ class Ledger:
                               % (number, len(line.encode())))
 
     def attempts(self):
-        """(attempt, stage) -> candidate, checkout, opened, resumptions and
-        status, in the order the ledger first names them."""
+        """(attempt, stage) -> candidate, the checkouts of all its lines
+        (`checkout`: the first), opened, resumptions, and every status the
+        attempt closed with, in order (`statuses`; `status`: the last), in
+        the order the ledger first names them. A run that was resumed or is
+        still open without a close of its own has been `interrupted`."""
         found = {}
         for record in self.records:
             if record["event"] not in ("open", "resume", "close"):
@@ -403,14 +406,27 @@ class Ledger:
             row = found.setdefault(
                 (record["attempt"], record["stage"]),
                 dict(candidate=record.get("candidate"), checkout=None,
-                     opened=None, resumed=0, status=None))
+                     checkouts=[], opened=None, resumed=0, statuses=[],
+                     status=None, running=False))
+            place = record.get("checkout")
+            if place not in row["checkouts"]:
+                row["checkouts"].append(place)
+            if record["event"] != "close":
+                if row["running"]:
+                    row["statuses"].append("interrupted")
+                row["running"] = True
             if record["event"] == "open":
                 row["opened"] = record["time"]
-                row["checkout"] = record.get("checkout")
             elif record["event"] == "resume":
                 row["resumed"] += 1
             else:
-                row["status"] = record["status"]
+                row["statuses"].append(record["status"])
+                row["running"] = False
+        for row in found.values():
+            if row.pop("running"):
+                row["statuses"].append("interrupted")
+            row["checkout"] = row["checkouts"][0]
+            row["status"] = row["statuses"][-1] if row["statuses"] else None
         return found
 
 
@@ -1302,7 +1318,12 @@ class Grid:
                     self.h.measure_cell(root, inventory, case, size, pairs,
                                         count, seconds, seed, args, reports,
                                         fds)
-                self.h.recheck(args.repo, inventory["candidate"], inventory)
+                try:
+                    self.h.recheck(args.repo, inventory["candidate"],
+                                   inventory)
+                except CheckoutChanged as error:
+                    inventory["checkout_changed"] = str(error)
+                    raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
         return reports
@@ -1585,9 +1606,11 @@ class Grid:
 
     def report_attempts(self, state, inventory, stage):
         """Print every attempt of the table in the ledger, the candidate's
-        marked, with its status and the checkout it was made in, so that a
-        reader of a replay sees each retry and a retry made elsewhere. The
-        attempts of a table that are not all in one checkout are named."""
+        marked, with every status it closed with and the checkouts of its
+        lines, so that a reader of a replay sees each retry, an interruption
+        or a checkout that changed on the way, and a retry made elsewhere.
+        The attempts of a table that are not all in one checkout are
+        named."""
         if state is None:
             return
         found = state.attempts()
@@ -1604,9 +1627,10 @@ class Grid:
             print("ATTEMPT %s %s opened %s resumed %d status %s candidate "
                   "%s checkout %s%s" % (
                       attempt, kind, row["opened"], row["resumed"],
-                      row["status"] or "interrupted", row["candidate"],
-                      row["checkout"], mark))
-        places = {row["checkout"] for row in found.values()}
+                      ",".join(row["statuses"]) or "interrupted",
+                      row["candidate"], ",".join(map(str, row["checkouts"])),
+                      mark))
+        places = {x for row in found.values() for x in row["checkouts"]}
         if len(places) > 1:
             print("LEDGER-CHECKOUTS: the attempts of this ledger were made "
                   "in %d different checkouts" % len(places))
@@ -1915,6 +1939,10 @@ class Grid:
 
     def check_header(self, inventory):
         t = self.t
+        a.require("checkout_changed" not in inventory,
+                  "the checkout changed while this grid ran (%s): it is "
+                  "dead, neither resumed nor replayed; its route is a new "
+                  "grid in a new output" % inventory.get("checkout_changed"))
         seeded = inventory.get("layout_seed") is not None
         for code in [inventory] + inventory.get("resumed", []):
             self.h.check_code(code, seeded)
