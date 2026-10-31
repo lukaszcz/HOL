@@ -694,17 +694,38 @@ has no disposition.
   with its own controls receipt), and the timing grid's products are those of
   its own checkout, so the two digests are of different things and a
   comparison would be wrong. The checkout is compared again under the lock,
-  just before the first cell, and at the end of a measurement: a checkout
-  that changed in between ends the attempt as `checkout-changed` (the closing
-  line of the ledger says so) and the inventory records `checkout_changed`
-  (as a pilot's does), with no pass. **Such a grid is dead.** `--resume` and
-  `replay` refuse its directory (`the checkout changed while this grid ran`),
-  a `prepare` after it cannot make it a pass, and its route is a new grid in
-  a new output, a new attempt of the ledger. What is compared is the checkout
-  at those moments, so a change made and undone between them is not seen; and
-  the record proves that the checkout holds the recorded tree and products
-  now, not that it held them when `prepare` ran. A pilot made at X and a grid
-  at Y are not required to have the same tree outside the performance area: a
+  just before the first cell, and at the end of a measurement; a checkout
+  that is not as recorded ends the attempt as `checkout-changed` (the closing
+  line of the ledger says so), with no pass, and what it leaves behind
+  depends on which of two things was found.
+  *Known to differ.* The head is not the commit measured, or the tree
+  outside the performance area or the products differ from the stamp or from
+  the record. The inventory records `checkout_changed` (as a pilot's does)
+  and **such a grid is dead**: `--resume`, `replay`, `extend` and `close`
+  refuse its directory (`the checkout changed while this grid ran ... it is
+  dead`; a dead pilot is refused by `predeclare` and `verify-counts` with
+  `the checkout changed while the pilot ran`, and its `--resume` with
+  `resume with different settings`), a `prepare` after it cannot make it a
+  pass, and its route is a new grid in a new output, a new attempt of the
+  ledger.
+  *Not judged.* The tree is not clean at the end (a stray or untracked file,
+  an uncommitted edit, an editor's swap file) or the stamp is missing,
+  malformed or of another build command. The attempt closes the same way but
+  the inventory carries no mark and the grid is not dead: it has no
+  decisions, so a full `replay`, `extend` and `close` have nothing to check
+  (`replay --partial` replays its cells), and `--resume` compares the
+  checkout with the record as after any stop, so it goes on once the tree
+  is clean and the stamp is there again, and is refused (`resume with
+  different settings`) if the products, the tree or the head are not the
+  recorded ones. A pilot records `checkout_unjudged` instead; `predeclare`
+  and `verify-counts` refuse it until `pilot --resume` has found the
+  checkout as recorded.
+  What is compared is the checkout at those moments, so a change made and
+  undone between them is not seen (an unclean tree at the end hides a
+  change of the products that was undone as well); and the record proves
+  that the checkout holds the recorded tree and products now, not that it
+  held them when `prepare` ran. A pilot made at X and a grid at Y are not
+  required to have the same tree outside the performance area: a
   production fix between them must stay possible (route after a regression,
   above); it needs a `prepare` at the commit it is committed in.
   **Where the output goes.** The tree must be clean when a measurement is
