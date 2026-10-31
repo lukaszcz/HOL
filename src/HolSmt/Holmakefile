@@ -1,5 +1,6 @@
 INCLUDES = ../hol88 ../integer ../n-bit ../rational ../real ../real/analysis \
-           ../res_quan/src ../sort ../string ../floating-point ../bag
+           ../res_quan/src ../sort ../string ../floating-point ../bag \
+           ../HolSat
 
 all: $(DEFAULT_TARGETS) selftest.exe smtfloat-diff.exe
 .PHONY: all

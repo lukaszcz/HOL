@@ -40,7 +40,8 @@ fun parseSat (s1,s2) ss =
  in
   List.map (valOf o Int.fromString o Substring.string) ssl
  end
- handle _ => failwith("parseSat");
+ handle e => if dimacsTools.is_terminal e then raise e
+             else failwith("parseSat");
 
 fun isSuccess s = Process.isSuccess s
 
@@ -92,13 +93,13 @@ fun with_solver_statistics action =
        internal_system = !(#internal_system fields)}
   in (Exn.release result,observed) end
 fun sat_sysl command = case !solver_meter of
-    NONE => Systeml.system_ps command
+    NONE => SatProcess.system command
   | SOME fields =>
       let
         val _ = #external_calls fields := !(#external_calls fields) + 1
         val wall = Timer.startRealTimer ()
         val child_times_before = Posix.ProcEnv.times ()
-        val result = Exn.capture Systeml.system_ps command
+        val result = Exn.capture SatProcess.system command
         val measured = Exn.capture (fn () =>
           let val after = Posix.ProcEnv.times ()
           in add_solver_time (#external_wall fields)
@@ -147,8 +148,9 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
                     else print("Warning:\n Process.system reports failure \
                                \signal returned by\n " ^ run_cmd ^ "\n")
    val ins        = TextIO.openIn outfile
-   val sat_res_ss = Substring.full (TextIO.inputAll ins)
-   val _          = TextIO.closeIn ins
+   val sat_res_ss = Substring.full
+     (dimacsTools.with_cleanup (fn () => TextIO.closeIn ins)
+        TextIO.inputAll ins)
    val result     = substringContains failure_string sat_res_ss
  in
   if result
@@ -166,7 +168,7 @@ fun invokeSat sat_solver tm vc nr svm sva infile =
         in model3 end
     end
  end
-handle Io _ => NONE
+handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
 
 (*
 ** satCheck [l1,...,ln] t
@@ -200,7 +202,8 @@ fun satCheck model t =
                  (UNDISCH (EQF_ELIM (REWRITE_CONV [] t))
                   handle HOL_ERR _ => raise satCheckError)
             else raise satCheckError
-        | otherwise => raise satCheckError;
+        | otherwise => if dimacsTools.is_terminal otherwise
+                       then raise otherwise else raise satCheckError;
 
 end
 end

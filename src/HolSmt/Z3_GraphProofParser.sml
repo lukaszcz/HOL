@@ -142,9 +142,20 @@ struct
       val variables = ref ([] : 'a list)
       val closures = ref ([] : (unit -> unit) list)
       fun close () =
-        let val saved = !closures
-            val _ = closures := []
-        in List.app (fn action => action ()) saved end
+        let
+          val saved = !closures
+          (* Detach before callbacks: repeated/reentrant close cannot run a
+             closure twice. One failed child must not strand its siblings
+             or parents; explicit close still reports the FIRST failure. *)
+          val _ = closures := []
+          fun drain [] primary =
+                (case primary of NONE => () | SOME error => raise error)
+            | drain (action::rest) primary =
+                (case Exn.capture action () of
+                   Exn.Res () => drain rest primary
+                 | Exn.Exn error => drain rest
+                     (case primary of NONE => SOME error | _ => primary))
+        in drain saved NONE end
       fun error message = raise ERR "parse" message
       fun term session aliases raw =
         buffered raw (#parse_from (session : 'a F.constructed_session))

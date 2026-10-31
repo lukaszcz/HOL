@@ -34,12 +34,7 @@ structure Z3 = struct
   fun is_sat_stream instream = Lib.fst (is_sat_stream_with_consumed instream)
 
   fun is_sat_file path =
-    let
-      val instream = TextIO.openIn path
-    in
-      is_sat_stream instream
-        before TextIO.closeIn instream
-    end
+    SolverSpec.with_input_file path is_sat_stream
 
   fun get_nonempty_env name =
     case OS.Process.getEnv name of
@@ -48,8 +43,9 @@ structure Z3 = struct
 
   fun command_available name =
     OS.Process.isSuccess
-      (OS.Process.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
-    handle _ => false
+      (SatProcess.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
+    handle exn =>
+      if SolverSpec.terminal_capture_exception exn then raise exn else false
 
   fun configured_executable () =
     case get_nonempty_env "HOL4_Z3_EXECUTABLE" of
@@ -85,35 +81,14 @@ structure Z3 = struct
     handle Overflow => max_capture_file_bytes + 1
 
   fun copy_file_bounded_memory source target =
-    let
-      val input = TextIO.openIn source
-      val output = TextIO.openOut target
-      fun copy () =
-        case TextIO.inputN (input, 65536) of
-          "" => ()
-        | chunk => (TextIO.output (output, chunk); copy ())
-      fun finish () =
+    SolverSpec.with_input_file source (fn input =>
+      SolverSpec.with_output_file target (fn output =>
         let
-          val input_exception =
-            (TextIO.closeIn input; NONE) handle exn => SOME exn
-          fun close_output () = TextIO.closeOut output
-        in
-          case input_exception of
-            NONE =>
-              (close_output () handle exn =>
-                SmtResource.resolve_diagnostic_exception exn
-                  (fn () => ()) (fn _ => ()))
-          | SOME exn =>
-              SmtResource.resolve_diagnostic_exception exn close_output
-                (fn _ => ())
-        end
-    in
-      case Exn.capture copy () of
-        Exn.Res result => (finish (); result)
-      | Exn.Exn exn =>
-          SmtResource.resolve_diagnostic_exception exn finish
-            (fn original => raise original)
-    end
+          fun copy () =
+            case TextIO.inputN (input, 65536) of
+              "" => ()
+            | chunk => (TextIO.output (output, chunk); copy ())
+        in copy () end))
 
   (* Exact solver artifacts are retained only when this E0 hook is enabled.
      Streaming the copy avoids allocating a proof-sized ML string.  A single
@@ -223,15 +198,15 @@ structure Z3 = struct
   (* e.g. "Z3 version 4.5.0 - 64 bit" *)
   fun parse_Z3_version fname =
     let
-      val instrm = TextIO.openIn fname
-      val s = TextIO.inputAll instrm before TextIO.closeIn instrm
+      val s = SolverSpec.with_input_file fname TextIO.inputAll
       val tokens = String.tokens Char.isSpace s
     in
       case tokens of
         "Z3" :: "version" :: version :: _ => version
       | _ => "0"
     end
-    handle _ => "0"
+    handle exn =>
+      if SolverSpec.terminal_capture_exception exn then raise exn else "0"
 
   val Z3version =
       case configured_executable () of
@@ -240,14 +215,15 @@ structure Z3 = struct
           let
             val outfile = OS.FileSys.tmpName()
             fun work () = let
-              val _ = OS.Process.system (p ^ " -version > " ^ outfile)
+              val _ = SatProcess.system
+                (SolverSpec.with_wall_timeout (p ^ " -version > " ^ outfile))
             in
               parse_Z3_version outfile
             end
             fun finish () =
                 OS.FileSys.remove outfile handle SysErr _ => ()
           in
-            Portable.finally finish work ()
+            SolverSpec.complete_owned finish work ()
           end
 
   fun configured_version () =
@@ -471,11 +447,7 @@ structure Z3 = struct
         fn outfile =>
           let
             val instream = TextIO.openIn outfile
-            fun close () =
-              TextIO.closeIn instream
-              handle exn =>
-                SmtResource.resolve_diagnostic_exception exn
-                  (fn () => ()) (fn _ => ())
+            fun close () = TextIO.closeIn instream
             fun contextualize_parse exn =
               if SmtResource.terminal_diagnostic_exception exn then raise exn
               else
@@ -571,13 +543,8 @@ structure Z3 = struct
                   end
                 | _ => result
               end
-            val outcome = Exn.capture work ()
           in
-            case outcome of
-              Exn.Res result => (close (); result)
-            | Exn.Exn exn =>
-                SmtResource.resolve_diagnostic_exception exn close
-                  (fn original => raise original)
+            SolverSpec.complete_owned close work ()
           end)
 
   (* Explicit finite graph path; legacy Z3_SMT_Prover above is unchanged. *)
@@ -636,12 +603,7 @@ structure Z3 = struct
                     (original_goal,theorem))
               in SolverSpec.UNSAT (SOME theorem) end
             | _ => status end
-          val outcome = Exn.capture work ()
-        in case outcome of Exn.Res result => (close ();result)
-          | Exn.Exn error =>
-              SmtResource.resolve_diagnostic_exception error close
-              (fn original => raise original)
-        end))
+        in SolverSpec.complete_owned close work () end))
 
 
   (* Phase envelopes belong to the checked graph API, not the public solver

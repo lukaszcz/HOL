@@ -36,7 +36,9 @@ structure SolverSpec = struct
   fun wall_timeout_seconds () =
     (configured_timeout_milliseconds () + 999) div 1000 + 1
 
-  (* The wall timeout is only a backstop: each solver is additionally asked to
+  (* SatProcess owns the process group. Keep timeout inside that group so
+     cancellation/normal cleanup also collects solver descendants.
+     The wall timeout is only a backstop: each solver is additionally asked to
      limit itself via its own command-line option.  `timeout` is GNU coreutils
      and is absent on macOS/BSD, where a coreutils install provides `gtimeout`
      instead.  Probe once, and run the solver unwrapped when neither is
@@ -60,10 +62,41 @@ structure SolverSpec = struct
         wall_timeout_command := SOME found; found
       end
 
+  (* Run all independent cleanup actions, retaining the first failure. *)
+  fun cleanup_all actions =
+    let
+      fun loop [] outcome = Exn.release outcome
+        | loop (action::rest) outcome =
+            let val next = Exn.capture action ()
+            in loop rest (case outcome of Exn.Exn _ => outcome
+                           | Exn.Res () => next) end
+    in loop actions (Exn.Res ()) end
+
+  (* Cleanup may fail, but never replaces the protected action's exception. *)
+  fun complete_owned complete work input =
+    let
+      val outcome = Exn.capture work input
+      val cleanup = Exn.capture complete ()
+    in case outcome of
+        Exn.Exn primary => raise primary
+      | Exn.Res result => (Exn.release cleanup;result)
+    end
+
+  fun with_input_file path action =
+    let val stream = TextIO.openIn path
+    in complete_owned (fn () => TextIO.closeIn stream) action stream end
+
+  fun with_output_file path action =
+    let val stream = TextIO.openOut path
+    in complete_owned (fn () => TextIO.closeOut stream) action stream end
+
+  fun remove_temp path = OS.FileSys.remove path handle SysErr _ => ()
+
   fun with_wall_timeout cmd =
     case find_wall_timeout_command () of
       SOME command =>
-        command ^ " " ^ Int.toString (wall_timeout_seconds ()) ^ " " ^ cmd
+        command ^ " --foreground --kill-after=1 " ^
+          Int.toString (wall_timeout_seconds ()) ^ " " ^ cmd
     | NONE => cmd
 
   fun ordinary_validation _ (As, g) thm =
@@ -98,6 +131,7 @@ structure SolverSpec = struct
   fun terminal_capture_exception exn =
     case exn of Interrupt => true
       | Timeout.TIMEOUT _ => true
+      | IO.Io {cause,...} => terminal_capture_exception cause
       | _ => false
 
   type input_writer = (string -> unit) -> unit
@@ -133,7 +167,8 @@ structure SolverSpec = struct
     val (x, inputs) = quiet pre goal
     val cmd_stem = command_stem x
     val infile = FileSys.tmpName ()
-    val outfile = FileSys.tmpName ()
+    val outfile = FileSys.tmpName () handle primary =>
+      (ignore (Exn.capture remove_temp infile);raise primary)
     fun observe stage source =
       (Option.app
         (fn record => record cmd_stem infile stage source) capture
@@ -153,7 +188,7 @@ structure SolverSpec = struct
                                    cmd ^ "'")
               else ()
       val _ = SmtResource.profile_phase "solver/certificate-generation"
-        Systeml.system_ps cmd
+        SatProcess.system cmd
       val _ = observe "output" outfile
       (* call 'post' to determine the result *)
       val result = post x outfile
@@ -186,16 +221,11 @@ structure SolverSpec = struct
     fun finish () =
         (* delete all temporary files *)
         if !Library.trace < 4 then
-          List.app (fn path => OS.FileSys.remove path handle SysErr _ => ())
-                   [infile, outfile]
+          cleanup_all (List.map (fn path => fn () => remove_temp path)
+                               [infile, outfile])
         else ()
   in
-    if strict_capture then
-      let val outcome = Exn.capture work ()
-          val cleanup = Exn.capture finish ()
-      in case outcome of Exn.Exn primary => raise primary
-        | Exn.Res result => (Exn.release cleanup;result) end
-    else Portable.finally finish work ()
+    complete_owned finish work ()
   end) goal
 
   (* Retain the list API and its exact fragment order. Both forms use the
@@ -261,15 +291,6 @@ structure SolverSpec = struct
      status and temporary-file behavior is delegated to the original API.
      Retire a retained artifact on every outcome, including SAT/UNKNOWN and
      errors between preprocessing and post. Cleanup cannot replace primary. *)
-  fun complete_owned complete work input =
-    let
-      val outcome = Exn.capture work input
-      val cleanup = Exn.capture complete ()
-    in case outcome of
-        Exn.Exn primary => raise primary
-      | Exn.Res result => (Exn.release cleanup;result)
-    end
-
   fun make_solver_with_capture_command_and_completion
       validate complete capture pre command_stem post goal =
     let

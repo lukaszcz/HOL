@@ -459,8 +459,17 @@ struct
     (check_scope g caller;!(#validation_changes g))
   fun scope_retirement_epoch (g : graph) caller =
     (check_scope g caller;!(#scope_retirements g))
-  fun close_scope (g : graph) scope =
-    let val frame = scope_frame g scope
+  fun close_scope (g : graph) (Scope {owner,id}) =
+    let
+        (* Retirement is cleanup, not a productive semantic lookup. It must
+           work after the captured meter or Type/Term epoch has retired.
+           Authenticate THIS exact frame without reopening paid indices or
+           touching any other graph/store. Ordinary scope_frame stays paid. *)
+        val _ = if owner = #owner g then () else
+          raise ERR "scope" "scope belongs to a different graph"
+        val frame = case R.peek_int (!(#scopes g),id) of
+            SOME frame => frame
+          | NONE => raise ERR "scope" "unknown scope"
         (* Allocate the unbounded next witness BEFORE changing frame state.
            Foreign scope failure cannot advance another graph's witness. *)
         val next = !(#scope_retirements g) + 1

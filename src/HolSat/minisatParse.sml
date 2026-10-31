@@ -180,7 +180,7 @@ fun parseTrace_with_roots make_roots cl sva nr fname solver vc clauseth lfn
             Exn.Res _ => sat_fileclose fin
           | Exn.Exn _ => (sat_fileclose fin handle _ => ())
      in SOME (Exn.release result) end
-handle Io _ => NONE
+handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
 
 fun parseTrace roots cl sva nr fname solver vc clauseth lfn proof =
     Option.map #1 (parseTrace_with_roots (fn () => roots) cl sva nr fname

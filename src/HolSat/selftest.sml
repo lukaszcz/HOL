@@ -2,6 +2,141 @@ open HolKernel Parse boolLib testutils HolSatLib
 
 val _ = set_trace "Unicode" 0
 
+(* These callbacks never run a SAT executable.  In particular, failures in
+   command construction must get the same cleanup as solver/replay failures. *)
+local
+  open satConfig SatSolvers
+  exception CleanupSentinel of unit ref
+  val token = ref ()
+  val primary = CleanupSentinel token
+  val secondary = Fail "secondary cleanup failure"
+  val duration = Time.fromSeconds 7
+  fun same (CleanupSentinel x) (CleanupSentinel y) = x = y
+    | same Interrupt Interrupt = true
+    | same (Timeout.TIMEOUT x) (Timeout.TIMEOUT y) = x = y
+    | same (Fail x) (Fail y) = x = y
+    | same _ _ = false
+  fun raised expected (Exn.Exn actual) = same expected actual
+    | raised _ _ = false
+  fun control name action =
+    (tprint name; require_msg (check_result I) Bool.toString action ())
+  fun put path text =
+    let val out = TextIO.openOut path
+    in dimacsTools.with_cleanup (fn () => TextIO.closeOut out)
+         (fn () => TextIO.output (out,text)) () end
+  fun exists path = OS.FileSys.access (path,[])
+  fun solver run post =
+    let val SatSolver fields = minisatp
+    in SatSolver
+      {name = "cleanup-sentinel", URL = #URL fields,
+       (* Access is checked, but this executable is never launched. *)
+       executable = OS.Path.concat (Globals.HOLDIR,"bin/hol"),
+       post_exe = Option.map (fn _ => "unused") post,
+       notime_run = run, time_run = #time_run fields,
+       post_run = (case post of SOME f => f | NONE => #post_run fields),
+       only_true = false, failure_string = "UNSAT",
+       start_string = "SAT", end_string = " 0"}
+    end
+
+  val _ = control "SAT resource scopes preserve the first exception"
+    (fn () => List.all (fn error =>
+      List.all (fn cleanup_error =>
+        let val closed = ref false
+            val result = Exn.capture
+              (dimacsTools.with_cleanup
+                (fn () => (closed := true; raise cleanup_error))
+                (fn () => raise error)) ()
+        in !closed andalso raised error result end)
+        [secondary, Interrupt, Timeout.TIMEOUT duration])
+      [primary, Interrupt, Timeout.TIMEOUT duration] andalso
+      raised secondary (Exn.capture
+        (dimacsTools.with_cleanup (fn () => raise secondary) (fn () => 1))
+        ()) andalso
+      dimacsTools.with_cleanup (fn () => ()) (fn () => 17) () = 17)
+
+  (* Verify sidecars as well as the CNF and the tmpName placeholder.  The
+     outer scope also cleans broken-test leftovers before reporting failure. *)
+  fun callback_case input answer run_error post_error prove accept =
+    let
+      val paths = ref (case input of NONE => [] | SOME path => [path])
+      val calls = ref 0
+      val ready = ref false
+      fun run _ (cnf,outfile) =
+        (calls := !calls + 1;
+         paths := [cnf,outfile,outfile^".proof",outfile^".stats"] @
+           (case input of NONE => [!dimacsTools.tmp_name] | SOME _ => []);
+         ready := exists cnf;
+         put outfile answer;
+         put (outfile^".proof") "sentinel proof";
+         put (outfile^".stats") "sentinel stats";
+         case run_error of SOME error => raise error | NONE => "exit 0")
+      val post = Option.map (fn error => fn _ => fn _ => raise error)
+                            post_error
+      val conf = set_solver (solver run post)
+        (set_term ``~(p /\ q)`` base_config)
+      val conf = case input of NONE => conf | SOME path => set_infile path conf
+    in dimacsTools.with_cleanup (fn () => dimacsTools.clean_files (!paths))
+         (fn () =>
+           let val result = Exn.capture prove conf
+           in !calls = 1 andalso !ready andalso accept result andalso
+              List.all (fn path => exists path = Option.isSome input) (!paths)
+           end) ()
+    end
+  fun failed error =
+    callback_case NONE "UNSAT\n" (SOME error) NONE GEN_SAT (raised error)
+  val _ = control "SAT callback failures remove all owned solver files"
+    (fn () => List.all failed [primary, Interrupt, Timeout.TIMEOUT duration])
+  val _ = control "SAT postprocessor failures remove all owned solver files"
+    (fn () => List.all (fn error =>
+      callback_case NONE "UNSAT\n" NONE (SOME error) GEN_SAT (raised error))
+      [primary, Interrupt, Timeout.TIMEOUT duration])
+  val _ = control "SAT callback cleanup preserves caller-owned files"
+    (fn () =>
+      let val input = OS.FileSys.tmpName ()
+      in dimacsTools.with_cleanup (fn () => dimacsTools.clean_files [input])
+           (fn () =>
+             (put input "p cnf 1 1\n1 0\n";
+              callback_case (SOME input) "UNSAT\n" (SOME primary) NONE
+                GEN_SAT (fn result => raised primary result andalso
+                  dimacsTools.readDimacs input ~~ ``v1:bool``))) ()
+      end)
+  val _ = control "SAT result/failure paths remove owned solver files"
+    (fn () =>
+      callback_case NONE "SAT 1 2 0\n" NONE NONE GEN_SAT_PROVE_ONLY
+        (fn Exn.Exn (SAT_satisfiable _) => true | _ => false) andalso
+      callback_case NONE "SAT 1 2 0\n" NONE NONE
+        (fn conf => GEN_SAT (set_flag_is_proved false conf))
+        (fn Exn.Exn (SAT_cex _) => true | _ => false) andalso
+      callback_case NONE "UNSAT\n" NONE NONE
+        (fn conf => GEN_SAT (set_flag_is_proved false conf))
+        (fn Exn.Res th => concl th ~~ ``~(p /\ q)`` | _ => false) andalso
+      callback_case NONE "SAT not-an-integer 0\n" NONE NONE GEN_SAT
+        (fn Exn.Exn (HOL_ERR _) => true | _ => false) andalso
+      callback_case NONE "SAT 1 2 0\n" NONE NONE GEN_SAT
+        (fn Exn.Exn (SAT_cex _) => true | _ => false) andalso
+      callback_case NONE "SAT -1 -2 0\n" NONE NONE GEN_SAT
+        (fn Exn.Exn satTools.satCheckError => true | _ => false))
+
+  (* Keep the legacy ordinary-I/O classification; only terminal I/O causes
+     must escape rather than being classified as an UNSAT response. *)
+  fun invoke error = satTools.invokeSat
+    (solver (fn _ => fn _ => raise error) NONE) T NONE NONE
+    (1,Redblackmap.mkDict Term.compare) (Array.fromList [T]) "unused"
+  val ordinary_io = IO.Io
+    {name = "sentinel", function = "callback", cause = Fail "ordinary"}
+  fun terminal_io error = IO.Io
+    {name = "sentinel", function = "callback", cause = error}
+  val _ = control "SAT callback ordinary I/O classification is unchanged"
+    (fn () => not (Option.isSome (invoke ordinary_io)) andalso
+      raised primary (Exn.capture invoke primary) andalso
+      List.all (fn error =>
+        case Exn.capture invoke (terminal_io error) of
+          Exn.Exn (IO.Io {cause,...}) => same error cause | _ => false)
+        [Interrupt, Timeout.TIMEOUT duration])
+in
+  val _ = ()
+end
+
 (* #1170: SAT_ORACLE used to fabricate a bogus theorem on inputs whose
    negated form has a top-level conjunct that boolean-simplifies to F.
    For ``b ==> T`` the negation is ``b /\ ~T``; presimp turns ``~T`` into

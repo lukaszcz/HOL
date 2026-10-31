@@ -97,12 +97,7 @@ structure CVC = struct
   fun is_sat_stream instream = Lib.fst (is_sat_stream_with_consumed instream)
 
   fun is_sat_file path =
-    let
-      val instream = TextIO.openIn path
-    in
-      is_sat_stream instream
-        before TextIO.closeIn instream
-    end
+    SolverSpec.with_input_file path is_sat_stream
 
   fun get_nonempty_env name =
     case OS.Process.getEnv name of
@@ -111,8 +106,9 @@ structure CVC = struct
 
   fun command_available name =
     OS.Process.isSuccess
-      (OS.Process.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
-    handle _ => false
+      (SatProcess.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
+    handle exn =>
+      if SolverSpec.terminal_capture_exception exn then raise exn else false
 
   fun configured_executable () =
     case get_nonempty_env "HOL4_CVC_EXECUTABLE" of
@@ -147,8 +143,7 @@ structure CVC = struct
      follows it. *)
   fun parse_cvc_version fname =
     let
-      val instrm = TextIO.openIn fname
-      val text = TextIO.inputAll instrm before TextIO.closeIn instrm
+      val text = SolverSpec.with_input_file fname TextIO.inputAll
       fun version_after ("version" :: rest) = version_after rest
         | version_after (token :: _) =
             if is_version_token token then SOME token else NONE
@@ -164,7 +159,9 @@ structure CVC = struct
         SOME version => version
       | NONE => CPC_Proof.unknown_cvc_version
     end
-    handle _ => CPC_Proof.unknown_cvc_version
+    handle exn =>
+      if SolverSpec.terminal_capture_exception exn then raise exn
+      else CPC_Proof.unknown_cvc_version
 
   val CVCversion =
     case configured_executable () of
@@ -173,11 +170,12 @@ structure CVC = struct
         let
           val outfile = OS.FileSys.tmpName ()
           fun work () =
-            let val _ = OS.Process.system (executable ^ " --version > " ^ outfile)
+            let val _ = SatProcess.system (SolverSpec.with_wall_timeout
+                  (executable ^ " --version > " ^ outfile))
             in parse_cvc_version outfile end
           fun finish () = OS.FileSys.remove outfile handle SysErr _ => ()
         in
-          Portable.finally finish work ()
+          SolverSpec.complete_owned finish work ()
         end
 
   fun version_string () = CVCversion
@@ -201,13 +199,10 @@ structure CVC = struct
       raise Feedback.mk_HOL_ERR "CVC" name error_msg
 
   fun copy_file source target =
-    let
-      val input = TextIO.openIn source
-      fun work () = Library.write_strings_to_file target [TextIO.inputAll input]
-      fun finish () = TextIO.closeIn input
-    in
-      Portable.finally finish work ()
-    end
+    SolverSpec.with_input_file source (fn input =>
+      let val text = TextIO.inputAll input
+      in SolverSpec.with_output_file target (fn output =>
+        TextIO.output (output, text)) end)
 
   (* Keeping these exact temporary artifacts is deliberately opt-in.  It lets
      the CPC corpus runner consume precisely the post-preprocessing SMT-LIB
@@ -348,32 +343,39 @@ structure CVC = struct
       (data as ((original_goal, goal, validation, finite_hyps),
         (translation, _))) outfile =
     let
-      val instream = TextIO.openIn outfile
-      val (result, proof_start) = is_sat_stream_with_consumed instream
+      (* Scan, dictionary setup and every parser outcome share one owner.
+         Release the descriptor before replay, as on the established path. *)
+      fun read_proof instream =
+        let val (result, proof_start) = is_sat_stream_with_consumed instream
+        in case result of
+            SolverSpec.UNSAT NONE =>
+              let
+                val dicts = quiet (fn () =>
+                  SmtLib.parser_dicts_for_solver_translation "cvc5" translation)
+                val _ = if !Library.trace > 1 then
+                    Feedback.HOL_MESG "HolSmtLib: parsing CVC proof"
+                  else ()
+                val proof = quiet (fn () =>
+                  SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
+                    outfile proof_start instream
+                    (SmtResource.profile_phase "cvc/cpc-parse"
+                      (CPC_ProofParser.with_cpc_fp_private_source_terms
+                        (Lib.snd goal :: finite_hyps @ Lib.fst goal)
+                        (parse dicts))))
+                  handle Feedback.HOL_ERR holerr =>
+                    if SmtResource.is_resource_gate holerr then
+                      raise Feedback.HOL_ERR holerr
+                    else
+                      raise_with_context proof_name "proof parse"
+                        (command_stem data) holerr
+              in (result, SOME proof) end
+          | _ => (result, NONE)
+        end
+      val (result, proof) = SolverSpec.with_input_file outfile read_proof
     in
-      case result of
-        SolverSpec.UNSAT NONE =>
+      case proof of
+        SOME proof =>
         let
-          val (ty_dict, tm_dict) = quiet (fn () =>
-            SmtLib.parser_dicts_for_solver_translation "cvc5" translation)
-          val _ = if !Library.trace > 1 then
-              Feedback.HOL_MESG "HolSmtLib: parsing CVC proof"
-            else ()
-          val proof = quiet (fn () =>
-            SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
-              outfile proof_start instream
-              (SmtResource.profile_phase "cvc/cpc-parse"
-                (CPC_ProofParser.with_cpc_fp_private_source_terms
-                  (Lib.snd goal :: finite_hyps @ Lib.fst goal)
-                  (parse (ty_dict, tm_dict)))))
-            handle Feedback.HOL_ERR holerr =>
-              (TextIO.closeIn instream;
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else
-                 raise_with_context proof_name "proof parse"
-                   (command_stem data) holerr)
-          val _ = TextIO.closeIn instream
           val (As, g) = goal
           val _ = if !Library.trace > 1 then
               Feedback.HOL_MESG "HolSmtLib: checking CVC proof"
@@ -400,7 +402,7 @@ structure CVC = struct
           val thm = quiet (fn () =>
             check_reconstructed_theorem proof_name (original_goal, thm))
         in SolverSpec.UNSAT (SOME thm) end
-      | _ => (result before TextIO.closeIn instream)
+      | NONE => result
     end
 
   (* CPC is the sole checked cvc5 proof format. *)
@@ -459,12 +461,7 @@ structure CVC = struct
               "CVC_SMT_Graph_Prover" (original_goal,theorem))
           in SolverSpec.UNSAT (SOME theorem) end
         | _ => status end
-      val outcome = Exn.capture work ()
-    in case outcome of Exn.Res result => (close ();result)
-      | Exn.Exn error =>
-              SmtResource.resolve_diagnostic_exception error close
-          (fn original => raise original)
-    end
+    in SolverSpec.complete_owned close work () end
   fun CVC_SMT_Graph_Prover limits =
     (SmtCheckedGraph.validate limits;
      mk_CVC_CPC_fun "CVC_SMT_Graph_Prover" proof_pre cpc_command
