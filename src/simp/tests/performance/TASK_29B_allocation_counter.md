@@ -312,11 +312,22 @@ default and is chosen by the caller outside the repository.
   resolved private runtime path too, which a symlinked `TMPDIR` can change
   alone; the final replay refuses cells recorded at lengths that differ. The
   argument has a limit: no gated bracket (the 27 cases of
-  `task29_gate.CASES`) reads an environment variable or a path. The one
-  path-sensitive call in a bracket is `new_theory` in the
-  `history_theory_change` case of `MatrixSupport.sml` (`parent_doc_url` in
-  `Theory.sml` reads the working directory). That case is not gated; gating
-  it would make `TMPDIR` content, not a place. The rest of the environment
+  `task29_gate.CASES`, and the 23 allocation cases of
+  `task30_cases.ALLOCATION_CASES`) reads an environment variable or a path.
+  The one path-sensitive call in a bracket is `new_theory` in the
+  `history_theory_change` case of `MatrixSupport.sml`. In a `hol run`
+  process (`Globals.interactive` is false) it takes the non-interactive
+  path of `Theory.sml`, which exports the current theory: it writes the
+  `*Theory` files into the working directory, which is the sealed private
+  selection that must not change during a cell, and builds documentation
+  paths (`parent_doc_url`) from the working directory. Its words therefore
+  depend on the path structure (the arc lengths and the position relative
+  to `HOLDIR`), not only on the path length, and its files change the
+  private tree. Equal scratch path lengths do not make it a gated case.
+  That case is outside every allocation task (it stays in the timing
+  gate); gating it would need the fixture to avoid the export and a
+  measured check that two scratch places of one length give equal words. The
+  rest of the environment
   is content, `HOLDIR` included: it names the toolchain, which `--toolchain`
   identifies by path and whose products are sealed by that path. A changed
   `PATH`, compiler path or toolchain is a different grid.

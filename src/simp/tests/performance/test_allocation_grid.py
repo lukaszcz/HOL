@@ -735,7 +735,8 @@ class Run(Bed):
         counts = m.load_iterations()
         counts["steady"] = dict(counts["steady"], **{"frag_create-0": 99})
         self.patched()
-        with mock.patch.object(m, "load_iterations", lambda: counts):
+        with mock.patch.object(m, "load_iterations",
+                              lambda **task: counts):
             with self.assertRaisesRegex(sc.InvalidAllocation, "iterations"):
                 self.quiet(m.run, arguments(self.out, CELLS[:2],
                                             resume=True))
@@ -849,7 +850,7 @@ class Replay(Bed):
         args = argparse.Namespace(output=self.out)
         with mock.patch.object(m, "finish", lambda root, inv: decisions), \
                 mock.patch.object(m, "results_markdown",
-                                  lambda found: "table\n"):
+                                  lambda found, label: "table\n"):
             self.assertEqual(self.quiet(m.replay, args), 0)
             (self.out / "RESULTS.md").write_text("other\n")
             with self.assertRaisesRegex(sc.InvalidAllocation, "results"):

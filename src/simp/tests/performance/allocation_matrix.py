@@ -40,6 +40,7 @@ import path_schema
 import private_runtime as pr
 import run_paired as rp
 import task29_gate as gate
+import task30_cases
 from prepare_patch import DEFAULT_SOURCE
 
 ITERATIONS = HERE / "allocation_iterations.json"
@@ -47,6 +48,33 @@ BOUNDARY = HERE / "allocation_boundary.json"
 SCHEMA = "task29b-matrix-v2"
 CONTROLS_SCHEMA = "task29-managed-counter-controls-v4"
 CASES, SIZES = gate.CASES, a.SIZES
+
+
+class Task:
+    """Which cases a grid measures and where its steady counts stand. The
+    default task is TASK29B's; a header names another only by `task`."""
+
+    def __init__(self, name, label, cases, iterations, excluded=None):
+        self.name, self.label, self.cases = name, label, tuple(cases)
+        self.iterations, self.excluded = iterations, dict(excluded or {})
+
+
+DEFAULT_TASK = "task29b"
+TASKS = {
+    DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
+    "task30": Task("task30", "TASK30", task30_cases.ALLOCATION_CASES,
+                   HERE / "allocation_iterations_task30.json",
+                   task30_cases.ALLOCATION_EXCLUDED)}
+
+
+def task_named(name):
+    sc.require(name in TASKS, "unknown task: %r" % (name,))
+    return TASKS[name]
+
+
+def task_of(header):
+    """The task a grid header (or inventory) belongs to."""
+    return task_named(header.get("task", DEFAULT_TASK))
 PAIRS = 10  # acceptance minimum; fewer pairs is a smoke only
 # Job directories are named "j%02d" (make_job): more would give some private
 # paths, hence PAIR_PRIVATE, another length than the rest of the grid.
@@ -94,22 +122,24 @@ PATH_LAUNCHERS = (
     ("failure_path", "failure", "failure-path-controls.exe"))
 
 
-def keys():
-    return [(case, size) for case in CASES for size in SIZES]
+def keys(task=None):
+    return [(case, size) for case in (task or TASKS[DEFAULT_TASK]).cases
+            for size in SIZES]
 
 
 def name_of(case, size):
     return "%s-%d" % (case, size)
 
 
-def load_iterations(path=ITERATIONS):
-    counts = a.load(path)
+def load_iterations(path=None, task=None):
+    task = task or TASKS[DEFAULT_TASK]
+    counts = a.load(path or task.iterations)
     sc.require(counts.get("schema") == "task29b-iterations-v1",
                "wrong predeclared counts")
     sc.require(isinstance(counts["repeats"], int) and counts["repeats"] >= 3,
                "need at least three steady repeats")
     steady = counts["steady"]
-    sc.require(set(steady) == {name_of(*k) for k in keys()} and
+    sc.require(set(steady) == {name_of(*k) for k in keys(task)} and
                all(isinstance(v, int) and not isinstance(v, bool) and v > 0
                    for v in steady.values()), "incomplete predeclared counts")
     return counts
@@ -146,8 +176,10 @@ def source_map(inventory):
 
 def grid_digest(header):
     """Digest of every input shared by all cells of one grid."""
-    data = json.dumps({k: header[k] for k in GRID_KEYS}, sort_keys=True,
-                      allow_nan=False).encode()
+    shared = {k: header[k] for k in GRID_KEYS}
+    if header.get("task", DEFAULT_TASK) != DEFAULT_TASK:
+        shared["task"] = header["task"]  # TASK29B digests are unchanged
+    data = json.dumps(shared, sort_keys=True, allow_nan=False).encode()
     return hashlib.sha256(data).hexdigest()
 
 
@@ -191,6 +223,8 @@ def changed_settings(old, new):
     lengths: those are listed as `<key>-length`)."""
     return ([k for k in GRID_KEYS + ("acceptance_pairs",)
              if old.get(k) != new[k]] +
+            [k for k in ("task",) if old.get(k, DEFAULT_TASK) !=
+             new.get(k, DEFAULT_TASK)] +
             [k + "-length" for k in LENGTH_KEYS
              if place_lengths(old).get(k) != place_lengths(new)[k]])
 
@@ -313,18 +347,20 @@ def controls_copy(root, inventory):
             "malformed controls entry of the inventory: %r" % (error,))
 
 
-def harness_files():
+def harness_files(task=None):
     """Files of this checkout that decide a measurement, as paths: the
     driver and its helpers, the fixtures installed in every private
-    directory, the iteration counts and the reviewed boundary."""
+    directory, the iteration counts of `task` and the reviewed boundary."""
+    task = task or TASKS[DEFAULT_TASK]
     paired = sorted(p for p in (HERE.parent / "compatibility" /
                                 "paired").iterdir() if p.is_file())
     inputs = [HERE / n for n in (
         "allocation_matrix.py", "allocation_schema.py",
         "allocation_analysis.py", "allocation_boundary.py",
-        "allocation_boundary.json", "allocation_iterations.json",
+        "allocation_boundary.json", task.iterations.name,
         "MatrixAllocation.sml", "MatrixSupport.sml", "acceptance.py",
         "evidence_bundle.py", "loading.py", "task29_gate.py",
+        "task30_cases.py",
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
         "audit_evidence.py", "summarize.py")]
     inputs += [HERE / "allocator-counter" / n for n in (
@@ -372,6 +408,7 @@ class Job:
 
 class Grid:
     """Locked, sealed environment: toolchain, private runtime, shim."""
+    task = TASKS[DEFAULT_TASK]
 
     def __init__(self, args):
         self.args = args
@@ -381,6 +418,7 @@ class Grid:
         self.scratch = None
         self.ready = False
         self.header = {}
+        self.task = task_named(getattr(args, "task", DEFAULT_TASK))
 
     def run(self, command, cwd=None, runtime_env=None):
         env = self.env if runtime_env is None else runtime_env
@@ -440,7 +478,7 @@ class Grid:
         # that is not what its commit says, before anything is built.
         self.boundary = bd.resolve(self.repo, args.baseline, args.candidate,
                                    pr.HOL_SEQUENCE, BOUNDARY)
-        inputs, fixtures = harness_files()
+        inputs, fixtures = harness_files(self.task)
         self.harness = harness_binding(HERE.parents[3], args.candidate,
                                        inputs, fixtures)
         self.env = dict(
@@ -539,8 +577,11 @@ class Grid:
         # entries are places (see PLACE_KEYS); its content is `runtime`.
         tools = {k: v for k, v in self.tools.items()
                  if not Path(k).is_relative_to(self.lib.parent)}
+        named = {} if self.task.name == DEFAULT_TASK else dict(
+            task=self.task.name)
         return dict(
-            schema=SCHEMA, baseline=args.baseline, candidate=args.candidate,
+            named, schema=SCHEMA, baseline=args.baseline,
+            candidate=args.candidate,
             pairs=self.pairs, runtime=report["runtime"], shim=report["shim"],
             shim_path=str(self.shim), library=str(self.lib),
             aliases=self.aliases, repo=str(self.hol),
@@ -926,12 +967,13 @@ def cell_status(record):
                       for m in p.values()])
 
 
-def assemble(cells, records, observed, baseline=a.BASE):
+def assemble(cells, records, observed, baseline=a.BASE, task=None):
     """decisions.json content from analyzed cells (all or a subset)."""
+    cases = (task or TASKS[DEFAULT_TASK]).cases
     out = dict(schema="task29b-decisions-v1", cases={}, nondeterminism=[],
                published_varying=[], code_visible=[], unresolved=[])
     every = []
-    for case in CASES:
+    for case in cases:
         sizes = [n for n in SIZES if (case, n) in cells]
         if not sizes:
             continue
@@ -971,7 +1013,7 @@ def assemble(cells, records, observed, baseline=a.BASE):
                 every += [m["decision"] for p in c["phases"].values()
                           for m in p.values()]
         out["cases"][case] = record
-    complete = len(out["cases"]) == len(CASES) and not out["unresolved"] and \
+    complete = len(out["cases"]) == len(cases) and not out["unresolved"] and \
         all(r["slopes"] is not None for r in out["cases"].values())
     pairs = {c["pairs"] for r in out["cases"].values()
              for c in r["cells"].values()}
@@ -993,8 +1035,8 @@ def counts_text(counts):
     return ", ".join("%s x%d" % (k, n) for k, n in counts.items())
 
 
-def results_markdown(decisions):
-    lines = ["# TASK29B allocation matrix", "",
+def results_markdown(decisions, label="TASK29B"):
+    lines = ["# %s allocation matrix" % label, "",
              "Status: **%s** (complete: %s). No allowance, no subtraction."
              % (decisions["status"], decisions["complete"]), "",
              "Decisions are counts of phase/metric rows per cell "
@@ -1050,10 +1092,12 @@ def checkpoint(path, value):
 def finish(root, inventory):
     """Recompute everything from the archives; write decisions + results."""
     cells, records, observed, shared = {}, {}, {}, {}
+    task = task_of(inventory)
     controls_copy(root, inventory)
     for row in inventory["runs"]:
         key = row["case"], row["size"]
-        sc.require(key in keys() and key not in cells, "wrong/duplicate cell")
+        sc.require(key in keys(task) and key not in cells,
+                   "wrong/duplicate cell")
         archive = a.safe_child(root, row["archive"])
         sc.require(a.seal(archive) == row["seal"], "changed archive")
         cells[key] = row
@@ -1071,15 +1115,17 @@ def finish(root, inventory):
     sc.require(len({json.dumps(place_lengths(r.get("places") or {}))
                     for r in inventory["runs"]}) <= 1,
                "cells measured at scratch paths of different lengths")
-    return assemble(set(cells), records, observed, inventory["baseline"])
+    return assemble(set(cells), records, observed, inventory["baseline"],
+                    task)
 
 
-def write_results(root, decisions, partial):
+def write_results(root, decisions, partial, label="TASK29B"):
     suffix = "-partial" if partial else ""
     for stale in root.glob("*-partial.*") if partial else ():
         stale.unlink()  # derived from the archives; a resume recomputes it
     a.save(root / ("decisions%s.json" % suffix), decisions)
-    (root / ("RESULTS%s.md" % suffix)).write_text(results_markdown(decisions))
+    (root / ("RESULTS%s.md" % suffix)).write_text(
+        results_markdown(decisions, label))
 
 
 def status_code(decisions):
@@ -1088,8 +1134,9 @@ def status_code(decisions):
 
 def run(args):
     root = args.output.resolve()
-    counts = load_iterations()
-    wanted = keys()
+    task = task_named(getattr(args, "task", DEFAULT_TASK))
+    counts = load_iterations(task=task)
+    wanted = keys(task)
     if args.only:
         wanted = [k for k in wanted if name_of(*k) in args.only]
         sc.require(len(wanted) == len(args.only), "unknown --only cell")
@@ -1152,7 +1199,7 @@ def run(args):
             checkpoint(root / "inventory.json", inventory)
         executor.shutdown()
     decisions = finish(root, inventory)
-    write_results(root, decisions, not decisions["complete"])
+    write_results(root, decisions, not decisions["complete"], task.label)
     return status_code(decisions)
 
 
@@ -1164,10 +1211,12 @@ def replay(args):
     name = "decisions%s.json" % ("-partial" if partial else "")
     sc.require(json.loads(json.dumps(decisions)) == a.load(root / name),
                "changed decisions")
-    sc.require(results_markdown(decisions) == (root / (
+    label = task_of(inventory).label
+    sc.require(results_markdown(decisions, label) == (root / (
         "RESULTS-partial.md" if partial else "RESULTS.md")).read_text(),
         "changed results table")
-    print("TASK29B archives and decisions replayed: " + decisions["status"])
+    print("%s archives and decisions replayed: %s" % (
+        label, decisions["status"]))
     return status_code(decisions)
 
 
@@ -1257,6 +1306,9 @@ def main(argv=None):
         p.add_argument("--repo", type=Path, default=HERE.parents[3])
         p.add_argument("--timeout", type=int, default=3600)
         if measuring:
+            p.add_argument("--task", choices=sorted(TASKS),
+                           default=DEFAULT_TASK,
+                           help="cases and steady counts of this task")
             p.add_argument("--baseline", default=a.BASE)
             p.add_argument("--candidate", required=True)
             p.add_argument("--toolchain", type=Path, required=True)

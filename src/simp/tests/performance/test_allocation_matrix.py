@@ -1713,8 +1713,13 @@ class TmpdirIsAPlace(unittest.TestCase):
     """TMPDIR (and the path length of the scratch tree below it) is a place
     and not content only while no gated bracket reads an environment
     variable or a path. The one path-sensitive call in a bracket is the
-    `new_theory` of `history_theory_change` (Theory.sml reads the working
-    directory); that case is outside gate.CASES."""
+    `new_theory` of `history_theory_change`: in a `hol run` process it
+    exports the theory (Theory.sml writes *Theory files into the working
+    directory, which is the sealed private selection) and builds
+    documentation paths from the working directory, so its words depend on
+    the path structure and not only on its length. That case is outside
+    every allocation task: gate.CASES and the TASK30 selection
+    (task30_cases.ALLOCATION_EXCLUDED)."""
     CASE_NAME = "history_theory_change"
     SENSITIVE = ("new_theory", "export_theory", "getEnv", "OS.FileSys",
                  "FileSys.", "OS.Process", "Posix.", "TextIO.openIn",
@@ -1724,6 +1729,8 @@ class TmpdirIsAPlace(unittest.TestCase):
             self):
         if "tmpdir" in m.PLACE_KEYS:
             self.assertNotIn(self.CASE_NAME, gate.CASES)
+            for task in m.TASKS.values():
+                self.assertNotIn(self.CASE_NAME, task.cases)
         else:
             self.skipTest("TMPDIR is content")
 
