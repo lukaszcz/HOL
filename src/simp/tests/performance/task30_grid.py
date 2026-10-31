@@ -35,10 +35,12 @@ checkout; `replay` and `close` may read the ledger of another with
 tree outside the performance area and the contents of bin/hol,
 bin/hol.state0 and sigobj with the stamp.
 
-The exit status is zero only when every cell passes. Failed, inconclusive,
-control-limited and protocol-failed cells are listed separately and none is
-excused here; a disposition, if one is ever made, is a separate reviewed
-decision.
+The exit status is zero only when every cell passes (1: a cell failed; 2:
+the grid is not conclusive). Failed, inconclusive, control-limited and
+protocol-failed cells are listed separately and none is excused here; a
+disposition, if one is ever made, is a separate reviewed decision. A command
+that is refused, or ends with an error that decided nothing, prints one
+REFUSED line on the standard error and exits 3.
 
   prepare     build the checkout and stamp it            (takes the lock)
   pilot       develop-only cells for the counts          (needs a window)
@@ -148,7 +150,8 @@ def close(args):
     return code
 
 
-def main(argv=None):
+def commands():
+    """The actions of this task besides the engine's: `close`."""
     def configure(parser):
         parser.add_argument("--grid", type=Path, required=True,
                             help="the timing grid, its second stage where "
@@ -162,7 +165,11 @@ def main(argv=None):
         parser.add_argument("--ledger", type=Path,
                             help="read this attempts ledger, of the "
                             "checkout the timing grid was made in")
-    return ENGINE.main(argv, extra=dict(close=(configure, close)))
+    return dict(close=(configure, close))
+
+
+def main(argv=None):
+    return ENGINE.main(argv, extra=commands())
 
 
 if __name__ == "__main__":

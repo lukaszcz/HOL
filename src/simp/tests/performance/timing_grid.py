@@ -430,12 +430,23 @@ class Ledger:
         return found
 
 
+def sync_directory(path):
+    """Make the entries of a directory durable (a file just created in it
+    is not, until then)."""
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def ledger_append(path, **record):
     """Append one record, naming the line before it. The file is only ever
     appended to, and the line is on disk before the caller goes on. After
     lines cut short by a crash the append first ends the last of them and
-    acknowledges them all, so that none is lost or repeated."""
-    state = Ledger(path)
+    acknowledges them all, so that none is lost or repeated. A file the
+    append creates is made durable in its directory too."""
+    state, created = Ledger(path), not Path(path).exists()
     prefix, prev = "\n" if state.unterminated else "", state.last
     if state.torn:
         acknowledgement = json.dumps(
@@ -450,6 +461,8 @@ def ledger_append(path, **record):
         stream.write(prefix + line + "\n")
         stream.flush()
         os.fsync(stream.fileno())
+    if created:
+        sync_directory(Path(path).parent)
 
 
 def git_keep(repo, table, commit):
@@ -1040,6 +1053,7 @@ class Grid:
         root = args.output.resolve()
         inventory = self.h.pilot_inventory(args)
         self.h.attempts_file(args, True)  # the ledger place, while it is cheap
+        self.h.check_output(args)
         if t.fixed_seconds:
             inventory["checkout"] = self.h.bind_checkout(args.repo, None)
         done = {}
@@ -1546,6 +1560,25 @@ class Grid:
                 Ledger(path)
         return path
 
+    def check_output(self, args):
+        """A table with fixed seconds needs a clean checkout at the end of
+        a measurement, so an output inside the repository must be ignored by
+        git; one that is not would be found out only at the end, after the
+        measuring."""
+        if not self.t.fixed_seconds:
+            return
+        root = args.output.resolve()
+        if root.is_relative_to(Path(args.repo).resolve()):
+            found = subprocess.run(
+                ["git", "-C", str(args.repo), "check-ignore", "-q",
+                 str(root / "inventory.json")], stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            a.require(found.returncode == 0, "the output %s is inside the "
+                      "repository and not ignored by git, so the checkout "
+                      "would not be clean when the measuring is over: "
+                      "put it below %s" % (root, Path(
+                          self.h.ledger_path(args.repo)).parent))
+
     def record_attempt(self, path, event, stage, inventory, root, repo,
                        **more):
         """One line of the ledger about a grid of `stage` ("first" or
@@ -1795,6 +1828,7 @@ class Grid:
                       "repeated --only cell")
             a.require(len(keys) == len(args.only), "unknown --only cell")
         ledger = self.h.attempts_file(args, True)
+        self.h.check_output(args)
         if t.fixed_seconds:
             # A resumption after a recorded change of a sealed file is
             # judged by the grid's own header (check_header).
@@ -2037,10 +2071,13 @@ class Grid:
         t = self.t
         grid, root = args.grid.resolve(), args.output.resolve()
         ledger = self.h.attempts_file(args, True)
+        self.h.check_output(args)
         if t.fixed_seconds:
-            # The cheap refusal first: the recorded checkout, then the
-            # present one, before the first stage is replayed in full.
+            # The cheap refusal first: the kind of grid, the recorded
+            # checkout, then the present one, before the first stage is
+            # replayed in full.
             recorded = a.load(grid / "inventory.json")
+            self.h.check_experiment(recorded)
             self.h.check_checkout(recorded, args.repo)
             a.require(self.h.bind_checkout(
                 args.repo, recorded["candidate"]) == recorded["checkout"],
@@ -2239,6 +2276,19 @@ class Grid:
         return parser, sub
 
     def main(self, argv=None, extra=None):
+        """`execute`, with a refusal (a ValueError, among them a checkout
+        that changed and a lock that is held) printed as one line on the
+        standard error and the status `REFUSED`, which no grid has: a
+        wrapper tells a command that measured nothing, or ended in no
+        decision, from a grid that failed (1) or was not conclusive (2)."""
+        try:
+            return self.execute(argv, extra)
+        except ValueError as error:
+            print("REFUSED: " + " ".join(str(error).split()), file=sys.stderr,
+                  flush=True)
+            return REFUSED
+
+    def execute(self, argv=None, extra=None):
         """Dispatch. `extra` maps a task's own action to (configure the
         subparser, handler); the engine decides nothing of the kind."""
         parser, sub = self.parser()

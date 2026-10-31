@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -283,7 +284,7 @@ class Rig(unittest.TestCase):
     def go(self, argv, **kw):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = self.grid.main(argv, **kw)
+            code = self.grid.execute(argv, **kw)
         return code, out.getvalue()
 
     def rewrite(self, **kw):
@@ -2335,6 +2336,22 @@ class Attempts(Rig):
         self.assertRegex(mine[2], r"status interrupted candidate %s "
                          r"checkout \S+$" % other)
 
+    def test_a_new_ledger_is_synced_in_its_directory_too(self):
+        synced = []
+        real = os.fsync
+
+        def fsync(fd):
+            synced.append(stat.S_ISDIR(os.fstat(fd).st_mode))
+            return real(fd)
+        where = self.root / "ledger" / "new.jsonl"
+        where.parent.mkdir()
+        with patch.object(os, "fsync", fsync):
+            for _ in range(2):
+                tg.ledger_append(where, event="open", stage="first",
+                                 attempt="q" * 32)
+        # The file, then its directory, once; then the file only.
+        self.assertEqual(synced, [False, True, False])
+
     def test_every_status_of_an_attempt_is_kept(self):
         def append(event, **more):
             tg.ledger_append(self.attempts, event=event, stage="first",
@@ -3408,6 +3425,14 @@ class Measuring(Rig):
             ("open", None), ("close", "checkout-changed")])
         self.assertEqual(self.ledger()[-1]["stage"], "second")
 
+    def test_a_pilot_is_not_extended_and_the_refusal_says_so(self):
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "a pilot is checked by "
+                                    "verify-counts"):
+            self.go(self.extend_argv(self.pilot_dir))
+        self.assertEqual(self.calls, calls)
+        self.assertFalse((self.root / "ext").exists())
+
     def dead(self, argv):
         """A command on a grid whose checkout changed is refused at once."""
         calls, before = self.calls, self.attempts.read_bytes()
@@ -3798,6 +3823,32 @@ class Chain(ChainRig):
             return report
         return patch.object(a, "run", run)
 
+    def test_an_output_inside_the_repository_must_be_ignored_by_git(self):
+        y = self.commit_counts()
+        loose = self.repo / "grids" / "grid"
+        ignored = self.repo / ".agent-files" / "evidence" / "toy" / "grid"
+        for action, extra in (("pilot", ()), ("run", ("--candidate", y))):
+            with self.subTest(action):
+                with self.assertRaisesRegex(ValueError, "inside the "
+                                            "repository and not ignored.*"
+                                            "put it below .*evidence.toy"):
+                    self.go(self.argv(action, loose,
+                                      "--authorize-measurements", *extra))
+                self.assertFalse(loose.exists())
+        self.assertEqual((self.calls, self.launched), (0, []))
+        self.assertEqual(self.run_at(y)[0], 0)
+        with self.assertRaisesRegex(ValueError, "not ignored"):
+            self.go(self.argv("extend", loose, "--grid",
+                              str(self.root / "grid"),
+                              "--authorize-measurements"))
+        self.assertFalse(loose.exists())
+        # Below the ignored directory it is accepted, and leaves the
+        # checkout clean for the end of the measurement.
+        self.assertEqual(self.go(self.argv(
+            "run", ignored, "--candidate", y,
+            "--authorize-measurements"))[0], 0)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
     def test_a_restamp_cannot_make_a_dead_grid_pass(self):
         y = self.commit_counts()
         with self.changing_heap(5):
@@ -3964,7 +4015,7 @@ class Chain(ChainRig):
         grid = tg.Grid(tg.Table("toy", "TOY", CASES, self.driver,
                                 self.counts))
         with self.assertRaisesRegex(ValueError, "takes no build stamp"):
-            grid.main(["prepare", "--repo", str(self.repo)])
+            grid.execute(["prepare", "--repo", str(self.repo)])
 
     def test_the_build_is_the_standard_kernel_and_the_stamp_names_it(self):
         self.assertIn("--stdknl", tg.BUILD)
@@ -4057,6 +4108,57 @@ class Chain(ChainRig):
         with self.assertRaisesRegex(ValueError, "prepare.log"):
             self.prepare()
         self.assertEqual((where / "prepare.log").read_text(), "failed\n")
+
+
+class Refusals(Rig):
+    """A command that decided nothing ends with a status no grid has."""
+
+    def main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            return self.grid.main(argv), out.getvalue(), err.getvalue()
+
+    def test_the_status_of_a_refusal_is_not_that_of_a_grid(self):
+        self.assertNotIn(tg.REFUSED, (0, 1, 2))
+        self.assertEqual(tg.REFUSED, 3)
+
+    def test_a_refusal_is_one_line_and_that_status_and_no_traceback(self):
+        argv = self.argv("run", self.root / "grid", "--candidate",
+                         CANDIDATE)
+        code, out, err = self.main(argv)
+        self.assertEqual((code, out), (tg.REFUSED, ""))
+        self.assertEqual(err, "REFUSED: exclusive window required\n")
+        self.assertFalse((self.root / "grid").exists())
+
+    def test_a_held_lock_and_a_changed_checkout_are_refusals_too(self):
+        argv = self.argv("run", self.root / "grid", "--candidate",
+                         CANDIDATE, "--authorize-measurements")
+        with a.serial_lock(self.repo):
+            code, out, err = self.main(argv)
+        self.assertEqual((code, err.count("\n")), (tg.REFUSED, 1))
+        self.assertTrue(err.startswith("REFUSED: "), err)
+
+        def changed(repo, commit=None, stamp=None):
+            seen.append(commit)
+            return self.fake_checkout(repo, commit, stamp) if len(
+                seen) < 3 else dict(head=commit, tree_outside_performance=
+                                    "u" * 64, products=PRODUCTS)
+        seen = []
+        with patch.object(tg, "checkout_identity", changed):
+            code, out, err = self.main(argv)
+        self.assertEqual((code, err.count("\n")), (tg.REFUSED, 1))
+        self.assertIn("not the one recorded", err)
+
+    def test_a_grid_keeps_its_own_statuses(self):
+        argv = self.argv("run", self.root / "pass", "--candidate",
+                         CANDIDATE, "--authorize-measurements")
+        self.assertEqual(self.main(argv)[0], 0)
+        self.candidate = lambda case, size, pairs, seed: (1.04, 1.08)
+        argv[2] = str(self.root / "fail")
+        self.assertEqual(self.main(argv)[0], 1)
+        self.candidate = lambda case, size, pairs, seed: WIDE
+        argv[2] = str(self.root / "open")
+        self.assertEqual(self.main(argv)[0], 2)
 
 
 class Logged(unittest.TestCase):

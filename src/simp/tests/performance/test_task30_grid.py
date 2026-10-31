@@ -296,11 +296,13 @@ class Whole(ttg.Rig):
 
     def test_the_command_line_is_the_shared_one(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ValueError, "exclusive window"):
-                t30.main(["run", "--output", tmp + "/x", "--candidate",
-                          "c" * 40])
-            with self.assertRaisesRegex(ValueError, "exclusive window"):
-                t30.main(["pilot", "--output", tmp + "/x"])
+            for argv in (["run", "--output", tmp + "/x", "--candidate",
+                          "c" * 40], ["pilot", "--output", tmp + "/x"]):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(t30.main(argv), tg.REFUSED)
+                self.assertEqual(err.getvalue(),
+                                 "REFUSED: exclusive window required\n")
 
 
 class Closing(unittest.TestCase):
@@ -369,14 +371,26 @@ class Closing(unittest.TestCase):
         (self.allocation / "decisions.json").write_text(json.dumps(
             dict(status=status)))
 
+    def argv(self):
+        return ["close", "--grid", str(self.grid), "--pilot",
+                str(self.pilot), "--allocation", str(self.allocation),
+                "--repo", str(REPO), "--ledger", str(self.ledger)]
+
     def close(self):
+        """`close` as the engine runs it: a refusal is an exception here."""
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = t30.main(["close", "--grid", str(self.grid), "--pilot",
-                             str(self.pilot), "--allocation",
-                             str(self.allocation), "--repo", str(REPO),
-                             "--ledger", str(self.ledger)])
+            code = t30.ENGINE.execute(self.argv(), extra=t30.commands())
         return code, out.getvalue()
+
+    def test_a_refused_close_is_one_line_and_not_the_status_of_a_grid(self):
+        self.ledger.unlink()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = t30.main(self.argv())
+        self.assertEqual(code, tg.REFUSED)
+        self.assertRegex(err.getvalue(), r"^REFUSED: no attempts ledger: "
+                         r".*attempts.jsonl\n$")
 
     def test_two_passes_of_one_candidate_in_one_harness_are_one_pass(self):
         code, text = self.close()
