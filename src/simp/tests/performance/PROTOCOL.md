@@ -629,13 +629,18 @@ has no disposition.
   the real `bin/build --stdknl --seq=tools/sequences/upto-parallel` with
   `/dev/null` as its standard input, both into one log. Configure writes
   only files that git ignores (`tools/Holmake/Systeml.sml`, `bin`, `sigobj`,
-  the generated editor files) and `Systeml.sig` it only reads, so the
-  checkout stays clean; measured on a checkout whose products were up to
-  date, configure and this build took under five minutes together (from
-  nothing the build takes the better part of an hour). After configure it
-  reads the HOLDIR of `tools/Holmake/Systeml.sml` and refuses a checkout
-  that has none or whose HOLDIR is another path (a tree that was moved or
-  copied would otherwise build in, and link to, the other tree). The
+  the generated editor files, and the tools it compiles) and `Systeml.sig` it
+  only reads, so the checkout stays clean; measured on a checkout whose
+  products were up to date, configure and this build took under five minutes
+  together (from nothing the build takes the better part of an hour). The
+  real configure script runs under a handler that swallows an exception and
+  lets `poly` exit 0, so after configure `prepare` requires the line
+  `Finished configuration!` in what this configure wrote (not in an earlier
+  run's text, were the log appended to) as well as the exit status 0: without
+  that line there is no build and no stamp. It then reads the HOLDIR of
+  `tools/Holmake/Systeml.sml` as an assertion about what configure left
+  (configure has just written the HOLDIR of the directory it ran in), and
+  refuses a checkout that has none, more than one, or another path. The
   standard kernel is fixed on the command line (`bin/build` would otherwise
   take the kernel of the last build), and the allocation gate's toolchain is
   the standard kernel too. The input of the build is closed because
@@ -651,7 +656,8 @@ has no disposition.
   build: the durable record of the build a pilot or a grid ran with is the
   products digest in its inventory, `checkout.products`); the default timeout
   is four hours for each of the two commands. Only if configure and the build
-  exit 0 and leave the checkout clean at the same `HEAD` does it write
+  exit 0, configure prints its last line, and the checkout is clean at the
+  same `HEAD` does it write
   `.agent-files/evidence/<table>/build-stamp.json`. A failed, timed out or
   interrupted configure or build writes no stamp and removes the one of an
   earlier `prepare`. The stamp holds `HEAD`, the seal of the tracked tree
@@ -677,17 +683,27 @@ has no disposition.
   removing one, or changing any tracked source outside the performance area
   (`src/simp/src` included) is refused with "run prepare at this commit". A
   commit that touches only the performance area (the counts file as Y) needs
-  no second
-  `prepare`. The pilot's inventory and a grid's record the `checkout` (`head`,
-  the seal of the tree outside the performance area, and the `products`
-  digest): a second stage must find the same checkout as its first, the
-  products included; a resumed `run`, `extend` or `pilot` finds the checkout
-  its inventory recorded, so a `prepare` between a stop and its resume that
-  changed the products is refused (`resume with different settings`), and
-  so is one between the stages, which `extend` (also `extend --resume`)
-  refuses before it replays the first stage (`the checkout is not the one
-  the first stage was measured in`); `replay` derives the tree seal of the
-  candidate from git again (`changed checkout`) and finds a well-formed digest.
+  no second `prepare`. The pilot's inventory and a grid's record the
+  `checkout` (`head`, the seal of the tree outside the performance area, and
+  the `products` digest): a second stage must find the same checkout as its
+  first, the products included; a resumed `run`, `extend` or `pilot` finds
+  the checkout its inventory recorded. **Every `prepare` makes a new
+  products digest**: configure relinks `bin/hol` and `bin/Holmake` and the
+  build makes the heap again, and three real `prepare` runs at one commit
+  gave the same head and tree and three different digests (2499 files
+  each). The digest is not made stable. So **a grid that is stopped, or
+  whose attempt ended `checkout-changed`, must not be prepared**: a
+  `prepare` between a stop and its `--resume` is refused (`resume with
+  different settings`, or `not at the commit measured` and `run prepare at
+  this commit` where those apply),
+  `prepare` is no way back to a stopped grid, and a stamp that is lost comes
+  back only from a copy of that same file. A mistaken `prepare`, or a lost
+  stamp with no copy, costs the cells of that grid, and the route is a new
+  grid. A `prepare` between the stages is refused the same way, by `extend`
+  (also `extend --resume`) before it replays the first stage (`the checkout
+  is not the one the first stage was measured in`). `replay` derives the
+  tree seal of the candidate from git again (`changed checkout`) and finds a
+  well-formed digest.
   `close` compares the timing grid's head and tree seal with the allocation
   grid's harness, and cannot compare the products: the allocation grid is
   measured with a toolchain of its own (a fresh clone built at the candidate,
@@ -700,29 +716,42 @@ has no disposition.
   depends on which of two things was found.
   *Known to differ.* The head is not the commit measured, or the tree
   outside the performance area or the products differ from the stamp or from
-  the record. The inventory records `checkout_changed` (as a pilot's does)
-  and **such a grid is dead**: `--resume`, `replay`, `extend` and `close`
-  refuse its directory (`the checkout changed while this grid ran ... it is
-  dead`; a dead pilot is refused by `predeclare` and `verify-counts` with
-  `the checkout changed while the pilot ran`, and its `--resume` with
-  `resume with different settings`), a `prepare` after it cannot make it a
-  pass, and its route is a new grid in a new output, a new attempt of the
-  ledger.
-  *Not judged.* The tree is not clean at the end (a stray or untracked file,
-  an uncommitted edit, an editor's swap file) or the stamp is missing,
-  malformed or of another build command. The attempt closes the same way but
-  the inventory carries no mark and the grid is not dead: it has no
+  the record, or any tracked file differs from `HEAD` (see below). The
+  inventory records `checkout_changed` (as a pilot's does) and **such a grid
+  is dead**: `--resume`, `replay`, `extend` and `close` refuse its directory
+  (`the checkout changed while this grid ran ... it is dead`; a dead pilot is
+  refused by `predeclare` and `verify-counts` with `the checkout changed
+  while the pilot ran`, and its `--resume` with `resume with different
+  settings`), a `prepare` after it cannot make it a pass, and its route is a
+  new grid in a new output, a new attempt of the ledger.
+  *Not judged.* Only untracked files in the tree (a stray file, an editor's
+  swap file), or a stamp that is missing, malformed or of another build
+  command, with nothing else known to differ. The attempt closes the same way
+  but the inventory carries no mark and the grid is not dead: it has no
   decisions, so a full `replay`, `extend` and `close` have nothing to check
   (`replay --partial` replays its cells), and `--resume` compares the
-  checkout with the record as after any stop, so it goes on once the tree
-  is clean and the stamp is there again, and is refused (`resume with
-  different settings`) if the products, the tree or the head are not the
-  recorded ones. A pilot records `checkout_unjudged` instead; `predeclare`
-  and `verify-counts` refuse it until `pilot --resume` has found the
-  checkout as recorded.
+  checkout with the record as after any stop, so it goes on once the stray
+  file is gone and the stamp is there again (the same file, copied back: see
+  above), and is refused if the products, the tree or the head are not the
+  recorded ones (`resume with different settings`, and before that the
+  refusals of the stamp, `run prepare at this commit`, and of the head, `not
+  at the commit measured`). A pilot records `checkout_unjudged` instead;
+  `predeclare` and `verify-counts` refuse it until `pilot --resume` has found
+  the checkout as recorded. The mark is cleared by that resume, but the text
+  of every unjudged end stays in the pilot's `unjudged_ends`, which the
+  resume comparison ignores.
+  *What is judged without a clean tree or a stamp*, in this order: the head
+  (it must be the recorded one); the products digest, computed from the
+  products and compared with `checkout.products` of the inventory (a
+  difference is known); then the tree. **No tracked file may change while a
+  grid or a pilot runs, not even a documentation file**: the recorded
+  identity is a tree, so a change to any tracked file anywhere (any entry of
+  `git status --porcelain` but `??`, the performance area included) is a
+  different tree and is known to differ, whether the file is undone before
+  the next command or not; the grid is dead. An untracked stray file costs a
+  resume, nothing more. The same holds for the end of a pilot.
   What is compared is the checkout at those moments, so a change made and
-  undone between them is not seen (an unclean tree at the end hides a
-  change of the products that was undone as well); and the record proves
+  undone between them is not seen; and the record proves
   that the checkout holds the recorded tree and products now, not that it
   held them when `prepare` ran. A pilot made at X and a grid at Y are not
   required to have the same tree outside the performance area: a
@@ -799,7 +828,8 @@ has no disposition.
      prerequisite below; the timing grid is run at Y too, in the checkout
      that made the pilot and holds the ledger (a step that rebuilds the
      products of that checkout changes the digest the stamp holds, and the
-     driver then says to run `prepare` again);
+     driver then says to run `prepare` again, before the grid starts: a grid
+     that has started must not be prepared, see above);
   5. `run --candidate Y --pilot OUT/pilot`; `extend` if the control left
      cells open; `replay` of each stage;
   6. `close`:

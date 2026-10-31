@@ -118,7 +118,8 @@ class Rig(unittest.TestCase):
                 (tg, ("git_difference", self.fake_difference)),
                 (tg, ("git_keep", self.fake_keep)),
                 (tg, ("git_tree_outside", self.fake_tree)),
-                (tg, ("checkout_identity", self.fake_checkout)))
+                (tg, ("checkout_identity", self.fake_checkout)),
+                (tg, ("known_difference", self.fake_known)))
 
     def make_table(self, cases=CASES, **kw):
         options = dict(seconds=0.3, seconds_by_case={CASES[0]: LONG},
@@ -190,6 +191,10 @@ class Rig(unittest.TestCase):
 
     def fake_tree(self, repo, rev):
         return "t" * 64
+
+    def fake_known(self, repo, recorded):
+        """Nothing is known of a checkout that could not be judged."""
+        return None
 
     def fake_checkout(self, repo, commit=None, stamp=None):
         """The checkout is clean and at the commit measured."""
@@ -1365,7 +1370,9 @@ class Pilot(Rig):
 
     def test_a_pilot_is_made_in_the_checkout_of_its_own_commit(self):
         self.pilot()
-        self.assertEqual(self.bound, [None] * 3)
+        # The first binding finds the head; the two later ones compare it
+        # with the head the inventory recorded.
+        self.assertEqual(self.bound, [None, COMMIT, COMMIT])
         self.assertEqual(self.inventory(self.root / "pilot")["checkout"],
                          dict(head=COMMIT, tree_outside_performance="t" * 64,
                               products=PRODUCTS))
@@ -1408,18 +1415,22 @@ class Pilot(Rig):
             self.go(["predeclare", "--grid", str(self.root / "pilot"),
                      "--output", str(self.root / "c.json")])
 
-    def test_a_pilot_that_could_not_judge_its_checkout_at_the_end_resumes(
-            self):
+    def unjudged_at_the_end(self, message="harness checkout is not clean"):
+        """A pilot whose last binding finds a checkout it cannot judge."""
         seen = []
 
         def identity(repo, commit=None, stamp=None):
             seen.append(commit)
             if len(seen) < 3:
                 return self.fake_checkout(repo, commit, stamp)
-            raise tg.CheckoutUnjudged("harness checkout is not clean")
+            raise tg.CheckoutUnjudged(message)
         with patch.object(tg, "checkout_identity", identity):
             with self.assertRaises(tg.CheckoutChanged):
                 self.pilot()
+
+    def test_a_pilot_that_could_not_judge_its_checkout_at_the_end_resumes(
+            self):
+        self.unjudged_at_the_end()
         out = self.root / "pilot"
         recorded = self.inventory(out)
         self.assertIn("checkout_unjudged", recorded)
@@ -1437,6 +1448,79 @@ class Pilot(Rig):
         self.assertNotIn("checkout_unjudged", self.inventory(out))
         self.assertEqual(self.go(["predeclare", "--grid", str(out),
                                   "--output", str(counts)])[0], 0)
+
+    def test_an_unjudged_end_of_a_pilot_stays_listed_after_its_resume(self):
+        self.unjudged_at_the_end("first: not clean")
+        out = self.root / "pilot"
+        self.assertEqual(self.inventory(out)["unjudged_ends"],
+                         ["first: not clean"])
+        self.assertEqual(self.pilot(extra=("--resume",))[0], 0)
+        resumed = self.inventory(out)
+        # The mark that gates predeclare is gone, the text is not.
+        self.assertNotIn("checkout_unjudged", resumed)
+        self.assertEqual(resumed["unjudged_ends"], ["first: not clean"])
+        # The resume does not compare the list, and a later unjudged end
+        # adds to it.
+        seen = []
+
+        def identity(repo, commit=None, stamp=None):
+            seen.append(commit)
+            if len(seen) < 3:
+                return self.fake_checkout(repo, commit, stamp)
+            raise tg.CheckoutUnjudged("second: not clean")
+        with patch.object(tg, "checkout_identity", identity):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.pilot(extra=("--resume",))
+        again = self.inventory(out)
+        self.assertEqual(again["unjudged_ends"],
+                         ["first: not clean", "second: not clean"])
+        self.assertEqual(again["checkout_unjudged"], "second: not clean")
+
+    def test_verify_counts_refuses_an_unjudged_pilot_and_resume_keeps_it(
+            self):
+        self.unjudged_at_the_end()
+        out = self.root / "pilot"
+        with self.assertRaisesRegex(ValueError, "could not be judged.*"
+                                    "resume it"):
+            self.go(["verify-counts", "--grid", str(out)])
+
+        def unclean(repo, commit=None, stamp=None):
+            raise tg.CheckoutUnjudged("harness checkout is not clean")
+        before = (out / "inventory.json").read_bytes()
+        with patch.object(tg, "checkout_identity", unclean):
+            with self.assertRaisesRegex(ValueError, "not clean"):
+                self.pilot(extra=("--resume",))
+        # Still unclean: nothing was resumed and the mark is where it was.
+        self.assertEqual((out / "inventory.json").read_bytes(), before)
+        self.assertIn("checkout_unjudged", self.inventory(out))
+        with self.assertRaisesRegex(ValueError, "could not be judged"):
+            self.go(["verify-counts", "--grid", str(out)])
+        self.assertEqual(self.pilot(extra=("--resume",))[0], 0)
+
+    def test_a_pilot_whose_checkout_is_known_to_differ_at_the_end_is_dead(
+            self):
+        # A tracked file that changed, the products or the like, found
+        # when the tree could not be judged: the pilot is dead.
+        seen = []
+
+        def identity(repo, commit=None, stamp=None):
+            seen.append(commit)
+            if len(seen) < 3:
+                return self.fake_checkout(repo, commit, stamp)
+            raise tg.CheckoutUnjudged("harness checkout is not clean")
+        with patch.object(tg, "checkout_identity", identity), patch.object(
+                tg, "known_difference",
+                lambda repo, recorded: "tracked file(s) changed: M x"):
+            with self.assertRaisesRegex(tg.CheckoutChanged, "tracked"):
+                self.pilot()
+        recorded = self.inventory(self.root / "pilot")
+        self.assertIn("checkout_changed", recorded)
+        self.assertNotIn("checkout_unjudged", recorded)
+        self.assertNotIn("unjudged_ends", recorded)
+        with self.assertRaisesRegex(ValueError, "changed while the pilot "
+                                    "ran"):
+            self.go(["predeclare", "--grid", str(self.root / "pilot"),
+                     "--output", str(self.root / "c.json")])
 
     def test_a_pilot_checks_the_checkout_again_under_the_lock(self):
         seen = []
@@ -3552,6 +3636,46 @@ class Measuring(Rig):
         # The first stage is still a grid (inconclusive: it was widened).
         self.assertEqual(self.go(self.replay_argv(grid))[0], 2)
 
+    def test_an_unjudged_end_that_shows_a_difference_is_dead(self):
+        out = self.root / "grid"
+        with self.changing_after(2, unjudged=True), patch.object(
+                tg, "known_difference",
+                lambda repo, recorded: "tracked file(s) changed: M x"):
+            with self.assertRaisesRegex(tg.CheckoutChanged,
+                                        "tracked file") as caught:
+                self.first()
+        self.assertTrue(caught.exception.dead)
+        self.assertIn("tracked file", self.inventory(out)["checkout_changed"])
+        self.dead(self.argv("run", out, "--candidate", CANDIDATE,
+                            "--authorize-measurements", "--resume"))
+
+    def test_a_second_stage_with_an_unjudged_end_is_not_marked_and_resumes(
+            self):
+        self.widen()
+        grid, _, _ = self.first()
+        with self.changing_after(2, unjudged=True):
+            with self.assertRaisesRegex(tg.CheckoutChanged,
+                                        "not clean") as caught:
+                self.go(self.extend_argv(grid))
+        ext = self.root / "ext"
+        self.assertFalse(caught.exception.dead)
+        self.assertNotIn("checkout_changed", self.inventory(ext))
+        self.assertFalse((ext / "decisions.json").exists())
+        self.assertEqual(self.closing()[-2:], [
+            ("open", None), ("close", "checkout-changed")])
+        self.assertEqual(self.ledger()[-1]["stage"], "second")
+        # Not dead: the resume measures what is left (here, nothing, for
+        # the cells were done) and ends with decisions that replay.
+        calls = self.calls
+        self.assertEqual(self.go(self.extend_argv(grid, "ext",
+                                                  "--resume"))[0], 0)
+        self.assertEqual(self.calls, calls)
+        self.assertTrue((ext / "decisions.json").exists())
+        self.assertEqual(self.closing()[-2:], [
+            ("resume", None), ("close", "pass")])
+        status, text = self.go(self.replay_argv(ext))
+        self.assertEqual(status, 0, text)
+
     def test_a_second_stage_compares_the_checkout_before_the_first_replay(
             self):
         self.widen()
@@ -3751,15 +3875,22 @@ class ChainRig(Rig):
         return dict(exit=self.build_exit, timed_out=False)
 
     def configure_actions(self):
-        """What configure does to the checkout: it leaves the HOLDIR."""
+        """What configure does to the checkout: it leaves the HOLDIR, and
+        it relinks bin/hol, which is never the same bytes twice (the real
+        one gave three digests for three runs at one commit)."""
         self.configure()
+        self.configured += 1
+        (self.repo / "bin" / "hol").write_text(
+            "executable %d" % self.configured)
 
     def build(self):
         """What the build does to the checkout (nothing)."""
 
     def provision(self):
         self.steps, self.built, self.build_exit = [], [], 0
-        self.configure_exit, self.configure_log = 0, "configure log\n"
+        self.configured = 0
+        self.configure_exit = 0
+        self.configure_log = "configure log\n%s\n" % tg.FINISHED
         self.build_log = "build log\n"
         self.assertEqual(self.go(["prepare", "--repo", str(self.repo)])[0],
                          0)
@@ -4021,7 +4152,18 @@ class Chain(ChainRig):
         self.stamp().write_bytes(saved)
         self.assertEqual(self.resume(y)[0], 0)
 
-    def test_an_unclean_end_is_resumed_only_into_the_recorded_checkout(self):
+    def dead_resume(self, y, name="grid"):
+        """A resume of a grid whose checkout was found to differ."""
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "checkout changed while "
+                                    "this grid ran.*dead"):
+            self.resume(y, name)
+        self.assertEqual(self.calls, calls)
+
+    def test_an_unclean_end_with_other_products_is_dead(self):
+        # The products digest needs neither a clean tree nor the stamp: a
+        # stray file does not hide that the products are not the recorded
+        # ones, and no prepare undoes it.
         y = self.commit_counts()
         stray = self.repo / "notes.txt"
 
@@ -4029,33 +4171,189 @@ class Chain(ChainRig):
             stray.write_text("x")
             (self.repo / "bin" / "hol.state0").write_text("another")
         with self.acting_at(5, both):
-            with self.assertRaisesRegex(tg.CheckoutChanged, "not clean"):
+            with self.assertRaisesRegex(tg.CheckoutChanged,
+                                        "not the recorded ones"):
                 self.run_at(y)
         out = self.root / "grid"
-        self.assertNotIn("checkout_changed", self.inventory(out))
+        self.assertIn("checkout_changed", self.inventory(out))
         stray.unlink()
-        # Another product: the stamp refuses it, and after a prepare the
-        # record does.
         with self.assertRaisesRegex(ValueError, "run prepare at this "
                                     "commit"):
             self.resume(y)
         self.assertEqual(self.prepare()[0], 0)
-        with self.assertRaisesRegex(ValueError, "different settings"):
-            self.resume(y)
+        self.dead_resume(y)
         self.assertFalse((out / "decisions.json").exists())
 
-    def test_a_restamp_between_a_stop_and_its_resume_is_refused(self):
+    def test_a_missing_stamp_does_not_hide_other_products_or_a_tracked_edit(
+            self):
+        y = self.commit_counts()
+        for label, action, undo in (
+                ("products",
+                 lambda: (self.repo / "bin" / "hol.state0").write_text("x"),
+                 lambda: (self.repo / "bin" / "hol.state0").write_text(
+                     "heap")),
+                ("tracked file",
+                 lambda: (self.repo / "src" / "one.sml").write_text("x\n"),
+                 lambda: self.git("checkout", "--", "src/one.sml"))):
+            with self.subTest(label):
+                saved = self.stamp().read_bytes()
+                name = "grid-" + label.replace(" ", "-")
+
+                def both():
+                    self.stamp().unlink()
+                    action()
+                with self.acting_at(self.calls + 5, both):
+                    with self.assertRaises(tg.CheckoutChanged):
+                        self.run_at(y, name)
+                self.assertIn("checkout_changed",
+                              self.inventory(self.root / name))
+                undo()
+                self.stamp().write_bytes(saved)
+                self.dead_resume(y, name)
+
+    def test_a_tracked_edit_at_the_end_kills_the_grid_though_it_is_undone(
+            self):
+        # An edit seen at the end, then undone, and then a resume that
+        # would find the recorded tree: it is not a stray file, it is a
+        # tree other than the recorded one, a documentation file included.
+        y = self.commit_counts()
+        perf = self.repo / "src" / "simp" / "tests" / "performance"
+        for label, path, edit in (
+                ("source", self.repo / "src" / "one.sml",
+                 lambda path: path.write_text("val one = 7\n")),
+                ("performance area", perf / "p.sml",
+                 lambda path: path.write_text("val p = 7\n")),
+                ("removed", self.repo / "src" / "two.sml",
+                 lambda path: path.unlink()),
+                ("staged", self.repo / "src" / "one.sml",
+                 lambda path: (path.write_text("val one = 8\n"),
+                               self.git("add", "src/one.sml")))):
+            with self.subTest(label):
+                name = "grid-" + label.replace(" ", "-")
+                with self.acting_at(self.calls + 5, lambda: edit(path)):
+                    with self.assertRaisesRegex(tg.CheckoutChanged,
+                                                "tracked file"):
+                        self.run_at(y, name)
+                out = self.root / name
+                self.assertIn("checkout_changed", self.inventory(out))
+                self.assertFalse((out / "decisions.json").exists())
+                self.git("checkout", "HEAD", "--", str(
+                    path.relative_to(self.repo)))
+                self.assertEqual(self.git("status", "--porcelain"), "")
+                self.dead_resume(y, name)
+                calls = self.calls
+                with self.assertRaisesRegex(ValueError, "checkout changed "
+                                            "while this grid ran"):
+                    self.go(self.replay_argv(out))
+                self.assertEqual(self.calls, calls)
+                self.assertEqual(
+                    self.ledger_lines()[-1]["status"], "checkout-changed")
+
+    def test_a_head_that_moved_under_a_stray_file_is_dead(self):
+        # The head is judged before the tree is looked at, so a tree that
+        # is not clean does not make a moved head merely unjudged.
+        y = self.commit_counts()
+        stray = self.repo / "notes.txt"
+
+        def moves():
+            self.commit_file("src/three.sml", "val three = 1\n", "moved")
+            stray.write_text("x")
+        with self.acting_at(5, moves):
+            with self.assertRaisesRegex(tg.CheckoutChanged,
+                                        "not at the commit measured") as c:
+                self.run_at(y)
+        self.assertTrue(c.exception.dead)
+        self.assertIn("checkout_changed", self.inventory(self.root / "grid"))
+        stray.unlink()
+        self.git("checkout", "-q", y)
+        self.dead_resume(y)
+
+    def test_a_pilot_ends_dead_on_a_tracked_edit_and_unjudged_on_a_stray(
+            self):
+        self.commit_counts()
+        real = self.fake_launch
+        file = self.repo / "src" / "one.sml"
+        stray = self.repo / "notes.txt"
+        for label, path in (("tracked", file), ("stray", stray)):
+            with self.subTest(label):
+                name = "pilot-" + label
+                before = len(self.launched)
+
+                def launching(command, output, fds, timeout, stdin=None,
+                              append=False, path=path):
+                    found = real(command, output, fds, timeout, stdin,
+                                 append)
+                    if "--performance-case" in command and len(
+                            self.launched) == before + 12:
+                        path.write_text("changed\n")
+                    return found
+                argv = self.argv("pilot", self.root / name,
+                                 "--authorize-measurements")
+                with patch.object(a, "run_logged", launching):
+                    with self.assertRaises(tg.CheckoutChanged):
+                        self.go(argv)
+                recorded = self.inventory(self.root / name)
+                if label == "tracked":
+                    self.assertIn("checkout_changed", recorded)
+                    self.assertNotIn("unjudged_ends", recorded)
+                    self.git("checkout", "--", "src/one.sml")
+                    with self.assertRaisesRegex(ValueError, "different "
+                                                "settings"):
+                        self.go(argv + ["--resume"])
+                else:
+                    self.assertIn("checkout_unjudged", recorded)
+                    self.assertEqual(len(recorded["unjudged_ends"]), 1)
+                    stray.unlink()
+                    self.assertEqual(self.go(argv + ["--resume"])[0], 0)
+                    resumed = self.inventory(self.root / name)
+                    self.assertNotIn("checkout_unjudged", resumed)
+                    self.assertEqual(resumed["unjudged_ends"],
+                                     recorded["unjudged_ends"])
+
+    def test_every_prepare_makes_a_new_digest(self):
+        # Configure relinks bin/hol, which differs at each run, so two
+        # prepares at one commit stamp the same head and tree and different
+        # products (three real runs gave three digests).
+        self.commit_counts()
+        self.assertEqual(self.prepare()[0], 0)
+        first = json.loads(self.stamp().read_text())
+        self.assertEqual(self.prepare()[0], 0)
+        second = json.loads(self.stamp().read_text())
+        self.assertEqual((second["head"], second["tree_outside_performance"]),
+                         (first["head"], first["tree_outside_performance"]))
+        self.assertNotEqual(second["products"]["sha256"],
+                            first["products"]["sha256"])
+        self.assertEqual(second["products"]["files"],
+                         first["products"]["files"])
+
+    def test_a_prepare_between_a_stop_and_its_resume_is_refused(self):
+        # Nothing but prepare itself touches the products here: a stopped
+        # grid must not be prepared, and prepare is no way back to it.
         y = self.commit_counts()
         self.explode_at = 5
         with self.assertRaises(RuntimeError):
             self.run_at(y)
         self.explode_at = None
-        (self.repo / "bin" / "hol.state0").write_text("another")
+        recorded = self.inventory(self.root / "grid")["checkout"]["products"]
         self.assertEqual(self.prepare()[0], 0)
+        self.assertNotEqual(
+            json.loads(self.stamp().read_text())["products"]["sha256"],
+            recorded)
         calls = self.calls
-        with self.assertRaisesRegex(ValueError, "different settings"):
+        with self.assertRaisesRegex(ValueError, "resume with different "
+                                    "settings"):
             self.run_at(y, "grid", "--resume")
         self.assertEqual(self.calls, calls)
+        # Another prepare does not bring the digest back either.
+        self.assertEqual(self.prepare()[0], 0)
+        with self.assertRaisesRegex(ValueError, "resume with different "
+                                    "settings"):
+            self.run_at(y, "grid", "--resume")
+        # A lost stamp comes back only from a copy of that same file.
+        stamp = self.stamp()
+        stamp.unlink()
+        with self.assertRaisesRegex(ValueError, "no build stamp"):
+            self.run_at(y, "grid", "--resume")
 
     def test_a_restamp_between_the_stages_is_refused(self):
         self.control = lambda case, size, pairs, seed: (
@@ -4318,6 +4616,43 @@ class Chain(ChainRig):
         self.configure_exit = 0
         self.assertEqual(self.prepare()[0], 0)
 
+    def test_a_configure_that_exits_zero_without_its_last_line_is_refused(
+            self):
+        # The real script swallows an exception and poly exits 0.
+        y = self.commit_counts()
+        built = len(self.built)
+        self.assertTrue(self.stamp().exists())
+        for label, log in (("nothing", ""),
+                           ("other text", "You must do poly < x\n"),
+                           ("part of the line",
+                            "Finished configuration! (not)\n")):
+            with self.subTest(label):
+                self.configure_log = log
+                with self.assertRaisesRegex(
+                        ValueError, "exited 0 but did not print "
+                        "'Finished configuration!'.*no build stamp: see "
+                        ".*prepare.log"):
+                    self.prepare()
+                self.assertFalse(self.stamp().exists())
+                self.assertEqual(len(self.built), built)
+                with self.assertRaisesRegex(ValueError, "no build stamp"):
+                    self.run_at(y)
+        self.configure_log = "configure log\n%s\n" % tg.FINISHED
+        self.assertEqual(self.prepare()[0], 0)
+        self.assertEqual(len(self.built), built + 1)
+
+    def test_only_the_text_of_this_configure_counts_as_its_last_line(self):
+        log = self.root / "appended.log"
+        log.write_text("an older run\n%s\n" % tg.FINISHED)
+        offset = log.stat().st_size
+        with log.open("a") as stream:
+            stream.write("this run died\n")
+        self.assertTrue(tg.configure_finished(log))
+        self.assertFalse(tg.configure_finished(log, offset))
+        with log.open("a") as stream:
+            stream.write("  %s  \n" % tg.FINISHED)
+        self.assertTrue(tg.configure_finished(log, offset))
+
     def test_a_timed_out_configure_writes_no_stamp_and_runs_no_build(self):
         self.commit_counts()
         built, real = len(self.built), self.fake_launch
@@ -4531,6 +4866,15 @@ class Options(Rig):
         self.assertEqual(options & {"--layout-seed", "--pairs", "--samples"},
                          set())
         self.assertLessEqual({"--revises", "--rescale", "--repilot"}, options)
+
+    def test_prepare_says_it_configures_and_that_its_timeout_is_each_ones(
+            self):
+        parser, sub = self.grid.parser()
+        summary = [x.help for x in sub._choices_actions
+                   if x.dest == "prepare"][0]
+        self.assertRegex(summary, "configure.*build.*stamp")
+        text = " ".join(sub.choices["prepare"].format_help().split())
+        self.assertRegex(text, "each of the two commands")
 
     def test_the_baseline_defaults_to_the_tables(self):
         self.table.baseline = "e" * 40
@@ -4842,6 +5186,73 @@ class Checkout(unittest.TestCase):
             tg.checkout_identity(self.repo, self.git("rev-parse", "HEAD"),
                                  self.stamp)
         self.assertNotIsInstance(caught.exception, tg.CheckoutUnjudged)
+
+    def test_the_head_is_judged_before_the_tree_is_looked_at(self):
+        # A head that is not the commit measured is a difference even when
+        # the tree is not clean: it is not merely unjudged.
+        (self.repo / "notes.txt").write_text("x")
+        with self.assertRaises(ValueError) as caught:
+            self.identity(self.third)
+        self.assertNotIsInstance(caught.exception, tg.CheckoutUnjudged)
+        self.assertIn("not at the commit", str(caught.exception))
+
+    def recorded(self):
+        found = tg.build_stamp(self.repo)
+        return dict(head=found["head"], products=found["products"]["sha256"],
+                    tree_outside_performance=found[
+                        "tree_outside_performance"])
+
+    def test_a_known_difference_needs_neither_a_clean_tree_nor_the_stamp(
+            self):
+        recorded = self.recorded()
+        self.assertIsNone(tg.known_difference(self.repo, recorded))
+        # Untracked files and a missing stamp say nothing.
+        (self.repo / "notes.txt").write_text("x")
+        self.stamp.unlink()
+        self.assertIsNone(tg.known_difference(self.repo, recorded))
+        self.assertEqual(tg.tracked_changes(self.repo), [])
+        (self.repo / "notes.txt").unlink()
+        # Any change of a tracked file does, wherever it is, a documentation
+        # file and the performance area included.
+        (self.repo / "doc.md").write_text("notes\n")
+        self.git("add", "doc.md")
+        self.git("commit", "-q", "-m", "doc")
+        recorded = self.recorded()
+        for label, change, undo in (
+                ("source", lambda: (self.repo / "src" / "a.sml").write_text(
+                    "val a = 2\n"), lambda: self.git(
+                        "checkout", "HEAD", "--", "src/a.sml")),
+                ("doc", lambda: (self.repo / "doc.md").write_text("more\n"),
+                 lambda: self.git("checkout", "HEAD", "--", "doc.md")),
+                ("performance area", lambda: (self.perf / "p.sml")
+                 .write_text("val p = 2\n"), lambda: self.git(
+                     "checkout", "HEAD", "--", str(self.perf / "p.sml"))),
+                ("removed", (self.repo / "doc.md").unlink, lambda:
+                 self.git("checkout", "HEAD", "--", "doc.md")),
+                ("staged", lambda: (
+                    (self.repo / "doc.md").write_text("staged\n"),
+                    self.git("add", "doc.md")), lambda: self.git(
+                        "checkout", "HEAD", "--", "doc.md"))):
+            with self.subTest(label):
+                change()
+                self.assertRegex(tg.known_difference(self.repo, recorded),
+                                 "tracked file.*not the recorded one")
+                undo()
+                self.assertIsNone(tg.known_difference(self.repo, recorded))
+
+    def test_a_known_difference_of_the_products_comes_before_the_dirt(self):
+        recorded = self.recorded()
+        self.stamp.unlink()
+        (self.repo / "src" / "a.sml").write_text("val a = 2\n")
+        self.heap.write_text("other")
+        self.assertRegex(tg.known_difference(self.repo, recorded),
+                         "products.*not the recorded ones")
+        self.heap.write_text("heap")
+        self.assertRegex(tg.known_difference(self.repo, recorded),
+                         "tracked file")
+        self.heap.unlink()
+        self.assertRegex(tg.known_difference(self.repo, recorded),
+                         "not the recorded ones.*no product")
 
     def test_a_checkout_without_a_usable_stamp_is_refused(self):
         self.stamp.unlink()

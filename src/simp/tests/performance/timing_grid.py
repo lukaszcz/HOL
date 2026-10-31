@@ -91,8 +91,9 @@ class CheckoutChanged(ValueError):
 
 class CheckoutUnjudged(ValueError):
     """The checkout cannot be compared with the stamp: it is not clean, or
-    there is no usable stamp. That says nothing about the checkout the
-    record names."""
+    there is no usable stamp. By itself that says nothing about the
+    checkout the record names; `known_difference` asks what can still be
+    judged."""
 
 
 class Table:
@@ -505,6 +506,10 @@ BUILD = ("bin/build", "--stdknl", "--seq=tools/sequences/upto-parallel")
 # (tools/build/buildutils.sml, check_against); configure just before makes
 # it unreachable, and it is asserted all the same.
 STALE = "WARNING! WARNING!"
+# The last line configure prints, once it has done everything. The real
+# script runs under a handler that swallows an exception and lets poly
+# exit 0, so the exit status alone does not say that it finished.
+FINISHED = "Finished configuration!"
 # The products a measurement loads from the checkout besides the sources the
 # harness takes per side from git (the simplifier's, below src/simp/src): the
 # executable, the heap, the Holmake that compiles the fixtures, everything the
@@ -586,6 +591,42 @@ def judge(ok, message):
         raise CheckoutUnjudged(message)
 
 
+def tracked_changes(repo):
+    """The status lines of the tracked files that differ from HEAD anywhere
+    in the tree (every entry of `git status --porcelain` but an untracked
+    file), beyond the agent-state directory."""
+    listing = a.git(repo, "status", "--porcelain", "--untracked-files=all",
+                    "--", ":(top)", ":(top,exclude)" + pr.AGENT_STATE)
+    return [line for line in listing.splitlines()
+            if line.strip() and not line.startswith("??")]
+
+
+def known_difference(repo, recorded):
+    """Why the checkout is known to differ from the record `recorded` (a
+    grid's or a pilot's `checkout`) although `checkout_identity` could not
+    judge it (the tree is not clean, or there is no usable stamp), or None
+    when nothing is known. The head is judged first, by `checkout_identity`,
+    which compares it with the commit before it looks at the tree. Here: the
+    products digest, which needs neither a clean tree nor the stamp; then
+    the tracked files. A change to any tracked file, a documentation file
+    included, is a tree other than the recorded one. Only untracked files,
+    or a missing stamp, say nothing."""
+    try:
+        products = products_digest(repo)["sha256"]
+    except ValueError as error:
+        return "the products are not the recorded ones: %s" % error
+    if products != recorded["products"]:
+        return ("the products (bin/hol, bin/hol.state0, bin/Holmake, "
+                "sigobj, the theory data files and sources) are not the "
+                "recorded ones: " + PREPARE)
+    changed = tracked_changes(repo)
+    if changed:
+        return ("tracked file(s) changed, so the tree is not the recorded "
+                "one: " + "; ".join(changed[:5])
+                + (" ..." if len(changed) > 5 else ""))
+    return None
+
+
 def checkout_identity(repo, commit=None, stamp=None):
     """The checkout a measurement runs in: HEAD is the commit measured (HEAD
     itself when `commit` is None), the tree is clean, and the tree outside
@@ -603,7 +644,8 @@ def checkout_identity(repo, commit=None, stamp=None):
     while an edited product or a changed source outside the performance area
     is refused until `prepare` is run again. A checkout that is not clean,
     or a stamp that is missing or malformed or of another build command,
-    cannot be judged (`CheckoutUnjudged`); a head, a tree or products that
+    cannot be judged here (`CheckoutUnjudged`, which `recheck` takes
+    further with `known_difference`); a head, a tree or products that
     differ are judged. The stamp is a discipline and not a proof of
     provenance: it shows the products are those present when a configure
     and a build exited cleanly at this tree."""
@@ -644,7 +686,9 @@ def checkout_identity(repo, commit=None, stamp=None):
 def configured_holdir(repo):
     """The HOLDIR that configure wrote into tools/Holmake/Systeml.sml, which
     every executable of the checkout (bin/hol, bin/Holmake, bin/build) and
-    the build work from; it must be this repository."""
+    the build work from; it must be this repository. Configure has just
+    written the HOLDIR of the directory it ran in, so this is an assertion
+    about what it left."""
     repo = Path(repo)
     path = repo / "tools" / "Holmake" / "Systeml.sml"
     a.require(path.is_file(), "configure did not leave the checkout "
@@ -656,8 +700,18 @@ def configured_holdir(repo):
               "in %s" % path)
     a.require(Path(found[0]).resolve() == repo.resolve(),
               "configure left the checkout configured for %s, not for %s "
-              "(a moved or copied tree builds in, and links to, the other)"
+              "(the build would work in, and link to, the other tree)"
               % (found[0], repo.resolve()))
+
+
+def configure_finished(log, offset=0):
+    """Whether the log holds the line configure ends with, in what was
+    written from byte `offset` on (this configure's output, not the text of
+    an earlier run in a log that is appended to)."""
+    with Path(log).open("rb") as stream:
+        stream.seek(offset)
+        text = stream.read().decode(errors="replace")
+    return any(line.strip() == FINISHED for line in text.splitlines())
 
 
 def stale_executable_warning(log):
@@ -1104,7 +1158,7 @@ class Grid:
                           "stopped before its first checkpoint); remove it "
                           "and start again" % root)
                 old = a.load(root / "inventory.json")
-                ignored = ("runs", "checkout_unjudged")
+                ignored = ("runs", "checkout_unjudged", "unjudged_ends")
                 a.require({k: v for k, v in old.items()
                            if k not in ignored} ==
                           {k: v for k, v in inventory.items()
@@ -1115,6 +1169,9 @@ class Grid:
                               row["seal"], "changed archive")
                     done[row["case"], row["size"]] = row
                 inventory["runs"] = old["runs"]
+                if "unjudged_ends" in old:
+                    # The mark is cleared by this resume; what it said stays.
+                    inventory["unjudged_ends"] = list(old["unjudged_ends"])
             else:
                 root.mkdir(parents=True, exist_ok=False)
             checkpoint(root / "inventory.json", inventory)
@@ -1132,9 +1189,14 @@ class Grid:
                 except CheckoutChanged as error:
                     # A pilot has no decisions that a missing mark would
                     # hold back: an unjudged end is marked until a resume
-                    # finds the checkout as recorded.
-                    inventory["checkout_changed" if error.dead
-                              else "checkout_unjudged"] = str(error)
+                    # finds the checkout as recorded, and listed for good
+                    # (the resume comparison ignores the list).
+                    if error.dead:
+                        inventory["checkout_changed"] = str(error)
+                    else:
+                        inventory["checkout_unjudged"] = str(error)
+                        inventory.setdefault("unjudged_ends", []).append(
+                            str(error))
                     raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
@@ -1738,15 +1800,23 @@ class Grid:
         measuring is over; a checkout that changed while a grid ran
         (a build, an edit, a checkout of another commit) leaves no grid
         that passes, and the attempt closes as `checkout-changed`. The grid
-        is dead (`CheckoutChanged.dead`) only when the head, the tree or
-        the products are known to differ from the record; a checkout that
-        could not be judged (not clean, no stamp) is not, and a resumption
+        is dead (`CheckoutChanged.dead`) when the head, the tree or the
+        products are known to differ from the record, which includes any
+        change to a tracked file (`known_difference`: that is judged
+        without a clean tree or a stamp). Only a checkout with untracked
+        files, or without a usable stamp, is not dead, and a resumption
         compares the record."""
         if not self.t.fixed_seconds:
             return
         try:
-            found = self.h.bind_checkout(repo, commit)
+            # The head is the recorded one, for a pilot too: a head that
+            # moved is judged before the tree is looked at.
+            found = self.h.bind_checkout(
+                repo, commit or inventory["checkout"]["head"])
         except CheckoutUnjudged as error:
+            known = known_difference(repo, inventory["checkout"])
+            if known is not None:
+                raise CheckoutChanged(known) from None
             raise CheckoutChanged(str(error), dead=False) from None
         except ValueError as error:
             raise CheckoutChanged(str(error)) from None
@@ -1760,9 +1830,10 @@ class Grid:
         checkout and takes the lock; in the repository root it runs
         configure (`CONFIGURE` reading `CONFIGURE_INPUT`, with the `poly` on
         the PATH) and then the real build (`BUILD`; Holmake decides what is
-        out of date) with no standard input. Only when both exit zero, with
-        no stale-executable warning, in a checkout configured here and
-        clean at the same HEAD, does it write the stamp: HEAD, the tree
+        out of date) with no standard input. Only when both exit zero,
+        configure has printed its closing line (`FINISHED`), the build has
+        printed no stale-executable warning, and the checkout is configured
+        here and clean at the same HEAD, does it write the stamp: HEAD, the tree
         outside the performance area, the content digest of the shared
         products and the build command. An earlier stamp is removed first,
         so that a failed or interrupted configure or build leaves none. The
@@ -1781,6 +1852,8 @@ class Grid:
             log.unlink(missing_ok=True)
             inside = ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"',
                       "prepare", str(repo)]
+            # Only what this configure writes counts (the log is new here).
+            offset = log.stat().st_size if log.exists() else 0
             configured = a.run_logged(
                 inside + list(CONFIGURE), log, fds, args.timeout,
                 stdin=repo / CONFIGURE_INPUT)
@@ -1789,6 +1862,10 @@ class Grid:
                       "configure failed (exit %s%s), no build stamp: see %s"
                       % (configured["exit"], ", timed out" if
                          configured["timed_out"] else "", log))
+            a.require(configure_finished(log, offset),
+                      "configure exited 0 but did not print %r, so it "
+                      "stopped on an exception it swallowed, no build "
+                      "stamp: see %s" % (FINISHED, log))
             configured_holdir(repo)
             built = a.run_logged(
                 inside + list(BUILD), log, fds, args.timeout,
@@ -2268,11 +2345,12 @@ class Grid:
                            help="the pilot the counts derive from")
 
         build = sub.add_parser(
-            "prepare", help="build the checkout and stamp it for the "
-            "measuring commands")
+            "prepare", help="configure and build the checkout and stamp it "
+            "for the measuring commands")
         build.add_argument("--repo", type=Path, default=repo)
         build.add_argument("--timeout", type=int, default=BUILD_TIMEOUT,
-                           help="seconds the build may take")
+                           help="seconds each of the two commands, configure "
+                           "and the build, may take")
         pilot = sub.add_parser(
             "pilot", help="develop-only experiments for the counts")
         pilot.add_argument("--output", type=Path, required=True)
