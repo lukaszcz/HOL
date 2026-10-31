@@ -1,4 +1,4 @@
-(* Fixed comparator tables. Source proposal; UNCOMPILED.
+(* Fixed comparator tables.
    Planning records every constructor instruction in original evaluation order.
    No generic Redblack table/comparator can be wrapped by this API. *)
 structure ReplayRedblackPrivateWork :> ReplayRedblackPrivateWork =
@@ -57,20 +57,32 @@ struct
     in walk tree end
 
   datatype ledger = Ledger of {ceiling : IntInf.int option,
+    meter : scope_meter option,
     work : IntInf.int ref, views : IntInf.int ref,
     comparisons : IntInf.int ref, string_bytes : IntInf.int ref,
     plan_nodes : IntInf.int ref, finish_nodes : IntInf.int ref}
-  fun ledger cap =
+  fun ledger_with_meter cap meter =
     (* Fixed setup is admitted before the six counter references/record.
-       Arithmetic/primitive string representation costs remain qualified. *)
+       Arithmetic/primitive string representation costs remain qualified.
+       Coupling is only to the original typed meter, never a payer callback. *)
     if (case cap of SOME c => c < 16 | NONE => false) then raise Limit
-    else Ledger {ceiling=cap,work=ref 16,views=ref 0,comparisons=ref 0,
-      string_bytes=ref 0,plan_nodes=ref 0,finish_nodes=ref 0}
-  fun spend (Ledger {ceiling,work,...}) n =
+    else
+      (case meter of NONE => () | SOME m => scope_meter_charge m 16;
+       Ledger {ceiling=cap,meter=meter,work=ref 16,views=ref 0,
+         comparisons=ref 0,string_bytes=ref 0,plan_nodes=ref 0,
+         finish_nodes=ref 0})
+  fun ledger cap = ledger_with_meter cap NONE
+  fun spend (Ledger {ceiling,meter,work,...}) n =
     let val next = !work + n in
       if n < 0 orelse (case ceiling of SOME c => next > c | NONE => false)
-      then raise Limit else work := next
+      then raise Limit
+      else
+        (case meter of NONE => () | SOME m => scope_meter_charge m n;
+         work := next)
     end
+  (* Every coupled debit precedes its effects, including future-finish
+     reservations. Refusal retains prior debits; abandonment or a stale
+     finish never refunds them. Finish methods do not charge again. *)
   fun counter l r n = (spend l n;r := !r+n)
   fun view_tick (l as Ledger {views,...}) = counter l views 1
   fun compare_tick (l as Ledger {comparisons,...}) = counter l comparisons 1
@@ -308,16 +320,24 @@ struct
           LESS => search l compare left key
         | GREATER => search l compare right key
         | EQUAL => (spend l 1;SOME v)))
-  fun lookup_int (base as IntMap(_,tree),key,ceiling) =
-    let val l=ledger(SOME ceiling)
+  fun plan_lookup_int cap meter (base as IntMap(_,tree),key) =
+    let val l=ledger_with_meter cap meter
         val answer=search l (int_compare l) tree key
         val _=spend l 8
     in IntLookup {base=base,answer=answer,cost=cost l,used=ref false} end
-  fun lookup_string (base as StringSet(_,tree),key,ceiling) =
-    let val l=ledger(SOME ceiling)
+  fun lookup_int (base,key,ceiling) =
+    plan_lookup_int (SOME ceiling) NONE (base,key)
+  fun scope_plan_lookup_int meter args =
+    plan_lookup_int NONE (SOME meter) args
+  fun plan_lookup_string cap meter (base as StringSet(_,tree),key) =
+    let val l=ledger_with_meter cap meter
         val answer=Option.isSome(search l (string_compare l) tree key)
         val _=spend l 8
     in StringLookup {base=base,answer=answer,cost=cost l,used=ref false} end
+  fun lookup_string (base,key,ceiling) =
+    plan_lookup_string (SOME ceiling) NONE (base,key)
+  fun scope_plan_lookup_string meter args =
+    plan_lookup_string NONE (SOME meter) args
   fun int_lookup_cost (IntLookup {cost,...}) = cost
   fun string_lookup_cost (StringLookup {cost,...}) = cost
   fun retire same (current,base,used) =
@@ -337,9 +357,9 @@ struct
     {base : string_set,root : (string,unit) link,
      instructions : (string,unit) link list,count : int,
      cost : cost,used : bool ref}
-  fun plan_batch cap (base as IntMap(count,tree),keys) =
+  fun plan_batch_with_meter cap meter (base as IntMap(count,tree),keys) =
     let
-      val l=ledger cap
+      val l=ledger_with_meter cap meter
       val _=spend l 2
       val instructions=ref []
       fun loop remaining root count ordinal =
@@ -359,10 +379,15 @@ struct
       val _=spend l (IntInf.fromInt n*3+16)
     in IntBatch {base=base,root=root,instructions= !instructions,count=count,
       payloads=n,cost=cost l,used=ref false} end
+  fun plan_batch cap args = plan_batch_with_meter cap NONE args
   fun insert_int_batch (base,keys,ceiling) =
     plan_batch (SOME ceiling) (base,keys)
   fun insert_int (base,key,ceiling) =
     plan_batch (SOME ceiling) (base,[key])
+  fun scope_plan_insert_int_batch meter args =
+    plan_batch_with_meter NONE (SOME meter) args
+  fun scope_plan_insert_int meter (base,key) =
+    scope_plan_insert_int_batch meter (base,[key])
   fun int_batch_cost (IntBatch {cost,...}) = cost
   val int_insertion_cost = int_batch_cost
   fun read_link (Held tree) = tree
@@ -388,9 +413,9 @@ struct
      replay instructions (Array.fromList values);
      IntMap(count,read_link root))
   fun finish_int (current,plan,value) = finish_int_batch(current,plan,[value])
-  fun plan_string cap (base as StringSet(count,tree),key) =
+  fun plan_string_with_meter cap meter (base as StringSet(count,tree),key) =
     let
-      val l=ledger cap
+      val l=ledger_with_meter cap meter
       val _=spend l 2
       val instructions=ref []
       val (root,fresh)=set_insert l instructions (string_compare l)
@@ -398,8 +423,11 @@ struct
       val _=spend l 16
     in StringInsertion {base=base,root=root,instructions= !instructions,
       count=if fresh then count+1 else count,cost=cost l,used=ref false} end
+  fun plan_string cap args = plan_string_with_meter cap NONE args
   fun insert_string (base,key,ceiling) =
     plan_string (SOME ceiling) (base,key)
+  fun scope_plan_insert_string meter args =
+    plan_string_with_meter NONE (SOME meter) args
   fun string_insertion_cost (StringInsertion {cost,...}) = cost
   fun finish_string
       (current,StringInsertion {base,root,instructions,count,used,...}) =
@@ -471,13 +499,17 @@ struct
              in visit left row end)
     in visit link [] end
 
-  fun list_int_plan (base as IntMap(_,tree),ceiling) =
-    let val l=ledger(SOME ceiling)
+  fun plan_list_int cap meter (base as IntMap(_,tree)) =
+    let val l=ledger_with_meter cap meter
         (* Held root link, final record/wrapper/ref; future empty-list case,
            one-shot state/identity/retirement and result field accesses. *)
         val _=spend l 10
         val rows=listing_rows l (Held tree)
     in IntListing {base=base,rows=rows,cost=cost l,used=ref false} end
+  fun list_int_plan (base,ceiling) =
+    plan_list_int (SOME ceiling) NONE base
+  fun scope_plan_list_int meter base =
+    plan_list_int NONE (SOME meter) base
   fun int_listing_cost (IntListing {cost,...}) = cost
   fun copy_listing [] = []
     | copy_listing ((key,HeldValue value)::rest) =
@@ -491,8 +523,8 @@ struct
   fun finish_list_int (current,IntListing {base,rows,used,...}) =
     (retire same_int(current,base,used);copy_listing rows)
 
-  fun list_int_batch_plan (batch as IntBatch {root,used,...},ceiling) =
-    let val l=ledger(SOME ceiling)
+  fun plan_list_int_batch cap meter (batch as IntBatch {root,used,...}) =
+    let val l=ledger_with_meter cap meter
         (* Final captured batch plan/phase reference, future two phase
            guards/state writes/binding wrapper and final empty-list case.
            Underlying batch finish has its OWN retained authentic cost. *)
@@ -501,6 +533,10 @@ struct
         val rows=listing_rows l root
     in IntBatchListing {batch=batch,rows=rows,cost=cost l,
       phase=ref ListingPrepared} end
+  fun list_int_batch_plan (batch,ceiling) =
+    plan_list_int_batch (SOME ceiling) NONE batch
+  fun scope_plan_list_int_batch meter batch =
+    plan_list_int_batch NONE (SOME meter) batch
   fun int_batch_listing_cost (IntBatchListing {cost,...}) = cost
   fun finish_int_batch_with_listing
       (current,IntBatchListing {batch,phase,...},values) =
@@ -526,49 +562,23 @@ struct
   fun scope_meter_charged_policy (PolicyScopeMeter {charged,...}) = !charged
     | scope_meter_charged_policy (ScopeMeter {charged,...}) =
         IntInf.fromInt (!charged)
-  fun lookup_int_with_policy
-      (base as IntMap(_,tree),key,maximum) =
-    let
-      val ceiling = case maximum of
-          SmtReplayResourcePolicy.Uncapped => NONE
-        | SmtReplayResourcePolicy.AtMost cap => SOME cap
-      val l=ledger ceiling
-      val answer=search l (int_compare l) tree key
-      val _=spend l 8
-    in IntLookup {base=base,answer=answer,cost=cost l,used=ref false} end
-
   fun table_policy_ceiling SmtReplayResourcePolicy.Uncapped=NONE
     | table_policy_ceiling (SmtReplayResourcePolicy.AtMost maximum)=
         SOME maximum
+  fun lookup_int_with_policy (base,key,maximum) =
+    plan_lookup_int (table_policy_ceiling maximum) NONE (base,key)
   fun insert_int_batch_with_policy (base,keys,maximum)=
     plan_batch (table_policy_ceiling maximum) (base,keys)
   fun insert_int_with_policy (base,key,maximum)=
     plan_batch (table_policy_ceiling maximum) (base,[key])
   fun insert_string_with_policy (base,key,maximum)=
     plan_string (table_policy_ceiling maximum) (base,key)
-  fun lookup_string_with_policy (base as StringSet(_,tree),key,maximum) =
-    let val l=ledger(table_policy_ceiling maximum)
-        val answer=Option.isSome(search l (string_compare l) tree key)
-        val _=spend l 8
-    in StringLookup {base=base,answer=answer,cost=cost l,used=ref false} end
-  fun list_int_plan_with_policy (base as IntMap(_,tree),maximum) =
-    let val l=ledger(table_policy_ceiling maximum)
-        (* Held root link, final record/wrapper/ref; future empty-list case,
-           one-shot state/identity/retirement and result field accesses. *)
-        val _=spend l 10
-        val rows=listing_rows l (Held tree)
-    in IntListing {base=base,rows=rows,cost=cost l,used=ref false} end
-  fun list_int_batch_plan_with_policy
-      (batch as IntBatch {root,used,...},maximum) =
-    let val l=ledger(table_policy_ceiling maximum)
-        (* Final captured batch plan/phase reference, future two phase
-           guards/state writes/binding wrapper and final empty-list case.
-           Underlying batch finish has its OWN retained authentic cost. *)
-        val _=spend l 24
-        val _=if !used then raise StalePlan else ()
-        val rows=listing_rows l root
-    in IntBatchListing {batch=batch,rows=rows,cost=cost l,
-      phase=ref ListingPrepared} end
+  fun lookup_string_with_policy (base,key,maximum) =
+    plan_lookup_string (table_policy_ceiling maximum) NONE (base,key)
+  fun list_int_plan_with_policy (base,maximum) =
+    plan_list_int (table_policy_ceiling maximum) NONE base
+  fun list_int_batch_plan_with_policy (batch,maximum) =
+    plan_list_int_batch (table_policy_ceiling maximum) NONE batch
   fun reachable_plan_node (l as Ledger {plan_nodes,finish_nodes,...}) instructions
            (c,a,k,v,b) =
     let

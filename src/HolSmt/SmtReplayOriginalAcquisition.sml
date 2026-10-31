@@ -184,6 +184,43 @@ struct
   fun remaining (Work seed) =
     let val Seed {request,charged,...} = seed
     in active seed;RP.remaining (#work_limit request) (!charged) end
+  (* Private fixed-program runner, never a public meter/callback port.
+     W keeps its initial Source authentication. Preserve the old remaining
+     guard BEFORE R/G and active/charge16/32/0 AFTER it: a planning R.Limit
+     must precede any later guard failure. Together W+A still pay six active
+     guards +72 on success, including the three old inside guards. A fixed
+     callback-free phase header authenticates Busy before planning without
+     prepaying the suffix. No Ready test, nested action or new publication
+     restriction. R/G bill the SAME meter, including future finish work. *)
+  fun paid_plan (work as Work seed) program =
+    ((let
+        val _ = remaining work
+        val Seed {meter,action,...} = seed
+        val _ = case !action of Busy => ()
+          | _ => fail seed "inside" "original Work has no owned action"
+        val result = program meter
+        val _ = active seed
+        val _ = charge work 16
+        val _ = charge work 32
+        val _ = charge work 0
+      in result end)
+     handle primary => (retire_seed seed;raise primary))
+  fun plan_lookup_int work args =
+    paid_plan work (fn meter => R.scope_plan_lookup_int meter args)
+  fun plan_lookup_string work args =
+    paid_plan work (fn meter => R.scope_plan_lookup_string meter args)
+  fun plan_insert_int work args =
+    paid_plan work (fn meter => R.scope_plan_insert_int meter args)
+  fun plan_insert_string work args =
+    paid_plan work (fn meter => R.scope_plan_insert_string meter args)
+  fun plan_insert_int_batch work args =
+    paid_plan work (fn meter => R.scope_plan_insert_int_batch meter args)
+  fun plan_list_int_batch work batch =
+    paid_plan work (fn meter => R.scope_plan_list_int_batch meter batch)
+  fun plan_placeholders work graph scope args =
+    paid_plan work (fn meter =>
+      G.plan_placeholders_with_meter graph scope meter args)
+
   fun request_for_work (Work seed) = (active seed;request_metadata seed)
   fun close_seed (seed as Seed {graph,root,...}) =
     (retire_seed seed;G.close_scope graph root)

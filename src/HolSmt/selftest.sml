@@ -84852,9 +84852,14 @@ val _=run_postlude 432 "fixed-name-physical-Type-identity-5"
 val _ = run_postlude 433 "z3-binder-alias-shadowing-5"
   run_z3_binder_alias_shadowing_controls
 
+val _ = run_postlude 434 "replay-work-order-accounting-14"
+  SmtReplayWorkOrderTests.run
+val _ = run_postlude 435 "replay-prepared-primitive-work-5"
+  SmtReplayPrimitiveWorkTests.run
+
 val () =
   let
-    val expected = 434
+    val expected = 436
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso

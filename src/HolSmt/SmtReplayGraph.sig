@@ -324,10 +324,17 @@ sig
      ProofBoundary may enter descendant scopes; every node must be visible. *)
   val occurrence_leaves : occurrence -> occurrence list
   val validate_occurrence : graph -> occurrence -> unit
-(* Proposed additive G interface; Source-only and UNCOMPILED. *)
+(* Graph-owned placeholder planning and one-shot publication. *)
 type placeholder_plan
 val plan_placeholders : graph -> scope ->
   {nodes : node list,remaining_work : int} -> placeholder_plan
+(* Additive SAME-meter planner. Each instruction is paid before its effect;
+   Refusal retains its diagnostic and successful prefix. Costs include paid
+   future mint/finish reservations: do NOT charge plan_cost again.
+   Validation still requires the caller's separate guard payment. *)
+val plan_placeholders_with_meter : graph -> scope ->
+  ReplayRedblackPrivateWork.scope_meter ->
+  {nodes : node list} -> placeholder_plan
 (* Immutable DATA from the genuine planner; not a Work/Root grant. *)
 val placeholder_plan_cost : placeholder_plan -> IntInf.int
 val placeholder_plan_guard_cost : placeholder_plan -> IntInf.int

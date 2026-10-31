@@ -41,6 +41,59 @@ sig
     entitlement
   val consume : portfolio -> entitlement -> int -> unit
   val close : portfolio -> unit
+  (* Caller owns the existing action. Closed SAME-counter planners keep
+     the old remaining -> R/G -> spend guard order; a fixed callback-free
+     phase header authenticates Busy before planning. Returned plans include
+     future finish reservations: use R/G finishers without paying the cost
+     again. Any failure retires Work and preserves the primary exception,
+     including R.Limit before later guard failures. No meter or new action
+     escapes. All modes supported. Original Work keeps W/A's old guards. *)
+  val plan_lookup_int : portfolio ->
+    'a ReplayRedblackPrivateWork.int_map * int ->
+    'a ReplayRedblackPrivateWork.int_lookup
+  val plan_lookup_string : portfolio ->
+    ReplayRedblackPrivateWork.string_set * string ->
+    ReplayRedblackPrivateWork.string_lookup
+  val plan_insert_int : portfolio ->
+    'a ReplayRedblackPrivateWork.int_map * int ->
+    'a ReplayRedblackPrivateWork.int_insertion
+  val plan_insert_string : portfolio ->
+    ReplayRedblackPrivateWork.string_set * string ->
+    ReplayRedblackPrivateWork.string_insertion
+  val plan_insert_int_batch : portfolio ->
+    'a ReplayRedblackPrivateWork.int_map * int list ->
+    'a ReplayRedblackPrivateWork.int_batch
+  (* Pays only the listing; the underlying batch must already be paid. *)
+  val plan_list_int_batch : portfolio ->
+    'a ReplayRedblackPrivateWork.int_batch ->
+    'a ReplayRedblackPrivateWork.int_batch_listing
+  val plan_placeholders : portfolio -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> {nodes:SmtReplayGraph.node list} ->
+    SmtReplayGraph.placeholder_plan
+
+  (* Legacy finite Proof pay also queried remaining AFTER R/G and before
+     spend: retain that third active guard on guarded finite portfolios.
+     Same closed planning/finish contract as above, no extra semantic checks
+     or mode refusal. Original Work retains the same W/A dispatch. *)
+  val legacy_plan_lookup_int : portfolio ->
+    'a ReplayRedblackPrivateWork.int_map * int ->
+    'a ReplayRedblackPrivateWork.int_lookup
+  val legacy_plan_lookup_string : portfolio ->
+    ReplayRedblackPrivateWork.string_set * string ->
+    ReplayRedblackPrivateWork.string_lookup
+  val legacy_plan_insert_int : portfolio ->
+    'a ReplayRedblackPrivateWork.int_map * int ->
+    'a ReplayRedblackPrivateWork.int_insertion
+  val legacy_plan_insert_int_batch : portfolio ->
+    'a ReplayRedblackPrivateWork.int_map * int list ->
+    'a ReplayRedblackPrivateWork.int_batch
+  val legacy_plan_list_int_batch : portfolio ->
+    'a ReplayRedblackPrivateWork.int_batch ->
+    'a ReplayRedblackPrivateWork.int_batch_listing
+  val legacy_plan_placeholders : portfolio -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> {nodes:SmtReplayGraph.node list} ->
+    SmtReplayGraph.placeholder_plan
+
   (* Reject a known exhausted private plan using the ordinary Work error.
      Retirement only: no debit, phase change to Busy or admission grant. *)
   val abort_work_limit : portfolio -> 'a

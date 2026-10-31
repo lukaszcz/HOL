@@ -25,6 +25,35 @@ sig
   val with_action : work -> (unit -> 'a) -> 'a
   val charge : work -> IntInf.int -> unit
   val remaining : work -> SmtReplayResourcePolicy.limit
+  (* Closed planners inside the caller's SAME action; no meter getter.
+     W authenticates its Source first. Keep remaining before R/G planning
+     and the old active/charge16/32/0 guards after it. A fixed callback-free
+     phase header authenticates Busy before planning. Returned costs/future
+     finish reservations are paid; do not debit them again. Failure retires
+     and preserves R.Limit ahead of any later guard failure. *)
+  val plan_lookup_int : work ->
+    'a ReplayRedblackPrivateWork.int_map * int ->
+    'a ReplayRedblackPrivateWork.int_lookup
+  val plan_lookup_string : work ->
+    ReplayRedblackPrivateWork.string_set * string ->
+    ReplayRedblackPrivateWork.string_lookup
+  val plan_insert_int : work ->
+    'a ReplayRedblackPrivateWork.int_map * int ->
+    'a ReplayRedblackPrivateWork.int_insertion
+  val plan_insert_string : work ->
+    ReplayRedblackPrivateWork.string_set * string ->
+    ReplayRedblackPrivateWork.string_insertion
+  val plan_insert_int_batch : work ->
+    'a ReplayRedblackPrivateWork.int_map * int list ->
+    'a ReplayRedblackPrivateWork.int_batch
+  (* The underlying batch is separately paid, not charged again here. *)
+  val plan_list_int_batch : work ->
+    'a ReplayRedblackPrivateWork.int_batch ->
+    'a ReplayRedblackPrivateWork.int_batch_listing
+  val plan_placeholders : work -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> {nodes:SmtReplayGraph.node list} ->
+    SmtReplayGraph.placeholder_plan
+
   val request_for_work : work -> request
   val retire_work : work -> unit
   val close_seed : seed -> unit

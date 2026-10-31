@@ -3537,8 +3537,12 @@ struct
       {ceiling : IntInf.int,used : IntInf.int ref} | PaidGuard
     | PolicyCountGuard of
       {ceiling:SmtReplayResourcePolicy.limit,used:IntInf.int ref}
+    | SameMeterGuard of R.scope_meter
   datatype placeholder_requirement = EitherState | PreparedState
   fun placeholder_event PaidGuard = ()
+    | placeholder_event (SameMeterGuard meter) =
+        (R.scope_meter_charge meter 1 handle R.Limit =>
+          raise ERR "plan_placeholders" "original remaining Work exhausted")
     | placeholder_event (CountGuard {ceiling,used}) =
         if !used >= ceiling then
           raise ERR "plan_placeholders" "original remaining Work exhausted"
@@ -5148,6 +5152,219 @@ struct
       {snapshot = snapshot,rows = !rows,names = !names,
        bindings = !bindings,batch = batch,
        work = !used,guard_work = guard_work,phase = phase,
+       revision = #validation_changes g} end
+
+  (* SAME-meter counterpart of the genuine placeholder programme. The
+     ordinary planners above retain their exact standalone accounting and
+     diagnostics. Only this route uses already-paid R plans; their costs
+     must NOT be charged a second time. All partial debits survive refusal.
+     Meter snapshots report cost DATA, never create a new allowance. *)
+  fun plan_placeholders_with_meter (g : graph) caller meter {nodes} =
+    let
+      val initial = R.scope_meter_charged_policy meter
+      val _ = R.scope_meter_charge meter 2 handle R.Limit =>
+        raise ERR "plan_placeholders" "remaining Work cannot create meter"
+      fun spend amount = R.scope_meter_charge meter amount handle R.Limit =>
+        raise ERR "plan_placeholders" "original remaining Work exhausted"
+      fun tick () = spend 1
+      val _ = tick ()
+      val original_nodes = !(#nodes g)
+      val _ = tick ()
+      val original_scopes = !(#scopes g)
+      val _ = tick ()
+      val original_reserved = !(#reserved g)
+      val _ = tick ()
+      val original_placeholders = !(#placeholders g)
+      val _ = tick ()
+      val first_name = !(#next_name g)
+      val _ = tick ()
+      val first_node = !(#next g)
+      val _ = tick ()
+      val first_scope = !(#next_scope g)
+      val _ = tick ()
+      val epoch = Type.type_epoch ()
+      val _ = tick ()
+      val symbols = Term.term_epoch ()
+      val _ = tick ()
+      val frames = ref ([] : (scope * bool ref) list)
+      val _ = tick ()
+      val scope_values = ref ([] : (scope * frame) list)
+      fun int_value table key =
+        let val _ = tick ()
+            val plan = R.scope_plan_lookup_int meter (table,key)
+            val _ = tick ()
+        in R.int_lookup_value (table,plan) end
+      fun previous scope pending =
+        (tick ();case pending of [] => NONE
+         | (old,value)::rest =>
+             (tick ();if scope = old then (tick ();SOME value)
+              else previous scope rest))
+      fun scope_value (scope as Scope {owner,id}) =
+        (tick ();
+         if owner <> #owner g then
+           raise ERR "plan_placeholders" "foreign caller/frame"
+         else (tick ();case previous scope (!scope_values) of
+           SOME value => value
+         | NONE =>
+             let val value = case int_value original_scopes id of
+                     SOME value => value
+                   | NONE => raise ERR "plan_placeholders" "unknown frame"
+                 val _ = tick () val _ = tick () val _ = tick ()
+                 val _ = scope_values := (scope,value) :: !scope_values
+                 val _ = tick () val _ = tick () val _ = tick ()
+                 val _ = frames := (scope,#active value) :: !frames
+             in value end))
+      fun alive scope =
+        let val frame = scope_value scope val _ = tick ()
+            val _ = if !(#active frame) then () else
+              raise ERR "plan_placeholders" "retired frame"
+        in tick ();case #parent frame of NONE => () | SOME p => alive p end
+      fun visible scope required =
+        (tick ();if scope = required then true else
+         case #parent (scope_value scope) of NONE => false
+         | SOME parent => visible parent required)
+      val _ = alive caller
+      val _ = tick () val staged_reserved = ref original_reserved
+      val _ = tick () val next_name = ref first_name
+      val _ = tick () val rows = ref ([] : placeholder_row list)
+      val _ = tick () val names = ref ([] : (node * string) list)
+      val _ = tick ()
+      val bindings = ref ([] : (node * string * Type.hol_type) list)
+      val _ = tick () val keys = ref ([] : int list)
+      val _ = spend 2
+      val visited = ref (R.empty_int () : node list R.int_map)
+      fun visited_entry node =
+        let val _ = spend 3
+            val table = !visited
+            val key = node_id node
+            val query = R.scope_plan_lookup_int meter (table,key)
+            val _ = tick ()
+            val values = case R.int_lookup_value (table,query) of
+                NONE => [] | SOME values => values
+        in (table,key,values) end
+      fun visited_member node pending =
+        (tick ();case pending of [] => false | old::rest =>
+          (tick ();node = old orelse visited_member node rest))
+      fun remember entry node =
+        let val _ = spend 3
+            val (table,key,values) = entry
+            val insertion = R.scope_plan_insert_int meter (table,key)
+            val _ = spend 2
+            val next = R.finish_int (table,insertion,node::values)
+        in visited := next end
+      fun candidate id =
+        let
+          fun digits n = (tick ();if n < 10 then 1 else 1+digits (n div 10))
+          val _ = if id < 0 then
+            raise ERR "plan_placeholders" "negative name counter" else ()
+          val _ = case Int.maxInt of NONE => () | SOME maximum =>
+            if id < maximum then () else
+              raise ERR "plan_placeholders" "name counter cannot advance"
+          val n = digits id
+          val _ = spend (IntInf.fromInt n)
+          val decimal = Int.toString id
+          val _ = spend (IntInf.fromInt (String.size "__smt_replay_"))
+          val _ = spend (IntInf.fromInt n)
+        in "__smt_replay_" ^ decimal end
+      fun choose () =
+        let val _ = tick () val id = !next_name
+            val name = candidate id
+            val _ = tick () val _ = tick () val _ = next_name := id+1
+            val _ = tick () val staged = !staged_reserved
+            val _ = tick ()
+            val plan = R.scope_plan_lookup_string meter (staged,name)
+            val _ = tick ()
+        in if R.string_lookup_value (staged,plan) then choose ()
+           else name end
+      fun one (node as Node {owner,id}) =
+        let
+          val _ = tick ()
+          val _ = if owner = #owner g then () else
+            raise ERR "plan_placeholders" "foreign node"
+          val fields = case int_value original_nodes id of SOME v => v
+            | NONE => raise ERR "plan_placeholders" "unknown node"
+          val _ = alive (#scope fields)
+          val _ = if visible caller (#scope fields) then () else
+            raise ERR "plan_placeholders" "node outside original caller"
+        in case int_value original_placeholders id of
+            SOME term =>
+              let val _ = tick () val name = #1 (Term.dest_var term)
+                  val _ = tick () val _ = tick ()
+                  val _ = tick () val _ = tick ()
+                  val _ = rows := CachedName (node,term) :: !rows
+                  val _ = tick () val _ = tick () val _ = tick ()
+                  val _ = names := (node,name) :: !names
+                  val _ = spend 4
+                  val _ = bindings := (node,name,#ty fields) :: !bindings
+              in () end
+          | NONE =>
+              let
+                val name = choose ()
+                val _ = tick () val staged = !staged_reserved
+                val _ = tick ()
+                val insertion = R.scope_plan_insert_string meter
+                  (staged,name)
+                val _ = tick ()
+                val next = R.finish_string (staged,insertion)
+                val _ = tick () val _ = staged_reserved := next
+                val _ = tick () val _ = tick ()
+                val _ = tick () val _ = tick ()
+                val _ = rows := NewName (node,name,#ty fields) :: !rows
+                val _ = tick () val _ = tick () val _ = tick ()
+                val _ = names := (node,name) :: !names
+                val _ = spend 4
+                val _ = bindings := (node,name,#ty fields) :: !bindings
+                val _ = tick () val _ = tick () val _ = keys := id :: !keys
+              in () end
+        end
+      fun walk pending =
+        (tick ();case pending of [] => () | node::rest =>
+          let val entry = visited_entry node
+              val _ = spend 3
+              val (_,_,values) = entry
+          in if visited_member node values then
+               raise ERR "plan_placeholders" "duplicate naming node"
+             else (one node;remember entry node;tick ();walk rest)
+          end)
+      val _ = walk nodes
+      fun reserve_payloads pending =
+        (tick ();tick ();case pending of [] => spend 4
+         | CachedName _::rest =>
+             (spend 5;reserve_payloads rest)
+         | NewName _::rest =>
+             (spend 8;reserve_payloads rest))
+      val _ = reserve_payloads (!rows)
+      fun reserve_reverse [] = tick ()
+        | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
+      val _ = reserve_reverse (!rows)
+      val batch = R.scope_plan_insert_int_batch meter
+        (original_placeholders,!keys)
+      val _ = tick () val _ = tick () val _ = tick ()
+      val snapshot = PlaceholderSnapshot
+        {owner = #owner g,caller = caller,nodes = original_nodes,
+         scopes = original_scopes,reserved = original_reserved,
+         placeholders = original_placeholders,first_name = first_name,
+         first_node = first_node,first_scope = first_scope,
+         epoch = epoch,symbols = symbols,frames = !frames,
+         next_reserved = !staged_reserved,
+         next_name = !next_name}
+      val phase = ref NamesPrepared
+      val _ = tick () val _ = tick ()
+      val guard_meter = SameMeterGuard meter
+      val before_guard = R.scope_meter_charged_policy meter
+      val _ = placeholder_guard EitherState guard_meter g caller
+        snapshot phase
+      val positive_guard = R.scope_meter_charged_policy meter-before_guard
+      val guard_work = positive_guard+1
+      val _ = spend guard_work
+      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
+      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
+      val _ = spend 2
+    in PlaceholderPlan
+      {snapshot = snapshot,rows = !rows,names = !names,
+       bindings = !bindings,batch = batch,
+       work = R.scope_meter_charged_policy meter-initial,
+       guard_work = guard_work,phase = phase,
        revision = #validation_changes g} end
 
   (* Only authentic policy discovery profiles can fill an opaque leaf.

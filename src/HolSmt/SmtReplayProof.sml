@@ -108,15 +108,12 @@ struct
     else (W.close work;raise ERR "private_table" "original Work exhausted")
   fun table_peek (LegacyTable map,key) = Redblackmap.peek (map,key)
     | table_peek (FixedTable {work,map,...},key) =
-        (let val plan = R.lookup_int (map,key,remaining work)
-            val _ = pay work (#work (R.int_lookup_cost plan))
+        (let val plan = W.legacy_plan_lookup_int work (map,key)
         in R.int_lookup_value (map,plan) end
         handle primary => (W.close work;raise primary))
     | table_peek (PolicyFixedTable {work,map,guard,...},key) =
         ((guard ();
-          let val plan=R.lookup_int_with_policy
-                (map,key,W.remaining_policy work)
-              val _=W.spend_policy work (#work (R.int_lookup_cost plan))
+          let val plan=W.plan_lookup_int work (map,key)
               val value=R.int_lookup_value (map,plan)
               val _=guard ()
           in value end)
@@ -167,10 +164,8 @@ struct
               (* Actual key-copy events plus THIS future payload row/cons.
                  This private plan owns the later exact one-shot replay. *)
               (W.spend work 6;key input :: keys rest)
-        val batch = R.insert_int_batch (base,keys inputs,remaining work)
-        val _ = pay work (#work (R.int_batch_cost batch))
-        val listing = R.list_int_batch_plan (batch,remaining work)
-        val _ = pay work (#work (R.int_batch_listing_cost listing))
+        val batch = W.legacy_plan_insert_int_batch work (base,keys inputs)
+        val listing = W.legacy_plan_list_int_batch work batch
         (* Plan3, future one-shot/control events5, FixedTable2.
            W/Scope guard helper internals remain a separate open quote. *)
         val _ = W.spend work 10
@@ -248,8 +243,7 @@ struct
             | prepare ((node,name,ty)::rest) types =
               let val _ = W.spend work 1
                   val index = naming_index work name
-                  val slot = R.insert_int (types,index,remaining work)
-                  val _ = pay work (#work (R.int_insertion_cost slot))
+                  val slot = W.legacy_plan_insert_int work (types,index)
                   val _ = W.spend work 1
                   val next_types = R.finish_int (types,slot,(name,ty))
               in prepare rest next_types end
@@ -326,8 +320,7 @@ struct
           val (name,ty) = Term.dest_var term
       in case strings of NONE =>
           let fun lookup index =
-                let val query = R.lookup_int (types,index,remaining expected)
-                    val _ = pay expected (#work (R.int_lookup_cost query))
+                let val query = W.legacy_plan_lookup_int expected (types,index)
                 in R.int_lookup_value (types,query) end
           in case fixed_suffix_name (pay expected) lookup name of
               NONE => false
@@ -343,12 +336,10 @@ struct
           end
         | SOME strings =>
           let
-          val query = R.lookup_string (strings,name,remaining expected)
-          val _ = pay expected (#work (R.string_lookup_cost query))
+          val query = W.legacy_plan_lookup_string expected (strings,name)
       in if not (R.string_lookup_value (strings,query)) then false else
         let val index = naming_index expected name
-            val slot = R.lookup_int (types,index,remaining expected)
-            val _ = pay expected (#work (R.int_lookup_cost slot))
+            val slot = W.legacy_plan_lookup_int expected (types,index)
             val (exact,wanted) = case R.int_lookup_value (types,slot) of
                 SOME pair => pair | NONE =>
                   raise ERR "fixed_names_member" "missing authentic typed name"
@@ -1293,7 +1284,6 @@ struct
         val data = Scope.description_for work frame
         val graph = #graph data and scope = #scope data
         val cap = #template_limit (W.semantic_limits work)
-        val pay_private = pay work
         fun pay n = W.spend work n
         val diagnostics =
           (OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" = SOME "1")
@@ -1367,16 +1357,14 @@ struct
            ID cannot hide a foreign input. This index grants no admission. *)
         fun bucket index node =
           let val _ = pay 2
-              val query = R.lookup_int (index,G.node_id node,remaining work)
+              val query = W.legacy_plan_lookup_int work (index,G.node_id node)
                 handle R.Limit => W.abort_work_limit work
-              val _ = pay_private (#work (R.int_lookup_cost query))
           in case R.int_lookup_value (index,query) of
               NONE => [] | SOME nodes => nodes end
         fun insert index node previous =
           let val _ = pay 2
-              val plan = R.insert_int (index,G.node_id node,remaining work)
+              val plan = W.legacy_plan_insert_int work (index,G.node_id node)
                 handle R.Limit => W.abort_work_limit work
-              val _ = pay_private (#work (R.int_insertion_cost plan))
               val _ = pay 2
           in R.finish_int (index,plan,node::previous) end
         fun index nodes = List.foldl (fn (node,index) =>
@@ -1826,9 +1814,8 @@ struct
           fun hold node =
             (W.spend work 2;G.closure_root graph scope node)
           val held = List.map hold reachable
-          val naming = G.plan_placeholders graph scope
-            {nodes = reachable,remaining_work = IntInf.toInt (remaining work)}
-          val _ = pay work (G.placeholder_plan_cost naming)
+          val naming = W.legacy_plan_placeholders work graph scope
+            {nodes = reachable}
           val name_guard =
             prepare_fixed_names work graph scope frame naming held
           val node_plan = prepare_fixed_table work reachable G.node_id
@@ -1885,9 +1872,8 @@ struct
             (W.spend work 2;G.closure_root graph scope node)
           val held = List.map hold reachable
           val _ = tables_phase work "prepare.held.after" (fn () => "")
-          val naming = G.plan_placeholders graph scope
-            {nodes = reachable,remaining_work = IntInf.toInt (remaining work)}
-          val _ = pay work (G.placeholder_plan_cost naming)
+          val naming = W.legacy_plan_placeholders work graph scope
+            {nodes = reachable}
           val _ = tables_phase work "prepare.naming.after" (fn () => "")
           val name_guard =
             prepare_fixed_names work graph scope frame naming held
@@ -5386,7 +5372,6 @@ struct
         val (frontier,rows,slot_origins) = W.with_step expected (fn () =>
           let
             val _ = source_realization_guards_with_work expected receipts
-            val pay_private = pay expected
             fun pay n = W.spend expected n
             fun include_laws [] = closed_facts
               | include_laws (ClosedLawSpine {fact,...}::rest) =
@@ -5618,17 +5603,12 @@ struct
                           "ordinary demand escaped actual frame"
                       val key = G.node_id node
                       val current = !table
-                      val query = R.lookup_int (current,key,remaining expected)
-                      val _ = pay_private
-                        (#work (R.int_lookup_cost query))
+                      val query = W.legacy_plan_lookup_int expected (current,key)
                       val bucket = case R.int_lookup_value (current,query) of
                           NONE => [] | SOME held => held
                     in if member node bucket then walk rest else
                       let
-                        val insertion = R.insert_int
-                          (current,key,remaining expected)
-                        val _ = pay_private
-                          (#work (R.int_insertion_cost insertion))
+                        val insertion = W.legacy_plan_insert_int expected (current,key)
                         val _ = pay 4
                         val _ = table := R.finish_int
                           (current,insertion,node::bucket)
@@ -6027,10 +6007,8 @@ struct
                   SOME (_,variable) => (variable,names)
                 | NONE =>
                     let
-                      val plan = G.plan_placeholders graph scope
-                        {nodes = [hypothesis],remaining_work =
-                          IntInf.toInt (remaining expected)}
-                      val _ = pay expected (G.placeholder_plan_cost plan)
+                      val plan = W.legacy_plan_placeholders expected graph scope
+                        {nodes = [hypothesis]}
                       val _ = pay expected
                         (G.placeholder_plan_guard_cost plan)
                       val minted = G.mint_placeholder_terms graph scope plan
@@ -6084,10 +6062,8 @@ struct
               fun missing node = not (List.exists (fn (old,_) =>
                 (W.spend expected 1;node=old)) names)
               val missing_nodes = List.filter missing constructors
-              val plan = G.plan_placeholders graph scope
-                {nodes = missing_nodes,remaining_work =
-                  IntInf.toInt (remaining expected)}
-              val _ = pay expected (G.placeholder_plan_cost plan)
+              val plan = W.legacy_plan_placeholders expected graph scope
+                {nodes = missing_nodes}
               val _ = pay expected (G.placeholder_plan_guard_cost plan)
               val minted = G.mint_placeholder_terms graph scope plan
               val names = minted @ names
@@ -21163,12 +21139,8 @@ struct
       fun keys []=[]
         | keys (input::rest)=
             (W.spend_policy work 6;key input::keys rest)
-      val batch=R.insert_int_batch_with_policy
-        (base,keys inputs,W.remaining_policy work)
-      val _=W.spend_policy work (#work (R.int_batch_cost batch))
-      val listing=R.list_int_batch_plan_with_policy
-        (batch,W.remaining_policy work)
-      val _=W.spend_policy work (#work (R.int_batch_listing_cost listing))
+      val batch=W.plan_insert_int_batch work (base,keys inputs)
+      val listing=W.plan_list_int_batch work batch
       val _=W.spend_policy work 10
     in PRFixedPlan
       {work=work,base=base,listing=listing,used=ref false} end
@@ -21229,14 +21201,9 @@ struct
               let
                 val _=W.spend_policy work 1
                 val index=pr_name_index work name
-                val insertion=R.insert_string_with_policy
-                  (strings,name,W.remaining_policy work)
-                val _=W.spend_policy work
-                  (#work (R.string_insertion_cost insertion))
+                val insertion=W.plan_insert_string work (strings,name)
                 val next_strings=R.finish_string (strings,insertion)
-                val slot=R.insert_int_with_policy
-                  (types,index,W.remaining_policy work)
-                val _=W.spend_policy work (#work (R.int_insertion_cost slot))
+                val slot=W.plan_insert_int work (types,index)
                 val _=W.spend_policy work 1
                 val next_types=R.finish_int (types,slot,(name,ty))
               in prepare rest next_strings next_types end
@@ -21294,9 +21261,7 @@ struct
         val total_count=source_count+total_closed
         val held=List.map (fn node=>
           (W.spend_policy work 2;G.closure_root graph scope node)) reachable
-        val naming=G.plan_placeholders_with_policy graph scope
-          {nodes=reachable,remaining_work=W.remaining_policy work}
-        val _=W.spend_policy work (G.placeholder_plan_cost naming)
+        val naming=W.plan_placeholders work graph scope {nodes=reachable}
         val names=pr_prepare_names work graph scope frame naming held
         val nodes=pr_fixed_plan work reachable G.node_id
         fun member node []=false
@@ -21783,9 +21748,7 @@ struct
         val (text,ty)=Term.dest_var term
     in case strings of NONE =>
       let fun lookup index =
-            let val slot = R.lookup_int_with_policy
-                  (types,index,W.remaining_policy work)
-                val _ = pp_pay work (#work (R.int_lookup_cost slot))
+            let val slot = W.plan_lookup_int work (types,index)
             in R.int_lookup_value (types,slot) end
       in case fixed_suffix_name (pp_pay work) lookup text of
           NONE => false
@@ -21796,9 +21759,7 @@ struct
           in Type.compare (ty,wanted)=EQUAL end
       end
     | SOME strings =>
-      let val query=R.lookup_string_with_policy
-          (strings,text,W.remaining_policy work)
-        val _=pp_pay work (#work (R.string_lookup_cost query))
+      let val query=W.plan_lookup_string work (strings,text)
     in if not (R.string_lookup_value (strings,query)) then false else
       let val prefix="__smt_replay_"
           val _=pp_spend work (String.size text+String.size prefix+1)
@@ -21809,9 +21770,7 @@ struct
           val index=case Int.fromString suffix of SOME n=>
                 if n>=0 then n else raise ERR "policy_name" "negative index"
             | NONE=>raise ERR "policy_name" "invalid placeholder index"
-          val slot=R.lookup_int_with_policy
-            (types,index,W.remaining_policy work)
-          val _=pp_pay work (#work (R.int_lookup_cost slot))
+          val slot=W.plan_lookup_int work (types,index)
           val (exact,wanted)=case R.int_lookup_value (types,slot) of
               SOME value=>value
             | NONE=>raise ERR "policy_name" "missing authentic typed name"
@@ -21898,16 +21857,26 @@ struct
           val _=W.spend_policy expected 0
           val _=if !used then raise ERR "policy_primitive" "used plan"
             else used:=true
+          (* Pay all name/owner queries before the callback-free native
+             suffix. Its result still requires the checked shape/Hyp test. *)
+          val named=case recipe of ReflexiveName node=>SOME(name block node)
+            | ApplyNamedArgument node=>SOME(name block node) | _=>NONE
+          fun native_name _=case named of SOME term=>term | NONE=>
+            raise ERR "policy_primitive" "unexpected native name query"
+          val _=ignore(pp_owner expected block)
+          val _=W.require_callback_free_return expected
           val proof=SmtReplayNamedContext.primitive_using
             (fn () => ERR "policy_primitive" "incorrect fixed recipe arity")
-            (name block) (named_primitive recipe) proofs
+            native_name (named_primitive recipe) proofs
           val matches=SmtReplayNamedContext.matches
           val _=if matches shape (Thm.concl proof) andalso clean proof
               andalso List.all (fn term=>List.exists (fn candidate=>
                 Portable.pointer_eq(term,candidate)) hypotheses)
                 (Thm.hyp proof) then () else
             raise ERR "policy_primitive" "fixed rule result/Hyp changed"
-          val _=ignore (pp_owner expected block)
+          val _=if epoch=Type.type_epoch() andalso
+              symbols=Term.term_epoch() then () else
+            raise ERR "policy_primitive" "native lifetime changed"
           val Block {owner,graph,...}=block
           val dependency=new_dependency block (Union dependencies)
       in observe_proof graph #fixed;observe_proof graph #edges;
@@ -21987,6 +21956,9 @@ struct
           raise ERR "policy_closed_inst" "schema epochs changed"
         (* Exact same original variable-only INST. No P.checked, import,
            Hyp lookup, FVL/HOLset query or external proof callback follows. *)
+        val _ = fixed_names_guard expected names
+        val _ = active block
+        val _ = W.require_callback_free_return expected
         val proof = SmtReplayRuleObservation.INST substitution theorem
         val matches=SmtReplayNamedContext.named_inst_matches
         val result_tag = Thm.tag proof
@@ -21995,8 +21967,9 @@ struct
             #1 (Tag.dest_tag result_tag) = oracles andalso
             matches shape (Thm.concl proof) then () else
           raise ERR "policy_closed_inst" "closed schema result changed"
-        val _ = fixed_names_guard expected names
-        val _ = active block
+        val _ = if Type.type_epoch()=epoch andalso
+            Term.term_epoch()=symbols then () else
+          raise ERR "policy_closed_inst" "native lifetime changed"
         val dependency = new_dependency block (Leaves [])
       in observe_proof graph #edges;
          Edge {owner=owner,theorem=proof,dependencies=dependency} end)
@@ -22536,15 +22509,23 @@ struct
             then () else raise ERR "policy_boolean" "native owner changed"
           val _=if !used then raise ERR "policy_boolean" "used plan"
             else used:=true
+          val named=case opcode of PolicyContradiction node=>
+              SOME(name block node) | _=>NONE
+          fun native_name _=case named of SOME term=>term | NONE=>
+            raise ERR "policy_boolean" "unexpected native name query"
+          val _=ignore(pp_owner expected block)
+          val _=W.require_callback_free_return expected
           val proof=SmtReplayNamedContext.boolean_using
             (fn()=>ERR "policy_boolean" "incorrect fixed rule arity")
-            (name block) (named_boolean opcode) proofs
+            native_name (named_boolean opcode) proofs
           val matches=SmtReplayNamedContext.boolean_matches
           val _=if matches shape(Thm.concl proof) andalso clean proof andalso
               List.all (fn term=>List.exists(fn held=>
                 Portable.pointer_eq(term,held)) hypotheses)(Thm.hyp proof)
             then () else raise ERR "policy_boolean" "fixed proof changed"
-          val _=ignore(pp_owner expected block)
+          val _=if epoch=Type.type_epoch() andalso
+              symbols=Term.term_epoch() then () else
+            raise ERR "policy_boolean" "native lifetime changed"
           val Block {owner,graph,...}=block
           val dependency=new_dependency block (Union dependencies)
       in observe_proof graph #fixed;observe_proof graph #edges;

@@ -62,6 +62,31 @@ sig
     'a int_map * 'a int_batch_listing * 'a list -> 'a int_map
   val finish_batch_list_int :
     'a int_map * 'a int_batch_listing -> (int * 'a) list
+
+  (* Already-paid planners, for either integer or policy scope meters.
+     Every ledger debit (including setup) charges the original meter before
+     its effects. Limit retains all earlier successful debits, even when no
+     plan is returned. Successful meter delta equals the ordinary plan cost.
+     Costs INCLUDE reservations for future finish work, not just work already
+     performed. Abandonment/stale finish never refunds these reservations.
+     Read costs and finish using the ordinary methods above WITHOUT charging
+     the plan cost again; the one-shot/base-identity rules are unchanged.
+     Batch listing pays only its own cost, NOT its underlying batch cost;
+     use scope_plan_insert_int_batch to pay for that batch separately. *)
+  val scope_plan_lookup_int :
+    scope_meter -> 'a int_map * int -> 'a int_lookup
+  val scope_plan_lookup_string :
+    scope_meter -> string_set * string -> string_lookup
+  val scope_plan_insert_int :
+    scope_meter -> 'a int_map * int -> 'a int_insertion
+  val scope_plan_insert_string :
+    scope_meter -> string_set * string -> string_insertion
+  val scope_plan_insert_int_batch :
+    scope_meter -> 'a int_map * int list -> 'a int_batch
+  val scope_plan_list_int : scope_meter -> 'a int_map -> 'a int_listing
+  val scope_plan_list_int_batch :
+    scope_meter -> 'a int_batch -> 'a int_batch_listing
+
   val new_scope_meter_with_policy :
     {limit:SmtReplayResourcePolicy.limit,charged:IntInf.int ref} -> scope_meter
   val scope_meter_charged_policy : scope_meter -> IntInf.int

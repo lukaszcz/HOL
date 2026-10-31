@@ -14,7 +14,8 @@ struct
   datatype token_phase = Ready | Spent
   datatype portfolio = Portfolio of
     {graph : G.graph,scope : G.scope,sources : S.sources,limits : limits,
-     limit : int,used : int ref,epoch : int,phase : phase ref,
+     limit : int,used : int ref,meter:R.scope_meter,
+     epoch : int,phase : phase ref,
      names : ((role * int) * entitlement) list ref}
     | GuardedPortfolio of
     {graph:G.graph,scope:G.scope,sources:S.sources,limits:limits,
@@ -24,7 +25,7 @@ struct
     | PolicyPortfolio of
     {graph:G.graph,scope:G.scope,sources:S.sources,
      limits:RP.semantic_policy,limit:RP.limit,used:IntInf.int ref,
-     epoch:int,phase:phase ref,
+     meter:R.scope_meter,epoch:int,phase:phase ref,
      names:((role * int) * entitlement) list ref,
      priced:(G.scope_path * R.scope_meter) option}
     | OriginalPortfolio of
@@ -253,8 +254,10 @@ struct
          Fresh S.new objects are distinct: outer ownership is still required. *)
       val _ = S.claim_invocation_work sources
       val epoch = Type.type_epoch ()
+      val used = ref 0
+      val meter = R.new_scope_meter {limit=work_limit,charged=used}
     in Portfolio {graph = graph,scope = scope,sources = sources,limits = limits,
-      limit = work_limit,used = ref 0,epoch = epoch,phase = ref Idle,
+      limit = work_limit,used = used,meter=meter,epoch = epoch,phase = ref Idle,
       names = ref []} end
   fun begin_with_scope_guard graph scope sources
       {limits=limits as {input_limit,output_limit,template_limit},work_limit} =
@@ -557,9 +560,12 @@ struct
         raise ERR "begin" "malformed pre-work limits"
       val _ = S.claim_invocation_work sources
       val epoch = Type.type_epoch ()
+      val used = ref (0:IntInf.int)
+      val meter = R.new_scope_meter_with_policy
+        {limit=work_limit,charged=used}
     in PolicyPortfolio {graph=graph,scope=scope,sources=sources,
-      limits=limits,limit=work_limit,used=ref 0,epoch=epoch,phase=ref Idle,
-      names=ref [],priced=NONE} end
+      limits=limits,limit=work_limit,used=used,meter=meter,
+      epoch=epoch,phase=ref Idle,names=ref [],priced=NONE} end
   fun begin_with_scope_guard_policy graph scope sources {limits,work_limit} =
     let
       val original = S.owner_for_scope_guard sources
@@ -585,7 +591,7 @@ struct
           val meter = R.new_scope_meter_with_policy
             {limit=work_limit,charged=used}
         in PolicyPortfolio {graph=graph,scope=scope,sources=sources,
-          limits=limits,limit=work_limit,used=used,epoch=epoch,
+          limits=limits,limit=work_limit,used=used,meter=meter,epoch=epoch,
           phase=ref Idle,names=ref [],priced=SOME(path,meter)} end
     in commit () handle primary =>
          (S.consume_scope_guard_attempt sources;raise primary) end
@@ -734,6 +740,78 @@ struct
         (inside p;scope_debit p 7;
          if amount >= 0 then scope_debit p (amount+6)
          else fail p "admit" "original cumulative work allowance exhausted")
+  (* Private dispatch only: callers cannot supply a program or obtain a
+     meter. Keep the old remaining -> R/G -> spend guard order, so an
+     exhausted plan retains its successful prefix debits and R.Limit rather
+     than failing in a prepaid spend guard. The zero spend pays only the old
+     successful spend overhead; the plan/future finish is not debited twice.
+     Busy is authenticated by a fixed, callback-free phase header before
+     planning. Plain modes couple their existing ref, never ref0; priced
+     modes reuse their stored adapter. Bootstrap is unchanged.
+     Legacy finite Proof pay did a SECOND remaining before spend. Keep that
+     extra guard after planning; original Work retains its A dispatch. *)
+  fun paid_plan legacy p program original =
+    ((case p of OriginalPortfolio {work,...} =>
+        (original_active p;original work)
+      | _ =>
+        let
+          val _ = remaining_policy p
+          fun owned phase = case !phase of Busy => ()
+            | _ => fail p "admit" "no owned work action"
+          val meter = case p of
+              Portfolio {meter,phase,...} => (owned phase;meter)
+            | GuardedPortfolio {meter,phase,...} => (owned phase;meter)
+            | PolicyPortfolio {meter,phase,...} => (owned phase;meter)
+            | OriginalPortfolio _ =>
+                raise Fail "original planner dispatch changed"
+          val result = program meter
+          val _ = if legacy then (ignore (remaining_policy p)) else ()
+          val _ = spend_policy p 0
+        in result end)
+     handle primary => (close p;raise primary))
+  fun plan_lookup_int p args =
+    paid_plan false p (fn meter => R.scope_plan_lookup_int meter args)
+      (fn work => A.plan_lookup_int work args)
+  fun plan_lookup_string p args =
+    paid_plan false p (fn meter => R.scope_plan_lookup_string meter args)
+      (fn work => A.plan_lookup_string work args)
+  fun plan_insert_int p args =
+    paid_plan false p (fn meter => R.scope_plan_insert_int meter args)
+      (fn work => A.plan_insert_int work args)
+  fun plan_insert_string p args =
+    paid_plan false p (fn meter => R.scope_plan_insert_string meter args)
+      (fn work => A.plan_insert_string work args)
+  fun plan_insert_int_batch p args =
+    paid_plan false p (fn meter => R.scope_plan_insert_int_batch meter args)
+      (fn work => A.plan_insert_int_batch work args)
+  fun plan_list_int_batch p batch =
+    paid_plan false p (fn meter => R.scope_plan_list_int_batch meter batch)
+      (fn work => A.plan_list_int_batch work batch)
+  fun plan_placeholders p graph scope args =
+    paid_plan false p
+      (fn meter => G.plan_placeholders_with_meter graph scope meter args)
+      (fn work => A.plan_placeholders work graph scope args)
+
+  fun legacy_plan_lookup_int p args =
+    paid_plan true p (fn meter => R.scope_plan_lookup_int meter args)
+      (fn work => A.plan_lookup_int work args)
+  fun legacy_plan_lookup_string p args =
+    paid_plan true p (fn meter => R.scope_plan_lookup_string meter args)
+      (fn work => A.plan_lookup_string work args)
+  fun legacy_plan_insert_int p args =
+    paid_plan true p (fn meter => R.scope_plan_insert_int meter args)
+      (fn work => A.plan_insert_int work args)
+  fun legacy_plan_insert_int_batch p args =
+    paid_plan true p (fn meter => R.scope_plan_insert_int_batch meter args)
+      (fn work => A.plan_insert_int_batch work args)
+  fun legacy_plan_list_int_batch p batch =
+    paid_plan true p (fn meter => R.scope_plan_list_int_batch meter batch)
+      (fn work => A.plan_list_int_batch work batch)
+  fun legacy_plan_placeholders p graph scope args =
+    paid_plan true p
+      (fn meter => G.plan_placeholders_with_meter graph scope meter args)
+      (fn work => A.plan_placeholders work graph scope args)
+
   fun require_callback_free_return p =
     let
       (* The actual live guard runs NOW, on the original meter. During the
