@@ -31,8 +31,10 @@ history does not hold the file as exactly one commit, and re-derives the file
 from its pilot (`--pilot`, the same check as `verify-counts`). It measures
 only in a clean checkout at the candidate in which `prepare` built (the
 tree outside the performance area and the shared products, bin/hol,
-bin/hol.state0 and sigobj, are those it stamped; Holmake judges what a build
-must redo, the driver only compares contents). Every run appends to the table's
+bin/hol.state0, bin/Holmake, sigobj and the theory data files, are those it
+stamped, and the grid records their digest; Holmake judges what a build must
+redo, the driver only compares contents; configure is run by the operator,
+not by `prepare`). Every run appends to the table's
 attempts ledger, one hash-chained file below the checkout that git excludes,
 and a replay needs the grid's opening line in it and prints every attempt of
 the table. The ledger is a discipline and not a proof. A counts file is

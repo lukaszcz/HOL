@@ -387,12 +387,15 @@ has no disposition.
   resumption (`run --resume`, `extend --resume`) checks that the ledger holds
   its opening before it measures. `replay` needs the ledger and the grid's
   opening line in it, verifies the chain, and prints every attempt of the
-  table with its stage, time, resumptions, status, candidate and checkout,
-  marking the one of the grid replayed and those of its candidate
-  (`ATTEMPT id first opened T resumed N status S candidate C checkout P
-  (this grid)`), with the counts (`ATTEMPTS of TOY: N in the ledger, M of this
-  candidate C`), so a reader of a replay sees each retry, also of another
-  candidate. `close` repeats the counts in its line. A rerun under the same
+  table with its stage, time, resumptions, every status it closed with (in
+  order, comma separated; `interrupted` for a stop with no close), candidate
+  and the checkouts of its lines, marking the one of the grid replayed and
+  those of its candidate (`ATTEMPT id first opened T resumed N status S
+  candidate C checkout P (this grid)`), with the counts (`ATTEMPTS of TOY: N
+  in the ledger, M of this candidate C`), so a reader of a replay sees each
+  retry and each close of it, also of another candidate. `close` replays the
+  timing grid, so it prints the same lines, and repeats the counts in its
+  line. A rerun under the same
   settings, after a pass or
   a non-pass alike, is a new draw: a new attempt in the same ledger, its
   predecessors stay in it, and the handoff publishes the whole ledger, not
@@ -400,7 +403,8 @@ has no disposition.
   checkout, so a grid and every retry of it, the second stage included, are
   made in the one checkout: a draw made in a second clone is in that clone's
   ledger and the first would not show it. Each line records the absolute path
-  of its checkout, so a ledger that holds lines of two paths says so
+  of its checkout, so a ledger that holds lines of two paths, in the opening
+  of an attempt or in a resumption or close of it, says so
   (`LEDGER-CHECKOUTS: N different checkouts` in a replay), and a clone made
   from the first, with its ledger copied, shows as lines of a path that is not
   the clone's. `replay` and `close` alone take `--ledger FILE`, read-only, to
@@ -552,7 +556,12 @@ has no disposition.
   is inconclusive only because its B/B control is outside the window);
   *protocol* (no admitted measurement). The exit status is zero only when
   every cell and the retained slope pass, one when anything failed, two
-  otherwise. The lists are derived from `decisions.json` and `replay`
+  otherwise. A command that is refused (a check that failed before or while
+  it measured, a held lock, a checkout that changed) prints one
+  `REFUSED: reason` line on the standard error and exits **3**, a status no
+  grid has, so that a wrapper tells "nothing was decided" from a grid that
+  failed (1) or was not conclusive (2); a usage error of the command line is
+  the parser's 2. The lists are derived from `decisions.json` and `replay`
   prints them again. No cell is excused: a task that accepts a
   non-passing cell does so in a separate, reviewed table (as TASK29A did),
   outside the engine.
@@ -599,47 +608,92 @@ has no disposition.
   in the scope of the task, it needs its own timed batch.
 - **The checkout a measurement runs in.** `prepare` builds, `pilot`, `run`
   and `extend` measure, and each of them refuses to go on unless the checkout
-  is the one the measurement names. `prepare` is the one command that builds:
+  is the one the measurement names. `prepare` is the one command that builds,
+  and it does not configure. A checkout is configured once, with
+  `poly < tools/smart-configure.sml` in its root (this makes `bin/hol`,
+  `bin/Holmake` and `bin/build`, and writes the HOLDIR of the tree into
+  `tools/Holmake/Systeml.sml`); `bin/build` never rebuilds those three
+  executables, so after a merge, a switch of branch or a move of the tree
+  that makes one of their sources newer, configure is run again:
 
       python3 -B task30_grid.py prepare [--repo ROOT] [--timeout SECONDS]
 
   It needs a clean checkout (`private_runtime.harness_identity`, the check
-  the allocation gate uses), takes the measurement lock for the whole build,
-  runs the real `bin/build --seq=tools/sequences/upto-parallel` in the root
-  (the log is `prepare-<UTC>.log` beside the ledger; the default timeout is
-  four hours), and only if the build exits 0 and leaves the checkout clean it
-  writes `.agent-files/evidence/<table>/build-stamp.json`. A failed, timed
-  out or interrupted build writes no stamp and removes the one of an earlier
+  the allocation gate uses) that is configured here: it reads the HOLDIR of
+  `tools/Holmake/Systeml.sml` and refuses, naming configure, a checkout that
+  has none or whose HOLDIR is another path (a tree that was moved or copied
+  would otherwise build in, and link to, the other tree). It takes the
+  measurement lock for the whole build and runs the real
+  `bin/build --stdknl --seq=tools/sequences/upto-parallel` in the root, with
+  `/dev/null` as its standard input. The standard kernel is fixed on the
+  command line (`bin/build` would otherwise take the kernel of the last
+  build), and the allocation gate's toolchain is the standard kernel too. The
+  input is closed because `bin/build`, when `bin/hol`, `bin/Holmake` or
+  `bin/build` is older than a source of it, prints `WARNING! WARNING!` and
+  waits for a line (`check_against` in `tools/build/buildutils.sml`): with an
+  open input the build would sit for the whole timeout, with none it goes on
+  and a stale executable would be stamped as the product of the new tree. So
+  `prepare` also refuses to stamp when the log holds that warning, whatever
+  the exit status, and says to run configure and `prepare` again. The log is
+  `prepare.log` beside the ledger, replaced by the next `prepare` (one file,
+  so the disk use does not grow); the default timeout is four hours. Only if
+  the build exits 0 and leaves the checkout clean at the same `HEAD` does it
+  write `.agent-files/evidence/<table>/build-stamp.json`. A failed, timed out
+  or interrupted build writes no stamp and removes the one of an earlier
   `prepare`. The stamp holds `HEAD`, the seal of the tracked tree outside the
-  performance area, and the digest of the products the measurement runs
-  with: the contents (names and SHA-256, symlinks followed) of `bin/hol`,
-  `bin/hol.state0` and everything below `sigobj`. Where each piece of a
-  measurement comes from: the code of both sides below `src/simp/src` is read
-  from git (the blobs of the baseline and of the candidate), and everything
-  else it runs with comes from the heap, `bin/hol` and `sigobj`, which the
-  stamp binds. `pilot`, `run` and `extend` then require the tree clean, `HEAD`
-  the commit measured (the candidate; a pilot has none and is bound to the
-  commit it is made at), and the stamp to be there, of the same seal outside
-  the performance area and of the same products digest as the checkout has
-  now. No file time is read: touching `bin/hol.state0`, or switching to
-  another commit and back, changes nothing; editing a product, adding or
-  removing one, or changing any tracked source outside the performance area
-  (`src/simp/src` included) is refused with "run prepare at this commit". A
-  commit that touches only the performance area (the counts file as Y) needs
-  no second `prepare`. The pilot's inventory and a grid's record the
-  `checkout` (`head`, and the seal of the tree outside the performance
-  area); a second stage must find the same checkout as its first; `replay`
-  derives the tree seal of the candidate from git again (`changed
-  checkout`). The checkout is compared again under the lock, just before the
-  first cell, and at the end of a measurement: a checkout that changed in
-  between ends the attempt as `checkout-changed` (the closing line of the
-  ledger says so), with no pass. What is compared is the checkout at those
-  moments, so a change made and undone between them is not seen; and the
-  record proves that the checkout holds the recorded tree and products now,
-  not that it held them when `prepare` ran. A pilot made at X and a grid at Y
-  are not required to have the same tree outside the performance area: a
+  performance area, the build command, and the digest of the products: the
+  contents (names and SHA-256, symlinks followed) of `bin/hol`,
+  `bin/hol.state0`, `bin/Holmake` (which compiles the fixtures), everything
+  below `sigobj`, and the theory data files `src/**/.hol/objs/*.dat` (which
+  the theories load). A product, or the target of a link, that resolves
+  outside the repository is refused. What the stamp does not bind: the
+  Poly/ML runtime and libraries (`poly`, libpolyml), which each cell's manifest
+  records among its tools, and the fixtures, which come from the checkout's
+  git blobs and are sealed separately. Where each piece of a measurement comes
+  from: the code of both sides below `src/simp/src` is read from git (the
+  blobs of the baseline and of the candidate), and the rest of what it runs
+  with is those products and that runtime. `pilot`, `run` and `extend` then
+  require the tree clean, `HEAD` the commit measured (the candidate; a pilot
+  has none and is bound to the commit it is made at), and the stamp to be
+  there, of the same seal outside the performance area, of the same build
+  command and of the same products digest as the checkout has now. No file
+  time is read: touching `bin/hol.state0`, or switching to another commit and
+  back, changes nothing; editing a product, adding or removing one, or
+  changing any tracked source outside the performance area (`src/simp/src`
+  included) is refused with "run prepare at this commit". A commit that
+  touches only the performance area (the counts file as Y) needs no second
+  `prepare`. The pilot's inventory and a grid's record the `checkout` (`head`,
+  the seal of the tree outside the performance area, and the `products`
+  digest): a second stage must find the same checkout as its first, the
+  products included; a resumed `run`, `extend` or `pilot` finds the checkout
+  its inventory recorded, so a `prepare` between a stop and its resume that
+  changed the products is refused (`resume with different settings`) and so
+  is one between the stages; `replay` derives the tree seal of the candidate
+  from git again (`changed checkout`) and finds a well-formed digest.
+  `close` compares the timing grid's head and tree seal with the allocation
+  grid's harness, and cannot compare the products: the allocation grid is
+  measured with a toolchain of its own (a fresh clone built at the candidate,
+  with its own controls receipt), and the timing grid's products are those of
+  its own checkout, so the two digests are of different things and a
+  comparison would be wrong. The checkout is compared again under the lock,
+  just before the first cell, and at the end of a measurement: a checkout
+  that changed in between ends the attempt as `checkout-changed` (the closing
+  line of the ledger says so) and the inventory records `checkout_changed`
+  (as a pilot's does), with no pass. **Such a grid is dead.** `--resume` and
+  `replay` refuse its directory (`the checkout changed while this grid ran`),
+  a `prepare` after it cannot make it a pass, and its route is a new grid in
+  a new output, a new attempt of the ledger. What is compared is the checkout
+  at those moments, so a change made and undone between them is not seen; and
+  the record proves that the checkout holds the recorded tree and products
+  now, not that it held them when `prepare` ran. A pilot made at X and a grid
+  at Y are not required to have the same tree outside the performance area: a
   production fix between them must stay possible (route after a regression,
   above); it needs a `prepare` at the commit it is committed in.
+  **Where the output goes.** The tree must be clean when a measurement is
+  over, so an output inside the repository must be ignored by git: `pilot`,
+  `run` and `extend` refuse one that is not, before they measure. Put `OUT`
+  below `.agent-files/evidence/<table>/` of the checkout, beside the ledger
+  and the stamp; an output outside the repository needs nothing.
   Each measured candidate is also kept by a local ref,
   `refs/performance/<table>/<full candidate sha>`, made by `run` and `extend`,
   so that a rebase, a squash into develop and garbage collection cannot make
@@ -694,7 +748,10 @@ has no disposition.
   `replay` and `close` take `--ledger FILE` for a read-only copy.
 - **The sequence, from the pilot to the verdict.** With X the commit the
   pilot is made at and Y the candidate (the commit of the counts file):
-  1. at X, a clean checkout: `prepare`, which builds, then `pilot`;
+  1. at X, a clean checkout, configured once with
+     `poly < tools/smart-configure.sml` (and again after anything that makes
+     a source of `bin/hol`, `bin/Holmake` or `bin/build` newer than them):
+     `prepare`, which builds, then `pilot`;
   2. `predeclare`, `verify-counts`; review the counts file;
   3. commit the counts file as Y (with any production fix and pins, in the
      order of the route after a regression); `verify-counts` again. Run
