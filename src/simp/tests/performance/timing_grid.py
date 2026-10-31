@@ -22,19 +22,22 @@ Every step of `Grid` is looked up on its `hooks` object (the grid itself by
 default), so a task module can wrap or replace a step by defining it.
 
 A table with `fixed_seconds` keeps its predeclaration in one committed counts
-file: the batch counts, the seconds of each cell, the layout seed, the pairs
-and samples (the last three are fields of the table), the seals of the files
-the counts are bound to, and the seals of the pilot that produced them. `run`
+file: the batch counts, the seconds of each cell, the headroom, the layout
+seed, the pairs and samples, the target and cap of the second stage (all
+fields of the table), the seals of the files the counts are bound to, and the
+seals of the pilot that produced them. `run`
 takes them from that file, refuses other values, refuses a candidate whose
 history does not hold the file as exactly one commit, and re-derives the file
 from its pilot (`--pilot`, the same check as `verify-counts`). It measures
-only in a clean checkout at the candidate, with a heap built after its
-sources. Every run appends to the table's attempts ledger, one hash-chained
-file below the checkout that git excludes, and a replay needs the grid's
-opening line in it and prints every attempt of the candidate. The ledger is a
-discipline and not a proof. A counts file is never edited: a revision is a
-new file named in the table, derived from the file before it, by rescaling
-cells or by a fresh pilot.
+only in a clean checkout at the candidate in which `prepare` built (the
+tree outside the performance area and the shared products, bin/hol,
+bin/hol.state0 and sigobj, are those it stamped; Holmake judges what a build
+must redo, the driver only compares contents). Every run appends to the table's
+attempts ledger, one hash-chained file below the checkout that git excludes,
+and a replay needs the grid's opening line in it and prints every attempt of
+the table. The ledger is a discipline and not a proof. A counts file is
+never edited: a revision is a new file named in the table, derived from the
+file before it, by rescaling cells or by a fresh pilot.
 """
 import argparse
 import copy
@@ -70,6 +73,10 @@ REVISION_FACTOR = 4
 REVISION_REASON = "fixed calibration too short"
 
 
+class CheckoutChanged(ValueError):
+    """The checkout a measurement started in is not the one it ended in."""
+
+
 class Table:
     """What a task supplies. Only data, no behaviour.
 
@@ -91,10 +98,13 @@ class Table:
         samples, and a run uses those and no others (a task whose runs
         predate this keeps --batch-seconds, --pairs and --samples free).
     pairs, samples and seed (the layout seed) are then fields of the table,
-        sealed with the driver: `predeclare` copies them into the counts file
-        and `run` refuses a file that differs, so changing one is a visible
-        commit of the table. A replay and the derivation of a counts file
-        take them from the file, so that an older file stays replayable.
+        as are headroom, target and max_pairs and the seconds: sealed with
+        the driver, `predeclare` copies them into the counts file and `run`
+        refuses a file that differs, so changing one is a visible commit of
+        the table. A replay and the derivation of a counts file take them
+        (the seconds of each cell, the headroom, and the target and cap of
+        the second stage included) from the file, so that an older file
+        stays replayable whatever the table says now.
     drivers, acceptance, layout_acceptance, engines: seals of earlier code
         whose recorded runs must still replay.
     engine: seal this module too (a task whose runs predate it does not).
@@ -112,10 +122,12 @@ class Table:
         inventory of a run apart from `sealed` (the pins are facts of the
         candidate, so the counts are not bound to them), with pin_history,
         {sha256 of an earlier version of the file: the pins it held}, for
-        the grids whose recorded pins have since changed.
+        the grids whose recorded pins have since changed (kept in the pin
+        file itself, so that adding one changes no driver seal).
     ledger: the attempts ledger; by default `.agent-files/evidence/<name>/
         attempts.jsonl` below the root of the checkout, the one place the
-        table has (a test names another).
+        table has (a test names another). The build stamp of `prepare` is
+        beside it.
     tree: a path of the repository whose whole name-status difference between
         the baseline and the candidate a run records and a replay derives
         again, so that the difference outside `sources` is published too.
@@ -241,6 +253,15 @@ def canonical(value):
                       sort_keys=True)
 
 
+def unused(path):
+    """`path`, or the first of `<stem>-N<suffix>` that does not exist."""
+    number, found = 1, path
+    while found.exists():
+        found = path.with_name("%s-%d%s" % (path.stem, number, path.suffix))
+        number += 1
+    return found
+
+
 def set_aside(path, kind):
     """Keep a file that is not evidence of its cell under another name
     (`<name>.<kind>-N`), so the cell can be measured again."""
@@ -326,62 +347,65 @@ class Ledger:
 
     Each line is one JSON object, and `prev` of a line is the SHA-256 of the
     line before it (64 zeros for the first), so that a line removed or
-    changed in the middle breaks the chain. The last line may be cut short
-    by a crash: an unterminated line that is no record is reported, left in
-    the file and acknowledged by the next append with a `torn` record. A
-    line that is no record and is terminated, or not acknowledged, is
-    refused. The chain is a discipline and not a proof: it cannot show that
-    lines after the last one, or the whole file, were removed."""
+    changed in the middle breaks the chain. The end of the file may be cut
+    short by a crash, or by a crash while the next append was acknowledging
+    the first: any run of lines at the end that are no record, the last of
+    them perhaps unterminated, is reported, left in the file and
+    acknowledged together by the next append with one `torn` record naming
+    their hashes. A line that is no record and is followed by a record that
+    does not acknowledge it, or by a different run, is refused. The chain is
+    a discipline and not a proof: it cannot show that lines after the last
+    one, or the whole file, were removed."""
 
     def __init__(self, path):
         self.records, self.notes = [], []
-        self.last, self.torn = LEDGER_START, None
+        self.last, self.torn = LEDGER_START, []
         text = Path(path).read_text() if Path(path).exists() else ""
         lines = text.split("\n")
         tail = lines.pop()
         self.unterminated = tail != ""
         if self.unterminated:
             lines.append(tail)
-        skipped = None
+        skipped, first = [], 0
         for number, line in enumerate(lines, 1):
-            bad = "malformed attempts ledger: %s line %d" % (path, number)
             record = ledger_record(line)
-            final = number == len(lines)
             if record is None:
-                a.require(skipped is None, bad)
-                if final and self.unterminated:
-                    self.torn = line
-                    self.notes.append(
-                        "LEDGER-TORN-LINE %d: %d bytes of an unfinished "
-                        "write, ignored" % (number, len(line.encode())))
-                else:
-                    a.require(not final, bad)
-                    skipped = line
+                first = first or number
+                skipped.append(line)
                 continue
-            if skipped is not None:
+            if skipped:
                 a.require(record["event"] == "torn" and record.get(
-                    "skipped") == ledger_hash(skipped), bad)
-                skipped = None
+                    "skipped") == [ledger_hash(x) for x in skipped],
+                    "malformed attempts ledger: %s line %d" % (path, first))
+                skipped, first = [], 0
             a.require(record.get("prev") == self.last,
                       "attempts ledger chain broken at line %d: %s"
                       % (number, path))
             self.records.append(record)
             self.last = ledger_hash(line)
-            if final and self.unterminated:
+            if number == len(lines) and self.unterminated:
                 self.notes.append("LEDGER-UNTERMINATED-LAST-LINE %d: kept, "
                                   "it is a complete record" % number)
+        self.torn = skipped
+        for number, line in enumerate(skipped, len(lines) - len(skipped) + 1):
+            self.notes.append("LEDGER-TORN-LINE %d: %d bytes of an "
+                              "unfinished write, ignored"
+                              % (number, len(line.encode())))
 
-    def attempts(self, candidate):
-        """(attempt, stage) of a candidate -> opened, resumptions, status."""
+    def attempts(self):
+        """(attempt, stage) -> candidate, checkout, opened, resumptions and
+        status, in the order the ledger first names them."""
         found = {}
         for record in self.records:
-            if record.get("candidate") != candidate or \
-                    record["event"] not in ("open", "resume", "close"):
+            if record["event"] not in ("open", "resume", "close"):
                 continue
-            row = found.setdefault((record["attempt"], record["stage"]),
-                                   dict(opened=None, resumed=0, status=None))
+            row = found.setdefault(
+                (record["attempt"], record["stage"]),
+                dict(candidate=record.get("candidate"), checkout=None,
+                     opened=None, resumed=0, status=None))
             if record["event"] == "open":
                 row["opened"] = record["time"]
+                row["checkout"] = record.get("checkout")
             elif record["event"] == "resume":
                 row["resumed"] += 1
             else:
@@ -391,15 +415,15 @@ class Ledger:
 
 def ledger_append(path, **record):
     """Append one record, naming the line before it. The file is only ever
-    appended to, and the line is on disk before the caller goes on. After a
-    line cut short by a crash the append first ends that line and
-    acknowledges it, so that it is neither lost nor repeated."""
+    appended to, and the line is on disk before the caller goes on. After
+    lines cut short by a crash the append first ends the last of them and
+    acknowledges them all, so that none is lost or repeated."""
     state = Ledger(path)
     prefix, prev = "\n" if state.unterminated else "", state.last
-    if state.torn is not None:
+    if state.torn:
         acknowledgement = json.dumps(
             dict(event="torn", prev=prev, time=utc_now(),
-                 skipped=ledger_hash(state.torn)),
+                 skipped=[ledger_hash(x) for x in state.torn]),
             sort_keys=True, allow_nan=False)
         prefix += acknowledgement + "\n"
         prev = ledger_hash(acknowledgement)
@@ -421,32 +445,105 @@ def git_keep(repo, table, commit):
     return ref
 
 
-def checkout_identity(repo, commit=None):
+# What `prepare` runs, in the repository root: the real build, up to the
+# parallel builds, which Holmake judges (it rebuilds what is out of date and
+# leaves the rest).
+BUILD = ("bin/build", "--seq=tools/sequences/upto-parallel")
+# The products a measurement loads from the checkout besides the sources the
+# harness takes per side from git (the simplifier's, below src/simp/src): the
+# executable, the heap and everything the heap's libraries load from sigobj.
+PRODUCTS = ("bin/hol", "bin/hol.state0")
+PREPARE = "run prepare at this commit"
+# A build from nothing takes the better part of an hour.
+BUILD_TIMEOUT = 4 * 3600
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def products_digest(repo):
+    """The content of the shared products a measurement loads: bin/hol,
+    bin/hol.state0 and every file below sigobj, symlinks followed, as the
+    sha256 of their sorted names and content seals. Times play no part."""
+    repo = Path(repo)
+    found = {name: repo / name for name in PRODUCTS}
+    top = repo / "sigobj"
+    a.require(top.is_dir(), "no sigobj to measure with: " + str(top))
+    seen = set()
+    for folder, dirs, files in os.walk(top, followlinks=True):
+        if os.path.realpath(folder) in seen:
+            dirs.clear()
+            continue
+        seen.add(os.path.realpath(folder))
+        for name in files:
+            path = Path(folder) / name
+            found[path.relative_to(repo).as_posix()] = path
+    digest = hashlib.sha256()
+    for name in sorted(found):
+        a.require(found[name].is_file(), "no product to measure with: "
+                  + str(found[name]))
+        digest.update(("%s\0%s\n" % (name, file_sha256(found[name]))).encode())
+    return dict(sha256=digest.hexdigest(), files=len(found))
+
+
+def clean_head(repo):
+    """HEAD and the seal of its tree outside the performance area, in a
+    checkout whose tree is clean."""
+    head = a.git(repo, "rev-parse", "HEAD")
+    found = pr.harness_identity(repo, head)
+    return dict(head=head,
+                tree_outside_performance=found["tree_outside_performance"])
+
+
+def build_stamp(repo):
+    """What `prepare` records after a build that succeeded: HEAD, the seal
+    of the tree outside the performance area, and the content digest of the
+    shared products."""
+    return dict(clean_head(repo), products=products_digest(repo))
+
+
+def checkout_identity(repo, commit=None, stamp=None):
     """The checkout a measurement runs in: HEAD is the commit measured (HEAD
-    itself when `commit` is None), the tree is clean, and the heap was built
-    after the last change of any source it holds. Whatever is not read from
-    git comes from `bin/hol.state0`, and only the simplifier's sources are
-    taken per side, so a heap built from other sources or an edited file
-    would put the measurement on a commit it does not name. The heap check
-    is of file times, a discipline and not a proof of provenance."""
+    itself when `commit` is None), the tree is clean, and the tree outside
+    the performance area and the shared products are those `prepare` stamped
+    (`stamp`, a file). The simplifier's sources below src/simp/src are taken
+    per side from git; everything else the measurement loads comes from the
+    heap, bin/hol and sigobj, and the stamp binds exactly those. Holmake, not
+    this module, judges whether a build is out of date: the comparison is of
+    contents, so a commit that touches only the performance area, a checkout
+    round trip to the same tree and a touched heap pass, while an edited
+    product or a changed source outside the performance area is refused until
+    `prepare` is run again. The stamp is a discipline and not a proof of
+    provenance: it shows the products are those present when a build exited
+    cleanly at this tree."""
     repo = Path(repo)
     head = a.git(repo, "rev-parse", "HEAD")
     a.require(commit is None or head == commit,
               "the checkout is at %s, not at the commit measured: %s"
               % (head, commit))
-    found = pr.harness_identity(repo, head)
-    heap = repo / "bin" / "hol.state0"
-    a.require(heap.is_file(), "no heap to measure with: " + str(heap))
-    built = heap.stat().st_mtime_ns
-    names = a.git(repo, "ls-files", "-z", "--", "*.sml", "*.sig",
-                  "*.ML").split("\0")
-    newer = sorted(n for n in names if n and
-                   not n.startswith(pr.PERFORMANCE_DIR) and
-                   (repo / n).stat().st_mtime_ns > built)
-    a.require(not newer, "the heap is older than %s: build it from this "
-              "commit first" % (newer[:1] or [""])[0])
-    return dict(head=head,
-                tree_outside_performance=found["tree_outside_performance"])
+    found = clean_head(repo)
+    a.require(stamp is not None and Path(stamp).is_file(),
+              "no build stamp (%s): %s" % (stamp, PREPARE))
+    try:
+        made = json.loads(Path(stamp).read_text())
+    except ValueError:
+        made = None
+    a.require(isinstance(made, dict) and sorted(made) == [
+        "head", "products", "tree_outside_performance"],
+        "malformed build stamp %s: %s" % (stamp, PREPARE))
+    a.require(made["tree_outside_performance"] ==
+              found["tree_outside_performance"],
+              "the tree outside the performance area is not the one the "
+              "build was made from: " + PREPARE)
+    a.require(made["products"] == products_digest(repo),
+              "bin/hol, bin/hol.state0 or sigobj differ from the stamped "
+              "build: " + PREPARE)
+    return found
 
 
 def git_tree_outside(repo, rev):
@@ -562,11 +659,12 @@ class Grid:
         a.require(len(counts) >= 1, "no develop calibration counts")
         return counts
 
-    def check_pilot_settings(self, inventory):
+    def check_pilot_settings(self, inventory, seconds=None):
         """Counts follow the pilot's batch seconds; a pilot made with other
-        seconds than this table predeclares says nothing about its cells.
-        A table without fixed seconds takes the counts of a historical
-        grid, which is no pilot."""
+        seconds than the counts predeclare (the table's, or the file's own
+        when it is derived again) says nothing about its cells. A table
+        without fixed seconds takes the counts of a historical grid, which
+        is no pilot."""
         t = self.t
         a.require(inventory["baseline"] == t.baseline,
                   "pilot of another baseline")
@@ -574,23 +672,46 @@ class Grid:
             return
         a.require(inventory["schema"] == t.schema("pilot"),
                   "pilot of another task")
-        a.require(inventory["seconds"] == t.seconds and
-                  inventory["seconds_by_case"] == t.seconds_by_case,
-                  "pilot batch seconds differ from the table")
+        a.require("checkout_changed" not in inventory,
+                  "the checkout changed while the pilot ran")
+        seconds = t.seconds_map() if seconds is None else seconds
+        a.require(all(inventory["seconds_by_case"].get(
+            case, inventory["seconds"]) == seconds.get("%s-%d" % (case, size))
+            for case, size in t.keys()),
+            "pilot batch seconds differ from the predeclared seconds")
+
+    def table_settings(self):
+        """What a table with fixed seconds predeclares besides the counts,
+        as the counts file records it."""
+        t = self.t
+        return dict(layout_seed=t.seed, pairs=t.pairs, samples=t.samples,
+                    headroom=t.headroom, seconds=t.seconds_map(),
+                    target=t.target, max_pairs=t.max_pairs)
+
+    def file_settings(self, found):
+        """The same as a counts file says them: a replay and the derivation
+        of a file use these, so that a later change of the table does not
+        make an earlier grid unreplayable. A key the file lacks is the
+        table's, which then differs from what the file derives to."""
+        return {k: found.get(k, v) for k, v in self.table_settings().items()}
 
     def predeclare(self, grid, rederive=False, settings=None):
         """Per-cell counts from the develop-only (B/B) processes of a pilot
         or of a historical grid, before any candidate observation. A table
-        with fixed seconds also predeclares the layout seed, pairs and
-        samples of its run, which are the table's (`settings`, the file's
-        own when it is derived again), and records the seals of the pilot
-        and of the files the counts are bound to, so that the file can be
-        derived again (`rederive`: the pilot's code need not be the current
-        one then). It runs the pilot's analyses again on every archive."""
+        with fixed seconds also predeclares the settings of its run: layout
+        seed, pairs, samples, headroom, seconds and the limits of the second
+        stage, which are the table's (`settings`, the file's own when it is
+        derived again), and records the seals of the pilot and of the files
+        the counts are bound to, so that the file can be derived again
+        (`rederive`: the pilot's code need not be the current one then). It
+        runs the pilot's analyses again on every archive."""
         t = self.t
-        seed, pairs, samples = settings or (t.seed, t.pairs, t.samples)
+        settings = self.table_settings() if settings is None else settings
+        seed, pairs, samples = (settings[k] for k in (
+            "layout_seed", "pairs", "samples"))
+        headroom = settings["headroom"]
         inventory = a.load(grid / "inventory.json")
-        self.h.check_pilot_settings(inventory)
+        self.h.check_pilot_settings(inventory, settings["seconds"] or None)
         if t.fixed_seconds:
             if not rederive:
                 self.h.check_code(inventory, False)
@@ -618,8 +739,9 @@ class Grid:
                 counts = self.h.calibration_counts(folder, case, size)
                 if t.fixed_seconds:
                     found[name] = self.h.check_pilot_cell(
-                        folder, inventory, row, counts)
-                table[name] = batch_iterations(t.headroom * max(counts))
+                        folder, inventory, row, counts,
+                        settings["seconds"][name])
+                table[name] = batch_iterations(headroom * max(counts))
         a.require(set(table) == set(t.names()),
                   "incomplete predeclared counts")
         if t.fixed_seconds:
@@ -627,24 +749,27 @@ class Grid:
                       canonical(found), "changed pilot variability.json")
         result = dict(schema=t.schema("iterations"),
                       source=inventory["driver"],
-                      baseline=inventory["baseline"], headroom=t.headroom,
+                      baseline=inventory["baseline"], headroom=headroom,
                       rule="HEADROOM * max develop calibration count in B/B",
                       iterations=table)
         if t.fixed_seconds:
             result.update(
-                seconds=t.seconds_map(), layout_seed=seed, pairs=pairs,
-                samples=samples, sealed=inventory.get("sealed", {}),
+                seconds=settings["seconds"], layout_seed=seed, pairs=pairs,
+                samples=samples, target=settings["target"],
+                max_pairs=settings["max_pairs"],
+                sealed=inventory.get("sealed", {}),
                 pilot=dict(inventory=a.seal(grid / "inventory.json"),
                            archives=archives))
         return result
 
-    def check_pilot_cell(self, folder, inventory, row, counts):
+    def check_pilot_cell(self, folder, inventory, row, counts, seconds=None):
         """One archived pilot cell is what its inventory says: both sides of
         every process are the baseline, the analysis gives again the
         variability that was recorded, and the calibration counts are those
         of the receipts. Returns the variability."""
         t = self.t
         case, size = row["case"], row["size"]
+        seconds = t.seconds_for(case) if seconds is None else seconds
         control = folder / ("%s-%d-control" % (case, size))
         manifest = a.load(control / "manifest.json")
         a.require(all(manifest["selections"][side]["revision"] ==
@@ -653,7 +778,7 @@ class Grid:
                   "a pilot process is not the baseline")
         options = argparse.Namespace(
             baseline=inventory["baseline"], pairs=inventory["pairs"],
-            samples=inventory["samples"], batch_seconds=t.seconds_for(case))
+            samples=inventory["samples"], batch_seconds=seconds)
         variability = self.h.variability(
             self.h.check_pilot(control, options, case, size))
         a.require(row["counts"] == sorted(counts),
@@ -734,8 +859,7 @@ class Grid:
         found = a.load(path)
         link = found.get("revises")
         at = self.position(path)
-        settings = (found.get("layout_seed"), found.get("pairs"),
-                    found.get("samples")) if self.t.fixed_seconds else None
+        settings = self.file_settings(found) if self.t.fixed_seconds else None
         a.require(at != 0 or link is None, "the first counts file revises "
                   "no other")
         a.require(at in (0, None) or link is not None,
@@ -834,8 +958,8 @@ class Grid:
         counts, and nothing a candidate does, set the predeclared counts.
         The baseline-versus-baseline variability of each cell is published
         beside them in variability.json. The pilot has no candidate and is
-        made in a checkout that is clean, with a heap built from its own
-        commit, which the inventory names."""
+        made in a checkout that is clean and was prepared at its tree
+        (`prepare`), which the inventory names."""
         t = self.t
         a.require(args.pairs >= 10 and args.samples >= 3,
                   "pilot needs at least ten pairs and three samples")
@@ -843,10 +967,12 @@ class Grid:
                   "pilot baseline differs from the table's")
         root = args.output.resolve()
         inventory = self.h.pilot_inventory(args)
+        self.h.attempts_file(args, True)  # the ledger place, while it is cheap
         if t.fixed_seconds:
             inventory["checkout"] = self.h.bind_checkout(args.repo, None)
         done = {}
         with self.h.locked(args.repo) as fds:
+            self.h.recheck(args.repo, None, inventory)
             if args.resume:
                 a.require((root / "inventory.json").exists(),
                           "nothing to resume: %s has no inventory (a pilot "
@@ -873,6 +999,11 @@ class Grid:
                         continue
                     ms.get_case(case, size)
                     self.h.pilot_cell(root, inventory, case, size, args, fds)
+                try:
+                    self.h.recheck(args.repo, None, inventory)
+                except CheckoutChanged as error:
+                    inventory["checkout_changed"] = str(error)
+                    raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
                 checkpoint(root / "variability.json", {
@@ -1115,6 +1246,7 @@ class Grid:
                     self.h.measure_cell(root, inventory, case, size, pairs,
                                         count, seconds, seed, args, reports,
                                         fds)
+                self.h.recheck(args.repo, inventory["candidate"], inventory)
             finally:
                 checkpoint(root / "inventory.json", inventory)
         return reports
@@ -1169,6 +1301,10 @@ class Grid:
                       "--%s differs from the predeclared counts"
                       % key.replace("_", "-"))
             a.require(counts[key] == own, "the %s of the counts differs "
+                      "from the table's" % key.replace("_", " "))
+        for key, own in (("headroom", t.headroom), ("target", t.target),
+                         ("max_pairs", t.max_pairs)):
+            a.require(counts.get(key) == own, "the %s of the counts differs "
                       "from the table's" % key.replace("_", " "))
         return t.pairs, t.samples, t.seed
 
@@ -1288,22 +1424,35 @@ class Grid:
     # Attempts -------------------------------------------------------------
 
     def ledger_path(self, repo):
-        """The one attempts ledger of the table: below the root of the
-        checkout, in the agent-state directory that git excludes, where this
-        project keeps evidence."""
+        """The one attempts ledger of the table in a checkout: below its
+        root, in the agent-state directory that git excludes, where this
+        project keeps evidence. A grid and its retries stay in the one
+        checkout, so the ledger is that checkout's."""
         t = self.t
         if t.ledger is not None:
             return t.ledger
         return (Path(repo).resolve() / ".agent-files" / "evidence" / t.name /
                 "attempts.jsonl")
 
+    def stamp_path(self, repo):
+        """The build stamp of `prepare`, beside the ledger."""
+        return self.h.ledger_path(repo).with_name("build-stamp.json")
+
     def attempts_file(self, args, appending):
         """The attempts ledger of a table with fixed seconds, or None. A
-        measurement appends to it. Below the checkout it must be ignored by
-        git, so that no commit can hold or rewrite it."""
+        measurement appends to the ledger of its own checkout (`pilot` and
+        `prepare` only check its place); below the checkout it must be
+        ignored by git, so that no commit can hold or rewrite it. A replay
+        or a close in another checkout may name the file read-only
+        (`args.ledger`)."""
         t = self.t
         if not t.fixed_seconds:
             return None
+        given = getattr(args, "ledger", None)
+        if given is not None:
+            a.require(not appending, "a measurement appends to the ledger "
+                      "of its own checkout, not to another")
+            return Path(given)
         path = self.h.ledger_path(args.repo)
         if appending:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1313,29 +1462,34 @@ class Grid:
                      str(path)], stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL)
                 a.require(found.returncode == 0, "the attempts ledger would "
-                          "be tracked by git: ignore .agent-files: %s" % path)
+                          "be tracked by git: exclude .agent-files first, "
+                          "in the file `git rev-parse --git-path "
+                          "info/exclude` names: %s" % path)
             if path.exists():
                 Ledger(path)
         return path
 
-    def record_attempt(self, path, event, stage, inventory, root, **more):
+    def record_attempt(self, path, event, stage, inventory, root, repo,
+                       **more):
         """One line of the ledger about a grid of `stage` ("first" or
-        "second"): its opening, a resumption, or its close with a status."""
+        "second"): its opening, a resumption, or its close with a status,
+        with the checkout it was made in."""
         if path is not None:
             ledger_append(
                 path, event=event, stage=stage, attempt=inventory["attempt"],
                 candidate=inventory["candidate"],
                 counts_file=inventory["counts_file"],
                 counts=inventory["iterations_seal"],
-                seed=inventory.get("layout_seed"), output=str(root), **more)
+                seed=inventory.get("layout_seed"), output=str(root),
+                checkout=str(Path(repo).resolve()), **more)
 
-    def close_attempt(self, path, stage, inventory, root, status):
+    def close_attempt(self, path, stage, inventory, root, repo, status):
         """The close of an attempt. When it cannot be written the attempt
         stays open in the ledger, which shows it as interrupted, and the
         outcome of the run is not replaced by the failure."""
         try:
             self.h.record_attempt(path, "close", stage, inventory, root,
-                                  status=status)
+                                  repo, status=status)
         except Exception as error:
             print("ATTEMPT-NOT-CLOSED %s (outcome %s): %s" % (
                 inventory["attempt"], status, error), file=sys.stderr,
@@ -1358,21 +1512,48 @@ class Grid:
                   "the attempts ledger has no opening of this grid")
         return state
 
+    def attempt_counts(self, state, candidate):
+        """(attempts of the table, attempts of the candidate) in a ledger;
+        each stage of a grid is one."""
+        found = state.attempts()
+        return len(found), sum(1 for row in found.values()
+                               if row["candidate"] == candidate)
+
+    def ledger_counts(self, args, candidate):
+        """The counts of the ledger that args name, or None."""
+        path = self.h.attempts_file(args, False)
+        if path is None:
+            return None
+        a.require(path.is_file(), "no attempts ledger: %s" % path)
+        return self.h.attempt_counts(Ledger(path), candidate)
+
     def report_attempts(self, state, inventory, stage):
-        """Print every attempt of the candidate in the ledger with its
-        status, so that a reader of a replay sees each retry."""
+        """Print every attempt of the table in the ledger, the candidate's
+        marked, with its status and the checkout it was made in, so that a
+        reader of a replay sees each retry and a retry made elsewhere. The
+        attempts of a table that are not all in one checkout are named."""
         if state is None:
             return
-        found = state.attempts(inventory["candidate"])
-        print("ATTEMPTS of %s: %d in the ledger (%d records, chain intact)"
-              % (inventory["candidate"], len(found), len(state.records)))
-        for (attempt, kind), row in sorted(found.items(),
-                                           key=lambda x: x[1]["opened"]):
-            print("ATTEMPT %s %s opened %s resumed %d status %s%s" % (
-                attempt, kind, row["opened"], row["resumed"],
-                row["status"] or "interrupted",
-                " (this grid)" if (attempt, kind) == (
-                    inventory["attempt"], stage) else ""))
+        found = state.attempts()
+        total, mine = self.h.attempt_counts(state, inventory["candidate"])
+        print("ATTEMPTS of %s: %d in the ledger, %d of this candidate %s "
+              "(%d records, chain intact)" % (
+                  self.t.label, total, mine, inventory["candidate"],
+                  len(state.records)))
+        for (attempt, kind), row in found.items():
+            mark = (" (this grid)" if (attempt, kind) == (
+                inventory["attempt"], stage) else
+                " (this candidate)" if row["candidate"] ==
+                inventory["candidate"] else "")
+            print("ATTEMPT %s %s opened %s resumed %d status %s candidate "
+                  "%s checkout %s%s" % (
+                      attempt, kind, row["opened"], row["resumed"],
+                      row["status"] or "interrupted", row["candidate"],
+                      row["checkout"], mark))
+        places = {row["checkout"] for row in found.values()}
+        if len(places) > 1:
+            print("LEDGER-CHECKOUTS: the attempts of this ledger were made "
+                  "in %d different checkouts" % len(places))
         for note in state.notes:
             print(note)
 
@@ -1387,13 +1568,76 @@ class Grid:
                             self.h.counts_for(inventory))
 
     def bind_checkout(self, repo, commit):
-        """The checkout the measurement runs in is that of `commit`
-        (checkout_identity)."""
-        return checkout_identity(repo, commit)
+        """The checkout the measurement runs in is that of `commit`, and
+        the one `prepare` stamped (checkout_identity)."""
+        return checkout_identity(repo, commit, self.h.stamp_path(repo))
+
+    def recheck(self, repo, commit, inventory):
+        """The checkout is still the one the inventory recorded. It is
+        asked under the lock, before anything is written, and when the
+        measuring is over; a checkout that changed while a grid ran
+        (a build, an edit, a checkout of another commit) leaves no grid
+        that passes, and the attempt closes as `checkout-changed`."""
+        if not self.t.fixed_seconds:
+            return
+        try:
+            found = self.h.bind_checkout(repo, commit)
+        except ValueError as error:
+            raise CheckoutChanged(str(error)) from None
+        if found != inventory["checkout"]:
+            raise CheckoutChanged(
+                "the checkout is not the one recorded: %s, not %s"
+                % (found, inventory["checkout"]))
+
+    def prepare(self, args):
+        """Build the checkout and stamp it. It needs a clean checkout, runs
+        the real build (`BUILD`, in the repository root; Holmake decides
+        what is out of date) under the lock, and only when that exits zero
+        and leaves the checkout clean writes the stamp: HEAD, the tree
+        outside the performance area, and the content digest of the shared
+        products. An earlier stamp is removed first, so that a failed or
+        interrupted build leaves none. The measuring commands compare the
+        checkout with the stamp and never read a file time."""
+        t = self.t
+        a.require(t.fixed_seconds, "%s takes no build stamp" % t.label)
+        repo = Path(args.repo).resolve()
+        stamp = self.h.stamp_path(repo)
+        self.h.attempts_file(args, True)  # the ledger place, while cheap
+        before = clean_head(repo)
+        with self.h.locked(repo) as fds:
+            stamp.unlink(missing_ok=True)
+            log = unused(stamp.with_name("prepare-%s.log" % utc_now().replace(
+                "-", "").replace(":", "")))
+            built = a.run_logged(
+                ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"', "prepare",
+                 str(repo), *BUILD], log, fds, args.timeout)
+            a.require(built["exit"] == 0 and not built["timed_out"],
+                      "the build failed (exit %s%s), no build stamp: see %s"
+                      % (built["exit"], ", timed out" if built["timed_out"]
+                         else "", log))
+            try:
+                found = build_stamp(repo)
+            except ValueError as error:
+                raise ValueError("the build left the checkout unusable, no "
+                                 "build stamp: %s" % error) from None
+            a.require(found["head"] == before["head"],
+                      "HEAD moved during the build, no build stamp")
+            partial = stamp.with_name(stamp.name + ".partial")
+            partial.write_text(json.dumps(found, indent=2, sort_keys=True,
+                                          allow_nan=False) + "\n")
+            partial.replace(stamp)
+        print("PREPARED %s tree %s products %s (%d files), stamp %s" % (
+            found["head"], found["tree_outside_performance"][:12],
+            found["products"]["sha256"][:12], found["products"]["files"],
+            stamp), flush=True)
+        return 0
 
     def check_checkout(self, inventory, repo=None):
         """The recorded checkout names the candidate, and its tree outside
-        the performance area is what git gives for the candidate."""
+        the performance area is what git gives for the candidate. That is
+        all a replay can know: not that the checkout was so at the time of
+        the run, which the stamp, the lock and the ledger make a discipline
+        of the run."""
         if not self.t.fixed_seconds:
             return
         repo = a.HERE.parents[3] if repo is None else repo
@@ -1438,7 +1682,7 @@ class Grid:
         a.require(not t.fixed_seconds or args.batch_seconds == t.seconds,
                   "batch seconds differ from the table")
         a.require(not t.fixed_seconds or all(k in counts for k in (
-            "pairs", "samples", "layout_seed")),
+            "pairs", "samples", "layout_seed", "target", "max_pairs")),
             "predeclared counts do not match the table")
         pairs, samples, seed = self.h.settings(args, counts)
         a.require(seed is not None or not t.require_seed,
@@ -1488,13 +1732,15 @@ class Grid:
                 args.repo, args.baseline, args.candidate)
         self.h.check_provenance(args, inventory)
         with self.h.locked(args.repo):
+            self.h.recheck(args.repo, args.candidate, inventory)
             reports = self.h.begin(root, inventory, args.resume)
             if args.resume:
                 self.h.check_attempt(args, inventory, "first")
             if t.fixed_seconds:
                 self.h.keep(args.repo, args.candidate)
             self.h.record_attempt(ledger, "resume" if args.resume else "open",
-                                  "first", inventory, root, only=args.only)
+                                  "first", inventory, root, args.repo,
+                                  only=args.only)
             status = "interrupted"
             try:
                 self.h.measure(root, inventory, [k + (pairs,) for k in keys],
@@ -1507,12 +1753,36 @@ class Grid:
                 a.save(root / "decisions.json", decisions)
                 status = decisions["status"]
                 return self.h.status_code(decisions)
+            except CheckoutChanged:
+                status = "checkout-changed"
+                raise
             finally:
-                self.h.close_attempt(ledger, "first", inventory, root, status)
+                self.h.close_attempt(ledger, "first", inventory, root,
+                                     args.repo, status)
 
     # Second stage ----------------------------------------------------
 
-    def extension_pairs(self, report, pairs):
+    def limits_of(self, inventory):
+        """(target, cap) of the second stage as the counts the grid used say
+        them, or None when they say none (a table whose counts predate
+        them): a later change of the table does not change the plan an older
+        grid is replayed by."""
+        counts = inventory["iterations"]
+        return (counts["target"], counts["max_pairs"]) \
+            if "target" in counts and "max_pairs" in counts else None
+
+    def limits_dict(self, inventory):
+        target, cap = self.limits_of(inventory) or (self.t.target,
+                                                    self.t.max_pairs)
+        return dict(target=target, max_pairs=cap)
+
+    def planned(self, stage1, first):
+        """The remeasurement plan of a first stage, by its own limits."""
+        limits = self.limits_of(first)
+        return self.h.extension_plan(
+            stage1, first["pairs"], *(() if limits is None else (limits,)))
+
+    def extension_pairs(self, report, pairs, limits=None):
         """Pairs for a cell's remeasurement, or None when it is final.
 
         Under randomized layout a cell's develop/develop control may be too
@@ -1536,16 +1806,17 @@ class Grid:
                 "paired_ratio_bootstrap_95_percent"]
             width = max(width, math.log(ci[1] / ci[0]) / 2
                         if ci and ci[0] > 0 else math.inf)
-        wanted = pairs * (width / self.t.target) ** 2
+        target, cap = limits or (self.t.target, self.t.max_pairs)
+        wanted = pairs * (width / target) ** 2
         if not math.isfinite(wanted):
-            return self.t.max_pairs
-        return min(self.t.max_pairs,
-                   max(2 * pairs, 10 * math.ceil(wanted / 10)))
+            return cap
+        return min(cap, max(2 * pairs, 10 * math.ceil(wanted / 10)))
 
-    def extension_plan(self, reports, pairs):
+    def extension_plan(self, reports, pairs, limits=None):
         plan = []
         for key in self.t.keys():
-            extra = self.h.extension_pairs(reports[key], pairs)
+            extra = self.h.extension_pairs(
+                reports[key], pairs, *(() if limits is None else (limits,)))
             if extra is not None:
                 plan.append([*key, extra])
         return plan
@@ -1649,7 +1920,7 @@ class Grid:
                       grid_inventory=a.seal(grid / "inventory.json"),
                       grid_decisions=a.seal(grid / "decisions.json"),
                       layout_seed=layout_seed(seed + "-ext"),
-                      target=t.target, max_pairs=t.max_pairs, runs=[],
+                      **self.h.limits_dict(inventory), runs=[],
                       **self.h.code_now())
         return result
 
@@ -1668,29 +1939,35 @@ class Grid:
         t = self.t
         grid, root = args.grid.resolve(), args.output.resolve()
         ledger = self.h.attempts_file(args, True)
+        if t.fixed_seconds:
+            # The cheap refusal first: the recorded checkout, then the
+            # present one, before the first stage is replayed in full.
+            recorded = a.load(grid / "inventory.json")
+            self.h.check_checkout(recorded, args.repo)
+            a.require(self.h.bind_checkout(
+                args.repo, recorded["candidate"]) == recorded["checkout"],
+                "the checkout is not the one the first stage was measured "
+                "in")
         first, stage1, _ = self.h.replay_grid(grid, args.repo)
         self.h.check_provenance(args, first)
         self.h.check_attempt(args, first, "first")
-        if t.fixed_seconds:
-            a.require(self.h.bind_checkout(args.repo, first["candidate"]) ==
-                      first["checkout"], "the checkout is not the one the "
-                      "first stage was measured in")
         inventory = self.h.extension_inventory(grid, root, first)
         if t.fixed_seconds:
             # Every second stage is an attempt of its own.
             inventory["attempt"] = uuid.uuid4().hex
-        plan = self.h.extension_plan(stage1, first["pairs"])
+        plan = self.h.planned(stage1, first)
         inventory["plan"] = plan
         print("PLAN %d cells: %s" % (len(plan), json.dumps(plan)),
               flush=True)
         with self.h.locked(args.repo):
+            self.h.recheck(args.repo, first["candidate"], inventory)
             reports = self.h.begin(root, inventory, args.resume)
             if args.resume:
                 self.h.check_attempt(args, inventory, "second")
             if t.fixed_seconds:
                 self.h.keep(args.repo, first["candidate"])
             self.h.record_attempt(ledger, "resume" if args.resume else "open",
-                                  "second", inventory, root)
+                                  "second", inventory, root, args.repo)
             status = "interrupted"
             try:
                 self.h.measure(root, inventory, [tuple(p) for p in plan],
@@ -1699,9 +1976,12 @@ class Grid:
                 a.save(root / "decisions.json", decisions)
                 status = decisions["status"]
                 return self.h.status_code(decisions)
+            except CheckoutChanged:
+                status = "checkout-changed"
+                raise
             finally:
                 self.h.close_attempt(ledger, "second", inventory, root,
-                                     status)
+                                     args.repo, status)
 
     def replay(self, args):
         t = self.t
@@ -1729,7 +2009,7 @@ class Grid:
             self.h.check_attempt(args, first, "first")
             a.require(inventory == dict(
                 self.h.extension_inventory(grid, root, first),
-                plan=self.h.extension_plan(stage1, first["pairs"]),
+                plan=self.h.planned(stage1, first),
                 runs=inventory["runs"],
                 **{k: inventory[k] for k in t.code() + ("resumed", "attempt")
                    if k in inventory}), "changed extension plan")
@@ -1788,6 +2068,12 @@ class Grid:
             p.add_argument("--pilot", type=Path,
                            help="the pilot the counts derive from")
 
+        build = sub.add_parser(
+            "prepare", help="build the checkout and stamp it for the "
+            "measuring commands")
+        build.add_argument("--repo", type=Path, default=repo)
+        build.add_argument("--timeout", type=int, default=BUILD_TIMEOUT,
+                           help="seconds the build may take")
         pilot = sub.add_parser(
             "pilot", help="develop-only experiments for the counts")
         pilot.add_argument("--output", type=Path, required=True)
@@ -1848,6 +2134,9 @@ class Grid:
         check.add_argument("--repo", type=Path, default=repo)
         check.add_argument("--partial", action="store_true",
                            help="interrupted run: replay cells, no decision")
+        check.add_argument("--ledger", type=Path,
+                           help="read this attempts ledger, of the checkout "
+                           "the grid was made in (read-only)")
         provenance(check)
         return parser, sub
 
@@ -1887,6 +2176,8 @@ class Grid:
             return 0
         if args.action == "verify-counts":
             return self.h.verify_counts(args)
+        if args.action == "prepare":
+            return self.h.prepare(args)
         if args.action in ("pilot", "run", "extend"):
             a.require(args.authorize_measurements,
                       "exclusive window required")

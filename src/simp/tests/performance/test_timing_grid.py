@@ -13,6 +13,7 @@ controls and take the lock in the checkout, so the whole suite does create
 The counts file of every rig comes from a (stand-in) pilot and `predeclare`,
 as a fixed table's must; a pilot is made once for each table and copied.
 """
+import argparse
 import contextlib
 import gzip
 import io
@@ -187,7 +188,7 @@ class Rig(unittest.TestCase):
     def fake_tree(self, repo, rev):
         return "t" * 64
 
-    def fake_checkout(self, repo, commit=None):
+    def fake_checkout(self, repo, commit=None, stamp=None):
         """The checkout is clean and at the commit measured."""
         self.bound.append(commit)
         return dict(head=commit or COMMIT,
@@ -1359,12 +1360,12 @@ class Pilot(Rig):
 
     def test_a_pilot_is_made_in_the_checkout_of_its_own_commit(self):
         self.pilot()
-        self.assertEqual(self.bound, [None])
+        self.assertEqual(self.bound, [None] * 3)
         self.assertEqual(self.inventory(self.root / "pilot")["checkout"],
                          dict(head=COMMIT, tree_outside_performance="t" * 64))
 
     def test_a_pilot_in_a_checkout_that_is_not_clean_measures_nothing(self):
-        def unclean(repo, commit=None):
+        def unclean(repo, commit=None, stamp=None):
             raise ValueError("harness checkout is not clean: commit first")
         with patch.object(tg, "checkout_identity", unclean):
             with self.assertRaisesRegex(ValueError, "not clean"):
@@ -1375,12 +1376,46 @@ class Pilot(Rig):
     def test_a_resumed_pilot_is_of_the_same_checkout(self):
         self.interrupted()
 
-        def elsewhere(repo, commit=None):
+        def elsewhere(repo, commit=None, stamp=None):
             return dict(head="e" * 40, tree_outside_performance="t" * 64)
         with patch.object(tg, "checkout_identity", elsewhere):
             with self.assertRaisesRegex(ValueError, "different settings"):
                 self.pilot(extra=("--resume",))
         self.assertEqual(self.pilot(extra=("--resume",))[0], 0)
+
+    def test_a_checkout_that_changed_under_the_pilot_makes_it_no_pilot(self):
+        seen = []
+
+        def identity(repo, commit=None, stamp=None):
+            seen.append(commit)
+            return self.fake_checkout(repo, commit, stamp) if len(
+                seen) < 3 else dict(head=COMMIT,
+                                    tree_outside_performance="u" * 64)
+        with patch.object(tg, "checkout_identity", identity):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.pilot()
+        recorded = self.inventory(self.root / "pilot")
+        self.assertIn("checkout_changed", recorded)
+        self.assertEqual(len(recorded["runs"]), len(self.launched))
+        with self.assertRaisesRegex(ValueError, "changed while the pilot "
+                                    "ran"):
+            self.go(["predeclare", "--grid", str(self.root / "pilot"),
+                     "--output", str(self.root / "c.json")])
+
+    def test_a_pilot_checks_the_checkout_again_under_the_lock(self):
+        seen = []
+
+        def identity(repo, commit=None, stamp=None):
+            seen.append(commit)
+            return self.fake_checkout(repo, commit, stamp) if len(
+                seen) < 2 else dict(head=COMMIT,
+                                    tree_outside_performance="u" * 64)
+        launched = len(self.launched)
+        with patch.object(tg, "checkout_identity", identity):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.pilot()
+        self.assertEqual(len(self.launched), launched)
+        self.assertFalse((self.root / "pilot").exists())
 
     def test_a_tampered_pilot_archive_is_refused_on_resume(self):
         out = self.interrupted()
@@ -2108,19 +2143,81 @@ class Attempts(Rig):
                 where / "attempts.jsonl").read_text().splitlines())],
             ["open", "close"])
 
-    def test_the_command_line_has_no_ledger_option(self):
+    def test_the_ledger_place_is_checked_at_the_pilot_too(self):
+        self.table.ledger = None
+        calls = len(self.launched)
+        with self.assertRaisesRegex(ValueError, "would be tracked by git"):
+            self.go(self.argv("pilot", self.root / "again",
+                              "--authorize-measurements"))
+        self.assertEqual(len(self.launched), calls)
+        self.assertFalse((self.root / "again").exists())
+
+    def test_the_refusal_names_the_exclude_step(self):
+        self.table.ledger = None
+        with self.assertRaisesRegex(ValueError, "exclude .agent-files.*"
+                                    "info/exclude"):
+            self.first()
+
+    def test_the_command_line_has_no_ledger_option_but_a_read_only_one(self):
         with self.assertRaises(SystemExit), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.go(self.run_argv() + ["--attempts", str(self.attempts)])
+        # `run` and `extend` append to their own checkout's ledger and take
+        # no other; `replay` (and `close`) may read one.
+        parser, sub = self.grid.parser()
+        for name in ("run", "extend", "pilot", "prepare"):
+            options = {o for action in sub.choices[name]._actions
+                       for o in action.option_strings}
+            self.assertNotIn("--ledger", options, name)
+        options = {o for action in sub.choices["replay"]._actions
+                   for o in action.option_strings}
+        self.assertIn("--ledger", options)
+        with self.assertRaises(SystemExit), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.go(self.run_argv() + ["--ledger", str(self.attempts)])
+
+    def test_an_appending_command_refuses_another_ledger(self):
+        args = argparse.Namespace(repo=self.repo, ledger=self.attempts)
+        with self.assertRaisesRegex(ValueError, "of its own checkout"):
+            self.grid.attempts_file(args, True)
+        self.assertEqual(self.grid.attempts_file(args, False),
+                         self.attempts)
+
+    def test_every_line_names_the_checkout_it_was_made_in(self):
+        self.first()
+        found = self.ledger()
+        self.assertEqual({x["checkout"] for x in found},
+                         {str(self.repo.resolve())})
+        self.assertEqual(len(found), 2)
+
+    def test_replay_reads_the_ledger_of_another_checkout_without_changing_it(
+            self):
+        out, _, _ = self.first()
+        kept = self.root / "kept-attempts.jsonl"
+        shutil.copy(self.attempts, kept)
+        self.table.ledger = self.root / "elsewhere" / "none.jsonl"
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
+            self.go(self.replay_argv(out))
+        before = kept.read_bytes()
+        status, text = self.go(self.replay_argv(out, "--ledger", str(kept)))
+        self.assertEqual(status, 0)
+        self.assertIn("checkout %s" % self.repo.resolve(), text)
+        self.assertEqual(kept.read_bytes(), before)
+        self.assertFalse(self.table.ledger.parent.exists())
 
     def test_a_malformed_ledger_is_refused_before_any_cell(self):
+        # A line that is no record, followed by a record that does not
+        # acknowledge it, is not a torn tail.
+        self.first(name="one")
+        good = self.attempts.read_text()
+        calls = self.calls
         for i, text in enumerate(("not json\n", "[1]\n",
                                   '{"no": "event"}\n')):
             with self.subTest(text):
-                self.attempts.write_text(text)
+                self.attempts.write_text(text + good)
                 with self.assertRaisesRegex(ValueError, "malformed attempts"):
                     self.first(name="g%d" % i)
-        self.assertEqual(self.calls, 0)
+        self.assertEqual(self.calls, calls)
 
     def test_the_ledger_records_the_grid_it_opens_and_closes(self):
         out, status, _ = self.first()
@@ -2207,20 +2304,44 @@ class Attempts(Rig):
         self.assertNotEqual(lines[0]["attempt"], lines[2]["attempt"])
         self.assertEqual({x["candidate"] for x in lines}, {CANDIDATE})
 
-    def test_replay_prints_every_attempt_of_the_candidate(self):
+    def test_replay_prints_every_attempt_of_the_table_marking_the_candidates(
+            self):
         self.candidate = lambda case, size, pairs, seed: (1.04, 1.08)
         one, _, _ = self.first(name="one")
         self.candidate = lambda case, size, pairs, seed: GOOD
         two, _, _ = self.first(name="two")
+        # A retry at another commit, made in the same checkout.
+        other = "d" * 40
+        tg.ledger_append(self.attempts, event="open", stage="first",
+                         attempt="x" * 32, candidate=other,
+                         counts_file="toy_iterations.json", counts="s",
+                         seed="s0", output="o", checkout=str(self.repo))
         status, text = self.go(self.replay_argv(two))
         self.assertEqual(status, 0)
-        self.assertIn("ATTEMPTS of %s: 2 in the ledger (4 records, chain "
-                      "intact)" % CANDIDATE, text)
+        self.assertIn("ATTEMPTS of TOY: 3 in the ledger, 2 of this candidate "
+                      "%s (5 records, chain intact)" % CANDIDATE, text)
         mine = [x for x in text.splitlines() if x.startswith("ATTEMPT ")]
-        self.assertEqual(len(mine), 2)
-        self.assertRegex(mine[0], r" first opened \S+ resumed 0 status fail$")
-        self.assertRegex(mine[1], r" resumed 0 status pass \(this grid\)$")
+        self.assertEqual(len(mine), 3)
+        self.assertRegex(mine[0], r" first opened \S+ resumed 0 status fail "
+                         r"candidate %s checkout \S+ \(this candidate\)$"
+                         % CANDIDATE)
+        self.assertRegex(mine[1], r" resumed 0 status pass candidate .* "
+                         r"\(this grid\)$")
         self.assertIn(self.inventory(two)["attempt"], mine[1])
+        self.assertRegex(mine[2], r"status interrupted candidate %s "
+                         r"checkout \S+$" % other)
+
+    def test_attempts_made_in_several_checkouts_are_named(self):
+        out, _, _ = self.first()
+        tg.ledger_append(self.attempts, event="open", stage="first",
+                         attempt="y" * 32, candidate=CANDIDATE,
+                         counts_file="toy_iterations.json", counts="s",
+                         seed="s0", output="o", checkout="/elsewhere")
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 0)
+        self.assertIn("LEDGER-CHECKOUTS: the attempts of this ledger were "
+                      "made in 2 different checkouts", text)
+        self.assertIn("checkout /elsewhere", text)
 
     def test_replay_needs_the_ledger_and_the_opening_in_it(self):
         out, _, _ = self.first()
@@ -2256,20 +2377,50 @@ class Attempts(Rig):
         self.assertEqual(text[2], '{"event": "op')
         self.assertEqual(json.loads(text[3])["event"], "torn")
         self.assertEqual(json.loads(text[3])["skipped"],
-                         tg.ledger_hash('{"event": "op'))
+                         [tg.ledger_hash('{"event": "op')])
         self.assertEqual(json.loads(text[3])["prev"],
                          tg.ledger_hash(text[1]))
         status, text = self.go(self.replay_argv(out))
         self.assertEqual(status, 0)
         self.assertNotIn("LEDGER-TORN-LINE", text)
-        self.assertIn("ATTEMPTS of %s: 2 in the ledger" % CANDIDATE, text)
+        self.assertIn("ATTEMPTS of TOY: 2 in the ledger", text)
 
-    def test_a_cut_line_is_refused_when_it_is_not_the_last(self):
+    def test_a_run_of_cut_lines_at_the_tail_is_acknowledged_together(self):
+        # The acknowledging append was itself cut short (the same full disk),
+        # or stopped just after the newline that ends the cut line: lines
+        # at the end that are no record, however many, however ended.
         out, _, _ = self.first()
         before = self.attempts.read_text()
-        for what, text in (("terminated", before + '{"event": "op\n'),
-                           ("unacknowledged", before + '{"event": "op\n' +
-                            before)):
+        for what, tail in (
+                ("after the newline", ['{"event": "op\n']),
+                ("acknowledgement cut", ['{"event": "op\n',
+                                         '{"event": "torn", "pr']),
+                ("three", ['{"event": "op\n', "x\n", '{"ev'])):
+            with self.subTest(what):
+                self.attempts.write_text(before + "".join(tail))
+                status, text = self.go(self.replay_argv(out))
+                self.assertEqual(status, 0)
+                self.assertEqual(text.count("LEDGER-TORN-LINE"), len(tail))
+                self.first(name="again-" + str(len(tail)) + what[:3])
+                lines = self.lines()
+                torn = [json.loads(x) for x in lines
+                        if x.startswith('{"event": "torn", "prev"')]
+                self.assertEqual(len(torn), 1)
+                self.assertEqual(torn[0]["skipped"], [
+                    tg.ledger_hash(x.rstrip("\n")) for x in tail])
+                status, text = self.go(self.replay_argv(out))
+                self.assertEqual(status, 0)
+                self.assertNotIn("LEDGER-TORN-LINE", text)
+                self.attempts.write_text(before)
+
+    def test_a_cut_line_is_refused_when_it_is_not_at_the_tail(self):
+        out, _, _ = self.first()
+        before = self.attempts.read_text()
+        for what, text in (
+                ("unacknowledged", before + '{"event": "op\n' + before),
+                ("acknowledging another run", before + '{"event": "op\n' +
+                 json.dumps(dict(event="torn", prev=tg.ledger_hash(
+                     before.split("\n")[-2]), skipped=["0" * 64])) + "\n")):
             with self.subTest(what):
                 self.attempts.write_text(text)
                 with self.assertRaisesRegex(ValueError, "malformed attempts"):
@@ -2512,6 +2663,60 @@ class Commits(Rig):
         # A run under the changed table is another matter.
         with self.assertRaisesRegex(ValueError, "differs from the table"):
             self.first(name="two")
+
+    def test_the_counts_record_the_limits_of_the_second_stage(self):
+        counts = json.loads(self.counts.read_text())
+        self.assertEqual((counts["target"], counts["max_pairs"],
+                          counts["headroom"]),
+                         (tg.TARGET, tg.MAX_PAIRS, 2))
+        # A run refuses a file that says other than the table.
+        for key, value in (("target", 0.02), ("max_pairs", 60),
+                           ("headroom", 3)):
+            with self.subTest(key):
+                self.rewrite(**{key: value})
+                with self.assertRaisesRegex(
+                        ValueError, "the %s of the counts differs from the "
+                        "table's" % key.replace("_", " ")):
+                    self.first(name="g-" + key)
+                self.rewrite(**{key: counts[key]})
+        self.assertEqual(self.calls, 0)
+
+    def test_the_second_stage_replays_by_the_limits_of_its_counts(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        grid, _, _ = self.first()
+        ext = self.root / "ext"
+        status, _ = self.go(self.argv(
+            "extend", ext, "--grid", str(grid), "--authorize-measurements"))
+        self.assertEqual(status, 0)
+        recorded = self.inventory(ext)
+        self.assertEqual((recorded["target"], recorded["max_pairs"]),
+                         (tg.TARGET, tg.MAX_PAIRS))
+        # Another target and cap in the table change neither the plan nor
+        # the replay of grids made under the counts that said otherwise.
+        self.table.target, self.table.max_pairs = 0.5, 30
+        status, text = self.go(self.replay_argv(ext))
+        self.assertEqual(status, 0, text)
+        self.assertEqual(self.go(self.replay_argv(grid))[0], 2)
+
+    def test_the_counts_are_derived_again_by_their_own_seconds_and_headroom(
+            self):
+        pilot = str(self.pilot_dir)
+        out, _, _ = self.first()
+        # The table is edited after the counts were made: other seconds, no
+        # longer cell, another headroom. What the file says is what counts.
+        self.table.seconds, self.table.seconds_by_case = 0.6, {}
+        self.table.headroom = 5
+        self.assertEqual(self.go(["verify-counts", "--grid", pilot])[0], 0)
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        # And a pilot made for other seconds than the file's is refused.
+        path = self.pilot_dir / "inventory.json"
+        recorded = json.loads(path.read_text())
+        path.write_text(json.dumps(dict(recorded, seconds_by_case={})))
+        with self.assertRaisesRegex(ValueError, "pilot batch seconds "
+                                    "differ"):
+            self.go(["verify-counts", "--grid", pilot])
 
     def test_the_counts_are_bound_to_the_sealed_files(self):
         value = json.loads(self.counts.read_text())
@@ -3062,12 +3267,12 @@ class Measuring(Rig):
 
     def test_a_run_is_bound_to_the_checkout_of_its_candidate(self):
         out, status, _ = self.first()
-        self.assertEqual(self.bound, [CANDIDATE])
+        self.assertEqual(self.bound, [CANDIDATE] * 3)
         self.assertEqual(self.inventory(out)["checkout"], dict(
             head=CANDIDATE, tree_outside_performance="t" * 64))
 
     def test_a_checkout_that_is_not_the_candidate_measures_nothing(self):
-        def elsewhere(repo, commit=None):
+        def elsewhere(repo, commit=None, stamp=None):
             raise ValueError("the checkout is at %s, not at the commit "
                              "measured: %s" % ("e" * 40, commit))
         with patch.object(tg, "checkout_identity", elsewhere):
@@ -3079,9 +3284,9 @@ class Measuring(Rig):
         self.widen()
         grid, _, _ = self.first()
         self.assertEqual(self.go(self.extend_argv(grid))[0], 0)
-        self.assertEqual(self.bound, [CANDIDATE, CANDIDATE])
+        self.assertEqual(self.bound, [CANDIDATE] * 6)
 
-        def other_tree(repo, commit=None):
+        def other_tree(repo, commit=None, stamp=None):
             return dict(head=commit, tree_outside_performance="u" * 64)
         calls = self.calls
         with patch.object(tg, "checkout_identity", other_tree):
@@ -3089,6 +3294,73 @@ class Measuring(Rig):
                 self.go(self.extend_argv(grid, "again"))
         self.assertEqual(self.calls, calls)
         self.assertFalse((self.root / "again").exists())
+
+    def changing_after(self, calls, tree="u" * 64, refuse=False):
+        """checkout_identity as the rig has it for `calls` calls, then
+        another tree (or a refusal): the checkout changed while the grid was
+        measured."""
+        seen = []
+
+        def identity(repo, commit=None, stamp=None):
+            seen.append(commit)
+            if len(seen) > calls:
+                if refuse:
+                    raise ValueError("bin/hol differs from the stamped "
+                                     "build: run prepare at this commit")
+                return dict(head=commit, tree_outside_performance=tree)
+            return self.fake_checkout(repo, commit, stamp)
+        return patch.object(tg, "checkout_identity", identity)
+
+    def closing(self):
+        return [(x["event"], x.get("status")) for x in self.ledger()]
+
+    def test_a_checkout_that_changed_under_the_lock_measures_nothing(self):
+        with self.changing_after(1):
+            with self.assertRaisesRegex(tg.CheckoutChanged, "not the one "
+                                        "recorded"):
+                self.first()
+        self.nothing_written()
+
+    def test_a_checkout_that_changed_while_measuring_is_no_grid(self):
+        out = self.root / "grid"
+        for label, change in (("tree", dict()),
+                              ("refused", dict(refuse=True))):
+            with self.subTest(label):
+                self.attempts.unlink(missing_ok=True)
+                if out.exists():
+                    shutil.rmtree(out)
+                with self.changing_after(2, **change):
+                    with self.assertRaises(tg.CheckoutChanged):
+                        self.first()
+                self.assertFalse((out / "decisions.json").exists())
+                self.assertEqual(self.closing(), [
+                    ("open", None), ("close", "checkout-changed")])
+
+    def test_a_second_stage_whose_checkout_changed_is_no_grid_either(self):
+        self.widen()
+        grid, _, _ = self.first()
+        with self.changing_after(2):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.go(self.extend_argv(grid))
+        self.assertFalse((self.root / "ext" / "decisions.json").exists())
+        self.assertEqual(self.closing()[-2:], [
+            ("open", None), ("close", "checkout-changed")])
+        self.assertEqual(self.ledger()[-1]["stage"], "second")
+
+    def test_a_second_stage_compares_the_checkout_before_the_first_replay(
+            self):
+        self.widen()
+        grid, _, _ = self.first()
+
+        def other_tree(repo, commit=None, stamp=None):
+            return dict(head=commit, tree_outside_performance="u" * 64)
+
+        def replayed(*args, **kw):
+            raise AssertionError("the first stage was replayed first")
+        with patch.object(tg, "checkout_identity", other_tree), \
+                patch.object(self.grid, "replay_grid", replayed):
+            with self.assertRaisesRegex(ValueError, "not the one the first"):
+                self.go(self.extend_argv(grid, "again"))
 
     def test_replay_sees_a_checkout_that_is_not_the_recorded_one(self):
         out, _, _ = self.first()
@@ -3192,11 +3464,9 @@ class Measuring(Rig):
         self.nothing_written()
 
 
-class Chain(Rig):
-    """The operator's whole sequence on a real repository, with git, the
-    checkout and the ledger as they are, and only the measurement faked:
-    pilot at X, predeclare, the counts committed as Y, run, extend and
-    replay of both stages."""
+class ChainRig(Rig):
+    """A real repository, with git, the checkout, the build stamp and the
+    ledger as they are, and only the build and the measurement faked."""
 
     def git(self, *args):
         return subprocess.run(
@@ -3208,29 +3478,50 @@ class Chain(Rig):
         return ()
 
     def make_table(self, **kw):
-        """The repository as it is at X: the sources, and a heap built after
-        them that git ignores."""
+        """The repository as it is at X: the sources, and the products a
+        build leaves, which git ignores."""
         if not hasattr(self, "base"):
             perf = self.repo / "src" / "simp" / "tests" / "performance"
             perf.mkdir(parents=True)
             (perf / "p.sml").write_text("val p = 1\n")
+            # As the project's, the counts file is in the performance area.
+            self.counts = perf / "toy_iterations.json"
             for name in ("one", "two"):
                 (self.repo / "src" / (name + ".sml")).write_text(
                     "val %s = 1\n" % name)
-            (self.repo / ".gitignore").write_text("bin/\n")
+            (self.repo / ".gitignore").write_text("bin/\nsigobj/\n")
             (self.repo / ".git" / "info" / "exclude").write_text(
                 ".agent-files\n")
             self.git("add", "-A")
             self.git("commit", "-q", "-m", "X")
             self.base = self.git("rev-parse", "HEAD")
             (self.repo / "bin").mkdir()
+            (self.repo / "bin" / "hol").write_text("executable")
             (self.repo / "bin" / "hol.state0").write_text("heap")
+            (self.repo / "sigobj").mkdir()
+            (self.repo / "sigobj" / "m.uo").write_text("object")
             self.pilot_revision = self.base
         kw.setdefault("baseline", self.base)
         kw.setdefault("ledger", None)
         return super().make_table(**kw)
 
+    def fake_launch(self, command, output, fds, timeout):
+        """The build, or a pilot process."""
+        if "bin/build" not in command:
+            return super().fake_launch(command, output, fds, timeout)
+        self.built.append(dict(command=command, output=output, fds=fds,
+                               timeout=timeout))
+        Path(output).write_text("build log\n")
+        self.build()
+        return dict(exit=self.build_exit, timed_out=False)
+
+    def build(self):
+        """What the build does to the checkout (nothing)."""
+
     def provision(self):
+        self.built, self.build_exit = [], 0
+        self.assertEqual(self.go(["prepare", "--repo", str(self.repo)])[0],
+                         0)
         self.make_pilot(self.pilot_dir)
         code, _ = self.go(["predeclare", "--grid", str(self.pilot_dir),
                            "--output", str(self.counts)])
@@ -3238,18 +3529,36 @@ class Chain(Rig):
         self.launched.clear()
         self.analyses.clear()
 
+    def prepare(self):
+        return self.go(["prepare", "--repo", str(self.repo)])
+
+    def stamp(self):
+        return (self.repo / ".agent-files" / "evidence" / "toy" /
+                "build-stamp.json")
+
     def commit_counts(self):
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "Y: the counts")
         self.candidate_commit = self.git("rev-parse", "HEAD")
         return self.candidate_commit
 
+    def commit_file(self, path, text, name="Z"):
+        (self.repo / path).write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
     def run_at(self, commit, name="grid", *extra):
         return self.go(self.argv("run", self.root / name, "--candidate",
                                  commit, "--authorize-measurements",
                                  *extra))
 
-    def test_pilot_predeclare_commit_run_extend_and_replay(self):
+
+class Chain(ChainRig):
+    """The operator's whole sequence: prepare and pilot at X, predeclare,
+    the counts committed as Y, run, extend and replay of both stages."""
+
+    def test_prepare_pilot_predeclare_commit_run_extend_and_replay(self):
         self.control = lambda case, size, pairs, seed: (
             GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
             else WIDE)
@@ -3261,6 +3570,7 @@ class Chain(Rig):
         self.assertEqual(self.go(["verify-counts", "--grid",
                                   str(self.pilot_dir)])[0], 0)
         # The control leaves one cell open, which the second stage settles.
+        # No second prepare: the commit touched only the performance area.
         status, text = self.run_at(y)
         self.assertEqual(status, 2, text)
         grid, ext = self.root / "grid", self.root / "ext"
@@ -3274,7 +3584,8 @@ class Chain(Rig):
         for stage, expected in ((grid, 2), (ext, 0)):
             status, text = self.go(self.replay_argv(stage))
             self.assertEqual(status, expected, text)
-        self.assertIn("ATTEMPTS of %s: 2 in the ledger" % y, text)
+        self.assertIn("ATTEMPTS of TOY: 2 in the ledger, 2 of this "
+                      "candidate %s" % y, text)
         self.assertEqual(self.git("rev-parse", "refs/performance/toy/" + y),
                          y)
         where = self.repo / ".agent-files" / "evidence" / "toy"
@@ -3298,18 +3609,45 @@ class Chain(Rig):
     def test_an_edited_checkout_is_refused(self):
         y = self.commit_counts()
         (self.repo / "src" / "one.sml").write_text("val one = 2\n")
-        os.utime(self.repo / "bin" / "hol.state0")
         with self.assertRaisesRegex(ValueError, "not clean"):
             self.run_at(y)
         self.assertEqual(self.calls, 0)
 
-    def test_a_heap_older_than_a_source_is_refused(self):
+    def test_an_edited_product_is_refused_until_prepare_is_run(self):
         y = self.commit_counts()
-        old = (self.repo / "bin" / "hol.state0").stat().st_mtime - 100
-        os.utime(self.repo / "bin" / "hol.state0", (old, old))
-        with self.assertRaisesRegex(ValueError, "heap is older"):
+        (self.repo / "bin" / "hol.state0").write_text("another heap")
+        with self.assertRaisesRegex(ValueError, "run prepare at this "
+                                    "commit"):
             self.run_at(y)
         self.assertEqual(self.calls, 0)
+        self.assertEqual(self.prepare()[0], 0)
+        self.assertEqual(self.run_at(y)[0], 0)
+
+    def test_a_source_change_outside_the_performance_area_needs_prepare(self):
+        self.commit_counts()
+        z = self.commit_file("src/three.sml", "val three = 1\n")
+        with self.assertRaisesRegex(ValueError, "run prepare at this "
+                                    "commit"):
+            self.run_at(z)
+        self.assertEqual(self.calls, 0)
+        self.assertEqual(self.prepare()[0], 0)
+        self.assertEqual(self.run_at(z)[0], 0)
+
+    def test_a_touched_heap_and_a_round_trip_pass(self):
+        y = self.commit_counts()
+        os.utime(self.repo / "bin" / "hol.state0", (4e9, 4e9))
+        main = self.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.git("checkout", "-q", "-b", "side", self.base)
+        self.git("checkout", "-q", main)
+        self.assertEqual(self.run_at(y)[0], 0)
+
+    def test_the_counts_commit_needs_no_second_prepare(self):
+        # The stamp of X is the stamp of Y: the performance area is left out
+        # of the tree it binds.
+        before = json.loads(self.stamp().read_text())
+        y = self.commit_counts()
+        self.assertEqual(self.run_at(y)[0], 0)
+        self.assertEqual(json.loads(self.stamp().read_text()), before)
 
     def test_a_counts_file_committed_twice_is_refused(self):
         self.commit_counts()
@@ -3318,6 +3656,109 @@ class Chain(Rig):
         with self.assertRaisesRegex(ValueError, "exactly one commit"):
             self.run_at(self.git("rev-parse", "HEAD"))
         self.assertEqual(self.calls, 0)
+
+    # prepare ------------------------------------------------------------
+
+    def test_prepare_runs_the_real_build_in_the_root_and_stamps(self):
+        y = self.commit_counts()
+        self.stamp().unlink()
+        status, text = self.prepare()
+        self.assertEqual(status, 0, text)
+        built = self.built[-1]
+        self.assertEqual(built["command"][-2:], list(tg.BUILD))
+        self.assertEqual(tg.BUILD, ("bin/build",
+                                    "--seq=tools/sequences/upto-parallel"))
+        self.assertIn(str(self.repo.resolve()), built["command"])
+        self.assertEqual(built["timeout"], tg.BUILD_TIMEOUT)
+        self.assertEqual(built["output"].parent, self.stamp().parent)
+        self.assertRegex(built["output"].name,
+                         r"^prepare-\d{8}T\d{6}Z(-\d+)?\.log$")
+        stamp = json.loads(self.stamp().read_text())
+        self.assertEqual(stamp, tg.build_stamp(self.repo))
+        self.assertEqual(stamp["head"], y)
+        self.assertIn("PREPARED %s" % y, text)
+
+    def test_prepare_runs_the_build_under_the_lock(self):
+        self.commit_counts()
+        self.stamp().unlink()
+        built = len(self.built)
+        with a.serial_lock(self.repo):
+            with self.assertRaises(a.Blocked):
+                self.prepare()
+        self.assertEqual(len(self.built), built)
+        self.assertFalse(self.stamp().exists())
+        seen = []
+        real = self.fake_launch
+
+        def holding(command, output, fds, timeout):
+            seen.append(fds)
+            return real(command, output, fds, timeout)
+        with patch.object(a, "run_logged", holding):
+            self.assertEqual(self.prepare()[0], 0)
+        self.assertTrue(seen[0])
+
+    def test_prepare_needs_a_clean_checkout(self):
+        built = len(self.built)
+        before = self.stamp().read_bytes()
+        (self.repo / "src" / "one.sml").write_text("val one = 2\n")
+        with self.assertRaisesRegex(ValueError, "not clean"):
+            self.prepare()
+        self.assertEqual((len(self.built), self.stamp().read_bytes()),
+                         (built, before))
+
+    def test_a_failed_build_writes_no_stamp_and_removes_the_old_one(self):
+        y = self.commit_counts()
+        self.assertTrue(self.stamp().exists())
+        self.build_exit = 2
+        with self.assertRaisesRegex(ValueError, "build failed \\(exit 2\\)"
+                                    ", no build stamp"):
+            self.prepare()
+        self.assertFalse(self.stamp().exists())
+        with self.assertRaisesRegex(ValueError, "no build stamp.*run "
+                                    "prepare at this commit"):
+            self.run_at(y)
+
+    def test_a_timed_out_build_writes_no_stamp(self):
+        self.commit_counts()
+        real = self.fake_launch
+        patched = lambda *args: dict(real(*args), timed_out=True)
+        with patch.object(a, "run_logged", patched):
+            with self.assertRaisesRegex(ValueError, "timed out"):
+                self.prepare()
+        self.assertFalse(self.stamp().exists())
+
+    def test_an_interrupted_build_leaves_no_stamp(self):
+        self.commit_counts()
+        def interrupted(*args):
+            raise KeyboardInterrupt
+        with patch.object(a, "run_logged", interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                self.prepare()
+        self.assertFalse(self.stamp().exists())
+
+    def test_a_build_that_leaves_the_checkout_unclean_writes_no_stamp(self):
+        self.commit_counts()
+        def dirty():
+            (self.repo / "src" / "one.sml").write_text("val one = 9\n")
+        self.build = dirty
+        with self.assertRaisesRegex(ValueError, "left the checkout "
+                                    "unusable, no build stamp"):
+            self.prepare()
+        self.assertFalse(self.stamp().exists())
+
+    def test_prepare_checks_the_place_of_the_ledger(self):
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.write_text("")
+        built = len(self.built)
+        with self.assertRaisesRegex(ValueError, "would be tracked by git"):
+            self.prepare()
+        self.assertEqual(len(self.built), built)
+
+    def test_a_table_without_fixed_seconds_takes_no_stamp(self):
+        grid = tg.Grid(tg.Table("toy", "TOY", CASES, self.driver,
+                                self.counts))
+        with self.assertRaisesRegex(ValueError, "takes no build stamp"):
+            grid.main(["prepare", "--repo", str(self.repo)])
 
 
 class Options(Rig):
@@ -3535,7 +3976,8 @@ class Git(unittest.TestCase):
 class Checkout(unittest.TestCase):
     """The checkout a measurement runs in (checkout_identity), and the ref
     that keeps what was measured, on a private repository shaped like the
-    project's: sources, the performance area, and an ignored heap."""
+    project's: sources, the performance area, and ignored products (the
+    executable, the heap, sigobj with links, as `prepare` stamps them)."""
 
     git = Git.git
 
@@ -3545,53 +3987,160 @@ class Checkout(unittest.TestCase):
         perf.mkdir(parents=True)
         (perf / "p.sml").write_text("val p = 1\n")
         (self.repo / "src" / "a.sml").write_text("val a = 1\n")
-        (self.repo / ".gitignore").write_text("bin/\n")
+        simp = self.repo / "src" / "simp" / "src"
+        simp.mkdir(parents=True)
+        (simp / "s.sml").write_text("val s = 1\n")
+        (self.repo / ".gitignore").write_text(
+            "bin/\nsigobj/\n.hol\n.agent-files\n")
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "sources")
         self.head = self.git("rev-parse", "HEAD")
         (self.repo / "bin").mkdir()
+        self.hol = self.repo / "bin" / "hol"
         self.heap = self.repo / "bin" / "hol.state0"
+        self.hol.write_text("executable")
         self.heap.write_text("heap")
+        # sigobj holds links into the built directories, as the real one.
+        built = self.repo / "src" / ".hol" / "objs"
+        built.mkdir(parents=True)
+        (self.repo / "sigobj").mkdir()
+        self.product = built / "aTheory.uo"
+        self.product.write_text("object")
+        (self.repo / "sigobj" / "aTheory.uo").symlink_to(self.product)
+        self.stamp = self.repo / ".agent-files" / "build-stamp.json"
+        self.stamp.parent.mkdir()
         self.perf = perf
+        self.prepare()
 
-    def age(self, path, seconds):
-        stamp = self.heap.stat().st_mtime + seconds
-        os.utime(path, (stamp, stamp))
+    def prepare(self):
+        """What `prepare` writes after a build that succeeded."""
+        self.stamp.write_text(json.dumps(tg.build_stamp(self.repo)))
 
-    def test_a_clean_checkout_at_the_commit_with_a_fresh_heap(self):
-        self.age(self.repo / "src" / "a.sml", -10)
-        found = tg.checkout_identity(self.repo, self.head)
+    def identity(self, commit="head"):
+        return tg.checkout_identity(
+            self.repo, self.head if commit == "head" else commit, self.stamp)
+
+    def test_a_stamped_clean_checkout_at_the_commit_is_the_identity(self):
+        found = self.identity()
         self.assertEqual(found, dict(
             head=self.head, tree_outside_performance=tg.git_tree_outside(
                 self.repo, self.head)))
-        self.assertEqual(tg.checkout_identity(self.repo), found)
-        # A file of the performance area changed after the heap was built
-        # is no reason: the heap does not read it.
-        self.age(self.perf / "p.sml", 10)
-        self.assertEqual(tg.checkout_identity(self.repo, self.head), found)
+        self.assertEqual(self.identity(None), found)
+        stamped = json.loads(self.stamp.read_text())
+        self.assertEqual(sorted(stamped), ["head", "products",
+                                           "tree_outside_performance"])
+        self.assertEqual(stamped["head"], self.head)
+        self.assertEqual(stamped["products"]["files"], 3)
 
     def test_the_head_must_be_the_commit_measured(self):
-        self.age(self.repo / "src" / "a.sml", -10)
         with self.assertRaisesRegex(ValueError, "not at the commit"):
-            tg.checkout_identity(self.repo, self.third)
+            self.identity(self.third)
 
     def test_an_unclean_tree_is_refused(self):
-        self.age(self.repo / "src" / "a.sml", -10)
         (self.repo / "src" / "a.sml").write_text("val a = 2\n")
-        self.age(self.repo / "src" / "a.sml", -10)
         with self.assertRaisesRegex(ValueError, "not clean"):
-            tg.checkout_identity(self.repo, self.head)
+            self.identity()
 
-    def test_a_missing_heap_is_refused(self):
-        self.heap.unlink()
-        with self.assertRaisesRegex(ValueError, "no heap"):
-            tg.checkout_identity(self.repo, self.head)
+    def test_a_checkout_without_a_usable_stamp_is_refused(self):
+        self.stamp.unlink()
+        with self.assertRaisesRegex(ValueError, "no build stamp.*run "
+                                    "prepare at this commit"):
+            self.identity()
+        for what, text in (("text", "not json"), ("list", "[]"),
+                           ("keys", json.dumps(dict(head=self.head)))):
+            with self.subTest(what):
+                self.stamp.write_text(text)
+                with self.assertRaisesRegex(ValueError, "malformed build "
+                                            "stamp.*run prepare at this "
+                                            "commit"):
+                    self.identity()
 
-    def test_a_heap_older_than_a_source_is_refused(self):
-        self.age(self.repo / "src" / "a.sml", 10)
-        with self.assertRaisesRegex(ValueError, "heap is older than "
-                                    "src/a.sml"):
-            tg.checkout_identity(self.repo, self.head)
+    def test_a_commit_touching_only_the_performance_area_passes(self):
+        # The counts file is committed after the checkout was prepared.
+        found = self.identity()
+        (self.perf / "counts.json").write_text("{}\n")
+        (self.perf / "p.sml").write_text("val p = 2\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "counts")
+        self.assertEqual(
+            tg.checkout_identity(self.repo, self.git("rev-parse", "HEAD"),
+                                 self.stamp)["tree_outside_performance"],
+            found["tree_outside_performance"])
+
+    def test_a_round_trip_to_the_same_tree_passes(self):
+        # Git rewrites the files of a commit it passes through; the content
+        # at the end is the same, only the times differ.
+        main = self.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.git("checkout", "-q", "-b", "side")
+        (self.repo / "src" / "a.sml").write_text("val a = 2\n")
+        (self.repo / "src" / "simp" / "src" / "s.sml").write_text(
+            "val s = 2\n")
+        self.git("commit", "-q", "-a", "-m", "side")
+        self.git("checkout", "-q", main)
+        stamp = self.stamp.read_bytes()
+        self.assertEqual(self.identity()["head"], self.head)
+        self.assertEqual(self.stamp.read_bytes(), stamp)
+
+    def test_a_touched_heap_passes_for_the_content_is_the_same(self):
+        for path in (self.heap, self.hol, self.product):
+            os.utime(path, (4_000_000_000, 4_000_000_000))
+        for path in (self.repo / "src" / "a.sml", self.perf / "p.sml"):
+            os.utime(path, (4_000_000_001, 4_000_000_001))
+        self.assertEqual(self.identity()["head"], self.head)
+
+    def test_an_edited_product_is_refused(self):
+        sigobj = self.repo / "sigobj"
+        for label, change, undo in (
+                ("heap", lambda: self.heap.write_text("other"),
+                 lambda: self.heap.write_text("heap")),
+                ("executable", lambda: self.hol.write_text("other"),
+                 lambda: self.hol.write_text("executable")),
+                ("linked file", lambda: self.product.write_text("other"),
+                 lambda: self.product.write_text("object")),
+                ("added file", lambda: (sigobj / "b.ui").write_text("x"),
+                 lambda: (sigobj / "b.ui").unlink()),
+                ("removed link", lambda: (sigobj / "aTheory.uo").unlink(),
+                 lambda: (sigobj / "aTheory.uo").symlink_to(self.product)),
+                ("heap removed", self.heap.unlink,
+                 lambda: self.heap.write_text("heap"))):
+            with self.subTest(label):
+                change()
+                with self.assertRaisesRegex(ValueError, "differ from the "
+                                            "stamped build.*run prepare at "
+                                            "this commit|no product"):
+                    self.identity()
+                undo()
+                self.assertEqual(self.identity()["head"], self.head)
+
+    def test_a_dangling_link_in_sigobj_is_refused(self):
+        self.product.unlink()
+        with self.assertRaisesRegex(ValueError, "no product"):
+            self.identity()
+
+    def test_a_source_changed_outside_the_performance_area_is_refused(self):
+        for path in ("src/a.sml", "src/simp/src/s.sml"):
+            with self.subTest(path):
+                (self.repo / path).write_text("val x = 3\n")
+                self.git("commit", "-q", "-a", "-m", path)
+                with self.assertRaisesRegex(ValueError, "run prepare at "
+                                            "this commit"):
+                    tg.checkout_identity(
+                        self.repo, self.git("rev-parse", "HEAD"),
+                        self.stamp)
+                # `prepare` stamps this tree, and then it passes.
+                self.prepare()
+                self.assertEqual(
+                    self.identity(self.git("rev-parse", "HEAD"))["head"],
+                    self.git("rev-parse", "HEAD"))
+
+    def test_no_file_time_is_read(self):
+        # A source newer than the heap (the old check refused it) and a
+        # heap older than every source change nothing.
+        for path in (self.repo / "src" / "a.sml",
+                     self.repo / "src" / "simp" / "src" / "s.sml"):
+            os.utime(path, (4_000_000_000, 4_000_000_000))
+        os.utime(self.heap, (1_000_000_000, 1_000_000_000))
+        self.assertEqual(self.identity()["head"], self.head)
 
     def test_the_tree_seal_leaves_the_performance_area_out(self):
         before = tg.git_tree_outside(self.repo, self.head)

@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,6 +23,7 @@ import task30_cases as cases
 import task30_grid as t30
 import task30_pins as pins
 import test_timing_grid as ttg
+import timing_grid as tg
 
 
 REPO = a.HERE.parents[3]
@@ -126,8 +128,18 @@ class Table(unittest.TestCase):
         table = t30.TABLE
         self.assertNotIn("task30_pins.py", table.sealed)
         self.assertEqual(table.pinned, pins.PINNED)
-        self.assertEqual(table.pin_history, t30.PIN_HISTORY)
+        self.assertEqual(table.pin_history, pins.PIN_HISTORY)
         self.assertTrue((table.home / "task30_pins.py").is_file())
+
+    def test_the_pin_history_is_kept_in_the_pin_file_not_in_the_driver(self):
+        # A change of the history is a change of the pin file, whose seal a
+        # grid records apart from the driver's: adding to it leaves the
+        # driver, and so every earlier grid's driver seal, alone.
+        self.assertFalse(hasattr(t30, "PIN_HISTORY"))
+        driver = (t30.a.HERE / "task30_grid.py").read_text()
+        self.assertNotIn("PIN_HISTORY =", driver)
+        self.assertIn("PIN_HISTORY =", (t30.a.HERE / "task30_pins.py"
+                                        ).read_text())
 
     def test_the_matrix_fixtures_are_sealed_with_the_driver(self):
         for name in ("MatrixSupport.sml", "MatrixPerformance.sml"):
@@ -316,9 +328,21 @@ class Closing(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.replayed = []
         self.timing(), self.counted()
+        # The ledger of the checkout the timing grid was made in: three
+        # attempts, two of this candidate.
+        self.ledger = self.root / "attempts.jsonl"
+        for name, candidate, events in (
+                ("a" * 32, self.CANDIDATE, ("open", "close")),
+                ("b" * 32, "d" * 40, ("open", "close")),
+                ("c" * 32, self.CANDIDATE, ("open",))):
+            for event in events:
+                tg.ledger_append(
+                    self.ledger, event=event, stage="first", attempt=name,
+                    candidate=candidate, status="pass", checkout="/here")
 
     def fake_timing(self, args):
-        self.replayed.append(("timing", args.output, args.pilot))
+        self.replayed.append(("timing", args.output, args.pilot,
+                              args.ledger))
         return self.codes["timing"]
 
     def fake_allocation(self, args):
@@ -350,7 +374,8 @@ class Closing(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             code = t30.main(["close", "--grid", str(self.grid), "--pilot",
                              str(self.pilot), "--allocation",
-                             str(self.allocation), "--repo", str(REPO)])
+                             str(self.allocation), "--repo", str(REPO),
+                             "--ledger", str(self.ledger)])
         return code, out.getvalue()
 
     def test_two_passes_of_one_candidate_in_one_harness_are_one_pass(self):
@@ -358,12 +383,13 @@ class Closing(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual([k for k, *_ in self.replayed],
                          ["timing", "allocation"])
-        self.assertEqual(self.replayed[0][1:], (self.grid.resolve(),
-                                                self.pilot.resolve()))
+        self.assertEqual(self.replayed[0][1:], (
+            self.grid.resolve(), self.pilot.resolve(), self.ledger))
         verdicts = [x for x in text.splitlines() if "closing verdict" in x]
         self.assertEqual(verdicts, [
             "TASK30 closing verdict: pass (timing pass, allocation pass; "
-            "candidate %s, harness %s)" % (self.CANDIDATE, self.HARNESS)])
+            "candidate %s, harness %s; attempts 3 in the ledger, 2 of the "
+            "candidate)" % (self.CANDIDATE, self.HARNESS)])
 
     def test_either_gate_that_is_not_a_pass_is_not_a_pass(self):
         for timing, allocation, code in ((1, 0, 1), (0, 1, 1), (2, 0, 2),
@@ -381,6 +407,28 @@ class Closing(unittest.TestCase):
             self.close()
         self.counted(baseline="b" * 40)
         with self.assertRaisesRegex(ValueError, "different baselines"):
+            self.close()
+
+    def test_the_cheap_comparisons_come_before_the_replays(self):
+        # Neither gate is replayed in full for a pair that cannot close.
+        self.counted(candidate="d" * 40)
+        with self.assertRaises(ValueError):
+            self.close()
+        self.counted(harness=dict(head="e" * 40))
+        with self.assertRaises(ValueError):
+            self.close()
+        self.counted(task="task29b")
+        with self.assertRaises(ValueError):
+            self.close()
+        self.counted()
+        (self.allocation / "decisions.json").unlink()
+        with self.assertRaises(ValueError):
+            self.close()
+        self.assertEqual(self.replayed, [])
+
+    def test_close_reads_a_ledger_that_exists(self):
+        self.ledger.unlink()
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
             self.close()
 
     def test_the_two_grids_must_have_run_in_one_harness(self):
@@ -425,6 +473,106 @@ class Closing(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()):
                 t30.main(["close", *(x for kv in argv.items()
                                      for x in kv)])
+
+
+class RealChain(ttg.ChainRig):
+    """The operator's sequence on the real TASK30 table: its cells, seals and
+    pins, real git and the real checkout binding, the real harness binding of
+    the allocation gate and the real `close`. Only the build, the
+    measurement and the allocation replay are stand-ins. The repository is a
+    sparse shared clone of this one at its HEAD (the baseline and the
+    reviewed sources are in its history), with the products a build leaves."""
+    pairs, samples = 20, 5
+
+    def setUp(self):
+        if git("rev-parse", "--git-dir") is None or \
+                git("cat-file", "-e", a.BASE + "^{commit}") is None:
+            self.skipTest("needs a checkout holding the baseline commit")
+        self.head = git("rev-parse", "HEAD")
+        for path, pin in pins.PINNED.items():
+            if git("rev-parse", "%s:%s" % (self.head, path)) != pin["blob"]:
+                self.skipTest("the pins are not those of HEAD: " + path)
+        import allocation_matrix as am
+        self.am = am
+        inputs, fixtures = am.harness_files(am.task_named("task30"))
+        self.harness = [p for p in inputs + fixtures
+                        if p.name != "task30_iterations.json"]
+        if any(git("rev-parse", "%s:%s" % (
+                self.head, p.relative_to(REPO).as_posix())) is None
+                for p in self.harness):
+            self.skipTest("needs the harness files committed")
+        super().setUp()
+
+    def make_table(self, **kw):
+        if not hasattr(self, "base"):
+            shutil.rmtree(self.repo)
+            clone = ["git", "clone", "-q", "--shared", "--no-checkout",
+                     str(REPO), str(self.repo)]
+            subprocess.run(clone, check=True)
+            self.git("sparse-checkout", "set", "--cone", "bin",
+                     "src/simp/tests")
+            self.git("-c", "advice.detachedHead=false", "checkout", "-q",
+                     "--detach", self.head)
+            (self.repo / ".git" / "info" / "exclude").write_text(
+                ".agent-files\n")
+            perf = self.repo / a.HERE.relative_to(REPO)
+            self.counts = perf / "task30_iterations.json"
+            if self.counts.exists():
+                # Counts are committed: this chain starts before them.
+                self.git("rm", "-q", "-f", str(self.counts))
+                self.git("commit", "-q", "-m", "X: without the counts")
+            self.base = self.git("rev-parse", "HEAD")
+            (self.repo / "bin" / "hol").write_text("executable")
+            (self.repo / "bin" / "hol.state0").write_text("heap")
+            (self.repo / "sigobj").mkdir()
+            (self.repo / "sigobj" / "m.uo").write_text("object")
+            self.pilot_revision = a.BASE
+        table = copy.copy(t30.TABLE)
+        table.counts, table.ledger = self.counts, None
+        return table
+
+    def test_the_whole_sequence_from_prepare_to_the_closing_verdict(self):
+        y = self.commit_counts()
+        status, text = self.run_at(y)
+        self.assertEqual(status, 0, text)
+        self.assertIn("TASK30 grid: pass (pass 144, fail 0", text)
+        grid = self.root / "grid"
+        first = self.inventory(grid)
+        self.assertEqual((first["candidate"], first["counts_commit"],
+                          first["checkout"]["head"]), (y, y, y))
+        self.assertEqual(len(self.runs), 144)
+        decisions = json.loads((grid / "decisions.json").read_text())
+        self.assertEqual(decisions["source_identity"]["differing"], [])
+        self.assertEqual(decisions["source_identity"]["reviewed"],
+                         pins.PINNED)
+        self.assertEqual(self.go(self.replay_argv(grid))[0], 0)
+        # The allocation gate's own harness binding, at Y, in this checkout.
+        move = lambda files: [self.repo / p.relative_to(REPO)
+                              for p in files]
+        inputs, fixtures = self.am.harness_files(self.am.task_named("task30"))
+        binding = self.am.harness_binding(
+            self.repo, y, move(inputs), move(fixtures))
+        self.assertEqual(binding["head"], y)
+        counted = self.root / "allocation"
+        counted.mkdir()
+        (counted / "inventory.json").write_text(json.dumps(dict(
+            task="task30", candidate=y, baseline=a.BASE, harness=binding)))
+        (counted / "decisions.json").write_text(json.dumps(
+            dict(status="pass")))
+        out = io.StringIO()
+        with unittest.mock.patch.object(t30, "ENGINE", self.grid), \
+                unittest.mock.patch.object(t30, "TABLE", self.table), \
+                unittest.mock.patch.object(self.am, "replay",
+                                           lambda args: 0), \
+                contextlib.redirect_stdout(out):
+            code = t30.main(["close", "--grid", str(grid), "--pilot",
+                             str(self.pilot_dir), "--allocation",
+                             str(counted), "--repo", str(self.repo)])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("TASK30 closing verdict: pass (timing pass, allocation "
+                      "pass; candidate %s, harness %s; attempts 1 in the "
+                      "ledger, 1 of the candidate)" % (y, y), out.getvalue())
+        self.assertEqual(self.git("status", "--porcelain"), "")
 
 
 tearDownModule = ttg.tearDownModule

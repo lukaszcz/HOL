@@ -28,13 +28,19 @@ is a reviewed difference pinned in task30_pins.PINNED, which the counts are
 not bound to. `run`, `extend` and `replay` take the pilot the counts derive
 from (`--pilot DIR`, derived again in full); every run is recorded in the
 table's attempts ledger, `.agent-files/evidence/task30/attempts.jsonl` below
-the checkout.
+the checkout it was made in (a grid and its retries stay in that one
+checkout; `replay` and `close` may read the ledger of another with
+`--ledger FILE`). The checkout is built and stamped by `prepare` (the real
+`bin/build`, which Holmake judges), and every measuring command compares the
+tree outside the performance area and the contents of bin/hol,
+bin/hol.state0 and sigobj with the stamp.
 
 The exit status is zero only when every cell passes. Failed, inconclusive,
 control-limited and protocol-failed cells are listed separately and none is
 excused here; a disposition, if one is ever made, is a separate reviewed
 decision.
 
+  prepare     build the checkout and stamp it            (takes the lock)
   pilot       develop-only cells for the counts          (needs a window)
   predeclare  counts file from a pilot, or a revision of the last file
               (--revises PREVIOUS --rescale CELL [CELL ...], or
@@ -45,7 +51,7 @@ decision.
   replay      recompute every archived decision offline (--pilot)
   close       replay the timing grid and the allocation grid, require one
               candidate and one harness, print the single closing verdict
-              (--grid, --pilot, --allocation)
+              (--grid, --pilot, --allocation, [--ledger])
 """
 import argparse
 from pathlib import Path
@@ -81,33 +87,26 @@ INSTALLED = (
     if p.suffix == ".sml" or p.name == "Holmakefile")
 SEALED = ("task30_cases.py", "task29_gate.py", "matrix_schema.py",
           "performance_schema.py", "evidence_bundle.py") + INSTALLED
-# The sha256 of an earlier version of task30_pins.py and the pins it held,
-# for the grids that were judged by them (see that file).
-PIN_HISTORY = {}
 TABLE = tg.Table(
     "task30", "TASK30", cases.CASES, __file__, COUNTS, seconds=SECONDS,
     seconds_by_case={c: LONG_SECONDS for c in cases.DELETIONS},
     fixed_seconds=True, pairs=PAIRS, samples=SAMPLES, seed=LAYOUT_SEED,
     baseline=a.BASE, engine=True, engines=(), tree="src", sealed=SEALED,
     sources=cases.SOURCES, pinned=pins.PINNED, pin_file="task30_pins.py",
-    pin_history=PIN_HISTORY, require_seed=True,
+    pin_history=pins.PIN_HISTORY, require_seed=True,
     allocation="the separate gate of allocation_matrix.py --task task30, "
     "all 24 cases at six sizes")
 ENGINE = tg.Grid(TABLE, doc=__doc__)
 
 
-def verdict(grid, allocation, repo, pilot):
+def verdict(grid, allocation, repo, pilot, ledger=None):
     """Replay both gates, require that they measured one candidate with one
     harness, and return the closing line and the exit status. Nothing is
-    excused: any status but pass in either gate is not a pass here."""
+    excused: any status but pass in either gate is not a pass here. The
+    cheap comparisons of the two inventories come before the replays."""
     import allocation_matrix as am
-    timing_code = ENGINE.replay(argparse.Namespace(
-        output=grid, partial=False, repo=repo, pilot=pilot))
-    for line in tg.class_report(TABLE.label, a.load(grid / "decisions.json")):
-        print(line)
     a.require((allocation / "decisions.json").exists(),
               "the allocation grid is partial: it has no decisions")
-    allocation_code = am.replay(argparse.Namespace(output=allocation))
     timing = a.load(grid / "inventory.json")
     counted = a.load(allocation / "inventory.json")
     harness = counted.get("harness", {})
@@ -125,18 +124,26 @@ def verdict(grid, allocation, repo, pilot):
         harness.get("dirty") is False,
         "the two grids ran in different harnesses (head %s and %s)"
         % (timing["checkout"]["head"], harness.get("head")))
+    timing_code = ENGINE.replay(argparse.Namespace(
+        output=grid, partial=False, repo=repo, pilot=pilot, ledger=ledger))
+    for line in tg.class_report(TABLE.label, a.load(grid / "decisions.json")):
+        print(line)
+    allocation_code = am.replay(argparse.Namespace(output=allocation))
+    total, mine = ENGINE.ledger_counts(argparse.Namespace(
+        repo=repo, ledger=ledger), timing["candidate"])
     states = [a.load(grid / "decisions.json")["status"],
               a.load(allocation / "decisions.json")["status"]]
     code = max(timing_code, allocation_code)
     result = "pass" if code == 0 else "not pass"
     return ("%s closing verdict: %s (timing %s, allocation %s; candidate %s, "
-            "harness %s)" % (TABLE.label, result, states[0], states[1],
-                             timing["candidate"], harness["head"]), code)
+            "harness %s; attempts %d in the ledger, %d of the candidate)"
+            % (TABLE.label, result, states[0], states[1],
+               timing["candidate"], harness["head"], total, mine), code)
 
 
 def close(args):
     line, code = verdict(args.grid.resolve(), args.allocation.resolve(),
-                         args.repo, args.pilot.resolve())
+                         args.repo, args.pilot.resolve(), args.ledger)
     print(line)
     return code
 
@@ -152,6 +159,9 @@ def main(argv=None):
                             help="the output of allocation_matrix.py "
                             "run --task task30")
         parser.add_argument("--repo", type=Path, default=a.HERE.parents[3])
+        parser.add_argument("--ledger", type=Path,
+                            help="read this attempts ledger, of the "
+                            "checkout the timing grid was made in")
     return ENGINE.main(argv, extra=dict(close=(configure, close)))
 
 

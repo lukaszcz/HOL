@@ -6,7 +6,8 @@ counts derive from develop-only measurements, so this file is not among the
 counts were made. Its seal is recorded in the inventory of every grid
 instead (`pins`), so a grid replays with the pins it was judged by: when
 this file changes, the sha256 of its earlier version and the pins that
-version held are added to `PIN_HISTORY` of task30_grid.py.
+version held are added to `PIN_HISTORY` below. The history lives here, and
+not in task30_grid.py, so that adding to it changes no driver seal.
 """
 
 # Differences from the baseline in SOURCES that were reviewed and are
@@ -35,3 +36,8 @@ PINNED = {
         reason="New file: the signature of the moved rewrite-tracking "
         "code."),
 }
+
+# The sha256 (hex) of each earlier version of this file, changed after
+# grids were judged by it, mapped to the pins that version held, for the
+# grids that were judged by them.
+PIN_HISTORY = {}
