@@ -733,7 +733,11 @@ struct
     fun prepare_in_scope work
         {frame,conversion,ordinal,native_contract,profiles,check_type}=
       protect work (fn()=>
-      (NC.validate_for work native_contract;W.with_step work (fn()=>
+      ((* Reject a foreign immutable recipe before NC/with_step can debit
+          priced Work. This grants no validation credit: guard still checks
+          every live leaf on the same Work below. *)
+       C.validate_conversion_header_for work conversion;
+       NC.validate_for work native_contract;W.with_step work (fn()=>
       let
         val incoming=Scope.description_with_policy_for work frame
         val owner={work=work,graph= #graph incoming,root= #root incoming,

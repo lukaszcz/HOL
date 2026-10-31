@@ -29738,29 +29738,31 @@ let
         val rows=ref 0
         val plan=C.graph_conversion g r false
           (fn _ => (rows:= !rows+1;NONE)) node
-    in (plan,12+8*IntInf.fromInt (!rows)) end
+    (* Policy Work without a wrapper: dispatch8, map quote4+8*rows,
+       reverse terminal1 cold; dispatch8 and empty slot terminal1 warm. *)
+    in (plan,13+8*IntInf.fromInt (!rows)) end
   fun leave w amount =
     case W.remaining_policy w of
         RP.AtMost n => W.with_step w
           (fn () => W.spend_policy w (n-amount))
       | _ => raise Fail "finite guard fixture lost its allowance"
-  fun verify w plan fee =
+  fun verify w plan cold warm =
     let val prior=charged w val native=Count.thm_count ()
         val _=C.validate_conversion_with_policy w plan
         val middle=charged w
         val _=W.with_step w
           (fn () => C.validate_conversion_with_policy w plan)
-    in require "legacy map walk was unpaid, cached or admitted native work"
-      (middle=prior+fee andalso charged w=middle+fee andalso
+    in require "map projection lost cold/warm payment or admitted native work"
+      (middle=prior+cold andalso charged w=middle+warm andalso
        not (#retired (W.audit_policy w)) andalso
        Count.thm_count ()=native) end
 in
-  test "Legacy NONE-slot maps pay each Idle/Busy scan at both sizes"
+  test "Legacy NONE-slot maps pay exact cold/warm costs at both sizes"
     (fn () => List.app (fn size =>
       let val e=setup 1000000
           val (plan,fee)=recipe (#g e) (#r e) size
-      in verify (#w e) plan fee;W.close (#w e) end) [1,128]);
-  test "Checked schema and shared sequence pay every legacy occurrence"
+      in verify (#w e) plan fee 9;W.close (#w e) end) [1,128]);
+  test "Checked schema and shared sequence pay exact cold/warm occurrences"
     (fn () =>
       let val e=setup 1000000 val g= #g e val r= #r e val w= #w e
           val hole=Term.mk_var ("guard_schema_hole",Type.bool)
@@ -29775,7 +29777,9 @@ in
             {first=plan,second=identity,observe=fn()=>()}
           val shared=C.graph_sequence g r
             {first=sequence,second=identity,observe=fn()=>()}
-      in verify w plan 20;verify w shared 76;W.close w end);
+          (* plan is warm before shared: two sequence dispatches16,
+             plan9, identity21 then9 cold; all three leaves9 warm. *)
+      in verify w plan 21 9;verify w shared 55 43;W.close w end);
   test "Processed GP owner guards pay duplicate assumptions on every call"
     (fn () =>
       let val g=G.new () val r=G.root_scope g
@@ -29800,10 +29804,12 @@ in
           val _=GP.validate_with_policy w validation
           val middle=charged w
           val _=W.with_step w (fn()=>GP.validate_with_policy w validation)
+          (* Each of three distinct five-row maps costs53 cold,9 warm;
+             two assumption links2 each and the list terminal1 add5. *)
       in require "GP owner guard omitted legacy rows/duplicate occurrences"
-        (middle=prior+161 andalso charged w=middle+161 andalso
+        (middle=prior+164 andalso charged w=middle+32 andalso
          Count.thm_count ()=native);W.close w end);
-  test "Legacy map admission is prospective at exact and short allowance"
+  test "Full cold validation admits exactly its fee, not one unit less"
     (fn () =>
       let val exact=setup 1000000 val short=setup 1000000
           val (a,fee)=recipe (#g exact) (#r exact) 1
@@ -29814,13 +29820,37 @@ in
           val denied=refused
             (fn()=>C.validate_conversion_with_policy (#w short) b)
           val _=C.validate_conversion_with_policy (#w exact) a
-      in require "map scanned without full prepayment or failure retired late"
+      in require "cold terminal cost was waived or failure retired late"
         (denied=SOME "original cumulative work allowance exhausted" andalso
-         charged (#w short)=prior+8 andalso
+         charged (#w short)=prior+fee-1 andalso
          #retired (W.audit_policy (#w short)) andalso
          W.remaining_policy (#w exact)=RP.AtMost 0 andalso
          not (#retired (W.audit_policy (#w exact))) andalso
          Count.thm_count ()=native);W.close (#w exact) end);
+  test "Cold map quote is prepaid separately from its terminal cost"
+    (fn () =>
+      let val exact=setup 1000000 val short=setup 1000000
+          val (a,fee)=recipe (#g exact) (#r exact) 1
+          val (b,other)=recipe (#g short) (#r short) 1
+          val _=require "fixture cost mismatch" (fee=other)
+          (* dispatch8 + map quote = fee-1; neither budget covers
+             the terminal, but only exact can prepay the map walk. *)
+          val _=leave (#w exact) (fee-1)
+          val _=leave (#w short) (fee-2)
+          val initial=charged (#w exact) val prior=charged (#w short)
+          val native=Count.thm_count ()
+          val denied=refused
+            (fn()=>C.validate_conversion_with_policy (#w short) b)
+          val terminal=refused
+            (fn()=>C.validate_conversion_with_policy (#w exact) a)
+      in require "map walk was not prospectively paid or terminal was free"
+        (denied=SOME "original cumulative work allowance exhausted" andalso
+         terminal=SOME "original cumulative work allowance exhausted" andalso
+         charged (#w short)=prior+8 andalso
+         charged (#w exact)=initial+fee-1 andalso
+         #retired (W.audit_policy (#w short)) andalso
+         #retired (W.audit_policy (#w exact)) andalso
+         Count.thm_count ()=native) end);
   test "Legacy and priced Work guards debit the same live allowance"
     (fn () => List.app (fn priced =>
       let val g=G.new () val r=G.root_scope g
@@ -29830,19 +29860,32 @@ in
           val w=if priced then W.begin_with_scope_guard g r s policy
                 else W.begin g r s policy
           val (plan,fee)=recipe g r 1
+          val observed=charged w
+          val _=ignore (W.original_sources w)
+          val activation=charged w-observed
+          val _=require "priced activation observation disagreed with path"
+            (activation=(case W.priced_root_scope_path w of
+                NONE=>0
+              | SOME path=>12+G.scope_path_validation_work path))
+          (* Legacy visitation adds member1 and remember1 to policy fee.
+             Cold has five guard payments, warm four; each pays activation
+             (not spend_policy's Busy/arithmetic overhead). with_step adds
+             two activations and, only for priced Work, two phase fees9. *)
+          val cold=fee+2+5*activation
+          val warm=11+6*activation+(if priced then 18 else 0)
           val prior=charged w val native=Count.thm_count ()
           val _=C.validate_conversion_with_policy w plan
           val middle=charged w
           val _=W.with_step w
             (fn()=>C.validate_conversion_with_policy w plan)
       in require "legacy/priced guard lost its original counter or phase"
-        (middle>=prior+fee andalso charged w>=middle+fee andalso
+        (middle=prior+cold andalso charged w=middle+warm andalso
          not (#retired (W.audit_policy w)) andalso
          Count.thm_count ()=native);W.close w end) [false,true]);
   test "Paid legacy validation does not waive later Scope expiry"
     (fn () =>
       let val e=setup 1000000 val (plan,fee)=recipe (#g e) (#r e) 1
-          val _=verify (#w e) plan fee
+          val _=verify (#w e) plan fee 9
           val _=G.close_scope (#g e) (#r e)
           val native=Count.thm_count ()
           val denied=refused
@@ -29850,7 +29893,7 @@ in
       in require "paid validation cached away live Scope backing"
         (Option.isSome denied andalso #retired (W.audit_policy (#w e))
          andalso Count.thm_count ()=native) end);
-  test "Foreign wrapper header precedes exhausted legacy guard payment"
+  test "Foreign wrapper header precedes exhausted legacy/priced payment"
     (fn () =>
       let
         val home=setup 1000000 val hw= #w home
@@ -29871,20 +29914,34 @@ in
         val sequence=W.with_step hw (fn()=>
           C.graph_cut_sequence_with_policy hw
             {first=leaf,second=leaf,observe=fn()=>W.spend_policy hw 1})
-        fun check conversion entry =
+        val before=charged hw val native=Count.thm_count ()
+        val _=List.app (C.validate_conversion_header_for hw) [leaf,sequence]
+        val _=require "same-owner header activated or paid Work"
+          (charged hw=before andalso Count.thm_count ()=native andalso
+           not (#retired (W.audit_policy hw)))
+        fun check conversion priced entry =
           let
             val g=G.new () val r=G.root_scope g
             val s=S.new g r 10000 {goal=boolSyntax.T,assumptions=[]}
-            val w=W.begin g r s
-              {limits={input_limit=10000,output_limit=10000,
+            val policy={limits={input_limit=10000,output_limit=10000,
                  template_limit=10000},work_limit=1000000}
+            val w=if priced then W.begin_with_scope_guard g r s policy
+                  else W.begin g r s policy
             val f=Scope.root w
             val nc=NC.capture w
               {semantic_limits={input_limit=10000,output_limit=10000,
                  template_limit=10000},import_limit=10000,
                type_work_limit=1000000}
-            val _=leave w 0
+            (* Pay the last activation, then drain the exact remainder
+               without a with_step return fence retiring priced Work. *)
+            val activation=case W.priced_root_scope_path w of NONE=>0
+              | SOME path=>12+G.scope_path_validation_work path
+            val remaining=case W.remaining_policy w of RP.AtMost n=>n
+              | _=>raise Fail "foreign header fixture lost finite Work"
+            val _=W.spend_guard_policy w (remaining-activation)
             val prior=charged w val native=Count.thm_count ()
+            val _=require "drain retired Work before header check"
+              (not (#retired (W.audit_policy w)))
             val callbacks=ref 0
             val denied=refused (fn()=>case entry of
                 0=>C.validate_conversion_for w conversion
@@ -29898,7 +29955,8 @@ in
              charged w=prior andalso #retired (W.audit_policy w) andalso
              not (#retired (W.audit_policy hw)) andalso !callbacks=0 andalso
              Count.thm_count ()=native) end
-      in List.app (fn plan=>List.app (check plan) [0,1,2]) [leaf,sequence];
+      in List.app (fn plan=>List.app (fn priced=>
+           List.app (check plan priced) [0,1,2]) [false,true]) [leaf,sequence];
          W.close hw end);
   test "Guard payment grants no action and preserves Primary/reentry"
     (fn () =>

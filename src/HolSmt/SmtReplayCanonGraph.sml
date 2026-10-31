@@ -1012,6 +1012,9 @@ struct
      without a policy wrapper. Either entry may warm structural projections,
      but later paid calls still pay each link/terminal and recheck witnesses.
      No validation success or Work credit escapes either call. *)
+  fun validate_conversion_header_for expected conversion =
+    (conversion_header expected conversion
+     handle primary => (W.close expected;raise primary))
   fun validate_conversion_for expected conversion =
     validate_conversion_using (fn _ => ()) expected conversion
   fun validate_conversion_with_policy expected conversion =

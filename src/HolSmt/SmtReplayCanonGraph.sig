@@ -9,6 +9,10 @@ sig
   val with_schema_statistics : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     (unit -> 'a) -> 'a * schema_statistics
   type graph_conversion
+  (* O(1) immutable root owner check only, before caller guard payment.
+     No activation, traversal, admission or successful validation credit. *)
+  val validate_conversion_header_for : SmtReplayInvocationWork.portfolio ->
+    graph_conversion -> unit
   (* Expected Work before any opaque realized leaf activation. Dormant
      metadata retains its old no-activation semantics for legacy recipes. *)
   val validate_conversion_for : SmtReplayInvocationWork.portfolio ->

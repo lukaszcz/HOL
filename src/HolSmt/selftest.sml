@@ -5690,6 +5690,63 @@ in
        Portable.pointer_eq (hd (Thm.hyp result),
          G.representative (#graph f) (hd original_nodes))) end
 
+  (* The ordinary assembler, like the owned/sparse assembly functor, must
+     keep original occurrences, not just membership of their endpoint set. *)
+  val _ = testutils.tprint "GP assembly keeps ordered duplicate Source prefix"
+  val _ = let val f = fixture true true true
+      val validation = #validation f
+      val originals = GP.source_nodes validation
+      val extra = #node (G.import (#graph f) (#scope f) maximum
+        (Term.mk_var ("gp_local_suffix",Type.bool)))
+      fun assemble sources =
+        let val block = SmtReplayProof.freeze (#graph f)
+              {scope = #scope f,roots = extra :: GP.roots validation,
+               sources = sources,template_limit = maximum}
+            val build = GP.assembler validation block
+            val target = hd (GP.processed_assumptions validation)
+            val result = SmtReplayProof.realize block target
+              (valOf (build target))
+            val (tags,_) = Tag.dest_tag (Thm.tag result)
+        in Portable.pointer_eq (Thm.concl result,
+             G.representative (#graph f) target) andalso
+           length (Thm.hyp result) =
+             (if length sources = length originals then 2 else 3) andalso
+           List.all (fn hyp => List.exists (fn node =>
+             Term.aconv hyp (G.representative (#graph f) node)) sources)
+             (Thm.hyp result) andalso
+           null (Tag.axioms_of (Thm.tag result)) andalso
+           List.all (fn tag => tag = "DISK_THM") tags
+        end
+    in ensure "GP rejected the genuine prefix or a local suffix"
+      (assemble originals andalso assemble (originals @ [extra])) end
+
+  val _ = testutils.tprint "GP rejects changed original occurrence portfolios"
+  val _ = let val f = fixture true true true
+      val validation = #validation f
+      val originals = GP.source_nodes validation
+      val first = hd originals
+      val denied = List.last originals
+      fun rejects sources =
+        let val block = SmtReplayProof.freeze (#graph f)
+              {scope = #scope f,roots = GP.roots validation,
+               sources = sources,template_limit = maximum}
+            val count = Count.thm_count ()
+            val rejected = refuses (fn () => ignore
+              (GP.assembler validation block))
+        in rejected andalso Count.thm_count () = count end
+      val _ = Count.counting_thms true
+      val count = #REFL (Count.thm_count ())
+      val _ = Thm.REFL boolSyntax.T
+      val active = #REFL (Count.thm_count ()) = count + 1
+      val result = Exn.capture (fn () =>
+        active andalso rejects [denied,first,first] andalso
+        rejects [first,denied] andalso
+        rejects [first,denied,first] andalso
+        rejects [first,first]) ()
+      val _ = Count.counting_thms false
+    in ensure "GP treated original Sources as an unordered endpoint set"
+      (Exn.release result) end
+
   val _ = testutils.tprint "GP conversion memo refuses reuse after realization"
   val _ = let val f = fixture true true false
       val validation = #validation f

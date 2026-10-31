@@ -153,14 +153,23 @@ struct
       val _ = active validation
       val _ = if G.scope_visible graph (P.scope block) scope then () else
         raise ERR "assembler" "replay block is outside preprocessing scope"
+      (* The original occurrence portfolio is a prefix, not a set of
+         endpoints. In particular, do not silently drop duplicate Sources
+         or select a matching local assumption in place of an original. *)
+      val originals = source_nodes validation
+      fun prefix [] _ = ()
+        | prefix (_::_) [] =
+            raise ERR "assembler" "original Source prefix absent"
+        | prefix (wanted::rest) (held::tail) =
+            if wanted = held then prefix rest tail else
+              raise ERR "assembler" "original Source changed"
+      val _ = prefix originals (P.sources block)
       val indices = ListPair.zip
-        (P.sources block,List.tabulate (List.length (P.sources block),
-          fn index => index))
+        (originals,List.tabulate (List.length originals,fn index => index))
       fun index node = case List.find
           (fn (source,_) => source = node) indices of
           SOME (_,index) => index
         | NONE => raise ERR "assembler" "original source is absent from block"
-      val _ = List.app (ignore o index) (source_nodes validation)
       fun source node = P.source block (index node)
       fun equality conversion =
         P.compose block
