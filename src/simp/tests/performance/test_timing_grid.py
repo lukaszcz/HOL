@@ -4151,6 +4151,41 @@ class Refusals(Rig):
         self.assertEqual((code, err.count("\n")), (tg.REFUSED, 1))
         self.assertIn("not the one recorded", err)
 
+    def test_any_other_error_is_a_traceback_and_a_refusal_line_and_status(
+            self):
+        for error in (FileNotFoundError("gone"), KeyError("field"),
+                      OSError(28, "No space left on device"),
+                      subprocess.CalledProcessError(1, "git")):
+            with self.subTest(type(error).__name__):
+                with patch.object(self.grid, "execute", side_effect=error):
+                    code, out, err = self.main(["replay"])
+                self.assertEqual((code, out), (tg.REFUSED, ""))
+                self.assertIn("Traceback (most recent call last)", err)
+                last = err.rstrip("\n").splitlines()[-1]
+                self.assertTrue(last.startswith("REFUSED: %s: " % type(
+                    error).__name__), last)
+
+    def test_the_real_error_of_a_missing_output_is_one_too(self):
+        code, out, err = self.main(self.replay_argv(self.root / "nowhere"))
+        self.assertEqual((code, out), (tg.REFUSED, ""))
+        self.assertIn("Traceback", err)
+        self.assertIn("REFUSED: FileNotFoundError: ", err)
+
+    def test_an_interrupt_is_not_caught(self):
+        with patch.object(self.grid, "execute",
+                          side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.main(["replay"])
+
+    def test_a_record_that_is_not_json_is_refused_by_its_name(self):
+        grid = self.root / "grid"
+        grid.mkdir()
+        (grid / "inventory.json").write_text("{not json")
+        code, out, err = self.main(self.replay_argv(grid))
+        self.assertEqual((code, err.count("\n")), (tg.REFUSED, 1))
+        self.assertRegex(err, "REFUSED: .*inventory.json is not valid JSON")
+        self.assertNotIn("Traceback", err)
+
     def test_a_grid_keeps_its_own_statuses(self):
         argv = self.argv("run", self.root / "pass", "--candidate",
                          CANDIDATE, "--authorize-measurements")

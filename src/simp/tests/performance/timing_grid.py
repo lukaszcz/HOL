@@ -53,6 +53,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import traceback
 import uuid
 
 sys.dont_write_bytecode = True
@@ -2278,15 +2279,22 @@ class Grid:
         return parser, sub
 
     def main(self, argv=None, extra=None):
-        """`execute`, with a refusal (a ValueError, among them a checkout
-        that changed and a lock that is held) printed as one line on the
-        standard error and the status `REFUSED`, which no grid has: a
-        wrapper tells a command that measured nothing, or ended in no
-        decision, from a grid that failed (1) or was not conclusive (2)."""
+        """`execute`, with a command that decided nothing printed as a
+        `REFUSED` line on the standard error and the status `REFUSED`, which
+        no grid has: a wrapper tells a command that measured nothing, or
+        ended in no decision, from a grid that failed (1) or was not
+        conclusive (2). A refusal (a ValueError, among them a checkout that
+        changed and a lock that is held) is that line alone; any other error
+        (a missing file, a full disk, a malformed record, a bug) has its
+        traceback before it. An interrupt is not caught."""
         try:
             return self.execute(argv, extra)
-        except ValueError as error:
-            print("REFUSED: " + " ".join(str(error).split()), file=sys.stderr,
+        except Exception as error:
+            text = str(error)
+            if not isinstance(error, ValueError):
+                traceback.print_exc()
+                text = "%s: %s" % (type(error).__name__, text)
+            print("REFUSED: " + " ".join(text.split()), file=sys.stderr,
                   flush=True)
             return REFUSED
 

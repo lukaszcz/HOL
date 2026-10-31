@@ -43,7 +43,8 @@ the grid is not conclusive). Failed, inconclusive, control-limited and
 protocol-failed cells are listed separately and none is excused here; a
 disposition, if one is ever made, is a separate reviewed decision. A command
 that is refused, or ends with an error that decided nothing, prints one
-REFUSED line on the standard error and exits 3.
+REFUSED line on the standard error (after a traceback, if the error is not a
+refusal) and exits 3.
 
   prepare     build the checkout and stamp it            (takes the lock)
   pilot       develop-only cells for the counts          (needs a window)

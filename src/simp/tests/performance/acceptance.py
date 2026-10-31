@@ -64,7 +64,10 @@ def load(path):
     data = path.read_bytes()
     if path.suffix == ".gz":
         data = gzip.decompress(data)
-    return json.loads(data)
+    try:
+        return json.loads(data)
+    except ValueError as error:
+        raise ValueError("%s is not valid JSON: %s" % (path, error)) from None
 
 
 def save(path, value):

@@ -560,11 +560,14 @@ has no disposition.
   it measured, a held lock, a checkout that changed) prints one
   `REFUSED: reason` line on the standard error and exits **3**, a status no
   grid has, so that a wrapper tells "nothing was decided" from a grid that
-  failed (1) or was not conclusive (2); a usage error of the command line is
-  the parser's 2. The lists are derived from `decisions.json` and `replay`
-  prints them again. No cell is excused: a task that accepts a
-  non-passing cell does so in a separate, reviewed table (as TASK29A did),
-  outside the engine.
+  failed (1) or was not conclusive (2); any other error that decided nothing
+  (a missing file, a full disk, a malformed record, a bug) has the same
+  status and the same line, after its traceback; a record that is not valid
+  JSON names its file; an interrupt is not caught; a usage error of the
+  command line is the parser's 2. The lists are derived from
+  `decisions.json` and `replay` prints them again. No cell is excused: a task
+  that accepts a non-passing cell does so in a separate, reviewed table (as
+  TASK29A did), outside the engine.
 - **Whole operations.** The timed operation is the fixture's complete
   `run`, and its result is verified in the same process, so work cannot move
   into unmeasured preprocessing: a batch contains the construction or call
