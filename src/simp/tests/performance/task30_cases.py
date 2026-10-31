@@ -34,10 +34,12 @@ CASES = DELETIONS + (
 # The boundary: the kernel, the parser and the build files stay outside
 # the list (they are shared by every operation and by the harness itself, so
 # a change there moves both gates' baselines and is for review, not for a
-# list of this size). A file of the list being identical says nothing of the
-# data it works on, such as the size of the theory graph; the fixtures fix
-# that. The decisions publish every file under src/ that differs (the
-# inventory's source_tree), whether listed here or not.
+# list of this size). Other modules sit outside it too (`ThmAttribute`,
+# `Lib`, `testutils`, the build files). A file of the list being identical
+# says nothing of the data it works on, such as the size of the theory
+# graph; the fixtures fix that. The decisions hold the identity of the
+# listed files only; the inventory publishes every file under src/ that
+# differs (its source_tree), whether listed here or not.
 SOURCES = (
     "src/simp/src/simpLib.sml", "src/simp/src/simpLib.sig",
     "src/1/Ho_Net.sml", "src/1/Ho_Net.sig",
@@ -57,30 +59,3 @@ SOURCES = (
     "src/1/Drule.sml", "src/1/Drule.sig",
     "src/1/Conv.sml", "src/1/Conv.sig",
     "src/1/Tactical.sml", "src/1/Tactical.sig")
-
-# Differences from the baseline in SOURCES that were reviewed and are
-# accepted: each path maps to the exact candidate git blob (at the commit
-# that introduced the pin) and the reason. The timing gate publishes them in
-# its decisions and does not count them as a failure of source identity; any
-# other revision of the file, or any other differing file, still does. A file
-# the candidate adds (absent at the baseline) is listed in SOURCES and is
-# accepted only with such a pin.
-PINNED = {
-    "src/simp/src/Cond_rewr.sml": dict(
-        blob="a67c08102a6467765eba4febfb89c2e0c032b821",
-        reason="Moves the rewrite-tracking helper to SimpTracking and "
-        "aliases note_rewrite and with_tracking, which now call through "
-        "SimpTracking's opaque signature, leaving mk_cond_rewrs and "
-        "COND_REWR_CONV textually unchanged and adding no loop."),
-    "src/simp/src/Cond_rewr.sig": dict(
-        blob="ece2594285431754f43b3a293a6c0dd24dd70fbd",
-        reason="Exports the existing is_var_perm and adds comments."),
-    "src/simp/src/SimpTracking.sml": dict(
-        blob="534f1637f1130bac873c5ffbb0466d60355cc280",
-        reason="New file: the rewrite-tracking code removed from "
-        "Cond_rewr, textually the same, held behind an opaque signature."),
-    "src/simp/src/SimpTracking.sig": dict(
-        blob="6aacb35d97fb7190e489cb2cb319fe6ea01ce2bb",
-        reason="New file: the signature of the moved rewrite-tracking "
-        "code."),
-}

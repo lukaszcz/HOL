@@ -4,18 +4,23 @@
 The engine is tested in test_timing_grid.py; here the TASK30 table itself is
 checked, and the engine runs it whole (144 cells) on synthetic stand-ins.
 """
+import contextlib
 import copy
+import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 import acceptance as a
 import matrix_schema as ms
 import task30_cases as cases
 import task30_grid as t30
+import task30_pins as pins
 import test_timing_grid as ttg
 
 
@@ -79,10 +84,9 @@ class Table(unittest.TestCase):
         self.assertEqual((table.pairs, table.samples), (20, 5))
         self.assertEqual(table.seed, "task30-layout-1")
         self.assertEqual(table.tree, "src")
-        self.assertEqual(table.revisions, ())
         self.assertEqual(table.latest(), t30.COUNTS)
+        self.assertEqual(table.files()[0], t30.COUNTS)
         self.assertEqual((table.pilot_pairs, table.pilot_samples), (10, 3))
-        self.assertEqual(table.drivers, ())
         self.assertEqual(table.schema("grid"), "task30-grid-v1")
 
     def test_the_counts_file_is_predeclared_from_the_pilot(self):
@@ -112,12 +116,47 @@ class Table(unittest.TestCase):
         # The driver, the engine and the data of the case list are all
         # sealed, so none of them changes unnoticed.
         self.assertEqual(table.code(), ("driver", "engine", "acceptance",
-                                        "sealed"))
+                                        "sealed", "pins"))
         self.assertIn("task30_cases.py", table.sealed)
+        self.assertEqual(table.pin_file, "task30_pins.py")
+
+    def test_the_pins_are_recorded_apart_from_the_sealed_files(self):
+        # A pin is bumped after a production fix, and must not change the
+        # seal the counts are bound to.
+        table = t30.TABLE
+        self.assertNotIn("task30_pins.py", table.sealed)
+        self.assertEqual(table.pinned, pins.PINNED)
+        self.assertEqual(table.pin_history, t30.PIN_HISTORY)
+        self.assertTrue((table.home / "task30_pins.py").is_file())
 
     def test_the_matrix_fixtures_are_sealed_with_the_driver(self):
         for name in ("MatrixSupport.sml", "MatrixPerformance.sml"):
             self.assertIn(name, t30.TABLE.sealed)
+
+    def test_the_sealed_files_are_those_the_installer_installs(self):
+        import allocation_matrix  # puts compatibility on the path
+        import run_paired as rp
+        copied = []
+        real = rp.shutil.copyfile
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.object(
+                    rp.shutil, "copyfile",
+                    lambda src, dst: copied.append(Path(src)) or real(
+                        src, dst)):
+            rp.install_fixtures(Path(tmp), performance=True,
+                                matrix_fixture="MatrixPerformance.sml")
+        self.assertGreater(len(copied), 5)
+        names = {Path(os.path.relpath(p, a.HERE)).as_posix()
+                 for p in copied}
+        # What the installer reads besides, and the harness's data.
+        names |= {"review-20261021/abicheck.sml", "matrix.json",
+                  "../compatibility/run_paired.py"}
+        self.assertEqual(names, set(t30.INSTALLED))
+        self.assertLessEqual(set(t30.INSTALLED), set(t30.TABLE.sealed))
+        self.assertEqual(
+            sorted(set(t30.TABLE.sealed) - set(t30.INSTALLED)),
+            sorted(["task30_cases.py", "task29_gate.py", "matrix_schema.py",
+                    "performance_schema.py", "evidence_bundle.py"]))
 
     def test_the_sources_cover_the_modules_the_cases_call_into(self):
         # The simplifier's own modules and what every case calls through
@@ -136,11 +175,11 @@ class Table(unittest.TestCase):
 
     def test_the_pins_are_the_reviewed_simplifier_files(self):
         table = t30.TABLE
-        self.assertEqual(table.pinned, cases.PINNED)
-        self.assertEqual(sorted(cases.PINNED), [
+        self.assertEqual(table.pinned, pins.PINNED)
+        self.assertEqual(sorted(pins.PINNED), [
             "src/simp/src/Cond_rewr.sig", "src/simp/src/Cond_rewr.sml",
             "src/simp/src/SimpTracking.sig", "src/simp/src/SimpTracking.sml"])
-        for path, pin in cases.PINNED.items():
+        for path, pin in pins.PINNED.items():
             self.assertIn(path, cases.SOURCES)
             self.assertRegex(pin["blob"], "^[0-9a-f]{40}$")
             self.assertTrue(pin["reason"].endswith("."), path)
@@ -152,7 +191,7 @@ class Table(unittest.TestCase):
 
     def test_each_pin_is_the_blob_of_the_file_in_this_checkout(self):
         self.checkout()
-        for path, pin in cases.PINNED.items():
+        for path, pin in pins.PINNED.items():
             with self.subTest(path):
                 self.assertEqual(disk_blob(path), pin["blob"])
                 self.assertNotEqual(base_blob(path), pin["blob"])
@@ -161,14 +200,14 @@ class Table(unittest.TestCase):
         self.checkout()
         for path in cases.SOURCES:
             if base_blob(path) is None:
-                self.assertIn(path, cases.PINNED, path)
+                self.assertIn(path, pins.PINNED, path)
                 self.assertTrue((REPO / path).is_file(), path)
         self.assertIsNone(base_blob("src/simp/src/SimpTracking.sml"))
 
     def test_every_unpinned_source_is_the_baseline_file_here(self):
         self.checkout()
         for path in cases.SOURCES:
-            if path not in cases.PINNED:
+            if path not in pins.PINNED:
                 with self.subTest(path):
                     self.assertEqual(disk_blob(path), base_blob(path))
 
@@ -184,19 +223,20 @@ class Whole(ttg.Rig):
     def make_table(self, **kw):
         table = copy.copy(t30.TABLE)
         table.driver, table.counts = self.driver, self.counts
+        table.ledger = self.attempts
         return table
 
     def setUp(self):
         super().setUp()
         # The files the candidate adds are absent at the baseline.
-        self.absent = {p for p in cases.PINNED if p.endswith(
+        self.absent = {p for p in pins.PINNED if p.endswith(
             ("SimpTracking.sml", "SimpTracking.sig"))}
 
     def fake_blob(self, repo, rev, path):
         """As the rig's, but the candidate holds each pinned file at its
         pinned blob, as the table requires."""
-        if rev == ttg.CANDIDATE and path in cases.PINNED:
-            return cases.PINNED[path]["blob"]
+        if rev == ttg.CANDIDATE and path in pins.PINNED:
+            return pins.PINNED[path]["blob"]
         return super().fake_blob(repo, rev, path)
 
     def test_a_clean_grid_runs_144_cells_and_passes(self):
@@ -208,7 +248,7 @@ class Whole(ttg.Rig):
         identity = json.loads(
             (out / "decisions.json").read_text())["source_identity"]
         self.assertEqual(identity["differing"], [])
-        self.assertEqual(identity["reviewed"], cases.PINNED)
+        self.assertEqual(identity["reviewed"], pins.PINNED)
         by_case = {}
         for options in self.runs:
             by_case.setdefault(options["case"][0], set()).add(
@@ -249,6 +289,142 @@ class Whole(ttg.Rig):
                           "c" * 40])
             with self.assertRaisesRegex(ValueError, "exclusive window"):
                 t30.main(["pilot", "--output", tmp + "/x"])
+
+
+class Closing(unittest.TestCase):
+    """`close` replays the timing grid and the allocation grid and prints
+    one verdict, only for one candidate in one harness."""
+    CANDIDATE, HARNESS = "c" * 40, "c" * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="task30-close-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.grid, self.allocation = self.root / "grid", self.root / "alloc"
+        self.pilot = self.root / "pilot"
+        for folder in (self.grid, self.allocation, self.pilot):
+            folder.mkdir()
+        self.codes = {"timing": 0, "allocation": 0}
+        import allocation_matrix as am
+        self.am = am
+        for patcher in (
+                unittest.mock.patch.object(t30.ENGINE, "replay",
+                                           self.fake_timing),
+                unittest.mock.patch.object(am, "replay",
+                                           self.fake_allocation)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.replayed = []
+        self.timing(), self.counted()
+
+    def fake_timing(self, args):
+        self.replayed.append(("timing", args.output, args.pilot))
+        return self.codes["timing"]
+
+    def fake_allocation(self, args):
+        self.replayed.append(("allocation", args.output))
+        return self.codes["allocation"]
+
+    def timing(self, status="pass", **more):
+        head = more.pop("head", self.CANDIDATE)
+        found = dict(candidate=self.CANDIDATE, baseline=a.BASE, checkout=dict(
+            head=head, tree_outside_performance="t" * 64))
+        found.update(more)
+        (self.grid / "inventory.json").write_text(json.dumps(found))
+        (self.grid / "decisions.json").write_text(json.dumps(dict(
+            status=status, workloads=[], retained_scaling=None)))
+
+    def counted(self, status="pass", **more):
+        harness = dict(head=self.HARNESS, dirty=False,
+                       tree_outside_performance="t" * 64)
+        harness.update(more.pop("harness", {}))
+        found = dict(task="task30", candidate=self.CANDIDATE,
+                     baseline=a.BASE, harness=harness)
+        found.update(more)
+        (self.allocation / "inventory.json").write_text(json.dumps(found))
+        (self.allocation / "decisions.json").write_text(json.dumps(
+            dict(status=status)))
+
+    def close(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = t30.main(["close", "--grid", str(self.grid), "--pilot",
+                             str(self.pilot), "--allocation",
+                             str(self.allocation), "--repo", str(REPO)])
+        return code, out.getvalue()
+
+    def test_two_passes_of_one_candidate_in_one_harness_are_one_pass(self):
+        code, text = self.close()
+        self.assertEqual(code, 0)
+        self.assertEqual([k for k, *_ in self.replayed],
+                         ["timing", "allocation"])
+        self.assertEqual(self.replayed[0][1:], (self.grid.resolve(),
+                                                self.pilot.resolve()))
+        verdicts = [x for x in text.splitlines() if "closing verdict" in x]
+        self.assertEqual(verdicts, [
+            "TASK30 closing verdict: pass (timing pass, allocation pass; "
+            "candidate %s, harness %s)" % (self.CANDIDATE, self.HARNESS)])
+
+    def test_either_gate_that_is_not_a_pass_is_not_a_pass(self):
+        for timing, allocation, code in ((1, 0, 1), (0, 1, 1), (2, 0, 2),
+                                         (1, 2, 2)):
+            with self.subTest((timing, allocation)):
+                self.codes = {"timing": timing, "allocation": allocation}
+                self.timing("fail" if timing == 1 else "inconclusive")
+                got, text = self.close()
+                self.assertEqual(got, code)
+                self.assertIn("closing verdict: not pass (timing", text)
+
+    def test_the_two_grids_must_be_of_one_candidate_and_baseline(self):
+        self.counted(candidate="d" * 40)
+        with self.assertRaisesRegex(ValueError, "timing grid measured"):
+            self.close()
+        self.counted(baseline="b" * 40)
+        with self.assertRaisesRegex(ValueError, "different baselines"):
+            self.close()
+
+    def test_the_two_grids_must_have_run_in_one_harness(self):
+        for label, harness in (
+                ("head", dict(head="e" * 40)),
+                ("tree", dict(tree_outside_performance="u" * 64)),
+                ("dirty", dict(dirty=True))):
+            with self.subTest(label):
+                self.counted(harness=harness)
+                with self.assertRaisesRegex(ValueError, "different "
+                                            "harnesses"):
+                    self.close()
+        self.counted()
+        self.timing(head="e" * 40)
+        with self.assertRaisesRegex(ValueError, "different harnesses"):
+            self.close()
+
+    def test_the_allocation_grid_must_be_a_complete_task30_grid(self):
+        self.counted(task="task29b")
+        with self.assertRaisesRegex(ValueError, "not a TASK30 grid"):
+            self.close()
+        (self.allocation / "decisions.json").unlink()
+        with self.assertRaisesRegex(ValueError, "allocation grid is "
+                                    "partial"):
+            self.close()
+
+    def test_close_applies_no_disposition(self):
+        self.codes = {"timing": 1, "allocation": 0}
+        self.timing("fail")
+        code, text = self.close()
+        self.assertEqual(code, 1)
+        self.assertNotIn("disposition", text.lower())
+        self.assertEqual(sorted(p.name for p in self.grid.iterdir()),
+                         ["decisions.json", "inventory.json"])
+
+    def test_close_needs_the_grid_the_pilot_and_the_allocation(self):
+        for missing in ("--grid", "--pilot", "--allocation"):
+            argv = {"--grid": str(self.grid), "--pilot": str(self.pilot),
+                    "--allocation": str(self.allocation)}
+            del argv[missing]
+            with self.subTest(missing), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                t30.main(["close", *(x for kv in argv.items()
+                                     for x in kv)])
 
 
 tearDownModule = ttg.tearDownModule

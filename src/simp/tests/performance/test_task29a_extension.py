@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """TASK29A second stage: candidate-blind remeasurement and resume."""
+import contextlib
 import copy
 import hashlib
 from pathlib import Path
@@ -193,6 +194,8 @@ class TwoStage(unittest.TestCase):
                               return_value=(first, stage1, {})), \
                     patch.object(grid, "measure", side_effect=measure), \
                     patch.object(grid, "summary", side_effect=summary), \
+                    patch.object(grid.ENGINE, "locked",
+                                 lambda repo: contextlib.nullcontext()), \
                     patch.object(grid, "check_header"):
                 self.assertEqual(grid.extend(args), 0)
                 inventory = a.load(ext / "inventory.json")
