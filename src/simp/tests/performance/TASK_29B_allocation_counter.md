@@ -311,12 +311,11 @@ default and is chosen by the caller outside the repository.
   resume therefore requires `len(tmpdir)` equal, and the length of the
   resolved private runtime path too, which a symlinked `TMPDIR` can change
   alone; the final replay refuses cells recorded at lengths that differ. The
-  reason this holds is that no bracket reads a path: no gated bracket (the 27
-  cases of `task29_gate.CASES` and the 24 cases of `task30_cases.CASES`)
-  reads an environment variable or a path. The one call that would is
-  `new_theory` in the `history_theory_change` case of `MatrixSupport.sml`:
-  in a `hol run` process (`Globals.interactive` is false) it exports the
-  current theory,
+  reason this holds is that no gated bracket (the 27 cases of
+  `task29_gate.CASES` and the 24 cases of `task30_cases.CASES`) reads an
+  environment variable or a path. The one call that would is `new_theory` in
+  the `history_theory_change` case of `MatrixSupport.sml`: in a `hol run`
+  process (`Globals.interactive` is false) it exports the current theory,
   which writes the `*Theory` files below the working directory (the sealed
   private selection, which must not change during a cell) and builds
   documentation paths (`parent_doc_url`) from it, and its export has words
@@ -325,10 +324,11 @@ default and is chosen by the caller outside the repository.
   `MatrixSupport.theoryChange` to a no-op, and the reparse the case verifies
   comes from the `Context.restore` that drops the theory the case linked
   (`filter_net_by_names` then raises "bad theory name"). The timing gate
-  keeps the real `new_theory`. The rest of the environment
-  is content, `HOLDIR` included: it names the toolchain, which `--toolchain`
-  identifies by path and whose products are sealed by that path. A changed
-  `PATH`, compiler path or toolchain is a different grid.
+  keeps the real `new_theory`, in setup and outside any batch. The rest of
+  the environment is content, `HOLDIR` included: it names the toolchain,
+  which `--toolchain` identifies by path and whose products are sealed by
+  that path. A changed `PATH`, compiler path or toolchain is a different
+  grid.
 - **Acceptance baseline.** `decisions.json` records `acceptance_baseline`,
   true only when the `--baseline` of the run is the pinned develop commit of
   `acceptance.py`; any other baseline is measured and published, a definite

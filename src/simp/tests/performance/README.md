@@ -35,14 +35,15 @@ applies the policy owner's disposition (13 cells unresolvable on this host,
 `timing_grid.py` is the TASK29A grid as a parameterized engine (`PROTOCOL.md`,
 "Shared timing grid"); `task29a_grid.py` and `task30_grid.py` are its tables.
 `task30_grid.py` covers the 24 exclusion and history cases at six sizes (144
-cells): `pilot` and `predeclare` produce the develop-only batch counts,
-layout seed, pairs and samples that are committed as
+cells): `pilot` and `predeclare` produce the develop-only batch counts, with
+the layout seed, pairs and samples of the table, that are committed as
 `task30_iterations.json` before any candidate observation (`verify-counts`
 checks the file against its pilot), `run`, `extend` and `replay` follow
-TASK29A, a candidate whose source files on the path differ from the
-baseline's is never a pass, and the exit status is zero only when every cell
-passes. The exact-allocation counterpart is
-`allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
+TASK29A and take the pilot and an attempts ledger, a candidate whose source
+files on the path differ from the baseline's is never a pass unless the
+difference is a pinned, reviewed one (`task30_cases.PINNED`), and the exit
+status is zero only when every cell passes. The exact-allocation counterpart
+is `allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
 `history_theory_change` the allocation fixture makes no `new_theory`
 transition, see `PROTOCOL.md` and `TASK_29B_allocation_counter.md`).
 
