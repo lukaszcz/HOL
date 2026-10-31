@@ -644,6 +644,31 @@ structure Z3 = struct
         end))
 
 
+  (* Phase envelopes belong to the checked graph API, not the public solver
+     result. In particular, cancellation/resource primaries must survive
+     unchanged, before any diagnostic classification or context gathering. *)
+  fun checked_source_result name action =
+    let
+      fun parse_error error =
+        if SmtResource.terminal_diagnostic_exception error then raise error
+        else case error of Feedback.HOL_ERR holerr =>
+          (classify_proof_parse_error holerr
+           handle Feedback.HOL_ERR classified =>
+             raise_with_context name "proof parse"
+               (current_proof_cmd_stem ()) classified)
+        | _ => raise Feedback.mk_HOL_ERR "Z3" name
+            ("Z3 graph parse failed: " ^ General.exnMessage error)
+      fun replay_error error =
+        if SmtResource.terminal_diagnostic_exception error then raise error
+        else case error of Feedback.HOL_ERR holerr =>
+          raise_with_context name "proof replay"
+            (current_proof_cmd_stem ()) holerr
+        | _ => raise error
+    in action ()
+      handle SmtCheckedGraph.ParseFailure error => parse_error error
+        | SmtCheckedGraph.ReplayFailure error => replay_error error
+    end
+
   (* Optional original Source path. The caller supplies a checked GP producer,
      not an old tactic validation or a ready flag. LEGACY remains unchanged. *)
   fun Z3_SMT_Original_Source_Prover
@@ -678,9 +703,10 @@ structure Z3 = struct
                 let
                   val bytes = SmtResource.remaining_file_bytes outfile start
                   val _ = SmtResource.check_proof_size "z3-proof-text" bytes
-                  val theorem = quiet (fn () =>
-                    SmtCheckedGraph.z3_original invocation translation version
-                      {local_law = local_law,nnf = nnf} input)
+                  val theorem = checked_source_result
+                    "Z3_SMT_Original_Source_Prover" (fn () => quiet (fn () =>
+                      SmtCheckedGraph.z3_original invocation translation version
+                        {local_law = local_law,nnf = nnf} input))
                 in SolverSpec.UNSAT (SOME theorem) end
               | _ => status end
             val outcome = Exn.capture work ()
@@ -731,9 +757,12 @@ structure Z3 = struct
                 let
                   val bytes = SmtResource.remaining_file_bytes outfile start
                   val _ = SmtResource.check_proof_size "z3-proof-text" bytes
-                  val theorem = quiet (fn () =>
-                    SmtCheckedGraph.z3_original_with_work invocation translation version
-                      {local_law = local_law,nnf = nnf} input)
+                  val theorem = checked_source_result
+                    "Z3_SMT_Original_Source_Prover_With_Work"
+                    (fn () => quiet (fn () =>
+                      SmtCheckedGraph.z3_original_with_work
+                        invocation translation version
+                        {local_law = local_law,nnf = nnf} input))
                 in SolverSpec.UNSAT (SOME theorem) end
               | _ => status end
             val outcome = Exn.capture work ()
@@ -789,9 +818,11 @@ structure Z3 = struct
                 in case status of SolverSpec.UNSAT NONE =>
                   let val bytes = SmtResource.remaining_file_bytes outfile start
                       val _ = SmtResource.check_proof_size "z3-proof-text" bytes
-                      val theorem = quiet (fn () =>
-                        SmtCheckedGraph.z3_original_emitted_with_work
-                          invocation receipt version input)
+                      val theorem = checked_source_result
+                        "Z3_SMT_Original_Source_Prover_With_Work_And_Emissions"
+                        (fn () => quiet (fn () =>
+                          SmtCheckedGraph.z3_original_emitted_with_work
+                            invocation receipt version input))
                   in SolverSpec.UNSAT (SOME theorem) end
                 | _ => status end
               val outcome = Exn.capture work ()

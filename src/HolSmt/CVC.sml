@@ -471,6 +471,24 @@ structure CVC = struct
        (checked_graph_post limits))
 
 
+  (* Keep the graph API's phase envelopes internal. Terminal primaries bypass
+     context gathering; ordinary HOL errors retain phase/command diagnostics. *)
+  fun checked_source_result name arrays_exp action =
+    let
+      fun classify phase error =
+        if SmtResource.terminal_diagnostic_exception error then raise error
+        else case error of Feedback.HOL_ERR holerr =>
+          raise_with_context name phase
+            (cpc_proof_cmd ^ (if arrays_exp then "--arrays-exp " else ""))
+            holerr
+        | _ => raise error
+    in action ()
+      handle SmtCheckedGraph.ParseFailure error =>
+          classify "proof parse" error
+        | SmtCheckedGraph.ReplayFailure error =>
+          classify "proof replay" error
+    end
+
   (* Optional original Source path; no post-expanded tactic substitution. *)
   fun CVC_SMT_Original_Source_Prover
       {limits,discover,ordinary_limit,worker,force_worker} original =
@@ -500,19 +518,22 @@ structure CVC = struct
           in translate () handle primary =>
             ((SmtCheckedGraph.close_original invocation handle _ => ());
              raise primary) end
-        fun post (invocation,translation,version,_) outfile =
+        fun post (invocation,translation,version,arrays_exp) outfile =
           let
             val input = TextIO.openIn outfile
             fun work () =
               let val (status,start) = is_sat_stream_with_consumed input
               in case status of SolverSpec.UNSAT NONE =>
                 let
-                  val theorem = quiet (fn () =>
-                    SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
-                      outfile start input
-                      (fn stream => SmtCheckedGraph.cvc_original invocation
-                        translation version {ordinary_limit = ordinary_limit,
-                          worker = worker,force_worker = force_worker} stream))
+                  val theorem = checked_source_result
+                    "CVC_SMT_Original_Source_Prover" arrays_exp
+                    (fn () => quiet (fn () =>
+                      SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
+                        outfile start input
+                        (fn stream => SmtCheckedGraph.cvc_original invocation
+                          translation version {ordinary_limit = ordinary_limit,
+                            worker = worker,force_worker = force_worker}
+                          stream)))
                 in SolverSpec.UNSAT (SOME theorem) end
               | _ => status end
             val outcome = Exn.capture work ()
@@ -560,20 +581,23 @@ structure CVC = struct
             ((SmtCheckedGraph.close_original_with_work invocation
                 handle _ => ());
              raise primary) end
-        fun post (invocation,translation,version,_) outfile =
+        fun post (invocation,translation,version,arrays_exp) outfile =
           let
             val input = TextIO.openIn outfile
             fun work () =
               let val (status,start) = is_sat_stream_with_consumed input
               in case status of SolverSpec.UNSAT NONE =>
                 let
-                  val theorem = quiet (fn () =>
-                    SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
-                      outfile start input
-                      (fn stream => SmtCheckedGraph.cvc_original_with_work
-                        invocation
-                        translation version {ordinary_limit = ordinary_limit,
-                          worker = worker,force_worker = force_worker} stream))
+                  val theorem = checked_source_result
+                    "CVC_SMT_Owned_Original_Source_Prover" arrays_exp
+                    (fn () => quiet (fn () =>
+                      SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
+                        outfile start input
+                        (fn stream => SmtCheckedGraph.cvc_original_with_work
+                          invocation translation version
+                          {ordinary_limit = ordinary_limit,
+                           worker = worker,force_worker = force_worker}
+                          stream)))
                 in SolverSpec.UNSAT (SOME theorem) end
               | _ => status end
             val outcome = Exn.capture work ()
@@ -623,19 +647,21 @@ structure CVC = struct
             ((SmtCheckedGraph.close_original_with_work invocation
                 handle _ => ());
              raise primary) end
-        fun post (invocation,receipt,version,_) outfile =
+        fun post (invocation,receipt,version,arrays_exp) outfile =
           let
             val input = TextIO.openIn outfile
             fun work () =
               let val (status,start) = is_sat_stream_with_consumed input
               in case status of SolverSpec.UNSAT NONE =>
                 let
-                  val theorem = quiet (fn () =>
-                    SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
-                      outfile start input
-                      (fn stream =>
-                        SmtCheckedGraph.cvc_original_emitted_with_work
-                          invocation receipt version ordinary_limit stream))
+                  val theorem = checked_source_result
+                    "CVC_SMT_Owned_Original_Source_Prover_With_Emissions"
+                    arrays_exp (fn () => quiet (fn () =>
+                      SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
+                        outfile start input
+                        (fn stream =>
+                          SmtCheckedGraph.cvc_original_emitted_with_work
+                            invocation receipt version ordinary_limit stream)))
                 in SolverSpec.UNSAT (SOME theorem) end
               | _ => status end
             val outcome = Exn.capture work ()

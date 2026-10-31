@@ -135,6 +135,140 @@ struct
       (!discoveries = 1 andalso
        Option.isSome (refusal (fn () => G.validate_scope graph scope))) end
 
+  (* Poly/ML may attach fresh exception locations; compare constructors and
+     retained payloads rather than the runtime exception wrapper pointer. *)
+  fun same_primary (Feedback.HOL_ERR expected) (Feedback.HOL_ERR actual) =
+        ptr expected actual
+    | same_primary (Timeout.TIMEOUT expected) (Timeout.TIMEOUT actual) =
+        ptr expected actual
+    | same_primary Interrupt Interrupt = true
+    | same_primary (Fail expected) (Fail actual) = expected = actual
+    | same_primary _ _ = false
+
+  (* Real external UNSAT invocations reach a replay callback exactly once.
+     No fabricated response, proof text or phase envelope is used here. *)
+  fun public_failure engine owned (label,primary,terminal) =
+    let
+      val held = ref (NONE : (G.graph * G.scope) option)
+      val held_work = ref NONE
+      val hits = ref 0
+      val discoveries = ref 0
+      fun abort () = (hits := !hits + 1; raise primary)
+      fun remember sources =
+        (discoveries := !discoveries + 1;
+         held := SOME (S.owning_graph sources,S.owning_scope sources))
+      fun discover sources =
+        (remember sources;
+         GP.discover_from_sources (S.owning_graph sources)
+           (S.owning_scope sources) sources
+           {import_limit=cap,revisit=false,check_type=fn _ => (),
+            conversion=fn _ => NONE})
+      fun owned_solver original =
+        SmtLib_CheckedCarrierProducer.run_cvc_with_work
+          {limits=limits,semantic_limits={input_limit=cap,output_limit=cap,
+             template_limit=200000},work_limit=10000000,
+           check_type=fn _ => (),scope_opened=fn _ => ()}
+          (fn produce =>
+            let fun discover sources =
+                  let val _ = remember sources
+                      val result = produce sources
+                      val _ = held_work := SOME (#work result)
+                  in result end
+            in case engine of
+                Z3Engine => Z3.Z3_SMT_Original_Source_Prover_With_Work
+                  {limits=limits,discover=discover,
+                   local_law=fn _ => abort (),nnf=fn _ => abort ()}
+              | CVCEngine => CVC.CVC_SMT_Owned_Original_Source_Prover
+                  {limits=limits,discover=discover,ordinary_limit=cap,
+                   worker=fn _ => abort (),force_worker=NONE}
+            end) original
+      val solver = if owned then owned_solver else case engine of
+          Z3Engine => Z3.Z3_SMT_Original_Source_Prover
+            {limits=limits,discover=discover,
+             local_law=fn _ => abort (),nnf=fn _ => abort ()}
+        | CVCEngine => CVC.CVC_SMT_Original_Source_Prover
+            {limits=limits,discover=discover,ordinary_limit=cap,
+             worker=fn _ => abort (),force_worker=NONE}
+      val x = Term.mk_var ("public_failure_x",intSyntax.int_ty)
+      val y = Term.mk_var ("public_failure_y",intSyntax.int_ty)
+      val z = Term.mk_var ("public_failure_z",intSyntax.int_ty)
+      val goal = ([intSyntax.mk_less (x,y),intSyntax.mk_less (y,z)],
+                  intSyntax.mk_less (x,z))
+      val result = Exn.capture (fn () => ignore
+        (HolSmtLib.GENERIC_SMT_TAC solver goal (Context.snapshot ()))) ()
+      val name = case (engine,owned) of
+          (Z3Engine,false) => "Z3_SMT_Original_Source_Prover"
+        | (Z3Engine,true) => "Z3_SMT_Original_Source_Prover_With_Work"
+        | (CVCEngine,false) => "CVC_SMT_Original_Source_Prover"
+        | (CVCEngine,true) => "CVC_SMT_Owned_Original_Source_Prover"
+      val expected_structure = case engine of
+          Z3Engine => "Z3" | CVCEngine => "CVC"
+      val _ = require "public replay failure lost primary/context"
+        (case result of Exn.Exn actual =>
+           if label = "ordinary HOL_ERR" then
+             (case actual of Feedback.HOL_ERR detail =>
+                Feedback.top_structure_of detail = expected_structure andalso
+                Feedback.top_function_of detail = name andalso
+                List.all (fn text => String.isSubstring text
+                  (Feedback.message_of detail))
+                  ["proof replay failed", "version:", "command:",
+                   "SmtPublicWrapperTests.replay: ordinary callback failure"]
+              | _ => false)
+           else same_primary primary actual andalso
+             SmtResource.terminal_diagnostic_exception actual = terminal
+         | _ => false)
+      val (graph,scope) = valOf (!held)
+    in require "public failure repeated callbacks or leaked graph/Work"
+      (!hits = 1 andalso !discoveries = 1 andalso
+       Option.isSome (refusal (fn () => G.validate_scope graph scope)) andalso
+       (case !held_work of NONE => not owned
+        | SOME work => #retired (SmtReplayInvocationWork.audit work))) end
+
+  fun failure_cases () =
+    let val resource = case Exn.capture (fn () =>
+              SmtResource.check_dag_size_with_limit
+                "SmtPublicWrapperTests" "public-replay" 1 2) () of
+            Exn.Exn error => error
+          | _ => raise Fail "resource fixture did not gate"
+    in [("resource HOL_ERR",resource,true),
+        ("Interrupt",Interrupt,true),
+        ("Timeout",Timeout.TIMEOUT (Time.fromSeconds 7),true),
+        ("ordinary HOL_ERR",Feedback.mk_HOL_ERR "SmtPublicWrapperTests"
+           "replay" "ordinary callback failure",false),
+        ("non-HOL exception",Fail "public callback failure",false)] end
+
+  (* Adapter-only parser controls, NOT claimed as external solver failures.
+     The checked graph API owns these envelopes; public adapters remove them. *)
+  fun parse_diagnostics engine =
+    let
+      val name = "public_parser_adapter"
+      fun adapt error = case engine of
+          Z3Engine => Z3.checked_source_result name
+            (fn () => raise CG.ParseFailure error)
+        | CVCEngine => CVC.checked_source_result name true
+            (fn () => raise CG.ParseFailure error)
+      val _ = List.app (fn (_,primary,terminal) => if not terminal then ()
+        else require "parse adapter changed a terminal primary"
+          (case Exn.capture adapt primary of
+             Exn.Exn actual => same_primary primary actual andalso
+               SmtResource.terminal_diagnostic_exception actual
+           | _ => false)) (failure_cases ())
+      val primary = Feedback.mk_HOL_ERR "SmtLib_Parser"
+        SmtLib_Parser.unknown_symbol_origin "public unknown proof symbol"
+      val _ = require "parse adapter lost phase/symbol/command context"
+        (case Exn.capture adapt primary of
+           Exn.Exn (Feedback.HOL_ERR detail) =>
+             Feedback.top_function_of detail = name andalso
+             List.all (fn text => String.isSubstring text
+               (Feedback.message_of detail))
+               (["proof parse failed", "version:", "command:",
+                 "public unknown proof symbol"] @
+                (case engine of
+                   Z3Engine => [Z3.unsupported_proof_symbol_diagnostic]
+                 | CVCEngine => ["--arrays-exp"]))
+         | _ => false)
+    in () end
+
   (* Raw negative controls ONLY. Kernel theorems here deliberately attack
      the Source/session receiver; none are fed to GENERIC_SMT_TAC. *)
   fun with_session original action =
@@ -302,5 +436,13 @@ struct
         (1,"(p /\\ T) -> p, duplicate assumptions"),
         (2,"((p /\\ T) /\\ T) -> p, duplicate assumptions")])
        [Z3Engine,CVCEngine];
-     raw_negatives ())
+     raw_negatives ();
+     List.app (fn engine =>
+       (List.app (fn owned => List.app (fn failure as (label,_,_) =>
+          test (engine_name engine ^ (if owned then " owned" else "") ^
+            " public replay preserves " ^ label)
+            (fn () => public_failure engine owned failure)) (failure_cases ()))
+          [false,true];
+        test (engine_name engine ^ " parser diagnostic adapter")
+          (fn () => parse_diagnostics engine))) [Z3Engine,CVCEngine])
 end
