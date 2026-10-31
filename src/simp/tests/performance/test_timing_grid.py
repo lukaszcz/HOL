@@ -3746,6 +3746,17 @@ class Chain(ChainRig):
             self.prepare()
         self.assertFalse(self.stamp().exists())
 
+    def test_a_build_that_moves_head_writes_no_stamp(self):
+        self.commit_counts()
+
+        def moves():
+            self.commit_file("src/one.sml", "val one = 5\n", "moved")
+        self.build = moves
+        with self.assertRaisesRegex(ValueError, "HEAD moved during the "
+                                    "build, no build stamp"):
+            self.prepare()
+        self.assertFalse(self.stamp().exists())
+
     def test_prepare_checks_the_place_of_the_ledger(self):
         exclude = self.repo / ".git" / "info" / "exclude"
         exclude.write_text("")
