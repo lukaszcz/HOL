@@ -307,8 +307,53 @@ struct
          check (!calls=3) "reset collision did not use full checked worker")
     in Portable.finally (fn () => Context.restore saved) test () end
 
+  (* Publication must return a checked result even for tiny binder syntax
+     with an exponentially unfolded ground range Type. Also put the unsafe
+     binder below a small one: admission must precede nested count_body,
+     not just the final name-preserving destructor. *)
+  fun binder_publication () =
+    let
+      fun shared_type 0 = Type.bool
+        | shared_type n =
+            let val child = shared_type (n - 1)
+            in Type.mk_type ("fun", [child,child]) end
+      val variable = Term.mk_var ("task49_publication_b", Type.bool)
+      val body = Term.mk_var ("task49_publication_y", shared_type 38)
+      val huge = Term.mk_abs (variable,body)
+      val predicate = Term.mk_var ("task49_publication_p",
+        Type.--> (Term.type_of huge,Type.bool))
+      val atom = Term.mk_comb (predicate,huge)
+      val nested = Term.mk_abs (variable,atom)
+      val small = Term.mk_abs (variable,variable)
+      fun trial abstraction retain =
+        let
+          val consume = Term.mk_var ("task49_publication_consume",
+            Type.--> (Term.type_of abstraction,Type.bool))
+          val input = Term.mk_comb (consume,abstraction)
+          (* Construct the checked endpoint BEFORE the publication watchdog. *)
+          val theorem = Thm.DISCH input (Thm.ASSUME input)
+          val target = Thm.concl theorem
+          val context = S.new_sat_context ()
+          val calls = ref 0
+          fun worker () = (calls := !calls+1; theorem)
+          fun run () =
+            let
+              val result = S.cached_sat_proof context target 16 worker
+              val _ = check (Portable.pointer_eq (Thm.concl result,target))
+                "publication changed the checked endpoint"
+            in checked result target end
+          val _ = Timeout.apply (Time.fromSeconds 2)
+            (fn () => (run (); run ())) ()
+        in
+          check (!calls = (if retain then 1 else 2))
+            "binder publication lost small reuse or huge checked misses";
+          check (null (!(#proofs context)) = not retain)
+            "unsafe binder was retained"
+        end
+    in trial huge false; trial nested false; trial small true end
+
   fun run () =
-    (owner_keys (); optional_miss (); reset_restore ();
+    (owner_keys (); optional_miss (); binder_publication (); reset_restore ();
      retired_publication (); attempt_reset_restore ();
      List.app retained [false,true];
      List.app restored [false,true];

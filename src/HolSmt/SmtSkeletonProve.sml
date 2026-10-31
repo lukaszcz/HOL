@@ -166,6 +166,40 @@ struct
               val _ = if live then remember types bucket ty else ()
             in live end
         end
+      (* Raw counting itself opens every nested binder. Standard count_body
+         builds REFL/Beta at its range Type, whose native classification can
+         unfold shared children exponentially. Liveness hints do not bound
+         that work: admit an unfolded range before ANY such opening. This
+         conservative optional check may only forgo retention. *)
+      fun before_open ty =
+        let
+          val allowance = ref 8192
+          val sizes = ref ([] : (hol_type * int) list)
+          fun debit () =
+            (if !allowance = 0 then raise Unknown else ();
+             allowance := !allowance - 1; spend 1)
+          fun find _ [] = NONE
+            | find ty ((saved,size) :: rest) =
+                (debit ();
+                 if Portable.pointer_eq (ty,saved) then SOME size
+                 else find ty rest)
+          fun visit ty =
+            (debit ();
+             case find ty (!sizes) of
+               SOME size => size
+             | NONE =>
+                 let
+                   fun add (child,total) =
+                     let val _ = debit ()
+                         val sum = total + visit child
+                     in if sum > 8192 then raise Unknown else sum end
+                   val size = if Type.is_vartype ty then 1 else
+                     List.foldl add 1 (#Args (Type.dest_thy_typeid ty))
+                   val _ = sizes := (ty,size) :: !sizes
+                 in size end)
+          (* Pointer memoization saves guard work, not the native unfolded
+             work. Reserve that too, across all openings in this check. *)
+        in spend (visit (#2 (Type.dom_rng ty))) end
       fun live_term term =
         let
           val _ = spend 1
@@ -188,8 +222,8 @@ struct
                 else
                   (* Large binders are an optional miss. Never allow the
                      publication walk to open an unbounded legacy body. *)
-                  (case SmtReplayImport.bounded_raw_size
-                      (Int.min (8192, !remaining)) term of
+                  (case SmtReplayImport.bounded_raw_size_with_type_check
+                      before_open (Int.min (8192, !remaining)) term of
                      NONE => raise Unknown
                    | SOME nodes =>
                        let
