@@ -45,12 +45,26 @@ structure SolverSpec = struct
      available rather than failing every query with "command not found". *)
   val wall_timeout_command : string option option ref = ref NONE
 
+  (* Ordinary capture observers remain best-effort, but terminal exceptions
+     must also survive cold command discovery before any solver is run. *)
+  fun terminal_capture_exception exn =
+    case exn of Interrupt => true
+      | Timeout.TIMEOUT _ => true
+      | IO.Io {cause,...} => terminal_capture_exception cause
+      | _ => false
+
+  fun timeout_command_available name =
+    OS.Process.isSuccess
+      (SatProcess.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
+    handle exn =>
+      if terminal_capture_exception exn then raise exn else false
+
   fun find_wall_timeout_command () =
     case !wall_timeout_command of
       SOME cached => cached
     | NONE =>
       let
-        val found = List.find Library.command_available ["timeout", "gtimeout"]
+        val found = List.find timeout_command_available ["timeout", "gtimeout"]
         val () =
           if Option.isSome found orelse !Library.trace < 1 then
             ()
@@ -126,14 +140,6 @@ structure SolverSpec = struct
   (* Validation receives this invocation's exact preprocessing artifact and
      original goal. Graph callers must supply their retained source check;
      the invocation itself performs no mixed raw/canonical comparisons. *)
-  (* Only opt-in capture calls may propagate cancellation. The ordinary
-     capture observer retains its existing best-effort behavior. *)
-  fun terminal_capture_exception exn =
-    case exn of Interrupt => true
-      | Timeout.TIMEOUT _ => true
-      | IO.Io {cause,...} => terminal_capture_exception cause
-      | _ => false
-
   type input_writer = (string -> unit) -> unit
 
   (* Emit fragments directly to the invocation's file. Close the stream on

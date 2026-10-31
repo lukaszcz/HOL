@@ -8,6 +8,22 @@ struct
    The fork fallback participates too, so it cannot inherit fast-path FDs. *)
 val spawn_lock = Mutex.mutex ()
 
+(* Retire ownership and close as one cancellation-deferred transition. An
+   interrupt must neither lose an open FD nor leave a closed FD registered
+   for cleanup: another thread may already have reused its number. Preserve
+   the caller's current attributes (also when already inside cleanup). *)
+fun close_owned descriptors fd =
+  let
+    val attributes = Thread.getAttributes ()
+    val _ = Thread.setAttributes
+      [Thread.InterruptState Thread.InterruptDefer]
+    val _ =
+      (descriptors := List.filter (fn other => other <> fd) (!descriptors);
+       Posix.IO.close fd)
+      handle e =>
+        ((Thread.setAttributes attributes handle _ => ()); raise e)
+  in Thread.setAttributes attributes end
+
 fun fork_system command =
   let
     val attributes = Thread.getAttributes ()
@@ -21,9 +37,7 @@ fun fork_system command =
     fun unlock () = if !locked then
       (locked := false; Mutex.unlock spawn_lock) else ()
     val descriptors = ref ([] : Posix.IO.file_desc list)
-    fun close fd =
-      (descriptors := List.filter (fn other => other <> fd) (!descriptors);
-       Posix.IO.close fd)
+    fun close fd = close_owned descriptors fd
     fun close_all () =
       let val fds = !descriptors
           val _ = descriptors := []
@@ -81,12 +95,15 @@ fun fork_system command =
     case child of
       NONE =>
         ((Posix.ProcEnv.setpgid {pid = NONE,pgid = NONE};
-          close infd; close writer;
+          (* Already deferred across fork. Do not query thread attributes in
+             this forked live heap: another vanished thread may own the
+             runtime lock used by getAttributes. Exec/exit retires the child
+             registry; only the parent needs cancellation-safe ownership. *)
+          Posix.IO.close infd; Posix.IO.close writer;
           (* Clear CLOEXEC only in this child.  Concurrent calls' pipes must
              not stay open in this call's supervisor or command. *)
           Posix.IO.setfd (outfd,Posix.IO.FD.flags []);
           Posix.IO.setfd (script,Posix.IO.FD.flags []);
-          restore ();
           Systeml.exec ("/bin/sh",["sh",fdpath script]))
          handle _ => Posix.Process.exit 0w127)
     | SOME pid =>
@@ -203,9 +220,7 @@ fun spawn_system setsid command =
     val locked = ref false
     fun unlock () = if !locked then
       (locked := false; Mutex.unlock spawn_lock) else ()
-    fun close fd =
-      (descriptors := List.filter (fn other => other <> fd) (!descriptors);
-       Posix.IO.close fd)
+    fun close fd = close_owned descriptors fd
     fun close_all () =
       let val fds = !descriptors
           val _ = descriptors := []
