@@ -42,6 +42,7 @@ never edited: a revision is a new file named in the table, derived from the
 file before it, by rescaling cells or by a fresh pilot.
 """
 import argparse
+import contextlib
 import copy
 import datetime
 import hashlib
@@ -50,6 +51,7 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -92,8 +94,9 @@ class CheckoutChanged(ValueError):
 class CheckoutRefused(ValueError):
     """What `checkout_identity` refuses: `what`, and `fresh`, the words that
     end it for a fresh start (the text is `what: fresh`). `resumed` is the
-    same refusal as a `--resume` gives it, which ends with `RESUMING`
-    instead: that is the one place the words of a resumption are added."""
+    same refusal as a resumption or a second stage gives it, which ends
+    with `RESUMING` instead: that is the one place the words of a
+    resumption are added."""
 
     def __init__(self, what, fresh=None):
         super().__init__(what if fresh is None else "%s: %s" % (what, fresh))
@@ -430,7 +433,10 @@ class Ledger:
         (`checkout`: the first), opened, resumptions, and every status the
         attempt closed with, in order (`statuses`; `status`: the last), in
         the order the ledger first names them. A run that was resumed or is
-        still open without a close of its own has been `interrupted`."""
+        still open without a close of its own has been `interrupted`. The
+        texts of the closes that carry a `found` (a difference found and not
+        marked) or a `judgement` (an end that could not be judged) are in
+        the lists of those names."""
         found = {}
         for record in self.records:
             if record["event"] not in ("open", "resume", "close"):
@@ -439,7 +445,7 @@ class Ledger:
                 (record["attempt"], record["stage"]),
                 dict(candidate=record.get("candidate"), checkout=None,
                      checkouts=[], opened=None, resumed=0, statuses=[],
-                     status=None, running=False))
+                     status=None, found=[], judgement=[], running=False))
             place = record.get("checkout")
             if place not in row["checkouts"]:
                 row["checkouts"].append(place)
@@ -453,6 +459,9 @@ class Ledger:
                 row["resumed"] += 1
             else:
                 row["statuses"].append(record["status"])
+                for key in ("found", "judgement"):
+                    if key in record:
+                        row[key].append(record[key])
                 row["running"] = False
         for row in found.values():
             if row.pop("running"):
@@ -532,16 +541,41 @@ FINISHED = "Finished configuration!"
 # not here: each cell's manifest records them among its tools.
 PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/Holmake")
 PREPARE = "run prepare at this commit"
-# What is safe when a resumption is refused: a prepare gives new products, so
-# it cannot be the way back, and a commit moves HEAD.
-RESUMING = ("this run resumes only at the recorded commit, tree and "
+# What is safe when a grid whose record has begun is refused, at a resumption
+# or at a second stage: a prepare gives new products, so it cannot be the way
+# back, and it ends the grid; a commit moves HEAD, and the way back is to the
+# recorded commit.
+RESUMING = ("this grid goes on only at the recorded commit, tree and "
             "products; remove the change, or restore the stamp from a copy "
-            "of that same file; a prepare or a commit ends the grid")
+            "of that same file; a prepare ends the grid, and a later commit "
+            "must be left: go back to the recorded commit")
 # A build from nothing takes the better part of an hour.
 BUILD_TIMEOUT = 4 * 3600
 # The exit status of a command that was refused or ended with an error, and
 # so decided nothing; 0, 1 and 2 are those of a grid (`status_code`).
 REFUSED = 3
+
+
+@contextlib.contextmanager
+def terminating_as_interrupt():
+    """SIGTERM and SIGHUP (a plain `kill`, a `timeout`, an agent's stop, a
+    closed terminal) raise `KeyboardInterrupt`, as SIGINT does, so that
+    they take the path of an interrupt: the cell's process group is killed
+    and waited for, the lock is released and the end of the attempt is
+    judged. The handlers are put back at the exit. Off the main thread,
+    where Python allows no handler, nothing changes."""
+    old = {}
+    try:
+        for number in (signal.SIGTERM, signal.SIGHUP):
+            old[number] = signal.signal(number, signal.default_int_handler)
+    except ValueError:
+        pass
+    try:
+        yield
+    finally:
+        for number, handler in old.items():
+            if handler is not None:
+                signal.signal(number, handler)
 
 
 def file_sha256(path):
@@ -1217,7 +1251,18 @@ class Grid:
             except CheckoutChanged:
                 raise
             except BaseException as stop:
-                self.h.judge_end(root, args.repo, None, inventory, stop)
+                _, note = self.h.judge_end(root, args.repo, None, inventory,
+                                           stop)
+                # A pilot has no ledger to carry the note: what the judgement
+                # could not write is kept in memory, for the checkpoint
+                # below (if that fails too, its error shows).
+                if "found" in note:
+                    inventory["checkout_changed"] = note["found"]
+                elif "judgement" in note:
+                    inventory["checkout_unjudged"] = note["judgement"]
+                    inventory["unjudged_ends"] = [
+                        *inventory.get("unjudged_ends", []),
+                        note["judgement"]]
                 raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
@@ -1749,6 +1794,21 @@ class Grid:
                   "the attempts ledger has no opening of this grid")
         return state
 
+    def refuse_found(self, state):
+        """A ledger that holds a difference found and not marked, on any
+        attempt, is refused like a dead grid: the checkout was known to
+        differ and the inventory could not say so. Only a replay (and so a
+        close) reads it; a `--resume` does not."""
+        if state is None:
+            return
+        for (attempt, _), row in state.attempts().items():
+            if row["found"]:
+                raise ValueError(
+                    "the checkout changed while attempt %s ran (%s) and "
+                    "the mark could not be written: the grid is dead, "
+                    "neither replayed nor closed; its route is a new grid "
+                    "in a new output" % (attempt, row["found"][0]))
+
     def attempt_counts(self, state, candidate):
         """(attempts of the table, attempts of the candidate) in a ledger;
         each stage of a grid is one."""
@@ -1769,6 +1829,9 @@ class Grid:
         marked, with every status it closed with and the checkouts of its
         lines, so that a reader of a replay sees each retry, an interruption
         or a checkout that changed on the way, and a retry made elsewhere.
+        A close that carries a difference found and not marked
+        (`CHECKOUT-FOUND-NOT-MARKED`), or an end that could not be judged
+        (`JUDGEMENT-NOT-MADE`), has a line of its own.
         The attempts of a table that are not all in one checkout are
         named."""
         if state is None:
@@ -1790,6 +1853,10 @@ class Grid:
                       ",".join(row["statuses"]) or "interrupted",
                       row["candidate"], ",".join(map(str, row["checkouts"])),
                       mark))
+            for text in row["found"]:
+                print("CHECKOUT-FOUND-NOT-MARKED %s %s" % (attempt, text))
+            for text in row["judgement"]:
+                print("JUDGEMENT-NOT-MADE %s %s" % (attempt, text))
         places = {x for row in found.values() for x in row["checkouts"]}
         if len(places) > 1:
             print("LEDGER-CHECKOUTS: the attempts of this ledger were made "
@@ -1807,15 +1874,16 @@ class Grid:
         self.h.check_counts(Path(args.pilot).resolve(),
                             self.h.counts_for(inventory))
 
-    def bind_checkout(self, repo, commit, resuming=False):
+    def bind_checkout(self, repo, commit, recorded=False):
         """The checkout the measurement runs in is that of `commit`, and
-        the one `prepare` stamped (checkout_identity). At a resumption a
-        refusal ends with what is safe there (`RESUMING`), not with what a
-        fresh start does."""
+        the one `prepare` stamped (checkout_identity). Where the record of
+        the grid already exists (`recorded`: a resumption, or a second
+        stage, whose first stage has been measured) a refusal ends with what
+        is safe there (`RESUMING`), not with what a fresh start does."""
         try:
             return checkout_identity(repo, commit, self.h.stamp_path(repo))
         except CheckoutRefused as error:
-            if not resuming:
+            if not recorded:
                 raise
             raise error.resumed() from None
 
@@ -1869,15 +1937,31 @@ class Grid:
         failure inside the measuring, an interrupt), and then it never
         raises: the exception of the stop goes on to decide the exit
         status. It returns the status the attempt closes with and what its
-        close line adds: `checkout-changed` when something was found and
-        marked, and `interrupted` otherwise, with the reason as
-        `judgement` when the judgement itself failed (nothing is marked
-        then; a checkout that cannot be asked says nothing)."""
+        close line adds:
+
+        - something was found and marked: `checkout-changed`, nothing
+          added;
+        - the checkout was found to differ (dead) and the mark could not be
+          written: `checkout-changed`, with `found`, the text found and the
+          failure of the mark; the inventory does not say it, so the ledger
+          is the only record (a `replay` and a `close` refuse such a
+          ledger);
+        - the checkout could not be asked, or the mark of an end that was
+          only not judged could not be written: `interrupted`, with the
+          reason as `judgement`, as of a process that was killed;
+        - nothing found: `interrupted`, nothing added."""
         try:
             try:
                 self.h.recheck(repo, commit, inventory)
             except CheckoutChanged as error:
-                self.h.mark_end(root, inventory, error)
+                try:
+                    self.h.mark_end(root, inventory, error)
+                except BaseException as failure:
+                    if stop is not None and error.dead:
+                        return "checkout-changed", dict(
+                            found="%s; not marked: %s: %s" % (
+                                error, type(failure).__name__, failure))
+                    raise
                 if stop is None:
                     raise
                 return "checkout-changed", {}
@@ -2299,7 +2383,7 @@ class Grid:
             self.h.check_experiment(recorded)
             self.h.check_checkout(recorded, args.repo)
             a.require(self.h.bind_checkout(
-                args.repo, recorded["candidate"], args.resume) ==
+                args.repo, recorded["candidate"], True) ==
                 recorded["checkout"],
                 "the checkout is not the one the first stage was measured "
                 "in")
@@ -2357,6 +2441,7 @@ class Grid:
         self.h.check_provenance(args, inventory)
         stage = "second" if second else "first"
         state = self.h.check_attempt(args, inventory, stage)
+        self.h.refuse_found(state)
         if second:
             grid = (root / inventory["grid"]).resolve()
             a.require(a.seal(grid / "inventory.json") ==
@@ -2508,17 +2593,19 @@ class Grid:
         conclusive (2). A refusal (a ValueError, among them a checkout that
         changed and a lock that is held) is that line alone; any other error
         (a missing file, a full disk, a malformed record, a bug) has its
-        traceback before it. An interrupt is not caught."""
-        try:
-            return self.execute(argv, extra)
-        except Exception as error:
-            text = str(error)
-            if not isinstance(error, ValueError):
-                traceback.print_exc()
-                text = "%s: %s" % (type(error).__name__, text)
-            print("REFUSED: " + " ".join(text.split()), file=sys.stderr,
-                  flush=True)
-            return REFUSED
+        traceback before it. An interrupt is not caught, and SIGTERM and
+        SIGHUP are one, for every command (`terminating_as_interrupt`)."""
+        with terminating_as_interrupt():
+            try:
+                return self.execute(argv, extra)
+            except Exception as error:
+                text = str(error)
+                if not isinstance(error, ValueError):
+                    traceback.print_exc()
+                    text = "%s: %s" % (type(error).__name__, text)
+                print("REFUSED: " + " ".join(text.split()),
+                      file=sys.stderr, flush=True)
+                return REFUSED
 
     def execute(self, argv=None, extra=None):
         """Dispatch. `extra` maps a task's own action to (configure the

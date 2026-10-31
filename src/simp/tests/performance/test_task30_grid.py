@@ -546,6 +546,23 @@ class RealChain(ttg.ChainRig):
         table.counts, table.ledger = self.counts, None
         return table
 
+    def allocation_at(self, y):
+        """The allocation gate's own harness binding, at Y, in this
+        checkout, and a passing allocation grid of it."""
+        move = lambda files: [self.repo / p.relative_to(REPO)
+                              for p in files]
+        inputs, fixtures = self.am.harness_files(self.am.task_named("task30"))
+        binding = self.am.harness_binding(
+            self.repo, y, move(inputs), move(fixtures))
+        self.assertEqual(binding["head"], y)
+        counted = self.root / "allocation"
+        counted.mkdir()
+        (counted / "inventory.json").write_text(json.dumps(dict(
+            task="task30", candidate=y, baseline=a.BASE, harness=binding)))
+        (counted / "decisions.json").write_text(json.dumps(
+            dict(status="pass")))
+        return counted
+
     def test_the_whole_sequence_from_prepare_to_the_closing_verdict(self):
         y = self.commit_counts()
         status, text = self.run_at(y)
@@ -561,19 +578,7 @@ class RealChain(ttg.ChainRig):
         self.assertEqual(decisions["source_identity"]["reviewed"],
                          pins.PINNED)
         self.assertEqual(self.go(self.replay_argv(grid))[0], 0)
-        # The allocation gate's own harness binding, at Y, in this checkout.
-        move = lambda files: [self.repo / p.relative_to(REPO)
-                              for p in files]
-        inputs, fixtures = self.am.harness_files(self.am.task_named("task30"))
-        binding = self.am.harness_binding(
-            self.repo, y, move(inputs), move(fixtures))
-        self.assertEqual(binding["head"], y)
-        counted = self.root / "allocation"
-        counted.mkdir()
-        (counted / "inventory.json").write_text(json.dumps(dict(
-            task="task30", candidate=y, baseline=a.BASE, harness=binding)))
-        (counted / "decisions.json").write_text(json.dumps(
-            dict(status="pass")))
+        counted = self.allocation_at(y)
         out = io.StringIO()
         with unittest.mock.patch.object(t30, "ENGINE", self.grid), \
                 unittest.mock.patch.object(t30, "TABLE", self.table), \
@@ -588,6 +593,38 @@ class RealChain(ttg.ChainRig):
                       "pass; candidate %s, harness %s; attempts 1 in the "
                       "ledger, 1 of the candidate)" % (y, y), out.getvalue())
         self.assertEqual(self.git("status", "--porcelain"), "")
+
+
+    def test_a_close_and_a_replay_refuse_a_difference_found_not_marked(self):
+        y = self.commit_counts()
+        readme = self.repo / a.HERE.relative_to(REPO) / "README.md"
+
+        def edit():
+            readme.write_text(readme.read_text() + "edited\n")
+        self.found_not_marked(y, "grid", edit)
+        self.git("checkout", "--", str(readme))
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        counted = self.allocation_at(y)
+        grid = self.root / "grid"
+        self.assertNotIn("checkout_changed", self.inventory(grid))
+        with unittest.mock.patch.object(t30, "ENGINE", self.grid), \
+                unittest.mock.patch.object(t30, "TABLE", self.table), \
+                unittest.mock.patch.object(self.am, "replay",
+                                           lambda args: 0):
+            for command in (
+                    ["close", "--grid", str(grid), "--pilot",
+                     str(self.pilot_dir), "--allocation", str(counted),
+                     "--repo", str(self.repo)],
+                    ["replay", "--output", str(grid), "--repo",
+                     str(self.repo), "--pilot", str(self.pilot_dir)]):
+                err, out = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stderr(err), \
+                        contextlib.redirect_stdout(out):
+                    code = t30.main(command)
+                self.assertEqual(code, tg.REFUSED, out.getvalue())
+                self.assertRegex(
+                    err.getvalue(), "^REFUSED: the checkout changed while "
+                    "attempt .* ran .*the grid is dead")
 
 
 tearDownModule = ttg.tearDownModule

@@ -22,9 +22,12 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import stat
 import subprocess
+import sys
 import tempfile
+import time
 import traceback
 import unittest
 from unittest.mock import patch
@@ -44,6 +47,8 @@ COMMIT = "1" * 40
 PRODUCTS = "p" * 64
 GOOD = (0.99, 1.01)
 WIDE = (0.95, 1.06)
+# The real `run_logged`, before a rig puts a stand-in in its place.
+REAL_RUN_LOGGED = a.run_logged
 
 
 def interval_metric(ci, margin=0.03):
@@ -3905,10 +3910,13 @@ class ChainRig(Rig):
     def prepare(self):
         return self.go(["prepare", "--repo", str(self.repo)])
 
+    def attempts_path(self):
+        return (self.repo / ".agent-files" / "evidence" / self.table.name /
+                "attempts.jsonl")
+
     def ledger_lines(self):
-        return [json.loads(line) for line in (
-            self.repo / ".agent-files" / "evidence" / "toy" /
-            "attempts.jsonl").read_text().splitlines()]
+        return [json.loads(line) for line in
+                self.attempts_path().read_text().splitlines()]
 
     def stamp(self):
         return (self.repo / ".agent-files" / "evidence" / "toy" /
@@ -3930,6 +3938,60 @@ class ChainRig(Rig):
         return self.go(self.argv("run", self.root / name, "--candidate",
                                  commit, "--authorize-measurements",
                                  *extra))
+
+    def acting_at(self, call, action):
+        """The measurement of cell number `call` finds the worktree changed
+        by `action`."""
+        real = self.fake_run
+
+        def run(options):
+            report = real(options)
+            if self.calls == call:
+                action()
+            return report
+        return patch.object(a, "run", run)
+
+    def resume(self, y, name="grid"):
+        return self.run_at(y, name, "--resume")
+
+    def failing_after(self, call, action=lambda: None, error=None):
+        """Cell number `call` does `action` and then raises `error`."""
+        real = self.fake_run
+
+        def run(options):
+            if self.calls + 1 == call:
+                action()
+                self.calls += 1
+                raise error or RuntimeError("infrastructure failure")
+            return real(options)
+        return patch.object(a, "run", run)
+
+    def edit_one(self):
+        (self.repo / "src" / "one.sml").write_text("val one = 7\n")
+
+    def undo_one(self):
+        self.git("checkout", "--", "src/one.sml")
+
+    def statuses(self):
+        return [(x["event"], x.get("status")) for x in self.ledger_lines()]
+
+    def fail_the_mark(self, error=None):
+        """The mark of the end cannot be written."""
+        def mark(root, inventory, found):
+            raise error or OSError("disk full")
+        return patch.object(self.grid, "mark_end", mark)
+
+    def found_not_marked(self, y, name="grid", edit=None):
+        """P3: an edit after cell 3, cell 5 raises, and the mark of the
+        difference found at the stop cannot be written."""
+        self.explode_at = self.calls + 5
+        with self.acting_at(self.calls + 3, edit or self.edit_one):
+            with self.fail_the_mark():
+                with self.assertRaises(RuntimeError) as caught:
+                    self.run_at(y, name)
+        self.explode_at = None
+        self.assertEqual(str(caught.exception), "infrastructure failure")
+        return self.ledger_lines()[-1]
 
 
 class Chain(ChainRig):
@@ -4102,21 +4164,6 @@ class Chain(ChainRig):
                             self.inventory(self.root / "new")[
                                 "checkout"]["products"])
 
-    def acting_at(self, call, action):
-        """The measurement of cell number `call` finds the worktree changed
-        by `action`."""
-        real = self.fake_run
-
-        def run(options):
-            report = real(options)
-            if self.calls == call:
-                action()
-            return report
-        return patch.object(a, "run", run)
-
-    def resume(self, y, name="grid"):
-        return self.run_at(y, name, "--resume")
-
     def test_a_stray_file_at_the_end_does_not_kill_the_grid(self):
         y = self.commit_counts()
         stray = self.repo / "notes.txt"
@@ -4180,7 +4227,7 @@ class Chain(ChainRig):
         stray.unlink()
         # The binding refuses first, in the words of a resumption.
         with self.assertRaisesRegex(ValueError, "differ from the stamped "
-                                    "build: this run resumes only"):
+                                    "build: this grid goes on only"):
             self.resume(y)
         self.assertEqual(self.prepare()[0], 0)
         self.dead_resume(y)
@@ -4314,27 +4361,6 @@ class Chain(ChainRig):
 
     # The end of an attempt that stops early -----------------------------
 
-    def failing_after(self, call, action=lambda: None, error=None):
-        """Cell number `call` does `action` and then raises `error`."""
-        real = self.fake_run
-
-        def run(options):
-            if self.calls + 1 == call:
-                action()
-                self.calls += 1
-                raise error or RuntimeError("infrastructure failure")
-            return real(options)
-        return patch.object(a, "run", run)
-
-    def edit_one(self):
-        (self.repo / "src" / "one.sml").write_text("val one = 7\n")
-
-    def undo_one(self):
-        self.git("checkout", "--", "src/one.sml")
-
-    def statuses(self):
-        return [(x["event"], x.get("status")) for x in self.ledger_lines()]
-
     def test_an_edit_before_an_early_stop_kills_the_grid(self):
         # P1: the edit is made after cell 3, and cell 5 raises. The end of
         # the attempt is judged though the measuring never finished.
@@ -4380,8 +4406,30 @@ class Chain(ChainRig):
                                     "this grid ran.*dead"):
             self.go(argv + ["--resume"])
         self.assertEqual(self.calls, calls)
+        with self.subTest("judgement"):
+            real, seen = tg.Grid.recheck, []
 
-    def pilot_stopping(self, name, action, before=4):
+            def recheck(this, repo, commit, inventory):
+                seen.append(1)
+                if len(seen) > 1:
+                    raise OSError("git went away")
+                return real(this, repo, commit, inventory)
+            again = self.argv("extend", self.root / "ext2", "--grid",
+                              str(self.root / "grid"),
+                              "--authorize-measurements")
+            with self.failing_after(self.calls + 1):
+                with patch.object(tg.Grid, "recheck", recheck):
+                    with self.assertRaises(RuntimeError):
+                        self.go(again)
+            line = self.ledger_lines()[-1]
+            self.assertEqual((line["stage"], line["status"]),
+                             ("second", "interrupted"))
+            self.assertEqual(line["judgement"],
+                             "not made: OSError: git went away")
+            self.assertNotIn("checkout_changed",
+                             self.inventory(self.root / "ext2"))
+
+    def pilot_stopping(self, name, action, before=4, error=RuntimeError):
         """A pilot whose fifth process does `action` and then raises."""
         real = self.fake_launch
         started = len(self.launched)
@@ -4396,9 +4444,83 @@ class Chain(ChainRig):
         argv = self.argv("pilot", self.root / name,
                          "--authorize-measurements")
         with patch.object(a, "run_logged", launching):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(error):
                 self.go(argv)
         return argv
+
+    def test_a_pilot_keeps_what_its_judgement_could_not_write(self):
+        self.commit_counts()
+        real, seen = tg.Grid.recheck, []
+
+        def recheck(this, repo, commit, inventory):
+            seen.append(1)
+            if len(seen) > 1:
+                raise OSError("git went away")
+            return real(this, repo, commit, inventory)
+        # P2: the checkout cannot be asked at the stop. A pilot has no
+        # ledger, so its inventory must say that the end was not judged.
+        with patch.object(tg.Grid, "recheck", recheck):
+            argv = self.pilot_stopping("unjudged", lambda: None)
+        recorded = self.inventory(self.root / "unjudged")
+        text = "not made: OSError: git went away"
+        self.assertEqual(recorded["checkout_unjudged"], text)
+        self.assertEqual(recorded["unjudged_ends"], [text])
+        self.assertNotIn("checkout_changed", recorded)
+        with self.assertRaisesRegex(ValueError, "could not be judged.*"
+                                    "resume it"):
+            self.go(["predeclare", "--grid", str(self.root / "unjudged"),
+                     "--output", str(self.root / "c.json")])
+        self.assertEqual(self.go(argv + ["--resume"])[0], 0)
+        resumed = self.inventory(self.root / "unjudged")
+        self.assertNotIn("checkout_unjudged", resumed)
+        self.assertEqual(resumed["unjudged_ends"], [text])
+        self.assertEqual(self.go(["predeclare", "--grid",
+                                  str(self.root / "unjudged"), "--output",
+                                  str(self.root / "c.json")])[0], 0)
+        # A difference found and not marked is dead in the inventory.
+        with self.fail_the_mark():
+            self.pilot_stopping("found", self.edit_one)
+        recorded = self.inventory(self.root / "found")
+        self.assertRegex(recorded["checkout_changed"], "tracked file.*; not "
+                         "marked: OSError: disk full$")
+        self.assertNotIn("checkout_unjudged", recorded)
+        with self.assertRaisesRegex(ValueError, "changed while the pilot "
+                                    "ran"):
+            self.go(["predeclare", "--grid", str(self.root / "found"),
+                     "--output", str(self.root / "d.json")])
+        self.undo_one()
+        # Nothing is known to differ (a stray file) and the mark of the
+        # unjudged end cannot be written: the judgement was not made.
+        stray = self.repo / "notes.txt"
+        with self.fail_the_mark():
+            self.pilot_stopping("stray", lambda: stray.write_text("x"))
+        recorded = self.inventory(self.root / "stray")
+        self.assertEqual(recorded["checkout_unjudged"],
+                         "not made: OSError: disk full")
+        self.assertNotIn("checkout_changed", recorded)
+        stray.unlink()
+
+    def test_a_pilot_whose_last_checkpoint_fails_shows_that_error(self):
+        self.commit_counts()
+        real, seen = tg.Grid.recheck, []
+
+        def recheck(this, repo, commit, inventory):
+            seen.append(1)
+            if len(seen) > 1:
+                raise OSError("git went away")
+            return real(this, repo, commit, inventory)
+        written = tg.checkpoint
+
+        def checkpoint(path, value):
+            if "checkout_unjudged" in value:
+                raise OSError("disk full")
+            return written(path, value)
+        with patch.object(tg.Grid, "recheck", recheck), \
+                patch.object(tg, "checkpoint", checkpoint):
+            # The error of the checkpoint replaces the stop's.
+            self.pilot_stopping("full", lambda: None, error=OSError)
+        self.assertNotIn("checkout_unjudged",
+                         self.inventory(self.root / "full"))
 
     def test_a_pilot_that_stops_early_is_judged_too(self):
         self.commit_counts()
@@ -4475,8 +4597,7 @@ class Chain(ChainRig):
         real = tg.Grid.recheck
         for label, error, step in (
                 ("recheck", OSError("git went away"), "recheck"),
-                ("second interrupt", KeyboardInterrupt(), "recheck"),
-                ("the mark", OSError("disk full"), "mark_end")):
+                ("second interrupt", KeyboardInterrupt(), "recheck")):
             with self.subTest(label):
                 name = "grid-" + label.replace(" ", "-")
                 seen = []
@@ -4490,12 +4611,9 @@ class Chain(ChainRig):
 
                 def mark(root, inventory, found):
                     raise error
-                stand_in = (recheck if step == "recheck" else mark)
                 # An edit that the judgement would have found.
                 with self.failing_after(self.calls + 5, self.edit_one):
-                    with patch.object(
-                            tg.Grid if step == "recheck" else self.grid,
-                            step, stand_in):
+                    with patch.object(tg.Grid, "recheck", recheck):
                         with self.assertRaises(RuntimeError) as caught:
                             self.run_at(y, name)
                 self.assertEqual(str(caught.exception),
@@ -4507,8 +4625,115 @@ class Chain(ChainRig):
                                  ("close", "interrupted"))
                 self.assertIn("not made: " + type(error).__name__,
                               line["judgement"])
+                self.assertNotIn("found", line)
                 self.undo_one()
         self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_a_difference_found_and_not_marked_is_in_the_close(self):
+        # P3: the judgement was made and its answer is "known to differ".
+        y = self.commit_counts()
+        line = self.found_not_marked(y)
+        self.assertEqual((line["event"], line["status"]),
+                         ("close", "checkout-changed"))
+        self.assertNotIn("judgement", line)
+        self.assertRegex(line["found"], "tracked file.*; not marked: "
+                         "OSError: disk full$")
+        self.assertNotIn("checkout_changed",
+                         self.inventory(self.root / "grid"))
+        found = tg.Ledger(self.attempts_path()).attempts()
+        row, = found.values()
+        self.assertEqual((row["found"], row["judgement"]),
+                         ([line["found"]], []))
+        # The line of the report of the attempts, which a replay that
+        # refuses does not reach.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.grid.report_attempts(
+                tg.Ledger(self.attempts_path()),
+                self.inventory(self.root / "grid"), "first")
+        self.assertRegex(out.getvalue(), "(?m)^CHECKOUT-FOUND-NOT-MARKED "
+                         "[0-9a-f]{32} tracked file.*; not marked: "
+                         "OSError: disk full$")
+        self.assertNotIn("JUDGEMENT-NOT-MADE", out.getvalue())
+
+    def test_a_replay_and_a_close_refuse_a_ledger_with_a_found(self):
+        y = self.commit_counts()
+        self.found_not_marked(y, "found")
+        self.undo_one()
+        # The ledger is the only record; a resume does not read it, and
+        # goes on.
+        self.assertEqual(self.resume(y, "found")[0], 0)
+        self.assertEqual(self.run_at(y, "other")[0], 0)
+        for label, argv in (
+                ("replay", self.replay_argv(self.root / "other")),
+                ("replay of the resumed grid",
+                 self.replay_argv(self.root / "found"))):
+            with self.subTest(label):
+                calls = self.calls
+                with self.assertRaisesRegex(
+                        ValueError, "the checkout changed while attempt "
+                        ".* ran \\(tracked file.*disk full\\).*the grid "
+                        "is dead.*neither replayed nor closed"):
+                    self.go(argv)
+                self.assertEqual(self.calls, calls)
+        # Through main: the exit status and the line of a refusal.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.grid.main(self.replay_argv(self.root / "other"))
+        self.assertEqual(code, tg.REFUSED)
+        self.assertRegex(err.getvalue(), "^REFUSED: the checkout changed "
+                         "while attempt")
+
+    def test_a_judgement_not_made_is_a_killed_process_with_a_line(self):
+        # P4: a second interrupt during the judgement, so that nothing was
+        # found. No refusal: a resume and a replay go on, and the replay
+        # prints the line.
+        y = self.commit_counts()
+        real = tg.Grid.recheck
+        seen = []
+
+        def recheck(this, repo, commit, inventory):
+            seen.append(1)
+            if len(seen) > 1:
+                raise KeyboardInterrupt()
+            return real(this, repo, commit, inventory)
+        self.explode_at = self.calls + 5
+        with self.acting_at(self.calls + 3, self.edit_one):
+            with patch.object(tg.Grid, "recheck", recheck):
+                with self.assertRaises(RuntimeError):
+                    self.run_at(y)
+        self.explode_at = None
+        line = self.ledger_lines()[-1]
+        self.assertEqual((line["status"], line["judgement"]),
+                         ("interrupted", "not made: KeyboardInterrupt: "))
+        self.assertNotIn("found", line)
+        self.undo_one()
+        self.assertEqual(self.resume(y)[0], 0)
+        status, text = self.go(self.replay_argv(self.root / "grid"))
+        self.assertEqual(status, 0, text)
+        self.assertIn("status interrupted,pass", text)
+        self.assertRegex(
+            text, "(?m)^JUDGEMENT-NOT-MADE [0-9a-f]{32} not made: "
+            "KeyboardInterrupt: $")
+        self.assertNotIn("CHECKOUT-FOUND-NOT-MARKED", text)
+
+    def test_a_second_stage_that_loses_the_mark_is_found_in_its_close(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        y = self.commit_counts()
+        self.assertEqual(self.run_at(y)[0], 2)
+        argv = self.argv("extend", self.root / "ext", "--grid",
+                         str(self.root / "grid"), "--authorize-measurements")
+        with self.failing_after(self.calls + 1, self.edit_one):
+            with self.fail_the_mark():
+                with self.assertRaises(RuntimeError):
+                    self.go(argv)
+        line = self.ledger_lines()[-1]
+        self.assertEqual((line["stage"], line["status"]),
+                         ("second", "checkout-changed"))
+        self.assertRegex(line["found"], "tracked file.*not marked: "
+                         "OSError: disk full")
 
     def test_a_mark_that_cannot_be_written_is_not_kept_in_memory(self):
         inventory = dict(schema=self.table.schema("experiment"), runs=[])
@@ -4584,7 +4809,9 @@ class Chain(ChainRig):
         self.assertNotIn("run prepare", text)
         self.assertIn("restore the stamp from a copy of that same file",
                       text)
-        self.assertIn("a prepare or a commit ends the grid", text)
+        self.assertIn("a prepare ends the grid, and a later commit must be "
+                      "left: go back to the recorded commit", text)
+        self.assertNotIn("or a commit", text)
         self.stamp().write_bytes(saved)
         self.assertEqual(self.resume(y)[0], 0)
 
@@ -4644,6 +4871,35 @@ class Chain(ChainRig):
         self.stamp().write_bytes(saved)
         self.assertEqual(self.go(argv + ["--resume"])[0], 0)
         self.assertEqual(self.go(pilot + ["--resume"])[0], 0)
+
+    def test_a_fresh_extend_is_told_the_words_of_a_grid_that_has_begun(self):
+        # Its first stage has been measured: the record has begun, and a
+        # prepare costs the first stage, as it costs a stopped grid.
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        y = self.commit_counts()
+        self.assertEqual(self.run_at(y)[0], 2)
+        argv = self.argv("extend", self.root / "ext", "--grid",
+                         str(self.root / "grid"), "--authorize-measurements")
+        saved = self.stamp().read_bytes()
+        self.stamp().unlink()
+        with self.assertRaises(ValueError) as caught:
+            self.go(argv)
+        self.assertRegex(str(caught.exception), "^no build stamp \\(.*\\): "
+                         + re.escape(tg.RESUMING) + "$")
+        self.assertNotIn("run prepare", str(caught.exception))
+        self.stamp().write_bytes(saved)
+        stray = self.repo / "notes.txt"
+        stray.write_text("x")
+        with self.assertRaises(ValueError) as caught:
+            self.go(argv)
+        self.assertRegex(str(caught.exception), "^harness checkout is not "
+                         "clean: " + re.escape(tg.RESUMING) + "$")
+        self.assertNotIn("commit first", str(caught.exception))
+        self.assertFalse((self.root / "ext").exists())
+        stray.unlink()
+        self.assertEqual(self.go(argv)[0], 0)
 
     def test_a_fresh_start_keeps_the_words_of_a_fresh_start(self):
         y = self.commit_counts()
@@ -5110,6 +5366,143 @@ class Chain(ChainRig):
                          self.configure_log + "failed\n")
 
 
+class Sleeping(ChainRig):
+    """The child process of `Terminated`: a real grid on a real repository
+    whose one cell is a real process group that sleeps, holding the lock it
+    inherits as a cell does."""
+
+    def sleeps(self, marks):
+        marks = Path(marks)
+        # The parent looks at the repository after this process is gone, and
+        # removes it with `marks`: the exit must not.
+        self.tmp._finalizer.detach()
+        y = self.commit_counts()
+        out = self.root / "grid"
+
+        def cell(options):
+            # The edit the judgement of the stop has to find.
+            self.edit_one()
+            fds = [int(x) for x in os.environ[
+                "HOL4_PERF_LOCK_FDS"].split(",")]
+            script = ('sleep 600 & echo $! > "$1/grandchild"; '
+                      'echo $$ > "$1/cell"; wait')
+            return REAL_RUN_LOGGED(
+                ["/bin/sh", "-c", script, "cell", str(marks)],
+                marks / "cell.log", fds, 600)
+        (marks / "where.json").write_text(json.dumps(
+            dict(repo=str(self.repo), out=str(out))))
+        with patch.object(a, "run", cell):
+            return self.grid.main(self.argv(
+                "run", out, "--candidate", y, "--authorize-measurements"))
+
+
+CHILD = ("import sys; import test_timing_grid as T; "
+         "c = T.Sleeping('sleeps'); c.setUp(); "
+         "sys.exit(c.sleeps(sys.argv[1]))")
+
+
+def alive(pid):
+    """The process exists and is not a zombie waiting to be reaped."""
+    try:
+        state = Path("/proc/%d/stat" % pid).read_text().rsplit(")", 1)[1]
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    return state.split()[0] != "Z"
+
+
+@unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc")
+class Terminated(unittest.TestCase):
+    """A termination signal takes the path of an interrupt, in a real
+    process: the cell's group is killed and waited for, the lock is
+    released, and the end of the attempt is judged."""
+
+    def await_pids(self, child, marks):
+        deadline = time.monotonic() + 120
+        pids = []
+        while len(pids) < 2:
+            if child.poll() is not None or time.monotonic() > deadline:
+                self.fail("no cell started: %s" % (
+                    marks / "child.log").read_text())
+            pids = []
+            for name in ("grandchild", "cell"):
+                try:
+                    pids.append(int((marks / name).read_text()))
+                except (FileNotFoundError, ValueError):
+                    time.sleep(0.05)
+                    break
+        return pids
+
+    def terminate(self, number):
+        with tempfile.TemporaryDirectory(prefix="timing-grid-signal-") as t:
+            marks = Path(t)
+            env = {k: v for k, v in os.environ.items()
+                   if k != "HOL4_PERF_LOCK_FDS"}
+            env["TMPDIR"] = t  # the child's rig is removed with `marks`
+            pids = []
+            with (marks / "child.log").open("w") as log:
+                child = subprocess.Popen(
+                    [sys.executable, "-B", "-c", CHILD, t],
+                    cwd=Path(__file__).parent, env=env, stdout=log,
+                    stderr=subprocess.STDOUT)
+            try:
+                pids = self.await_pids(child, marks)
+                for pid in pids:
+                    self.assertTrue(alive(pid))
+                child.send_signal(number)
+                code = child.wait(timeout=60)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+                if pids:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(pids[1], signal.SIGKILL)
+            log = (marks / "child.log").read_text()
+            # It died of the interrupt, not of the signal.
+            self.assertNotIn(code, (0, -number), log)
+            self.assertIn("KeyboardInterrupt", log)
+            deadline = time.monotonic() + 10
+            while any(alive(pid) for pid in pids) and \
+                    time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertEqual([alive(pid) for pid in pids], [False, False])
+            where = json.loads((marks / "where.json").read_text())
+            with patch.dict(os.environ), a.serial_lock(where["repo"]):
+                pass  # the lock is free
+            ledger = Path(where["repo"]) / ".agent-files" / "evidence" / \
+                "toy" / "attempts.jsonl"
+            lines = [json.loads(x) for x in ledger.read_text().splitlines()]
+            self.assertEqual([(x["event"], x.get("status")) for x in lines],
+                             [("open", None), ("close", "checkout-changed")])
+            inventory = json.loads(
+                (Path(where["out"]) / "inventory.json").read_text())
+            self.assertIn("tracked file", inventory["checkout_changed"])
+
+    def test_sigterm_is_judged_like_an_interrupt(self):
+        self.terminate(signal.SIGTERM)
+
+    def test_sighup_is_judged_like_an_interrupt(self):
+        self.terminate(signal.SIGHUP)
+
+    def test_the_handlers_are_put_back_and_only_main_installs_them(self):
+        before = [signal.getsignal(n) for n in (signal.SIGTERM,
+                                                signal.SIGHUP)]
+        with tg.terminating_as_interrupt():
+            for number in (signal.SIGTERM, signal.SIGHUP):
+                self.assertIs(signal.getsignal(number),
+                              signal.default_int_handler)
+        self.assertEqual([signal.getsignal(n) for n in (
+            signal.SIGTERM, signal.SIGHUP)], before)
+        seen = []
+        grid = tg.Grid(tg.Table(
+            "toy", "TOY", CASES, Path(__file__), Path("c.json"),
+            ledger=None))
+        with patch.object(grid, "execute", lambda *a_, **k: seen.append(
+                signal.getsignal(signal.SIGTERM)) or 0):
+            self.assertEqual(grid.main([]), 0)
+        self.assertEqual(seen, [signal.default_int_handler])
+
+
 class Refusals(Rig):
     """A command that decided nothing ends with a status no grid has."""
 
@@ -5325,6 +5718,12 @@ class Hygiene(Rig):
 
 
 class Helpers(unittest.TestCase):
+    def test_protocol_quotes_the_words_of_a_resumption_to_the_byte(self):
+        text = " ".join(
+            (Path(__file__).with_name("PROTOCOL.md")).read_text().split())
+        self.assertIn('"%s"' % " ".join(tg.RESUMING.split()), text)
+        self.assertNotIn("a prepare or a commit ends the grid", text)
+
     def test_set_aside_numbers_its_names(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "c.json.xz"

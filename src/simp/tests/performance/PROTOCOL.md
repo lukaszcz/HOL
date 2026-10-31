@@ -702,10 +702,14 @@ has no disposition.
   back only from a copy of that same file. A mistaken `prepare`, or a lost
   stamp with no copy, costs the cells of that grid, and the route is a new
   grid. So a refusal of the checkout at a `--resume` of a grid, a second
-  stage or a pilot does not say `run prepare at this commit` or `commit
-  first`, which are for a fresh start: it ends with "this run resumes only at
-  the recorded commit, tree and products; remove the change, or restore the
-  stamp from a copy of that same file; a prepare or a commit ends the grid".
+  stage or a pilot, or at an `extend` (whose first stage has been measured,
+  so its record has begun as much as a stopped grid's), does not say `run
+  prepare at this commit` or `commit first`, which are for a fresh start: it
+  ends with "this grid goes on only at the recorded commit, tree and
+  products; remove the change, or restore the stamp from a copy of that same
+  file; a prepare ends the grid, and a later commit must be left: go back to
+  the recorded commit". A commit that is left (the checkout put back at the
+  recorded commit) does not end a grid; a `prepare` does.
   The same words end the text of an end that could not be judged (below).
   A `prepare` between the stages is refused the same way, by `extend`
   (also `extend --resume`) before it replays the first stage (`the checkout
@@ -717,19 +721,29 @@ has no disposition.
   measured with a toolchain of its own (a fresh clone built at the candidate,
   with its own controls receipt), and the timing grid's products are those of
   its own checkout, so the two digests are of different things and a
-  comparison would be wrong. **When the checkout is judged.** Under the lock,
-  before anything is written (each attempt, a resumption included), and at
-  every end of an attempt that the process survives: after the last cell;
-  and when an attempt stops early, by a cell that raises, a failure inside
-  the measuring, a `KeyboardInterrupt`, or a termination signal where Python
-  gets control. One routine judges the end for a grid, a second stage and a
-  pilot, the normal end and the early stop alike, and it is the only place
-  that marks. Those are all the moments: nothing else is looked at. A
-  checkout that is not as recorded at one of them ends the attempt as
-  `checkout-changed` (the closing line of the ledger says so), with no pass,
-  and what it leaves behind depends on which of two things was found. At an
-  early stop the exception of the stop still propagates, with its traceback,
-  and decides the exit status; the judgement adds the mark and the close.
+  comparison would be wrong.
+  **When the checkout is judged.** Before the lock, in the binding
+  (`bind_checkout`: the first look, where the refusals at a `--resume` or an
+  `extend` come from, a stray file and a tracked edit included); under the
+  lock, before anything is written (each attempt, a resumption included);
+  and at every end of an attempt that the process survives: after the last
+  cell; and when an attempt stops early, by a cell that raises, a failure
+  inside the measuring or after it (the summary, the decisions), or an
+  interrupt or a termination signal (SIGINT, SIGTERM, SIGHUP). The driver
+  makes SIGTERM and SIGHUP a `KeyboardInterrupt` in every command (a
+  handler put in at `main`, and put back at its exit), so a plain `kill`, a
+  `timeout`, an agent's stop and a closed terminal take the path of an
+  interrupt: the cell's process group is killed and waited for, the lock is
+  released and the end is judged. A failure after the measuring is judged a
+  second time by the same handler. One routine judges the end for a grid, a
+  second stage and a pilot, the normal end and the early stop alike, and it
+  is the only place that marks. Those are all the moments: nothing else is
+  looked at. A checkout that is not as recorded at one of them ends the
+  attempt as `checkout-changed` (the closing line of the ledger says so),
+  with no pass, and what it leaves behind depends on which of two things was
+  found. At an early stop the exception of the stop still propagates, as it
+  would without the judgement, and decides the exit status; the judgement
+  adds the mark and the close.
   *Known to differ.* The head is not the commit measured, or the tree
   outside the performance area or the products differ from the stamp or from
   the record, or any tracked file differs from `HEAD` (see below). The
@@ -761,20 +775,48 @@ has no disposition.
   the checkout as recorded. The mark is cleared by that resume, but the text
   of every unjudged end stays in the pilot's `unjudged_ends`, which the
   resume comparison ignores.
-  *Nothing found, or the judgement failed.* An attempt that stops early and
-  finds nothing closes `interrupted`, as before. When the judgement itself
-  fails (an `OSError`, a second interrupt, git failing, the mark that cannot
-  be written) nothing is marked, the original exception still propagates,
-  and the attempt closes `interrupted` with the reason in `judgement` on its
-  close line; the exit status is that of the original exception.
+  *Nothing found.* An attempt that stops early and finds nothing closes
+  `interrupted`, as before.
+  *A difference found and not marked.* The end of an attempt that stops
+  early finds the checkout known to differ, and the mark cannot be written
+  (a full disk, a second interrupt in the writing). The original exception
+  still propagates and the attempt closes `checkout-changed`, with the text
+  found and the failure of the mark in `found` on its close line. The
+  inventory does not say it, so the ledger is the only record, and **a
+  `replay` and a `close` refuse a grid whose ledger has a `found` on any
+  attempt**, as they refuse a dead grid (`the checkout changed while attempt
+  ... ran ... the grid is dead`, the exit status of a refusal). A
+  `--resume` does not read it: it may run, and the cells it measures stand
+  for nothing, since the replay will not pass. The refusal names the
+  attempt and the text found; the report of the attempts has the same as a
+  line of its own, `CHECKOUT-FOUND-NOT-MARKED <attempt> <text>`, which a
+  replay that refuses does not reach.
+  *The judgement could not be made.* The checkout could not be asked (an
+  `OSError`, a second interrupt, git failing), or the mark of an end that
+  was only not judged (a pilot's) could not be written. Nothing is marked,
+  the original exception still propagates, the attempt closes `interrupted`
+  with the reason in `judgement` on its close line, and the exit status is
+  that of the original exception. A `--resume` after it is as after a
+  killed process (below): the end was not judged, so a change present while
+  the attempt ran and undone before the `--resume` is not seen; there is no
+  refusal, and the line `JUDGEMENT-NOT-MADE <attempt> <text>` is in what
+  `replay` prints. A pilot has no ledger: it keeps the note in the
+  inventory, `checkout_changed` for a difference found and `checkout_unjudged`
+  with the text added to `unjudged_ends` for a judgement not made, when its
+  last checkpoint writes it, so that `predeclare` and `verify-counts` refuse
+  the pilot until a `pilot --resume` has judged the checkout. If that
+  checkpoint fails too, its error is the one shown.
   *A tracked edit found only by `--resume`.* An attempt whose end was
   judged and found nothing, and a tracked file edited after that, with no
   cell run under it: `--resume` refuses it (the tree is not clean) and
   writes no mark, and the edit undone, the resume goes on. The same holds
   after a stray-file end.
-  *A process that is killed* (`SIGKILL`, a power cut, the machine) gets no
-  judgement. Its attempt stays `interrupted` in the ledger, with no close
-  line, and its end was not judged: a change present while it ran and
+  *A process that is killed* (`SIGKILL`, a power cut, the machine; the
+  driver has a handler for SIGINT, SIGTERM and SIGHUP only) gets no
+  judgement, and the cell of a driver so killed runs on, in a group of its
+  own, and keeps the lock until it ends, so that a `--resume` is refused as
+  busy until then. Its attempt stays `interrupted` in the ledger, with no
+  close line, and its end was not judged: a change present while it ran and
   undone before the `--resume` is not seen, and a change found at the
   `--resume` is refused, not marked. A reader of an `interrupted` line must
   treat it so: the status does not say that the end was judged.
