@@ -39,10 +39,13 @@ cells): `pilot` and `predeclare` produce the develop-only batch counts, with
 the layout seed, pairs and samples of the table, that are committed as
 `task30_iterations.json` before any candidate observation (`verify-counts`
 checks the file against its pilot), `run`, `extend` and `replay` follow
-TASK29A and take the pilot and an attempts ledger, a candidate whose source
-files on the path differ from the baseline's is never a pass unless the
-difference is a pinned, reviewed one (`task30_cases.PINNED`), and the exit
-status is zero only when every cell passes. The exact-allocation counterpart
+TASK29A and take the pilot (every run is recorded in the table's attempts
+ledger, `.agent-files/evidence/task30/attempts.jsonl`, and a measurement
+needs a clean checkout at the candidate); `close` replays this gate and the
+allocation gate and prints one verdict. A candidate whose source files on the
+path differ from the baseline's is never a pass unless the difference is a
+pinned, reviewed one (`task30_pins.PINNED`), and the exit status is zero only
+when every cell passes. The exact-allocation counterpart
 is `allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
 `history_theory_change` the allocation fixture makes no `new_theory`
 transition, see `PROTOCOL.md` and `TASK_29B_allocation_counter.md`).

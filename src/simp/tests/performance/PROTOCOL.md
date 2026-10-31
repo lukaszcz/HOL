@@ -299,28 +299,40 @@ has no disposition.
   carries the baseline, the rule, each cell's batch seconds, the table's
   layout seed, pairs and samples, the seal of the pilot's driver, the seal
   of the pilot's inventory, the seal of every cell's archive and the seals
-  of the files the table seals (`sealed`, including the two Matrix fixtures
-  `MatrixSupport.sml` and `MatrixPerformance.sml`, so the counts are bound to
-  the fixture they were measured with). `verify-counts --grid PILOT
+  of the files the table seals (`sealed`: everything the harness installs
+  into the private directories, which is `MatrixPerformance.sml`,
+  `MatrixSupport.sml`, `RuntimeMetrics.sml`, the signature fixture, the
+  paired sources and `run_paired.py`, and `matrix.json`, besides the case
+  list and the schema modules; a test installs the fixtures and compares the
+  two lists, so the counts are bound to the fixtures they were measured
+  with). The pins (`task30_pins.py`) are not among them: see the route after
+  a regression below. `verify-counts --grid PILOT
   [--counts FILE]` derives the file again from the pilot (the pilot's code
   need not be the current code for that) and refuses any difference. The
   file is reviewed and committed before the first candidate observation.
-- **What `run`, `extend` and `replay` take.** The counts must be the table's
-  last counts file, byte for byte (see revisions below), and the baseline of
-  the counts, of the table and of `--baseline` (which defaults to the
-  table's) must agree; a candidate equal to the baseline is refused. The
-  layout seed, pairs and samples are the table's and the file must say so; a
-  different explicit `--layout-seed`, `--pairs` or `--samples` is refused
-  (the second-stage seed `SEED-ext` must be valid too, so the seed is at most
-  60 characters). A run refuses counts bound to other sealed files than the
-  current ones. All three need `--pilot DIR`, the pilot the counts derive
-  from, and derive the counts file from it again in full (archives
-  unpacked, analyses rerun, every process the baseline, `variability.json`
-  recomputed): counts that no pilot made are refused, and so is a pilot that
-  is not the one of the counts. The candidate's own history must hold the
-  file as it is (same git blob) and exactly one commit of that history may
-  have touched it; that commit is recorded as `counts_commit`, and a replay
-  derives it, and the seal of the file, again. `inventory["seconds"]` is
+- **What `run`, `extend` and `replay` take.** `run` takes the table's last
+  counts file, byte for byte (see revisions below); `extend` and `replay`
+  take the file the grid names, which is how a grid made under an earlier file
+  replays. The baseline of the counts, of the table and of `--baseline`
+  (which defaults to the table's) must agree; a candidate equal to the
+  baseline is refused. The layout seed, pairs and samples are the table's at
+  `predeclare`, which copies them into the counts file; `run` refuses a file
+  that does not say what the table says and a different explicit
+  `--layout-seed`, `--pairs` or `--samples` (the second-stage seed `SEED-ext`
+  must be valid too, so the seed is at most 60 characters). `replay` and
+  `extend` read all three from the counts file the grid used, so a later
+  change of the table does not make an earlier grid unreplayable. A run
+  refuses counts bound to other sealed files than the current ones. All
+  three need `--pilot DIR`, the pilot the counts derive from, and derive the
+  counts file from it again in full (archives unpacked, analyses rerun, every
+  process the baseline, `variability.json` recomputed): counts that no pilot
+  made are refused, and so is a pilot that is not the one of the counts.
+  The candidate's own history must hold the file as it is (same git blob)
+  and exactly one commit of that history may have touched it (merges are
+  looked through with `--full-history --simplify-merges`, so an honest merge
+  passes and a side branch that committed the file again, or a merge that
+  edited it, is refused); that commit is recorded as `counts_commit`, and a
+  replay derives it, and the seal of the file, again. `inventory["seconds"]` is
   only the table's default; the seconds of a cell are those in
   `iterations.seconds`. Every replay checks the header against the counts
   file and the table.
@@ -330,37 +342,87 @@ has no disposition.
   left: the counts are a function of the pilot and the table. It does not
   prove the order relative to any *observation*: the candidate's code can
   have been measured under an earlier commit (TASK28 and TASK29 observed the
-  same code). The attempts ledger is what keeps a retry from being silent.
-- **Attempts ledger.** `run` and `extend` need `--attempts FILE`, a path
-  outside the repository (a commit cannot rewrite it) in an existing
-  directory. Before the first cell they append a JSON line with the event
-  (`open`, or `resume` after an interruption), the stage (`first`, `second`),
-  an attempt id, the candidate, the counts file and its seal, the layout
-  seed, the output path and the UTC time, and at the end a `close` line with
-  the grid's status (`pass`, `fail`, `inconclusive`, ...; `partial` for a
-  diagnostic subset, `interrupted` when it stopped).
-  The file is only appended to, and a malformed ledger is refused. `replay`
-  needs it too and requires the grid's opening line (so a grid opened
-  without the ledger cannot be replayed as an attempt). A rerun under the
-  same settings, after a pass or a non-pass alike, is a new draw: it is a
-  new attempt in the same ledger, its predecessors stay in it, and the
-  handoff publishes the whole ledger, not the line of the grid that passed.
+  same code). The attempts ledger is what makes a retry visible, as a
+  discipline and not as a proof.
+- **Attempts ledger.** Each table with fixed seconds has one ledger, at
+  `.agent-files/evidence/<table name>/attempts.jsonl` below the root of the
+  checkout (`.agent-files/evidence/task30/attempts.jsonl`); there is no
+  option to name another. The directory is made when a measurement starts,
+  and a measurement is refused unless git ignores the path (the project's
+  `.agent-files` is excluded), so no commit holds or rewrites it. Before the
+  first cell `run` and `extend` append a JSON line with the event (`open`, or
+  `resume` after an interruption), the stage (`first`, `second`), an attempt
+  id (a second stage has its own, and a retry of it another), the candidate,
+  the counts file and its seal, the layout seed, the output path and the UTC
+  time, and at the end a `close` line with the status (`pass`, `fail`,
+  `inconclusive`, ...; `partial` for a diagnostic subset, `interrupted` when
+  it stopped). A close that cannot be written is reported on standard error
+  (`ATTEMPT-NOT-CLOSED`), leaves the attempt open in the ledger, which shows
+  it as interrupted, and does not replace the outcome of the run.
+  The lines form a hash chain: each carries `prev`, the SHA-256 of the line
+  before it (64 zeros for the first), so a line removed or changed in the
+  middle is refused (`attempts ledger chain broken at line N`), as is a
+  malformed line. A crash may leave one unterminated last line. It is
+  tolerated and reported (`LEDGER-TORN-LINE`) if it is not a record; the next
+  append ends it and writes a `torn` record naming its hash, so it is neither
+  lost nor silent; a complete record without its newline is kept
+  (`LEDGER-UNTERMINATED-LAST-LINE`). A resumption (`run --resume`, `extend
+  --resume`) checks that the ledger holds its opening before it measures.
+  `replay` needs the ledger and the grid's opening line in it, verifies the
+  chain, and prints every attempt of the candidate in the ledger with its
+  stage, time, resumptions and status, marking the grid replayed
+  (`ATTEMPT id first opened T resumed N status S (this grid)`), so a reader of
+  a replay sees each retry. A rerun under the same settings, after a pass or
+  a non-pass alike, is a new draw: a new attempt in the same ledger, its
+  predecessors stay in it, and the handoff publishes the whole ledger, not
+  the line of the grid that passed. **The ledger is a discipline, not a
+  proof:** the chain shows that no line was removed from or changed in the
+  middle, not that lines after the last one, or the whole file, were not
+  removed. That deletion is undetectable here, and what covers it is that the
+  handoff names the ledger and that a reviewer asks for it.
 - **Revisions.** A counts file is never edited: a changed file is a new file
   at a new path (`task30_iterations_2.json`, ...), listed in order in the
-  table's revisions, and made by `predeclare --grid PILOT --output NEW
-  --revises PREVIOUS --rescale CELL [CELL ...]`. `PREVIOUS` is the table's
-  last file (verified against the pilot first); the new file is it with the
-  named cells multiplied by 4, and records the seal of the previous file, the
-  cells, the factor and the reason ("fixed calibration too short");
-  `verify-counts` derives it again through the chain. A revision is a whole
-  new grid at a new candidate commit (the file must be in the candidate's
-  history): the first grid stays published and replays against the file it
-  used (its inventory names it), and `run` uses the last file only. Adding a
-  revision changes `task30_grid.py`, so the seals of the driver (and of
-  `sealed_history`, for sealed files that moved) that the earlier grids
-  recorded must be added to the table's `drivers` for them to replay. The
-  route is for cells the first grid rejected as "fixed calibration too
-  short" (see below).
+  table's `revisions` (paths absolute or built from `a.HERE`, as the first
+  file's is), and every file after the first revises the one before it. There
+  are two kinds of link, and `predeclare --revises PREVIOUS` takes one:
+
+      --rescale CELL [CELL ...]   the same pilot: the named cells multiplied
+                                  by 4 (reason "fixed calibration too short")
+      --repilot REASON            a fresh pilot (`--grid` is the new one)
+                                  for a change that alters what is measured,
+                                  such as a fixture bug, with the stated
+                                  reason
+
+  `PREVIOUS` is the table's last file. A rescaling is made after the
+  previous file is verified against the pilot; a new pilot must be another
+  pilot than that of the previous file and a reason is required. The new
+  file records the seal of the previous one and the link (the cells and
+  factor, or the reason); `verify-counts --grid PILOT` derives it again from
+  its own pilot and refuses a file whose link is not to the file before it in
+  the table, a later file without a link, or a first file with one. A
+  revision is a whole new grid at a new candidate commit (the file must be in
+  the candidate's history): the first grid stays published and replays
+  against the file it used (its inventory names it), and `run` uses the last
+  file only. Adding a revision changes `task30_grid.py`, so the seals of the
+  driver (and of `sealed_history`, for sealed files that moved) that the
+  earlier grids recorded must be added to the table's `drivers` for them to
+  replay, and `test_task30_grid.py` makes no assertion about the number of
+  revisions or drivers. The rescaling route is for cells the first grid
+  rejected as "fixed calibration too short" (see below).
+- **The route after a regression.** The task asks for a diagnosis, a fix and a
+  rerun. A production fix in a pinned file changes the candidate's blob of
+  that file, so the pin is stale and `run` refuses (below). The route, in
+  order: fix the production code; compute the new blobs and write the new pins
+  into `task30_pins.py`, adding the seal of the previous version of that file
+  and the pins it held to `PIN_HISTORY` in `task30_grid.py` (so the grids it
+  judged still replay); commit the result as a new candidate commit (the
+  counts file is already in its history, and the pilot, the counts and the
+  sealed files are untouched, because the pins file is not among them); run a
+  new complete grid under the same counts file, then the second stage and the
+  allocation gate as for any candidate. Every attempt, the regressed grid
+  included, is in the ledger, and the handoff publishes the ledger. If the fix
+  changes what is measured (a fixture or a sealed file), the counts must be
+  derived again: a `--repilot` revision.
 - **Batch seconds.** A table gives all cells one calibration target and may
   name a longer one for cases whose single operation is tiny, so that a
   batch stands clear of the per-batch overhead (the ten direct deletions of
@@ -381,8 +443,9 @@ has no disposition.
   is the evidence for "no extra source scan": neither gate sees a scan that
   allocates nothing and costs a few percent, so the identity of the code on
   the path, not a measurement, shows that no scan was added there. The
-  boundary: the kernel, the parser and the build files stay outside the list
-  (every operation and the harness itself go through them, so a change there
+  boundary: what is not listed stays outside the identity (the kernel, the
+  parser, `ThmAttribute`, `Lib`, `testutils` and the build files among it:
+  every operation and the harness itself go through them, so a change there
   moves both gates and is for review, not for a list of this size), and the
   identity of a file says nothing of the data it works on, such as the size
   of the theory graph; the fixtures fix that. The inventory therefore
@@ -392,7 +455,7 @@ has no disposition.
   differs, listed or not, is published: for the present candidate that
   includes `ThmAttribute` (additive accessors), the `rawtheory` tool
   `mktool.ML` and build files, none of them a listed source.
-  A reviewed difference may be pinned: `task30_cases.PINNED` maps a path
+  A reviewed difference may be pinned: `task30_pins.PINNED` maps a path
   of the list to the exact candidate blob and the reason. A file that
   differs is accepted only when its candidate blob is the pinned one; it is
   then published under `source_identity.reviewed` with its reason, prints no
@@ -402,7 +465,16 @@ has no disposition.
   (absent at the baseline) is recorded with no baseline blob and is accepted
   only with such a pin; unpinned, or absent at both commits, it is refused.
   `replay` and the second stage re-derive all of it, so the record is not
-  trusted. The reviewed differences are `Cond_rewr.sml`/`.sig` (the
+  trusted. The pins are in a file of their own, whose seal every grid
+  records (`pins`) beside the sealed files; a grid replays by the pins it was
+  judged by, the current ones or those kept in `PIN_HISTORY` under the seal of
+  that earlier version (otherwise `changed pins`). `run` refuses, before any
+  measurement, a candidate with a source that differs without a current pin
+  (a stale pin is one), because that grid could never pass: it prints
+  `SOURCE-DIFFERS` and stops. `--only` still measures a diagnostic subset,
+  marked `diagnostic` in its inventory, which has no decisions, can never
+  complete a grid, and cannot be resumed without `--only`. The reviewed
+  differences are `Cond_rewr.sml`/`.sig` (the
   rewrite-tracking helper moves to the new `SimpTracking`, aliased as
   `note_rewrite` and `with_tracking`, which call through its opaque
   signature, and `is_var_perm` is exported; `mk_cond_rewrs` and
@@ -414,13 +486,31 @@ has no disposition.
   a theory transition. Audit of its callers: the baseline has nine sites in
   seven files (`TexTokenMap`, `markerLib`, `OpenTheoryMap`, `Parse` twice,
   `DB` twice, `ThyDataSexp`, `pred_setScript`), all unchanged in the
-  candidate, plus a test-only one. The candidate adds one,
-  `SplitData.ensure_listener`, reached only through
-  `splitLib.enable_split_attribute` (an explicit opt-in used by the split
-  tests): no ordinary compiled source and neither fixture loads it, so it is
-  not on the path of the cases. A candidate that registered a hook on an
-  ordinary path would not be visible to the source identity of the listed
-  files alone; this audit, repeated for a new candidate, is what covers it.
+  candidate. The candidate adds one ordinary site, `SplitData.ensure_listener`
+  (`SplitData.sml:98`), reached through `splitLib.enable_split_attribute`:
+  the explicit opt-in of the split tests, and
+  `src/simp/src/splitPersistLib.sml` (line 6), a compiled public module that
+  calls it when it is loaded. Neither
+  is in the ordinary heap (`src/boss/tests/tracked-defaults/ordinary.sml`
+  checks that an ordinary load does not hold `SplitData`, `splitLib` or
+  `splitPersistLib`), and neither fixture loads them, so the site is not on
+  the path of the cases. Test-only registrations are
+  `src/simp/tests/split-lifecycle/repair.sml:33` and
+  `src/simp/tests/split-registration/selftest.sml:392,413`. A search for the
+  text `register_hook` is not enough: `ThyDataSexp.sml:357` registers a hook
+  for each data type made by `ThyDataSexp.new`, so a new user of
+  `ThmSetData`, `AncestryData` or `ThyDataSexp.new` adds one too. The audit
+  therefore covers those names as well, over the ordinary sources and the
+  lines changed in them (`git diff BASELINE CANDIDATE -- src` outside the
+  tests, and `git grep` of each name at both commits). For the present
+  candidate it finds no ordinary file that gains a use of any of the four:
+  `SplitData.sml` queries `ThmSetData` (`data_exportfns`, `all_set_types`,
+  `toKName`) and names `AncestryData` in a comment, and `splitLib.sig` in a
+  comment; the other new users are tests (`split-registration/selftest.sml`
+  among them, which also calls `ThyDataSexp.new`). A candidate that
+  registered a hook on an ordinary path would not be visible to the source
+  identity of the listed files alone; this audit, repeated for a new
+  candidate, is what covers it.
 - **Decisions.** `run` prints, and the exit status reflects, five separate
   lists: pass; *fail*; *inconclusive*; *control-limited* (every open metric
   is inconclusive only because its B/B control is outside the window);
@@ -441,9 +531,12 @@ has no disposition.
   the deletion calls no maker and no collector (zero of each: `-*` runs
   neither). Their simpsets are built with the maker and the dprocs first and
   the data after them, so that a rebuild of the history would, by the
-  reading of `++` and `build_from_history` in `simpLib.sml`, run the maker
-  and prime the dprocs and the zero counts would fail; they are zero because
-  the deletion replays nothing. That reading has not been run in HOL, and
+  reading of `++` and `build_from_history` in `simpLib.sml`, prime the dprocs
+  (`++` passes the rewrites of each later fragment to `Traverse.addctxt`)
+  and, where data follows (`exclude_mixed`), run the maker, so the zero
+  counts would fail; `exclude_dproc` has no data, so there only the
+  collectors would be primed. They are zero because the deletion replays
+  nothing. That reading has not been run in HOL, and
   the counts of a rebuild are not asserted. The fixtures do not count scans,
   and production records none. The allocation matrix
   (`allocation_matrix.py --task task30`) brackets setup, first and steady
@@ -468,6 +561,32 @@ has no disposition.
   above) and the hook audit; a change to the export that is not a change of
   `Theory.sml`, or a hook, would be invisible. If the cost of the export is
   in the scope of the task, it needs its own timed batch.
+- **The checkout a measurement runs in.** `pilot`, `run` and `extend` refuse
+  to measure unless the checkout is the one the measurement names:
+  `private_runtime.harness_identity` (the same check the allocation gate
+  uses) finds the tree clean, `HEAD` is the commit measured (the candidate;
+  a pilot has none and is bound to the commit it is made at), and
+  `bin/hol.state0` exists and is not older than any tracked `.sml`, `.sig` or
+  `.ML` file outside the performance area. The pilot's inventory and a
+  grid's record the `checkout` (`head`, and the seal of the tree outside the
+  performance area); a second stage must find the same checkout as its
+  first; `replay` derives the tree seal of the candidate from git again
+  (`changed checkout`). The heap check is of file times: a discipline, not
+  a proof that the heap was built from this commit, so build the heap from
+  the commit just before measuring. A pilot made at X and a grid at Y are not
+  required to have the same tree outside the performance area: a production
+  fix between them must stay possible (route after a regression, above).
+  Each measured candidate is also kept by a local ref,
+  `refs/performance/<table>/<full candidate sha>`, made by `run` and `extend`,
+  so that a rebase, a squash into develop and garbage collection cannot make
+  the candidate and the counts commit in its history unreachable.
+- **What a replay needs kept.** The grids (the first stage and the second),
+  the pilot directory the counts derive from, every earlier counts file named
+  in the table, the attempts ledger, and the `refs/performance/task30/<sha>`
+  refs of the measured candidates (or the commits themselves in a clone that
+  keeps them). Without the commits `replay` fails with "unknown revision";
+  without the pilot, the counts are underived; without the ledger, no replay
+  passes.
 - **Pilot method for a new task.**
 
       python3 -B task30_grid.py pilot --output OUT/pilot \
@@ -477,48 +596,85 @@ has no disposition.
       python3 -B task30_grid.py verify-counts --grid OUT/pilot \
           --counts OUT/task30_iterations.json
 
-  The pilot needs the exclusive measurement window, like `run`.
-  `OUT/pilot/inventory.json` lists every archive and its calibration counts.
-  Review the counts file, then copy it to `task30_iterations.json` and commit
-  it before the candidate is measured; `--resume` continues an interrupted
-  pilot as it does a run. The fixtures run only in HOL; the operator runs
-  the fixture smoke (`smoke_matrix.py`) on the build before the pilot,
-  because the pilot's counts depend on the fixture and the unit tests do not
-  execute SML.
+  The pilot needs the exclusive measurement window, like `run`, and the
+  checkout above. `OUT/pilot/inventory.json` lists every archive and its
+  calibration counts. Review the counts file, then copy it to
+  `task30_iterations.json` and commit it before the candidate is measured
+  (that commit is the candidate Y); `--resume` continues an interrupted pilot
+  as it does a run. The fixtures run only in HOL; the operator runs the fixture
+  smoke (`smoke_matrix.py`) on the build before the pilot, because the
+  pilot's counts depend on the fixture and the unit tests do not execute SML.
 - **Grid.**
 
       python3 -B task30_grid.py run --candidate SHA --output OUT/grid \
-          --pilot OUT/pilot --attempts LEDGER --authorize-measurements
+          --pilot OUT/pilot --authorize-measurements
       python3 -B task30_grid.py extend --grid OUT/grid --output OUT/stage2 \
-          --pilot OUT/pilot --attempts LEDGER --authorize-measurements
+          --pilot OUT/pilot --authorize-measurements
       python3 -B task30_grid.py replay --output OUT/stage2 \
-          --pilot OUT/pilot --attempts LEDGER
+          --pilot OUT/pilot
 
   `run` takes the layout seed, pairs and samples from the table (through the
   counts file) and is refused without a seed. `--resume` continues an
   interrupted `run`, `extend` or `pilot`; `replay --partial` replays the
   finished cells of an interrupted one. `replay` of a pilot is refused: a
-  pilot is checked by `verify-counts`.
+  pilot is checked by `verify-counts`. The attempts ledger is at its fixed
+  place; none of the commands takes it as an option.
+- **The sequence, from the pilot to the verdict.** With X the commit the
+  pilot is made at and Y the candidate (the commit of the counts file):
+  1. at X, a clean checkout with a heap built from it: `pilot`;
+  2. `predeclare`, `verify-counts`; review the counts file;
+  3. commit the counts file as Y (with any production fix and pins, in the
+     order of the route after a regression);
+  4. at Y: build the toolchain at Y, take the controls receipt, then run the
+     allocation gate (`allocation_matrix.py run --task task30`), see the
+     prerequisite below; the timing grid is run at Y too;
+  5. `run --candidate Y --pilot OUT/pilot`; `extend` if the control left
+     cells open; `replay` of each stage;
+  6. `close`:
+
+         python3 -B task30_grid.py close --grid OUT/stage2 \
+             --pilot OUT/pilot --allocation OUT/allocation
+
+     (`--grid` is the second stage where there is one, otherwise the first).
+     `close` replays the timing grid and the allocation grid, requires that
+     they are of one candidate and baseline and that they ran in the same
+     harness (the timing checkout's `head` and tree seal equal the allocation
+     record's `harness`, which is clean), and prints one line,
+     `TASK30 closing verdict: pass|not pass (timing S, allocation S;
+     candidate C, harness H)`. Any status but pass in either gate exits
+     non-zero; `close` applies no disposition. Because the timing grid is
+     measured at `HEAD == Y`, the allocation run must be made in the checkout
+     at Y too.
 - **A cell that is too short.** A cell rejected as "fixed calibration too
   short" is a non-pass and blocks the grid. The only route is a counts
   revision (above) that multiplies that cell's count by 4 for baseline and
   candidate alike, committed with a new candidate commit, and a complete new
   grid (a cell cannot be merged into another grid, and `--only` decides
   nothing); the first grid stays published and replays against its own
-  file. The revision is a reaction to a candidate observation, so it is a
-  new draw like any rerun, recorded in the ledger, and the handoff states
+  file (the other link, a fresh pilot, is for a change of what is
+  measured). The revision is a reaction to a candidate observation, so it is
+  a new draw like any rerun, recorded in the ledger, and the handoff states
   it. The code does not check that the previous grid rejected the cell; the
   reviewer does. No code changes for it: the ordinary exclusion path
   (`simpLib`) is identical to develop (see source identity), so a candidate
   that runs twice as fast as the baseline is not expected, and a count that
   proves too short is a property of the pilot.
 - **Allocation gate prerequisite.** A TASK30 allocation run
-  (`allocation_matrix.py run --task task30`) needs a controls receipt taken
-  at the candidate: `acceptance.py` is a harness input of the controls
-  receipt, and `task30_cases.py`, `MatrixSupport.sml` and
+  (`allocation_matrix.py run --task task30`) needs, in this order: the pilot
+  at X; `predeclare`; the counts committed as the candidate Y; the HOL and
+  native toolchain built at Y; the controls receipt; then the allocation run.
+  The constraint is the toolchain: its build lineage must be at the exact
+  candidate commit, and is refused otherwise ("toolchain not built at the
+  candidate commit"), so after the counts commit, and again after any
+  revision or production fix that makes a new candidate. The refusal comes at
+  once, so no measurement is lost. A controls receipt taken at X is accepted
+  at Y only because the counts file is inside the performance area: the
+  controls compare the tree outside it, and the harness inputs are checked by
+  seal. Separately, `task30_cases.py`, `MatrixSupport.sml` and
   `MatrixAllocation.sml` are among the files of the harness the allocation
-  run records and compares (`harness_files`), so a receipt of an earlier
-  harness, or a TASK29B run resumed across them, is refused.
+  run records and compares (`harness_files`), so a TASK29B run resumed
+  across them is refused. Nothing in the allocation run itself links its
+  candidate to that of the timing grid; `close` does.
 - **Cost.** The grid is 144 cells at 20 pairs and two slots per pair, each
   slot a fresh process with its batch (0.3 s, or 1.0 s for the ten direct
   deletions at every size, including 10000): about two to three days of
