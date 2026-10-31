@@ -4,14 +4,22 @@
 Synthetic fixtures only. The acceptance runner and the statistics are
 replaced by deterministic stand-ins that build a report exactly as
 acceptance.run does (real decisions, real control rule), so the engine's own
-logic is what these tests exercise. Nothing is measured and no repository
-state is touched: the lock is taken in a throwaway git repository.
+logic is what these tests exercise. Nothing is measured, and this module (and
+test_task30_grid.py) leaves the checkout alone: the lock is taken in a
+throwaway git repository. Other modules of this directory run real timing
+controls and take the lock in the checkout, so the whole suite does create
+`.agent-files/` there.
+
+The counts file of every rig comes from a (stand-in) pilot and `predeclare`,
+as a fixed table's must; a pilot is made once for each table and copied.
 """
 import contextlib
 import gzip
 import io
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -40,8 +48,21 @@ def interval_metric(ci, margin=0.03):
                 reason="paired bootstrap", margin=margin)
 
 
+PILOTS = {}
+
+
+def tearDownModule():
+    """Pilots are kept for the tests of a module (and of a module that uses
+    this one's rig), and removed with it."""
+    if "dir" in PILOTS:
+        PILOTS["dir"].cleanup()
+    PILOTS.clear()
+
+
 class Rig(unittest.TestCase):
-    """A toy table, its files, a private repository and the stand-ins."""
+    """A toy table, its files, a private repository and the stand-ins. The
+    counts file is made by `predeclare` from a pilot, as a fixed table's must
+    be (a pilot is made once per table and copied)."""
     pairs, samples = 10, 3
 
     def setUp(self):
@@ -54,71 +75,106 @@ class Rig(unittest.TestCase):
         self.driver = self.root / "toy_grid.py"
         self.driver.write_text("# the toy driver\n")
         self.counts = self.repo / "toy_iterations.json"
+        self.attempts = self.root / "attempts.jsonl"
+        self.pilot_dir = self.root / "rig-pilot"
         self.committed, self.differ = True, set()
+        self.absent, self.gone = set(), set()
+        self.pilot_revision = a.BASE
+        self.commits = [COMMIT]
+        self.changes = [["A", "src/new.sml"], ["M", "src/one.sml"]]
         self.sealed_dir = self.root / "sealed"
         self.sealed_dir.mkdir()
         for name in SEALED:
             (self.sealed_dir / name).write_text("sealed " + name)
         self.table = self.make_table()
-        self.counts.write_text(json.dumps(self.counts_value(self.table)))
         self.grid = tg.Grid(self.table)
         self.runs, self.analyses, self.calls = [], [], 0
+        self.launched = []
+        self.max_count = lambda case, size: 2 ** len(str(size))
         self.control = lambda case, size, pairs, seed: GOOD
+        self.pilot_control = self.control
         self.candidate = lambda case, size, pairs, seed: GOOD
         self.protocol_failure = lambda case, size: False
         self.explode_at = None
         for target, stand_in in ((a, ("run", self.fake_run)),
                                  (a, ("analyze", self.fake_analyze)),
+                                 (a, ("run_logged", self.fake_launch)),
                                  (tg, ("git_blob", self.fake_blob)),
-                                 (tg, ("git_introduced", self.fake_commit))):
+                                 (tg, ("git_commits", self.fake_commits)),
+                                 (tg, ("git_difference",
+                                       self.fake_difference))):
             patcher = patch.object(target, stand_in[0], stand_in[1])
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.provision()
 
     def make_table(self, cases=CASES, **kw):
         options = dict(seconds=0.3, seconds_by_case={CASES[0]: LONG},
                        fixed_seconds=True, pairs=self.pairs,
-                       samples=self.samples, sources=SOURCES,
-                       sealed=SEALED, home=self.sealed_dir)
+                       samples=self.samples, seed="s0", tree="src",
+                       sources=SOURCES, sealed=SEALED, home=self.sealed_dir)
         options.update(kw)
         return tg.Table("toy", "TOY", cases, self.driver, self.counts,
                         **options)
 
-    @staticmethod
-    def counts_value(table, **kw):
-        keys = table.keys()
-        value = dict(schema=table.schema("iterations"), source={},
-                     baseline=a.BASE, headroom=2, rule="toy",
-                     iterations={"%s-%d" % k: 64 * (1 + i % 3)
-                                 for i, k in enumerate(keys)})
-        if table.fixed_seconds:
-            value.update(seconds=table.seconds_map(), layout_seed="s0",
-                         pairs=table.pairs, samples=table.samples)
-        value.update(kw)
-        return value
+    def provision(self):
+        """A pilot and the counts file `predeclare` makes of it. They are
+        made once for each table and copied, because every test needs them."""
+        t = self.table
+        key = repr((t.keys(), t.seconds_map(), t.pairs, t.samples,
+                    t.pilot_pairs, t.pilot_samples, t.seed, t.sealed))
+        kept = PILOTS.get(key)
+        if kept is None:
+            self.make_pilot(self.pilot_dir)
+            made = self.root / "rig-counts.json"
+            code, _ = self.go(["predeclare", "--grid", str(self.pilot_dir),
+                               "--output", str(made)])
+            a.require(code == 0, "the rig's counts")
+            if "dir" not in PILOTS:
+                PILOTS["dir"] = tempfile.TemporaryDirectory(
+                    prefix="timing-pilots-")
+            where = Path(PILOTS["dir"].name) / ("p%d" % len(PILOTS))
+            shutil.copytree(self.pilot_dir, where)
+            kept = PILOTS[key] = (where, made.read_text())
+        else:
+            shutil.copytree(kept[0], self.pilot_dir)
+        self.counts.write_text(kept[1])
+        self.launched.clear()
+        self.analyses.clear()
+
+    def make_pilot(self, out):
+        code, _ = self.go(self.argv("pilot", out, "--authorize-measurements"))
+        a.require(code == 0, "the rig's pilot")
 
     # Stand-ins -------------------------------------------------------
 
     def fake_blob(self, repo, rev, path):
-        """Git blobs: the counts file as committed (or not), the sources
+        """Git blobs: the counts files as committed (or not), the sources
         the same at both commits except those in `differ`."""
         if len(rev) != 40:
             raise ValueError("unknown revision: " + rev)
-        if path == "toy_iterations.json":
+        if (rev == a.BASE and path in self.absent) or (
+                rev == CANDIDATE and path in self.gone):
+            return None
+        if path in [p.name for p in self.table.files()]:
             if isinstance(self.committed, str):
                 return self.committed
-            return a.git(repo, "hash-object", str(self.counts)) \
-                if self.committed else None
+            found = self.repo / path
+            return a.git(repo, "hash-object", str(found)) \
+                if self.committed and found.exists() else None
         return ("f" if rev == CANDIDATE and path in self.differ
                 else "0") * 40
 
-    def fake_commit(self, repo, rev, path):
-        a.require(self.fake_blob(repo, rev, path), "no commit: " + path)
-        return COMMIT
+    def fake_commits(self, repo, rev, path):
+        """The commits that changed a counts file: `commits`."""
+        return list(self.commits) if self.fake_blob(repo, rev, path) else []
 
-    def analysis(self, case, size, control, pairs, seed):
-        ci = (self.control if control else self.candidate)(
-            case, size, pairs, seed)
+    def fake_difference(self, repo, baseline, candidate, tree):
+        return sorted([s, p] for s, p in self.changes)
+
+    def analysis(self, case, size, control, pairs, seed, pilot=False):
+        ci = (self.pilot_control if pilot else self.control if control
+              else self.candidate)(case, size, pairs, seed)
         metrics = {m: interval_metric(ci) for m in ("cpu", "wall")}
         metrics["gc"] = dict(decision="reported", gated=False,
                              median_paired_ratio=1.0,
@@ -134,7 +190,31 @@ class Rig(unittest.TestCase):
             pairs=pairs, samples=samples, seconds=seconds,
             iterations=iterations, seed=layout_seed, policy=policy))
         return self.analysis(case, size, candidate == baseline, pairs,
-                             layout_seed)
+                             layout_seed, pilot=iterations is None)
+
+    def fake_launch(self, command, output, fds, timeout):
+        """A pilot process: both sides the baseline, two develop receipts
+        with calibration counts, and one of the loading fixture."""
+        self.launched.append(command)
+        folder = Path(command[command.index("--output") + 1])
+        case = command[command.index("--performance-case") + 1]
+        size = int(command[command.index("--performance-size") + 1])
+        folder.mkdir(parents=True)
+        for pair in range(2):
+            receipt = dict(fixture="performance", measurements=dict(
+                workloads={case: dict(calibration=[
+                    dict(iterations=1),
+                    dict(iterations=self.max_count(case, size) // (
+                        1 + pair))])}))
+            with gzip.open(folder / ("pair-%02d.json.gz" % pair), "wt") as w:
+                json.dump(receipt, w)
+        with gzip.open(folder / "pair-99.json.gz", "wt") as stream:
+            json.dump(dict(fixture="loading"), stream)
+        (folder / "manifest.json").write_text(json.dumps(dict(selections={
+            side: dict(revision=self.pilot_revision)
+            for side in ("baseline", "candidate")})))
+        Path(output).write_text("log\n")
+        return dict(exit=0, timed_out=False)
 
     def fake_run(self, options):
         self.calls += 1
@@ -166,12 +246,15 @@ class Rig(unittest.TestCase):
     # Helpers ---------------------------------------------------------
 
     def argv(self, action, out, *extra):
+        more = (["--pilot", str(self.pilot_dir), "--attempts",
+                 str(self.attempts)] if action in ("run", "extend") else [])
         return [action, "--output", str(out), "--repo", str(self.repo),
-                *extra]
+                *more, *extra]
 
-    @staticmethod
-    def replay_argv(out, *extra):
-        return ["replay", "--output", str(out), *extra]
+    def replay_argv(self, out, *extra):
+        return ["replay", "--output", str(out), "--repo", str(self.repo),
+                "--pilot", str(self.pilot_dir), "--attempts",
+                str(self.attempts), *extra]
 
     def go(self, argv, **kw):
         out = io.StringIO()
@@ -185,21 +268,46 @@ class Rig(unittest.TestCase):
         value.update(kw)
         self.counts.write_text(json.dumps(value))
 
-    def first(self, name="grid", extra=(), seed=None, pairs=None):
-        """A first stage with the settings of the counts file, unless the
-        command line is made to name them."""
+    def first(self, name="grid", extra=()):
+        """A first stage with the settings of the counts file."""
         out = self.root / name
         argv = self.argv("run", out, "--candidate", CANDIDATE,
                          "--authorize-measurements", *extra)
-        if pairs is not None:
-            argv += ["--pairs", str(pairs)]
-        if seed is not None:
-            argv += ["--layout-seed", seed]
         code, text = self.go(argv)
         return out, code, text
 
     def inventory(self, out):
         return json.loads((out / "inventory.json").read_text())
+
+    def grid_only(self, change):
+        """`bundle.unpack` altered for the archives of the grid, not for the
+        pilot's (which the run's provenance check unpacks too)."""
+        real = tg.bundle.unpack
+
+        def unpack(archive, output):
+            if "grid" not in Path(archive).parts[-2:-1]:
+                return real(archive, output)
+            return change(archive, output, real)
+        return patch.object(tg.bundle, "unpack", unpack)
+
+    def cells(self):
+        """The analyses of grid cells (those of the pilot's, made again by
+        the provenance check, have no counts)."""
+        return [r for r in self.analyses if r["iterations"] is not None]
+
+    def declare_again(self, **table):
+        """The counts file of the table as changed, made again by
+        `predeclare` from the rig's pilot."""
+        for key, value in table.items():
+            setattr(self.table, key, value)
+        self.counts.unlink()
+        code, _ = self.go(["predeclare", "--grid", str(self.pilot_dir),
+                           "--output", str(self.counts)])
+        self.assertEqual(code, 0)
+
+    def ledger(self):
+        return [json.loads(line)
+                for line in self.attempts.read_text().splitlines()]
 
 
 class FirstStage(Rig):
@@ -283,13 +391,21 @@ class FirstStage(Rig):
         self.assertEqual(status, 1)
 
     def test_layout_randomization_is_required(self):
+        with self.assertRaisesRegex(ValueError, "names its layout seed"):
+            self.make_table(seed=None)
         self.rewrite(layout_seed=None)
-        with self.assertRaisesRegex(ValueError, "needs layout randomiza"):
+        with self.assertRaisesRegex(ValueError, "of the counts differs"):
             self.first()
         self.assertEqual(self.calls, 0)
-        self.table.require_seed = False
+
+    def test_a_table_may_waive_layout_randomization(self):
+        self.declare_again(seed=None, require_seed=False)
         out, status, _ = self.first(name="unseeded")
         self.assertEqual(status, 0)
+        self.assertNotIn("layout_seed", self.inventory(out))
+        self.table.require_seed = True
+        with self.assertRaisesRegex(ValueError, "needs layout randomiza"):
+            self.first(name="seeded")
 
     def test_counts_must_match_the_table(self):
         def rewrite(value):
@@ -348,20 +464,17 @@ class FirstStage(Rig):
 
 class Transport(Rig):
     def test_a_transport_that_changes_bytes_is_refused(self):
-        real = tg.bundle.unpack
-
-        def corrupt(archive, output):
+        def corrupt(archive, output, real):
             count = real(archive, output)
             next(Path(output).rglob("evidence.txt")).write_text("x\n")
             return count
-        with patch.object(tg.bundle, "unpack", corrupt), \
+        with self.grid_only(corrupt), \
                 self.assertRaisesRegex(ValueError, "transport changed"):
             self.first()
 
     def test_a_transport_that_loses_a_file_is_refused(self):
-        real = tg.bundle.unpack
-        with patch.object(tg.bundle, "unpack", lambda archive, output:
-                          real(archive, output) + 1), \
+        with self.grid_only(lambda archive, output, real:
+                            real(archive, output) + 1), \
                 self.assertRaisesRegex(ValueError, "transport count"):
             self.first()
 
@@ -493,13 +606,13 @@ class Resume(Rig):
 
     def test_resume_refuses_changed_counts_and_a_completed_run(self):
         out = self.interrupted()
-        value = json.loads(self.counts.read_text())
+        good = self.counts.read_text()
+        value = json.loads(good)
         value["iterations"]["exclude_empty-0"] *= 2
         self.counts.write_text(json.dumps(value))
-        with self.assertRaisesRegex(ValueError, "changed predeclared"):
+        with self.assertRaisesRegex(ValueError, "differ from their pilot"):
             self.resume(out)
-        value["iterations"]["exclude_empty-0"] //= 2
-        self.counts.write_text(json.dumps(value))
+        self.counts.write_text(good)
         self.resume(out)
         with self.assertRaisesRegex(ValueError, "already complete"):
             self.resume(out)
@@ -559,10 +672,13 @@ class Replay(Rig):
         status, text = self.go(self.replay_argv(out))
         self.assertEqual(status, 0)
         self.assertEqual(text.count("REPLAY "), 12)
-        self.assertEqual(len(self.analyses), 24)
+        # The cells, and the pilot's cells again (they have no counts).
+        cells = self.cells()
+        self.assertEqual(len(cells), 24)
+        self.assertEqual(len(self.analyses) - len(cells), 12)
         self.assertEqual({(r["case"], r["size"]): r["seconds"]
-                          for r in self.analyses}[(CASES[0], 0)], LONG)
-        self.assertEqual({r["iterations"] for r in self.analyses
+                          for r in cells}[(CASES[0], 0)], LONG)
+        self.assertEqual({r["iterations"] for r in cells
                           if r["case"] == CASES[1] and r["size"] == 0},
                          {json.loads(self.counts.read_text())[
                              "iterations"]["exclude_missing-0"]})
@@ -604,7 +720,7 @@ class Replay(Rig):
         inventory["iterations"] = value
         self.counts.write_text(json.dumps(value))
         (out / "inventory.json").write_text(json.dumps(inventory))
-        with self.assertRaisesRegex(ValueError, "differs from predecl"):
+        with self.assertRaisesRegex(ValueError, "changed counts seal"):
             self.go(self.replay_argv(out))
 
     def test_replay_of_an_interrupted_run_has_no_decision(self):
@@ -628,15 +744,16 @@ class Replay(Rig):
         (out / "inventory.json").write_text(json.dumps(inventory))
 
     def test_every_analysis_uses_the_grids_layout_seed(self):
-        self.rewrite(layout_seed="abc")
+        self.declare_again(seed="abc")
         out, _, _ = self.first()
         seed = self.inventory(out)["layout_seed"]
         self.assertTrue(seed)
-        self.assertEqual({r["seed"] for r in self.analyses}, {seed})
+        self.assertEqual({r["seed"] for r in self.cells()}, {seed})
         self.analyses.clear()
         self.go(self.replay_argv(out))
-        self.assertEqual(len(self.analyses), 24)
-        self.assertEqual({r["seed"] for r in self.analyses}, {seed})
+        cells = self.cells()
+        self.assertEqual(len(cells), 24)
+        self.assertEqual({r["seed"] for r in cells}, {seed})
 
     def test_an_incomplete_experiment_needs_a_recorded_reason(self):
         def check(report):
@@ -773,7 +890,7 @@ class SecondStage(Rig):
         self.assertEqual(run["batch_seconds"], LONG)
         self.analyses.clear()
         self.go(self.replay_argv(self.root / "ext"))
-        self.assertEqual({(r["seconds"], r["pairs"]) for r in self.analyses
+        self.assertEqual({(r["seconds"], r["pairs"]) for r in self.cells()
                           if r["case"] == CASES[0] and r["size"] == 10},
                          {(LONG, 20), (LONG, tg.MAX_PAIRS)})
 
@@ -821,9 +938,58 @@ class SecondStage(Rig):
         status, _ = self.stage(grid, resume=True)
         self.assertEqual(status, 0)
 
+    def test_the_second_stage_is_in_the_ledger_and_replay_needs_it(self):
+        self.control = self.wide_unless_long
+        grid, _, _ = self.first()
+        status, _ = self.stage(grid)
+        self.assertEqual(status, 0)
+        lines = self.ledger()
+        self.assertEqual([(x["stage"], x["event"]) for x in lines],
+                         [("first", "open"), ("first", "close"),
+                          ("second", "open"), ("second", "close")])
+        first, ext = self.inventory(grid), self.inventory(self.root / "ext")
+        self.assertEqual(lines[2]["attempt"], first["attempt"])
+        self.assertEqual(lines[3]["status"], "pass")
+        self.assertEqual({k: ext[k] for k in (
+            "attempt", "counts_file", "counts_commit", "source_tree")},
+            {k: first[k] for k in (
+                "attempt", "counts_file", "counts_commit", "source_tree")})
+        ledger = self.attempts.read_text().splitlines()
+        for dropped in (2, 0):
+            with self.subTest(dropped):
+                self.attempts.write_text("\n".join(
+                    x for i, x in enumerate(ledger) if i != dropped) + "\n")
+                with self.assertRaisesRegex(ValueError, "no opening"):
+                    self.go(self.replay_argv(self.root / "ext"))
+        self.attempts.write_text("\n".join(ledger) + "\n")
+        self.assertEqual(self.go(self.replay_argv(self.root / "ext"))[0], 0)
+
+    def test_the_second_stage_needs_the_ledger_and_the_first_opening(self):
+        self.control = self.wide_unless_long
+        grid, _, _ = self.first()
+        argv = self.argv("extend", self.root / "ext", "--grid", str(grid),
+                         "--authorize-measurements")
+        i = argv.index("--attempts")
+        with self.assertRaisesRegex(ValueError, "needs --attempts FILE"):
+            self.go(argv[:i] + argv[i + 2:])
+        self.attempts = self.root / "other.jsonl"
+        self.attempts.write_text("")
+        with self.assertRaisesRegex(ValueError, "no opening"):
+            self.stage(grid)
+        self.assertFalse((self.root / "ext").exists())
+
+    def test_the_second_stage_derives_the_first_stages_commit_again(self):
+        self.control = self.wide_unless_long
+        grid, _, _ = self.first()
+        header = self.inventory(grid)
+        (grid / "inventory.json").write_text(
+            json.dumps(dict(header, counts_commit="2" * 40)))
+        with self.assertRaisesRegex(ValueError, "changed counts commit"):
+            self.stage(grid)
+        self.assertFalse((self.root / "ext").exists())
+
     def test_a_grid_without_a_seed_has_no_second_stage(self):
-        self.table.require_seed = False
-        self.rewrite(layout_seed=None)
+        self.declare_again(seed=None, require_seed=False)
         grid, _, _ = self.first()
         with self.assertRaisesRegex(ValueError, "layout-randomized"):
             self.stage(grid)
@@ -985,34 +1151,6 @@ class Classes(unittest.TestCase):
 
 
 class Pilot(Rig):
-    def setUp(self):
-        super().setUp()
-        self.launched = []
-        patcher = patch.object(a, "run_logged", self.fake_launch)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.max_count = lambda case, size: 2 ** len(str(size))
-
-    def fake_launch(self, command, output, fds, timeout):
-        self.launched.append(command)
-        folder = Path(command[command.index("--output") + 1])
-        case = command[command.index("--performance-case") + 1]
-        size = int(command[command.index("--performance-size") + 1])
-        folder.mkdir(parents=True)
-        for pair in range(2):
-            receipt = dict(fixture="performance", measurements=dict(
-                workloads={case: dict(calibration=[
-                    dict(iterations=1),
-                    dict(iterations=self.max_count(case, size) // (
-                        1 + pair))])}))
-            with gzip.open(folder / ("pair-%02d.json.gz" % pair), "wt") as w:
-                json.dump(receipt, w)
-        # A receipt of the loading fixture carries no counts.
-        with gzip.open(folder / "pair-99.json.gz", "wt") as stream:
-            json.dump(dict(fixture="loading"), stream)
-        Path(output).write_text("log\n")
-        return dict(exit=0, timed_out=False)
-
     def pilot(self, name="pilot", extra=()):
         argv = self.argv("pilot", self.root / name, "--authorize-measurements",
                          *extra)
@@ -1043,7 +1181,7 @@ class Pilot(Rig):
     def test_predeclared_counts_come_from_the_pilot_alone(self):
         self.pilot()
         out = self.root / "counts.json"
-        status, _ = self.go(["predeclare", "--layout-seed", "s0", "--grid",
+        status, _ = self.go(["predeclare", "--grid",
                              str(self.root / "pilot"), "--output",
                              str(out)])
         self.assertEqual(status, 0)
@@ -1059,7 +1197,8 @@ class Pilot(Rig):
         self.assertEqual(value["headroom"], 2)
         # What the pilot predeclares is what a run accepts.
         self.counts.write_text(json.dumps(value))
-        out_grid, status, _ = self.first()
+        out_grid, status, _ = self.first(extra=(
+            "--pilot", str(self.root / "pilot")))
         self.assertEqual(status, 0)
 
     def expected(self, case, size):
@@ -1071,7 +1210,7 @@ class Pilot(Rig):
         out = self.root / "counts.json"
         out.write_text("{}")
         with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
-            self.go(["predeclare", "--layout-seed", "s0", "--grid",
+            self.go(["predeclare", "--grid",
                      str(self.root / "pilot"), "--output", str(out)])
 
     def test_predeclare_refuses_a_pilot_of_other_seconds_or_tasks(self):
@@ -1085,7 +1224,7 @@ class Pilot(Rig):
             with self.subTest(change):
                 path.write_text(json.dumps(dict(json.loads(good), **change)))
                 with self.assertRaisesRegex(ValueError, message):
-                    self.go(["predeclare", "--layout-seed", "s0", "--grid",
+                    self.go(["predeclare", "--grid",
                              str(self.root / "pilot"), "--output",
                              str(self.root / "c.json")])
 
@@ -1095,12 +1234,12 @@ class Pilot(Rig):
         good = json.loads(path.read_text())
         path.write_text(json.dumps(dict(good, runs=good["runs"][:-1])))
         with self.assertRaisesRegex(ValueError, "incomplete predeclared"):
-            self.declare("--layout-seed", "s0")
+            self.declare()
         path.write_text(json.dumps(good))
         archive = self.root / "pilot" / good["runs"][0]["archive"]
         archive.write_bytes(archive.read_bytes() + b"x")
         with self.assertRaisesRegex(ValueError, "changed archive"):
-            self.declare("--layout-seed", "s0")
+            self.declare()
 
     def test_a_pilot_needs_the_protocol_minimum_and_an_exact_pin(self):
         with self.assertRaisesRegex(ValueError, "at least ten pairs"):
@@ -1121,6 +1260,8 @@ class Pilot(Rig):
             with self.assertRaisesRegex(ValueError, "pilot runner failed"):
                 self.pilot()
         self.assertEqual(self.inventory(self.root / "pilot")["runs"], [])
+        self.assertEqual(len(list((self.root / "pilot").glob(
+            "*.json.xz.failed-1"))), 1)
 
     def test_a_pilot_that_fails_the_protocol_check_is_not_kept(self):
         def refuse(*args, **kw):
@@ -1202,7 +1343,7 @@ class Pilot(Rig):
             with self.subTest(label):
                 path.write_text(json.dumps(dict(good, runs=changed)))
                 with self.assertRaisesRegex(ValueError, message):
-                    self.go(["predeclare", "--layout-seed", "s0", "--grid",
+                    self.go(["predeclare", "--grid",
                              str(self.root / "pilot"), "--output",
                              str(self.root / "c.json")])
 
@@ -1230,8 +1371,8 @@ class Pilot(Rig):
 
     def test_the_counts_file_is_the_predeclaration(self):
         self.pilot()
-        self.declare("--layout-seed", "q1", "--pairs", "12", "--samples",
-                     "4")
+        self.table.pairs, self.table.samples, self.table.seed = 12, 4, "q1"
+        self.declare()
         value = json.loads((self.root / "c.json").read_text())
         pilot = self.root / "pilot"
         inventory = self.inventory(pilot)
@@ -1239,30 +1380,30 @@ class Pilot(Rig):
                           value["samples"], value["baseline"]),
                          ("q1", 12, 4, a.BASE))
         self.assertEqual(value["source"], inventory["driver"])
+        self.assertEqual(value["sealed"], inventory["sealed"])
+        self.assertEqual(sorted(value["sealed"]), sorted(SEALED))
         self.assertEqual(value["pilot"]["inventory"],
                          a.seal(pilot / "inventory.json"))
         self.assertEqual(
             value["pilot"]["archives"],
             {"%s-%d" % (r["case"], r["size"]): r["seal"]
              for r in inventory["runs"]})
-        self.declare("--layout-seed", "q1", out="d.json")
-        # Pairs and samples default to the table's.
-        value = json.loads((self.root / "d.json").read_text())
-        self.assertEqual((value["pairs"], value["samples"]), (10, 3))
 
     def test_the_settings_of_the_run_are_checked_when_predeclared(self):
         self.pilot()
-        with self.assertRaisesRegex(ValueError, "needs layout random"):
-            self.declare(out="e.json")
-        for option, value, message in (
-                ("--pairs", "9", "protocol minimum"),
-                ("--samples", "2", "protocol minimum"),
-                ("--layout-seed", "a b", "layout seed"),
-                ("--layout-seed", "a" * 61, "layout seed")):
-            with self.subTest(option + value), \
-                    self.assertRaisesRegex(ValueError, message):
-                self.declare("--layout-seed", "s0", option, value,
-                             out="f.json")
+        for label, change, message in (
+                ("pairs", dict(pairs=9), "protocol minimum"),
+                ("samples", dict(samples=2), "protocol minimum"),
+                ("no seed", dict(seed=None), "needs layout random"),
+                ("long seed", dict(seed="a" * 61), "layout seed")):
+            with self.subTest(label):
+                saved = {k: getattr(self.table, k) for k in change}
+                for key, value in change.items():
+                    setattr(self.table, key, value)
+                with self.assertRaisesRegex(ValueError, message):
+                    self.declare(out="f.json")
+                for key, value in saved.items():
+                    setattr(self.table, key, value)
         self.assertFalse((self.root / "f.json").exists())
 
     def test_a_pilot_is_the_only_source_of_a_fixed_table(self):
@@ -1277,31 +1418,33 @@ class Pilot(Rig):
             with self.subTest(label):
                 path.write_text(json.dumps(dict(good, **change)))
                 with self.assertRaisesRegex(ValueError, message):
-                    self.declare("--layout-seed", "s0")
+                    self.declare()
         path.write_text(json.dumps(good))
 
     def test_predeclare_checks_the_code_of_the_pilot(self):
         self.pilot()
         self.driver.write_text("# the toy driver, changed\n")
         with self.assertRaisesRegex(ValueError, "changed driver"):
-            self.declare("--layout-seed", "s0")
+            self.declare()
         (self.sealed_dir / "one.txt").write_text("edited")
         self.driver.write_text("# the toy driver\n")
         with self.assertRaisesRegex(ValueError, "changed one.txt"):
-            self.declare("--layout-seed", "s0")
+            self.declare()
 
-    def test_a_table_without_fixed_seconds_takes_no_settings(self):
+    def test_predeclare_takes_no_settings_from_the_command_line(self):
+        # The layout seed, pairs and samples are the table's; no option can
+        # make a counts file that differs.
         self.pilot()
-        self.table.fixed_seconds = False
         for option, value in (("--layout-seed", "s0"), ("--pairs", "10"),
                               ("--samples", "3")):
-            with self.subTest(option), self.assertRaisesRegex(
-                    ValueError, "predeclared with the counts of a pilot"):
+            with self.subTest(option), \
+                    contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit):
                 self.declare(option, value)
 
     def test_verify_counts_rederives_the_file_from_its_pilot(self):
         self.pilot()
-        self.declare("--layout-seed", "s0")
+        self.declare()
         self.counts.write_text((self.root / "c.json").read_text())
         status, text = self.go(["verify-counts", "--grid",
                                 str(self.root / "pilot")])
@@ -1316,7 +1459,7 @@ class Pilot(Rig):
 
     def test_verify_counts_refuses_a_file_the_pilot_did_not_make(self):
         self.pilot()
-        self.declare("--layout-seed", "s0")
+        self.declare()
         value = json.loads((self.root / "c.json").read_text())
         for label, changed in (
                 ("count", dict(value, iterations=dict(
@@ -1349,7 +1492,7 @@ class Pilot(Rig):
         self.assertEqual(self.launched, [])
 
     def test_the_variability_of_every_cell_is_published(self):
-        self.control = lambda case, size, pairs, seed: (
+        self.pilot_control = lambda case, size, pairs, seed: (
             WIDE if (case, size) == (CASES[1], 10) else GOOD)
         self.pilot()
         found = json.loads(
@@ -1388,6 +1531,45 @@ class Pilot(Rig):
         self.assertEqual(len(list(out.glob("*.json.xz"))), 12)
         self.assertEqual(len(list(out.glob("*.failed-1"))), 1)
 
+    def test_a_pilot_compares_its_settings_before_clearing_anything(self):
+        out = self.interrupted()
+        (out / "x.json.xz.partial.xz").write_text("half")
+        with self.assertRaisesRegex(ValueError, "different settings"):
+            self.pilot(extra=("--resume", "--pairs", "12"))
+        self.assertEqual((out / "x.json.xz.partial.xz").read_text(), "half")
+
+    def test_a_pilot_clears_what_a_stop_left_under_the_lock(self):
+        out = self.interrupted()
+        (out / "x.json.xz.partial.xz").write_text("half")
+        held = []
+        real = self.grid.sweep
+
+        def sweep(root, kept):
+            held.append(os.environ.get("HOL4_PERF_LOCK_FDS") is not None)
+            return real(root, kept)
+        with patch.dict(os.environ), patch.object(self.grid, "sweep", sweep):
+            os.environ.pop("HOL4_PERF_LOCK_FDS", None)
+            self.pilot(extra=("--resume",))
+        self.assertEqual(held, [True])
+        self.assertEqual(list(out.glob("*.partial*")), [])
+
+    def test_a_pilot_resumption_without_an_inventory_says_so(self):
+        (self.root / "pilot").mkdir()
+        with self.assertRaisesRegex(ValueError, "nothing to resume.*no "
+                                    "inventory"):
+            self.pilot(extra=("--resume",))
+
+    def test_the_pilot_inventory_exists_before_the_first_cell(self):
+        seen = []
+        real = self.fake_launch
+
+        def watching(command, output, fds, timeout):
+            seen.append((self.root / "pilot" / "inventory.json").exists())
+            return real(command, output, fds, timeout)
+        with patch.object(a, "run_logged", watching):
+            self.pilot()
+        self.assertEqual(seen[0], True)
+
     def test_a_pilot_resume_clears_what_a_stop_left(self):
         out = self.interrupted()
         for name in ("x.json.xz.partial.xz", "y.partial"):
@@ -1405,8 +1587,8 @@ class Pilot(Rig):
 class Predeclared(Rig):
     """The counts file is the predeclaration, bound to its baseline."""
 
-    def test_a_run_takes_its_settings_from_the_counts_file(self):
-        self.rewrite(layout_seed="q1", pairs=12, samples=4)
+    def test_a_run_takes_its_settings_from_the_table_through_the_counts(self):
+        self.declare_again(pairs=12, samples=4, seed="q1")
         out, status, _ = self.first()
         self.assertEqual(status, 0)
         self.assertEqual({(o["pairs"], o["samples"], o["layout_seed"])
@@ -1427,6 +1609,18 @@ class Predeclared(Rig):
         out, status, _ = self.first(extra=(
             "--pairs", "10", "--samples", "3", "--layout-seed", "s0"))
         self.assertEqual(status, 0)
+
+    def test_counts_of_other_settings_than_the_tables_are_refused(self):
+        good = json.loads(self.counts.read_text())
+        for key, value in (("layout_seed", "s9"), ("layout_seed", None),
+                           ("pairs", 11), ("samples", 4)):
+            with self.subTest(key, value=value):
+                self.rewrite(**{key: value})
+                with self.assertRaisesRegex(
+                        ValueError, "of the counts differs from the table"):
+                    self.first(name="g-%s-%s" % (key, value))
+                self.counts.write_text(json.dumps(good))
+        self.assertEqual(self.calls, 0)
 
     def test_a_run_refuses_counts_other_than_the_tables(self):
         other = self.root / "other.json"
@@ -1491,11 +1685,13 @@ class Predeclared(Rig):
                 with self.assertRaisesRegex(ValueError, message):
                     self.go(self.replay_argv(out))
 
-    def test_the_second_stage_seed_must_be_valid_before_any_cell(self):
-        self.rewrite(layout_seed="a" * 61)
+    def test_the_second_stage_seed_must_be_valid_before_the_counts(self):
+        # The seed of the first stage and its extension are both checked
+        # when the counts are made; the table refuses them as well.
         with self.assertRaisesRegex(ValueError, "layout seed"):
-            self.first()
-        self.assertEqual(self.calls, 0)
+            self.declare_again(seed="a" * 61)
+        with self.assertRaisesRegex(ValueError, "layout seed"):
+            self.make_table(seed="a" * 61)
 
     def test_the_second_stage_keeps_the_counts_commit(self):
         self.control = lambda case, size, pairs, seed: (
@@ -1640,7 +1836,7 @@ class SourceIdentity(Rig):
         with patch.object(tg, "git_blob", lambda repo, rev, path: None
                           if rev == a.BASE and path == "src/two.sml"
                           else real(repo, rev, path)):
-            with self.assertRaisesRegex(ValueError, "absent at the base"):
+            with self.assertRaisesRegex(ValueError, "absent at the baseline"):
                 self.first()
         self.assertEqual(self.calls, 0)
 
@@ -1796,6 +1992,627 @@ class ReviewedDifferences(Rig):
             self.go(self.replay_argv(self.root / "ext"))
 
 
+class Attempts(Rig):
+    """Every measured grid is recorded in an append-only ledger kept outside
+    the repository, so that a rerun under the same settings (a new draw) is
+    visible and an earlier attempt cannot be dropped."""
+
+    @staticmethod
+    def without(argv, option):
+        i = argv.index(option)
+        return argv[:i] + argv[i + 2:]
+
+    def run_argv(self, name="grid"):
+        return self.argv("run", self.root / name, "--candidate", CANDIDATE,
+                         "--authorize-measurements")
+
+    def test_a_run_needs_a_ledger(self):
+        with self.assertRaisesRegex(ValueError, "needs --attempts FILE"):
+            self.go(self.without(self.run_argv(), "--attempts"))
+        self.assertEqual(self.calls, 0)
+        self.assertFalse((self.root / "grid").exists())
+
+    def test_a_ledger_inside_the_repository_is_refused(self):
+        self.attempts = self.repo / "attempts.jsonl"
+        with self.assertRaisesRegex(ValueError, "inside the repository"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+        self.assertFalse(self.attempts.exists())
+
+    def test_a_ledger_in_no_directory_is_refused(self):
+        self.attempts = self.root / "nowhere" / "attempts.jsonl"
+        with self.assertRaisesRegex(ValueError, "no directory"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_malformed_ledger_is_refused_before_any_cell(self):
+        for i, text in enumerate(("not json\n", "[1]\n",
+                                  '{"no": "event"}\n')):
+            with self.subTest(text):
+                self.attempts.write_text(text)
+                with self.assertRaisesRegex(ValueError, "malformed attempts"):
+                    self.first(name="g%d" % i)
+        self.assertEqual(self.calls, 0)
+
+    def test_the_ledger_records_the_grid_it_opens_and_closes(self):
+        out, status, _ = self.first()
+        header = self.inventory(out)
+        opening, closing = self.ledger()
+        self.assertEqual((opening["event"], closing["event"]),
+                         ("open", "close"))
+        for line in (opening, closing):
+            self.assertEqual(
+                {k: line[k] for k in ("stage", "attempt", "candidate",
+                                      "counts_file", "counts", "seed",
+                                      "output")},
+                dict(stage="first", attempt=header["attempt"],
+                     candidate=CANDIDATE, counts_file="toy_iterations.json",
+                     counts=a.seal(self.counts),
+                     seed=header["layout_seed"], output=str(out)))
+            self.assertRegex(line["time"], r"^\d{4}-\d\d-\d\dT[\d:]{8}Z$")
+        self.assertEqual(closing["status"], "pass")
+        self.assertNotIn("status", opening)
+
+    def test_the_opening_is_written_before_the_first_cell(self):
+        seen = []
+        real = self.fake_run
+
+        def watching(options):
+            seen.append([line["event"] for line in self.ledger()])
+            return real(options)
+        with patch.object(a, "run", watching):
+            self.first()
+        self.assertEqual(seen[0], ["open"])
+
+    def test_an_interrupted_grid_is_closed_and_a_resumption_recorded(self):
+        self.explode_at = 4
+        with self.assertRaises(RuntimeError):
+            self.first()
+        self.explode_at = None
+        self.assertEqual([(x["event"], x.get("status"))
+                          for x in self.ledger()],
+                         [("open", None), ("close", "interrupted")])
+        status, _ = self.go(self.run_argv() + ["--resume"])
+        self.assertEqual(status, 0)
+        lines = self.ledger()
+        self.assertEqual([(x["event"], x.get("status")) for x in lines],
+                         [("open", None), ("close", "interrupted"),
+                          ("resume", None), ("close", "pass")])
+        self.assertEqual({x["attempt"] for x in lines},
+                         {self.inventory(self.root / "grid")["attempt"]})
+
+    def test_a_rerun_is_a_new_draw_and_the_earlier_one_stays(self):
+        self.candidate = lambda case, size, pairs, seed: (1.04, 1.08)
+        self.first(name="one")
+        self.candidate = lambda case, size, pairs, seed: GOOD
+        self.first(name="two")
+        lines = self.ledger()
+        self.assertEqual([x["event"] for x in lines],
+                         ["open", "close", "open", "close"])
+        self.assertEqual([x["status"] for x in lines if x["event"] == "close"],
+                         ["fail", "pass"])
+        self.assertNotEqual(lines[0]["attempt"], lines[2]["attempt"])
+        self.assertEqual({x["candidate"] for x in lines}, {CANDIDATE})
+
+    def test_replay_needs_the_ledger_and_the_opening_in_it(self):
+        out, _, _ = self.first()
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        argv = self.replay_argv(out)
+        with self.assertRaisesRegex(ValueError, "needs --attempts FILE"):
+            self.go(self.without(argv, "--attempts"))
+        self.attempts = self.root / "other.jsonl"
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
+            self.go(self.replay_argv(out))
+        self.attempts.write_text("")
+        with self.assertRaisesRegex(ValueError, "no opening"):
+            self.go(self.replay_argv(out))
+        # An opening of another grid, or of the same one with other
+        # settings, is not its opening.
+        opening = self.ledger_text_of(self.root / "attempts.jsonl")[0]
+        for key, value in (("attempt", "0" * 32), ("candidate", "d" * 40),
+                           ("counts", "x"), ("stage", "second")):
+            with self.subTest(key):
+                self.attempts.write_text(
+                    json.dumps(dict(opening, **{key: value})) + "\n")
+                with self.assertRaisesRegex(ValueError, "no opening"):
+                    self.go(self.replay_argv(out))
+
+    def ledger_text_of(self, path):
+        return [json.loads(x) for x in Path(path).read_text().splitlines()]
+
+
+class Provenance(Rig):
+    """A fixed table's counts are derived again from their pilot whenever a
+    grid runs, is extended or is replayed."""
+
+    def test_a_run_extension_and_replay_need_the_pilot(self):
+        out, _, _ = self.first()
+        argv = self.replay_argv(out)
+        i = argv.index("--pilot")
+        with self.assertRaisesRegex(ValueError, "needs --pilot DIR"):
+            self.go(argv[:i] + argv[i + 2:])
+        run = self.argv("run", self.root / "x", "--candidate", CANDIDATE,
+                        "--authorize-measurements")
+        i = run.index("--pilot")
+        with self.assertRaisesRegex(ValueError, "needs --pilot DIR"):
+            self.go(run[:i] + run[i + 2:])
+        ext = self.argv("extend", self.root / "ext", "--grid", str(out),
+                        "--authorize-measurements")
+        i = ext.index("--pilot")
+        with self.assertRaisesRegex(ValueError, "needs --pilot DIR"):
+            self.go(ext[:i] + ext[i + 2:])
+        self.assertEqual(self.calls, 12)
+
+    def test_a_changed_pilot_archive_is_refused_everywhere(self):
+        out, _, _ = self.first()
+        archive = next(self.pilot_dir.glob("*.json.xz"))
+        archive.write_bytes(archive.read_bytes() + b"x")
+        with self.assertRaisesRegex(ValueError, "changed archive"):
+            self.go(self.replay_argv(out))
+        self.calls = 0
+        with self.assertRaisesRegex(ValueError, "changed archive"):
+            self.first(name="again")
+        self.assertEqual(self.calls, 0)
+
+    def test_a_changed_variability_is_refused(self):
+        path = self.pilot_dir / "variability.json"
+        value = json.loads(path.read_text())
+        value[self.table.names()[0]]["cpu"]["median"] = 2.0
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "changed pilot variability"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_changed_variability_in_the_inventory_is_refused(self):
+        path = self.pilot_dir / "inventory.json"
+        value = json.loads(path.read_text())
+        value["runs"][0]["variability"]["cpu"]["median"] = 2.0
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "changed pilot variability"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_pilot_process_that_is_not_the_baseline_is_refused(self):
+        self.pilot_revision = "e" * 40
+        code, _ = self.go(self.argv("pilot", self.root / "bad",
+                                    "--authorize-measurements"))
+        self.assertEqual(code, 0)
+        with self.assertRaisesRegex(ValueError, "not the baseline"):
+            self.go(["predeclare", "--grid", str(self.root / "bad"),
+                     "--output", str(self.root / "c.json")])
+        with self.assertRaisesRegex(ValueError, "not the baseline"):
+            self.go(["verify-counts", "--grid", str(self.root / "bad")])
+        self.pilot_dir = self.root / "bad"
+        with self.assertRaisesRegex(ValueError, "not the baseline"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_one_side_that_is_not_the_baseline_is_refused_too(self):
+        for side in ("baseline", "candidate"):
+            with self.subTest(side):
+                inventory = self.inventory(self.pilot_dir)
+                row = inventory["runs"][0]
+                with tempfile.TemporaryDirectory() as tmp:
+                    case = Path(tmp) / "c"
+                    tg.bundle.unpack(self.pilot_dir / row["archive"], case)
+                    manifest, = case.rglob("manifest.json")
+                    value = json.loads(manifest.read_text())
+                    value["selections"][side]["revision"] = "e" * 40
+                    manifest.write_text(json.dumps(value))
+                    with self.assertRaisesRegex(ValueError, "not the base"):
+                        self.grid.check_pilot_cell(
+                            manifest.parent.parent, inventory, row,
+                            self.grid.calibration_counts(
+                                manifest.parent.parent, row["case"],
+                                row["size"]))
+
+    def test_counts_that_no_pilot_made_are_refused(self):
+        value = json.loads(self.counts.read_text())
+        for label, changed in (
+                ("no pilot", {k: v for k, v in value.items()
+                              if k != "pilot"}),
+                ("a count", dict(value, iterations=dict(
+                    value["iterations"], **{"exclude_empty-0": 1024}))),
+                ("a seal", dict(value, pilot=dict(
+                    value["pilot"], inventory="0" * 64)))):
+            with self.subTest(label):
+                self.counts.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError,
+                                            "differ from their pilot"):
+                    self.first(name="g" + label.replace(" ", ""))
+        self.assertEqual(self.calls, 0)
+
+    def test_a_pilot_of_other_seconds_is_no_provenance(self):
+        path = self.pilot_dir / "inventory.json"
+        value = json.loads(path.read_text())
+        path.write_text(json.dumps(dict(value, seconds=0.5)))
+        with self.assertRaisesRegex(ValueError, "pilot batch seconds"):
+            self.first()
+
+
+class Commits(Rig):
+    """The counts file is fixed by one commit that git alone dates, and the
+    grid names it."""
+
+    def test_the_header_names_the_file_the_commit_and_the_attempt(self):
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        self.assertEqual((header["counts_file"], header["counts_commit"],
+                          header["iterations_seal"]),
+                         ("toy_iterations.json", COMMIT,
+                          a.seal(self.counts)))
+        self.assertRegex(header["attempt"], "^[0-9a-f]{32}$")
+
+    def test_a_counts_file_with_two_commits_is_refused(self):
+        self.commits = [COMMIT, "2" * 40]
+        with self.assertRaisesRegex(ValueError, "exactly one commit.*not 2"):
+            self.first()
+        self.commits = []
+        with self.assertRaisesRegex(ValueError, "exactly one commit.*not 0"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_replay_derives_the_commit_and_the_seal_again(self):
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        for key, value, message in (
+                ("counts_commit", "2" * 40, "changed counts commit"),
+                ("iterations_seal", "0" * 64, "changed counts seal"),
+                ("counts_file", "elsewhere.json", "unknown counts file")):
+            with self.subTest(key):
+                (out / "inventory.json").write_text(
+                    json.dumps(dict(header, **{key: value})))
+                with self.assertRaisesRegex(ValueError, message):
+                    self.go(self.replay_argv(out))
+        (out / "inventory.json").write_text(json.dumps(
+            {k: v for k, v in header.items() if k != "attempt"}))
+        with self.assertRaisesRegex(ValueError, "no attempt recorded"):
+            self.go(self.replay_argv(out))
+
+    def test_replay_sees_a_history_that_gained_a_commit(self):
+        out, _, _ = self.first()
+        self.commits = [COMMIT, "2" * 40]
+        with self.assertRaisesRegex(ValueError, "exactly one commit"):
+            self.go(self.replay_argv(out))
+
+    def test_the_settings_are_the_tables_at_replay_too(self):
+        out, _, _ = self.first()
+        self.table.pairs = 12
+        with self.assertRaisesRegex(ValueError, "differ from the table"):
+            self.go(self.replay_argv(out))
+
+    def test_the_counts_are_bound_to_the_sealed_files(self):
+        value = json.loads(self.counts.read_text())
+        self.assertEqual(sorted(value["sealed"]), sorted(SEALED))
+        good = self.counts.read_text()
+        self.rewrite(sealed=dict(value["sealed"], **{"one.txt": "0" * 64}))
+        with self.assertRaisesRegex(ValueError, "bound to other sealed"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+        self.counts.write_text(good)
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        changed = dict(value, sealed=dict(value["sealed"], **{
+            "one.txt": "0" * 64}))
+        (out / "inventory.json").write_text(
+            json.dumps(dict(header, iterations=changed)))
+        self.counts.write_text(json.dumps(changed))
+        with self.assertRaisesRegex(ValueError, "bound to other sealed"):
+            self.go(self.replay_argv(out))
+
+
+class AddedFiles(Rig):
+    """A source the candidate adds is accepted only with a pin of its blob;
+    the whole difference below the tree is published."""
+    PIN = dict(blob="f" * 40, reason="A reviewed new file.")
+
+    def make_table(self, **kw):
+        kw.setdefault("pinned", {"src/two.sml": self.PIN})
+        return super().make_table(**kw)
+
+    def test_a_pinned_added_file_is_published_and_no_failure(self):
+        self.absent, self.differ = {"src/two.sml"}, {"src/two.sml"}
+        out, status, text = self.first()
+        self.assertEqual(status, 0)
+        self.assertEqual(self.inventory(out)["sources"]["src/two.sml"],
+                         dict(baseline=None, candidate="f" * 40))
+        identity = json.loads(
+            (out / "decisions.json").read_text())["source_identity"]
+        self.assertEqual(identity["differing"], [])
+        self.assertEqual(identity["reviewed"], {"src/two.sml": self.PIN})
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+
+    def test_an_added_file_with_another_blob_is_a_difference(self):
+        self.absent, self.differ = {"src/two.sml"}, {"src/two.sml"}
+        self.table.pinned = {"src/two.sml": dict(self.PIN, blob="e" * 40)}
+        out, status, text = self.first()
+        self.assertEqual(status, 2)
+        self.assertIn("SOURCE-DIFFERS src/two.sml", text)
+
+    def test_an_added_file_without_a_pin_is_refused(self):
+        self.absent = {"src/one.sml"}
+        with self.assertRaisesRegex(ValueError, "absent at the baseline "
+                                    "and not pinned: src/one.sml"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_file_absent_at_both_commits_is_refused(self):
+        self.absent, self.gone = {"src/two.sml"}, {"src/two.sml"}
+        with self.assertRaisesRegex(ValueError, "absent at both"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+
+class SourceTree(Rig):
+    """The name-status difference of every file below the tree is recorded
+    and derived again from git."""
+
+    def test_the_difference_is_recorded(self):
+        out, _, _ = self.first()
+        self.assertEqual(self.inventory(out)["source_tree"], dict(
+            tree="src", changes=[["A", "src/new.sml"], ["M", "src/one.sml"]]))
+
+    def test_replay_derives_it_again(self):
+        out, _, _ = self.first()
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        self.changes = self.changes + [["M", "src/other.sml"]]
+        with self.assertRaisesRegex(ValueError, "changed source difference"):
+            self.go(self.replay_argv(out))
+        self.changes = self.changes[:-1]
+        header = self.inventory(out)
+        header["source_tree"]["changes"] = header["source_tree"]["changes"][1:]
+        (out / "inventory.json").write_text(json.dumps(header))
+        with self.assertRaisesRegex(ValueError, "changed source difference"):
+            self.go(self.replay_argv(out))
+
+    def test_the_record_belongs_to_the_table(self):
+        out, _, _ = self.first()
+        header = self.inventory(out)
+        bare = {k: v for k, v in header.items() if k != "source_tree"}
+        with self.assertRaisesRegex(ValueError, "changed source tree"):
+            self.grid.check_header(bare)
+        self.table.tree = None
+        with self.assertRaisesRegex(ValueError, "changed source tree"):
+            self.grid.check_header(header)
+
+    def test_a_table_without_a_tree_records_none(self):
+        self.table.tree = None
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        self.assertNotIn("source_tree", self.inventory(out))
+
+
+class Revisions(Rig):
+    """A counts file is never edited: a cell rejected as too short is
+    rescaled in a new file the table lists, and the grid is run again."""
+
+    def revise(self, *cells, previous=None, name="toy_iterations_2.json",
+               grid=None):
+        out = self.repo / name
+        return self.go(["predeclare", "--grid", str(grid or self.pilot_dir),
+                        "--output", str(out), "--revises",
+                        str(previous or self.counts), "--rescale", *cells])
+
+    def adopt(self, *names):
+        self.table.revisions = tuple(self.repo / n for n in names)
+
+    def test_a_revision_is_a_new_file_that_rescales_the_named_cells(self):
+        before = self.counts.read_text()
+        self.assertEqual(self.revise("exclude_empty-0")[0], 0)
+        old = json.loads(before)
+        new = json.loads((self.repo / "toy_iterations_2.json").read_text())
+        self.assertEqual(self.counts.read_text(), before)
+        for name, count in old["iterations"].items():
+            self.assertEqual(new["iterations"][name], count * (
+                4 if name == "exclude_empty-0" else 1))
+        self.assertEqual(new["revises"], dict(
+            previous=a.seal(self.counts), cells=["exclude_empty-0"],
+            factor=4, reason="fixed calibration too short"))
+        for key in ("pilot", "sealed", "layout_seed", "pairs", "samples",
+                    "baseline", "seconds"):
+            self.assertEqual(new[key], old[key], key)
+
+    def test_the_revision_is_derived_again_from_the_pilot(self):
+        self.revise("exclude_empty-0", "exclude_missing-10")
+        self.adopt("toy_iterations_2.json")
+        self.assertEqual(self.go(["verify-counts", "--grid",
+                                  str(self.pilot_dir)])[0], 0)
+        path = self.repo / "toy_iterations_2.json"
+        value = json.loads(path.read_text())
+        for label, changed in (
+                ("count", dict(value, iterations=dict(
+                    value["iterations"], **{"exclude_empty-0": 1024}))),
+                ("cells", dict(value, revises=dict(
+                    value["revises"], cells=["exclude_empty-0"]))),
+                ("factor", dict(value, revises=dict(
+                    value["revises"], factor=8))),
+                ("link", dict(value, revises=dict(
+                    value["revises"], previous="0" * 64)))):
+            with self.subTest(label):
+                path.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    self.go(["verify-counts", "--grid", str(self.pilot_dir)])
+
+    def test_the_file_a_revision_follows_is_derived_again_too(self):
+        changed = json.loads(self.counts.read_text())
+        changed["iterations"]["exclude_missing-10"] *= 2
+        self.counts.write_text(json.dumps(changed))
+        # A revision made, by hand, from a file its pilot did not make.
+        value = self.grid.rescaled(self.counts, ["exclude_empty-0"])
+        (self.repo / "toy_iterations_2.json").write_text(json.dumps(value))
+        self.adopt("toy_iterations_2.json")
+        with self.assertRaisesRegex(ValueError, "differ from their pilot"):
+            self.go(["verify-counts", "--grid", str(self.pilot_dir)])
+
+    def test_a_revision_is_asked_for_precisely(self):
+        before = list(self.repo.glob("*.json"))
+        with self.assertRaisesRegex(ValueError, "go together"):
+            self.go(["predeclare", "--grid", str(self.pilot_dir), "--output",
+                     str(self.repo / "r.json"), "--revises",
+                     str(self.counts)])
+        with self.assertRaisesRegex(ValueError, "go together"):
+            self.go(["predeclare", "--grid", str(self.pilot_dir), "--output",
+                     str(self.repo / "r.json"), "--rescale",
+                     "exclude_empty-0"])
+        for cells in (["no_such-0"], ["exclude_empty-0", "exclude_empty-0"]):
+            with self.assertRaisesRegex(ValueError, "rescales cells"):
+                self.revise(*cells)
+        self.assertEqual(list(self.repo.glob("*.json")), before)
+
+    def test_a_revision_follows_the_last_file_and_its_pilot(self):
+        other = self.root / "other.json"
+        other.write_text(self.counts.read_text().replace("64", "32"))
+        with self.assertRaisesRegex(ValueError, "follows the table's last"):
+            self.revise("exclude_empty-0", previous=other)
+        changed = json.loads(self.counts.read_text())
+        changed["iterations"]["exclude_empty-0"] *= 2
+        self.counts.write_text(json.dumps(changed))
+        with self.assertRaisesRegex(ValueError, "differ from their pilot"):
+            self.revise("exclude_empty-1")
+
+    def test_a_revision_never_overwrites(self):
+        self.revise("exclude_empty-0")
+        with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
+            self.revise("exclude_empty-1")
+
+    def test_a_run_uses_the_last_file_and_names_it(self):
+        self.revise("exclude_empty-0")
+        self.adopt("toy_iterations_2.json")
+        new = self.repo / "toy_iterations_2.json"
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        header = self.inventory(out)
+        self.assertEqual((header["counts_file"], header["iterations_seal"]),
+                         ("toy_iterations_2.json", a.seal(new)))
+        counts = json.loads(new.read_text())["iterations"]
+        self.assertEqual(header["iterations"]["iterations"], counts)
+        self.assertEqual({r["iterations"] for r in header["runs"]
+                          if r["case"] == "exclude_empty" and r["size"] == 0},
+                         {counts["exclude_empty-0"]})
+        with self.assertRaisesRegex(ValueError, "changed predeclared"):
+            self.first(name="old", extra=("--iterations", str(self.counts)))
+
+    def test_an_older_grid_replays_against_its_own_file(self):
+        one, _, _ = self.first(name="one")
+        self.revise("exclude_empty-0")
+        self.adopt("toy_iterations_2.json")
+        self.assertEqual(self.go(self.replay_argv(one))[0], 0)
+        two, _, _ = self.first(name="two")
+        self.assertEqual(self.go(self.replay_argv(two))[0], 0)
+        self.assertEqual(self.inventory(one)["counts_file"],
+                         "toy_iterations.json")
+        self.assertEqual(self.inventory(two)["counts_file"],
+                         "toy_iterations_2.json")
+
+    def test_a_revision_of_a_revision_chains_to_the_pilot(self):
+        self.revise("exclude_empty-0")
+        self.adopt("toy_iterations_2.json")
+        self.revise("exclude_empty-0", "exclude_missing-0",
+                    previous=self.repo / "toy_iterations_2.json",
+                    name="toy_iterations_3.json")
+        self.adopt("toy_iterations_2.json", "toy_iterations_3.json")
+        self.assertEqual(self.go(["verify-counts", "--grid",
+                                  str(self.pilot_dir)])[0], 0)
+        old = json.loads(self.counts.read_text())["iterations"]
+        new = json.loads((self.repo / "toy_iterations_3.json").read_text())
+        self.assertEqual(new["iterations"]["exclude_empty-0"],
+                         old["exclude_empty-0"] * 16)
+        self.assertEqual(new["iterations"]["exclude_missing-0"],
+                         old["exclude_missing-0"] * 4)
+        # A table that no longer names the file a revision follows cannot
+        # derive it.
+        self.adopt("toy_iterations_3.json")
+        with self.assertRaisesRegex(ValueError, "does not name"):
+            self.go(["verify-counts", "--grid", str(self.pilot_dir)])
+
+    def test_only_a_fixed_table_has_revisions(self):
+        with self.assertRaisesRegex(ValueError, "revisions belong"):
+            tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                     revisions=("c2.json",))
+        with self.assertRaisesRegex(ValueError, "repeated counts file"):
+            self.make_table(revisions=(self.counts,))
+
+
+class Sweeping(Rig):
+    """What a stopped run left is cleared only once the resumption is known
+    to be of the same experiment, and under the lock."""
+
+    def interrupted(self):
+        self.explode_at = 4
+        with self.assertRaises(RuntimeError):
+            self.first()
+        self.explode_at = None
+        return self.root / "grid"
+
+    def resume(self, out, candidate=CANDIDATE):
+        return self.go(self.argv("run", out, "--candidate", candidate,
+                                 "--resume", "--authorize-measurements"))
+
+    def test_settings_are_compared_before_anything_is_swept(self):
+        out = self.interrupted()
+        (out / "x.json.partial").write_text("half")
+        stray = out / ("%s-100.json.xz" % CASES[1])
+        stray.write_bytes(b"unrecorded")
+        with self.assertRaisesRegex(ValueError, "different settings"):
+            self.resume(out, candidate="d" * 40)
+        self.assertEqual((out / "x.json.partial").read_text(), "half")
+        self.assertEqual(stray.read_bytes(), b"unrecorded")
+
+    def test_the_sweep_happens_under_the_lock(self):
+        out = self.interrupted()
+        (out / "x.json.partial").write_text("half")
+        held = []
+        real = self.grid.sweep
+
+        def sweep(root, kept):
+            held.append(os.environ.get("HOL4_PERF_LOCK_FDS") is not None)
+            return real(root, kept)
+        with patch.dict(os.environ), patch.object(self.grid, "sweep", sweep):
+            os.environ.pop("HOL4_PERF_LOCK_FDS", None)
+            self.resume(out)
+        self.assertEqual(held, [True])
+        self.assertEqual(list(out.glob("*.partial*")), [])
+
+    def test_a_resumption_without_an_inventory_says_so(self):
+        (self.root / "grid").mkdir()
+        with self.assertRaisesRegex(ValueError, "nothing to resume.*no "
+                                    "inventory"):
+            self.resume(self.root / "grid")
+
+    def test_the_inventory_exists_before_the_first_cell(self):
+        seen = []
+        real = self.fake_run
+
+        def watching(options):
+            seen.append(Path(self.root / "grid" / "inventory.json").exists())
+            return real(options)
+        with patch.object(a, "run", watching):
+            self.first()
+        self.assertEqual(seen[0], True)
+
+
+class Options(Rig):
+    def test_the_command_line_names_provenance_and_the_ledger(self):
+        parser, sub = self.grid.parser()
+        for name in ("run", "extend", "replay"):
+            options = {o for action in sub.choices[name]._actions
+                       for o in action.option_strings}
+            self.assertLessEqual({"--pilot", "--attempts"}, options, name)
+        options = {o for action in sub.choices["predeclare"]._actions
+                   for o in action.option_strings}
+        self.assertEqual(options & {"--layout-seed", "--pairs", "--samples"},
+                         set())
+        self.assertLessEqual({"--revises", "--rescale"}, options)
+
+    def test_the_baseline_defaults_to_the_tables(self):
+        self.table.baseline = "e" * 40
+        parser, sub = self.grid.parser()
+        for name in ("pilot", "run"):
+            found = [x.default for x in sub.choices[name]._actions
+                     if "--baseline" in x.option_strings]
+            self.assertEqual(found, ["e" * 40], name)
+
+
 class Hygiene(Rig):
     """What a stopped run leaves behind is never evidence."""
 
@@ -1833,10 +2650,10 @@ class Hygiene(Rig):
     def test_the_archive_appears_only_when_it_is_complete(self):
         calls = []
 
-        def broken(archive, output):
+        def broken(archive, output, real):
             calls.append(Path(archive).name)
             raise RuntimeError("interrupted")
-        with patch.object(tg.bundle, "unpack", broken), \
+        with self.grid_only(broken), \
                 self.assertRaises(RuntimeError):
             self.first()
         out = self.root / "grid"
@@ -1897,16 +2714,37 @@ class Git(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown revision"):
             tg.git_blob(self.repo, "f" * 40, "src/f.txt")
 
-    def test_the_introducing_commit_is_the_last_to_change_the_file(self):
+    def test_the_introducing_commit_is_the_only_one_to_change_the_file(self):
+        self.assertEqual(tg.git_commits(
+            self.repo, self.third, "counts.json"), [self.second])
         self.assertEqual(tg.git_introduced(
             self.repo, self.third, "counts.json"), self.second)
         (self.repo / "counts.json").write_text("{\"a\": 1}\n")
         self.git("commit", "-q", "-a", "-m", "revised")
         fourth = self.git("rev-parse", "HEAD")
-        self.assertEqual(tg.git_introduced(
-            self.repo, fourth, "counts.json"), fourth)
+        self.assertEqual(tg.git_commits(
+            self.repo, fourth, "counts.json"), [fourth, self.second])
+        # A file committed twice was not fixed at one point: refused.
+        with self.assertRaisesRegex(ValueError, "exactly one commit.*not 2"):
+            tg.git_introduced(self.repo, fourth, "counts.json")
+        # The earlier candidate still has the one commit.
         self.assertEqual(tg.git_introduced(
             self.repo, self.third, "counts.json"), self.second)
+        with self.assertRaisesRegex(ValueError, "exactly one commit.*not 0"):
+            tg.git_introduced(self.repo, self.first, "counts.json")
+
+    def test_the_difference_lists_every_changed_file_below_the_tree(self):
+        (self.repo / "src" / "g.txt").write_text("new\n")
+        (self.repo / "src" / "f.txt").write_text("two\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "tree")
+        fourth = self.git("rev-parse", "HEAD")
+        self.assertEqual(
+            tg.git_difference(self.repo, self.third, fourth, "src"),
+            [["A", "src/g.txt"], ["M", "src/f.txt"]])
+        self.assertEqual(
+            tg.git_difference(self.repo, self.third, fourth, "other.txt"),
+            [])
 
     def test_the_counts_file_must_be_what_the_candidate_holds(self):
         counts = self.repo / "counts.json"
@@ -1946,7 +2784,7 @@ class Tables(unittest.TestCase):
 
     def test_seconds_per_case(self):
         table = self.table(seconds_by_case={CASES[0]: 1.0},
-                           fixed_seconds=True)
+                           fixed_seconds=True, seed="s0")
         self.assertEqual(table.seconds_for(CASES[0]), 1.0)
         self.assertEqual(table.seconds_for(CASES[1]), 0.3)
         self.assertEqual(table.seconds_map()["exclude_empty-0"], 1.0)

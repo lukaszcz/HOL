@@ -269,7 +269,10 @@ class Run(grid_tests.Bed):
         args = type("Args", (), {"output": self.out})
         self.assertEqual(self.quiet(m.replay, args), 2)
 
-    def test_the_theory_change_case_is_a_task30_cell(self):
+    def test_the_stub_runs_theory_change_cells_at_the_table_counts(self):
+        # The stub runner only shows that the cells are in the table and
+        # take its steady counts; the case's own code is checked by
+        # TheoryChange from the fixture text, and runs in HOL only.
         self.patched30()
         code = self.quiet(m.run, grid_tests.arguments(
             self.out, ["history_theory_change-0",
@@ -420,6 +423,26 @@ class TheoryChange(unittest.TestCase):
             with self.subTest(token):
                 self.assertNotIn(token, self.support)
 
+    def test_nor_do_the_functions_the_case_calls_into(self):
+        # The case calls Theory.link_parents (through the hook's default
+        # and the restore) and testutils.runtac; they are the bodies the
+        # support's own text cannot vouch for.
+        root = a.HERE.parents[3]
+        theory = code((root / "src/postkernel/Theory.sml").read_text())
+        start = theory.index("fun link_parents thy plist")
+        link = theory[start:theory.index("fun incorporate_types", start)]
+        utils = code((root / "src/parse/testutils.sml").read_text())
+        start = utils.index("fun runtac tac g")
+        runtac = utils[start:utils.index("\n", start)]
+        self.assertIn("Context.snapshot", runtac)
+        for name, body in (("link_parents", link), ("runtac", runtac)):
+            for token in ("export_theory", "getEnv", "OS.FileSys",
+                          "FileSys.", "OS.Process", "Posix.",
+                          "TextIO.openIn", "TextIO.openOut", "BinIO.open",
+                          "Portable.pwd"):
+                with self.subTest(name=name, token=token):
+                    self.assertNotIn(token, body)
+
 
 class Callbacks(unittest.TestCase):
     """The callback counts the fixture asserts for the dproc deletions are
@@ -466,6 +489,17 @@ class Callbacks(unittest.TestCase):
                                     "from -* pats) verify)"), 1)
         self.assertIn('"exclude_dproc" => dproc false', self.support)
         self.assertIn('"exclude_mixed" => dproc true', self.support)
+
+    def test_the_dproc_fragment_precedes_the_data_it_could_replay(self):
+        # A rebuild of the history would run the maker and prime the
+        # dprocs only if they are added before the data: the zero counts
+        # then mean the deletion replayed nothing.
+        start = self.support.index("fun dproc mixed = let")
+        body = self.support[start:self.support.index("in case label of",
+                                                     start)]
+        self.assertIn("val f = setup (SOME maker) ds", body)
+        self.assertIn("empty_ss ++ f ++ (if mixed then data else "
+                      "empty_ssfrag)", body)
 
     def test_the_callback_wrapper_checks_both_counters_exactly(self):
         self.assertIn("!makerCalls - !oldM = count * makers andalso",

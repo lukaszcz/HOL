@@ -6,7 +6,9 @@ checked, and the engine runs it whole (144 cells) on synthetic stand-ins.
 """
 import copy
 import json
+from pathlib import Path
 import re
+import subprocess
 import tempfile
 import unittest
 
@@ -15,6 +17,25 @@ import matrix_schema as ms
 import task30_cases as cases
 import task30_grid as t30
 import test_timing_grid as ttg
+
+
+REPO = a.HERE.parents[3]
+
+
+def git(*args):
+    found = subprocess.run(["git", "-C", str(REPO), *args], text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return found.stdout.strip() if found.returncode == 0 else None
+
+
+def disk_blob(path):
+    """The git blob of the file as it is now in the checkout."""
+    return git("hash-object", str(REPO / path))
+
+
+def base_blob(path):
+    """The blob of the file at the baseline, or None when it has none."""
+    return git("rev-parse", "%s:%s" % (a.BASE, path))
 
 
 class Table(unittest.TestCase):
@@ -56,6 +77,10 @@ class Table(unittest.TestCase):
         self.assertEqual((table.target, table.max_pairs, table.headroom),
                          (0.015, 120, 2))
         self.assertEqual((table.pairs, table.samples), (20, 5))
+        self.assertEqual(table.seed, "task30-layout-1")
+        self.assertEqual(table.tree, "src")
+        self.assertEqual(table.revisions, ())
+        self.assertEqual(table.latest(), t30.COUNTS)
         self.assertEqual((table.pilot_pairs, table.pilot_samples), (10, 3))
         self.assertEqual(table.drivers, ())
         self.assertEqual(table.schema("grid"), "task30-grid-v1")
@@ -90,15 +115,62 @@ class Table(unittest.TestCase):
                                         "sealed"))
         self.assertIn("task30_cases.py", table.sealed)
 
-    def test_the_pins_are_the_two_reviewed_cond_rewr_files(self):
+    def test_the_matrix_fixtures_are_sealed_with_the_driver(self):
+        for name in ("MatrixSupport.sml", "MatrixPerformance.sml"):
+            self.assertIn(name, t30.TABLE.sealed)
+
+    def test_the_sources_cover_the_modules_the_cases_call_into(self):
+        # The simplifier's own modules and what every case calls through
+        # them (see the comment on SOURCES for what stays outside).
+        for path in (
+                "src/simp/src/Trace.sig", "src/simp/src/SimpTracking.sml",
+                "src/simp/src/SimpTracking.sig", "src/postkernel/Theory.sml",
+                "src/postkernel/Theory.sig", "src/prekernel/Context.sml",
+                "src/lite/liteLib.sml", "src/marker/markerSyntax.sml",
+                "src/portableML/Uref.sml", "src/1/Drule.sml",
+                "src/1/Conv.sml", "src/1/Tactical.sml"):
+            self.assertIn(path, cases.SOURCES)
+        for path in cases.SOURCES:
+            if path.endswith(".sml"):
+                self.assertIn(path[:-3] + "sig", cases.SOURCES, path)
+
+    def test_the_pins_are_the_reviewed_simplifier_files(self):
         table = t30.TABLE
         self.assertEqual(table.pinned, cases.PINNED)
         self.assertEqual(sorted(cases.PINNED), [
-            "src/simp/src/Cond_rewr.sig", "src/simp/src/Cond_rewr.sml"])
+            "src/simp/src/Cond_rewr.sig", "src/simp/src/Cond_rewr.sml",
+            "src/simp/src/SimpTracking.sig", "src/simp/src/SimpTracking.sml"])
         for path, pin in cases.PINNED.items():
             self.assertIn(path, cases.SOURCES)
             self.assertRegex(pin["blob"], "^[0-9a-f]{40}$")
             self.assertTrue(pin["reason"].endswith("."), path)
+
+    def checkout(self):
+        if git("rev-parse", "--git-dir") is None or \
+                git("cat-file", "-e", a.BASE + "^{commit}") is None:
+            self.skipTest("needs a checkout holding the baseline commit")
+
+    def test_each_pin_is_the_blob_of_the_file_in_this_checkout(self):
+        self.checkout()
+        for path, pin in cases.PINNED.items():
+            with self.subTest(path):
+                self.assertEqual(disk_blob(path), pin["blob"])
+                self.assertNotEqual(base_blob(path), pin["blob"])
+
+    def test_the_files_added_by_the_candidate_are_pinned(self):
+        self.checkout()
+        for path in cases.SOURCES:
+            if base_blob(path) is None:
+                self.assertIn(path, cases.PINNED, path)
+                self.assertTrue((REPO / path).is_file(), path)
+        self.assertIsNone(base_blob("src/simp/src/SimpTracking.sml"))
+
+    def test_every_unpinned_source_is_the_baseline_file_here(self):
+        self.checkout()
+        for path in cases.SOURCES:
+            if path not in cases.PINNED:
+                with self.subTest(path):
+                    self.assertEqual(disk_blob(path), base_blob(path))
 
     def test_the_allocation_text_names_the_task_selection(self):
         self.assertIn("--task task30", t30.TABLE.allocation)
@@ -113,6 +185,12 @@ class Whole(ttg.Rig):
         table = copy.copy(t30.TABLE)
         table.driver, table.counts = self.driver, self.counts
         return table
+
+    def setUp(self):
+        super().setUp()
+        # The files the candidate adds are absent at the baseline.
+        self.absent = {p for p in cases.PINNED if p.endswith(
+            ("SimpTracking.sml", "SimpTracking.sig"))}
 
     def fake_blob(self, repo, rev, path):
         """As the rig's, but the candidate holds each pinned file at its
@@ -138,7 +216,8 @@ class Whole(ttg.Rig):
         self.assertEqual({c: s for c, s in by_case.items()},
                          {c: {t30.TABLE.seconds_for(c)}
                           for c in cases.CASES})
-        self.assertEqual({o["layout_seed"] for o in self.runs}, {"s0"})
+        self.assertEqual({o["layout_seed"] for o in self.runs},
+                         {t30.LAYOUT_SEED})
         self.assertEqual({(o["pairs"], o["samples"]) for o in self.runs},
                          {(20, 5)})
 
@@ -170,6 +249,9 @@ class Whole(ttg.Rig):
                           "c" * 40])
             with self.assertRaisesRegex(ValueError, "exclusive window"):
                 t30.main(["pilot", "--output", tmp + "/x"])
+
+
+tearDownModule = ttg.tearDownModule
 
 
 if __name__ == "__main__":
