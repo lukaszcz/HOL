@@ -370,7 +370,9 @@ has no disposition.
   absolute path of the checkout and the UTC time, and at the end a `close`
   line with the status (`pass`, `fail`,
   `inconclusive`, ...; `partial` for a diagnostic subset, `interrupted` when
-  it stopped). A close that cannot be written is reported on standard error
+  it stopped, and `checkout-changed`; see *when the checkout is judged*
+  below, for what an `interrupted` line does not say). A close that cannot
+  be written is reported on standard error
   (`ATTEMPT-NOT-CLOSED`), leaves the attempt open in the ledger, which shows
   it as interrupted, and does not replace the outcome of the run.
   The lines form a hash chain: each carries `prev`, the SHA-256 of the line
@@ -681,7 +683,8 @@ has no disposition.
   has now. No file time is read: touching `bin/hol.state0`, or switching to
   another commit and back, changes nothing; editing a product, adding or
   removing one, or changing any tracked source outside the performance area
-  (`src/simp/src` included) is refused with "run prepare at this commit". A
+  (`src/simp/src` included) is refused with "run prepare at this commit"
+  (at a fresh start; a `--resume` is told what is safe, below). A
   commit that touches only the performance area (the counts file as Y) needs
   no second `prepare`. The pilot's inventory and a grid's record the
   `checkout` (`head`, the seal of the tree outside the performance area, and
@@ -694,12 +697,17 @@ has no disposition.
   each). The digest is not made stable. So **a grid that is stopped, or
   whose attempt ended `checkout-changed`, must not be prepared**: a
   `prepare` between a stop and its `--resume` is refused (`resume with
-  different settings`, or `not at the commit measured` and `run prepare at
-  this commit` where those apply),
+  different settings`, or `not at the commit measured` where that applies),
   `prepare` is no way back to a stopped grid, and a stamp that is lost comes
   back only from a copy of that same file. A mistaken `prepare`, or a lost
   stamp with no copy, costs the cells of that grid, and the route is a new
-  grid. A `prepare` between the stages is refused the same way, by `extend`
+  grid. So a refusal of the checkout at a `--resume` of a grid, a second
+  stage or a pilot does not say `run prepare at this commit` or `commit
+  first`, which are for a fresh start: it ends with "this run resumes only at
+  the recorded commit, tree and products; remove the change, or restore the
+  stamp from a copy of that same file; a prepare or a commit ends the grid".
+  The same words end the text of an end that could not be judged (below).
+  A `prepare` between the stages is refused the same way, by `extend`
   (also `extend --resume`) before it replays the first stage (`the checkout
   is not the one the first stage was measured in`). `replay` derives the
   tree seal of the candidate from git again (`changed checkout`) and finds a
@@ -709,11 +717,19 @@ has no disposition.
   measured with a toolchain of its own (a fresh clone built at the candidate,
   with its own controls receipt), and the timing grid's products are those of
   its own checkout, so the two digests are of different things and a
-  comparison would be wrong. The checkout is compared again under the lock,
-  just before the first cell, and at the end of a measurement; a checkout
-  that is not as recorded ends the attempt as `checkout-changed` (the closing
-  line of the ledger says so), with no pass, and what it leaves behind
-  depends on which of two things was found.
+  comparison would be wrong. **When the checkout is judged.** Under the lock,
+  before anything is written (each attempt, a resumption included), and at
+  every end of an attempt that the process survives: after the last cell;
+  and when an attempt stops early, by a cell that raises, a failure inside
+  the measuring, a `KeyboardInterrupt`, or a termination signal where Python
+  gets control. One routine judges the end for a grid, a second stage and a
+  pilot, the normal end and the early stop alike, and it is the only place
+  that marks. Those are all the moments: nothing else is looked at. A
+  checkout that is not as recorded at one of them ends the attempt as
+  `checkout-changed` (the closing line of the ledger says so), with no pass,
+  and what it leaves behind depends on which of two things was found. At an
+  early stop the exception of the stop still propagates, with its traceback,
+  and decides the exit status; the judgement adds the mark and the close.
   *Known to differ.* The head is not the commit measured, or the tree
   outside the performance area or the products differ from the stamp or from
   the record, or any tracked file differs from `HEAD` (see below). The
@@ -723,7 +739,10 @@ has no disposition.
   refused by `predeclare` and `verify-counts` with `the checkout changed
   while the pilot ran`, and its `--resume` with `resume with different
   settings`), a `prepare` after it cannot make it a pass, and its route is a
-  new grid in a new output, a new attempt of the ledger.
+  new grid in a new output, a new attempt of the ledger. This holds for an
+  early stop as for the last cell: an edit made after cell 3 of a grid whose
+  cell 5 raises is found at the stop, the grid is dead, and undoing the edit
+  before the `--resume` changes nothing.
   *Not judged.* Only untracked files in the tree (a stray file, an editor's
   swap file), or a stamp that is missing, malformed or of another build
   command, with nothing else known to differ. The attempt closes the same way
@@ -734,12 +753,31 @@ has no disposition.
   file is gone and the stamp is there again (the same file, copied back: see
   above), and is refused if the products, the tree or the head are not the
   recorded ones (`resume with different settings`, and before that the
-  refusals of the stamp, `run prepare at this commit`, and of the head, `not
-  at the commit measured`). A pilot records `checkout_unjudged` instead;
+  refusals of the checkout, which end with the words of a resumption, above).
+  An attempt that stops early and finds only that closes `checkout-changed`
+  as well, with no mark, and the original exception propagates. A pilot
+  records `checkout_unjudged` instead;
   `predeclare` and `verify-counts` refuse it until `pilot --resume` has found
   the checkout as recorded. The mark is cleared by that resume, but the text
   of every unjudged end stays in the pilot's `unjudged_ends`, which the
   resume comparison ignores.
+  *Nothing found, or the judgement failed.* An attempt that stops early and
+  finds nothing closes `interrupted`, as before. When the judgement itself
+  fails (an `OSError`, a second interrupt, git failing, the mark that cannot
+  be written) nothing is marked, the original exception still propagates,
+  and the attempt closes `interrupted` with the reason in `judgement` on its
+  close line; the exit status is that of the original exception.
+  *A tracked edit found only by `--resume`.* An attempt whose end was
+  judged and found nothing, and a tracked file edited after that, with no
+  cell run under it: `--resume` refuses it (the tree is not clean) and
+  writes no mark, and the edit undone, the resume goes on. The same holds
+  after a stray-file end.
+  *A process that is killed* (`SIGKILL`, a power cut, the machine) gets no
+  judgement. Its attempt stays `interrupted` in the ledger, with no close
+  line, and its end was not judged: a change present while it ran and
+  undone before the `--resume` is not seen, and a change found at the
+  `--resume` is refused, not marked. A reader of an `interrupted` line must
+  treat it so: the status does not say that the end was judged.
   *What is judged without a clean tree or a stamp*, in this order: the head
   (it must be the recorded one); the products digest, computed from the
   products and compared with `checkout.products` of the inventory (a
@@ -750,8 +788,10 @@ has no disposition.
   different tree and is known to differ, whether the file is undone before
   the next command or not; the grid is dead. An untracked stray file costs a
   resume, nothing more. The same holds for the end of a pilot.
-  What is compared is the checkout at those moments, so a change made and
-  undone between them is not seen; and the record proves
+  What is compared is the checkout at the moments listed above (under the
+  lock before the first cell, and at each end the process survives), so a
+  change made and undone between them is not seen, nor one made and undone
+  while a killed attempt ran; and the record proves
   that the checkout holds the recorded tree and products now, not that it
   held them when `prepare` ran. A pilot made at X and a grid at Y are not
   required to have the same tree outside the performance area: a
@@ -822,7 +862,8 @@ has no disposition.
   3. commit the counts file as Y (with any production fix and pins, in the
      order of the route after a regression); `verify-counts` again. Run
      `prepare` once more only if the commit changed a source outside the
-     performance area (the driver says "run prepare at this commit");
+     performance area (the driver says "run prepare at this commit" at a
+     fresh start);
   4. at Y: build the toolchain at Y, take the controls receipt, then run the
      allocation gate (`allocation_matrix.py run --task task30`), see the
      prerequisite below; the timing grid is run at Y too, in the checkout

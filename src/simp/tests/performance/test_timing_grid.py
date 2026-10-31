@@ -25,6 +25,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -1452,13 +1453,14 @@ class Pilot(Rig):
     def test_an_unjudged_end_of_a_pilot_stays_listed_after_its_resume(self):
         self.unjudged_at_the_end("first: not clean")
         out = self.root / "pilot"
-        self.assertEqual(self.inventory(out)["unjudged_ends"],
-                         ["first: not clean"])
+        first = str(tg.CheckoutUnjudged("first: not clean").resumed())
+        second = str(tg.CheckoutUnjudged("second: not clean").resumed())
+        self.assertEqual(self.inventory(out)["unjudged_ends"], [first])
         self.assertEqual(self.pilot(extra=("--resume",))[0], 0)
         resumed = self.inventory(out)
         # The mark that gates predeclare is gone, the text is not.
         self.assertNotIn("checkout_unjudged", resumed)
-        self.assertEqual(resumed["unjudged_ends"], ["first: not clean"])
+        self.assertEqual(resumed["unjudged_ends"], [first])
         # The resume does not compare the list, and a later unjudged end
         # adds to it.
         seen = []
@@ -1472,9 +1474,8 @@ class Pilot(Rig):
             with self.assertRaises(tg.CheckoutChanged):
                 self.pilot(extra=("--resume",))
         again = self.inventory(out)
-        self.assertEqual(again["unjudged_ends"],
-                         ["first: not clean", "second: not clean"])
-        self.assertEqual(again["checkout_unjudged"], "second: not clean")
+        self.assertEqual(again["unjudged_ends"], [first, second])
+        self.assertEqual(again["checkout_unjudged"], second)
 
     def test_verify_counts_refuses_an_unjudged_pilot_and_resume_keeps_it(
             self):
@@ -4177,8 +4178,9 @@ class Chain(ChainRig):
         out = self.root / "grid"
         self.assertIn("checkout_changed", self.inventory(out))
         stray.unlink()
-        with self.assertRaisesRegex(ValueError, "run prepare at this "
-                                    "commit"):
+        # The binding refuses first, in the words of a resumption.
+        with self.assertRaisesRegex(ValueError, "differ from the stamped "
+                                    "build: this run resumes only"):
             self.resume(y)
         self.assertEqual(self.prepare()[0], 0)
         self.dead_resume(y)
@@ -4309,6 +4311,392 @@ class Chain(ChainRig):
                     self.assertNotIn("checkout_unjudged", resumed)
                     self.assertEqual(resumed["unjudged_ends"],
                                      recorded["unjudged_ends"])
+
+    # The end of an attempt that stops early -----------------------------
+
+    def failing_after(self, call, action=lambda: None, error=None):
+        """Cell number `call` does `action` and then raises `error`."""
+        real = self.fake_run
+
+        def run(options):
+            if self.calls + 1 == call:
+                action()
+                self.calls += 1
+                raise error or RuntimeError("infrastructure failure")
+            return real(options)
+        return patch.object(a, "run", run)
+
+    def edit_one(self):
+        (self.repo / "src" / "one.sml").write_text("val one = 7\n")
+
+    def undo_one(self):
+        self.git("checkout", "--", "src/one.sml")
+
+    def statuses(self):
+        return [(x["event"], x.get("status")) for x in self.ledger_lines()]
+
+    def test_an_edit_before_an_early_stop_kills_the_grid(self):
+        # P1: the edit is made after cell 3, and cell 5 raises. The end of
+        # the attempt is judged though the measuring never finished.
+        y = self.commit_counts()
+        self.explode_at = 5
+        try:
+            with self.acting_at(3, self.edit_one):
+                self.run_at(y)
+        except RuntimeError as error:
+            # The error of the stop is the one that propagates, with its
+            # own traceback.
+            self.assertEqual(str(error), "infrastructure failure")
+            self.assertIn("fake_run", [f.name for f in traceback.extract_tb(
+                error.__traceback__)])
+        else:
+            self.fail("the stop was swallowed")
+        out = self.root / "grid"
+        self.assertIn("tracked file", self.inventory(out)["checkout_changed"])
+        self.assertEqual(self.statuses(),
+                         [("open", None), ("close", "checkout-changed")])
+        self.undo_one()
+        self.explode_at = None
+        self.dead_resume(y)
+        self.assertEqual(self.statuses()[-1], ("close", "checkout-changed"))
+
+    def test_a_second_stage_that_stops_early_is_judged_too(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        y = self.commit_counts()
+        self.assertEqual(self.run_at(y)[0], 2)
+        argv = self.argv("extend", self.root / "ext", "--grid",
+                         str(self.root / "grid"), "--authorize-measurements")
+        with self.failing_after(self.calls + 1, self.edit_one):
+            with self.assertRaises(RuntimeError):
+                self.go(argv)
+        self.assertIn("checkout_changed", self.inventory(self.root / "ext"))
+        self.assertEqual(self.statuses()[-2:],
+                         [("open", None), ("close", "checkout-changed")])
+        self.undo_one()
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "checkout changed while "
+                                    "this grid ran.*dead"):
+            self.go(argv + ["--resume"])
+        self.assertEqual(self.calls, calls)
+
+    def pilot_stopping(self, name, action, before=4):
+        """A pilot whose fifth process does `action` and then raises."""
+        real = self.fake_launch
+        started = len(self.launched)
+
+        def launching(command, output, fds, timeout, stdin=None,
+                      append=False):
+            if "--performance-case" in command and len(
+                    self.launched) == started + before:
+                action()
+                raise RuntimeError("infrastructure failure")
+            return real(command, output, fds, timeout, stdin, append)
+        argv = self.argv("pilot", self.root / name,
+                         "--authorize-measurements")
+        with patch.object(a, "run_logged", launching):
+            with self.assertRaises(RuntimeError):
+                self.go(argv)
+        return argv
+
+    def test_a_pilot_that_stops_early_is_judged_too(self):
+        self.commit_counts()
+        argv = self.pilot_stopping("dead", self.edit_one)
+        recorded = self.inventory(self.root / "dead")
+        self.assertIn("checkout_changed", recorded)
+        self.assertEqual(len(recorded["runs"]), 4)
+        self.undo_one()
+        with self.assertRaisesRegex(ValueError, "different settings"):
+            self.go(argv + ["--resume"])
+        # A stray file is not judged: no dead mark, and the pilot resumes.
+        stray = self.repo / "notes.txt"
+        argv = self.pilot_stopping(
+            "stray", lambda: stray.write_text("x"))
+        recorded = self.inventory(self.root / "stray")
+        self.assertNotIn("checkout_changed", recorded)
+        self.assertIn("checkout_unjudged", recorded)
+        self.assertEqual(len(recorded["unjudged_ends"]), 1)
+        stray.unlink()
+        self.assertEqual(self.go(argv + ["--resume"])[0], 0)
+        self.assertEqual(len(self.inventory(
+            self.root / "stray")["unjudged_ends"]), 1)
+        # A clean stop is marked with nothing, and resumes.
+        argv = self.pilot_stopping("clean", lambda: None)
+        recorded = self.inventory(self.root / "clean")
+        for key in ("checkout_changed", "checkout_unjudged",
+                    "unjudged_ends"):
+            self.assertNotIn(key, recorded)
+        self.assertEqual(self.go(argv + ["--resume"])[0], 0)
+
+    def test_a_stray_file_before_an_early_stop_leaves_the_grid_alive(self):
+        y = self.commit_counts()
+        stray = self.repo / "notes.txt"
+        self.explode_at = 5
+        with self.acting_at(3, lambda: stray.write_text("x")):
+            with self.assertRaises(RuntimeError):
+                self.run_at(y)
+        out = self.root / "grid"
+        self.assertNotIn("checkout_changed", self.inventory(out))
+        # The same close as an unjudged end after the last cell.
+        self.assertEqual(self.statuses(),
+                         [("open", None), ("close", "checkout-changed")])
+        stray.unlink()
+        self.explode_at = None
+        status, text = self.resume(y)
+        self.assertEqual(status, 0, text)
+        self.assertEqual(self.statuses()[-2:],
+                         [("resume", None), ("close", "pass")])
+
+    def test_a_clean_early_stop_stays_interrupted_and_resumes(self):
+        y = self.commit_counts()
+        self.explode_at = 5
+        with self.assertRaises(RuntimeError):
+            self.run_at(y)
+        self.assertNotIn("checkout_changed",
+                         self.inventory(self.root / "grid"))
+        line = self.ledger_lines()[-1]
+        self.assertEqual((line["event"], line["status"]),
+                         ("close", "interrupted"))
+        self.assertNotIn("judgement", line)
+        self.explode_at = None
+        self.assertEqual(self.resume(y)[0], 0)
+
+    def test_an_interrupt_propagates_with_the_checkout_judged(self):
+        y = self.commit_counts()
+        with self.failing_after(5, self.edit_one, KeyboardInterrupt()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_at(y)
+        self.assertIn("checkout_changed", self.inventory(self.root / "grid"))
+        self.assertEqual(self.statuses()[-1], ("close", "checkout-changed"))
+
+    def test_a_judgement_that_fails_masks_nothing_and_marks_nothing(self):
+        y = self.commit_counts()
+        real = tg.Grid.recheck
+        for label, error, step in (
+                ("recheck", OSError("git went away"), "recheck"),
+                ("second interrupt", KeyboardInterrupt(), "recheck"),
+                ("the mark", OSError("disk full"), "mark_end")):
+            with self.subTest(label):
+                name = "grid-" + label.replace(" ", "-")
+                seen = []
+
+                def recheck(this, repo, commit, inventory):
+                    # The first, under the lock, is the real one.
+                    seen.append(1)
+                    if len(seen) > 1:
+                        raise error
+                    return real(this, repo, commit, inventory)
+
+                def mark(root, inventory, found):
+                    raise error
+                stand_in = (recheck if step == "recheck" else mark)
+                # An edit that the judgement would have found.
+                with self.failing_after(self.calls + 5, self.edit_one):
+                    with patch.object(
+                            tg.Grid if step == "recheck" else self.grid,
+                            step, stand_in):
+                        with self.assertRaises(RuntimeError) as caught:
+                            self.run_at(y, name)
+                self.assertEqual(str(caught.exception),
+                                 "infrastructure failure")
+                self.assertNotIn("checkout_changed",
+                                 self.inventory(self.root / name))
+                line = self.ledger_lines()[-1]
+                self.assertEqual((line["event"], line["status"]),
+                                 ("close", "interrupted"))
+                self.assertIn("not made: " + type(error).__name__,
+                              line["judgement"])
+                self.undo_one()
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_a_mark_that_cannot_be_written_is_not_kept_in_memory(self):
+        inventory = dict(schema=self.table.schema("experiment"), runs=[])
+        found = tg.CheckoutChanged("tracked file(s) changed: M x")
+        with patch.object(tg, "checkpoint", side_effect=OSError("full")):
+            with self.assertRaises(OSError):
+                self.grid.mark_end(self.root, inventory, found)
+        self.assertNotIn("checkout_changed", inventory)
+        pilot = dict(schema=self.table.schema("pilot"), runs=[])
+        with patch.object(tg, "checkpoint", side_effect=OSError("full")):
+            with self.assertRaises(OSError):
+                self.grid.mark_end(self.root, pilot, tg.CheckoutChanged(
+                    "unclean", dead=False))
+        self.assertEqual(set(pilot), {"schema", "runs"})
+
+    def test_a_tracked_edit_found_only_by_resume_is_refused_not_marked(self):
+        # The end of the attempt was judged, so the edit came later and no
+        # cell ran under it: undoing it and resuming is honest.
+        y = self.commit_counts()
+        self.explode_at = 5
+        with self.assertRaises(RuntimeError):
+            self.run_at(y)
+        self.explode_at = None
+        self.edit_one()
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, "not clean"):
+            self.resume(y)
+        self.assertNotIn("checkout_changed",
+                         self.inventory(self.root / "grid"))
+        self.undo_one()
+        self.assertEqual(self.resume(y)[0], 0)
+        self.assertGreater(self.calls, calls)
+
+    def test_a_stray_end_then_a_tracked_edit_found_by_resume_then_undone(
+            self):
+        # P2
+        y = self.commit_counts()
+        stray = self.repo / "notes.txt"
+        with self.acting_at(5, lambda: stray.write_text("x")):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.run_at(y)
+        stray.unlink()
+        self.edit_one()
+        with self.assertRaisesRegex(ValueError, "not clean"):
+            self.resume(y)
+        self.assertNotIn("checkout_changed",
+                         self.inventory(self.root / "grid"))
+        self.undo_one()
+        self.assertEqual(self.resume(y)[0], 0)
+        self.assertEqual(
+            self.statuses(),
+            [("open", None), ("close", "checkout-changed"),
+             ("resume", None), ("close", "pass")])
+
+    # The words of a refusal ---------------------------------------------
+
+    def stopped(self, y):
+        self.explode_at = 5
+        with self.assertRaises(RuntimeError):
+            self.run_at(y)
+        self.explode_at = None
+
+    def test_a_resume_that_lost_the_stamp_is_told_what_is_safe(self):
+        y = self.commit_counts()
+        self.stopped(y)
+        saved = self.stamp().read_bytes()
+        self.stamp().unlink()
+        with self.assertRaises(ValueError) as caught:
+            self.resume(y)
+        text = str(caught.exception)
+        self.assertRegex(text, "^no build stamp \\(.*\\): " + re.escape(
+            tg.RESUMING) + "$")
+        self.assertNotIn("run prepare", text)
+        self.assertIn("restore the stamp from a copy of that same file",
+                      text)
+        self.assertIn("a prepare or a commit ends the grid", text)
+        self.stamp().write_bytes(saved)
+        self.assertEqual(self.resume(y)[0], 0)
+
+    def test_a_resume_with_a_stray_file_is_told_what_is_safe(self):
+        y = self.commit_counts()
+        self.stopped(y)
+        stray = self.repo / "notes.txt"
+        stray.write_text("x")
+        with self.assertRaises(ValueError) as caught:
+            self.resume(y)
+        text = str(caught.exception)
+        self.assertRegex(text, "^harness checkout is not clean: " +
+                         re.escape(tg.RESUMING) + "$")
+        self.assertNotIn("commit first", text)
+        stray.unlink()
+        self.assertEqual(self.resume(y)[0], 0)
+
+    def test_the_other_refusals_of_a_resume_are_told_it_too(self):
+        y = self.commit_counts()
+        self.stopped(y)
+        self.commit_file("note.txt", "later\n")
+        with self.assertRaisesRegex(
+                ValueError, "not at the commit measured.*: " +
+                re.escape(tg.RESUMING)):
+            self.resume(y)
+        self.git("checkout", "-q", y)
+        heap = self.repo / "bin" / "hol.state0"
+        heap.write_text("another")
+        with self.assertRaisesRegex(ValueError, "differ from the stamped "
+                                    "build: " + re.escape(tg.RESUMING)):
+            self.resume(y)
+        heap.write_text("heap")
+        self.assertEqual(self.resume(y)[0], 0)
+
+    def test_a_second_stage_and_a_pilot_resume_are_told_the_same(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        y = self.commit_counts()
+        self.assertEqual(self.run_at(y)[0], 2)
+        argv = self.argv("extend", self.root / "ext", "--grid",
+                         str(self.root / "grid"), "--authorize-measurements")
+        self.explode_at = self.calls + 1
+        with self.assertRaises(RuntimeError):
+            self.go(argv)
+        self.explode_at = None
+        pilot = self.pilot_stopping("again", lambda: None)
+        saved = self.stamp().read_bytes()
+        self.stamp().unlink()
+        for label, command in (("second stage", argv + ["--resume"]),
+                               ("pilot", pilot + ["--resume"])):
+            with self.subTest(label):
+                with self.assertRaisesRegex(
+                        ValueError, "^no build stamp \\(.*\\): " +
+                        re.escape(tg.RESUMING) + "$"):
+                    self.go(command)
+        self.stamp().write_bytes(saved)
+        self.assertEqual(self.go(argv + ["--resume"])[0], 0)
+        self.assertEqual(self.go(pilot + ["--resume"])[0], 0)
+
+    def test_a_fresh_start_keeps_the_words_of_a_fresh_start(self):
+        y = self.commit_counts()
+        saved = self.stamp().read_bytes()
+        self.stamp().unlink()
+        for command in (self.argv("run", self.root / "g", "--candidate", y,
+                                  "--authorize-measurements"),
+                        self.argv("pilot", self.root / "p",
+                                  "--authorize-measurements")):
+            with self.assertRaisesRegex(ValueError, "^no build stamp "
+                                        "\\(.*\\): run prepare at this "
+                                        "commit$"):
+                self.go(command)
+        self.stamp().write_bytes(saved)
+        stray = self.repo / "notes.txt"
+        stray.write_text("x")
+        with self.assertRaisesRegex(ValueError, "^harness checkout is not "
+                                    "clean: commit first$"):
+            self.run_at(y, "g")
+        stray.unlink()
+        self.assertFalse((self.root / "g").exists())
+
+    def test_an_unjudged_end_does_not_tell_the_operator_to_prepare(self):
+        y = self.commit_counts()
+        saved = self.stamp().read_bytes()
+        with self.acting_at(5, self.stamp().unlink):
+            with self.assertRaises(tg.CheckoutChanged) as caught:
+                self.run_at(y)
+        self.assertNotIn("run prepare", str(caught.exception))
+        self.assertIn(tg.RESUMING, str(caught.exception))
+        self.stamp().write_bytes(saved)
+        stray = self.repo / "notes.txt"
+        real = self.fake_launch
+
+        def launching(command, output, fds, timeout, stdin=None,
+                      append=False):
+            found = real(command, output, fds, timeout, stdin, append)
+            if "--performance-case" in command and len(self.launched) == 5:
+                stray.write_text("x")
+            return found
+        with patch.object(a, "run_logged", launching):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.go(self.argv("pilot", self.root / "pilot",
+                                  "--authorize-measurements"))
+        stored = self.inventory(self.root / "pilot")
+        for text in (stored["checkout_unjudged"], *stored["unjudged_ends"]):
+            self.assertNotIn("run prepare", text)
+            self.assertNotIn("commit first", text)
+            self.assertIn(tg.RESUMING, text)
+        stray.unlink()
+        with self.assertRaisesRegex(ValueError, "could not be judged.*"
+                                    "resume it"):
+            self.go(["verify-counts", "--grid", str(self.root / "pilot")])
 
     def test_every_prepare_makes_a_new_digest(self):
         # Configure relinks bin/hol, which differs at each run, so two
@@ -4641,17 +5029,18 @@ class Chain(ChainRig):
         self.assertEqual(self.prepare()[0], 0)
         self.assertEqual(len(self.built), built + 1)
 
-    def test_only_the_text_of_this_configure_counts_as_its_last_line(self):
-        log = self.root / "appended.log"
-        log.write_text("an older run\n%s\n" % tg.FINISHED)
-        offset = log.stat().st_size
-        with log.open("a") as stream:
-            stream.write("this run died\n")
-        self.assertTrue(tg.configure_finished(log))
-        self.assertFalse(tg.configure_finished(log, offset))
-        with log.open("a") as stream:
-            stream.write("  %s  \n" % tg.FINISHED)
-        self.assertTrue(tg.configure_finished(log, offset))
+    def test_the_last_line_of_configure_is_a_whole_line_of_the_log(self):
+        log = self.root / "configure.log"
+        for text, expected in (
+                ("", False), ("other text\n", False),
+                ("%s (not)\n" % tg.FINISHED, False),
+                ("not %s\n" % tg.FINISHED, False),
+                ("%s\n" % tg.FINISHED, True),
+                ("log\n  %s  \nmore\n" % tg.FINISHED, True),
+                ("%s" % tg.FINISHED, True)):
+            with self.subTest(text):
+                log.write_text(text)
+                self.assertEqual(tg.configure_finished(log), expected)
 
     def test_a_timed_out_configure_writes_no_stamp_and_runs_no_build(self):
         self.commit_counts()

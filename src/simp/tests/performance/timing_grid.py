@@ -89,7 +89,21 @@ class CheckoutChanged(ValueError):
         self.dead = dead
 
 
-class CheckoutUnjudged(ValueError):
+class CheckoutRefused(ValueError):
+    """What `checkout_identity` refuses: `what`, and `fresh`, the words that
+    end it for a fresh start (the text is `what: fresh`). `resumed` is the
+    same refusal as a `--resume` gives it, which ends with `RESUMING`
+    instead: that is the one place the words of a resumption are added."""
+
+    def __init__(self, what, fresh=None):
+        super().__init__(what if fresh is None else "%s: %s" % (what, fresh))
+        self.what = what
+
+    def resumed(self):
+        return type(self)(self.what, RESUMING)
+
+
+class CheckoutUnjudged(CheckoutRefused):
     """The checkout cannot be compared with the stamp: it is not clean, or
     there is no usable stamp. By itself that says nothing about the
     checkout the record names; `known_difference` asks what can still be
@@ -518,6 +532,11 @@ FINISHED = "Finished configuration!"
 # not here: each cell's manifest records them among its tools.
 PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/Holmake")
 PREPARE = "run prepare at this commit"
+# What is safe when a resumption is refused: a prepare gives new products, so
+# it cannot be the way back, and a commit moves HEAD.
+RESUMING = ("this run resumes only at the recorded commit, tree and "
+            "products; remove the change, or restore the stamp from a copy "
+            "of that same file; a prepare or a commit ends the grid")
 # A build from nothing takes the better part of an hour.
 BUILD_TIMEOUT = 4 * 3600
 # The exit status of a command that was refused or ended with an error, and
@@ -585,10 +604,16 @@ def build_stamp(repo):
                 build=list(BUILD))
 
 
-def judge(ok, message):
+def judge(ok, what, fresh=None):
     """`a.require` for what leaves the checkout unjudged, not different."""
     if not ok:
-        raise CheckoutUnjudged(message)
+        raise CheckoutUnjudged(what, fresh)
+
+
+def differs(ok, what, fresh=None):
+    """`a.require` for what makes the checkout other than the one wanted."""
+    if not ok:
+        raise CheckoutRefused(what, fresh)
 
 
 def tracked_changes(repo):
@@ -651,35 +676,38 @@ def checkout_identity(repo, commit=None, stamp=None):
     and a build exited cleanly at this tree."""
     repo = Path(repo)
     head = a.git(repo, "rev-parse", "HEAD")
-    a.require(commit is None or head == commit,
-              "the checkout is at %s, not at the commit measured: %s"
-              % (head, commit))
+    differs(commit is None or head == commit,
+            "the checkout is at %s, not at the commit measured (%s)"
+            % (head, commit))
     try:
         found = clean_head(repo)
     except ValueError as error:
-        raise CheckoutUnjudged(str(error)) from None
+        # Its own words for a fresh start are kept, for a fresh start.
+        text, fresh = str(error), "commit first"
+        if text.endswith(": " + fresh):
+            raise CheckoutUnjudged(text[:-len(fresh) - 2], fresh) from None
+        raise CheckoutUnjudged(text) from None
     judge(stamp is not None and Path(stamp).is_file(),
-          "no build stamp (%s): %s" % (stamp, PREPARE))
+          "no build stamp (%s)" % stamp, PREPARE)
     try:
         made = json.loads(Path(stamp).read_text())
     except ValueError:
         made = None
     judge(isinstance(made, dict) and sorted(made) == [
         "build", "head", "products", "tree_outside_performance"],
-        "malformed build stamp %s: %s" % (stamp, PREPARE))
+        "malformed build stamp %s" % stamp, PREPARE)
     judge(made["build"] == list(BUILD),
-          "the build stamp is of another build command, %s: %s"
-          % (made["build"], PREPARE))
-    a.require(made["tree_outside_performance"] ==
-              found["tree_outside_performance"],
-              "the tree outside the performance area is not the one the "
-              "build was made from: " + PREPARE)
+          "the build stamp is of another build command, %s" % made["build"],
+          PREPARE)
+    differs(made["tree_outside_performance"] ==
+            found["tree_outside_performance"],
+            "the tree outside the performance area is not the one the "
+            "build was made from", PREPARE)
     products = products_digest(repo)
-    a.require(made["products"] == products,
-              "the products (bin/hol, bin/hol.state0, bin/Holmake, sigobj, "
-              "the theory data files and sources) differ from the stamped "
-              "build: "
-              + PREPARE)
+    differs(made["products"] == products,
+            "the products (bin/hol, bin/hol.state0, bin/Holmake, sigobj, "
+            "the theory data files and sources) differ from the stamped "
+            "build", PREPARE)
     return dict(found, products=products["sha256"])
 
 
@@ -704,13 +732,9 @@ def configured_holdir(repo):
               % (found[0], repo.resolve()))
 
 
-def configure_finished(log, offset=0):
-    """Whether the log holds the line configure ends with, in what was
-    written from byte `offset` on (this configure's output, not the text of
-    an earlier run in a log that is appended to)."""
-    with Path(log).open("rb") as stream:
-        stream.seek(offset)
-        text = stream.read().decode(errors="replace")
+def configure_finished(log):
+    """Whether the log holds the line configure ends with."""
+    text = Path(log).read_bytes().decode(errors="replace")
     return any(line.strip() == FINISHED for line in text.splitlines())
 
 
@@ -1148,7 +1172,8 @@ class Grid:
         self.h.attempts_file(args, True)  # the ledger place, while it is cheap
         self.h.check_output(args)
         if t.fixed_seconds:
-            inventory["checkout"] = self.h.bind_checkout(args.repo, None)
+            inventory["checkout"] = self.h.bind_checkout(
+                args.repo, None, args.resume)
         done = {}
         with self.h.locked(args.repo) as fds:
             self.h.recheck(args.repo, None, inventory)
@@ -1184,20 +1209,16 @@ class Grid:
                         continue
                     ms.get_case(case, size)
                     self.h.pilot_cell(root, inventory, case, size, args, fds)
-                try:
-                    self.h.recheck(args.repo, None, inventory)
-                except CheckoutChanged as error:
-                    # A pilot has no decisions that a missing mark would
-                    # hold back: an unjudged end is marked until a resume
-                    # finds the checkout as recorded, and listed for good
-                    # (the resume comparison ignores the list).
-                    if error.dead:
-                        inventory["checkout_changed"] = str(error)
-                    else:
-                        inventory["checkout_unjudged"] = str(error)
-                        inventory.setdefault("unjudged_ends", []).append(
-                            str(error))
-                    raise
+                # A pilot has no decisions that a missing mark would hold
+                # back: an unjudged end is marked until a resume finds the
+                # checkout as recorded, and listed for good (the resume
+                # comparison ignores the list).
+                self.h.judge_end(root, args.repo, None, inventory)
+            except CheckoutChanged:
+                raise
+            except BaseException as stop:
+                self.h.judge_end(root, args.repo, None, inventory, stop)
+                raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
                 checkpoint(root / "variability.json", {
@@ -1440,13 +1461,8 @@ class Grid:
                     self.h.measure_cell(root, inventory, case, size, pairs,
                                         count, seconds, seed, args, reports,
                                         fds)
-                try:
-                    self.h.recheck(args.repo, inventory["candidate"],
-                                   inventory)
-                except CheckoutChanged as error:
-                    if error.dead:
-                        inventory["checkout_changed"] = str(error)
-                    raise
+                self.h.judge_end(root, args.repo, inventory["candidate"],
+                                 inventory)
             finally:
                 checkpoint(root / "inventory.json", inventory)
         return reports
@@ -1702,13 +1718,15 @@ class Grid:
                 seed=inventory.get("layout_seed"), output=str(root),
                 checkout=str(Path(repo).resolve()), **more)
 
-    def close_attempt(self, path, stage, inventory, root, repo, status):
-        """The close of an attempt. When it cannot be written the attempt
-        stays open in the ledger, which shows it as interrupted, and the
-        outcome of the run is not replaced by the failure."""
+    def close_attempt(self, path, stage, inventory, root, repo, status,
+                      **note):
+        """The close of an attempt, with `note` (the reason the end of an
+        early stop could not be judged). When it cannot be written the
+        attempt stays open in the ledger, which shows it as interrupted, and
+        the outcome of the run is not replaced by the failure."""
         try:
             self.h.record_attempt(path, "close", stage, inventory, root,
-                                  repo, status=status)
+                                  repo, status=status, **note)
         except Exception as error:
             print("ATTEMPT-NOT-CLOSED %s (outcome %s): %s" % (
                 inventory["attempt"], status, error), file=sys.stderr,
@@ -1789,17 +1807,25 @@ class Grid:
         self.h.check_counts(Path(args.pilot).resolve(),
                             self.h.counts_for(inventory))
 
-    def bind_checkout(self, repo, commit):
+    def bind_checkout(self, repo, commit, resuming=False):
         """The checkout the measurement runs in is that of `commit`, and
-        the one `prepare` stamped (checkout_identity)."""
-        return checkout_identity(repo, commit, self.h.stamp_path(repo))
+        the one `prepare` stamped (checkout_identity). At a resumption a
+        refusal ends with what is safe there (`RESUMING`), not with what a
+        fresh start does."""
+        try:
+            return checkout_identity(repo, commit, self.h.stamp_path(repo))
+        except CheckoutRefused as error:
+            if not resuming:
+                raise
+            raise error.resumed() from None
 
     def recheck(self, repo, commit, inventory):
         """The checkout is still the one the inventory recorded. It is
-        asked under the lock, before anything is written, and when the
-        measuring is over; a checkout that changed while a grid ran
-        (a build, an edit, a checkout of another commit) leaves no grid
-        that passes, and the attempt closes as `checkout-changed`. The grid
+        asked under the lock, before anything is written, and at every end
+        of an attempt that the process survives (`judge_end`); a checkout
+        that changed while a grid ran (a build, an edit, a checkout of
+        another commit) leaves no grid that passes, and the attempt closes
+        as `checkout-changed`. The grid
         is dead (`CheckoutChanged.dead`) when the head, the tree or the
         products are known to differ from the record, which includes any
         change to a tracked file (`known_difference`: that is judged
@@ -1817,13 +1843,63 @@ class Grid:
             known = known_difference(repo, inventory["checkout"])
             if known is not None:
                 raise CheckoutChanged(known) from None
-            raise CheckoutChanged(str(error), dead=False) from None
+            # The record is of a grid that has begun: what is safe is what a
+            # resumption does, and a prepare is not.
+            raise CheckoutChanged(str(error.resumed()), dead=False) \
+                from None
         except ValueError as error:
             raise CheckoutChanged(str(error)) from None
         if found != inventory["checkout"]:
             raise CheckoutChanged(
                 "the checkout is not the one recorded: %s, not %s"
                 % (found, inventory["checkout"]))
+
+    def judge_end(self, root, repo, commit, inventory, stop=None):
+        """Judge the checkout at the end of an attempt, as `recheck` does,
+        and mark what it finds: the one place that marks. A grid or a
+        second stage records `checkout_changed` when the checkout is known
+        to differ (dead), and nothing when it was only not judged; a pilot
+        records `checkout_unjudged` too, and lists the text in
+        `unjudged_ends`. The inventory is written with the mark, or not at
+        all.
+
+        It is called at the normal end of the measuring, where it raises
+        the `CheckoutChanged` it found. It is called again for an attempt
+        that stops early, by the exception `stop` (a cell that raised, a
+        failure inside the measuring, an interrupt), and then it never
+        raises: the exception of the stop goes on to decide the exit
+        status. It returns the status the attempt closes with and what its
+        close line adds: `checkout-changed` when something was found and
+        marked, and `interrupted` otherwise, with the reason as
+        `judgement` when the judgement itself failed (nothing is marked
+        then; a checkout that cannot be asked says nothing)."""
+        try:
+            try:
+                self.h.recheck(repo, commit, inventory)
+            except CheckoutChanged as error:
+                self.h.mark_end(root, inventory, error)
+                if stop is None:
+                    raise
+                return "checkout-changed", {}
+            return "interrupted", {}
+        except BaseException as failure:
+            if stop is None:
+                raise
+            return "interrupted", dict(judgement="not made: %s: %s" % (
+                type(failure).__name__, failure))
+
+    def mark_end(self, root, inventory, error):
+        """Write into the inventory what the end of an attempt found, if it
+        is to be marked (see `judge_end`)."""
+        if error.dead:
+            marks = dict(checkout_changed=str(error))
+        elif inventory["schema"] == self.t.schema("pilot"):
+            marks = dict(checkout_unjudged=str(error), unjudged_ends=[
+                *inventory.get("unjudged_ends", []), str(error)])
+        else:
+            return
+        checkpoint(root / "inventory.json", dict(inventory, **marks))
+        inventory.update(marks)
 
     def prepare(self, args):
         """Configure the checkout, build it and stamp it. It needs a clean
@@ -1852,8 +1928,6 @@ class Grid:
             log.unlink(missing_ok=True)
             inside = ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"',
                       "prepare", str(repo)]
-            # Only what this configure writes counts (the log is new here).
-            offset = log.stat().st_size if log.exists() else 0
             configured = a.run_logged(
                 inside + list(CONFIGURE), log, fds, args.timeout,
                 stdin=repo / CONFIGURE_INPUT)
@@ -1862,7 +1936,7 @@ class Grid:
                       "configure failed (exit %s%s), no build stamp: see %s"
                       % (configured["exit"], ", timed out" if
                          configured["timed_out"] else "", log))
-            a.require(configure_finished(log, offset),
+            a.require(configure_finished(log),
                       "configure exited 0 but did not print %r, so it "
                       "stopped on an exception it swallowed, no build "
                       "stamp: see %s" % (FINISHED, log))
@@ -1979,7 +2053,7 @@ class Grid:
             inventory.update(counts_file=t.latest().name,
                              attempt=uuid.uuid4().hex)
             inventory["checkout"] = self.h.bind_checkout(
-                args.repo, args.candidate)
+                args.repo, args.candidate, args.resume)
         if seed is not None:
             self.h.check_seed(seed)
             inventory["layout_seed"] = layout_seed(seed)
@@ -2010,7 +2084,7 @@ class Grid:
             self.h.record_attempt(ledger, "resume" if args.resume else "open",
                                   "first", inventory, root, args.repo,
                                   only=args.only)
-            status = "interrupted"
+            status, note = "interrupted", {}
             try:
                 self.h.measure(root, inventory, [k + (pairs,) for k in keys],
                                args, reports)
@@ -2025,9 +2099,13 @@ class Grid:
             except CheckoutChanged:
                 status = "checkout-changed"
                 raise
+            except BaseException as stop:
+                status, note = self.h.judge_end(
+                    root, args.repo, args.candidate, inventory, stop)
+                raise
             finally:
                 self.h.close_attempt(ledger, "first", inventory, root,
-                                     args.repo, status)
+                                     args.repo, status, **note)
 
     # Second stage ----------------------------------------------------
 
@@ -2221,7 +2299,8 @@ class Grid:
             self.h.check_experiment(recorded)
             self.h.check_checkout(recorded, args.repo)
             a.require(self.h.bind_checkout(
-                args.repo, recorded["candidate"]) == recorded["checkout"],
+                args.repo, recorded["candidate"], args.resume) ==
+                recorded["checkout"],
                 "the checkout is not the one the first stage was measured "
                 "in")
         first, stage1, _ = self.h.replay_grid(grid, args.repo)
@@ -2244,7 +2323,7 @@ class Grid:
                 self.h.keep(args.repo, first["candidate"])
             self.h.record_attempt(ledger, "resume" if args.resume else "open",
                                   "second", inventory, root, args.repo)
-            status = "interrupted"
+            status, note = "interrupted", {}
             try:
                 self.h.measure(root, inventory, [tuple(p) for p in plan],
                                args, reports)
@@ -2255,9 +2334,13 @@ class Grid:
             except CheckoutChanged:
                 status = "checkout-changed"
                 raise
+            except BaseException as stop:
+                status, note = self.h.judge_end(
+                    root, args.repo, first["candidate"], inventory, stop)
+                raise
             finally:
                 self.h.close_attempt(ledger, "second", inventory, root,
-                                     args.repo, status)
+                                     args.repo, status, **note)
 
     def replay(self, args):
         t = self.t
