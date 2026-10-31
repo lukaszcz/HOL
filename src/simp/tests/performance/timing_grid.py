@@ -563,8 +563,8 @@ def terminating_as_interrupt():
     they take the path of an interrupt: the cell's process group is killed,
     the lock is released and the end of the attempt is judged. A signal
     that is ignored at the start (SIGHUP under `nohup`) stays ignored, as
-    Python leaves an ignored SIGINT, and is put back as it was; only what
-    was replaced is restored, at the exit. The cell's group is killed, but
+    Python leaves an ignored SIGINT. What was replaced is restored at the
+    exit. The cell's group is killed, but
     a process that `run_paired` started has a session of its own, runs to
     its end holding the lock, and may have to be killed by hand: the lock
     staying is deliberate (see `acceptance.serial_lock`). Off the main

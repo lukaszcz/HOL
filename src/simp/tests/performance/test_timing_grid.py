@@ -5501,25 +5501,35 @@ class Terminated(unittest.TestCase):
             if alive(pid):
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(pid, signal.SIGKILL)
-        if pids and alive(pids[1]):
+        if len(pids) > 1 and alive(pids[1]):
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(pids[1], signal.SIGKILL)
 
-    def await_pids(self, child, marks):
+    def await_pids(self, child, marks, pids):
+        """Fill `pids` (grandchild, cell) as each mark is read, so that
+        `cleanup`, which holds the list, kills what a failed wait saw."""
         deadline = time.monotonic() + 120
-        pids = []
         while len(pids) < 2:
             if child.poll() is not None or time.monotonic() > deadline:
                 self.fail("no cell started: %s" % (
                     marks / "child.log").read_text())
-            pids = []
-            for name in ("grandchild", "cell"):
-                try:
-                    pids.append(int((marks / name).read_text()))
-                except (FileNotFoundError, ValueError):
-                    time.sleep(0.05)
-                    break
-        return pids
+            name = ("grandchild", "cell")[len(pids)]
+            try:
+                pids.append(int((marks / name).read_text()))
+            except (FileNotFoundError, ValueError):
+                time.sleep(0.05)
+
+    def await_session(self, pid):
+        """Wait until `pid` has left its parent's group by `setsid`."""
+        end = time.monotonic() + 60
+        while True:
+            try:
+                if os.getsid(pid) == pid:
+                    return
+            except ProcessLookupError:
+                self.fail("process %d is gone" % pid)
+            self.assertLess(time.monotonic(), end)
+            time.sleep(0.01)
 
     def terminate(self, number, nested=False):
         with tempfile.TemporaryDirectory(prefix="timing-grid-signal-") as t:
@@ -5534,11 +5544,21 @@ class Terminated(unittest.TestCase):
                 child = subprocess.Popen(
                     [sys.executable, "-B", "-c", CHILD, t],
                     cwd=Path(__file__).parent, env=env, stdout=log,
-                    stderr=subprocess.STDOUT)
+                    stderr=subprocess.STDOUT,
+                    # Whatever the suite inherited (a run under `nohup`
+                    # ignores SIGHUP), the signal under test is at its
+                    # default here.
+                    preexec_fn=lambda: signal.signal(number,
+                                                     signal.SIG_DFL))
             self.addCleanup(self.cleanup, child, pids)
-            pids.extend(self.await_pids(child, marks))
+            self.await_pids(child, marks, pids)
             for pid in pids:
                 self.assertTrue(alive(pid))
+            if nested:
+                # `setsid` is exec'd after the marks are written: the
+                # signal must not land while it is still in the cell's
+                # group.
+                self.await_session(pids[0])
             child.send_signal(number)
             code = child.wait(timeout=60)
             log = (marks / "child.log").read_text()
