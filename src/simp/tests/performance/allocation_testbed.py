@@ -232,6 +232,7 @@ class Sandbox:
         from unittest import mock
         header = self.header()
         grid = m.Grid.__new__(m.Grid)
+        grid.task = m.TASKS[m.DEFAULT_TASK]
         grid.args = argparse.Namespace(
             baseline=BASE_PIN, candidate=CAND_PIN,
             controls_receipt=self.controls_path)

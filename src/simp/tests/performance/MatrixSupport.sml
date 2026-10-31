@@ -250,8 +250,12 @@ struct
       in basic run verify end
       fun dproc mixed = let
         val ds = List.tabulate (n,fn i => reducer (dpname i))
-        val f = setup NONE ds
-        val from = (if mixed then source else empty_ss) ++ f
+        (* The dprocs and a maker come first and the data after them, so
+           that a rebuild of the history would run the maker and prime the
+           dprocs: the zero counts below then show the deletion replays
+           nothing, not that there was nothing to replay. *)
+        val f = setup (SOME maker) ds
+        val from = empty_ss ++ f ++ (if mixed then data else empty_ssfrag)
         val pats = [dpname 0] @ (if mixed then [rname 0] else [])
         val wantDP = List.drop (map (SOME o dpname)
                                 (List.tabulate (n,I)),Int.min (1,n))

@@ -407,7 +407,6 @@ class Job:
 
 class Grid:
     """Locked, sealed environment: toolchain, private runtime, shim."""
-    task = TASKS[DEFAULT_TASK]
 
     def __init__(self, args):
         self.args = args
