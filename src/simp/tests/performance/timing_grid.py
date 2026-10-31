@@ -1794,15 +1794,19 @@ class Grid:
                   "the attempts ledger has no opening of this grid")
         return state
 
-    def refuse_found(self, state):
-        """A ledger that holds a difference found and not marked, on any
-        attempt, is refused like a dead grid: the checkout was known to
-        differ and the inventory could not say so. Only a replay (and so a
-        close) reads it; a `--resume` does not."""
+    def refuse_found(self, state, attempts):
+        """The attempts of this grid, named by id (`attempts`), that hold a
+        difference found and not marked are refused like a dead grid: the
+        checkout was known to differ and the inventory could not say so.
+        The ledger is the table's, shared by every grid, so the attempts
+        of another grid are not read: a found difference kills its own
+        grid, stays in the ledger and is printed by every later replay,
+        but does not touch a new grid in a new output. Only a replay (and
+        so a close) reads it; a `--resume` does not."""
         if state is None:
             return
         for (attempt, _), row in state.attempts().items():
-            if row["found"]:
+            if attempt in attempts and row["found"]:
                 raise ValueError(
                     "the checkout changed while attempt %s ran (%s) and "
                     "the mark could not be written: the grid is dead, "
@@ -1831,7 +1835,11 @@ class Grid:
         or a checkout that changed on the way, and a retry made elsewhere.
         A close that carries a difference found and not marked
         (`CHECKOUT-FOUND-NOT-MARKED`), or an end that could not be judged
-        (`JUDGEMENT-NOT-MADE`), has a line of its own.
+        (`JUDGEMENT-NOT-MADE`), has a line of its own. The former is
+        refused for the attempts of the grid being replayed (and its first
+        stage) before this is reached, so a replay that gets here prints it
+        only for the attempts of other grids of the table: they stay
+        visible, and they do not touch this one.
         The attempts of a table that are not all in one checkout are
         named."""
         if state is None:
@@ -2441,7 +2449,7 @@ class Grid:
         self.h.check_provenance(args, inventory)
         stage = "second" if second else "first"
         state = self.h.check_attempt(args, inventory, stage)
-        self.h.refuse_found(state)
+        self.h.refuse_found(state, {inventory.get("attempt")})
         if second:
             grid = (root / inventory["grid"]).resolve()
             a.require(a.seal(grid / "inventory.json") ==
@@ -2451,6 +2459,9 @@ class Grid:
                       "changed first-stage grid")
             first, stage1, _ = self.h.replay_grid(grid, repo)
             self.h.check_attempt(args, first, "first")
+            # The first stage is a part of this grid: its difference found
+            # and not marked kills the second stage as well.
+            self.h.refuse_found(state, {first.get("attempt")})
             a.require(inventory == dict(
                 self.h.extension_inventory(grid, root, first),
                 plan=self.h.planned(stage1, first),

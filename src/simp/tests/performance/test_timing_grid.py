@@ -4656,33 +4656,83 @@ class Chain(ChainRig):
                          "OSError: disk full$")
         self.assertNotIn("JUDGEMENT-NOT-MADE", out.getvalue())
 
-    def test_a_replay_and_a_close_refuse_a_ledger_with_a_found(self):
+    DEAD = ("the checkout changed while attempt %s ran \\(tracked file.*"
+            "disk full\\).*the grid is dead.*neither replayed nor closed")
+
+    def refused(self, out, attempt=".*"):
+        calls = self.calls
+        with self.assertRaisesRegex(ValueError, self.DEAD % attempt):
+            self.go(self.replay_argv(out))
+        self.assertEqual(self.calls, calls)
+
+    def test_a_replay_refuses_the_grid_with_a_found(self):
         y = self.commit_counts()
         self.found_not_marked(y, "found")
         self.undo_one()
+        attempt, = [k[0] for k in tg.Ledger(self.attempts_path()).attempts()]
         # The ledger is the only record; a resume does not read it, and
         # goes on.
         self.assertEqual(self.resume(y, "found")[0], 0)
-        self.assertEqual(self.run_at(y, "other")[0], 0)
-        for label, argv in (
-                ("replay", self.replay_argv(self.root / "other")),
-                ("replay of the resumed grid",
-                 self.replay_argv(self.root / "found"))):
-            with self.subTest(label):
-                calls = self.calls
-                with self.assertRaisesRegex(
-                        ValueError, "the checkout changed while attempt "
-                        ".* ran \\(tracked file.*disk full\\).*the grid "
-                        "is dead.*neither replayed nor closed"):
-                    self.go(argv)
-                self.assertEqual(self.calls, calls)
+        self.refused(self.root / "found", attempt)
         # Through main: the exit status and the line of a refusal.
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            code = self.grid.main(self.replay_argv(self.root / "other"))
+            code = self.grid.main(self.replay_argv(self.root / "found"))
         self.assertEqual(code, tg.REFUSED)
         self.assertRegex(err.getvalue(), "^REFUSED: the checkout changed "
-                         "while attempt")
+                         "while attempt " + attempt)
+
+    def test_a_new_grid_of_the_table_passes_and_prints_the_found(self):
+        y = self.commit_counts()
+        self.found_not_marked(y, "found")
+        self.undo_one()
+        dead, = [k[0] for k in tg.Ledger(self.attempts_path()).attempts()]
+        self.assertEqual(self.run_at(y, "other")[0], 0)
+        status, text = self.go(self.replay_argv(self.root / "other"))
+        self.assertEqual(status, 0, text)
+        self.assertIn("ATTEMPTS of TOY: 2 in the ledger, 2 of this "
+                      "candidate %s" % y, text)
+        self.assertRegex(text, "(?m)^CHECKOUT-FOUND-NOT-MARKED %s tracked "
+                         "file.*; not marked: OSError: disk full$" % dead)
+        self.assertEqual(text.count("CHECKOUT-FOUND-NOT-MARKED"), 1)
+        # The earlier grid stays dead.
+        self.refused(self.root / "found", dead)
+
+    def second_stage_rig(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+        return self.commit_counts()
+
+    def extend_argv(self, *extra):
+        return self.argv("extend", self.root / "ext", "--grid",
+                         str(self.root / "grid"), "--authorize-measurements",
+                         *extra)
+
+    def test_a_second_stage_is_refused_for_a_found_of_its_first_stage(self):
+        y = self.second_stage_rig()
+        self.found_not_marked(y)
+        self.undo_one()
+        first, = [k[0] for k in tg.Ledger(self.attempts_path()).attempts()]
+        self.assertEqual(self.resume(y)[0], 2)
+        self.assertEqual(self.go(self.extend_argv())[0], 0)
+        self.refused(self.root / "grid", first)
+        self.refused(self.root / "ext", first)
+
+    def test_a_second_stage_is_refused_for_a_found_of_its_own(self):
+        y = self.second_stage_rig()
+        self.assertEqual(self.run_at(y)[0], 2)
+        with self.failing_after(self.calls + 1, self.edit_one):
+            with self.fail_the_mark():
+                with self.assertRaises(RuntimeError):
+                    self.go(self.extend_argv())
+        self.undo_one()
+        row, = [k[0] for k, v in tg.Ledger(self.attempts_path())
+                .attempts().items() if v["found"]]
+        self.assertEqual(self.go(self.extend_argv("--resume"))[0], 0)
+        self.refused(self.root / "ext", row)
+        # The first stage has no found of its own, and replays.
+        self.assertEqual(self.go(self.replay_argv(self.root / "grid"))[0], 2)
 
     def test_a_judgement_not_made_is_a_killed_process_with_a_line(self):
         # P4: a second interrupt during the judgement, so that nothing was

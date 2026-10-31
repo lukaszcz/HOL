@@ -783,14 +783,20 @@ has no disposition.
   still propagates and the attempt closes `checkout-changed`, with the text
   found and the failure of the mark in `found` on its close line. The
   inventory does not say it, so the ledger is the only record, and **a
-  `replay` and a `close` refuse a grid whose ledger has a `found` on any
-  attempt**, as they refuse a dead grid (`the checkout changed while attempt
-  ... ran ... the grid is dead`, the exit status of a refusal). A
-  `--resume` does not read it: it may run, and the cells it measures stand
-  for nothing, since the replay will not pass. The refusal names the
-  attempt and the text found; the report of the attempts has the same as a
-  line of its own, `CHECKOUT-FOUND-NOT-MARKED <attempt> <text>`, which a
-  replay that refuses does not reach.
+  `replay` and a `close` refuse a grid whose own attempts have a `found`**:
+  the attempt of the grid replayed or closed and, for a second stage, the
+  attempt of its first stage as well (a second stage is an attempt of its
+  own, so a `found` on either kills the grid). They refuse it as they refuse
+  a dead grid (`the checkout changed while attempt ... ran ... the grid is
+  dead`, the exit status of a refusal). A `--resume` does not read it: it
+  may run, and the cells it measures stand for nothing, since the replay
+  will not pass. The refusal names the attempt and the text found.
+  The ledger is the table's, shared by every grid, and the difference found
+  kills its own grid only. It is published with the ledger and does not
+  touch a new grid: the route of a dead grid is a new grid in a new
+  output, which `replay` and `close` accept, and whose report of the
+  attempts prints every earlier `found` as a line of its own,
+  `CHECKOUT-FOUND-NOT-MARKED <attempt> <text>`, so that it is not hidden.
   *The judgement could not be made.* The checkout could not be asked (an
   `OSError`, a second interrupt, git failing), or the mark of an end that
   was only not judged (a pilot's) could not be written. Nothing is marked,

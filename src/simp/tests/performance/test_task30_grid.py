@@ -626,6 +626,43 @@ class RealChain(ttg.ChainRig):
                     err.getvalue(), "^REFUSED: the checkout changed while "
                     "attempt .* ran .*the grid is dead")
 
+    def test_a_new_grid_of_the_table_closes_past_the_found_of_a_dead_one(
+            self):
+        y = self.commit_counts()
+        readme = self.repo / a.HERE.relative_to(REPO) / "README.md"
+
+        def edit():
+            readme.write_text(readme.read_text() + "edited\n")
+        self.found_not_marked(y, "dead", edit)
+        self.git("checkout", "--", str(readme))
+        dead, = [k[0] for k in tg.Ledger(self.attempts_path()).attempts()]
+        self.assertEqual(self.run_at(y, "grid")[0], 0)
+        counted = self.allocation_at(y)
+        grid = self.root / "grid"
+        with unittest.mock.patch.object(t30, "ENGINE", self.grid), \
+                unittest.mock.patch.object(t30, "TABLE", self.table), \
+                unittest.mock.patch.object(self.am, "replay",
+                                           lambda args: 0):
+            outputs = []
+            for command in (
+                    ["replay", "--output", str(grid), "--repo",
+                     str(self.repo), "--pilot", str(self.pilot_dir)],
+                    ["close", "--grid", str(grid), "--pilot",
+                     str(self.pilot_dir), "--allocation", str(counted),
+                     "--repo", str(self.repo)]):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = t30.main(command)
+                self.assertEqual(code, 0, out.getvalue())
+                outputs.append(out.getvalue())
+        for text in outputs:
+            self.assertRegex(text, "(?m)^CHECKOUT-FOUND-NOT-MARKED %s "
+                             "tracked file.*; not marked: " % dead)
+        self.assertIn("TASK30 closing verdict: pass", outputs[1])
+        self.assertIn("attempts 2 in the ledger, 2 of the candidate",
+                      outputs[1])
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
 
 tearDownModule = ttg.tearDownModule
 
