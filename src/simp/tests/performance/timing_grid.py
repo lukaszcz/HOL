@@ -31,10 +31,10 @@ history does not hold the file as exactly one commit, and re-derives the file
 from its pilot (`--pilot`, the same check as `verify-counts`). It measures
 only in a clean checkout at the candidate in which `prepare` built (the
 tree outside the performance area and the shared products, bin/hol,
-bin/hol.state0, bin/Holmake, sigobj and the theory data files, are those it
-stamped, and the grid records their digest; Holmake judges what a build must
-redo, the driver only compares contents; configure is run by the operator,
-not by `prepare`). Every run appends to the table's
+bin/hol.state0, bin/Holmake, sigobj, and the theory data files and sources,
+are those it stamped, and the grid records their digest; `prepare` runs
+configure and then the build, Holmake judges what a build must redo, the
+driver only compares contents). Every run appends to the table's
 attempts ledger, one hash-chained file below the checkout that git excludes,
 and a replay needs the grid's opening line in it and prints every attempt of
 the table. The ledger is a discipline and not a proof. A counts file is
@@ -492,15 +492,18 @@ def git_keep(repo, table, commit):
     return ref
 
 
-# What `prepare` runs, in the repository root: the real build, up to the
+# What `prepare` runs, in the repository root: configure, which makes
+# bin/hol, bin/Holmake and bin/build and writes the checkout's HOLDIR (the
+# `poly` on the PATH reads the file), and then the real build, up to the
 # parallel builds, which Holmake judges (it rebuilds what is out of date and
-# leaves the rest), with the standard kernel. It never rebuilds bin/hol,
-# bin/Holmake and bin/build, which configure makes (`CONFIGURE`).
+# leaves the rest), with the standard kernel.
+CONFIGURE = ("poly",)
+CONFIGURE_INPUT = "tools/smart-configure.sml"
 BUILD = ("bin/build", "--stdknl", "--seq=tools/sequences/upto-parallel")
-CONFIGURE = "poly < tools/smart-configure.sml"
 # The warning bin/build prints, and then waits on its standard input, when
 # one of those executables is older than a source of it
-# (tools/build/buildutils.sml, check_against).
+# (tools/build/buildutils.sml, check_against); configure just before makes
+# it unreachable, and it is asserted all the same.
 STALE = "WARNING! WARNING!"
 # The products a measurement loads from the checkout besides the sources the
 # harness takes per side from git (the simplifier's, below src/simp/src): the
@@ -570,9 +573,9 @@ def clean_head(repo):
 
 
 def build_stamp(repo):
-    """What `prepare` records after a build that succeeded: HEAD, the seal
-    of the tree outside the performance area, the content digest of the
-    shared products and the build command."""
+    """What `prepare` records after a configure and a build that succeeded:
+    HEAD, the seal of the tree outside the performance area, the content
+    digest of the shared products and the build command."""
     return dict(clean_head(repo), products=products_digest(repo),
                 build=list(BUILD))
 
@@ -644,17 +647,17 @@ def configured_holdir(repo):
     the build work from; it must be this repository."""
     repo = Path(repo)
     path = repo / "tools" / "Holmake" / "Systeml.sml"
-    a.require(path.is_file(), "the checkout is not configured (%s): run %s "
-              "in %s, then prepare" % (path, CONFIGURE, repo))
+    a.require(path.is_file(), "configure did not leave the checkout "
+              "configured: no %s" % path)
     found = [m.group(1) for m in (
         re.match(r'val HOLDIR\s*=\s*"(.*)"\s*$', line)
         for line in path.read_text().splitlines()) if m]
-    a.require(len(found) == 1, "no single HOLDIR in %s: run %s in %s, then "
-              "prepare" % (path, CONFIGURE, repo))
+    a.require(len(found) == 1, "configure did not leave a single HOLDIR "
+              "in %s" % path)
     a.require(Path(found[0]).resolve() == repo.resolve(),
-              "the checkout is configured for %s, not for %s (a moved or "
-              "copied tree): run %s here, then prepare"
-              % (found[0], repo.resolve(), CONFIGURE))
+              "configure left the checkout configured for %s, not for %s "
+              "(a moved or copied tree builds in, and links to, the other)"
+              % (found[0], repo.resolve()))
 
 
 def stale_executable_warning(log):
@@ -1753,38 +1756,48 @@ class Grid:
                 % (found, inventory["checkout"]))
 
     def prepare(self, args):
-        """Build the checkout and stamp it. It needs a clean checkout,
-        configured here (it does not run configure), runs the real build
-        (`BUILD`, in the repository root; Holmake decides what is out of
-        date) under the lock with no standard input, and only when that
-        exits zero without the stale-executable warning and leaves the
-        checkout clean writes the stamp: HEAD, the tree outside the
-        performance area, the content digest of the shared products and the
-        build command. An earlier stamp is removed first, so that a failed or
-        interrupted build leaves none. The log is `prepare.log` beside the
-        ledger, replaced by the next `prepare`. The measuring commands
-        compare the checkout with the stamp and never read a file time."""
+        """Configure the checkout, build it and stamp it. It needs a clean
+        checkout and takes the lock; in the repository root it runs
+        configure (`CONFIGURE` reading `CONFIGURE_INPUT`, with the `poly` on
+        the PATH) and then the real build (`BUILD`; Holmake decides what is
+        out of date) with no standard input. Only when both exit zero, with
+        no stale-executable warning, in a checkout configured here and
+        clean at the same HEAD, does it write the stamp: HEAD, the tree
+        outside the performance area, the content digest of the shared
+        products and the build command. An earlier stamp is removed first,
+        so that a failed or interrupted configure or build leaves none. The
+        log of both is `prepare.log` beside the ledger, replaced by the next
+        `prepare`. The measuring commands compare the checkout with the
+        stamp and never read a file time."""
         t = self.t
         a.require(t.fixed_seconds, "%s takes no build stamp" % t.label)
         repo = Path(args.repo).resolve()
         stamp = self.h.stamp_path(repo)
         self.h.attempts_file(args, True)  # the ledger place, while cheap
         before = clean_head(repo)
-        configured_holdir(repo)
         with self.h.locked(repo) as fds:
             stamp.unlink(missing_ok=True)
             log = stamp.with_name("prepare.log")
             log.unlink(missing_ok=True)
+            inside = ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"',
+                      "prepare", str(repo)]
+            configured = a.run_logged(
+                inside + list(CONFIGURE), log, fds, args.timeout,
+                stdin=repo / CONFIGURE_INPUT)
+            a.require(configured["exit"] == 0 and
+                      not configured["timed_out"],
+                      "configure failed (exit %s%s), no build stamp: see %s"
+                      % (configured["exit"], ", timed out" if
+                         configured["timed_out"] else "", log))
+            configured_holdir(repo)
             built = a.run_logged(
-                ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"', "prepare",
-                 str(repo), *BUILD], log, fds, args.timeout,
-                stdin=subprocess.DEVNULL)
+                inside + list(BUILD), log, fds, args.timeout,
+                stdin=subprocess.DEVNULL, append=True)
             a.require(not stale_executable_warning(log),
                       "bin/build warned that an executable is older than "
-                      "its sources, so bin/hol or bin/Holmake may not be "
-                      "the product of this tree, no build stamp: run %s in "
-                      "%s and prepare again (see %s)"
-                      % (CONFIGURE, repo, log))
+                      "its sources although configure ran just before, so "
+                      "bin/hol or bin/Holmake may not be the product of "
+                      "this tree, no build stamp: see %s" % log)
             a.require(built["exit"] == 0 and not built["timed_out"],
                       "the build failed (exit %s%s), no build stamp: see %s"
                       % (built["exit"], ", timed out" if built["timed_out"]
@@ -1792,8 +1805,9 @@ class Grid:
             try:
                 found = build_stamp(repo)
             except ValueError as error:
-                raise ValueError("the build left the checkout unusable, no "
-                                 "build stamp: %s" % error) from None
+                raise ValueError("configure and the build left the checkout "
+                                 "unusable, no build stamp: %s"
+                                 % error) from None
             a.require(found["head"] == before["head"],
                       "HEAD moved during the build, no build stamp")
             partial = stamp.with_name(stamp.name + ".partial")

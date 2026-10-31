@@ -30,11 +30,11 @@ from (`--pilot DIR`, derived again in full); every run is recorded in the
 table's attempts ledger, `.agent-files/evidence/task30/attempts.jsonl` below
 the checkout it was made in (a grid and its retries stay in that one
 checkout; `replay` and `close` may read the ledger of another with
-`--ledger FILE`). The checkout is configured by the operator
-(`poly < tools/smart-configure.sml`), then built and stamped by `prepare` (the
-real `bin/build --stdknl`, which Holmake judges), and every measuring command
-compares the tree outside the performance area and the contents of bin/hol,
-bin/hol.state0, bin/Holmake, sigobj and the theory data files with the stamp.
+`--ledger FILE`). The checkout is configured, built and stamped by `prepare`
+(`poly < tools/smart-configure.sml`, then the real `bin/build --stdknl`, which
+Holmake judges), and every measuring command compares the tree outside the
+performance area and the contents of bin/hol, bin/hol.state0, bin/Holmake,
+sigobj and the theory data files and sources with the stamp.
 `pilot`, `run` and `extend` take an output below `.agent-files/evidence/` (or
 outside the repository), for the tree must be clean when they end.
 
@@ -46,7 +46,7 @@ that is refused, or ends with an error that decided nothing, prints one
 REFUSED line on the standard error (after a traceback, if the error is not a
 refusal) and exits 3.
 
-  prepare     build the checkout and stamp it            (takes the lock)
+  prepare     configure, build and stamp the checkout    (takes the lock)
   pilot       develop-only cells for the counts          (needs a window)
   predeclare  counts file from a pilot, or a revision of the last file
               (--revises PREVIOUS --rescale CELL [CELL ...], or

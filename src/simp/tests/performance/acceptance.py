@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """TASK28 strict per-workload measurement machinery, not release approval."""
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import fcntl
 import gzip
 import hashlib
@@ -629,13 +629,18 @@ def verify_builds(path, baseline, candidate):
             "shared run_paired results cannot satisfy this prerequisite"}
 
 
-def run_logged(command, output, fds, timeout, stdin=None):
-    """Run `command` with its output in the new file `output`. The child
-    inherits this process's standard input unless `stdin` names another
-    (subprocess.DEVNULL, for a command that must never wait for a reader)."""
+def run_logged(command, output, fds, timeout, stdin=None, append=False):
+    """Run `command` with its output in the new file `output` (`append`: the
+    end of an existing file, for a second command of the same log). The
+    child inherits this process's standard input unless `stdin` names
+    another: subprocess.DEVNULL, for a command that must never wait for a
+    reader, or a path, a file the command reads (`poly < file`)."""
     expired = False
     code = None
-    with Path(output).open("x") as stream:
+    with Path(output).open("a" if append else "x") as stream, \
+            ExitStack() as stack:
+        if isinstance(stdin, (str, os.PathLike)):
+            stdin = stack.enter_context(Path(stdin).open("rb"))
         env = dict(os.environ, HOL4_PERF_LOCK_FDS=",".join(map(str, fds)))
         p = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
                              pass_fds=fds, env=env, start_new_session=True,

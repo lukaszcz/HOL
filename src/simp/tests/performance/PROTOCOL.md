@@ -611,62 +611,73 @@ has no disposition.
   simplifier work and is out of TASK_30's scope, so it has no timed batch
   and none is wanted; the reparse is in scope and is gated by both gates, as
   above.
-- **The checkout a measurement runs in.** `prepare` builds, `pilot`, `run`
-  and `extend` measure, and each of them refuses to go on unless the checkout
-  is the one the measurement names. `prepare` is the one command that builds,
-  and it does not configure. A checkout is configured once, with
-  `poly < tools/smart-configure.sml` in its root (this makes `bin/hol`,
-  `bin/Holmake` and `bin/build`, and writes the HOLDIR of the tree into
-  `tools/Holmake/Systeml.sml`); `bin/build` never rebuilds those three
-  executables, so after a merge, a switch of branch or a move of the tree
-  that makes one of their sources newer, configure is run again:
+- **The checkout a measurement runs in.** `prepare` configures and builds,
+  `pilot`, `run` and `extend` measure, and each of them refuses to go on
+  unless the checkout is the one the measurement names. `prepare` is the one
+  command that configures and builds, so the stamp binds executables built
+  from this tree: configure makes `bin/hol`, `bin/Holmake` and `bin/build`
+  and writes the HOLDIR of the tree into `tools/Holmake/Systeml.sml`, and
+  `bin/build` never rebuilds those three, so the operator has no configure
+  step, whatever a merge, a switch of branch or a move of the tree did:
 
       python3 -B task30_grid.py prepare [--repo ROOT] [--timeout SECONDS]
 
   It needs a clean checkout (`private_runtime.harness_identity`, the check
-  the allocation gate uses) that is configured here: it reads the HOLDIR of
-  `tools/Holmake/Systeml.sml` and refuses, naming configure, a checkout that
-  has none or whose HOLDIR is another path (a tree that was moved or copied
-  would otherwise build in, and link to, the other tree). It takes the
-  measurement lock for the whole build and runs the real
-  `bin/build --stdknl --seq=tools/sequences/upto-parallel` in the root, with
-  `/dev/null` as its standard input. The standard kernel is fixed on the
-  command line (`bin/build` would otherwise take the kernel of the last
-  build), and the allocation gate's toolchain is the standard kernel too. The
-  input is closed because `bin/build`, when `bin/hol`, `bin/Holmake` or
-  `bin/build` is older than a source of it, prints `WARNING! WARNING!` and
-  waits for a line (`check_against` in `tools/build/buildutils.sml`): with an
-  open input the build would sit for the whole timeout, with none it goes on
-  and a stale executable would be stamped as the product of the new tree. So
-  `prepare` also refuses to stamp when the log holds that warning, whatever
-  the exit status, and says to run configure and `prepare` again. The log is
-  `prepare.log` beside the ledger, replaced by the next `prepare` (one file,
-  so the disk use does not grow); the default timeout is four hours. Only if
-  the build exits 0 and leaves the checkout clean at the same `HEAD` does it
-  write `.agent-files/evidence/<table>/build-stamp.json`. A failed, timed out
-  or interrupted build writes no stamp and removes the one of an earlier
-  `prepare`. The stamp holds `HEAD`, the seal of the tracked tree outside the
-  performance area, the build command, and the digest of the products: the
-  contents (names and SHA-256, symlinks followed) of `bin/hol`,
+  the allocation gate uses) and takes the measurement lock for the whole of
+  what follows, in the repository root: `poly < tools/smart-configure.sml`
+  (the `poly` found on the PATH, with that file as its standard input), then
+  the real `bin/build --stdknl --seq=tools/sequences/upto-parallel` with
+  `/dev/null` as its standard input, both into one log. Configure writes
+  only files that git ignores (`tools/Holmake/Systeml.sml`, `bin`, `sigobj`,
+  the generated editor files) and `Systeml.sig` it only reads, so the
+  checkout stays clean; measured on a checkout whose products were up to
+  date, configure and this build took under five minutes together (from
+  nothing the build takes the better part of an hour). After configure it
+  reads the HOLDIR of `tools/Holmake/Systeml.sml` and refuses a checkout
+  that has none or whose HOLDIR is another path (a tree that was moved or
+  copied would otherwise build in, and link to, the other tree). The
+  standard kernel is fixed on the command line (`bin/build` would otherwise
+  take the kernel of the last build), and the allocation gate's toolchain is
+  the standard kernel too. The input of the build is closed because
+  `bin/build`, when `bin/hol`, `bin/Holmake` or `bin/build` is older than a
+  source of it, prints `WARNING! WARNING!` and waits for a line
+  (`check_against` in `tools/build/buildutils.sml`, which looks at some of
+  those sources only): with an open input the build would sit for the whole
+  timeout, with none it goes on. Configure has just made the three
+  executables, so the warning is not expected; `prepare` still refuses to
+  stamp when the log holds it, whatever the exit status, as an assertion.
+  The log is `prepare.log` beside the ledger, replaced by the next `prepare`
+  (one file, so the disk use does not grow, and it is not the record of a
+  build: the durable record of the build a pilot or a grid ran with is the
+  products digest in its inventory, `checkout.products`); the default timeout
+  is four hours for each of the two commands. Only if configure and the build
+  exit 0 and leave the checkout clean at the same `HEAD` does it write
+  `.agent-files/evidence/<table>/build-stamp.json`. A failed, timed out or
+  interrupted configure or build writes no stamp and removes the one of an
+  earlier `prepare`. The stamp holds `HEAD`, the seal of the tracked tree
+  outside the performance area, the build command, and the digest of the
+  products: the contents (names and SHA-256, symlinks followed) of `bin/hol`,
   `bin/hol.state0`, `bin/Holmake` (which compiles the fixtures), everything
-  below `sigobj`, and the theory data files `src/**/.hol/objs/*.dat` (which
-  the theories load). A product, or the target of a link, that resolves
-  outside the repository is refused. What the stamp does not bind: the
-  Poly/ML runtime and libraries (`poly`, libpolyml), which each cell's manifest
-  records among its tools, and the fixtures, which come from the checkout's
-  git blobs and are sealed separately. Where each piece of a measurement comes
-  from: the code of both sides below `src/simp/src` is read from git (the
-  blobs of the baseline and of the candidate), and the rest of what it runs
-  with is those products and that runtime. `pilot`, `run` and `extend` then
-  require the tree clean, `HEAD` the commit measured (the candidate; a pilot
-  has none and is bound to the commit it is made at), and the stamp to be
-  there, of the same seal outside the performance area, of the same build
-  command and of the same products digest as the checkout has now. No file
-  time is read: touching `bin/hol.state0`, or switching to another commit and
-  back, changes nothing; editing a product, adding or removing one, or
-  changing any tracked source outside the performance area (`src/simp/src`
-  included) is refused with "run prepare at this commit". A commit that
-  touches only the performance area (the counts file as Y) needs no second
+  below `sigobj`, and the theory data files and theory sources
+  `src/**/.hol/objs/*.dat` and `*.sml` (which the theories load; a theory
+  that the heap does not hold is read from them). A product, or the target of
+  a link, that resolves outside the repository is refused. What the stamp
+  does not bind: the Poly/ML runtime and libraries (`poly`, libpolyml), which
+  each cell's manifest records among its tools, and the fixtures, which come
+  from the checkout's git blobs and are sealed separately. Where each piece
+  of a measurement comes from: the code of both sides below `src/simp/src` is
+  read from git (the blobs of the baseline and of the candidate), and the
+  rest of what it runs with is those products and that runtime. `pilot`,
+  `run` and `extend` then require the tree clean, `HEAD` the commit measured
+  (the candidate; a pilot has none and is bound to the commit it is made at),
+  and the stamp to be there, of the same seal outside the performance area,
+  of the same build command and of the same products digest as the checkout
+  has now. No file time is read: touching `bin/hol.state0`, or switching to
+  another commit and back, changes nothing; editing a product, adding or
+  removing one, or changing any tracked source outside the performance area
+  (`src/simp/src` included) is refused with "run prepare at this commit". A
+  commit that touches only the performance area (the counts file as Y) needs
+  no second
   `prepare`. The pilot's inventory and a grid's record the `checkout` (`head`,
   the seal of the tree outside the performance area, and the `products`
   digest): a second stage must find the same checkout as its first, the
@@ -753,10 +764,8 @@ has no disposition.
   `replay` and `close` take `--ledger FILE` for a read-only copy.
 - **The sequence, from the pilot to the verdict.** With X the commit the
   pilot is made at and Y the candidate (the commit of the counts file):
-  1. at X, a clean checkout, configured once with
-     `poly < tools/smart-configure.sml` (and again after anything that makes
-     a source of `bin/hol`, `bin/Holmake` or `bin/build` newer than them):
-     `prepare`, which builds, then `pilot`;
+  1. at X, a clean checkout: `prepare`, which configures and builds, then
+     `pilot`;
   2. `predeclare`, `verify-counts`; review the counts file;
   3. commit the counts file as Y (with any production fix and pins, in the
      order of the route after a regression); `verify-counts` again. Run

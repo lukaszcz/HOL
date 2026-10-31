@@ -218,7 +218,8 @@ class Rig(unittest.TestCase):
         return self.analysis(case, size, candidate == baseline, pairs,
                              layout_seed, pilot=iterations is None)
 
-    def fake_launch(self, command, output, fds, timeout, stdin=None):
+    def fake_launch(self, command, output, fds, timeout, stdin=None,
+                    append=False):
         """A pilot process: both sides the baseline, two develop receipts
         with calibration counts, and one of the loading fixture."""
         self.launched.append(command)
@@ -3711,7 +3712,6 @@ class ChainRig(Rig):
             (self.repo / "src" / ".hol" / "objs").mkdir(parents=True)
             self.theory = self.repo / "src" / ".hol" / "objs" / "t.dat"
             self.theory.write_text("data")
-            self.configure()
             self.pilot_revision = self.base
         kw.setdefault("baseline", self.base)
         kw.setdefault("ledger", None)
@@ -3725,26 +3725,41 @@ class ChainRig(Rig):
         (where / "Systeml.sml").write_text('val HOLDIR = "%s"\n' % (
             self.repo.resolve() if holdir is None else holdir))
 
-    def fake_launch(self, command, output, fds, timeout, stdin=None):
-        """The build, or a pilot process. The build reads its standard input
-        (as bin/build does after its stale-executable warning), so that with
-        a reader that never answers it is killed at the timeout."""
-        if "bin/build" not in command:
+    def fake_launch(self, command, output, fds, timeout, stdin=None,
+                    append=False):
+        """Configure, the build, or a pilot process. Configure reads its
+        standard input, the file. The build reads its standard input (as
+        bin/build does after its stale-executable warning), so that with a
+        reader that never answers it is killed at the timeout."""
+        if "bin/build" not in command and "poly" not in command:
             return super().fake_launch(command, output, fds, timeout)
-        self.built.append(dict(command=command, output=output, fds=fds,
-                               timeout=timeout, stdin=stdin))
-        with Path(output).open("x") as stream:  # as run_logged does
-            stream.write(self.build_log)
+        kind = "build" if "bin/build" in command else "configure"
+        self.steps.append(dict(
+            kind=kind, command=command, output=output, fds=fds,
+            timeout=timeout, stdin=stdin, append=append))
+        # As run_logged does: a new file, or the end of the one before.
+        with Path(output).open("a" if append else "x") as stream:
+            stream.write(self.build_log if kind == "build"
+                         else self.configure_log)
+        if kind == "configure":
+            self.configure_actions()
+            return dict(exit=self.configure_exit, timed_out=False)
+        self.built.append(self.steps[-1])
         if stdin is None:
             return dict(exit=-9, timed_out=True)
         self.build()
         return dict(exit=self.build_exit, timed_out=False)
 
+    def configure_actions(self):
+        """What configure does to the checkout: it leaves the HOLDIR."""
+        self.configure()
+
     def build(self):
         """What the build does to the checkout (nothing)."""
 
     def provision(self):
-        self.built, self.build_exit = [], 0
+        self.steps, self.built, self.build_exit = [], [], 0
+        self.configure_exit, self.configure_log = 0, "configure log\n"
         self.build_log = "build log\n"
         self.assertEqual(self.go(["prepare", "--repo", str(self.repo)])[0],
                          0)
@@ -4089,12 +4104,14 @@ class Chain(ChainRig):
         seen = []
         real = self.fake_launch
 
-        def holding(command, output, fds, timeout, stdin=None):
+        def holding(command, output, fds, timeout, stdin=None,
+                    append=False):
             seen.append(fds)
-            return real(command, output, fds, timeout, stdin)
+            return real(command, output, fds, timeout, stdin, append)
         with patch.object(a, "run_logged", holding):
             self.assertEqual(self.prepare()[0], 0)
-        self.assertTrue(seen[0])
+        self.assertEqual(len(seen), 2)  # configure and the build
+        self.assertTrue(all(seen))
 
     def test_prepare_needs_a_clean_checkout(self):
         built = len(self.built)
@@ -4185,8 +4202,9 @@ class Chain(ChainRig):
         self.assertIs(self.built[-1]["stdin"], subprocess.DEVNULL)
         self.assertEqual(self.prepare()[0], 0)
         with patch.object(a, "run_logged", lambda command, output, fds,
-                          timeout, stdin=None: self.fake_launch(
-                              command, output, fds, timeout)):
+                          timeout, stdin=None, append=False:
+                          self.fake_launch(command, output, fds, timeout,
+                                           append=append)):
             with self.assertRaisesRegex(ValueError, "timed out"):
                 self.prepare()
         self.assertFalse(self.stamp().exists())
@@ -4200,43 +4218,113 @@ class Chain(ChainRig):
             with self.subTest(exit=exit_code):
                 self.build_exit = exit_code
                 with self.assertRaisesRegex(
-                        ValueError, "older than its sources.*no build "
-                        "stamp: run poly < tools/smart-configure.sml in "
-                        "%s and prepare again" % re.escape(
-                            str(self.repo.resolve()))):
+                        ValueError, "older than its sources although "
+                        "configure ran just before.*no build stamp: see "
+                        + re.escape(str(self.stamp().with_name(
+                            "prepare.log")))):
                     self.prepare()
                 self.assertFalse(self.stamp().exists())
                 self.assertEqual(
-                    self.built[-1]["output"].read_text(), self.build_log)
+                    self.built[-1]["output"].read_text(),
+                    self.configure_log + self.build_log)
                 self.build_log = self.build_log.replace("log", "text")
         self.build_exit, self.build_log = 0, "build log\n"
         self.assertEqual(self.prepare()[0], 0)
         self.assertTrue(self.stamp().exists())
 
-    def test_prepare_needs_a_checkout_configured_here(self):
+    def test_prepare_configures_in_the_root_and_then_builds_into_one_log(
+            self):
         self.commit_counts()
-        # It does not run configure: it says so, before it builds.
-        systeml = self.repo / "tools" / "Holmake" / "Systeml.sml"
-        built, before = len(self.built), self.stamp().read_bytes()
-        systeml.unlink()
-        with self.assertRaisesRegex(ValueError, "not configured.*run poly "
-                                    "< tools/smart-configure.sml in .*, "
-                                    "then prepare"):
-            self.prepare()
-        for label, text in (
-                ("another path", 'val HOLDIR = "/elsewhere/HOL"\n'),
-                ("none", "val x = 1\n"),
-                ("two", 'val HOLDIR = "/a"\nval HOLDIR = "/b"\n')):
-            with self.subTest(label):
-                systeml.write_text(text)
-                with self.assertRaisesRegex(ValueError, "configured for "
-                                            "/elsewhere/HOL, not for|no "
-                                            "single HOLDIR"):
-                    self.prepare()
-        self.assertEqual((len(self.built), self.stamp().read_bytes()),
-                         (built, before))
-        self.configure()
+        self.stamp().unlink()
+        self.steps.clear()
         self.assertEqual(self.prepare()[0], 0)
+        configure, build = self.steps
+        self.assertEqual((configure["kind"], build["kind"]),
+                         ("configure", "build"))
+        root = str(self.repo.resolve())
+        self.assertEqual(tg.CONFIGURE, ("poly",))
+        self.assertEqual(configure["command"][-1:], ["poly"])
+        self.assertEqual(configure["command"][-2], root)
+        # The file configure reads, and no input for the build.
+        self.assertEqual(configure["stdin"],
+                         self.repo.resolve() / "tools/smart-configure.sml")
+        self.assertEqual(tg.CONFIGURE_INPUT, "tools/smart-configure.sml")
+        self.assertIs(build["stdin"], subprocess.DEVNULL)
+        # One log: the build appends to what configure wrote.
+        self.assertEqual((configure["append"], build["append"]),
+                         (False, True))
+        self.assertEqual(configure["output"], build["output"])
+        self.assertEqual(build["output"].read_text(),
+                         self.configure_log + self.build_log)
+        self.assertEqual((configure["timeout"], build["timeout"]),
+                         (tg.BUILD_TIMEOUT, tg.BUILD_TIMEOUT))
+        self.assertTrue(configure["fds"])
+
+    def test_prepare_configures_a_checkout_that_was_not(self):
+        y = self.commit_counts()
+        systeml = self.repo / "tools" / "Holmake" / "Systeml.sml"
+        systeml.unlink()
+        self.stamp().unlink()
+        self.assertEqual(self.prepare()[0], 0)
+        self.assertTrue(systeml.is_file())
+        self.assertEqual(json.loads(self.stamp().read_text())["head"], y)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_a_failed_configure_writes_no_stamp_and_runs_no_build(self):
+        y = self.commit_counts()
+        self.assertTrue(self.stamp().exists())
+        built, self.configure_exit = len(self.built), 2
+        with self.assertRaisesRegex(ValueError, "configure failed \\(exit 2"
+                                    "\\), no build stamp: see .*prepare.log"):
+            self.prepare()
+        self.assertFalse(self.stamp().exists())
+        self.assertEqual((len(self.built), self.steps[-1]["kind"]),
+                         (built, "configure"))
+        # The stamp of the earlier prepare is gone, so nothing measures.
+        with self.assertRaisesRegex(ValueError, "no build stamp"):
+            self.run_at(y)
+        self.configure_exit = 0
+        self.assertEqual(self.prepare()[0], 0)
+
+    def test_a_timed_out_configure_writes_no_stamp_and_runs_no_build(self):
+        self.commit_counts()
+        built, real = len(self.built), self.fake_launch
+        patched = lambda *args, **kw: dict(real(*args, **kw), timed_out=True)
+        with patch.object(a, "run_logged", patched):
+            with self.assertRaisesRegex(ValueError, "configure failed.*"
+                                        "timed out"):
+                self.prepare()
+        self.assertFalse(self.stamp().exists())
+        self.assertEqual(len(self.built), built)
+
+    def test_a_configure_that_leaves_the_wrong_holdir_stops_before_the_build(
+            self):
+        self.commit_counts()
+        built = len(self.built)
+        systeml = self.repo / "tools" / "Holmake" / "Systeml.sml"
+        for label, text, message in (
+                ("none", None, "configure did not leave the checkout "
+                 "configured: no .*Systeml.sml"),
+                ("no HOLDIR", "val x = 1\n", "configure did not leave a "
+                 "single HOLDIR"),
+                ("two", 'val HOLDIR = "/a"\nval HOLDIR = "/b"\n',
+                 "configure did not leave a single HOLDIR"),
+                ("another path", 'val HOLDIR = "/elsewhere/HOL"\n',
+                 "configure left the checkout configured for "
+                 "/elsewhere/HOL, not for")):
+            with self.subTest(label):
+                def wrong():
+                    systeml.unlink(missing_ok=True)
+                    if text is not None:
+                        systeml.write_text(text)
+                self.configure_actions = wrong
+                with self.assertRaisesRegex(ValueError, message):
+                    self.prepare()
+                self.assertFalse(self.stamp().exists())
+                self.assertEqual(len(self.built), built)
+        del self.configure_actions
+        self.assertEqual(self.prepare()[0], 0)
+        self.assertEqual(len(self.built), built + 1)
 
     def test_a_link_in_the_products_may_not_leave_the_repository(self):
         self.commit_counts()
@@ -4256,12 +4344,14 @@ class Chain(ChainRig):
             self.assertEqual(self.prepare()[0], 0)
             self.assertEqual(sorted(p.name for p in where.glob("prepare*")),
                              ["prepare.log"])
-            self.assertEqual((where / "prepare.log").read_text(), text)
+            self.assertEqual((where / "prepare.log").read_text(),
+                             self.configure_log + text)
         self.build_exit = 2
         self.build_log = "failed\n"
         with self.assertRaisesRegex(ValueError, "prepare.log"):
             self.prepare()
-        self.assertEqual((where / "prepare.log").read_text(), "failed\n")
+        self.assertEqual((where / "prepare.log").read_text(),
+                         self.configure_log + "failed\n")
 
 
 class Refusals(Rig):
@@ -4368,6 +4458,27 @@ class Logged(unittest.TestCase):
             self.assertEqual((found["exit"], found["timed_out"]), (0, False))
             self.assertEqual(log.read_text(), "read []\n")
             self.assertEqual(given, [subprocess.DEVNULL])
+
+    def test_a_path_is_a_file_the_child_reads_and_a_log_may_be_appended_to(
+            self):
+        with tempfile.TemporaryDirectory(prefix="timing-grid-log-") as tmp:
+            log, source = Path(tmp) / "log", Path(tmp) / "input"
+            source.write_text("from the file\n")
+            for stdin in (source, str(source)):
+                log.unlink(missing_ok=True)
+                found = a.run_logged(
+                    ["/bin/sh", "-c", "cat"], log, [], 60, stdin=stdin)
+                self.assertEqual((found["exit"], found["timed_out"]),
+                                 (0, False))
+                self.assertEqual(log.read_text(), "from the file\n")
+            # The second command of one log: the end of the file, and
+            # without `append` an existing log is refused.
+            found = a.run_logged(["/bin/sh", "-c", "echo second"], log, [],
+                                 60, stdin=subprocess.DEVNULL, append=True)
+            self.assertEqual(log.read_text(), "from the file\nsecond\n")
+            self.assertEqual(found["log_hash"], a.seal(log))
+            with self.assertRaises(FileExistsError):
+                a.run_logged(["/bin/true"], log, [], 60)
 
     def test_the_default_is_the_inherited_standard_input(self):
         import inspect

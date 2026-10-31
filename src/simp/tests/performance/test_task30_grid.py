@@ -539,7 +539,6 @@ class RealChain(ttg.ChainRig):
             (self.repo / "bin" / "hol").write_text("executable")
             (self.repo / "bin" / "hol.state0").write_text("heap")
             (self.repo / "bin" / "Holmake").write_text("holmake")
-            self.configure()
             (self.repo / "sigobj").mkdir()
             (self.repo / "sigobj" / "m.uo").write_text("object")
             self.pilot_revision = a.BASE
