@@ -647,6 +647,32 @@ def run_logged(command, output, fds, timeout):
             "log": str(output), "log_hash": seal(output)}
 
 
+def matrix_command(args, case, size, candidate, folder, iterations=None,
+                   seed=None):
+    """The paired runner's command for one baseline-versus-`candidate`
+    experiment of one matrix cell. `args.baseline` is the baseline."""
+    command = [sys.executable, str(HERE.parent /
+               "compatibility/run_paired.py"),
+               "--repo", str(args.repo.resolve()),
+               "--baseline", args.baseline,
+               "--candidate", candidate,
+               "--candidate-signature", "pass",
+               "--candidate-behavior", "baseline",
+               "--matrix-performance",
+               "--performance-case",
+               case, "--performance-size", str(size),
+               "--performance-pairs", str(args.pairs),
+               "--samples", str(args.samples),
+               "--batch-seconds", str(args.batch_seconds),
+               "--timeout", str(args.timeout),
+               "--output", str(folder)]
+    if iterations is not None:
+        command += ["--batch-iterations", str(iterations)]
+    if seed is not None:
+        command += ["--layout-seed", seed]
+    return command
+
+
 def run(args):
     require(args.pairs >= 10 and args.samples >= 3 and
             0.1 <= args.batch_seconds <= 60 and args.timeout > 0,
@@ -699,25 +725,9 @@ def run(args):
                         folder = output / tag
                         candidate = (args.baseline if control else
                                      args.candidate)
-                        command = [sys.executable, str(HERE.parent /
-                                   "compatibility/run_paired.py"),
-                                   "--repo", str(args.repo.resolve()),
-                                   "--baseline", args.baseline,
-                                   "--candidate", candidate,
-                                   "--candidate-signature", "pass",
-                                   "--candidate-behavior", "baseline",
-                                   "--matrix-performance",
-                                   "--performance-case",
-                                   case, "--performance-size", str(size),
-                                   "--performance-pairs", str(args.pairs),
-                                   "--samples", str(args.samples),
-                                   "--batch-seconds", str(args.batch_seconds),
-                                   "--timeout", str(args.timeout),
-                                   "--output", str(folder)]
-                        if iterations is not None:
-                            command += ["--batch-iterations", str(iterations)]
-                        if seed is not None:
-                            command += ["--layout-seed", seed]
+                        command = matrix_command(
+                            args, case, size, candidate, folder, iterations,
+                            seed)
                         command_result = run_logged(
                             command, output / (tag + ".log"), fds, None)
                         report["commands"].append(command_result)

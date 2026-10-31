@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """TASK29A second stage: candidate-blind remeasurement and resume."""
 import copy
+import hashlib
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -245,6 +247,40 @@ class Disposition(unittest.TestCase):
             grid.dispose(stale)
         with self.assertRaisesRegex(ValueError, "second stage"):
             grid.dispose({"workloads": []})
+
+    def test_a_protocol_failure_always_blocks(self):
+        broken = self.decisions()
+        broken["workloads"][-2]["protocol"] = False
+        result = grid.dispose(broken)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["cells"]["blocking"], ["frag_record-0"])
+
+
+class Table(unittest.TestCase):
+    """TASK29A keeps the settings its recorded runs used."""
+
+    def test_the_table_is_the_recorded_policy_and_settings(self):
+        table = grid.TABLE
+        self.assertEqual((table.pairs, table.samples, table.headroom,
+                          table.seconds, table.target, table.max_pairs),
+                         (10, 3, 2, 0.3, 0.015, 120))
+        self.assertEqual(table.seconds_by_case, {})
+        self.assertFalse(table.fixed_seconds)
+        # The recorded runs predate the engine seal and need no seed.
+        self.assertFalse(table.engine)
+        self.assertFalse(table.require_seed)
+
+    def test_the_acceptance_seal_of_the_lock_move_is_recorded(self):
+        commit = "294bb61c3"
+        path = "src/simp/tests/performance/acceptance.py"
+        found = subprocess.run(
+            ["git", "-C", str(a.HERE), "show", "%s:%s" % (commit, path)],
+            capture_output=True)
+        if found.returncode:
+            self.skipTest("commit %s is not available" % commit)
+        self.assertIn(dict(bytes=len(found.stdout),
+                           sha256=hashlib.sha256(found.stdout).hexdigest()),
+                      grid.LAYOUT_ACCEPTANCE)
 
 
 if __name__ == "__main__":

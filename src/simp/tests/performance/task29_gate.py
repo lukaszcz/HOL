@@ -34,10 +34,12 @@ def keys():
     return [(case, size) for case in CASES for size in SIZES]
 
 
-def summary(reports):
-    a.require(set(reports) == set(keys()), "incomplete TASK29 grid")
+def summary(reports, cells=None, label="TASK29"):
+    """Rows of a grid; `cells` and `label` serve other tasks' grids."""
+    cells = keys() if cells is None else list(cells)
+    a.require(set(reports) == set(cells), "incomplete %s grid" % label)
     rows, storage = [], []
-    for case, size in keys():
+    for case, size in cells:
         report = reports[case, size]
         a.require(len(report.get("workloads", [])) <= 1,
                   "expected one case/size experiment")
