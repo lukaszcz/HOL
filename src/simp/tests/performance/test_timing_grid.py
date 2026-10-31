@@ -4073,6 +4073,38 @@ class Chain(ChainRig):
                               "--authorize-measurements"))
         self.assertEqual(self.calls, calls)
         self.assertFalse((self.root / "ext").exists())
+        # A resumption is judged the same way, first.
+        with self.assertRaisesRegex(ValueError, "not the one the first "
+                                    "stage was measured in"):
+            self.go(self.argv("extend", self.root / "ext", "--grid",
+                              str(self.root / "grid"), "--resume",
+                              "--authorize-measurements"))
+
+    def test_a_dead_pilot_is_not_predeclared_from_or_resumed(self):
+        self.commit_counts()
+        real, heap = self.fake_launch, self.repo / "bin" / "hol.state0"
+
+        def launching(command, output, fds, timeout, stdin=None,
+                      append=False):
+            found = real(command, output, fds, timeout, stdin, append)
+            if "--performance-case" in command and len(self.launched) == 5:
+                heap.write_text("another")
+            return found
+        argv = self.argv("pilot", self.root / "again",
+                         "--authorize-measurements")
+        with patch.object(a, "run_logged", launching):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.go(argv)
+        self.assertIn("checkout_changed", self.inventory(self.root / "again"))
+        with self.assertRaisesRegex(ValueError, "changed while the pilot "
+                                    "ran"):
+            self.go(["predeclare", "--grid", str(self.root / "again"),
+                     "--output", str(self.root / "c.json")])
+        # A prepare cannot revive it: the record differs.
+        self.assertEqual(self.prepare()[0], 0)
+        with self.assertRaisesRegex(ValueError, "resume with different "
+                                    "settings"):
+            self.go(argv + ["--resume"])
 
     def test_prepare_runs_the_real_build_in_the_root_and_stamps(self):
         y = self.commit_counts()

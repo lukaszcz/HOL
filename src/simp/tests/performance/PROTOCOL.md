@@ -683,9 +683,11 @@ has no disposition.
   digest): a second stage must find the same checkout as its first, the
   products included; a resumed `run`, `extend` or `pilot` finds the checkout
   its inventory recorded, so a `prepare` between a stop and its resume that
-  changed the products is refused (`resume with different settings`) and so
-  is one between the stages; `replay` derives the tree seal of the candidate
-  from git again (`changed checkout`) and finds a well-formed digest.
+  changed the products is refused (`resume with different settings`), and
+  so is one between the stages, which `extend` (also `extend --resume`)
+  refuses before it replays the first stage (`the checkout is not the one
+  the first stage was measured in`); `replay` derives the tree seal of the
+  candidate from git again (`changed checkout`) and finds a well-formed digest.
   `close` compares the timing grid's head and tree seal with the allocation
   grid's harness, and cannot compare the products: the allocation grid is
   measured with a toolchain of its own (a fresh clone built at the candidate,
