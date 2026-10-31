@@ -1407,6 +1407,36 @@ class Pilot(Rig):
             self.go(["predeclare", "--grid", str(self.root / "pilot"),
                      "--output", str(self.root / "c.json")])
 
+    def test_a_pilot_that_could_not_judge_its_checkout_at_the_end_resumes(
+            self):
+        seen = []
+
+        def identity(repo, commit=None, stamp=None):
+            seen.append(commit)
+            if len(seen) < 3:
+                return self.fake_checkout(repo, commit, stamp)
+            raise tg.CheckoutUnjudged("harness checkout is not clean")
+        with patch.object(tg, "checkout_identity", identity):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.pilot()
+        out = self.root / "pilot"
+        recorded = self.inventory(out)
+        self.assertIn("checkout_unjudged", recorded)
+        self.assertNotIn("checkout_changed", recorded)
+        self.assertEqual(len(recorded["runs"]), 12)
+        # It is no pilot yet, but it is not dead either.
+        counts = self.root / "c.json"
+        with self.assertRaisesRegex(ValueError, "could not be judged.*"
+                                    "resume it"):
+            self.go(["predeclare", "--grid", str(out), "--output",
+                     str(counts)])
+        launched = len(self.launched)
+        self.assertEqual(self.pilot(extra=("--resume",))[0], 0)
+        self.assertEqual(len(self.launched), launched)
+        self.assertNotIn("checkout_unjudged", self.inventory(out))
+        self.assertEqual(self.go(["predeclare", "--grid", str(out),
+                                  "--output", str(counts)])[0], 0)
+
     def test_a_pilot_checks_the_checkout_again_under_the_lock(self):
         seen = []
 
@@ -3373,15 +3403,19 @@ class Measuring(Rig):
         self.assertEqual(self.calls, calls)
         self.assertFalse((self.root / "again").exists())
 
-    def changing_after(self, calls, tree="u" * 64, refuse=False):
+    def changing_after(self, calls, tree="u" * 64, refuse=False,
+                       unjudged=False):
         """checkout_identity as the rig has it for `calls` calls, then
-        another tree (or a refusal): the checkout changed while the grid was
-        measured."""
+        another tree (or a refusal; or a checkout that cannot be judged, not
+        clean): the checkout changed while the grid was measured."""
         seen = []
 
         def identity(repo, commit=None, stamp=None):
             seen.append(commit)
             if len(seen) > calls:
+                if unjudged:
+                    raise tg.CheckoutUnjudged(
+                        "harness checkout is not clean: commit first")
                 if refuse:
                     raise ValueError("bin/hol differs from the stamped "
                                      "build: run prepare at this commit")
@@ -3457,8 +3491,52 @@ class Measuring(Rig):
         self.dead(self.replay_argv(out))
         self.dead(self.replay_argv(out, "--partial"))
         # The route is a new grid, and the ledger keeps both attempts.
-        self.attempts.unlink()
         self.assertEqual(self.first("again")[1], 0)
+        self.assertEqual(self.closing(), [
+            ("open", None), ("close", "checkout-changed"),
+            ("open", None), ("close", "pass")])
+        self.assertEqual(self.go(self.replay_argv(self.root / "again"))[0],
+                         0)
+
+    def test_a_checkout_that_could_not_be_judged_at_the_end_is_not_dead(self):
+        out = self.root / "grid"
+        with self.changing_after(2, unjudged=True):
+            with self.assertRaisesRegex(tg.CheckoutChanged,
+                                        "not clean") as caught:
+                self.first()
+        # The attempt closes as changed, there is no decision and no mark.
+        self.assertFalse(caught.exception.dead)
+        self.assertFalse((out / "decisions.json").exists())
+        self.assertNotIn("checkout_changed", self.inventory(out))
+        self.assertEqual(self.closing(), [
+            ("open", None), ("close", "checkout-changed")])
+        # Neither a replay of the finished cells nor a resume is refused as
+        # for a dead grid; the resume compares the record and goes on.
+        self.assertEqual(self.go(self.replay_argv(out, "--partial"))[0], 2)
+        calls = self.calls
+        status, text = self.go(self.argv(
+            "run", out, "--candidate", CANDIDATE, "--authorize-measurements",
+            "--resume"))
+        self.assertEqual((status, self.calls), (0, calls))
+        self.assertTrue((out / "decisions.json").exists())
+        self.assertEqual(self.closing(), [
+            ("open", None), ("close", "checkout-changed"),
+            ("resume", None), ("close", "pass")])
+
+    def test_a_resume_after_an_unjudged_end_still_compares_the_record(self):
+        out = self.root / "grid"
+        with self.changing_after(2, unjudged=True):
+            with self.assertRaises(tg.CheckoutChanged):
+                self.first()
+        # The checkout is clean again but is not the recorded one.
+        def elsewhere(repo, commit=None, stamp=None):
+            return dict(head=commit, tree_outside_performance="u" * 64,
+                        products=PRODUCTS)
+        with patch.object(tg, "checkout_identity", elsewhere):
+            with self.assertRaisesRegex(ValueError, "different settings"):
+                self.go(self.argv("run", out, "--candidate", CANDIDATE,
+                                  "--authorize-measurements", "--resume"))
+        self.assertFalse((out / "decisions.json").exists())
 
     def test_a_second_stage_whose_checkout_changed_is_dead_too(self):
         self.widen()
@@ -3876,6 +3954,80 @@ class Chain(ChainRig):
         self.assertNotEqual(self.inventory(out)["checkout"]["products"],
                             self.inventory(self.root / "new")[
                                 "checkout"]["products"])
+
+    def acting_at(self, call, action):
+        """The measurement of cell number `call` finds the worktree changed
+        by `action`."""
+        real = self.fake_run
+
+        def run(options):
+            report = real(options)
+            if self.calls == call:
+                action()
+            return report
+        return patch.object(a, "run", run)
+
+    def resume(self, y, name="grid"):
+        return self.run_at(y, name, "--resume")
+
+    def test_a_stray_file_at_the_end_does_not_kill_the_grid(self):
+        y = self.commit_counts()
+        stray = self.repo / "notes.txt"
+        with self.acting_at(5, lambda: stray.write_text("x")):
+            with self.assertRaisesRegex(tg.CheckoutChanged, "not clean"):
+                self.run_at(y)
+        out = self.root / "grid"
+        self.assertFalse((out / "decisions.json").exists())
+        self.assertNotIn("checkout_changed", self.inventory(out))
+        self.assertEqual(
+            [(x["event"], x.get("status")) for x in self.ledger_lines()],
+            [("open", None), ("close", "checkout-changed")])
+        stray.unlink()
+        calls = self.calls
+        status, text = self.resume(y)
+        self.assertEqual((status, self.calls), (0, calls), text)
+        self.assertEqual(
+            [(x["event"], x.get("status")) for x in self.ledger_lines()],
+            [("open", None), ("close", "checkout-changed"),
+             ("resume", None), ("close", "pass")])
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 0, text)
+        self.assertIn("status checkout-changed,pass", text)
+
+    def test_a_stamp_missing_at_the_end_does_not_kill_the_grid(self):
+        y = self.commit_counts()
+        saved = self.stamp().read_bytes()
+        with self.acting_at(5, self.stamp().unlink):
+            with self.assertRaisesRegex(tg.CheckoutChanged,
+                                        "no build stamp"):
+                self.run_at(y)
+        out = self.root / "grid"
+        self.assertNotIn("checkout_changed", self.inventory(out))
+        self.stamp().write_bytes(saved)
+        self.assertEqual(self.resume(y)[0], 0)
+
+    def test_an_unclean_end_is_resumed_only_into_the_recorded_checkout(self):
+        y = self.commit_counts()
+        stray = self.repo / "notes.txt"
+
+        def both():
+            stray.write_text("x")
+            (self.repo / "bin" / "hol.state0").write_text("another")
+        with self.acting_at(5, both):
+            with self.assertRaisesRegex(tg.CheckoutChanged, "not clean"):
+                self.run_at(y)
+        out = self.root / "grid"
+        self.assertNotIn("checkout_changed", self.inventory(out))
+        stray.unlink()
+        # Another product: the stamp refuses it, and after a prepare the
+        # record does.
+        with self.assertRaisesRegex(ValueError, "run prepare at this "
+                                    "commit"):
+            self.resume(y)
+        self.assertEqual(self.prepare()[0], 0)
+        with self.assertRaisesRegex(ValueError, "different settings"):
+            self.resume(y)
+        self.assertFalse((out / "decisions.json").exists())
 
     def test_a_restamp_between_a_stop_and_its_resume_is_refused(self):
         y = self.commit_counts()
@@ -4512,6 +4664,41 @@ class Checkout(unittest.TestCase):
         (self.repo / "src" / "a.sml").write_text("val a = 2\n")
         with self.assertRaisesRegex(ValueError, "not clean"):
             self.identity()
+
+    def test_an_unclean_tree_and_a_bad_stamp_are_unjudged_not_different(
+            self):
+        # They say nothing of the record, which a grid is dead for.
+        (self.repo / "notes.txt").write_text("x")
+        with self.assertRaises(tg.CheckoutUnjudged):
+            self.identity()
+        (self.repo / "notes.txt").unlink()
+        stamped = tg.build_stamp(self.repo)
+        for label, text in (("none", None), ("text", "not json"),
+                            ("build", json.dumps(dict(stamped,
+                                                      build=["bin/build"])))):
+            with self.subTest(label):
+                if text is None:
+                    self.stamp.unlink()
+                else:
+                    self.stamp.write_text(text)
+                with self.assertRaises(tg.CheckoutUnjudged):
+                    self.identity()
+        # A different head, tree or product is a difference.
+        self.prepare()
+        self.heap.write_text("other")
+        for label, commit in (("product", "head"), ("head", self.third)):
+            with self.subTest(label):
+                with self.assertRaises(ValueError) as caught:
+                    self.identity(commit)
+                self.assertNotIsInstance(caught.exception,
+                                         tg.CheckoutUnjudged)
+        self.heap.write_text("heap")
+        (self.repo / "src" / "a.sml").write_text("val a = 2\n")
+        self.git("commit", "-q", "-a", "-m", "source")
+        with self.assertRaises(ValueError) as caught:
+            tg.checkout_identity(self.repo, self.git("rev-parse", "HEAD"),
+                                 self.stamp)
+        self.assertNotIsInstance(caught.exception, tg.CheckoutUnjudged)
 
     def test_a_checkout_without_a_usable_stamp_is_refused(self):
         self.stamp.unlink()

@@ -78,7 +78,21 @@ REVISION_REASON = "fixed calibration too short"
 
 
 class CheckoutChanged(ValueError):
-    """The checkout a measurement started in is not the one it ended in."""
+    """The checkout a measurement started in is not the one it ended in, or
+    could not be judged. `dead` is whether the checkout is known to differ
+    from the record (a head, a tree or products), which no `prepare` can
+    undo; a checkout that only could not be judged (`CheckoutUnjudged`) is
+    not."""
+
+    def __init__(self, message, dead=True):
+        super().__init__(message)
+        self.dead = dead
+
+
+class CheckoutUnjudged(ValueError):
+    """The checkout cannot be compared with the stamp: it is not clean, or
+    there is no usable stamp. That says nothing about the checkout the
+    record names."""
 
 
 class Table:
@@ -563,6 +577,12 @@ def build_stamp(repo):
                 build=list(BUILD))
 
 
+def judge(ok, message):
+    """`a.require` for what leaves the checkout unjudged, not different."""
+    if not ok:
+        raise CheckoutUnjudged(message)
+
+
 def checkout_identity(repo, commit=None, stamp=None):
     """The checkout a measurement runs in: HEAD is the commit measured (HEAD
     itself when `commit` is None), the tree is clean, and the tree outside
@@ -578,27 +598,33 @@ def checkout_identity(repo, commit=None, stamp=None):
     comparison is of contents, so a commit that touches only the performance
     area, a checkout round trip to the same tree and a touched heap pass,
     while an edited product or a changed source outside the performance area
-    is refused until `prepare` is run again. The stamp is a discipline and
-    not a proof of provenance: it shows the products are those present when
-    a build exited cleanly at this tree."""
+    is refused until `prepare` is run again. A checkout that is not clean,
+    or a stamp that is missing or malformed or of another build command,
+    cannot be judged (`CheckoutUnjudged`); a head, a tree or products that
+    differ are judged. The stamp is a discipline and not a proof of
+    provenance: it shows the products are those present when a configure
+    and a build exited cleanly at this tree."""
     repo = Path(repo)
     head = a.git(repo, "rev-parse", "HEAD")
     a.require(commit is None or head == commit,
               "the checkout is at %s, not at the commit measured: %s"
               % (head, commit))
-    found = clean_head(repo)
-    a.require(stamp is not None and Path(stamp).is_file(),
-              "no build stamp (%s): %s" % (stamp, PREPARE))
+    try:
+        found = clean_head(repo)
+    except ValueError as error:
+        raise CheckoutUnjudged(str(error)) from None
+    judge(stamp is not None and Path(stamp).is_file(),
+          "no build stamp (%s): %s" % (stamp, PREPARE))
     try:
         made = json.loads(Path(stamp).read_text())
     except ValueError:
         made = None
-    a.require(isinstance(made, dict) and sorted(made) == [
+    judge(isinstance(made, dict) and sorted(made) == [
         "build", "head", "products", "tree_outside_performance"],
         "malformed build stamp %s: %s" % (stamp, PREPARE))
-    a.require(made["build"] == list(BUILD),
-              "the build stamp is of another build command, %s: %s"
-              % (made["build"], PREPARE))
+    judge(made["build"] == list(BUILD),
+          "the build stamp is of another build command, %s: %s"
+          % (made["build"], PREPARE))
     a.require(made["tree_outside_performance"] ==
               found["tree_outside_performance"],
               "the tree outside the performance area is not the one the "
@@ -766,6 +792,9 @@ class Grid:
                   "pilot of another task")
         a.require("checkout_changed" not in inventory,
                   "the checkout changed while the pilot ran")
+        a.require("checkout_unjudged" not in inventory,
+                  "the checkout of the pilot could not be judged when it "
+                  "ended (%s): resume it" % inventory.get("checkout_unjudged"))
         seconds = t.seconds_map() if seconds is None else seconds
         a.require(all(inventory["seconds_by_case"].get(
             case, inventory["seconds"]) == seconds.get("%s-%d" % (case, size))
@@ -1072,9 +1101,12 @@ class Grid:
                           "stopped before its first checkpoint); remove it "
                           "and start again" % root)
                 old = a.load(root / "inventory.json")
-                a.require({k: v for k, v in old.items() if k != "runs"} ==
+                ignored = ("runs", "checkout_unjudged")
+                a.require({k: v for k, v in old.items()
+                           if k not in ignored} ==
                           {k: v for k, v in inventory.items()
-                           if k != "runs"}, "resume with different settings")
+                           if k not in ignored},
+                          "resume with different settings")
                 for row in old["runs"]:
                     a.require(a.seal(a.safe_child(root, row["archive"])) ==
                               row["seal"], "changed archive")
@@ -1095,7 +1127,11 @@ class Grid:
                 try:
                     self.h.recheck(args.repo, None, inventory)
                 except CheckoutChanged as error:
-                    inventory["checkout_changed"] = str(error)
+                    # A pilot has no decisions that a missing mark would
+                    # hold back: an unjudged end is marked until a resume
+                    # finds the checkout as recorded.
+                    inventory["checkout_changed" if error.dead
+                              else "checkout_unjudged"] = str(error)
                     raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
@@ -1343,7 +1379,8 @@ class Grid:
                     self.h.recheck(args.repo, inventory["candidate"],
                                    inventory)
                 except CheckoutChanged as error:
-                    inventory["checkout_changed"] = str(error)
+                    if error.dead:
+                        inventory["checkout_changed"] = str(error)
                     raise
             finally:
                 checkpoint(root / "inventory.json", inventory)
@@ -1697,11 +1734,17 @@ class Grid:
         asked under the lock, before anything is written, and when the
         measuring is over; a checkout that changed while a grid ran
         (a build, an edit, a checkout of another commit) leaves no grid
-        that passes, and the attempt closes as `checkout-changed`."""
+        that passes, and the attempt closes as `checkout-changed`. The grid
+        is dead (`CheckoutChanged.dead`) only when the head, the tree or
+        the products are known to differ from the record; a checkout that
+        could not be judged (not clean, no stamp) is not, and a resumption
+        compares the record."""
         if not self.t.fixed_seconds:
             return
         try:
             found = self.h.bind_checkout(repo, commit)
+        except CheckoutUnjudged as error:
+            raise CheckoutChanged(str(error), dead=False) from None
         except ValueError as error:
             raise CheckoutChanged(str(error)) from None
         if found != inventory["checkout"]:
