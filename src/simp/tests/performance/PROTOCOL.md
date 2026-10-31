@@ -604,8 +604,10 @@ has no disposition.
   constants the fixture uses). The export is code of `Theory.sml`, and its
   cost is gated by nothing but the source identity of that file (listed
   above) and the hook audit; a change to the export that is not a change of
-  `Theory.sml`, or a hook, would be invisible. If the cost of the export is
-  in the scope of the task, it needs its own timed batch.
+  `Theory.sml`, or a hook, would be invisible. Decision: the export is not
+  simplifier work and is out of TASK_30's scope, so it has no timed batch
+  and none is wanted; the reparse is in scope and is gated by both gates, as
+  above.
 - **The checkout a measurement runs in.** `prepare` builds, `pilot`, `run`
   and `extend` measure, and each of them refuses to go on unless the checkout
   is the one the measurement names. `prepare` is the one command that builds,
