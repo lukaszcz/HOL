@@ -251,9 +251,11 @@ struct
       fun dproc mixed = let
         val ds = List.tabulate (n,fn i => reducer (dpname i))
         (* The dprocs and a maker come first and the data after them, so
-           that a rebuild of the history would run the maker and prime the
-           dprocs: the zero counts below then show the deletion replays
-           nothing, not that there was nothing to replay. *)
+           that a rebuild of the history would prime the dprocs (++ passes
+           the rewrites of each later fragment to Traverse.addctxt) and,
+           where data follows (mixed), run the maker: the zero counts below
+           then show the deletion replays nothing, not that there was
+           nothing to replay. With no data only the collectors are primed. *)
         val f = setup (SOME maker) ds
         val from = empty_ss ++ f ++ (if mixed then data else empty_ssfrag)
         val pats = [dpname 0] @ (if mixed then [rname 0] else [])
