@@ -73,6 +73,23 @@ class Table(unittest.TestCase):
         for value in counts["iterations"].values():
             self.assertEqual(value & (value - 1), 0)
 
+    def test_the_baseline_sources_and_sealed_files_are_named(self):
+        table = t30.TABLE
+        self.assertEqual(table.baseline, a.BASE)
+        self.assertEqual(table.engines, ())
+        self.assertEqual(table.sources, cases.SOURCES)
+        self.assertEqual(len(set(cases.SOURCES)), len(cases.SOURCES))
+        for path in cases.SOURCES:
+            self.assertFalse(path.startswith("/"), path)
+            self.assertTrue(path.endswith((".sml", ".sig")), path)
+        for name in table.sealed:
+            self.assertTrue((table.home / name).is_file(), name)
+        # The driver, the engine and the data of the case list are all
+        # sealed, so none of them changes unnoticed.
+        self.assertEqual(table.code(), ("driver", "engine", "acceptance",
+                                        "sealed"))
+        self.assertIn("task30_cases.py", table.sealed)
+
     def test_the_allocation_text_names_the_task_selection(self):
         self.assertIn("--task task30", t30.TABLE.allocation)
         self.assertNotIn("outside", t30.TABLE.allocation)
