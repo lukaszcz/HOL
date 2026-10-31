@@ -260,7 +260,9 @@ struct
                      length (dpnames from) = n andalso names ss = names from);
            checkSS (if mixed then first else fn _ => true) ss;
            checkSS (if mixed then no else fn _ => true) from)
-      in sswork (fn () => from -* pats) verify end
+        (* Deleting replays nothing: -* filters the net and the dprocs, and
+           neither a maker nor a collector runs. *)
+      in callbacks 0 0 (sswork (fn () => from -* pats) verify) end
     in case label of
         "exclude_empty" => delete source [] no
       | "exclude_missing" => delete source ["matrix_missing"] no

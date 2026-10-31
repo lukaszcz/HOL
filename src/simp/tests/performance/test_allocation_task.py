@@ -421,5 +421,58 @@ class TheoryChange(unittest.TestCase):
                 self.assertNotIn(token, self.support)
 
 
+class Callbacks(unittest.TestCase):
+    """The callback counts the fixture asserts for the dproc deletions are
+    derived from the deletion code: `-*` filters the net and the dprocs and
+    primes no reducer (`addctxt` calls its `addcontext`, a collector) and
+    applies no maker (`mk_rewrs`, which only `++` calls)."""
+
+    @classmethod
+    def setUpClass(cls):
+        root = a.HERE.parents[3] / "src/simp/src"
+        cls.simplib = (root / "simpLib.sml").read_text()
+        cls.support = (m.HERE / "MatrixSupport.sml").read_text()
+
+    def definition(self, start, stop):
+        i = self.simplib.index(start)
+        return self.simplib[i:self.simplib.index(stop, i)]
+
+    def test_the_deletion_calls_no_collector_or_maker(self):
+        delete = self.definition("fun (ss as SS{mk_rewrs,history,initial_net",
+                                 "fun remove_simps")
+        filters = self.definition("fun filter_net_by_names",
+                                  "fun (ss as SS{mk_rewrs")
+        for body in (delete, filters):
+            for token in ("addctxt", "addcontext", "build_from_history",
+                          "++", "add_weakener"):
+                with self.subTest(token):
+                    self.assertNotIn(token, body)
+            self.assertIsNone(re.search(r"mk_rewrs\s*[a-z(]", body))
+        self.assertIn("filter_net_by_names nms initial_net", delete)
+        self.assertIn("filter_dprocs_by_names nms dprocs", delete)
+
+    def test_the_replay_primes_the_existing_dprocs_once_per_addition(self):
+        # What history_collectors counts (callbacks n 1): the one existing
+        # reducer is primed by the one `++` that adds rewrites to it.
+        added = self.definition("val new_dprocs = map (Traverse.addctxt",
+                                "val reltravs")
+        self.assertIn("Traverse.addctxt (map #2 rewrs)) dprocs'", added)
+
+    def test_both_dproc_deletions_assert_no_callback(self):
+        start = self.support.index("fun dproc mixed = let")
+        end = self.support.index("in case label of", start)
+        body = self.support[start:end]
+        self.assertEqual(body.count("callbacks 0 0 (sswork (fn () => "
+                                    "from -* pats) verify)"), 1)
+        self.assertIn('"exclude_dproc" => dproc false', self.support)
+        self.assertIn('"exclude_mixed" => dproc true', self.support)
+
+    def test_the_callback_wrapper_checks_both_counters_exactly(self):
+        self.assertIn("!makerCalls - !oldM = count * makers andalso",
+                      self.support)
+        self.assertIn("!collectorCalls - !oldC = count * collectors",
+                      self.support)
+
+
 if __name__ == "__main__":
     unittest.main()
