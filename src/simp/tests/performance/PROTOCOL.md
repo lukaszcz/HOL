@@ -373,8 +373,9 @@ has no disposition.
   it stopped, and `checkout-changed`; see *when the checkout is judged*
   below, for what an `interrupted` line does not say). A close that cannot
   be written is reported on standard error
-  (`ATTEMPT-NOT-CLOSED`), leaves the attempt open in the ledger, which shows
-  it as interrupted, and does not replace the outcome of the run.
+  (`ATTEMPT-NOT-CLOSED`, with what the close would have added), leaves the
+  attempt open in the ledger, which shows it as interrupted, and does not
+  replace the outcome of the run.
   The lines form a hash chain: each carries `prev`, the SHA-256 of the line
   before it (64 zeros for the first), so a line removed or changed in the
   middle is refused (`attempts ledger chain broken at line N`), as is a
@@ -733,9 +734,17 @@ has no disposition.
   makes SIGTERM and SIGHUP a `KeyboardInterrupt` in every command (a
   handler put in at `main`, and put back at its exit), so a plain `kill`, a
   `timeout`, an agent's stop and a closed terminal take the path of an
-  interrupt: the cell's process group is killed and waited for, the lock is
-  released and the end is judged. A failure after the measuring is judged a
-  second time by the same handler. One routine judges the end for a grid, a
+  interrupt: the cell's process group is killed, and the end is judged. A
+  signal that is ignored when the driver starts (SIGHUP under `nohup`) stays
+  ignored, so a grid under `nohup` survives its terminal. The lock is
+  released with the cell, except for a process that `run_paired` started:
+  that has a session of its own, is not in the cell's group, and runs to
+  its end holding the lock, so a `--resume` may be refused as busy until
+  then, and a `simp-paired-*` directory may be left in `TMPDIR`; a process
+  that hangs has to be found and killed by hand. The lock staying is
+  deliberate: it is what keeps a second measurement out of a window that
+  one is still using. A failure after the measuring is judged a second time
+  by the same handler. One routine judges the end for a grid, a
   second stage and a pilot, the normal end and the early stop alike, and it
   is the only place that marks. Those are all the moments: nothing else is
   looked at. A checkout that is not as recorded at one of them ends the
@@ -781,16 +790,20 @@ has no disposition.
   early finds the checkout known to differ, and the mark cannot be written
   (a full disk, a second interrupt in the writing). The original exception
   still propagates and the attempt closes `checkout-changed`, with the text
-  found and the failure of the mark in `found` on its close line. The
+  found and the failure of the mark in `found` on its close line. If the
+  close cannot be written either (the same full disk), the line
+  `ATTEMPT-NOT-CLOSED` on standard error, which carries the `found`, is
+  the only record, and the attempt reads as a killed process. Otherwise the
   inventory does not say it, so the ledger is the only record, and **a
   `replay` and a `close` refuse a grid whose own attempts have a `found`**:
   the attempt of the grid replayed or closed and, for a second stage, the
   attempt of its first stage as well (a second stage is an attempt of its
   own, so a `found` on either kills the grid). They refuse it as they refuse
   a dead grid (`the checkout changed while attempt ... ran ... the grid is
-  dead`, the exit status of a refusal). A `--resume` does not read it: it
-  may run, and the cells it measures stand for nothing, since the replay
-  will not pass. The refusal names the attempt and the text found.
+  dead`, the exit status of a refusal). A `--resume` or an `extend` does
+  not read it: it may run, and the cells it measures stand for nothing,
+  since the replay will not pass. The refusal names the attempt and the
+  text found.
   The ledger is the table's, shared by every grid, and the difference found
   kills its own grid only. It is published with the ledger and does not
   touch a new grid: the route of a dead grid is a new grid in a new
@@ -810,7 +823,9 @@ has no disposition.
   inventory, `checkout_changed` for a difference found and `checkout_unjudged`
   with the text added to `unjudged_ends` for a judgement not made, when its
   last checkpoint writes it, so that `predeclare` and `verify-counts` refuse
-  the pilot until a `pilot --resume` has judged the checkout. If that
+  the pilot. A judgement not made is lifted by a `pilot --resume`, which
+  judges the checkout; a pilot with `checkout_changed` is dead, and its
+  `--resume` is refused (`resume with different settings`). If that
   checkpoint fails too, its error is the one shown.
   *A tracked edit found only by `--resume`.* An attempt whose end was
   judged and found nothing, and a tracked file edited after that, with no

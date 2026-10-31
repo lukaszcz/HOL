@@ -4656,6 +4656,28 @@ class Chain(ChainRig):
                          "OSError: disk full$")
         self.assertNotIn("JUDGEMENT-NOT-MADE", out.getvalue())
 
+    def test_a_close_that_fails_too_prints_what_it_would_have_said(self):
+        # P1: the mark and the close both fail; the line on standard error
+        # is the only record of the difference found.
+        y = self.commit_counts()
+        real = tg.ledger_append
+
+        def refusing(path, **record):
+            if record["event"] == "close":
+                raise OSError(28, "No space left on device")
+            return real(path, **record)
+        err = io.StringIO()
+        with patch.object(tg, "ledger_append", refusing), \
+                contextlib.redirect_stderr(err):
+            line = self.found_not_marked(y)
+        self.assertEqual(line["event"], "open")
+        self.assertEqual([x["event"] for x in self.ledger_lines()], ["open"])
+        attempt = line["attempt"]
+        self.assertRegex(err.getvalue(), (
+            r"(?m)^ATTEMPT-NOT-CLOSED %s \(outcome checkout-changed\): "
+            r"\[Errno 28\] No space left on device; found: tracked file"
+            r".*; not marked: OSError: disk full$") % attempt)
+
     DEAD = ("the checkout changed while attempt %s ran \\(tracked file.*"
             "disk full\\).*the grid is dead.*neither replayed nor closed")
 
@@ -5434,7 +5456,10 @@ class Sleeping(ChainRig):
             self.edit_one()
             fds = [int(x) for x in os.environ[
                 "HOL4_PERF_LOCK_FDS"].split(",")]
-            script = ('sleep 600 & echo $! > "$1/grandchild"; '
+            # Nested: as `run_paired` starts its builds, in a session of
+            # its own, holding the lock descriptors it inherits.
+            nested = "setsid " if os.environ.get("NESTED") else ""
+            script = (nested + 'sleep 600 & echo $! > "$1/grandchild"; '
                       'echo $$ > "$1/cell"; wait')
             return REAL_RUN_LOGGED(
                 ["/bin/sh", "-c", script, "cell", str(marks)],
@@ -5463,8 +5488,22 @@ def alive(pid):
 @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc")
 class Terminated(unittest.TestCase):
     """A termination signal takes the path of an interrupt, in a real
-    process: the cell's group is killed and waited for, the lock is
-    released, and the end of the attempt is judged."""
+    process: the cell's group is killed, the lock is released, and the end
+    of the attempt is judged. The assertions are about what the driver
+    did: nothing here kills the cell before they are made."""
+
+    def cleanup(self, child, pids):
+        """After the assertions: what a failed test left running."""
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        for pid in pids:
+            if alive(pid):
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+        if pids and alive(pids[1]):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pids[1], signal.SIGKILL)
 
     def await_pids(self, child, marks):
         deadline = time.monotonic() + 120
@@ -5482,31 +5521,26 @@ class Terminated(unittest.TestCase):
                     break
         return pids
 
-    def terminate(self, number):
+    def terminate(self, number, nested=False):
         with tempfile.TemporaryDirectory(prefix="timing-grid-signal-") as t:
             marks = Path(t)
             env = {k: v for k, v in os.environ.items()
-                   if k != "HOL4_PERF_LOCK_FDS"}
+                   if k not in ("HOL4_PERF_LOCK_FDS", "NESTED")}
             env["TMPDIR"] = t  # the child's rig is removed with `marks`
+            if nested:
+                env["NESTED"] = "1"
             pids = []
             with (marks / "child.log").open("w") as log:
                 child = subprocess.Popen(
                     [sys.executable, "-B", "-c", CHILD, t],
                     cwd=Path(__file__).parent, env=env, stdout=log,
                     stderr=subprocess.STDOUT)
-            try:
-                pids = self.await_pids(child, marks)
-                for pid in pids:
-                    self.assertTrue(alive(pid))
-                child.send_signal(number)
-                code = child.wait(timeout=60)
-            finally:
-                if child.poll() is None:
-                    child.kill()
-                    child.wait()
-                if pids:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(pids[1], signal.SIGKILL)
+            self.addCleanup(self.cleanup, child, pids)
+            pids.extend(self.await_pids(child, marks))
+            for pid in pids:
+                self.assertTrue(alive(pid))
+            child.send_signal(number)
+            code = child.wait(timeout=60)
             log = (marks / "child.log").read_text()
             # It died of the interrupt, not of the signal.
             self.assertNotIn(code, (0, -number), log)
@@ -5515,8 +5549,22 @@ class Terminated(unittest.TestCase):
             while any(alive(pid) for pid in pids) and \
                     time.monotonic() < deadline:
                 time.sleep(0.05)
-            self.assertEqual([alive(pid) for pid in pids], [False, False])
             where = json.loads((marks / "where.json").read_text())
+            if nested:
+                # The cell's group is killed; the process it started in a
+                # session of its own is not, and keeps the lock.
+                self.assertEqual([alive(pid) for pid in pids], [True, False])
+                with patch.dict(os.environ), self.assertRaisesRegex(
+                        a.Blocked, "lock busy"):
+                    with a.serial_lock(where["repo"]):
+                        pass
+                os.kill(pids[0], signal.SIGKILL)
+                deadline = time.monotonic() + 10
+                while alive(pids[0]) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+            else:
+                self.assertEqual([alive(pid) for pid in pids],
+                                 [False, False])
             with patch.dict(os.environ), a.serial_lock(where["repo"]):
                 pass  # the lock is free
             ledger = Path(where["repo"]) / ".agent-files" / "evidence" / \
@@ -5534,9 +5582,78 @@ class Terminated(unittest.TestCase):
     def test_sighup_is_judged_like_an_interrupt(self):
         self.terminate(signal.SIGHUP)
 
+    def test_the_lock_stays_with_a_process_in_a_session_of_its_own(self):
+        if shutil.which("setsid") is None:
+            self.skipTest("needs setsid")
+        self.terminate(signal.SIGTERM, nested=True)
+
+    def test_an_ignored_signal_stays_ignored_in_a_real_process(self):
+        # As under `nohup`: SIGHUP is ignored at the start.
+        with tempfile.TemporaryDirectory(prefix="timing-grid-ign-") as t:
+            marks = Path(t)
+            code = (
+                "import signal, sys, time; import timing_grid as tg\n"
+                "from pathlib import Path\n"
+                "marks = Path(sys.argv[1])\n"
+                "assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN\n"
+                "with tg.terminating_as_interrupt():\n"
+                "    assert signal.getsignal(signal.SIGHUP) == "
+                "signal.SIG_IGN\n"
+                "    assert signal.getsignal(signal.SIGTERM) is "
+                "signal.default_int_handler\n"
+                "    (marks / 'ready').write_text('x')\n"
+                "    end = time.monotonic() + 60\n"
+                "    while not (marks / 'go').exists():\n"
+                "        assert time.monotonic() < end\n"
+                "        time.sleep(0.02)\n"
+                "assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN\n"
+                "print('finished')\n")
+            with (marks / "log").open("w") as log:
+                child = subprocess.Popen(
+                    [sys.executable, "-B", "-c", code, t],
+                    cwd=Path(__file__).parent, stdout=log,
+                    stderr=subprocess.STDOUT,
+                    preexec_fn=lambda: signal.signal(signal.SIGHUP,
+                                                     signal.SIG_IGN))
+            self.addCleanup(lambda: child.poll() is None and child.kill())
+            deadline = time.monotonic() + 60
+            while not (marks / "ready").exists():
+                self.assertIsNone(child.poll(), (marks / "log").read_text())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.02)
+            child.send_signal(signal.SIGHUP)
+            time.sleep(0.3)
+            self.assertIsNone(child.poll(), (marks / "log").read_text())
+            (marks / "go").write_text("x")
+            self.assertEqual(child.wait(timeout=60), 0,
+                             (marks / "log").read_text())
+            self.assertEqual((marks / "log").read_text(), "finished\n")
+
+    def test_an_ignored_signal_is_not_replaced_and_is_left_as_found(self):
+        saved = {n: signal.getsignal(n) for n in (signal.SIGTERM,
+                                                  signal.SIGHUP)}
+        for number, handler in saved.items():
+            self.addCleanup(signal.signal, number, handler)
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with tg.terminating_as_interrupt():
+            self.assertIs(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+            self.assertIs(signal.getsignal(signal.SIGTERM),
+                          signal.default_int_handler)
+        self.assertIs(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+        self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
     def test_the_handlers_are_put_back_and_only_main_installs_them(self):
+        # A known value of its own: earlier calls of `main` may have left
+        # the handler of an interrupt in place.
+        saved = {n: signal.getsignal(n) for n in (signal.SIGTERM,
+                                                  signal.SIGHUP)}
+        for number, handler in saved.items():
+            self.addCleanup(signal.signal, number, handler)
+            signal.signal(number, signal.SIG_DFL)
         before = [signal.getsignal(n) for n in (signal.SIGTERM,
                                                 signal.SIGHUP)]
+        self.assertEqual(before, [signal.SIG_DFL, signal.SIG_DFL])
         with tg.terminating_as_interrupt():
             for number in (signal.SIGTERM, signal.SIGHUP):
                 self.assertIs(signal.getsignal(number),

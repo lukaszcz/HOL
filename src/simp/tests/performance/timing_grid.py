@@ -560,14 +560,21 @@ REFUSED = 3
 def terminating_as_interrupt():
     """SIGTERM and SIGHUP (a plain `kill`, a `timeout`, an agent's stop, a
     closed terminal) raise `KeyboardInterrupt`, as SIGINT does, so that
-    they take the path of an interrupt: the cell's process group is killed
-    and waited for, the lock is released and the end of the attempt is
-    judged. The handlers are put back at the exit. Off the main thread,
-    where Python allows no handler, nothing changes."""
+    they take the path of an interrupt: the cell's process group is killed,
+    the lock is released and the end of the attempt is judged. A signal
+    that is ignored at the start (SIGHUP under `nohup`) stays ignored, as
+    Python leaves an ignored SIGINT, and is put back as it was; only what
+    was replaced is restored, at the exit. The cell's group is killed, but
+    a process that `run_paired` started has a session of its own, runs to
+    its end holding the lock, and may have to be killed by hand: the lock
+    staying is deliberate (see `acceptance.serial_lock`). Off the main
+    thread, where Python allows no handler, nothing changes."""
     old = {}
     try:
         for number in (signal.SIGTERM, signal.SIGHUP):
-            old[number] = signal.signal(number, signal.default_int_handler)
+            if signal.getsignal(number) != signal.SIG_IGN:
+                old[number] = signal.signal(number,
+                                            signal.default_int_handler)
     except ValueError:
         pass
     try:
@@ -1765,17 +1772,20 @@ class Grid:
 
     def close_attempt(self, path, stage, inventory, root, repo, status,
                       **note):
-        """The close of an attempt, with `note` (the reason the end of an
-        early stop could not be judged). When it cannot be written the
-        attempt stays open in the ledger, which shows it as interrupted, and
-        the outcome of the run is not replaced by the failure."""
+        """The close of an attempt, with `note` (what the end of an early
+        stop adds: the reason it could not be judged, or the difference it
+        found and could not mark). When it cannot be written the attempt
+        stays open in the ledger, which shows it as interrupted, the
+        outcome of the run is not replaced by the failure, and the line
+        printed carries `note`, which is then the only record of it."""
         try:
             self.h.record_attempt(path, "close", stage, inventory, root,
                                   repo, status=status, **note)
         except Exception as error:
-            print("ATTEMPT-NOT-CLOSED %s (outcome %s): %s" % (
-                inventory["attempt"], status, error), file=sys.stderr,
-                flush=True)
+            print("ATTEMPT-NOT-CLOSED %s (outcome %s): %s%s" % (
+                inventory["attempt"], status, error, "".join(
+                    "; %s: %s" % item for item in note.items())),
+                file=sys.stderr, flush=True)
 
     def check_attempt(self, args, inventory, stage):
         """The ledger holds the opening of this grid, and its chain is
@@ -1953,7 +1963,7 @@ class Grid:
           written: `checkout-changed`, with `found`, the text found and the
           failure of the mark; the inventory does not say it, so the ledger
           is the only record (a `replay` and a `close` refuse such a
-          ledger);
+          grid);
         - the checkout could not be asked, or the mark of an end that was
           only not judged could not be written: `interrupted`, with the
           reason as `judgement`, as of a process that was killed;
