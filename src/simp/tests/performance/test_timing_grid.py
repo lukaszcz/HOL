@@ -20,6 +20,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,7 @@ CANDIDATE = "c" * 40
 SOURCES = ("src/one.sml", "src/two.sml")
 SEALED = ("one.txt", "two.txt")
 COMMIT = "1" * 40
+PRODUCTS = "p" * 64
 GOOD = (0.99, 1.01)
 WIDE = (0.95, 1.06)
 
@@ -192,7 +194,8 @@ class Rig(unittest.TestCase):
         """The checkout is clean and at the commit measured."""
         self.bound.append(commit)
         return dict(head=commit or COMMIT,
-                    tree_outside_performance=self.fake_tree(repo, commit))
+                    tree_outside_performance=self.fake_tree(repo, commit),
+                    products=PRODUCTS)
 
     def analysis(self, case, size, control, pairs, seed, pilot=False):
         ci = (self.pilot_control if pilot else self.control if control
@@ -214,7 +217,7 @@ class Rig(unittest.TestCase):
         return self.analysis(case, size, candidate == baseline, pairs,
                              layout_seed, pilot=iterations is None)
 
-    def fake_launch(self, command, output, fds, timeout):
+    def fake_launch(self, command, output, fds, timeout, stdin=None):
         """A pilot process: both sides the baseline, two develop receipts
         with calibration counts, and one of the loading fixture."""
         self.launched.append(command)
@@ -1362,7 +1365,8 @@ class Pilot(Rig):
         self.pilot()
         self.assertEqual(self.bound, [None] * 3)
         self.assertEqual(self.inventory(self.root / "pilot")["checkout"],
-                         dict(head=COMMIT, tree_outside_performance="t" * 64))
+                         dict(head=COMMIT, tree_outside_performance="t" * 64,
+                              products=PRODUCTS))
 
     def test_a_pilot_in_a_checkout_that_is_not_clean_measures_nothing(self):
         def unclean(repo, commit=None, stamp=None):
@@ -3269,7 +3273,8 @@ class Measuring(Rig):
         out, status, _ = self.first()
         self.assertEqual(self.bound, [CANDIDATE] * 3)
         self.assertEqual(self.inventory(out)["checkout"], dict(
-            head=CANDIDATE, tree_outside_performance="t" * 64))
+            head=CANDIDATE, tree_outside_performance="t" * 64,
+            products=PRODUCTS))
 
     def test_a_checkout_that_is_not_the_candidate_measures_nothing(self):
         def elsewhere(repo, commit=None, stamp=None):
@@ -3489,7 +3494,8 @@ class ChainRig(Rig):
             for name in ("one", "two"):
                 (self.repo / "src" / (name + ".sml")).write_text(
                     "val %s = 1\n" % name)
-            (self.repo / ".gitignore").write_text("bin/\nsigobj/\n")
+            (self.repo / ".gitignore").write_text(
+                "bin/\nsigobj/\ntools/Holmake/Systeml.sml\n.hol\n")
             (self.repo / ".git" / "info" / "exclude").write_text(
                 ".agent-files\n")
             self.git("add", "-A")
@@ -3498,20 +3504,38 @@ class ChainRig(Rig):
             (self.repo / "bin").mkdir()
             (self.repo / "bin" / "hol").write_text("executable")
             (self.repo / "bin" / "hol.state0").write_text("heap")
+            (self.repo / "bin" / "Holmake").write_text("holmake")
             (self.repo / "sigobj").mkdir()
             (self.repo / "sigobj" / "m.uo").write_text("object")
+            (self.repo / "src" / ".hol" / "objs").mkdir(parents=True)
+            self.theory = self.repo / "src" / ".hol" / "objs" / "t.dat"
+            self.theory.write_text("data")
+            self.configure()
             self.pilot_revision = self.base
         kw.setdefault("baseline", self.base)
         kw.setdefault("ledger", None)
         return super().make_table(**kw)
 
-    def fake_launch(self, command, output, fds, timeout):
-        """The build, or a pilot process."""
+    def configure(self, holdir=None):
+        """What configure leaves: the HOLDIR of the checkout, in a file git
+        ignores."""
+        where = self.repo / "tools" / "Holmake"
+        where.mkdir(parents=True, exist_ok=True)
+        (where / "Systeml.sml").write_text('val HOLDIR = "%s"\n' % (
+            self.repo.resolve() if holdir is None else holdir))
+
+    def fake_launch(self, command, output, fds, timeout, stdin=None):
+        """The build, or a pilot process. The build reads its standard input
+        (as bin/build does after its stale-executable warning), so that with
+        a reader that never answers it is killed at the timeout."""
         if "bin/build" not in command:
             return super().fake_launch(command, output, fds, timeout)
         self.built.append(dict(command=command, output=output, fds=fds,
-                               timeout=timeout))
-        Path(output).write_text("build log\n")
+                               timeout=timeout, stdin=stdin))
+        with Path(output).open("x") as stream:  # as run_logged does
+            stream.write(self.build_log)
+        if stdin is None:
+            return dict(exit=-9, timed_out=True)
         self.build()
         return dict(exit=self.build_exit, timed_out=False)
 
@@ -3520,6 +3544,7 @@ class ChainRig(Rig):
 
     def provision(self):
         self.built, self.build_exit = [], 0
+        self.build_log = "build log\n"
         self.assertEqual(self.go(["prepare", "--repo", str(self.repo)])[0],
                          0)
         self.make_pilot(self.pilot_dir)
@@ -3665,14 +3690,13 @@ class Chain(ChainRig):
         status, text = self.prepare()
         self.assertEqual(status, 0, text)
         built = self.built[-1]
-        self.assertEqual(built["command"][-2:], list(tg.BUILD))
-        self.assertEqual(tg.BUILD, ("bin/build",
+        self.assertEqual(built["command"][-len(tg.BUILD):], list(tg.BUILD))
+        self.assertEqual(tg.BUILD, ("bin/build", "--stdknl",
                                     "--seq=tools/sequences/upto-parallel"))
         self.assertIn(str(self.repo.resolve()), built["command"])
         self.assertEqual(built["timeout"], tg.BUILD_TIMEOUT)
-        self.assertEqual(built["output"].parent, self.stamp().parent)
-        self.assertRegex(built["output"].name,
-                         r"^prepare-\d{8}T\d{6}Z(-\d+)?\.log$")
+        self.assertEqual(built["output"], self.stamp().with_name(
+            "prepare.log"))
         stamp = json.loads(self.stamp().read_text())
         self.assertEqual(stamp, tg.build_stamp(self.repo))
         self.assertEqual(stamp["head"], y)
@@ -3690,9 +3714,9 @@ class Chain(ChainRig):
         seen = []
         real = self.fake_launch
 
-        def holding(command, output, fds, timeout):
+        def holding(command, output, fds, timeout, stdin=None):
             seen.append(fds)
-            return real(command, output, fds, timeout)
+            return real(command, output, fds, timeout, stdin)
         with patch.object(a, "run_logged", holding):
             self.assertEqual(self.prepare()[0], 0)
         self.assertTrue(seen[0])
@@ -3721,7 +3745,8 @@ class Chain(ChainRig):
     def test_a_timed_out_build_writes_no_stamp(self):
         self.commit_counts()
         real = self.fake_launch
-        patched = lambda *args: dict(real(*args), timed_out=True)
+        patched = lambda *args, **kw: dict(real(*args, **kw),
+                                           timed_out=True)
         with patch.object(a, "run_logged", patched):
             with self.assertRaisesRegex(ValueError, "timed out"):
                 self.prepare()
@@ -3729,7 +3754,7 @@ class Chain(ChainRig):
 
     def test_an_interrupted_build_leaves_no_stamp(self):
         self.commit_counts()
-        def interrupted(*args):
+        def interrupted(*args, **kw):
             raise KeyboardInterrupt
         with patch.object(a, "run_logged", interrupted):
             with self.assertRaises(KeyboardInterrupt):
@@ -3770,6 +3795,116 @@ class Chain(ChainRig):
                                 self.counts))
         with self.assertRaisesRegex(ValueError, "takes no build stamp"):
             grid.main(["prepare", "--repo", str(self.repo)])
+
+    def test_the_build_is_the_standard_kernel_and_the_stamp_names_it(self):
+        self.assertIn("--stdknl", tg.BUILD)
+        self.assertEqual(json.loads(self.stamp().read_text())["build"],
+                         list(tg.BUILD))
+        self.assertEqual(self.built[-1]["command"][-len(tg.BUILD):],
+                         list(tg.BUILD))
+
+    def test_the_build_has_no_standard_input_so_it_cannot_wait_for_one(self):
+        self.commit_counts()
+        # The stand-in build reads its standard input, as bin/build does
+        # after its warning, and is killed at the timeout unless it has none.
+        self.assertIs(self.built[-1]["stdin"], subprocess.DEVNULL)
+        self.assertEqual(self.prepare()[0], 0)
+        with patch.object(a, "run_logged", lambda command, output, fds,
+                          timeout, stdin=None: self.fake_launch(
+                              command, output, fds, timeout)):
+            with self.assertRaisesRegex(ValueError, "timed out"):
+                self.prepare()
+        self.assertFalse(self.stamp().exists())
+
+    def test_a_build_that_warns_of_a_stale_executable_writes_no_stamp(self):
+        self.commit_counts()
+        self.build_log = ("build log\nWARNING! WARNING!\n  The executable "
+                          "bin/hol is older than tools-poly/Holmake/x.sml;\n"
+                          "WARNING! WARNING!\nmore log\n")
+        for exit_code in (0, 2):
+            with self.subTest(exit=exit_code):
+                self.build_exit = exit_code
+                with self.assertRaisesRegex(
+                        ValueError, "older than its sources.*no build "
+                        "stamp: run poly < tools/smart-configure.sml in "
+                        "%s and prepare again" % re.escape(
+                            str(self.repo.resolve()))):
+                    self.prepare()
+                self.assertFalse(self.stamp().exists())
+                self.assertEqual(
+                    self.built[-1]["output"].read_text(), self.build_log)
+                self.build_log = self.build_log.replace("log", "text")
+        self.build_exit, self.build_log = 0, "build log\n"
+        self.assertEqual(self.prepare()[0], 0)
+        self.assertTrue(self.stamp().exists())
+
+    def test_prepare_needs_a_checkout_configured_here(self):
+        self.commit_counts()
+        # It does not run configure: it says so, before it builds.
+        systeml = self.repo / "tools" / "Holmake" / "Systeml.sml"
+        built, before = len(self.built), self.stamp().read_bytes()
+        systeml.unlink()
+        with self.assertRaisesRegex(ValueError, "not configured.*run poly "
+                                    "< tools/smart-configure.sml in .*, "
+                                    "then prepare"):
+            self.prepare()
+        for label, text in (
+                ("another path", 'val HOLDIR = "/elsewhere/HOL"\n'),
+                ("none", "val x = 1\n"),
+                ("two", 'val HOLDIR = "/a"\nval HOLDIR = "/b"\n')):
+            with self.subTest(label):
+                systeml.write_text(text)
+                with self.assertRaisesRegex(ValueError, "configured for "
+                                            "/elsewhere/HOL, not for|no "
+                                            "single HOLDIR"):
+                    self.prepare()
+        self.assertEqual((len(self.built), self.stamp().read_bytes()),
+                         (built, before))
+        self.configure()
+        self.assertEqual(self.prepare()[0], 0)
+
+    def test_a_link_in_the_products_may_not_leave_the_repository(self):
+        self.commit_counts()
+        outside = self.root / "outside.uo"
+        outside.write_text("object")
+        (self.repo / "sigobj" / "o.uo").symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "resolves outside the "
+                                    "repository"):
+            self.prepare()
+        self.assertFalse(self.stamp().exists())
+
+    def test_prepare_keeps_one_log_and_does_not_accumulate(self):
+        self.commit_counts()
+        where = self.stamp().parent
+        for text in ("one\n", "two\n", "three\n"):
+            self.build_log = text
+            self.assertEqual(self.prepare()[0], 0)
+            self.assertEqual(sorted(p.name for p in where.glob("prepare*")),
+                             ["prepare.log"])
+            self.assertEqual((where / "prepare.log").read_text(), text)
+        self.build_exit = 2
+        self.build_log = "failed\n"
+        with self.assertRaisesRegex(ValueError, "prepare.log"):
+            self.prepare()
+        self.assertEqual((where / "prepare.log").read_text(), "failed\n")
+
+
+class Logged(unittest.TestCase):
+    """The log of a command that must not wait for input."""
+
+    def test_a_child_with_no_standard_input_does_not_wait_for_one(self):
+        with tempfile.TemporaryDirectory(prefix="timing-grid-log-") as tmp:
+            log = Path(tmp) / "log"
+            found = a.run_logged(
+                ["/bin/sh", "-c", 'read line; echo "read [$line]"'], log,
+                [], 60, stdin=subprocess.DEVNULL)
+            self.assertEqual((found["exit"], found["timed_out"]), (0, False))
+            self.assertEqual(log.read_text(), "read []\n")
+
+    def test_the_default_is_the_inherited_standard_input(self):
+        import inspect
+        self.assertIsNone(
+            inspect.signature(a.run_logged).parameters["stdin"].default)
 
 
 class Options(Rig):
@@ -4009,14 +4144,18 @@ class Checkout(unittest.TestCase):
         (self.repo / "bin").mkdir()
         self.hol = self.repo / "bin" / "hol"
         self.heap = self.repo / "bin" / "hol.state0"
+        self.holmake = self.repo / "bin" / "Holmake"
         self.hol.write_text("executable")
         self.heap.write_text("heap")
+        self.holmake.write_text("holmake")
         # sigobj holds links into the built directories, as the real one.
         built = self.repo / "src" / ".hol" / "objs"
         built.mkdir(parents=True)
         (self.repo / "sigobj").mkdir()
         self.product = built / "aTheory.uo"
         self.product.write_text("object")
+        self.theory = built / "aTheory.dat"
+        self.theory.write_text("theory data")
         (self.repo / "sigobj" / "aTheory.uo").symlink_to(self.product)
         self.stamp = self.repo / ".agent-files" / "build-stamp.json"
         self.stamp.parent.mkdir()
@@ -4033,15 +4172,18 @@ class Checkout(unittest.TestCase):
 
     def test_a_stamped_clean_checkout_at_the_commit_is_the_identity(self):
         found = self.identity()
+        stamped = json.loads(self.stamp.read_text())
         self.assertEqual(found, dict(
             head=self.head, tree_outside_performance=tg.git_tree_outside(
-                self.repo, self.head)))
+                self.repo, self.head), products=stamped["products"]["sha256"]))
         self.assertEqual(self.identity(None), found)
-        stamped = json.loads(self.stamp.read_text())
-        self.assertEqual(sorted(stamped), ["head", "products",
+        self.assertEqual(sorted(stamped), ["build", "head", "products",
                                            "tree_outside_performance"])
         self.assertEqual(stamped["head"], self.head)
-        self.assertEqual(stamped["products"]["files"], 3)
+        self.assertEqual(stamped["build"], list(tg.BUILD))
+        # bin/hol, bin/hol.state0, bin/Holmake, one link, one data file.
+        self.assertEqual(stamped["products"]["files"], 5)
+        self.assertEqual(found["products"], stamped["products"]["sha256"])
 
     def test_the_head_must_be_the_commit_measured(self):
         with self.assertRaisesRegex(ValueError, "not at the commit"):
@@ -4058,7 +4200,10 @@ class Checkout(unittest.TestCase):
                                     "prepare at this commit"):
             self.identity()
         for what, text in (("text", "not json"), ("list", "[]"),
-                           ("keys", json.dumps(dict(head=self.head)))):
+                           ("keys", json.dumps(dict(head=self.head))),
+                           ("no build", json.dumps({k: v for k, v in
+                            tg.build_stamp(self.repo).items()
+                            if k != "build"}))):
             with self.subTest(what):
                 self.stamp.write_text(text)
                 with self.assertRaisesRegex(ValueError, "malformed build "
@@ -4113,7 +4258,16 @@ class Checkout(unittest.TestCase):
                 ("removed link", lambda: (sigobj / "aTheory.uo").unlink(),
                  lambda: (sigobj / "aTheory.uo").symlink_to(self.product)),
                 ("heap removed", self.heap.unlink,
-                 lambda: self.heap.write_text("heap"))):
+                 lambda: self.heap.write_text("heap")),
+                ("Holmake", lambda: self.holmake.write_text("other"),
+                 lambda: self.holmake.write_text("holmake")),
+                ("theory data", lambda: self.theory.write_text("other"),
+                 lambda: self.theory.write_text("theory data")),
+                ("added theory data", lambda: (self.product.parent /
+                                               "b.dat").write_text("x"),
+                 lambda: (self.product.parent / "b.dat").unlink()),
+                ("removed theory data", self.theory.unlink,
+                 lambda: self.theory.write_text("theory data"))):
             with self.subTest(label):
                 change()
                 with self.assertRaisesRegex(ValueError, "differ from the "
@@ -4122,6 +4276,39 @@ class Checkout(unittest.TestCase):
                     self.identity()
                 undo()
                 self.assertEqual(self.identity()["head"], self.head)
+
+    def test_a_stamp_of_another_build_command_is_refused(self):
+        stamped = tg.build_stamp(self.repo)
+        for build in (["bin/build", "--seq=tools/sequences/upto-parallel"],
+                      [], "bin/build"):
+            with self.subTest(build):
+                self.stamp.write_text(json.dumps(dict(stamped, build=build)))
+                with self.assertRaisesRegex(ValueError, "another build "
+                                            "command.*run prepare at this "
+                                            "commit"):
+                    self.identity()
+
+    def test_a_link_to_a_file_outside_the_repository_is_refused(self):
+        outside = Path(tempfile.mkdtemp(prefix="timing-grid-out-"))
+        self.addCleanup(shutil.rmtree, outside)
+        (outside / "x.uo").write_text("object")
+        for label, link, target in (
+                ("file", self.repo / "sigobj" / "x.uo", outside / "x.uo"),
+                ("directory", self.repo / "sigobj" / "d", outside),
+                ("executable", self.hol, outside / "x.uo")):
+            with self.subTest(label):
+                saved = None
+                if link.exists():
+                    saved = link.read_text()
+                    link.unlink()
+                link.symlink_to(target)
+                with self.assertRaisesRegex(ValueError, "resolves outside "
+                                            "the repository"):
+                    tg.products_digest(self.repo)
+                link.unlink()
+                if saved is not None:
+                    link.write_text(saved)
+        self.assertEqual(self.identity()["head"], self.head)
 
     def test_a_dangling_link_in_sigobj_is_refused(self):
         self.product.unlink()

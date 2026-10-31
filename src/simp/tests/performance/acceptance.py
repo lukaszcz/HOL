@@ -626,13 +626,17 @@ def verify_builds(path, baseline, candidate):
             "shared run_paired results cannot satisfy this prerequisite"}
 
 
-def run_logged(command, output, fds, timeout):
+def run_logged(command, output, fds, timeout, stdin=None):
+    """Run `command` with its output in the new file `output`. The child
+    inherits this process's standard input unless `stdin` names another
+    (subprocess.DEVNULL, for a command that must never wait for a reader)."""
     expired = False
     code = None
     with Path(output).open("x") as stream:
         env = dict(os.environ, HOL4_PERF_LOCK_FDS=",".join(map(str, fds)))
         p = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
-                             pass_fds=fds, env=env, start_new_session=True)
+                             pass_fds=fds, env=env, start_new_session=True,
+                             stdin=stdin)
         try:
             code = p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:

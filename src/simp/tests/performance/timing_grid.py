@@ -47,6 +47,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -447,15 +448,27 @@ def git_keep(repo, table, commit):
 
 # What `prepare` runs, in the repository root: the real build, up to the
 # parallel builds, which Holmake judges (it rebuilds what is out of date and
-# leaves the rest).
-BUILD = ("bin/build", "--seq=tools/sequences/upto-parallel")
+# leaves the rest), with the standard kernel. It never rebuilds bin/hol,
+# bin/Holmake and bin/build, which configure makes (`CONFIGURE`).
+BUILD = ("bin/build", "--stdknl", "--seq=tools/sequences/upto-parallel")
+CONFIGURE = "poly < tools/smart-configure.sml"
+# The warning bin/build prints, and then waits on its standard input, when
+# one of those executables is older than a source of it
+# (tools/build/buildutils.sml, check_against).
+STALE = "WARNING! WARNING!"
 # The products a measurement loads from the checkout besides the sources the
 # harness takes per side from git (the simplifier's, below src/simp/src): the
-# executable, the heap and everything the heap's libraries load from sigobj.
-PRODUCTS = ("bin/hol", "bin/hol.state0")
+# executable, the heap, the Holmake that compiles the fixtures, everything the
+# heap's libraries load from sigobj and the theory data files below
+# src/**/.hol/objs. The Poly/ML runtime and libraries are not here: each
+# cell's manifest records them among its tools.
+PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/Holmake")
 PREPARE = "run prepare at this commit"
 # A build from nothing takes the better part of an hour.
 BUILD_TIMEOUT = 4 * 3600
+# The exit status of a command that was refused or ended with an error, and
+# so decided nothing; 0, 1 and 2 are those of a grid (`status_code`).
+REFUSED = 3
 
 
 def file_sha256(path):
@@ -467,9 +480,11 @@ def file_sha256(path):
 
 
 def products_digest(repo):
-    """The content of the shared products a measurement loads: bin/hol,
-    bin/hol.state0 and every file below sigobj, symlinks followed, as the
-    sha256 of their sorted names and content seals. Times play no part."""
+    """The content of the shared products a measurement loads: `PRODUCTS`,
+    every file below sigobj (symlinks followed) and the theory data files
+    below src/**/.hol/objs, as the sha256 of their sorted names and content
+    seals. Times play no part. A product, or a link's target, outside the
+    repository is refused: the stamp binds this checkout's products only."""
     repo = Path(repo)
     found = {name: repo / name for name in PRODUCTS}
     top = repo / "sigobj"
@@ -483,8 +498,14 @@ def products_digest(repo):
         for name in files:
             path = Path(folder) / name
             found[path.relative_to(repo).as_posix()] = path
+    for path in sorted((repo / "src").glob("**/.hol/objs/*.dat")):
+        found[path.relative_to(repo).as_posix()] = path
+    inside = Path(os.path.realpath(repo))
     digest = hashlib.sha256()
     for name in sorted(found):
+        a.require(Path(os.path.realpath(found[name])).is_relative_to(inside),
+                  "a product resolves outside the repository: %s (to %s)"
+                  % (found[name], os.path.realpath(found[name])))
         a.require(found[name].is_file(), "no product to measure with: "
                   + str(found[name]))
         digest.update(("%s\0%s\n" % (name, file_sha256(found[name]))).encode())
@@ -502,25 +523,29 @@ def clean_head(repo):
 
 def build_stamp(repo):
     """What `prepare` records after a build that succeeded: HEAD, the seal
-    of the tree outside the performance area, and the content digest of the
-    shared products."""
-    return dict(clean_head(repo), products=products_digest(repo))
+    of the tree outside the performance area, the content digest of the
+    shared products and the build command."""
+    return dict(clean_head(repo), products=products_digest(repo),
+                build=list(BUILD))
 
 
 def checkout_identity(repo, commit=None, stamp=None):
     """The checkout a measurement runs in: HEAD is the commit measured (HEAD
     itself when `commit` is None), the tree is clean, and the tree outside
     the performance area and the shared products are those `prepare` stamped
-    (`stamp`, a file). The simplifier's sources below src/simp/src are taken
-    per side from git; everything else the measurement loads comes from the
-    heap, bin/hol and sigobj, and the stamp binds exactly those. Holmake, not
-    this module, judges whether a build is out of date: the comparison is of
-    contents, so a commit that touches only the performance area, a checkout
-    round trip to the same tree and a touched heap pass, while an edited
-    product or a changed source outside the performance area is refused until
-    `prepare` is run again. The stamp is a discipline and not a proof of
-    provenance: it shows the products are those present when a build exited
-    cleanly at this tree."""
+    (`stamp`, a file). It is the record of a grid: HEAD, the tree seal and
+    the products digest. The simplifier's sources below src/simp/src are
+    taken per side from git; the stamp binds the products named at
+    `PRODUCTS` and `products_digest`: bin/hol, bin/hol.state0, bin/Holmake,
+    sigobj and the theory data files. It does not bind the Poly/ML runtime
+    and libraries, which each cell's manifest records among its tools.
+    Holmake, not this module, judges whether a build is out of date: the
+    comparison is of contents, so a commit that touches only the performance
+    area, a checkout round trip to the same tree and a touched heap pass,
+    while an edited product or a changed source outside the performance area
+    is refused until `prepare` is run again. The stamp is a discipline and
+    not a proof of provenance: it shows the products are those present when
+    a build exited cleanly at this tree."""
     repo = Path(repo)
     head = a.git(repo, "rev-parse", "HEAD")
     a.require(commit is None or head == commit,
@@ -534,16 +559,47 @@ def checkout_identity(repo, commit=None, stamp=None):
     except ValueError:
         made = None
     a.require(isinstance(made, dict) and sorted(made) == [
-        "head", "products", "tree_outside_performance"],
+        "build", "head", "products", "tree_outside_performance"],
         "malformed build stamp %s: %s" % (stamp, PREPARE))
+    a.require(made["build"] == list(BUILD),
+              "the build stamp is of another build command, %s: %s"
+              % (made["build"], PREPARE))
     a.require(made["tree_outside_performance"] ==
               found["tree_outside_performance"],
               "the tree outside the performance area is not the one the "
               "build was made from: " + PREPARE)
-    a.require(made["products"] == products_digest(repo),
-              "bin/hol, bin/hol.state0 or sigobj differ from the stamped "
-              "build: " + PREPARE)
-    return found
+    products = products_digest(repo)
+    a.require(made["products"] == products,
+              "the products (bin/hol, bin/hol.state0, bin/Holmake, sigobj, "
+              "the theory data files) differ from the stamped build: "
+              + PREPARE)
+    return dict(found, products=products["sha256"])
+
+
+def configured_holdir(repo):
+    """The HOLDIR that configure wrote into tools/Holmake/Systeml.sml, which
+    every executable of the checkout (bin/hol, bin/Holmake, bin/build) and
+    the build work from; it must be this repository."""
+    repo = Path(repo)
+    path = repo / "tools" / "Holmake" / "Systeml.sml"
+    a.require(path.is_file(), "the checkout is not configured (%s): run %s "
+              "in %s, then prepare" % (path, CONFIGURE, repo))
+    found = [m.group(1) for m in (
+        re.match(r'val HOLDIR\s*=\s*"(.*)"\s*$', line)
+        for line in path.read_text().splitlines()) if m]
+    a.require(len(found) == 1, "no single HOLDIR in %s: run %s in %s, then "
+              "prepare" % (path, CONFIGURE, repo))
+    a.require(Path(found[0]).resolve() == repo.resolve(),
+              "the checkout is configured for %s, not for %s (a moved or "
+              "copied tree): run %s here, then prepare"
+              % (found[0], repo.resolve(), CONFIGURE))
+
+
+def stale_executable_warning(log):
+    """Whether the log of a build holds the warning bin/build prints when
+    bin/hol, bin/Holmake or bin/build is older than a source of it."""
+    with Path(log).open(errors="replace") as stream:
+        return any(STALE in line for line in stream)
 
 
 def git_tree_outside(repo, rev):
@@ -1590,27 +1646,38 @@ class Grid:
                 % (found, inventory["checkout"]))
 
     def prepare(self, args):
-        """Build the checkout and stamp it. It needs a clean checkout, runs
-        the real build (`BUILD`, in the repository root; Holmake decides
-        what is out of date) under the lock, and only when that exits zero
-        and leaves the checkout clean writes the stamp: HEAD, the tree
-        outside the performance area, and the content digest of the shared
-        products. An earlier stamp is removed first, so that a failed or
-        interrupted build leaves none. The measuring commands compare the
-        checkout with the stamp and never read a file time."""
+        """Build the checkout and stamp it. It needs a clean checkout,
+        configured here (it does not run configure), runs the real build
+        (`BUILD`, in the repository root; Holmake decides what is out of
+        date) under the lock with no standard input, and only when that
+        exits zero without the stale-executable warning and leaves the
+        checkout clean writes the stamp: HEAD, the tree outside the
+        performance area, the content digest of the shared products and the
+        build command. An earlier stamp is removed first, so that a failed or
+        interrupted build leaves none. The log is `prepare.log` beside the
+        ledger, replaced by the next `prepare`. The measuring commands
+        compare the checkout with the stamp and never read a file time."""
         t = self.t
         a.require(t.fixed_seconds, "%s takes no build stamp" % t.label)
         repo = Path(args.repo).resolve()
         stamp = self.h.stamp_path(repo)
         self.h.attempts_file(args, True)  # the ledger place, while cheap
         before = clean_head(repo)
+        configured_holdir(repo)
         with self.h.locked(repo) as fds:
             stamp.unlink(missing_ok=True)
-            log = unused(stamp.with_name("prepare-%s.log" % utc_now().replace(
-                "-", "").replace(":", "")))
+            log = stamp.with_name("prepare.log")
+            log.unlink(missing_ok=True)
             built = a.run_logged(
                 ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"', "prepare",
-                 str(repo), *BUILD], log, fds, args.timeout)
+                 str(repo), *BUILD], log, fds, args.timeout,
+                stdin=subprocess.DEVNULL)
+            a.require(not stale_executable_warning(log),
+                      "bin/build warned that an executable is older than "
+                      "its sources, so bin/hol or bin/Holmake may not be "
+                      "the product of this tree, no build stamp: run %s in "
+                      "%s and prepare again (see %s)"
+                      % (CONFIGURE, repo, log))
             a.require(built["exit"] == 0 and not built["timed_out"],
                       "the build failed (exit %s%s), no build stamp: see %s"
                       % (built["exit"], ", timed out" if built["timed_out"]
@@ -1633,18 +1700,21 @@ class Grid:
         return 0
 
     def check_checkout(self, inventory, repo=None):
-        """The recorded checkout names the candidate, and its tree outside
-        the performance area is what git gives for the candidate. That is
-        all a replay can know: not that the checkout was so at the time of
-        the run, which the stamp, the lock and the ledger make a discipline
-        of the run."""
+        """The recorded checkout names the candidate, its tree outside the
+        performance area is what git gives for the candidate, and it holds
+        the digest of the products. That is all a replay can know: not that
+        the checkout was so at the time of the run, which the stamp, the lock
+        and the ledger make a discipline of the run, nor what the products
+        were, which only the machine that measured can compare."""
         if not self.t.fixed_seconds:
             return
         repo = a.HERE.parents[3] if repo is None else repo
         found = inventory.get("checkout")
         a.require(isinstance(found, dict) and sorted(found) == [
-            "head", "tree_outside_performance"] and
+            "head", "products", "tree_outside_performance"] and
             found["head"] == inventory["candidate"] and
+            isinstance(found["products"], str) and
+            len(found["products"]) == 64 and
             found["tree_outside_performance"] == git_tree_outside(
                 repo, inventory["candidate"]), "changed checkout")
 
