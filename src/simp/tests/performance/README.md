@@ -32,6 +32,16 @@ applies the policy owner's disposition (13 cells unresolvable on this host,
 `evidence/task29a/` and
 [`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
 
+`timing_grid.py` is the TASK29A grid as a parameterized engine (`PROTOCOL.md`,
+"Shared timing grid"); `task29a_grid.py` and `task30_grid.py` are its tables.
+`task30_grid.py` covers the 24 exclusion and history cases at six sizes (144
+cells): `pilot` and `predeclare` produce the develop-only batch counts that
+are committed as `task30_iterations.json` before any candidate observation,
+`run`, `extend` and `replay` follow TASK29A, and the exit status is zero only
+when every cell passes. The exact-allocation counterpart is
+`allocation_matrix.py run --task task30` (23 cases; `history_theory_change`
+is outside it, see `TASK_29B_allocation_counter.md`).
+
 Fresh post-workload actual object/code/pool diagnostics are documented in
 [`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md). The subsequent
 [`RUNTIME_POOLS.md`](RUNTIME_POOLS.md) supplies all previously omitted split

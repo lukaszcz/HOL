@@ -257,6 +257,78 @@ like a slowdown or speedup at a fixed layout (`evidence/task29a/attribution/`).
   inconclusive cell blocks. `--record` writes `disposition.json`, and
   later runs check it.
 
+#### Shared timing grid and the TASK30 table
+
+`timing_grid.py` is the TASK29A grid with the task-specific parts removed.
+A task supplies a `Table` (cases, batch seconds, predeclared counts file,
+sealed code, historical seals); the policy, the layout randomization, the
+second stage, the archives, `--resume` and `replay` are the ones above and do
+not change. `task29a_grid.py` is its TASK29A table plus the TASK29A
+disposition; `task30_grid.py` is the TASK30 table (24 cases, 144 cells) and
+has no disposition.
+
+- **Cells.** The sizes of a case come from the matrix ledger. A cell is
+  `case-size`.
+- **Predeclared counts.** Every process of a cell runs one batch count,
+  chosen before any candidate observation from develop-only processes.
+  `pilot` runs, for each cell, a baseline-versus-baseline experiment
+  (`--pairs`, `--samples`, default ten and three) with free calibration and
+  archives it losslessly; no candidate and no layout seed take part.
+  `predeclare --grid PILOT --output FILE` writes
+  `HEADROOM * max(final calibration count)` rounded to a power of two (the
+  rule of TASK29A, `HEADROOM` 2) for each cell, with the per-cell batch
+  seconds, and refuses to overwrite. The file is reviewed and committed
+  before the first candidate observation; a run refuses counts that differ
+  from the table's cells or seconds, and every replay checks them against
+  the committed file.
+- **Batch seconds.** A table gives all cells one calibration target and may
+  name a longer one for cases whose single operation is tiny, so that a
+  batch stands clear of the per-batch overhead (the ten direct deletions of
+  TASK30 use 1 s, the others 0.3 s). The seconds are part of the counts
+  file, checked by `run`, and used again by `replay`.
+- **Decisions.** `run` prints, and the exit status reflects, five separate
+  lists: pass; *fail*; *inconclusive*; *control-limited* (every open metric
+  is inconclusive only because its B/B control is outside the window);
+  *protocol* (no admitted measurement). The exit status is zero only when
+  every cell and the retained slope pass, one when anything failed, two
+  otherwise. The lists are derived from `decisions.json` and `replay`
+  prints them again. No cell is excused: a task that accepts a
+  non-passing cell does so in a separate, reviewed table (as TASK29A did),
+  outside the engine.
+- **Whole operations.** The timed operation is the fixture's complete
+  `run`, and its result is verified in the same process, so work cannot move
+  into unmeasured preprocessing: a batch contains the construction or call
+  being gated and whatever it needs. The fixtures assert the callback
+  counts of the maker and collector cases (`history_collectors`,
+  `history_makers`) exactly and check the resulting simpset of every
+  deletion; they do not count scans, and production records none. The
+  structural work is therefore gated by the allocation matrix
+  (`allocation_matrix.py --task task30`), which brackets setup, first and
+  steady operation and verification and compares exact allocation words and
+  their size slopes between the sides.
+- **Pilot method for a new task.**
+
+      python3 -B task30_grid.py pilot --output OUT/pilot \
+          --authorize-measurements
+      python3 -B task30_grid.py predeclare --grid OUT/pilot \
+          --output OUT/task30_iterations.json
+
+  The pilot needs the exclusive measurement window, like `run`.
+  `OUT/pilot/inventory.json` lists every archive and its calibration counts.
+  Review the counts file, then copy it to `task30_iterations.json` and commit
+  it with the table before the candidate is measured.
+- **Grid.**
+
+      python3 -B task30_grid.py run --candidate SHA --layout-seed SEED \
+          --pairs 20 --samples 5 --output OUT/grid --authorize-measurements
+      python3 -B task30_grid.py extend --grid OUT/grid --output OUT/stage2 \
+          --authorize-measurements
+      python3 -B task30_grid.py replay --output OUT/stage2
+
+  A first stage without `--layout-seed` is refused for TASK30. `--resume`
+  continues an interrupted `run` or `extend`; `replay --partial` replays the
+  finished cells of an interrupted one.
+
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived
 results are revalidated through the existing schema and source-binding auditor,
