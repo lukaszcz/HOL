@@ -41,8 +41,9 @@ the layout seed, pairs and samples of the table, that are committed as
 checks the file against its pilot), `run`, `extend` and `replay` follow
 TASK29A and take the pilot (every run is recorded in the table's attempts
 ledger, `.agent-files/evidence/task30/attempts.jsonl`, and a measurement
-needs a clean checkout at the candidate); `close` replays this gate and the
-allocation gate and prints one verdict. A candidate whose source files on the
+needs a clean checkout at the candidate, built by `prepare`); `close`
+replays this gate and the allocation gate and prints one verdict. A
+candidate whose source files on the
 path differ from the baseline's is never a pass unless the difference is a
 pinned, reviewed one (`task30_pins.PINNED`), and the exit status is zero only
 when every cell passes. The exact-allocation counterpart
