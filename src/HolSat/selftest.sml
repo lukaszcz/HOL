@@ -90,6 +90,15 @@ local
     (fn () => List.all (fn error =>
       callback_case NONE "UNSAT\n" NONE (SOME error) GEN_SAT (raised error))
       [primary, Interrupt, Timeout.TIMEOUT duration])
+  val _ = control "MiniSat failure preserves unrelated fixed trace files"
+    (fn () =>
+      let val path = "resolve_trace"
+          val existed = exists path
+          val _ = if existed then () else put path "caller owned\n"
+      in dimacsTools.with_cleanup
+           (fn () => if existed then () else dimacsTools.clean_files [path])
+           (fn () => failed primary andalso exists path) ()
+      end)
   val _ = control "SAT callback cleanup preserves caller-owned files"
     (fn () =>
       let val input = OS.FileSys.tmpName ()
@@ -116,6 +125,27 @@ local
         (fn Exn.Exn (SAT_cex _) => true | _ => false) andalso
       callback_case NONE "SAT -1 -2 0\n" NONE NONE GEN_SAT
         (fn Exn.Exn satTools.satCheckError => true | _ => false))
+
+  val _ = control "SAT observation scopes retire on failure and reject reentry"
+    (fn () =>
+      let fun reset error =
+            let val failed = Exn.capture satTools.with_solver_statistics
+                  (fn () => raise error)
+                val (value,stats) = satTools.with_solver_statistics
+                  (fn () => 17)
+            in raised error failed andalso value = 17 andalso
+               #external_calls stats = 0 andalso #internal_calls stats = 0
+            end
+          val ((rejected,_),_) = satTools.with_solver_statistics (fn () =>
+            let val denied =
+                  ((satTools.with_solver_statistics (fn () => ()); false)
+                   handle HOL_ERR e =>
+                     Feedback.top_structure_of e = "satTools" andalso
+                     Feedback.top_function_of e = "with_solver_statistics"
+                     andalso Feedback.message_of e = "observation reentry")
+            in (denied,()) end)
+      in rejected andalso List.all reset
+           [primary,Interrupt,Timeout.TIMEOUT duration] end)
 
   (* Keep the legacy ordinary-I/O classification; only terminal I/O causes
      must escape rather than being classified as an UNSAT response. *)
@@ -354,6 +384,94 @@ local
         val _ = OS.FileSys.remove input
       in Exn.release result end)
 
+  val _ = control "ordinary DIMACS endpoints and caller-owned files"
+    (fn () =>
+      let val input = OS.FileSys.tmpName ()
+          val output = input ^ "." ^ getSolverName minisatp
+          fun put text =
+            let val out = TextIO.openOut input
+            in dimacsTools.with_cleanup (fn () => TextIO.closeOut out)
+                 (fn () => TextIO.output (out,text)) () end
+          fun exists () = OS.FileSys.access (input,[])
+      in dimacsTools.with_cleanup
+        (fn () => dimacsTools.clean_files
+          [input,output,output^".proof",output^".stats"])
+        (fn () =>
+          let val _ = put "p cnf 1 2\n1 0\n-1 0\n"
+              val problem = dimacsTools.readDimacs input
+              val conf = set_infile input base_config
+              val external =
+                if OS.FileSys.access (getSolverExe minisatp,
+                                      [OS.FileSys.A_EXEC]) then
+                  checked (mk_neg problem) (GEN_SAT conf) andalso exists ()
+                else true
+              val fallback = model (internal conf) problem andalso exists ()
+              val _ = put "p cnf 1 1\n1 0\n"
+              val sat = dimacsTools.readDimacs input
+          in external andalso fallback andalso
+             model (internal conf) sat andalso exists () end) ()
+      end)
+
+  (* Ordinary entries deliberately retain the historical explicit-CNF
+     polarity/model contract; the proof-only entry is not a replacement. *)
+  val _ = control "ordinary constant CNF keeps the zero-variable shortcut"
+    (fn () => List.all (fn oracle =>
+      let fun conf tm = set_flag_is_proved (not oracle) (config tm)
+          fun falsity tm =
+            (GEN_SAT (conf tm); false) handle SAT_cex th =>
+              checked (mk_neg tm) th
+      in checked T (GEN_SAT (conf T)) andalso falsity F andalso
+         checked ``T /\ T`` (GEN_SAT (conf ``T /\ T``)) andalso
+         falsity ``T /\ F`` end) [false,true])
+
+  val _ = control "ordinary compound CNF external and fallback contracts"
+    (fn () =>
+      let val unsat = ``(P:bool->bool) T /\ ~P T /\ P F /\ ~P F``
+          val sat = ``(P:bool->bool) T /\ ~P F``
+          val atom_goal = ``((P:bool->bool) T /\ P F) ==> P F``
+          val atom_bad = ``(P:bool->bool) T \/ P F``
+          fun legacy_compound tm =
+            ((GEN_SAT (internal (set_term tm base_config)); false)
+             handle HOL_ERR e =>
+               Feedback.top_structure_of e = "Term" andalso
+               Feedback.top_function_of e = "dest_const" andalso
+               Feedback.message_of e = "not a const")
+      in (if OS.FileSys.access (getSolverExe minisatp,
+                                 [OS.FileSys.A_EXEC]) then
+            checked (mk_neg unsat) (GEN_SAT (config unsat)) andalso
+            ((GEN_SAT (config sat); false) handle UNCHANGED => true)
+          else true) andalso
+         legacy_compound atom_goal andalso legacy_compound atom_bad andalso
+         (* Legacy fallback proves the positive CNF, hence a refutable CNF
+            raises a checked counterexample, not a refutation theorem. *)
+         measured (internal (config cnf)) (fn conf => model conf cnf) andalso
+         measured (internal (set_flag_is_proved false
+                     (set_term valid base_config)))
+           (fn conf => checked valid (GEN_SAT conf))
+      end)
+
+  val _ = control "compact malformed pivot preserves the old diagnostic"
+    (fn () => with_trace (roots @ [5,20,1,0]) (fn _ =>
+      let val x = mk_var ("sat_diagnostic", bool)
+          val atom = ``p /\ q``
+          val source = mk_conj (atom, mk_neg atom)
+          val premise = ASSUME source
+          val clauses = Array.fromList
+            [(x, CONJUNCT1 premise), (mk_neg x, CONJUNCT2 premise)]
+          val lfn = Redblackmap.insert
+            (Redblackmap.mkDict Term.var_compare, x, atom)
+      in (minisatParse.replayProof (Array.fromList [T,x]) 2 "unused"
+            minisatp 1 clauses lfn (SOME trace); false)
+         handle HOL_ERR e => Feedback.message_of e = "mk_sat_var10\n"
+      end))
+
+  val _ = control "ordinary false obligations are never certified"
+    (fn () => List.all (fn bytes => with_trace bytes (fn conf =>
+      let val th = GEN_SAT (set_term ``p /\ q`` conf)
+      in not (concl th ~~ ``~(p /\ q)``) andalso null (hyp th) end
+      handle HOL_ERR _ => true | Domain => true | Subscript => true
+           | SAT_cex _ => true))
+      [[2,0,0], roots, roots @ forward, roots @ backward])
   val _ = if not (OS.FileSys.access (getSolverExe minisatp,
                                      [OS.FileSys.A_EXEC])) then () else
     let

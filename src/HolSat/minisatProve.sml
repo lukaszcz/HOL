@@ -118,14 +118,16 @@ fun cleanup_solver_files solver infile tmpname in_name =
     if isSome infile then ()
     else
       let val solver_name = getSolverName solver in
-        clean_files [
-          "resolve_trace",                 (* in case using ZChaff *)
+        (* Only ZChaff writes this fixed-name trace.  In particular, a
+           MiniSat callback failure must not delete a caller's file. *)
+        clean_files ((if solver_name = "zchaff" then ["resolve_trace"]
+                      else []) @ [
           in_name,                                          (* CNF *)
           tmpname,(* tmpfile(created by Poly/ML, but not MoscowML) *)
           in_name^"."^solver_name,                (* result/status *)
           in_name^"."^solver_name^".proof",               (* proof *)
           in_name^"."^solver_name^".stats"
-        ]
+        ])
       end
 (* then raise exception if countermodel was found,
    else deduce input term from solver's result *)
@@ -144,16 +146,26 @@ fun finalise is_cnf th =
 (* if is_cnf, then assume tm \equiv ~s where s is in CNF                *)
 (* if CNF conversion found true or false, return theorem directly       *)
 exception initexp of thm;
-fun initialise infile is_cnf tm =
-    let val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
+fun initialise check_sat_model infile is_cnf tm =
+    let
+        fun prepare tm =
+            let val (cnfv,vc,lfn,clauses) = to_cnf is_cnf tm
+                (* The ordinary explicit-CNF entry historically uses the
+                   zero-free-variable shortcut, even for T/F clauses.
+                   Counting compound atoms must not change that contract.
+                   Proof-only callers instead refute the prepared clauses. *)
+                val vc = if check_sat_model andalso is_cnf andalso
+                            null (free_vars tm) then 0 else vc
+            in (cnfv,vc,lfn,clauses) end
+        val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
             (if isSome infile
              then let val fname = valOf infile
                       val (tm,svm,sva) = genReadDimacs fname
                       val (cnfv,vc,lfn,clauseth) =
-                          profile_stage "cnf" (to_cnf is_cnf) (mk_neg tm)
+                          profile_stage "cnf" prepare (mk_neg tm)
                   in (cnfv,vc,svm,sva,"",fname,mk_neg tm,lfn,clauseth) end
              else let val (cnfv,vc,lfn,clauseth) =
-                          profile_stage "cnf" (to_cnf is_cnf) (mk_neg tm)
+                          profile_stage "cnf" prepare (mk_neg tm)
                       val (tmpname,cnfname,sva,svm) =
                           profile_stage "dimacs"
                             (generateDimacs (SOME vc) tm (SOME clauseth))
@@ -181,7 +193,8 @@ fun GEN_SAT_WITH check_sat_model conf =
                 else ()
         val _ = sat_trace "CNF start"
         val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
-            profile_stage "initialise" (initialise infile is_cnf) tm
+            profile_stage "initialise"
+              (initialise check_sat_model infile is_cnf) tm
     in with_cleanup
          (fn () => cleanup_solver_files solver infile tmpname in_name)
          (fn () =>
