@@ -418,6 +418,103 @@ struct
                #simp bounded,#prove bounded];
              require "deleted suffix rewrite survived"
                (declines (fn () => SOME (#simp bounded deleted_goal))))) ()
+        (* Task53: deletion keys are matched against actual generated
+           names, NOT the unsuffixed source name. Compare the selected
+           consumer, including full public tags and competing-source Hyp. *)
+        fun compare label ss target hypotheses =
+          let
+            val native = simpLib.SIMP_PROVE ss [] target
+            val procedures = SmtDatatypeProve.checked_procedures_using
+              (fn () => ss) (fn _ => raise Conv.UNCHANGED) false
+              (A.new_term_check {limit=64,observe=fn () => ()})
+            fun same th =
+              require ("rewrite name/priority mismatch: " ^ label)
+                (Thm.concl th ~~ target andalso
+                 HOLset.equal (Thm.hypset th,
+                   HOLset.addList (Term.empty_tmset,hypotheses)) andalso
+                 Tag.dest_tag (Thm.tag th) = Tag.dest_tag (Thm.tag native)
+                 andalso Tag.axioms_of (Thm.tag th) =
+                   Tag.axioms_of (Thm.tag native))
+            (* The complete provers use different existing Boolean closing
+               laws (REFL_CLAUSE/EQ_REFL). Compare ALL dependency tags at the
+               actual source-projection boundary, before that closing step. *)
+            val redex = boolSyntax.lhs target
+            val expected = simpLib.SIMP_CONV ss [] redex
+            val projected = #with_simpset procedures
+              (fn ss => simpLib.SIMP_CONV ss [] redex)
+            val _ = require ("rewrite source dependency tags: " ^ label)
+              (Thm.concl expected ~~ target andalso
+               Thm.concl projected ~~ target andalso
+               HOLset.equal (Thm.hypset projected,Thm.hypset expected) andalso
+               Tag.dest_tag (Thm.tag projected) =
+                 Tag.dest_tag (Thm.tag expected) andalso
+               Tag.axioms_of (Thm.tag projected) =
+                 Tag.axioms_of (Thm.tag expected) andalso
+               Tag.dep_of (Thm.tag projected) = Tag.dep_of (Thm.tag expected))
+          in same native;List.app (fn prove => same (prove target))
+               [#simp procedures,#prove procedures] end
+        val stem = "history_names"
+        (* Two-field keys require an ANCESTOR, not the current theory. *)
+        val thy = "bool"
+        fun named_case name th = simpLib.rewrites_with_names
+          [({Thy=thy,Name=name},th)]
+        val name_bundle = Thm.CONJ g h
+        val named_ss = simpLib.++ (srw_ss (),named_case stem name_bundle)
+        fun deletion ss (key,keep_g,keep_h) =
+          let
+            val ss = simpLib.remove_simps [key] ss
+            val procedures = SmtDatatypeProve.checked_procedures_using
+              (fn () => ss) (fn _ => raise Conv.UNCHANGED) false
+              (A.new_term_check {limit=64,observe=fn () => ()})
+            fun check (target,live) = if live then
+                compare key ss target []
+              else List.app (fn prove => require
+                ("deleted rewrite survived: " ^ key)
+                (declines (fn () => SOME (prove target))))
+                [simpLib.SIMP_PROVE ss [],#simp procedures,#prove procedures]
+          in List.app check [(goal,keep_g),(hgoal,keep_h)] end
+        val _ = List.app (deletion named_ss)
+          [("rewrite:" ^ stem,true,true),
+           (thy ^ ".rewrite:" ^ stem,true,true),
+           ("rewrite:" ^ stem ^ ".1",false,true),
+           (thy ^ ".rewrite:" ^ stem ^ ".1",false,true),
+           (stem ^ ".1",false,true),(stem ^ ".2",true,false),
+           (thy ^ "." ^ stem,false,false),
+           ("list." ^ stem,true,true),(stem,false,false),
+           (stem ^ ".01",true,true),(stem ^ ".",true,true),
+           (stem ^ "s",true,true)]
+        val dotted = simpLib.++ (srw_ss (),named_case (stem ^ ".1") name_bundle)
+        val _ = List.app (deletion dotted)
+          [(stem ^ ".1",false,false),(stem,false,false),
+           ("rewrite:" ^ stem ^ ".1",true,true),
+           (thy ^ "." ^ stem ^ ".1",false,false)]
+        val anonymous = simpLib.++ (srw_ss (),simpLib.rewrites [name_bundle])
+        val _ = List.app (deletion anonymous)
+          [("<anonymous>",false,false),("rewrite:<anonymous>",false,false),
+           ("<anonymous>.1",true,true),
+           (thy ^ ".<anonymous>",true,true)]
+        val old_hyp = ``history_old:bool``
+        val new_hyp = ``history_new:bool``
+        fun marked tag hyp = Thm.add_tag
+          (Tag.read tag,Drule.ADD_ASSUM hyp g)
+        val old = marked "Task53_old" old_hyp
+        val newer = marked "Task53_new" new_hyp
+        val old_ss = simpLib.++ (srw_ss (),named_case stem old)
+        val newer_ss = simpLib.++ (old_ss,named_case (stem ^ ".1") newer)
+        val _ = compare "newest addition" newer_ss goal [new_hyp]
+        val _ = compare "prefixed parent no-op with competing sources"
+          (simpLib.remove_simps ["rewrite:" ^ stem] newer_ss) goal [new_hyp]
+        val _ = compare "dotted source removed, parent child 2 survives"
+          (simpLib.remove_simps [stem ^ ".1"]
+            (simpLib.++ (named_ss,named_case (stem ^ ".1") newer))) hgoal []
+        val _ = compare "first source in fragment"
+          (simpLib.++ (srw_ss (),simpLib.rewrites_with_names
+            [({Thy=thy,Name=stem},old),
+             ({Thy=thy,Name=stem},newer)])) goal [old_hyp]
+        val _ = compare "deleted then readded same name"
+          (simpLib.++ (simpLib.remove_simps [stem] old_ss,
+             named_case stem newer))
+          goal [new_hyp]
         val once = BoundedRewrites.Once g
         val duplicated = simpLib.++ (srw_ss (),simpLib.rewrites [once,once])
         val twice =

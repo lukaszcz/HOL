@@ -378,9 +378,19 @@ fun rewrite_sources (SS {history,...}) =
                             ci={name="rewrite:" ^ base,
                                 conval=fn _ => fn _ => Conv.NO_CONV}}
                         in not (name_match entry deleted) end
+                    (* Named entries ALWAYS have a generated suffix. Only
+                       a prefix covering every child can remove the source
+                       before canonicalization. In particular, the accepted
+                       key "rewrite:name" matches no child of "name". *)
+                    val removed = case name of
+                        NONE => not (active "")
+                      | SOME {Thy,Name} => List.exists (fn (thy,base) =>
+                          (thy = NONE orelse thy = SOME Thy) andalso
+                          String.isPrefix ("rewrite:" ^ base ^ ".")
+                            ("rewrite:" ^ Name ^ ".")) deleted
                     val selective = List.exists
                       (fn suffix => not (active ("." ^ suffix))) suffixes
-                  in if active "" then
+                  in if not removed then
                        SOME (rank,th,if selective then
                          SOME (fn n => active ("." ^ Int.toString n))
                          else NONE)
