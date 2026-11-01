@@ -479,7 +479,7 @@ struct
      both the `lhs` and the `rhs` are variables in `var_set`, then the `rhs`
      must not be "smaller" than the `lhs`. This is done to avoid ending up with
      circular definitions after they are all aggregated into the final theorem,
-     i.e. we want to avoid ending up with both `var1 = var2` and `var2 = var1`. *)
+     i.e. avoid both `var1 = var2` and `var2 = var1`. *)
   fun orient_def var_set (lhs, rhs) =
     if is_def_oriented var_set (lhs, rhs) then
       (lhs, rhs)
@@ -710,7 +710,8 @@ struct
                   (indices,ReplayG.node_id (#equation relation)))
               val proofs = List.foldl (fn (relation,table) =>
                 Redblackmap.insert (table,ReplayG.node_id (#equation relation),
-                  local_proof relation)) (Redblackmap.mkDict Int.compare) binders
+                  local_proof relation))
+                (Redblackmap.mkDict Int.compare) binders
               val edges = ReplayN.assemble_with_relations block plan
                 {assignment = witness,binder = binder_witness}
               val target = #target (List.last (ReplayN.equations plan))
@@ -870,15 +871,105 @@ struct
       val theta = List.map (fn theorem =>
         {redex = variable theorem, residue = theorem}) definitions
 
+      (* SUBST_CONV first replaces template variables by fresh holes using
+         Term.subst. Both kernels' substitution maps keep the last supplied
+         entry for a duplicate redex; only that hole selects a theorem in
+         SUBST. Search in that order, without inspecting unused residues. *)
+      val prospective_rules = List.rev (List.map (fn {redex,residue} =>
+        (redex, boolSyntax.rhs (Thm.concl residue), ref NONE)) theta)
+      fun residue_size (rhs, cached) = case !cached of SOME size => size
+        | NONE =>
+            let val size = case
+                  SmtReplayImport.bounded_raw_size limit rhs of
+                    SOME size => size | NONE => limit + 1
+            in cached := SOME size;size end
+      fun binder_refusal () = SmtResource.check_term_size_for
+        "BitVector" "binder-opening" (limit + 1)
+      fun prospective_refusal remaining =
+        (* An excessive output necessarily changes this admitted input.
+           At exhausted depth, the old worker reports the cycle BEFORE its
+           next input-size check. Preserve that first error without doing
+           the now-known unsafe substitution. *)
+        if remaining = 0 then raise error "cyclic definition expansion"
+        else binder_refusal ()
+
+      (* Exact simultaneous raw-node prediction, saturated at limit+1.
+         Opening is confined to the already admitted input, never a residue.
+         Shadowed variables are not replaced; capture renaming changes no
+         node counts. RHS sizes are lazy/memoized, not recursively rewritten.
+         A large binder result would hit the existing binder-opening gate
+         on the next iteration: refuse BEFORE native capture avoidance (and
+         before graph import can inspect the newly inserted annotations). *)
+      fun prospective_size remaining term =
+        let
+          fun add (left,right) =
+            if left > limit orelse right > limit - left then limit + 1
+            else left + right
+          fun selected _ [] = 1
+            | selected variable ((redex,rhs,cached)::rest) =
+                if Term.aconv variable redex then residue_size (rhs,cached)
+                else selected variable rest
+          fun walk shadowed term =
+            if Term.is_var term then
+              if List.exists (fn bound => Term.aconv bound term) shadowed
+              then 1 else selected term prospective_rules
+            else if Term.is_comb term then
+              let val (operator,operand) = Term.dest_comb term
+                  val left = walk shadowed operator
+                  val right = walk shadowed operand
+              in add (1,add (left,right)) end
+            else if Term.is_abs term then
+              let
+                val (bound,body) =
+                  SmtReplayImport.dest_abs_preserving_names term
+                val size = add (1,walk (bound::shadowed) body)
+                val _ = if size > limit then prospective_refusal remaining
+                        else ()
+              in size end
+            else 1
+        in walk [] term end
+
+      (* Outside binders, native SUBST inserts a residue once without
+         traversing it. Keep that ordinary path (including large outputs).
+         Find only the required binder islands, memoizing exposed source
+         applications by POINTER, not by whole-term comparison. Bounded
+         buckets keep collisions linear in the admitted input tree; losing
+         optional memo entries loses reuse, never a checked conversion. *)
+      fun admit_binder_insertions remaining root =
+        let
+          val seen = ref (Redblackmap.mkDict Int.compare)
+          fun visit term =
+            let
+              val key = SmtReplayImport.pointer_bucket 3 4093 term
+              val bucket = case Redblackmap.peek (!seen,key) of
+                  SOME terms => terms | NONE => []
+            in
+              if List.exists (fn old => Portable.pointer_eq (old,term))
+                  bucket then ()
+              else
+                (if List.length bucket < 8 then
+                   seen := Redblackmap.insert (!seen,key,term::bucket)
+                 else ();
+                 if Term.is_abs term then
+                   ignore (prospective_size remaining term)
+                 else if Term.is_comb term then
+                   let val (operator,operand) = Term.dest_comb term
+                   in visit operator;visit operand end
+                 else ())
+            end
+        in visit root end
+
       (* This adapter opens only an already bounded binder island. SUBST
-         handles lexical capture without making an expanded ABS proof. Its
-         template is admitted before every ordinary FVL/SUBST invocation. *)
+         handles lexical capture without making an expanded ABS proof. Both
+         its input and prospective output precede every native invocation. *)
       fun binder remaining term =
         let
           val _ = case SmtReplayImport.bounded_raw_size limit term of
               SOME _ => ()
             | NONE => SmtResource.check_term_size_for
                 "BitVector" "binder-opening" (limit + 1)
+          val _ = if prospective_size remaining term > limit then
+                    prospective_refusal remaining else ()
           val step = Drule.SUBST_CONV theta term term
           val right = boolSyntax.rhs (Thm.concl step)
         in
@@ -1042,18 +1133,28 @@ struct
         end
 
       fun normalize remaining term =
-        case SmtReplayImport.bounded_raw_size limit term of
-          NONE => graph_conversion term
-        | SOME _ =>
-            let
-              val step = Drule.SUBST_CONV theta term term
-              val right = boolSyntax.rhs (Thm.concl step)
-            in
-              if Term.aconv term right then Thm.REFL term
-              else if remaining = 0 then
-                raise error "cyclic definition expansion"
-              else Thm.TRANS step (normalize (remaining - 1) right)
-            end
+        let
+          val has_binder = ref false
+          (* Observe the existing raw-size pass, without a second scan of
+             binder-free syntax or any extra Type getter/admission. *)
+          val size = SmtReplayImport.bounded_raw_size_observing_binders
+            (fn () => has_binder := true) limit term
+        in
+          case size of NONE => graph_conversion term
+          | SOME _ =>
+              let
+                val _ = if !has_binder then
+                          admit_binder_insertions remaining term
+                        else ()
+                val step = Drule.SUBST_CONV theta term term
+                val right = boolSyntax.rhs (Thm.concl step)
+              in
+                if Term.aconv term right then Thm.REFL term
+                else if remaining = 0 then
+                  raise error "cyclic definition expansion"
+                else Thm.TRANS step (normalize (remaining - 1) right)
+              end
+        end
     in
       if List.null definitions then Thm.REFL target
       else normalize (List.length definitions) target
@@ -1117,7 +1218,8 @@ struct
         (!w:'a word n. n < dimword (:'a) ==> (w >>> n = w >>>~ n2w n))”
 
   val bit_field_insert_rwt = simpLib.SIMP_RULE
-        (simpLib.++(bossLib.bool_ss, boolSimps.LET_ss)) [] wordsTheory.bit_field_insert;
+        (simpLib.++(bossLib.bool_ss, boolSimps.LET_ss)) []
+        wordsTheory.bit_field_insert;
 
   val WORD_SIMP_TAC = let
     open Tactical Conv Tactic wordsTheory simpLib
@@ -1320,8 +1422,8 @@ struct
         else raise Feedback.HOL_ERR holerr
 
   (* Prove a nonlinear arithmetic goal using NLArith/SOSLib.
-     Type-dispatches: real → REAL_NLA then REAL_SOS, int → INT_SOS,
-     num → NUM_SOS_RULE.  Avoids trying wrong-type provers. *)
+     Type-dispatches: real to REAL_NLA then REAL_SOS, int to INT_SOS,
+     num to NUM_SOS_RULE. Avoids trying wrong-type provers. *)
   fun nla_prove tm =
     if term_contains_real_ty tm then
       NLArith.REAL_NLA tm

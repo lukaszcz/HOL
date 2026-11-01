@@ -438,6 +438,13 @@ struct
               val conditional = List.foldr (fn (hypothesis,result) =>
                 Thm.DISCH (G.representative graph hypothesis) result)
                 theorem hypotheses
+              (* Both callers complete at the EXACT representative of
+                 implication(prefix,node): ordinary realization checks its
+                 target pointer; BinderEquality ends at that same target.
+                 DISCH and R.implication retain the canonical antecedents
+                 and that shared suffix. ALPHA therefore compares only the
+                 new implication shells, never independent source DAGs.
+                 Keep this invariant if adding another retained-law caller. *)
               val closed = Thm.EQ_MP (Thm.ALPHA (Thm.concl conditional)
                 (G.representative graph law)) conditional
               val _ = if null (Thm.hyp closed) andalso clean closed then ()

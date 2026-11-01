@@ -20,6 +20,10 @@ sig
 
   (* The raw Term.term_size metric excludes the binder variable slot. *)
   val bounded_raw_size : int -> Term.term -> int option
+  (* The SAME raw visitor, with a local notification before each count-only
+     binder opening. No extra Type getter or semantic/FV opening grant. *)
+  val bounded_raw_size_observing_binders :
+    (unit -> unit) -> int -> Term.term -> int option
   (* Same metric; check the function Type before count-only opening of
      EVERY binder. The check must admit native classification of its range,
      not just its domain (standard count_body uses REFL/Beta at the range). *)

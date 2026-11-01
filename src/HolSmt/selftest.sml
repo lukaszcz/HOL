@@ -84863,10 +84863,12 @@ val _ = run_postlude 437 "replay-exception-lifecycle-8"
   SmtReplayLifecycleTests.run
 val _ = run_postlude 438 "solver-stream-cleanup-8"
   SmtSolverCleanupTests.run
+val _ = run_postlude 439 "replay-kernel-boundary-6"
+  SmtReplayKernelBoundaryTests.run
 
 val () =
   let
-    val expected = 439
+    val expected = 440
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso

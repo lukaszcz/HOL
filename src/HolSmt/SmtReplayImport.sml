@@ -153,6 +153,8 @@ struct
   fun bounded_size binder_slot limit root =
     bounded_size_program binder_slot (fn () => ()) limit root
   val bounded_raw_size = bounded_size false
+  fun bounded_raw_size_observing_binders observe =
+    bounded_size_observed_program (fn _ => ()) (fn () => ()) false observe
   fun bounded_raw_size_with_type_check check_type limit root =
     bounded_size_observed_program (check_type o Term.type_of)
       (fn () => ()) false (fn () => ()) limit root
