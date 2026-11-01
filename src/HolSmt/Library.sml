@@ -893,6 +893,16 @@ struct
         if remaining = 0 then raise error "cyclic definition expansion"
         else binder_refusal ()
 
+      (* Typed variable identity is metadata, not native aconv: independent
+         equal Type DAGs must not be unfolded during admission. Use the
+         graph's pointer-memoized Type interner only on a name collision. *)
+      val identities = G.new ()
+      fun same_variable left right =
+        Portable.pointer_eq (left,right) orelse
+        (#1 (Term.dest_var left) = #1 (Term.dest_var right) andalso
+         G.variable identities (G.root_scope identities) G.RigidSource left =
+         G.variable identities (G.root_scope identities) G.RigidSource right)
+
       (* Exact simultaneous raw-node prediction, saturated at limit+1.
          Opening is confined to the already admitted input, never a residue.
          Shadowed variables are not replaced; capture renaming changes no
@@ -900,32 +910,31 @@ struct
          A large binder result would hit the existing binder-opening gate
          on the next iteration: refuse BEFORE native capture avoidance (and
          before graph import can inspect the newly inserted annotations). *)
-      fun prospective_size remaining term =
+      fun prospective_size term =
         let
           fun add (left,right) =
             if left > limit orelse right > limit - left then limit + 1
             else left + right
           fun selected _ [] = 1
             | selected variable ((redex,rhs,cached)::rest) =
-                if Term.aconv variable redex then residue_size (rhs,cached)
+                if same_variable variable redex then residue_size (rhs,cached)
                 else selected variable rest
           fun walk shadowed term =
             if Term.is_var term then
-              if List.exists (fn bound => Term.aconv bound term) shadowed
+              if List.exists (fn bound => same_variable bound term) shadowed
               then 1 else selected term prospective_rules
             else if Term.is_comb term then
               let val (operator,operand) = Term.dest_comb term
                   val left = walk shadowed operator
-                  val right = walk shadowed operand
-              in add (1,add (left,right)) end
+              in
+                if left >= limit then limit + 1
+                else add (1,add (left,walk shadowed operand))
+              end
             else if Term.is_abs term then
               let
                 val (bound,body) =
                   SmtReplayImport.dest_abs_preserving_names term
-                val size = add (1,walk (bound::shadowed) body)
-                val _ = if size > limit then prospective_refusal remaining
-                        else ()
-              in size end
+              in add (1,walk (bound::shadowed) body) end
             else 1
         in walk [] term end
 
@@ -935,7 +944,8 @@ struct
          applications by POINTER, not by whole-term comparison. Bounded
          buckets keep collisions linear in the admitted input tree; losing
          optional memo entries loses reuse, never a checked conversion. *)
-      fun admit_binder_insertions remaining root =
+      exception ProspectiveBinder
+      fun admit_binder_insertions root =
         let
           val seen = ref (Redblackmap.mkDict Int.compare)
           fun visit term =
@@ -951,7 +961,8 @@ struct
                    seen := Redblackmap.insert (!seen,key,term::bucket)
                  else ();
                  if Term.is_abs term then
-                   ignore (prospective_size remaining term)
+                   if prospective_size term > limit then
+                     raise ProspectiveBinder else ()
                  else if Term.is_comb term then
                    let val (operator,operand) = Term.dest_comb term
                    in visit operator;visit operand end
@@ -968,7 +979,7 @@ struct
               SOME _ => ()
             | NONE => SmtResource.check_term_size_for
                 "BitVector" "binder-opening" (limit + 1)
-          val _ = if prospective_size remaining term > limit then
+          val _ = if prospective_size term > limit then
                     prospective_refusal remaining else ()
           val step = Drule.SUBST_CONV theta term term
           val right = boolSyntax.rhs (Thm.concl step)
@@ -979,7 +990,7 @@ struct
           else Thm.TRANS step (binder (remaining - 1) right)
         end
 
-      fun graph_conversion root =
+      fun graph_conversion initial_step root =
         let
           val graph = G.new ()
           val scope = G.root_scope graph
@@ -1031,26 +1042,63 @@ struct
                         in (DefinitionApplication
                           {operator = operator, operand = operand,
                            result = result}, result) end
-                    | G.OpaqueRetained =>
-                        let
-                          val term = G.representative graph node
-                          val theorem = binder (List.length definitions) term
-                          val right = boolSyntax.rhs (Thm.concl theorem)
-                        in
-                          if Portable.pointer_eq (term, right) then
-                            (DefinitionLeaf, node)
-                          else
-                            let val result = #node (source right)
-                            in (DefinitionReplacement
-                              {fact = fact theorem, rhs = result,
-                               result = result}, result) end
-                        end
+                    | G.OpaqueRetained => discover_binder node
                     | _ => (DefinitionLeaf, node)
                   val _ = steps := Redblackmap.insert
                     (!steps, G.node_id node, (step, result))
                   val _ = active := Redblackset.delete (!active, G.node_id node)
                 in result end
-          val result = discover (#node original)
+          and discover_binder node =
+            let
+              val term = G.representative graph node
+              val theorem = binder (List.length definitions) term
+              val right = boolSyntax.rhs (Thm.concl theorem)
+            in
+              if Portable.pointer_eq (term,right) then
+                (DefinitionLeaf,node)
+              else
+                let val result = #node (source right)
+                in (DefinitionReplacement
+                  {fact = fact theorem,rhs = result,result = result},result)
+                end
+            end
+          (* On an unsafe prospective insertion, probe the virtual next
+             root in ORIGINAL graph order, not with a global cycle scan.
+             Source applications need only ordered visits: never construct
+             their virtually substituted terms. A selected RHS is raw, so
+             discover (not probe) must visit it; a source binder still owes
+             the initial simultaneous layer. These phases have distinct
+             memos even when they share the same original graph node.
+             Imports/checked raw discovery retain their existing ownership;
+             only admitted binder islands may execute native substitution.
+             This path fails before root proof assembly or realization. *)
+          val probed = ref (Redblackset.empty Int.compare)
+          fun probe node =
+            if Redblackset.member (!probed,G.node_id node) then ()
+            else
+              let
+                val _ = case G.view graph node of
+                    G.Variable (G.RigidSource,_) =>
+                      (case Redblackmap.peek (!rules,G.node_id node) of
+                         SOME (right,_) => ignore (discover right)
+                       | NONE => ())
+                  | G.Application (operator,operand) =>
+                      (probe operator;probe operand)
+                  | G.OpaqueRetained =>
+                      let
+                        val term = G.representative graph node
+                        val _ = if prospective_size term > limit then
+                                  binder_refusal () else ()
+                        val step = Drule.SUBST_CONV theta term term
+                        val right = boolSyntax.rhs (Thm.concl step)
+                      in ignore (binder (List.length definitions) right) end
+                  | _ => ()
+                val _ = probed := Redblackset.add (!probed,G.node_id node)
+              in () end
+          val result = if initial_step then
+              (probe (#node original);
+               raise error "prospective binder probe did not fail")
+            else discover (#node original)
         in
           if result = #node original then Thm.REFL root
           else
@@ -1140,12 +1188,18 @@ struct
           val size = SmtReplayImport.bounded_raw_size_observing_binders
             (fn () => has_binder := true) limit term
         in
-          case size of NONE => graph_conversion term
+          case size of NONE => graph_conversion false term
           | SOME _ =>
-              let
-                val _ = if !has_binder then
-                          admit_binder_insertions remaining term
-                        else ()
+              if !has_binder andalso
+                 ((admit_binder_insertions term;false)
+                   handle ProspectiveBinder => true) then
+                (* The next root is excessive, hence changed. Exhaustion
+                   precedes its size check; otherwise graph discovery of
+                   that next root chooses the first error. *)
+                if remaining = 0 then
+                  raise error "cyclic definition expansion"
+                else graph_conversion true term
+              else let
                 val step = Drule.SUBST_CONV theta term term
                 val right = boolSyntax.rhs (Thm.concl step)
               in

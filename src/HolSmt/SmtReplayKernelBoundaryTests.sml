@@ -192,6 +192,44 @@ struct
       val context = shared 24 (Term.mk_comb (target,boolSyntax.T))
     in check context end
 
+  fun competing_cycles () =
+    let
+      val cycle = definition p (boolSyntax.mk_neg p)
+      val growth = definition q (shared 19 a)
+      val application = Term.mk_comb (Term.mk_abs (b,q),boolSyntax.T)
+      val cyclic = diagnostic (fn () => raise Feedback.mk_HOL_ERR
+        "Library" "checked_definition_rewrite_conv"
+        "cyclic definition expansion")
+      fun check rules target expected = require
+        "prospective binder admission changed graph first-exception order"
+        (diagnostic (fn () => ignore (rewrite rules target)) = expected)
+      val rules = [cycle,growth]
+      val _ = check rules (boolSyntax.mk_conj (p,application)) cyclic
+      (* A global reachable-cycle check would incorrectly choose the cycle
+         here. Preserve left-to-right discovery in both directions. *)
+      val _ = check rules (boolSyntax.mk_conj (application,p))
+        (binder_diagnostic ())
+      val indirect = definition fresh (boolSyntax.mk_neg p)
+      val _ = check (indirect::rules)
+        (boolSyntax.mk_conj (fresh,application)) cyclic
+      (* The earlier binder fits its first output but fails on the next
+         layer. It must still beat a later graph cycle. *)
+      val later = definition a (shared 19 boolSyntax.T)
+      val chain = definition q a
+      val first = Term.mk_comb (Term.mk_abs (b,q),boolSyntax.T)
+      val last = Term.mk_comb (Term.mk_abs (b,fresh),boolSyntax.T)
+      val _ = check [cycle,chain,later,definition fresh (shared 19 a)]
+        (boolSyntax.mk_conj (first,boolSyntax.mk_conj (p,last)))
+        (binder_diagnostic ())
+      (* This binder is inserted FROM a residue, so it must not receive the
+         virtual initial layer a second time. A bound occurrence remains
+         shadowed while the separate right binder causes the refusal. *)
+      val identity = Term.mk_abs (q,q)
+      val inserted = definition fresh (Term.mk_comb (identity,boolSyntax.T))
+      val _ = check (inserted::rules)
+        (boolSyntax.mk_conj (fresh,boolSyntax.mk_conj (p,application))) cyclic
+    in () end
+
   (* A typed FVL over this tiny body compares two equal but physically
      distinct exponential Types. Native SUBST would do that BEFORE returning
      any step, in either kernel. Counting syntax and shadowing needs neither
@@ -232,6 +270,36 @@ struct
         val _ = guarded [rule] context
       in () end) ()
 
+  (* Name collisions force exact typed variable selection. Put the poison
+     both before and after the excessive prefix: short-circuiting alone is
+     insufficient. The polymorphic prefix keeps REFL construction cheap. *)
+  fun annotation_collisions () =
+    Timeout.apply (Time.fromSeconds 3) (fn () =>
+      let
+        fun check prefix matching =
+          let
+            val first_type = Type.alpha --> shared_type 80
+            val second_type = Type.alpha --> shared_type 80
+            val _ = require "collision poison lost independent Types"
+              (not (Portable.pointer_eq (first_type,second_type)))
+            val u = Term.mk_var ("task55_same",first_type)
+            val r = Term.mk_var
+              (if matching then "task55_same" else "task55_other",
+               second_type)
+            val h = Term.mk_var ("task55_h",first_type --> Type.bool)
+            val atom = Term.mk_comb (h,u)
+            val body = if prefix then boolSyntax.mk_conj (atom,p)
+                       else boolSyntax.mk_conj (p,atom)
+            val target = Term.mk_abs (b,body)
+            val rules = [definition p (shared 19 a),Thm.REFL r]
+            val _ = guarded rules target
+            val context = shared 24 (Term.mk_comb (target,boolSyntax.T))
+          in guarded rules context end
+      in
+        check false false;check false true;
+        check true false;check true true
+      end) ()
+
   fun run () =
     (tprint "Checked definitions preserve capture, shadowing, Hyp and tags";
      small ();OK ();
@@ -244,5 +312,9 @@ struct
      tprint "Both definition sites retain exhausted-cycle diagnostic priority";
      exhausted_cycles ();OK ();
      tprint "Both checked-definition native sites guard before typed FVL";
-     before_native ();OK ())
+     before_native ();OK ();
+     tprint "Prospective binders preserve competing graph first exceptions";
+     competing_cycles ();OK ();
+     tprint "Prospective selection handles colliding exponential Types";
+     annotation_collisions ();OK ())
 end
