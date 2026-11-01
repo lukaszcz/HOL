@@ -25,10 +25,10 @@ local
     in dimacsTools.with_cleanup (fn () => TextIO.closeOut out)
          (fn () => TextIO.output (out,text)) () end
   fun exists path = OS.FileSys.access (path,[])
-  fun solver run post =
+  fun named_solver name run post =
     let val SatSolver fields = minisatp
     in SatSolver
-      {name = "cleanup-sentinel", URL = #URL fields,
+      {name = name, URL = #URL fields,
        (* Access is checked, but this executable is never launched. *)
        executable = OS.Path.concat (Globals.HOLDIR,"bin/hol"),
        post_exe = Option.map (fn _ => "unused") post,
@@ -37,6 +37,83 @@ local
        only_true = false, failure_string = "UNSAT",
        start_string = "SAT", end_string = " 0"}
     end
+  fun solver run post = named_solver "cleanup-sentinel" run post
+
+  (* A backend name does not establish ownership.  Check the fixed trace
+     separately from the generated per-call names, before any child launch. *)
+  fun fixed_trace_case present create input post error prove =
+    let
+      val trace = "resolve_trace"
+      val text = "caller owned before command construction\n"
+      val occupied = (ignore (OS.FileSys.isLink trace); true)
+                     handle OS.SysErr _ => false
+      val _ = if occupied then
+                raise Fail "resolve_trace already exists in test directory"
+              else ()
+      val paths = ref (case input of NONE => [] | SOME p => [p])
+      val calls = ref 0
+      fun run _ (cnf,outfile) =
+        (calls := !calls + 1;
+         paths := [cnf,outfile,outfile^".proof",outfile^".stats"] @
+           (case input of NONE => [!dimacsTools.tmp_name] | SOME _ => []);
+         put outfile "UNSAT\n";
+         put (outfile^".proof") "sentinel proof";
+         put (outfile^".stats") "sentinel stats";
+         if create then put trace "invocation owned\n" else ();
+         if post then "exit 0" else raise error)
+      val backend = named_solver "zchaff" run
+        (if post then SOME (fn _ => fn _ => raise error) else NONE)
+      val conf = set_solver backend (set_term ``~(p /\ q)`` base_config)
+      val conf = case input of NONE => conf | SOME p => set_infile p conf
+      fun same_text () =
+        let val stream = TextIO.openIn trace
+        in dimacsTools.with_cleanup (fn () => TextIO.closeIn stream)
+             TextIO.inputAll stream = text end
+    in dimacsTools.with_cleanup
+      (fn () => dimacsTools.clean_files (trace :: !paths))
+      (fn () =>
+        let val _ = if present then put trace text else ()
+            val result = Exn.capture prove conf
+        in !calls = 1 andalso raised error result andalso
+           (if present then exists trace andalso same_text ()
+            else exists trace = (create andalso Option.isSome input)) andalso
+           List.all (fn p => exists p = Option.isSome input) (!paths)
+        end) ()
+    end
+  val failures = [primary, Interrupt, Timeout.TIMEOUT duration]
+  val _ = control "ZChaff pre-launch failures preserve caller trace bytes"
+    (fn () => List.all (fn prove => List.all (fn error =>
+      fixed_trace_case true false NONE false error prove) failures)
+      [GEN_SAT, GEN_SAT_PROVE_ONLY,
+       fn conf => GEN_SAT (set_flag_is_proved false conf)])
+  val _ = control "ZChaff newly created trace drains on every failure"
+    (fn () => List.all (fn post => List.all (fn error =>
+      fixed_trace_case false true NONE post error GEN_SAT) failures)
+      [false,true])
+  val _ = control "ZChaff postprocessor failure preserves caller trace"
+    (fn () => List.all (fn error =>
+      fixed_trace_case true false NONE true error GEN_SAT) failures)
+  val _ = control "ZChaff explicit input retains invocation files"
+    (fn () => List.all (fn present =>
+      let val input = OS.FileSys.tmpName ()
+      in dimacsTools.with_cleanup (fn () => dimacsTools.clean_files [input])
+        (fn () => (put input "p cnf 1 1\n1 0\n";
+          fixed_trace_case present (not present) (SOME input) false
+            primary GEN_SAT)) () end) [false,true])
+  val _ = control "ZChaff pre-launch failure preserves dangling caller link"
+    (fn () =>
+      let val target = OS.FileSys.tmpName ()
+          val trace = "resolve_trace"
+          val _ = OS.FileSys.remove target
+      in dimacsTools.with_cleanup (fn () => dimacsTools.clean_files [trace])
+        (fn () =>
+          (Posix.FileSys.symlink {old = target, new = trace};
+           raised primary (Exn.capture GEN_SAT
+             (set_solver (named_solver "zchaff"
+               (fn _ => fn _ => raise primary) NONE)
+               (set_term ``~(p /\ q)`` base_config))) andalso
+           OS.FileSys.isLink trace andalso
+           OS.FileSys.readLink trace = target)) () end)
 
   val _ = control "SAT resource scopes preserve the first exception"
     (fn () => List.all (fn error =>
@@ -267,15 +344,16 @@ local
           val verified = satTools.satCheck (strip_conj assignment) denied
       in checked (concl th) th andalso checked (concl th) verified
          andalso denied ~~ mk_neg goal end
-  fun solver_at path =
+  fun named_solver_at name path =
     let val SatSolver fields = minisatp
     in SatSolver
-      {name = #name fields, URL = #URL fields, executable = path,
-       post_exe = #post_exe fields, notime_run = #notime_run fields,
+      {name = name, URL = #URL fields, executable = path,
+       post_exe = NONE, notime_run = #notime_run fields,
        time_run = #time_run fields, post_run = #post_run fields,
        only_true = #only_true fields, failure_string = #failure_string fields,
        start_string = #start_string fields, end_string = #end_string fields}
     end
+  fun solver_at path = named_solver_at (getSolverName minisatp) path
   val missing = OS.FileSys.tmpName ()
   val _ = OS.FileSys.remove missing
   fun internal conf = set_solver (solver_at missing) conf
@@ -316,6 +394,33 @@ local
         val result = Exn.capture action (set_proof trace (config cnf))
         val _ = OS.FileSys.remove trace
     in Exn.release result end
+  val _ = control "ZChaff fallback and malformed replay preserve caller trace"
+    (fn () =>
+      let val path = "resolve_trace"
+          val text = "caller owned during fallback/replay\n"
+          val backend = named_solver_at "zchaff" missing
+          fun zconf conf = set_solver backend conf
+          fun preserved () =
+            let val stream = TextIO.openIn path
+            in dimacsTools.with_cleanup (fn () => TextIO.closeIn stream)
+                 TextIO.inputAll stream = text end
+          fun fallback prove conf =
+            checked valid (prove (zconf conf)) andalso preserved ()
+      in dimacsTools.with_cleanup (fn () => dimacsTools.clean_files [path])
+        (fn () =>
+          let val out = TextIO.openOut path
+              val _ = TextIO.output (out,text)
+              val _ = TextIO.closeOut out
+              val conf = set_term valid base_config
+              val proof = set_flag_is_cnf false (set_proof missing conf)
+          in List.all (fn prove => fallback prove conf andalso
+               fallback prove proof) [GEN_SAT,GEN_SAT_PROVE_ONLY] andalso
+             with_trace [] (fn conf =>
+               ((GEN_SAT (zconf conf); false)
+                 handle Domain => preserved () | Subscript => preserved ()
+                      | HOL_ERR _ => preserved ()))
+          end) ()
+      end)
   val roots = [2,0,0,4,1,0]
   val forward = [5,2,1,0]
   val backward = [3,1,2,0]
