@@ -58,7 +58,8 @@ struct
   datatype opened_recipe = OpenedAtom
     | OpenedBinder of admitted_binder_origin
     | OpenedApplication of node * node
-  type opened_record = {source : source, recipe : opened_recipe}
+  type opened_record =
+    {source : source, recipe : opened_recipe, raw : IntInf.int option}
   datatype discovered_alpha = DiscoveredAlpha of
     {owner : unit ref,scope : scope,original : node,source : source,
      rows : (node * opened_record) list,roots : closure_child list,
@@ -114,10 +115,16 @@ struct
   datatype key = VariableKey of int * int * string * int
     | ConstantKey of KernelSig.kernelid * int
     | ApplicationKey of int * int * int
+  datatype native_raw = UnknownRaw | KnownRaw of IntInf.int
+    | ApplicationRaw of native_raw ref * native_raw ref
+  fun known_raw cell = case !cell of KnownRaw count => SOME count | _ => NONE
   type entry = {scope : scope, ty : Type.hol_type, type_id : int,
                 term : Term.term, view : view,
                 raw : int option, inclusive : int option,
-                source : source option ref}
+                source : source option ref,
+                (* Exact UNFOLDED native raw geometry, not the saturated
+                   legacy raw metric and never admission permission. *)
+                exact_raw : native_raw ref}
   (* Exactly one authoritative semantic representation per graph.
      FixedStorage metadata IDs below are a separate, unchanged API. *)
   type legacy_index_state =
@@ -149,7 +156,8 @@ struct
      (* Alias of the SAME root frame's retirement cell, never a lease. *)
      root_active : bool ref,
      indices : semantic_indices,
-     imports : (Term.term * int * source) list Array.array,
+     imports : (Term.term * int * source * native_raw ref)
+       list Array.array,
      (* Immutable native geometry only, NOT saved profile/lifetime authority.
         Rows are published solely by completed genuine policy captures. *)
      native_raw_geometry : (node * Term.term * IntInf.int) list ref,
@@ -833,7 +841,7 @@ struct
     in intern g (VariableKey (scope_id scope, kind_id kind, name, tid))
       {scope = scope, ty = ty, type_id = tid, term = term,
        view = Variable (kind,term), raw = SOME 1, inclusive = SOME 1,
-       source = ref NONE}
+       source = ref NONE, exact_raw = ref UnknownRaw}
     end
   fun fresh_bound_variable (g : graph) scope lexical =
     let
@@ -872,7 +880,7 @@ struct
     in intern g (ConstantKey (Name,tid))
       {scope = scope, ty = Ty, type_id = tid, term = term,
        view = Constant Name, raw = SOME 1, inclusive = SOME 1,
-       source = ref NONE}
+       source = ref NONE, exact_raw = ref UnknownRaw}
     end
   fun new_scope (g : graph) parent bindings =
     let
@@ -976,7 +984,8 @@ struct
       {scope = scope, ty = range, type_id = tid, term = term,
        view = Application (operator,operand),
        raw = sum (#raw left) (#raw right),
-       inclusive = sum (#inclusive left) (#inclusive right), source = ref NONE}
+       inclusive = sum (#inclusive left) (#inclusive right), source = ref NONE,
+       exact_raw=ref (ApplicationRaw (#exact_raw left,#exact_raw right))}
     end
 
   (* A deliberately fixed Boolean grammar: general constructors may contain
@@ -1053,19 +1062,23 @@ struct
   (* Hashes are bounded routing hints, never equality claims. Abstractions
      are opaque here; no dest_abs/body/free-variable query occurs. *)
   val physical_hint = SmtReplayImport.pointer_bucket 4 4093
-  fun memo_peek (g : graph) scope term =
-    case List.find (fn (saved,frame,_) => frame = scope_id scope andalso
+  fun memo_row_peek (g : graph) scope term =
+    List.find (fn (saved,frame,_,_) => frame = scope_id scope andalso
           Portable.pointer_eq (saved,term))
-        (Array.sub (#imports g, physical_hint term)) of
-      SOME (_,_,result) => SOME result | NONE => NONE
-  fun memo_save (g : graph) scope (source : source) =
+      (Array.sub (#imports g, physical_hint term))
+  fun memo_peek g scope term =
+    Option.map (fn (_,_,source,_) => source) (memo_row_peek g scope term)
+  (* The cell is the node's geometry cell on ordinary import paths.
+     Non-root binder-body paths deliberately keep an empty private cell;
+     they are never a root shape-transfer authority. *)
+  fun memo_save (g : graph) scope (source : source) raw =
     let val bucket = physical_hint (#original source) in
       validation_change g;
       Array.update (#imports g,bucket,
-        (#original source,scope_id scope,source) ::
+        (#original source,scope_id scope,source,raw) ::
           Array.sub (#imports g,bucket))
     end
-  fun source_for g original node theorem : source =
+  fun source_for_raw g original node theorem =
     let
       val (left,right) = Term.dest_eq (Thm.concl theorem)
       val _ = if List.null (Thm.hyp theorem) andalso
@@ -1073,10 +1086,13 @@ struct
           Portable.pointer_eq (representative g node,right) then () else
         raise ERR "source_for" "source bridge lost its exact endpoints"
       val source = {node = node,original = original,bridge = theorem}
-      val anchor = #source (entry g node)
+      val fields = entry g node
+      val anchor = #source fields
       val _ = if Option.isSome (!anchor) then () else
         (validation_change g;anchor := SOME source)
-    in source end
+    in (source,#exact_raw fields) end
+  fun source_for g original node theorem =
+    #1 (source_for_raw g original node theorem)
   (* The paid Type summary selects a checked proof, never an equality
      verdict or new admission limit. Small native comparisons stay native:
      they must not incur the cold full-GC cost of runtime sharing. *)
@@ -1119,10 +1135,12 @@ struct
     {graph : graph,scope : scope,maximum : int,original : Term.term,
      types : Type.hol_type list}
   (* Public applications only; abstractions remain opaque and unopened.
-     Count the same exposed DAG misses as import, before any alpha bridge. *)
-  fun plan_imports g scope maximum originals =
+     Count the same exposed DAG misses as import, before any alpha bridge.
+     skip_root is private to fused import: its caller has ALREADY checked
+     scope and performed the one mandatory root miss lookup. *)
+  fun plan_imports_root skip_root g scope maximum originals =
     let
-      val _ = check_scope g scope
+      val _ = if skip_root then () else check_scope g scope
       val _ = if maximum >= 1 then () else
         raise ERR "import" "nonpositive application import budget"
       val buckets = 4093
@@ -1130,7 +1148,8 @@ struct
       val observations = ref 0
       val types = ref ([] : Type.hol_type list)
       fun visit term = case memo_peek g scope term of SOME _ => ()
-        | NONE =>
+        | NONE => missing term
+      and missing term =
           let val bucket = SmtReplayImport.pointer_bucket 4 buckets term
               val held = Array.sub (seen,bucket)
           in if List.exists (fn old => Portable.pointer_eq (old,term)) held
@@ -1152,19 +1171,23 @@ struct
       fun plan original =
         let val _ = observations := 0
             val _ = types := []
-            val _ = visit original
+            val _ = if skip_root then missing original else visit original
         in ImportPlan {graph = g,scope = scope,maximum = maximum,
           original = original,types = List.rev (!types)} end
     in List.map plan originals end
+  fun plan_imports g scope maximum originals =
+    plan_imports_root false g scope maximum originals
   fun plan_import g scope maximum original =
     List.hd (plan_imports g scope maximum [original])
   fun import_types (ImportPlan {graph,scope,types,...}) =
     (check_scope graph scope;types)
-  fun execute_import
+  (* checked is private to fused import, after its fresh post-admit guard.
+     Planning between that guard and execution has no caller callbacks. *)
+  fun execute_import_checked checked
       (ImportPlan {graph = g,scope,maximum,original,...}) =
 
     let
-      val _ = check_scope g scope
+      val _ = if checked then () else check_scope g scope
       val _ = if maximum >= 1 then () else
         raise ERR "import" "nonpositive application import budget"
       val observations = ref 0
@@ -1191,14 +1214,16 @@ struct
                   val node = fresh g
                     {scope = scope, ty = ty, type_id = intern_type g ty,
                      term = term, view = OpaqueRetained,
-                     raw = NONE, inclusive = NONE, source = ref NONE}
+                     raw = NONE, inclusive = NONE, source = ref NONE,
+                     exact_raw=ref UnknownRaw}
                 in (node,Thm.REFL term) end
               else raise ERR "import" "unexpected public term constructor"
-            val source = source_for g term node theorem
-            val _ = memo_save g scope source
+            val (source,raw) = source_for_raw g term node theorem
+            val _ = memo_save g scope source raw
           in source end
     in visit original end
 
+  fun execute_import plan = execute_import_checked false plan
   fun import g scope maximum original =
     execute_import (plan_import g scope maximum original)
 
@@ -1210,9 +1235,11 @@ struct
          val ty = Term.type_of original
          val node = fresh g
            {scope=scope,ty=ty,type_id=intern_type g ty,term=original,
-            view=OpaqueRetained,raw=NONE,inclusive=NONE,source=ref NONE}
-         val source = source_for g original node (Thm.REFL original)
-         val _ = memo_save g scope source
+            view=OpaqueRetained,raw=NONE,inclusive=NONE,source=ref NONE,
+            exact_raw=ref UnknownRaw}
+         val (source,raw) =
+           source_for_raw g original node (Thm.REFL original)
+         val _ = memo_save g scope source raw
        in source end)
 
   fun reachable_using descend_binders g roots =
@@ -1550,7 +1577,8 @@ struct
       {scope = scope, ty = ty, type_id = intern_type g ty, term = term,
        view = AdmittedBinder {binder = binder,body = body,
                              frame = #scope binder_fields},
-       raw = raw, inclusive = inclusive, source = ref NONE}
+       raw = raw, inclusive = inclusive, source = ref NONE,
+       exact_raw = ref UnknownRaw}
     end
 
   (* An old abstraction has no body-frame argument; never infer that frame
@@ -1625,7 +1653,8 @@ struct
                           {scope = scope,ty = #ty fields,
                            type_id = #type_id fields,term = term,
                            view = #view fields,raw = #raw fields,
-                           inclusive = #inclusive fields,source = ref NONE}
+                           inclusive = #inclusive fields,source = ref NONE,
+                           exact_raw=ref UnknownRaw}
                       in (result,Thm.REFL term) end
                   | _ => raise ERR "rehome"
                       "retained node cannot escape its declaring frame"
@@ -1697,7 +1726,7 @@ struct
                 (align_application term (#bridge l) (#bridge r)
                   (representative g node)) end
               else import g body_frame maximum term
-              val _ = memo_save g body_frame source
+              val _ = memo_save g body_frame source (ref UnknownRaw)
             in source end
           val body = bounded body_term
           val node = recorded_abstraction g scope maximum
@@ -1739,6 +1768,10 @@ struct
   fun admit_binder g scope maximum original =
     #1 (admit_binder_record g scope maximum original)
 
+  fun exact_raw_sum (SOME (left:IntInf.int)) (SOME right) =
+        SOME (1+left+right)
+    | exact_raw_sum _ _ = NONE
+
   (* The private table records the actual construction, not a caller's
      assertion that a closed semantic equality is an alpha syntax view.
      Each application retains the two ORIGINAL child IDs. Binder discovery
@@ -1755,32 +1788,49 @@ struct
       fun visit node =
         (usable g scope node;
          case Redblackmap.peek (!(#opened_views g),key node) of
-           SOME record => #source record
+           SOME record => record
          | NONE =>
            let
              val _ = if !remaining > 0 then remaining := !remaining-1
                else raise ERR "record_opened_view"
                  "opened recipe discovery budget exhausted"
-             val term = representative g node
-             val (source,recipe) = case view g node of
+             (* Capture the OLD node's cell at the existing representative
+                read. Do not look up the newly opened representative. *)
+             val fields = entry g node
+             val term = #term fields
+             val (source,recipe,raw) = case view g node of
                  OpaqueRetained =>
                    let val (source,admission) =
                      admit_binder_record g scope maximum term
-                   in (source,OpenedBinder admission) end
+                   in (source,OpenedBinder admission,
+                       SOME (#raw admission)) end
                | Application (operator,operand) =>
                    let val left = visit operator val right = visit operand
-                       val rich = application g scope
-                         (#node left,#node right)
-                       val bridge = align_application term (#bridge left)
-                         (#bridge right) (representative g rich)
+                       val l = #source left val r = #source right
+                       val rich = application g scope (#node l,#node r)
+                       val bridge = align_application term (#bridge l)
+                         (#bridge r) (representative g rich)
+                       val raw = exact_raw_sum (#raw left) (#raw right)
                    in (source_for g term rich bridge,
-                       OpenedApplication (operator,operand)) end
-               | _ => (source_for g term node (Thm.REFL term),OpenedAtom)
+                       OpenedApplication (operator,operand),raw) end
+               | Variable _ =>
+                   (source_for g term node (Thm.REFL term),OpenedAtom,SOME 1)
+               | Constant _ =>
+                   (source_for g term node (Thm.REFL term),OpenedAtom,SOME 1)
+               | _ => (source_for g term node (Thm.REFL term),OpenedAtom,
+                       known_raw (#exact_raw fields))
+             (* Do not erase an App's child links when an older opened
+                recipe is incomplete; its raw option remains unchanged. *)
+             val raw = case raw of NONE => known_raw (#exact_raw fields)
+               | _ => raw
+             val record = {source = source,recipe = recipe,raw = raw}
              val _ = validation_change g
              val _ = #opened_views g := Redblackmap.insert
-               (!(#opened_views g),key node,{source = source,recipe = recipe})
-           in source end)
-    in visit original end
+               (!(#opened_views g),key node,record)
+             val _ = case raw of SOME count =>
+                 #exact_raw fields := KnownRaw count | NONE => ()
+           in record end)
+    in #source (visit original) end
 
   fun validate_discovered_view (g : graph) scope original
       (candidate : source) =
@@ -1789,7 +1839,7 @@ struct
       val _ = usable g scope original
       val _ = usable g scope (#node candidate)
       fun key node = (scope_id scope,node_id node)
-      val {source,recipe} = case Redblackmap.peek
+      val {source,recipe,...} = case Redblackmap.peek
           (!(#opened_views g),key original) of SOME record => record
         | NONE => raise ERR "validate_opened_view"
             "unrecorded opened Source view"
@@ -1911,7 +1961,7 @@ struct
   fun opened_binder_origin (g : graph) scope original candidate =
     let
       val _ = validate_opened_view g scope original candidate
-      val {source,recipe} = case Redblackmap.peek (!(#opened_views g),
+      val {source,recipe,...} = case Redblackmap.peek (!(#opened_views g),
           (scope_id scope,node_id original)) of SOME value => value
         | NONE => raise ERR "opened_binder_origin" "missing opened origin"
       val admission = case recipe of OpenedBinder value => value
@@ -4105,9 +4155,9 @@ struct
   fun policy_import_int_limit SmtReplayResourcePolicy.Uncapped = NONE
     | policy_import_int_limit (SmtReplayResourcePolicy.AtMost maximum) =
         (SOME (IntInf.toInt maximum) handle Overflow => NONE)
-  fun plan_exact_policy_imports g scope maximum originals =
+  fun plan_exact_policy_imports_root skip_root g scope maximum originals =
     let
-      val _ = check_scope g scope
+      val _ = if skip_root then () else check_scope g scope
       val _ = if SmtReplayResourcePolicy.positive maximum then () else
         raise ERR "import" "nonpositive application import budget"
       val buckets = 4093
@@ -4115,7 +4165,8 @@ struct
       val observations = ref (0 : IntInf.int)
       val types = ref ([] : Type.hol_type list)
       fun visit term = case memo_peek g scope term of SOME _ => ()
-        | NONE =>
+        | NONE => missing term
+      and missing term =
           let val bucket = SmtReplayImport.pointer_bucket 4 buckets term
               val held = Array.sub (seen,bucket)
           in if List.exists (fn old => Portable.pointer_eq (old,term)) held
@@ -4138,10 +4189,12 @@ struct
       fun plan original =
         let val _ = observations := 0
             val _ = types := []
-            val _ = visit original
+            val _ = if skip_root then missing original else visit original
         in ExactPolicyImportPlan {graph = g,scope = scope,maximum = maximum,
           original = original,types = List.rev (!types)} end
     in List.map plan originals end
+  fun plan_exact_policy_imports g scope maximum originals =
+    plan_exact_policy_imports_root false g scope maximum originals
   fun plan_imports_with_policy g scope maximum originals =
     case policy_import_int_limit maximum of
         SOME finite => List.map FinitePolicyImportPlan
@@ -4154,14 +4207,14 @@ struct
     | import_types_with_policy
         (ExactPolicyImportPlan {graph,scope,types,...}) =
         (check_scope graph scope;types)
-  fun execute_import_with_policy (FinitePolicyImportPlan plan) =
-        execute_import plan
-    | execute_import_with_policy
+  fun execute_import_with_policy_checked checked
+        (FinitePolicyImportPlan plan) = execute_import_checked checked plan
+    | execute_import_with_policy_checked checked
         (ExactPolicyImportPlan
           {graph = g,scope,maximum,original,...}) =
 
     let
-      val _ = check_scope g scope
+      val _ = if checked then () else check_scope g scope
       val _ = if SmtReplayResourcePolicy.positive maximum then () else
         raise ERR "import" "nonpositive application import budget"
       val observations = ref (0 : IntInf.int)
@@ -4189,17 +4242,127 @@ struct
                   val node = fresh g
                     {scope = scope, ty = ty, type_id = intern_type g ty,
                      term = term, view = OpaqueRetained,
-                     raw = NONE, inclusive = NONE, source = ref NONE}
+                     raw = NONE, inclusive = NONE, source = ref NONE,
+                     exact_raw=ref UnknownRaw}
                 in (node,Thm.REFL term) end
               else raise ERR "import" "unexpected public term constructor"
-            val source = source_for g term node theorem
-            val _ = memo_save g scope source
+            val (source,raw) = source_for_raw g term node theorem
+            val _ = memo_save g scope source raw
           in source end
     in visit original end
 
+  fun execute_import_with_policy plan =
+    execute_import_with_policy_checked false plan
   fun import_with_policy g scope maximum original =
     execute_import_with_policy
       (plan_import_with_policy g scope maximum original)
+
+  (* Fused mandatory importer prelude, NOT an optional geometry probe.
+     The fixed preflight permits at most 512 routing operations (including
+     name bytes, checked BEFORE folding) and 64 bucket rows before raw payment.
+     Deferral repeats at most that bounded prefix after authentic payment;
+     no Work callback/invoice is added to the legacy import contract.
+     Only a finished physical hit may lend DATA before payment. *)
+  exception RawImportBound
+  fun import_sized_with_policy (g:graph) scope maximum
+      {original,admit:IntInf.int -> unit} =
+    let
+      (* Immutable owner and root-liveness headers precede routing.
+         Geometry grants nothing; the old paid scope checks follow raw. *)
+      val Scope {owner,...} = scope
+      val _ = if owner= #owner g then () else
+        raise ERR "scope" "scope belongs to a different graph"
+      val root = scope_id scope=0
+      val _ = if root andalso not (!(#root_active g)) then
+          raise ERR "scope" "scope is closed" else ()
+      val _ = if SmtReplayResourcePolicy.allows maximum 1 then () else
+        raise RawImportBound
+      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
+      fun valid () =
+        (check_scope g scope;
+         if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then
+           () else raise ERR "import" "declaration epoch changed")
+      (* The header is not another paid semantic-index traversal. Child
+         callers retain the original visitor/import path. *)
+      exception Deferred
+      val preflight = ref (0:IntInf.int)
+      fun route amount =
+        if !preflight+amount <= 512 then preflight := !preflight+amount
+        else raise Deferred
+      fun seek 0 rows = (NONE,SOME rows)
+        | seek fuel [] = (NONE,NONE)
+        | seek fuel ((row as (saved,frame,_,_))::rest) =
+            if frame=0 andalso Portable.pointer_eq (saved,original) then
+              (SOME row,NONE)
+            else seek (fuel-1) rest
+      val routed = if root then
+          ((let val bucket = SmtReplayImport.pointer_bucket_observed route
+                  4 4093 original
+                val rows = Array.sub (#imports g,bucket)
+                val (hit,rest) = seek 64 rows
+            in SOME (bucket,rows,hit,rest) end) handle Deferred => NONE)
+        else NONE
+      val held = case routed of SOME (_,_,hit,NONE) => hit | _ => NONE
+      (* Follow actual native children, never canonical graph children or
+         DAG cardinality. An unknown subtree gets only the REMAINING cap:
+         the original visitor neither restarts nor repeats a paid prefix. *)
+      fun walk [] count = SOME count
+        | walk ((term,cell)::rest) count =
+          if not (SmtReplayResourcePolicy.allows maximum (count+1)) then NONE
+          else case !cell of
+              KnownRaw raw =>
+                if SmtReplayResourcePolicy.allows maximum (count+raw) then
+                  walk rest (count+raw) else NONE
+            | ApplicationRaw (left,right) =>
+                if Term.is_comb term then
+                  let val (f,x) = Term.dest_comb term
+                  in walk ((f,left)::(x,right)::rest) (count+1) end
+                else raise ERR "import" "changed native application shape"
+            | UnknownRaw =>
+                (case SmtReplayImport.raw_size_with_policy
+                    (SmtReplayResourcePolicy.remaining maximum count) term of
+                    SOME raw => walk rest (count+raw) | NONE => NONE)
+      val size = case held of SOME (_,_,_,cell) => walk [(original,cell)] 0
+        | NONE => SmtReplayImport.raw_size_with_policy maximum original
+      val count = case size of
+          SOME count =>
+            if SmtReplayResourcePolicy.allows maximum count then count
+            else raise RawImportBound
+        | NONE => raise RawImportBound
+      (* Cap failure precedes any admission callback or import tariff.
+         Preserve raw payment BEFORE the old plan/execute scope tariffs;
+         do not introduce a new priced guard just to look for raw DATA. *)
+      val _ = admit count
+      val _ = if root andalso not (!(#root_active g)) then
+          raise ERR "scope" "scope is closed" else ()
+      val _ = if Type.type_epoch ()=epoch andalso
+          Term.term_epoch ()=symbols then () else
+        raise ERR "import" "declaration epoch changed"
+      (* A deferred bucket scan resumes after raw payment; its hash and
+         already examined rows are not repeated. Hash deferral falls back
+         to the ordinary planner. Callbacks may have changed the bucket,
+         so authenticate its current physical list before resuming. *)
+      val finished = case routed of
+          SOME (_,_,hit,NONE) => SOME hit
+        | SOME (bucket,rows,_,SOME rest) =>
+            if Portable.pointer_eq (Array.sub (#imports g,bucket),rows) then
+              SOME (List.find (fn (saved,frame,_,_) => frame=0 andalso
+                Portable.pointer_eq (saved,original)) rest)
+            else NONE
+        | NONE => NONE
+    in case finished of NONE => import_with_policy g scope maximum original
+      | SOME hit =>
+          (valid ();valid ();
+           case hit of SOME (_,_,source,_) => source
+           | NONE =>
+             let val plan = case policy_import_int_limit maximum of
+                     SOME finite => FinitePolicyImportPlan (List.hd
+                       (plan_imports_root true g scope finite [original]))
+                   | NONE => List.hd
+                       (plan_exact_policy_imports_root true g scope maximum
+                         [original])
+             in execute_import_with_policy_checked true plan end)
+    end
 
   fun prepare_exact_scope_path (g:graph) caller {remaining_work} =
     let
@@ -4301,7 +4464,8 @@ struct
     {owner:unit ref,scope:scope,node:node,original:Term.term,
      raw:IntInf.int,inc:IntInf.int,ann:IntInf.int,ty:IntInf.int,
      type_bytes:IntInf.int,types:Type.hol_type list,
-     heads:Term.term list,ready:unit->bool,guard:unit->unit}
+     heads:Term.term list,raw_cell:native_raw ref,
+     ready:unit->bool,guard:unit->unit}
   datatype policy_partial_discovery = PolicyPartialDiscovery of
     {owner:unit ref,scope:scope,plan:partial_discovery,
      maximum:SmtReplayResourcePolicy.limit,
@@ -4356,6 +4520,16 @@ struct
           in save rest end
     in save profiles end
 
+  (* Captured opaque cells only. Their pointers were obtained at the
+     collector's ORIGINAL representative read. No import-array scan, App
+     aggregation, semantic lookup or coupled meter outside this envelope. *)
+  fun stage_native_raw_profiles note profiles =
+    let
+      fun stage [] = (note ();[])
+        | stage (PolicyOpaqueProfile {raw_cell,raw,...}::rest) =
+            (note ();note ();(raw_cell,raw)::stage rest)
+    in stage profiles end
+
   (* Publication is deliberately NOT a discovery suffix: its old step
      callback and scan_limit cannot pay for an optional acceleration.
      The selecting consumer supplies a separate envelope on its SAME Work,
@@ -4395,8 +4569,16 @@ struct
           val _ = charge 32
           val registry = ref (!(#native_raw_geometry g))
           val _ = remember_policy_native_raws g caller note registry profiles
+          val updates = stage_native_raw_profiles note profiles
+          (* Prepay traversal of the commit list and its stores too. No
+             callback can intervene after the final fresh validity check. *)
+          fun prepay [] = note ()
+            | prepay (_::rest) = (note ();note ();prepay rest)
+          val _ = prepay updates
           val _ = note ()
-        in #native_raw_geometry g := !registry;true end
+          val _ = #native_raw_geometry g := !registry
+          val _ = List.app (fn (cell,raw) => cell := KnownRaw raw) updates
+        in true end
     in publish () handle OptionalAllowance => false end
 
   (* Optional ROOT-only native-shape DATA, not raw/native admission.
@@ -4407,7 +4589,14 @@ struct
      also preserve ALPHA shape, but ALWAYS save in fresh non-root frames.
      None accepts an arbitrary caller Source or a rewrite proof. Thus the
      private root memo authenticates node/original provenance without an
-     entry/usable/canonical-child lookup. Walk ACTUAL public Apps/atoms;
+     entry/usable/canonical-child lookup. Direct fixed-storage producers
+     are also audited: FIRST/ordered/owned atomic imports use REFL or
+     ALPHA; owned applications use congruence of those exact child bridges;
+     denial imports use exact REFL. Each shares the node DATA cell captured
+     at its existing representative read/construction, never a rewritten
+     Source anchor. Thus every root row remains
+     ALPHA-only, including rows not created through memo_save.
+     Walk ACTUAL public Apps/atoms;
      every abs needs a genuine cached native count for SAME node/Term.
      Never open opaque syntax. Cold/incomplete/over-budget returns NONE.
      No profile guard or saved lifetime lease is adopted. *)
@@ -4445,7 +4634,7 @@ struct
           val _ = note ()
           val rows = Array.sub (#imports g,bucket)
           fun seek [] = (note ();NONE)
-            | seek ((held,frame,source:source)::rest) =
+            | seek ((held,frame,source:source,_)::rest) =
                 (note ();note ();
                  if frame=0 then
                    (note ();if Portable.pointer_eq (held,term) then
@@ -4591,7 +4780,8 @@ struct
       {scope = scope, ty = ty, type_id = intern_type g ty, term = term,
        view = AdmittedBinder {binder = binder,body = body,
                              frame = #scope binder_fields},
-       raw = raw, inclusive = inclusive, source = ref NONE}
+       raw = raw, inclusive = inclusive, source = ref NONE,
+       exact_raw = ref UnknownRaw}
     end
 
   fun recorded_abstraction_with_policy (g : graph) scope maximum
@@ -4661,7 +4851,7 @@ struct
                 (align_application term (#bridge l) (#bridge r)
                   (representative g node)) end
               else import_with_policy g body_frame maximum term
-              val _ = memo_save g body_frame source
+              val _ = memo_save g body_frame source (ref UnknownRaw)
             in source end
           val body = bounded body_term
           val node = recorded_abstraction_with_policy g scope maximum
@@ -4713,33 +4903,48 @@ struct
       fun visit node =
         (usable g scope node;
          case Redblackmap.peek (!(#opened_views g),key node) of
-           SOME record => #source record
+           SOME record => record
          | NONE =>
            let
              val _ = if SmtReplayResourcePolicy.allows maximum
                  (!observations+1) then observations := !observations+1
                else raise ERR "record_opened_view"
                  "opened recipe discovery budget exhausted"
-             val term = representative g node
-             val (source,recipe) = case view g node of
+             val fields = entry g node
+             val term = #term fields
+             val (source,recipe,raw) = case view g node of
                  OpaqueRetained =>
                    let val (source,admission) =
                      admit_binder_record_with_policy g scope maximum term
-                   in (source,OpenedBinder admission) end
+                   in (source,OpenedBinder admission,
+                       SOME (#raw admission)) end
                | Application (operator,operand) =>
                    let val left = visit operator val right = visit operand
-                       val rich = application g scope
-                         (#node left,#node right)
-                       val bridge = align_application term (#bridge left)
-                         (#bridge right) (representative g rich)
+                       val l = #source left val r = #source right
+                       val rich = application g scope (#node l,#node r)
+                       val bridge = align_application term (#bridge l)
+                         (#bridge r) (representative g rich)
+                       val raw = exact_raw_sum (#raw left) (#raw right)
                    in (source_for g term rich bridge,
-                       OpenedApplication (operator,operand)) end
-               | _ => (source_for g term node (Thm.REFL term),OpenedAtom)
+                       OpenedApplication (operator,operand),raw) end
+               | Variable _ =>
+                   (source_for g term node (Thm.REFL term),OpenedAtom,SOME 1)
+               | Constant _ =>
+                   (source_for g term node (Thm.REFL term),OpenedAtom,SOME 1)
+               | _ => (source_for g term node (Thm.REFL term),OpenedAtom,
+                       known_raw (#exact_raw fields))
+             (* Do not erase an App's child links when an older opened
+                recipe is incomplete; its raw option remains unchanged. *)
+             val raw = case raw of NONE => known_raw (#exact_raw fields)
+               | _ => raw
+             val record = {source = source,recipe = recipe,raw = raw}
              val _ = validation_change g
              val _ = #opened_views g := Redblackmap.insert
-               (!(#opened_views g),key node,{source = source,recipe = recipe})
-           in source end)
-    in visit original end
+               (!(#opened_views g),key node,record)
+             val _ = case raw of SOME count =>
+                 #exact_raw fields := KnownRaw count | NONE => ()
+           in record end)
+    in #source (visit original) end
 
   fun discover_partial_with_policy (g : graph) scope
       {original,maximum,scan_limit,step} =
@@ -4984,14 +5189,17 @@ struct
                         (term,value) :: Array.sub (memo,bucket))
                   in value end
               end
-            val original = invoke scope (fn () => representative g node)
+            (* Same entry read as representative; capture its raw pointer
+               here, not through a later semantic-index lookup. *)
+            val fields = invoke scope (fn () => entry g node)
+            val original = #term fields
             val value = visit original
             val profile = PolicyOpaqueProfile
               {owner = #owner g,scope = scope,node = node,
                original = original,raw = #raw value,inc = #inc value,
                ann = #ann value,ty = #ty value,
                type_bytes = #type_bytes value,types = !types,
-               heads = !heads,
+               heads = !heads,raw_cell = #exact_raw fields,
                ready = retained_ready,guard = retained_guard}
             val _ = valid scope
             val _ = validation_change g
@@ -5990,7 +6198,7 @@ struct
          view=AdmittedBinder{binder=binder,body=body,frame= #scope
            binder_fields},
          raw=policy_metric_int raw,inclusive=policy_metric_int inc,
-         source=ref NONE}
+         source=ref NONE, exact_raw = ref UnknownRaw}
       val creation:binder_closure_creation=
         {identity=ref(),node=node,declaring_scope=scope,binder=binder,
          binder_term=representative g binder,binder_frame= #scope
@@ -6461,14 +6669,17 @@ struct
                         (term,value) :: Array.sub (memo,bucket))
                   in value end
               end
-            val original = invoke scope (fn () => representative g node)
+            (* Same entry read as representative; capture its raw pointer
+               here, not through a later semantic-index lookup. *)
+            val fields = invoke scope (fn () => entry g node)
+            val original = #term fields
             val value = visit original
             val profile = PolicyOpaqueProfile
               {owner = #owner g,scope = scope,node = node,
                original = original,raw = #raw value,inc = #inc value,
                ann = #ann value,ty = #ty value,
                type_bytes = #type_bytes value,types = !types,
-               heads = !heads,
+               heads = !heads,raw_cell = #exact_raw fields,
                ready = retained_ready,guard = retained_guard}
             val _ = valid scope
             val _ = validation_change g
@@ -7291,7 +7502,7 @@ struct
           val fields : entry =
             {scope=caller,ty=ty,type_id=0,term=original,
              view=Variable(RigidSource,original),raw=SOME 1,
-             inclusive=SOME 1,source=anchor}
+             inclusive=SOME 1,source=anchor, exact_raw = ref UnknownRaw}
           val types = R.scope_put_graph_key meter
             (old_types,R.GraphTypeOperator(bool_name,[]),0)
           val keys = R.scope_put_graph_key meter
@@ -7329,7 +7540,7 @@ struct
           val _ = #next graph := 1
           val _ = #reserved graph := reserved
           val _ = Array.update (#imports graph,bucket,[(original,scope_id
-            caller,source)])
+            caller,source,#exact_raw fields)])
           val _ = #validation_changes graph := next_revision
         in SOME source end
     end
@@ -7412,7 +7623,7 @@ struct
           val fields : entry =
             {scope=caller,ty=ty,type_id=0,term=original,
              view=Constant Name,raw=SOME 1,
-             inclusive=SOME 1,source=anchor}
+             inclusive=SOME 1,source=anchor, exact_raw = ref UnknownRaw}
           val types = R.scope_put_graph_key meter
             (old_types,R.GraphTypeOperator(bool_name,[]),0)
           val keys = R.scope_put_graph_key meter
@@ -7447,7 +7658,7 @@ struct
           val _ = #nodes graph := nodes
           val _ = #next graph := 1
           val _ = Array.update (#imports graph,bucket,[(original,scope_id
-            caller,source)])
+            caller,source,#exact_raw fields)])
           val _ = #validation_changes graph := next_revision
         in SOME source end
     end
@@ -7767,7 +7978,7 @@ struct
       fun memo original rows =
         (R.scope_meter_charge meter 32;
          case rows of [] => NONE
-         | (term,scope,source)::rest =>
+         | (term,scope,source,_)::rest =>
              if scope=scope_id caller andalso
                  Portable.pointer_eq(term,original) then SOME source
              else memo original rest)
@@ -7892,7 +8103,7 @@ struct
              First anchor and all semantic node/key/type roots stay put. *)
           val _ = #aliases saved := receipt :: !(#aliases saved)
           val _ = Array.update(#imports graph,bucket,
-            (original,scope_id caller,source)::old_bucket)
+            (original,scope_id caller,source,#exact_raw fields)::old_bucket)
           val _ = #validation_changes graph := next_revision
           val _ = #expected saved := next_snapshot
         in finish source tail head_hash bucket end
@@ -8003,7 +8214,8 @@ struct
                       val anchor : source option ref = ref NONE
                       val fields : entry =
                         {scope=caller,ty=ty,type_id=0,term=original,
-                         view=view,raw=SOME 1,inclusive=SOME 1,source=anchor}
+                         view=view,raw=SOME 1,inclusive=SOME 1,source=anchor,
+                         exact_raw=ref UnknownRaw}
                       val keys = R.scope_put_graph_key meter
                         (#keys first,key,node)
                       val nodes = R.scope_put_int meter
@@ -8043,7 +8255,8 @@ struct
                       val _ = #next graph := id+1
                       val _ = #reserved graph := reserved
                       val _ = Array.update(#imports graph,bucket,
-                        (original,scope_id caller,source)::old_bucket)
+                        (original,scope_id caller,source,
+                         #exact_raw fields)::old_bucket)
                       val _ = #validation_changes graph := next_revision
                       val _ = #expected saved := next_snapshot
                     in finish source tail head_hash bucket end)
@@ -8086,7 +8299,7 @@ struct
       fun memo rows =
         (R.scope_meter_charge meter 32;
          case rows of [] => NONE
-         | (term,frame,source)::rest =>
+         | (term,frame,source,_)::rest =>
              if frame=scope_id caller andalso
                  Portable.pointer_eq(term,original) then SOME source
              else memo rest)
@@ -8202,7 +8415,8 @@ struct
                   val anchor : source option ref = ref NONE
                   val fields : entry =
                     {scope=caller,ty=ty,type_id=type_id,term=original,
-                     view=view,raw=SOME 1,inclusive=SOME 1,source=anchor}
+                     view=view,raw=SOME 1,inclusive=SOME 1,source=anchor,
+                     exact_raw=ref UnknownRaw}
                   val keys = R.scope_put_graph_key meter (#keys first,key,node)
                   val nodes = R.scope_put_int meter (#nodes first,id,fields)
                   val reserved = case name of NONE => #reserved first
@@ -8235,7 +8449,8 @@ struct
                   val _ = #next graph := id+1
                   val _ = #reserved graph := reserved
                   val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source)::old_bucket)
+                    (original,scope_id caller,source,
+                     #exact_raw fields)::old_bucket)
                   val _ = #validation_changes graph := revision
                   val _ = #expected saved := next
                   val _ = #function_children saved :=
@@ -8331,7 +8546,8 @@ struct
                     {source=source,canonical=canonical,anchor=anchor,
                      type_id=type_id}
                   val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source)::old_bucket)
+                    (original,scope_id caller,source,
+                     #exact_raw fields)::old_bucket)
                   val _ = #validation_changes graph := revision
                   val _ = #expected saved := next
                   val _ = #function_children saved :=
@@ -8482,7 +8698,8 @@ struct
       val not_node = Node {owner= #owner graph,id=not_id}
       val not_fields : entry =
         {scope=caller,ty=neg_ty,type_id=fun_id,term=negation,
-         view=Constant neg_id,raw=SOME 1,inclusive=SOME 1,source=ref NONE}
+         view=Constant neg_id,raw=SOME 1,inclusive=SOME 1,source=ref NONE,
+         exact_raw=ref UnknownRaw}
       val app_id = not_id+1
       val app_node = Node {owner= #owner graph,id=app_id}
       val app_key = R.GraphApplication(scope_id caller,not_id,node_id(#node
@@ -8495,7 +8712,7 @@ struct
       val app_fields : entry =
         {scope=caller,ty=Type.bool,type_id=bool_id,term=denial_term,
          view=Application(not_node,#node goal),raw=SOME 3,
-         inclusive=SOME 3,source=anchor}
+         inclusive=SOME 3,source=anchor, exact_raw = ref UnknownRaw}
       val keys = R.scope_put_graph_key meter
         (R.scope_put_graph_key meter (#keys first,not_key,not_node),
          app_key,app_node)
@@ -8525,7 +8742,7 @@ struct
       val _ = #nodes graph := nodes
       val _ = #next graph := app_id+1
       val _ = Array.update(#imports graph,bucket,
-        (denial_term,scope_id caller,source)::old_bucket)
+        (denial_term,scope_id caller,source,#exact_raw app_fields)::old_bucket)
       val _ = #validation_changes graph := next_revision
       val _ = #expected saved := next_snapshot
       val _ = #denial_bucket saved := SOME bucket
@@ -8974,7 +9191,7 @@ struct
       fun memo rows =
         (R.scope_meter_charge meter 32;
          case rows of [] => NONE
-         | (term,frame,source)::rest =>
+         | (term,frame,source,_)::rest =>
              if frame=scope_id caller andalso
                  Portable.pointer_eq(term,original) then SOME source
              else memo rest)
@@ -9090,7 +9307,8 @@ struct
                   val anchor : source option ref = ref NONE
                   val fields : entry =
                     {scope=caller,ty=ty,type_id=type_id,term=original,
-                     view=view,raw=SOME 1,inclusive=SOME 1,source=anchor}
+                     view=view,raw=SOME 1,inclusive=SOME 1,source=anchor,
+                     exact_raw=ref UnknownRaw}
                   val keys = R.scope_put_graph_key meter (#keys first,key,node)
                   val nodes = R.scope_put_int meter (#nodes first,id,fields)
                   val reserved = case name of NONE => #reserved first
@@ -9123,7 +9341,8 @@ struct
                   val _ = #next graph := id+1
                   val _ = #reserved graph := reserved
                   val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source)::old_bucket)
+                    (original,scope_id caller,source,
+                     #exact_raw fields)::old_bucket)
                   val _ = #validation_changes graph := revision
                   val _ = #expected saved := next
                   val _ = #function_children saved :=
@@ -9219,7 +9438,8 @@ struct
                     {source=source,canonical=canonical,anchor=anchor,
                      type_id=type_id}
                   val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source)::old_bucket)
+                    (original,scope_id caller,source,
+                     #exact_raw fields)::old_bucket)
                   val _ = #validation_changes graph := revision
                   val _ = #expected saved := next
                   val _ = #function_children saved :=
@@ -9396,7 +9616,8 @@ struct
         val anchor : source option ref = ref NONE
         val fields : entry =
           {scope=caller,ty=ty,type_id=type_id,term=original,
-           view=view,raw=SOME 1,inclusive=SOME 1,source=anchor}
+           view=view,raw=SOME 1,inclusive=SOME 1,source=anchor,
+           exact_raw=ref UnknownRaw}
         val keys = R.scope_put_graph_key meter (#keys first,key,node)
         val nodes = R.scope_put_int meter (#nodes first,id,fields)
         val reserved = case name of NONE => #reserved first
@@ -9420,7 +9641,7 @@ struct
         val _ = #next graph := id+1
         val _ = #reserved graph := reserved
         val _ = Array.update(#imports graph,bucket,
-          (original,scope_id caller,source)::old_bucket)
+          (original,scope_id caller,source,#exact_raw fields)::old_bucket)
         val _ = #validation_changes graph := revision
         val _ = #expected saved := next
         val _ = #argument_source retained := SOME (source,code)
@@ -9584,7 +9805,8 @@ struct
         val fields : entry =
           {scope=caller,ty=range,type_id=argument_type_id,term=original,
            view=Application(#node function,#node argument),
-           raw=SOME 3,inclusive=SOME 3,source=anchor}
+           raw=SOME 3,inclusive=SOME 3,source=anchor,
+           exact_raw = ref UnknownRaw}
         val keys = R.scope_put_graph_key meter (#keys first,key,node)
         val nodes = R.scope_put_int meter (#nodes first,id,fields)
         val revision = #revision first+1
@@ -9626,7 +9848,7 @@ struct
         val _ = #nodes graph := nodes
         val _ = #next graph := id+1
         val _ = Array.update(#imports graph,bucket,
-          (original,scope_id caller,source)::old_bucket)
+          (original,scope_id caller,source,#exact_raw fields)::old_bucket)
         val _ = #validation_changes graph := revision
         val _ = #expected saved := next
         val _ = #application_source retained := SOME(source,code,bucket)
@@ -9793,7 +10015,7 @@ struct
                   val fields : entry =
                     {scope=caller,ty=neg_ty,type_id=fun_id,term=negation,
                      view=Constant neg_id,raw=SOME 1,inclusive=SOME 1,
-                     source=ref NONE}
+                     source=ref NONE, exact_raw = ref UnknownRaw}
               in (node,negation,fields,true) end
       val denial_term = Term.mk_comb(not_term,#original retained)
       val not_hash = Word.fromInt(KernelSig.epoch_of neg_id)
@@ -9814,7 +10036,7 @@ struct
       val fields : entry =
         {scope=caller,ty= #ty goal_fields,type_id=0,term=denial_term,
          view=Application(not_node,#node goal),raw=SOME 5,
-         inclusive=SOME 5,source=anchor}
+         inclusive=SOME 5,source=anchor, exact_raw = ref UnknownRaw}
       val keys = R.scope_put_graph_key meter
         ((if not_is_new then R.scope_put_graph_key meter
             (#keys first,not_key,not_node) else #keys first),app_key,app_node)
@@ -9846,7 +10068,7 @@ struct
       val _ = #nodes graph := nodes
       val _ = #next graph := app_id+1
       val _ = Array.update(#imports graph,bucket,
-        (denial_term,scope_id caller,source)::old_bucket)
+        (denial_term,scope_id caller,source,#exact_raw fields)::old_bucket)
       val _ = #validation_changes graph := revision
       val _ = #expected saved := next
       val _ = #goal_witness saved := SOME(goal,goal_hash)

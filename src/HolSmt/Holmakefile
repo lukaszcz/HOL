@@ -73,7 +73,8 @@ DEPS = $(patsubst %,%.uo,$(BARE_DEPS))
 all: $(HOLHEAP) smtreplayheap selftest.exe
 
 $(HOLHEAP): $(DEPS) $(dprot $(HOLDIR)/src/real/analysis/realheap)
-	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \
+	$(protect $(HOLDIR)/bin/hol) --gcthreads=1 --maxheap=2800 \
+		buildheap $(DEBUG_FLAG) -o $@ \
 		-b $(protect $(HOLDIR)/src/real/analysis/realheap) $(BARE_DEPS)
 
 # Repeated proof-driver invocations share the compiled replay libraries.
@@ -142,7 +143,8 @@ REPLAY_DEPS = SmtCheckedGraph Z3_ProofReplay CPC_ProofReplay \
 REPLAY_OBJECTS = $(patsubst %,%.uo,$(REPLAY_DEPS))
 EXTRA_CLEANS += smtreplayheap
 smtreplayheap: $(HOLHEAP) $(REPLAY_OBJECTS)
-	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \
+	$(protect $(HOLDIR)/bin/hol) --gcthreads=1 --maxheap=2800 \
+		buildheap $(DEBUG_FLAG) -o $@ \
 		-b $(protect $(HOLHEAP)) $(REPLAY_DEPS)
 endif
 

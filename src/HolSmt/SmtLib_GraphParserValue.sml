@@ -219,34 +219,14 @@ struct
   fun import context scope maximum original = protected context (fn () =>
     let
       val _ = tick context 1 val _ = confined context scope
-      val Context {graph,active,validate_owner,spend_owner,
-        epoch,symbols,...} = context
-      (* This probe guards SAME live root directly around EVERY observer;
-         do not rewalk legacy ScopeMap via tick/validate per metadata note.
-         Keep the authentic owner's checks/spender, and check this context
-         afresh after spending too. No Work or native permission is saved.
-         The fixed surcharge pays the local constant context checks. *)
-      fun live () =
-        (if !active then () else raise ERR "import" "parser context closed";
-         validate_owner ();
-         if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then
-           () else raise ERR "import" "parser declaration lifetime changed")
-      fun observe amount = (live ();spend_owner (amount+32);live ())
-      (* Reuse only genuine immutable native geometry, never profile
-         authority. A cold/incomplete probe retains the original raw cap
-         with a proof-free public syntax counter. Neither route grants a
-         binder/FV/Source view. Both still pay the SAME raw geometry. *)
-      val geometry = G.imported_native_raw_geometry_observed graph scope
-        {original=original,maximum=maximum,observe=observe}
-      val size = case geometry of SOME size => SOME size
-        | NONE => SmtReplayImport.raw_size_with_policy maximum original
-      val _ = case size of
-          SOME size =>
-            if SmtReplayResourcePolicy.allows maximum size then
-              tick context size
-            else raise ERR "import" "source exceeds bounded contract"
-        | NONE => raise ERR "import" "source exceeds bounded contract"
-      val source = G.import_with_policy graph scope maximum original
+      val Context {graph,...} = context
+      (* Fuse the mandatory import lookup and raw contract. This never
+         speculatively spends Work on an optional geometry miss; completed
+         native DATA replaces the original raw visitor, not its payment. *)
+      val source = G.import_sized_with_policy graph scope maximum
+        {original=original,admit=tick context}
+        handle G.RawImportBound =>
+          raise ERR "import" "source exceeds bounded contract"
       val node = #node source
     in case G.view graph node of
         G.Variable _ => graph_leaf context scope node

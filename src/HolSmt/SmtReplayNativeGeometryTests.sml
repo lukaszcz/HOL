@@ -271,6 +271,191 @@ struct
               ignore (PV.import c r (RP.AtMost 6) original))))
       in () end)) [false,true]
 
+  (* Genuine finite Work, not the no-op syntax callbacks used by the
+     geometry-only tests. A cold atomic import originally costs exactly4.
+     Extra cache lookup debits may not retire that accepted invocation. *)
+  fun finite_import () =
+    let
+      fun check budget original maximum expected_charge expected =
+        let
+          val g = G.new () val r = G.root_scope g
+          val sources = SmtReplaySource.new g r 100
+            {goal=boolSyntax.T,assumptions=[]}
+          val limits = {input_limit=100,output_limit=100,template_limit=100}
+          val work = W.begin g r sources
+            {limits=limits,work_limit=budget}
+          val c = PV.create
+            {graph=g,scope=r,
+             validate=fn () => W.validate work g r sources limits,
+             spend=fn amount => W.spend work (IntInf.toInt amount),
+             retire=fn () => W.close work}
+          val outcome = Exn.capture (fn () => W.with_step work (fn () =>
+            PV.import c r maximum original)) ()
+          val {charged,retired} = W.audit work
+          val _ = require "finite import changed original payment/retirement"
+            (charged=expected_charge andalso retired=not expected andalso
+             (case outcome of Exn.Res _ => expected
+                | Exn.Exn (Feedback.HOL_ERR _) => not expected | _ => false))
+          val _ = require "finite failure did not close parser context"
+            (PV.failure_requires_propagation c=not expected)
+          val _ = PV.close c val _ = W.close work
+        in G.close_scope g r end
+      val x = Term.mk_var ("geometry_finite_cold",Type.bool)
+      val _ = List.app (fn original =>
+        (check 4 original (RP.AtMost 1) 4 true;
+         check 100000 original (RP.AtMost 1) 4 true;
+         check 3 original (RP.AtMost 1) 3 false;
+         check 4 original (RP.AtMost 0) 1 false)) [x,boolSyntax.T]
+      val _ = check 4 (Term.mk_abs (x,x)) (RP.AtMost 2) 4 true
+      val _ = fixture true (fn (g,r,original) =>
+        let
+          val sources = SmtReplaySource.new g r 100
+            {goal=boolSyntax.T,assumptions=[]}
+          val limits = {input_limit=100,output_limit=100,template_limit=100}
+          (* raw7, initial1, RetainedGraph row1; no free variables. *)
+          val work = W.begin g r sources {limits=limits,work_limit=9}
+          val c = PV.create
+            {graph=g,scope=r,
+             validate=fn () => W.validate work g r sources limits,
+             spend=fn amount => W.spend work (IntInf.toInt amount),
+             retire=fn () => W.close work}
+          val _ = W.with_step work (fn () =>
+            ignore (PV.import c r (RP.AtMost 7) original))
+          val _ = require "warm finite import spent optional geometry Work"
+            (#charged (W.audit work)=9 andalso
+             not (#retired (W.audit work)))
+          val _ = PV.close c
+        in W.close work end)
+    in () end
+
+  fun funded_factory_import () =
+    List.app (fn budget =>
+      let
+        val g = G.new () val r = G.root_scope g
+        val sources = SmtReplaySource.new g r 100
+          {goal=boolSyntax.T,assumptions=[]}
+        val limits = {input_limit=100,output_limit=100,template_limit=100}
+        val work = W.begin g r sources {limits=limits,work_limit=budget}
+        val factory = W.create_value_factory_with_policy work
+          {graph=g,scope=r,validate_metadata=fn () => (),
+           import_limit=RP.AtMost 1,literal_limit=RP.AtMost 1,
+           binder_limit=RP.AtMost 1}
+        val c = #context (W.value_factory_data_for work factory)
+        val _ = W.with_step work (fn () =>
+          ignore (PV.import c r (RP.AtMost 1)
+            (Term.mk_var ("geometry_factory_cold",Type.bool))))
+        val {charged,retired} = W.audit work
+        val _ = require "factory raw import changed original Work payment"
+          (not retired andalso charged=4)
+        val _ = W.close_value_factory factory val _ = W.close work
+      in G.close_scope g r end) [4,1000,100000]
+
+  fun uncapped_import () =
+    List.app (fn failure =>
+      let
+        val g = G.new () val r = G.root_scope g
+        val sources = SmtReplaySource.new g r 100
+          {goal=boolSyntax.T,assumptions=[]}
+        val limits = RP.semantic_from_ints
+          {input_limit=100,output_limit=100,template_limit=100}
+        val work = W.begin_with_policy g r sources
+          {limits=limits,work_limit=RP.Uncapped}
+        val token = ref ()
+        val calls = ref 0
+        val c = PV.create
+          {graph=g,scope=r,
+           validate=fn () => W.validate_policy work g r sources limits,
+           spend=fn amount =>
+             (W.spend_policy work amount;calls := !calls+1;
+              if !calls<>3 then () else
+                if failure=1 then raise Primary token
+                else if failure=2 then G.close_scope g r else ()),
+           retire=fn () => W.close work}
+        val outcome = Exn.capture (fn () => W.with_step work (fn () =>
+          PV.import c r (RP.AtMost 1)
+            (Term.mk_var ("geometry_uncapped_cold",Type.bool)))) ()
+        val {charged,retired} = W.audit_policy work
+        val _ = require "raw import skipped real payment or Primary"
+          (if failure<>0 then charged=2 andalso retired andalso
+             PV.failure_requires_propagation c andalso
+             (case outcome of
+                Exn.Exn (Primary actual) => failure=1 andalso actual=token
+              | Exn.Exn (Feedback.HOL_ERR _) => failure=2 | _ => false)
+           else charged=4 andalso not retired andalso !calls>=4 andalso
+             (case outcome of Exn.Res _ => true | _ => false))
+        val _ = PV.close c val _ = W.close work
+      in G.close_scope g r end) [0,1,2]
+
+  fun bounded_prelookup () =
+    let
+      val g = G.new () val r = G.root_scope g
+      val name = CharVector.tabulate (1000000,fn _ => #"x")
+      val f = Term.mk_var (name,Type.mk_type ("fun",[Type.bool,Type.bool]))
+      val input = Term.mk_comb (f,boolSyntax.T)
+      val _ = with_context g r (fn c =>
+        let val prior = Count.thm_count ()
+            val result = Timeout.apply (Time.fromSeconds 2)
+              (fn () => rejected (fn () =>
+                ignore (PV.import c r (RP.AtMost 1) input))) ()
+        in require "routing preceded bounded raw rejection without a bound"
+          (result andalso Count.thm_count ()=prior) end)
+      (* All abstractions route to the same bucket. Put the measured input
+         behind more rows than the pre-admission lookup may examine. *)
+      val x = Term.mk_var ("geometry_bucket",Type.bool)
+      val original = Term.mk_abs (x,x)
+      val source = G.import_with_policy g r (RP.AtMost 2) original
+      val _ = ignore (G.record_opened_view_with_policy g r
+        (RP.AtMost 2) (#node source))
+      val _ = List.app (fn i =>
+        let val v = Term.mk_var ("geometry_bucket_" ^ Int.toString i,Type.bool)
+        in ignore (G.import_with_policy g r (RP.AtMost 2)
+          (Term.mk_abs (v,v))) end) (List.tabulate (80,Lib.I))
+      val sources = SmtReplaySource.new g r 100
+        {goal=boolSyntax.T,assumptions=[]}
+      val limits = {input_limit=100,output_limit=100,template_limit=100}
+      val work = W.begin g r sources {limits=limits,work_limit=4}
+      val c = PV.create
+        {graph=g,scope=r,
+         validate=fn () => W.validate work g r sources limits,
+         spend=fn amount => W.spend work (IntInf.toInt amount),
+         retire=fn () => W.close work}
+      val _ = W.with_step work (fn () =>
+        ignore (PV.import c r (RP.AtMost 2) original))
+      val _ = require "deferred bucket lookup changed original payment"
+        (#charged (W.audit work)=4 andalso not (#retired (W.audit work)))
+      val _ = PV.close c val _ = W.close work
+    in G.close_scope g r end
+
+  (* A callback can prepend memo rows after prelookup. A deferred cursor
+     must then be discarded; a completed miss must find the callback's
+     newly imported Source rather than rebuild it. *)
+  fun mutated_prelookup () =
+    List.app (fn deferred =>
+      let
+        val g = G.new () val r = G.root_scope g
+        fun abstraction name =
+          let val x = Term.mk_var (name,Type.bool)
+          in Term.mk_abs (x,x) end
+        val original = abstraction "geometry_mutated_target"
+        val _ = if deferred then
+          (ignore (G.import_with_policy g r (RP.AtMost 2) original);
+           List.app (fn i => ignore (G.import_with_policy g r (RP.AtMost 2)
+             (abstraction ("geometry_mutated_" ^ Int.toString i))))
+             (List.tabulate (80,Lib.I))) else ()
+        val paid = ref (0:IntInf.int)
+        val snapshot = ref (Count.thm_count ())
+        val result = G.import_sized_with_policy g r (RP.AtMost 2)
+          {original=original,admit=fn amount =>
+             (paid := !paid+amount;
+              ignore (G.import_with_policy g r (RP.AtMost 2)
+                (if deferred then abstraction "geometry_mutated_new"
+                 else original));
+              snapshot := Count.thm_count ())}
+        val _ = require "callback memo mutation rebuilt or lost exact Source"
+          (!paid=2 andalso Count.thm_count ()= !snapshot andalso
+           Portable.pointer_eq (#original result,original))
+      in G.close_scope g r end) [false,true]
+
   fun owners () = fixture true (fn (g,r,original) =>
     let
       val other = G.new ()
@@ -378,6 +563,16 @@ struct
          test "native geometry: genuine cold/warm/alpha/exact count" exact;
          test "native geometry: parser import raw cap and warm native silence"
            parser_import;
+         test "native geometry: genuine finite Work4 cold import/failure"
+           finite_import;
+         test "native geometry: production tight/funded exact payment"
+           funded_factory_import;
+         test "native geometry: genuine payment/Primary/root retirement"
+           uncapped_import;
+         test "native geometry: bounded routing/collision fallback"
+           bounded_prelookup;
+         test "native geometry: callback-mutated miss/deferred bucket"
+           mutated_prelookup;
          test "native geometry: foreign, sibling and retired root" owners;
          test "native geometry: observer Primary/return/epoch freshness"
            callbacks)) ()

@@ -387,6 +387,25 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
   val execute_import_with_policy : policy_import_plan -> source
   val import_with_policy : graph -> scope ->
     SmtReplayResourcePolicy.limit -> Term.term -> source
+  (* Fused raw contract and ordinary import. A physical ROOT memo hit can
+     lend native raw cells: completed counts, or App links traversed with
+     the ACTUAL input's public dest_comb. Unknown subterms use the original
+     unfolded visitor with the REMAINING raw cap, never a prefix restart.
+     Checks the raw cap BEFORE admit, then revalidates scope/epochs before
+     returning a Source or running import. admit pays the authentic original
+     raw fee; no credit or admission permission is cached.
+     The mandatory importer prelude has a fixed 512-operation routing and
+     64-row preflight, including variable-name bytes BEFORE their fold.
+     Incomplete routing falls back after raw payment (at most that bounded
+     prefix can be duplicated); a deferred bucket retains its hash/rest.
+     Only a completed bounded physical hit can lend DATA before payment.
+     Child scopes retain the original visitor/import. No extra Work invoice,
+     optional geometry observer/probe or binder admission is introduced. *)
+  exception RawImportBound
+  val import_sized_with_policy : graph -> scope ->
+    SmtReplayResourcePolicy.limit ->
+    {original:Term.term,admit:IntInf.int -> unit} -> source
+
   (* Paid immutable native raw geometry only, for SAME live ROOT caller.
      Non-root callers return NONE before payload; foreign owners fail first.
      Exact physical root memo and actual public App/atom shape are required;
@@ -427,7 +446,12 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
      allowance spare after mandatory continuation/action-return costs.
      Insufficient remaining_work discards the staged batch and returns
      false; paid prefixes remain charged. Observer exceptions propagate
-     unchanged. Genuine completed captures only; no native permission. *)
+     unchanged. Genuine completed captures only; no native permission.
+     The same observed allowance stages KnownRaw writes ONLY for captured
+     opaque nodes, using raw-cell pointers saved at the collector's original
+     entry read. No import-array scan or aggregate-root walk is performed.
+     Registry staging and final cell writes are paid here, never added to
+     discovery's original scans or step callbacks. *)
   val publish_policy_native_raw_geometry_observed : graph -> scope ->
     {profiles:policy_opaque_profile list,
      remaining_work:SmtReplayResourcePolicy.limit,
