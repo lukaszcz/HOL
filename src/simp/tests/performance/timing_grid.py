@@ -1631,6 +1631,7 @@ class Grid:
                      seconds, seed, args, reports, fds):
         name = "%s-%d" % (case, size)
         schedule = schedule_of(inventory["iterations"])
+        # A backstop: `run` and `extend` have refused a mismatch already.
         a.require(schedule == self.t.schedule, "the schedule of the counts "
                   "differs from the table's")
         with tempfile.TemporaryDirectory(
@@ -1687,8 +1688,6 @@ class Grid:
                          ("max_pairs", t.max_pairs)):
             a.require(counts.get(key) == own, "the %s of the counts differs "
                       "from the table's" % key.replace("_", " "))
-        a.require(schedule_of(counts) == t.schedule, "the schedule of the "
-                  "counts differs from the table's")
         return t.pairs, t.samples, t.seed
 
     def repo_path(self, repo, path):
@@ -2243,6 +2242,10 @@ class Grid:
         a.require(not t.fixed_seconds or all(k in counts for k in (
             "pairs", "samples", "layout_seed", "target", "max_pairs")),
             "predeclared counts do not match the table")
+        # Before an attempt can be opened: a mismatch is a refusal, not a
+        # failed attempt in the ledger.
+        a.require(schedule_of(counts) == t.schedule, "the schedule of the "
+                  "counts differs from the table's")
         pairs, samples, seed = self.h.settings(args, counts)
         a.require(seed is not None or not t.require_seed,
                   "%s needs layout randomization (--layout-seed)" % t.label)
@@ -2522,6 +2525,10 @@ class Grid:
                 "in")
         first, stage1, _ = self.h.replay_grid(grid, args.repo)
         self.h.check_provenance(args, first)
+        # As `run` does, before the second stage is an attempt of the
+        # ledger: a mismatch is a refusal, not a failed attempt.
+        a.require(schedule_of(first["iterations"]) == t.schedule,
+                  "the schedule of the counts differs from the table's")
         self.h.check_attempt(args, first, "first")
         inventory = self.h.extension_inventory(grid, root, first)
         if t.fixed_seconds:

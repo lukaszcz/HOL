@@ -1050,6 +1050,26 @@ class SecondStage(Rig):
             self.stage(grid)
         self.assertFalse((self.root / "ext").exists())
 
+    def test_a_second_stage_refuses_a_schedule_switch_before_an_attempt(
+            self):
+        self.control = self.wide_unless_long
+        grid, status, _ = self.first()
+        self.assertEqual(status, 2)
+        before = self.attempts.read_text()
+        self.runs.clear()
+        # The table switched to the warmup schedule after the first stage:
+        # the grid still replays, but a second stage of it is refused, and
+        # no attempt of the ledger records the refusal.
+        self.table.schedule, self.table.headroom = "warmup", 1
+        self.analyses.clear()
+        with self.assertRaisesRegex(ValueError, "schedule of the counts"):
+            self.stage(grid)
+        self.assertEqual(self.runs, [])
+        self.assertEqual(self.attempts.read_text(), before)
+        self.assertEqual([(x["stage"], x["event"]) for x in self.ledger()],
+                         [("first", "open"), ("first", "close")])
+        self.assertFalse((self.root / "ext").exists())
+
     def test_a_grid_without_a_seed_has_no_second_stage(self):
         self.declare_again(seed=None, require_seed=False)
         grid, _, _ = self.first()

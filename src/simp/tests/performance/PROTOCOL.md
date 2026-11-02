@@ -116,11 +116,12 @@ selections of every experiment get the same N and schedule.
   `analyze(..., schedule=...)` must match the requested schedule, as
   `iterations` does, and `PERF_SCHEDULE` is bound by `audit_evidence.py` for
   every receipt. One rule for every function that takes a schedule
-  (`analyze`, `validate`, `batch_iterations`; `performance_schema.
-  named_schedule`): a caller names the ramp as `None` or as `"ramp"`, which
-  are the same. On the command lines (`--batch-schedule ramp`) `ramp` is
-  normalised to no field after the check that a schedule needs
-  `--batch-iterations`, which `ramp` needs like `warmup`.
+  (`analyze`, `validate`, `batch_iterations`;
+  `performance_schema.named_schedule`): a caller names the ramp as `None`
+  or as `"ramp"`, which are the same. On the command lines
+  (`--batch-schedule ramp`) `ramp` is normalised to no field after the
+  check that a schedule needs `--batch-iterations`, which `ramp` needs
+  like `warmup`.
 - **The count rule** (`timing_grid.warmup_count`, used by a table of this
   schedule): `N = max over the develop-only pilot processes of
   ceil(HEADROOM * seconds * n / wall)`, where `n` iterations and `wall`

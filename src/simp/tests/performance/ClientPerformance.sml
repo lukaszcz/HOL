@@ -14,7 +14,10 @@ val fixedIterations = Option.map (fn s => valOf (Int.fromString s))
                                  (OS.Process.getEnv "PERF_ITERATIONS")
 (* The fixed-count schedule is [ramp] (no PERF_SCHEDULE: every count 1, 2, 4,
    ..., N, a power of two) or [warmup] (one batch of exactly N, any N, then
-   the samples). *)
+   the samples). driver-staging/selftest.sml executes the text from the next
+   line down to the count requirement verbatim, so edits must keep it
+   self-contained: it may use only the names defined above it here and
+   [required]. *)
 val schedule = OS.Process.getEnv "PERF_SCHEDULE"
 val warmup = schedule = SOME "warmup"
 fun powerOfTwo n = n = 1 orelse
