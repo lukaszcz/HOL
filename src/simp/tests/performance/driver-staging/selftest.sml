@@ -16,11 +16,19 @@ struct
   val stages = ref ([] : (string * int) list)
   val fixed = ref (NONE : int option)
   val warmup = ref false
+  (* What PERF_SCHEDULE says, for the text above the suffix (see [gate]). *)
+  val perfSchedule = ref (NONE : string option)
   val sink = ref 0
   val observations = ref ([] : (string * string list) list)
   val checks = ref 0
   fun required b = if b then () else raise ShortCalibration
   fun emit key fields = observations := (key,fields) :: !observations
+  (* The target is 0.2 s. A batch of 3 lasts 0.15 s, between half the target
+     and all of it, so that the warm-up's test against half the target is
+     told from one against the whole target; a batch of 7 lasts less than
+     half. *)
+  fun duration n = if n = 3 then 0.15 else if n = 7 then 0.09
+                   else if n >= 2 then 0.25 else 0.01
   fun measured stage n = let
     val _ = case !first of
         NONE => first := SOME (!serial)
@@ -28,10 +36,10 @@ struct
                   else raise CompilerDuringMeasurement
     val _ = stages := (stage,n) :: !stages
     val _ = sink := !sink + n
-  in (if n >= 2 then 0.25 else 0.01, [Int.toString n]) end
+  in (duration n, [Int.toString n]) end
   fun reset count =
-    (first := NONE; stages := []; fixed := count; warmup := false; sink := 0;
-     observations := []; checks := 0)
+    (first := NONE; stages := []; fixed := count; warmup := false;
+     perfSchedule := NONE; sink := 0; observations := []; checks := 0)
 end
 
 fun check label yes = (tprint label; if yes then OK () else die label)
@@ -140,16 +148,55 @@ fun warmControls name driver = let
   val _ = DriverStaging.warmup := true
   val gap = (execute (reverted driver); false)
     handle DriverStaging.CompilerDuringMeasurement => true
-in check (name ^ " warm-up top-level-count regression rejects")
-  (gap andalso rev (!DriverStaging.stages) = [("calibration",4)] andalso
+  val _ = check (name ^ " warm-up top-level-count regression rejects")
+    (gap andalso rev (!DriverStaging.stages) = [("calibration",4)] andalso
+     !DriverStaging.checks = 0)
+  val _ = DriverStaging.reset (SOME 7)
+  val _ = DriverStaging.warmup := true
+  val under = (execute driver; false)
+    handle DriverStaging.ShortCalibration => true
+in check (name ^ " warm-up under half the target rejects before samples")
+  (under andalso rev (!DriverStaging.stages) = [("calibration",7)] andalso
    !DriverStaging.checks = 0)
+end
+(* The refusals above the suffix: the schedule and the count the environment
+   names. The text from [val schedule] to the end of the count requirement is
+   executed as the driver has it, the schedule read from the staging. *)
+fun gate text = let
+  val marker = "val schedule = OS.Process.getEnv \"PERF_SCHEDULE\""
+  val ending = "(warmup orelse powerOfTwo n))\n"
+  val (_,tail) = split marker text
+  val (body,_) = split ending tail
+in "val schedule = !DriverStaging.perfSchedule" ^ body ^ ending end
+fun admits text schedule count = let
+  val _ = DriverStaging.reset count
+  val _ = DriverStaging.perfSchedule := schedule
+in (execute text; true) handle DriverStaging.ShortCalibration => false end
+fun gateControls name driver = let
+  val text = gate driver
+  fun environment (label,schedule,count,yes) =
+    check (name ^ " environment " ^ label) (admits text schedule count = yes)
+in List.app environment
+  [("ramp count accepted", NONE, SOME 4, true),
+   ("adaptive accepted", NONE, NONE, true),
+   ("warmup any count accepted", SOME "warmup", SOME 3, true),
+   ("warmup top count accepted", SOME "warmup", SOME 1073741824, true),
+   ("named ramp rejected", SOME "ramp", SOME 4, false),
+   ("unknown schedule rejected", SOME "Warmup", SOME 4, false),
+   ("warmup without a count rejected", SOME "warmup", NONE, false),
+   ("ramp count not a power of two rejected", NONE, SOME 3, false),
+   ("warmup count 0 rejected", SOME "warmup", SOME 0, false),
+   ("warmup count over the bound rejected", SOME "warmup", SOME 1073741825,
+    false)]
 end
 val root = case OS.Process.getEnv "TASK29_STAGING_ROOT" of
     SOME path => path
   | NONE => raise Fail "set TASK29_STAGING_ROOT to the configured HOL root"
 val _ = List.app (fn name => let
-    val driver = suffix (contents
-      (OS.Path.concat (root,"src/simp/tests/performance/" ^ name)))
-  in (controls name driver; warmControls name driver) end)
+    val whole = contents
+      (OS.Path.concat (root,"src/simp/tests/performance/" ^ name))
+    val driver = suffix whole
+  in (controls name driver; warmControls name driver;
+      gateControls name whole) end)
   ["MatrixPerformance.sml","ClientPerformance.sml"]
-val _ = print "@@TASK29_DRIVER_STAGING\tcomplete\t56\n"
+val _ = print "@@TASK29_DRIVER_STAGING\tcomplete\t78\n"

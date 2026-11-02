@@ -19,7 +19,7 @@ import time
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from performance_schema import require
+from performance_schema import batch_schedule, named_schedule, require
 from summarize import interval, summarize
 from audit_evidence import audit
 
@@ -253,8 +253,8 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
     require(options.get("outliers") == "none removed", "changed outlier rule")
     require(options.get("batch_iterations") == iterations,
             "wrong predeclared batch iterations")
-    require(options.get("batch_schedule") == schedule,
-            "wrong predeclared batch schedule")
+    require(batch_schedule(options.get("batch_schedule")) ==
+            named_schedule(schedule), "wrong predeclared batch schedule")
     require(options.get("layout_seed") == layout_seed,
             "wrong layout randomization seed")
     for side, pin in (("baseline", baseline), ("candidate", candidate)):
@@ -696,13 +696,13 @@ def run(args):
             "require >=10 pairs, >=3 samples, 0.1..60s batches, timeout >0")
     iterations = getattr(args, "batch_iterations", None)
     schedule = getattr(args, "batch_schedule", None)
+    require(iterations is not None or schedule is None,
+            "a batch schedule needs a fixed batch count")
     if schedule == "ramp":
         schedule = None  # the historical protocol names no field
     if iterations is not None:
-        from performance_schema import batch_iterations, batch_schedule
+        from performance_schema import batch_iterations
         batch_iterations(iterations, batch_schedule(schedule))
-    require(iterations is not None or schedule is None,
-            "a batch schedule needs a fixed batch count")
     seed = getattr(args, "layout_seed", None)
     if seed is not None:
         from performance_schema import layout_seed

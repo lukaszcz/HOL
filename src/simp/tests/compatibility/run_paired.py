@@ -433,10 +433,10 @@ def main():
             from matrix_schema import get_case
             matrix_fixture = get_case(args.performance_case,
                                       args.performance_size)
-    if args.batch_schedule == "ramp":
-        args.batch_schedule = None  # the historical protocol names no field
     if args.batch_schedule is not None and args.batch_iterations is None:
         p.error("--batch-schedule requires --batch-iterations")
+    if args.batch_schedule == "ramp":
+        args.batch_schedule = None  # the historical protocol names no field
     if args.batch_iterations is not None:
         if not args.matrix_performance:
             p.error("--batch-iterations requires --matrix-performance")

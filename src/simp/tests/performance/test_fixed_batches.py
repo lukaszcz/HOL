@@ -333,6 +333,51 @@ class WarmupScheduleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "batch schedule"):
             fixture.fixture.analyze()
 
+    def test_a_ramp_caller_names_the_schedule_as_none_or_ramp(self):
+        # One rule for every function that takes a schedule: None and
+        # "ramp" are the same, and a record never names "ramp".
+        ramp = FixedBatchTests()
+        options = ps.suite_options(dict(suite="matrix", case="frag_create",
+                                        size=0, batch_iterations=4))
+        for schedule in (None, "ramp"):
+            with self.subTest(schedule=schedule):
+                _, result = ps.validate(ramp.events(), 3, 0.2,
+                                        schedule=schedule, **options)
+                self.assertNotIn("schedule", result["workloads"][
+                    "frag_create"])
+                self.assertEqual(ps.batch_iterations(4, schedule), 4)
+                with self.assertRaises(ValueError):
+                    ps.batch_iterations(3, schedule)
+                with self.assertRaises(ValueError):
+                    ps.validate(self.events(), 3, 0.2, schedule=schedule,
+                                **options)
+        self.assertEqual([ps.named_schedule(x) for x in
+                          (None, "ramp", "warmup")],
+                         ["ramp", "ramp", "warmup"])
+        for value in ("Ramp", "", 1, False):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ps.named_schedule(value)
+
+    def test_analysis_takes_none_or_ramp_for_a_ramp_archive(self):
+        fixture = fixtures.ArchiveProvenance(
+            "test_complete_archive_reaches_acceptance_automatically")
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        for schedule in (None, "ramp"):
+            with self.subTest(schedule=schedule):
+                fixture.fixture.options["schedule"] = schedule
+                fixture.fixture.analyze()
+        fixture.fixture.options["schedule"] = "warmup"
+        with self.assertRaisesRegex(ValueError, "batch schedule"):
+            fixture.fixture.analyze()
+        # An archive that names "ramp" is refused whatever is asked.
+        fixture.manifest["performance"]["batch_schedule"] = "ramp"
+        fixture.fixture.persist()
+        for schedule in (None, "ramp", "warmup"):
+            with self.subTest(named=schedule), self.assertRaises(ValueError):
+                fixture.fixture.options["schedule"] = schedule
+                fixture.fixture.analyze()
+
     def args(self, tmp, **extra):
         return argparse.Namespace(
             pairs=10, samples=3, batch_seconds=0.3, batch_iterations=63,
@@ -388,6 +433,26 @@ class WarmupScheduleTests(unittest.TestCase):
                 a.run(args)
             self.assertFalse(args.output.exists())
 
+    def test_ramp_is_a_command_line_name_and_needs_a_count_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self.args(tmp)
+            args.batch_schedule, args.batch_iterations = "ramp", None
+            with self.assertRaisesRegex(ValueError, "fixed batch count"):
+                a.run(args)
+            self.assertFalse(args.output.exists())
+            args.batch_iterations = 64
+            with patch.object(a, "negative_controls", return_value={}), \
+                    patch.object(a, "run_logged", return_value=dict(exit=0)) \
+                    as launch, patch.object(
+                        a, "analyze", return_value=dict(
+                            metrics={"cpu": dict(decision="inconclusive")})) \
+                    as analyze:
+                self.assertTrue(a.run(args)["success"])
+            for call in launch.call_args_list:
+                self.assertNotIn("--batch-schedule", call.args[0])
+            self.assertEqual([c.kwargs["schedule"] for c in
+                              analyze.call_args_list], [None, None])
+
     def test_runner_rejects_a_schedule_without_a_count_or_a_bad_count(self):
         runner = a.HERE.parent / "compatibility/run_paired.py"
         base = ["--matrix-performance", "--performance-pairs", "1",
@@ -396,6 +461,7 @@ class WarmupScheduleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "unused"
             for flags in (["--batch-schedule", "warmup"],
+                          ["--batch-schedule", "ramp"],
                           ["--batch-schedule", "other",
                            "--batch-iterations", "3"],
                           ["--batch-schedule", "warmup",

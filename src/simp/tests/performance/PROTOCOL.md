@@ -65,7 +65,8 @@ Independent time-based calibration can choose different iteration counts in
 paired selections. Per-operation normalization does not remove nonlinear GC
 and heap-sizing effects. For a predeclared common operation count, add
 `--batch-iterations N` to `acceptance.py run` (or the matrix paired runner).
-`N` must be a power of two in 1..1073741824. The front end passes the **same N**
+Under the default `ramp` schedule (the `warmup` schedule below differs) `N`
+must be a power of two in 1..1073741824. The front end passes the **same N**
 to B/B and B/C; every process performs **all** calibrations 1,2,...,N, even if
 an earlier calibration reaches the duration target, then every sample uses N.
 This fixes operation counts and calibration history, not the resulting heap
@@ -114,7 +115,12 @@ selections of every experiment get the same N and schedule.
   schedule existed validates, audits and replays byte for byte as before.
   `analyze(..., schedule=...)` must match the requested schedule, as
   `iterations` does, and `PERF_SCHEDULE` is bound by `audit_evidence.py` for
-  every receipt.
+  every receipt. One rule for every function that takes a schedule
+  (`analyze`, `validate`, `batch_iterations`; `performance_schema.
+  named_schedule`): a caller names the ramp as `None` or as `"ramp"`, which
+  are the same. On the command lines (`--batch-schedule ramp`) `ramp` is
+  normalised to no field after the check that a schedule needs
+  `--batch-iterations`, which `ramp` needs like `warmup`.
 - **The count rule** (`timing_grid.warmup_count`, used by a table of this
   schedule): `N = max over the develop-only pilot processes of
   ceil(HEADROOM * seconds * n / wall)`, where `n` iterations and `wall`
@@ -131,9 +137,30 @@ selections of every experiment get the same N and schedule.
   multiplies its count by 4 (reason "fixed batch too short" for this
   schedule). The counts file records the schedule, the rule and the headroom;
   `verify-counts` and every replay derive them again from the pilot.
+- **What the count rule assumes.** (1) Time is linear in the iterations of a
+  batch: N is extrapolated down from the final batch of the pilot, and with
+  headroom 1 and `wall >= seconds` N is never above `n`. A workload whose
+  cost per iteration grows inside a batch (state kept until `afterBatch`) has
+  a batch of N shorter than `seconds * N / n`: with `wall(n) = 2 * seconds`
+  and a quadratic cost, a batch of N = n/2 lasts about `seconds / 2`, the
+  edge of the check. (2) The final batch of a pilot process is selected
+  because its wall reached `seconds`, which biases that wall up a little (by
+  the noise), and N down by as much. Both fail closed (a batch under half the
+  target is refused, never used) and the revision by 4 recovers, so the cost
+  is a rerun. Load on the host during the pilot can only lengthen a pilot
+  batch, so only raise N: the maximum over processes takes the fastest, least
+  loaded one. The validation of the schedule should record, per cell, the
+  least of (warm-up or sample wall) / `seconds`, so that the margin to 0.5 is
+  measured and not only argued.
 - **The TASK30 table keeps `ramp`**, its counts file, pilot, grid and ledger,
   as does the TASK29A grid; their archives replay unchanged at this code (the
-  seals of the files this schedule changed are in the table's history).
+  seals of the files this schedule changed are in the table's history). The
+  history seals are compared per field, as for TASK29A (each field of the
+  code may be the current one or one of its history, so a record may pass
+  with a combination of fields that no one commit held), and the only code
+  added to what is accepted is the exact blobs of the six files at
+  63ac28189 (`task30_grid.py`, `timing_grid.py`, `acceptance.py`,
+  `MatrixPerformance.sml`, `performance_schema.py`, `run_paired.py`).
 
 ### Precompiled experiment driver
 
@@ -150,9 +177,15 @@ This repair is not a causal explanation or closure of their failures.
 Holmake-built `driver-staging/selftest.sml` compiles the exact live driver
 suffixes through the same HOLSource reader as QUse. A compiler-entry serial
 must remain fixed from first calibration to last sample. Synthetic durations
-exercise adaptive and fixed schedules, complete observation fields and short
-calibration rejection. Reinstating the old top-level count must trigger the
-serial guard for BOTH fixtures. These 56 assertions are scheduling tests, not
+exercise adaptive and fixed schedules, the warm-up schedule (a warm-up of
+0.15 s against the target 0.2 s passes, one of 0.09 s is rejected, so that a
+test against half the target is told from one against the whole), complete
+observation fields and short calibration rejection. The text of each driver
+above the suffix that refuses an environment (`PERF_SCHEDULE` other than
+unset or `warmup`, `warmup` without `PERF_ITERATIONS`, a count out of bounds
+or, for the ramp, not a power of two) is executed too, with accepted and
+refused environments. Reinstating the old top-level count must trigger the
+serial guard for BOTH fixtures. These 78 assertions are scheduling tests, not
 HOL timing or allocation measurements. Run separately from the repository root:
 
 ```sh
@@ -373,7 +406,10 @@ has no disposition.
   cap of pairs of the second stage, so a later change of the table does not
   make an earlier grid unreplayable (a key a file lacks is read as the
   table's, and the file is refused if it then differs from what it derives
-  to; `run` requires the file to have them). A run
+  to, except `schedule`: a file without one is `ramp`, as every file made
+  before the field, never the table's, so that a table that changes its
+  schedule still replays its earlier grids; `run` requires the file to have
+  them, and refuses one of another schedule than the table's). A run
   refuses counts bound to other sealed files than the current ones. All
   three need `--pilot DIR`, the pilot the counts derive from, and derive the
   counts file from it again in full (archives unpacked, analyses rerun, every

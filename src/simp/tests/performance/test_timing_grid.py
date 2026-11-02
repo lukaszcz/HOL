@@ -3565,6 +3565,111 @@ class Warmup(Rig):
             "exclude_empty-0"])["iterations"]["exclude_empty-0"], 2 ** 30)
 
 
+class WarmupStages(Rig):
+    """The second stage of a warmup table: its remeasurement is of the
+    schedule and the count of its first stage, and replays."""
+    pairs = 20
+
+    def make_table(self, **kw):
+        return super().make_table(schedule="warmup", **kw)
+
+    def extend(self, grid, name="ext"):
+        return self.go(self.argv("extend", self.root / name, "--grid",
+                                 str(grid), "--authorize-measurements"))
+
+    def open_cell(self):
+        self.control = lambda case, size, pairs, seed: (
+            GOOD if pairs >= 60 or (case, size) != (CASES[1], 100)
+            else WIDE)
+
+    def test_the_remeasurement_uses_the_schedule_and_count(self):
+        self.open_cell()
+        grid, status, _ = self.first()
+        self.assertEqual(status, 2)
+        self.runs.clear()
+        self.analyses.clear()
+        status, text = self.extend(grid)
+        self.assertEqual(status, 0)
+        options, = self.runs
+        counts = json.loads(self.counts.read_text())["iterations"]
+        self.assertEqual(counts["%s-100" % CASES[1]], 6)
+        self.assertEqual(
+            (options["batch_schedule"], options["batch_iterations"]),
+            ("warmup", 6))
+        self.assertIn(" schedule=warmup", text)
+        self.assertEqual(self.inventory(self.root / "ext")[
+            "iterations"]["schedule"], "warmup")
+        self.assertEqual({(r["iterations"], r["schedule"])
+                          for r in self.cells()
+                          if (r["case"], r["size"]) == (CASES[1], 100)},
+                         {(6, "warmup")})
+
+    def test_the_second_stage_replays_under_its_schedule(self):
+        self.open_cell()
+        grid, _, _ = self.first()
+        self.assertEqual(self.extend(grid)[0], 0)
+        ext = self.root / "ext"
+        self.analyses.clear()
+        status, text = self.go(self.replay_argv(ext))
+        self.assertEqual(status, 0)
+        self.assertIn("two-stage archives and decisions replayed: pass",
+                      text)
+        self.assertIn("TOY schedule: warmup; counts rule: ", text)
+        self.assertEqual({r["schedule"] for r in self.cells()}, {"warmup"})
+        header = self.inventory(ext)
+        for label, counts in (
+                ("ramp", {k: v for k, v in header["iterations"].items()
+                          if k != "schedule"}),
+                ("named ramp", dict(header["iterations"], schedule="ramp"))):
+            with self.subTest(label):
+                (ext / "inventory.json").write_text(json.dumps(
+                    dict(header, iterations=counts)))
+                with self.assertRaises(ValueError):
+                    self.go(self.replay_argv(ext))
+
+
+class ScheduleSwitch(Rig):
+    """A table that changes its schedule after a grid was measured: the
+    counts file of that grid says what it was, and a file that names no
+    schedule is `ramp`, not whatever the table declares by now."""
+
+    def test_an_earlier_ramp_grid_replays_under_a_warmup_table(self):
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        self.assertNotIn("schedule", json.loads(self.counts.read_text()))
+        # The table is now of the warmup schedule (a decision applied
+        # through a revision), headroom 1; the old counts file is as it was.
+        self.table.schedule, self.table.headroom = "warmup", 1
+        self.analyses.clear()
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 0)
+        self.assertNotIn("schedule", text)
+        self.assertEqual({r["iterations"] for r in self.cells()},
+                         set(json.loads(self.counts.read_text())[
+                             "iterations"].values()))
+        self.assertEqual(self.go(["verify-counts", "--grid",
+                                  str(self.pilot_dir)])[0], 0)
+
+    def test_a_run_refuses_the_old_counts_under_a_warmup_table(self):
+        self.table.schedule = "warmup"
+        with self.assertRaisesRegex(ValueError, "schedule of the counts"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_file_derives_under_its_own_schedule(self):
+        for table, own in (("warmup", "ramp"), ("ramp", "ramp")):
+            with self.subTest(table=table):
+                self.table.schedule = table
+                found = json.loads(self.counts.read_text())
+                self.assertEqual(
+                    self.grid.file_settings(found)["schedule"], own)
+        self.table.schedule = "ramp"
+        found = dict(json.loads(self.counts.read_text()), schedule="warmup")
+        self.assertEqual(self.grid.file_settings(found)["schedule"],
+                         "warmup")
+
+
 class Sweeping(Rig):
     """What a stopped run left is cleared only once the resumption is known
     to be of the same experiment, and under the lock."""

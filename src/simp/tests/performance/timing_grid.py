@@ -1014,8 +1014,13 @@ class Grid:
         """The same as a counts file says them: a replay and the derivation
         of a file use these, so that a later change of the table does not
         make an earlier grid unreplayable. A key the file lacks is the
-        table's, which then differs from what the file derives to."""
-        return {k: found.get(k, v) for k, v in self.table_settings().items()}
+        table's, which then differs from what the file derives to, except
+        `schedule`: a file without one is `ramp` (as every earlier file),
+        never the table's."""
+        settings = {k: found.get(k, v)
+                    for k, v in self.table_settings().items()}
+        settings["schedule"] = schedule_of(found)
+        return settings
 
     def predeclare(self, grid, rederive=False, settings=None):
         """Per-cell counts from the develop-only (B/B) processes of a pilot
@@ -1625,6 +1630,9 @@ class Grid:
     def measure_cell(self, root, inventory, case, size, pairs, count,
                      seconds, seed, args, reports, fds):
         name = "%s-%d" % (case, size)
+        schedule = schedule_of(inventory["iterations"])
+        a.require(schedule == self.t.schedule, "the schedule of the counts "
+                  "differs from the table's")
         with tempfile.TemporaryDirectory(
                 prefix="%s-" % self.t.name) as scratch:
             folder = Path(scratch) / name
@@ -1636,8 +1644,7 @@ class Grid:
                 authorize_measurements=True, case=[case], size=[size],
                 output=folder, mode="isolated", repo=args.repo,
                 build_manifest=None, layout_seed=seed,
-                batch_schedule=None if schedule_of(
-                    inventory["iterations"]) == "ramp" else "warmup")
+                batch_schedule=None if schedule == "ramp" else schedule)
             report = a.run(options)
             archive = root / (name + ".json.xz")
             files = self.h.archive(folder, archive, scratch)

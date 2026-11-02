@@ -613,9 +613,19 @@ class RealChain(ttg.ChainRig):
             perf = self.repo / a.HERE.relative_to(REPO)
             self.counts = perf / "task30_iterations.json"
             if self.counts.exists():
-                # Counts are committed: this chain starts before them.
-                self.git("rm", "-q", "-f", str(self.counts))
-                self.git("commit", "-q", "-m", "X: without the counts")
+                # Counts are committed: this chain starts before them. X
+                # is HEAD's tree without the file, on the parent of the
+                # commit that introduced it, so that the file has only the
+                # commit of Y in the history of the chain (a file added,
+                # removed and added again is refused).
+                rel = str(self.counts.relative_to(self.repo))
+                intro = self.git("log", "--format=%H", "--full-history",
+                                 "--simplify-merges", "HEAD", "--",
+                                 rel).split()[-1]
+                self.git("rm", "-q", "-f", rel)
+                x = self.git("commit-tree", self.git("write-tree"), "-p",
+                             intro + "^", "-m", "X: without the counts")
+                self.git("reset", "-q", "--soft", x)
             self.base = self.git("rev-parse", "HEAD")
             (self.repo / "bin" / "hol").write_text("executable")
             (self.repo / "bin" / "hol.state0").write_text("heap")

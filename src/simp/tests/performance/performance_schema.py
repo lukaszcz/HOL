@@ -67,9 +67,10 @@ def timing(value, prefix=0):
     return data[:prefix], ts
 
 
-def batch_iterations(value, schedule="ramp"):
-    """A predeclared common doubling endpoint (`ramp`) or batch size
-    (`warmup`), never selected by one side."""
+def batch_iterations(value, schedule=None):
+    """A predeclared common doubling endpoint (`ramp`, the default) or
+    batch size (`warmup`), never selected by one side."""
+    schedule = named_schedule(schedule)
     if schedule == "warmup":
         require(type(value) is int and 1 <= value <= 1073741824,
                 "warmup batch iterations must be in 1..1073741824")
@@ -87,6 +88,16 @@ def batch_schedule(value):
     the absence of any field and the historical protocol; only `warmup`
     (one batch of N, then the samples) is ever written down."""
     require(value in (None, "warmup"), "unknown batch schedule")
+    return "ramp" if value is None else value
+
+
+def named_schedule(value):
+    """The schedule a caller of a function names: `None` or `ramp` is the
+    historical one, `warmup` the other. This is the one rule of every
+    function that takes a schedule (`batch_iterations`, `validate`,
+    `acceptance.analyze`), so that a ramp caller may say either; a
+    record never names `ramp` (`batch_schedule` refuses it there)."""
+    require(value in (None, "ramp", "warmup"), "unknown batch schedule")
     return "ramp" if value is None else value
 
 
@@ -183,7 +194,8 @@ def graphs(lines, case, size):
 
 
 def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
-             storage=True, iterations=None, schedule="ramp"):
+             storage=True, iterations=None, schedule=None):
+    schedule = named_schedule(schedule)
     if iterations is not None:
         batch_iterations(iterations, schedule)
     require(iterations is not None or schedule == "ramp",
