@@ -837,7 +837,22 @@ struct
      boundary. Use the real worker and a checked force proof, once each. *)
   fun deferred_priority () =
     let
-      val marker = Term.mk_var ("@fp.task41_string",``:smtstr``)
+      (* Allocate a genuine private marker of the original String type. *)
+      val stream = TextIO.openString
+        "((define @m () (@fp.INF String)) (assume @p (= @m @m)))"
+      val parsed = Exn.capture (fn () => Q.parse_stream_with_version
+        (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4" stream) ()
+      val _ = TextIO.closeIn stream
+      (* A saved term alone does not retain proof-local allocation metadata.
+         Restore the owning proof scope at each real callback boundary. *)
+      val marker_proof = Exn.release parsed
+      fun with_marker action input =
+        Q.with_cpc_fp_private_proof marker_proof action input
+      val marker = case Q.cpc_fp_private_unbound_markers () of
+          [(marker,"@fp.INF")] => marker
+        | _ => raise Fail "missing String private marker fixture"
+      val _ = require "String marker lacks parser identity"
+        (Q.is_cpc_fp_private_marker marker)
       val private_goal = boolSyntax.mk_eq (marker,marker)
       val atom = ``binary_ieee$float_is_nan (f:('a,'b) binary_ieee$float)``
       val tautologies = List.tabulate (90,fn i =>
@@ -846,7 +861,7 @@ struct
       val mixed_goal = boolSyntax.list_mk_conj
         (boolSyntax.mk_eq (string_variable,string_variable) ::
          boolSyntax.mk_imp (atom,atom) :: tautologies)
-      fun check goal = with_graph (fn graph => fn scope =>
+      fun check (private,goal) = with_graph (fn graph => fn scope =>
         let
           val sources = SmtReplaySource.new graph scope limit
             {goal=goal,assumptions=[]}
@@ -873,25 +888,49 @@ struct
                   args=[],raw_conclusion=NONE,raw_args=[]}}]}
           val calls = ref 0
           val forced = ref 0
-          fun worker input =
-            (calls := !calls+1;
-             CPC_ProofReplay.graph_bounded_worker [] input)
-          fun force (step:CPC_Proof.step,_) =
+          val private_targets = ref 0
+          val deferred = ref 0
+          fun worker input = with_marker (fn input =>
+            let
+              val _ = calls := !calls+1
+              val (step:CPC_Proof.step,_) = input
+              val term = #term (valOf (#conclusion step))
+              val _ = if List.exists Q.is_cpc_fp_private_marker
+                  (Term.free_vars term) then
+                    private_targets := !private_targets+1 else ()
+              val result as (theorem,_) =
+                CPC_ProofReplay.graph_bounded_worker [] input
+              val _ = if List.exists (Term.aconv term) (Thm.hyp theorem)
+                then deferred := !deferred+1 else ()
+            in result end) input
+          fun force input = with_marker (fn (step:CPC_Proof.step,_) =>
             let val _ = forced := !forced+1
+                val _ = require "String force lost its private allocation"
+                  (not private orelse Q.is_cpc_fp_private_marker marker)
                 val result = valOf (#conclusion step)
                 val theorem = simpLib.SIMP_PROVE boolSimps.bool_ss []
                   (#term result)
-            in (theorem,result) end
-          val theorem = CPC_GraphProofReplay.check_contradiction_observing
-            {graph=graph,scope=scope,sources=sources,proof=proof,
-             ordinary_limit=limit,template_limit=limit,worker=worker,
-             force_worker=SOME force,observer=fn _ => ()}
-          val _ = require "String changed earlier TRUST deferral/force order"
-            (!calls=1 andalso !forced=1)
+            in (theorem,result) end) input
+          val outcome = Exn.capture (with_marker (fn () =>
+            CPC_GraphProofReplay.check_contradiction_observing
+              {graph=graph,scope=scope,sources=sources,proof=proof,
+               ordinary_limit=limit,template_limit=limit,worker=worker,
+               force_worker=SOME force,observer=fn _ => ()})) ()
+          val _ = require
+            ("String changed earlier TRUST deferral/force order: private=" ^
+             Bool.toString private ^ " calls=" ^ Int.toString (!calls) ^
+             " private_targets=" ^ Int.toString (!private_targets) ^
+             " deferred=" ^ Int.toString (!deferred) ^
+             " forced=" ^ Int.toString (!forced) ^ " got=" ^
+             (case outcome of Exn.Exn error => Feedback.exn_to_string error
+              | _ => "success"))
+            (!calls=1 andalso !forced=1 andalso !deferred=1 andalso
+             !private_targets=(if private then 1 else 0))
+          val theorem = Exn.release outcome
         in exact boolSyntax.F [boolSyntax.mk_neg goal] theorem end)
     in require "mixed TRUST fixture no longer selects large native deferral"
          (SmtResource.dag_nodes_up_to 257 mixed_goal > 256);
-       List.app check [private_goal,mixed_goal]
+       List.app check [(true,private_goal),(false,mixed_goal)]
     end
 
   fun run () = List.app (fn (name,action) =>

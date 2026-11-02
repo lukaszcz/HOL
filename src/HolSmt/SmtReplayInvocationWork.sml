@@ -896,6 +896,8 @@ struct
 
   (* Passive route DATA only, including after retirement. No phase change
      or native admission follows from learning this constructor mode. *)
+  fun ordinary_legacy_guard_mode (Portfolio _) = true
+    | ordinary_legacy_guard_mode _ = false
   fun ordinary_policy_guard_mode
       (PolicyPortfolio{priced=NONE,...})=true
     | ordinary_policy_guard_mode _=false
@@ -1148,11 +1150,16 @@ struct
     with_certificate_input "with_z3_certificate_input"
       A.with_z3_certificate_input work held consume
 
+  (* Reused completed slots need the same final input check, but neither
+     an issued-name traversal nor a fresh reservation/native realization. *)
+  fun validate_policy_ordinal_minimum work minimum =
+    ((inside work;
+      if minimum>=0 then () else
+        fail work "unused_policy_ordinal" "negative ordinal minimum")
+     handle primary => (close work;raise primary))
   fun unused_policy_ordinal work {role,minimum} =
     ((let
-      val _ = inside work
-      val _ = if minimum>=0 then () else
-        fail work "unused_policy_ordinal" "negative ordinal minimum"
+      val _ = validate_policy_ordinal_minimum work minimum
       val _ = spend_policy work 1
       (* Borrow the actual immutable issued-list spine. No ordinal token,
          mutable counter, future allowance or replacement names is made. *)

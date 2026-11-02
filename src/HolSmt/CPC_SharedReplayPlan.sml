@@ -194,12 +194,19 @@ struct
                 | build [] = raise Fail "empty recorded disjunction"
           in current (build entries)
             (ApplicationProvenance("or",provenances entries))end
+  (* Clause occurrences keep OR aliases opaque. An explicit constructor
+     rule may inspect the referenced definition at its root only; aliases
+     among its operands remain atoms with their original boundaries. *)
+  fun constructor_provenance (ApplicationProvenance ("<alias>",[body])) =
+        body
+    | constructor_provenance provenance = provenance
   (* SAME recorded aggregate and produced-AND programmes. Callers supply
      actual owned syntax and observation/copy tariffs, never proof flags. *)
   fun aggregate_entries
       {children,recorded,length,push,reverse,start,initial,check,error}
       node provenance =
     let
+      val provenance = constructor_provenance provenance
       val _ = case children provenance of SOME _ => ()
         | NONE => raise error "aggregate lacks recorded operand boundaries"
       fun walk [] _ result = reverse result
@@ -410,7 +417,15 @@ struct
                   in provenance end
             end
         in case role of
-            S.ConstructionReference stamp => reference stamp
+            S.ConstructionReference stamp =>
+              (* Keep the definition's metadata, but do not turn a lexical
+                 use of an OR-valued alias into an immediate OR occurrence.
+                 NOT remains visible: its actual signed atom can itself be
+                 an entire aliased OR, rather than that OR's operands. *)
+              (case reference stamp of
+                 body as ApplicationProvenance ("or",_) =>
+                   ApplicationProvenance ("<alias>",[body])
+               | body => body)
           | S.ConstructionApplication =>
               let val nested = nested () in
                 if token = "and" then ConjunctionProvenance
@@ -467,7 +482,8 @@ struct
           | _ =>
             raise error "not_or_elim" "missing negated OR boundary"
         val (selected,provenance) = selected
-          boolSyntax.disjunction body provenance (index ())
+          boolSyntax.disjunction body (constructor_provenance provenance)
+          (index ())
     in current (negate selected)
       (ApplicationProvenance ("not",[provenance])) end
   fun not_implies_elim1

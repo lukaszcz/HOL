@@ -108,6 +108,14 @@ struct
           (* Twenty captured fields, ten private refs, the constructor,
              held SOME/write and one prepaid retirement publication. *)
           val _=W.with_step work(fn()=>W.spend_policy work 34)
+          fun checkpoint label =
+            if OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" <>
+                SOME "1" then () else
+              let val audit=W.audit_policy work
+              in TextIO.output(TextIO.stdErr,"VALUE_SOLVER_WORK phase=" ^
+                label ^ " charged=" ^ IntInf.toString(#charged audit) ^
+                "\n");TextIO.flushOut TextIO.stdErr end
+          val _=checkpoint "prepare.owner"
           val saved=Invocation{work=work,original=original,owner=owner,
             graph=graph,scope=scope,sources=sources,contract=contract,
             request=request,executable=executable,version=version,
@@ -148,12 +156,14 @@ struct
                    opened= #node result}:: !rows)else()end
           fun checked ty=
             (live work saved;check_type ty;live work saved)
+          val _=checkpoint "finite.prepare.before"
           val prepared:finite_stage=E.prepare_finite_body_query work
             {query=query,validation=validation,options=options,
              open_opaque=open_view,native_contract=contract,ordinal=0,
              check_type=checked}
           val _=W.with_step work(fn()=>
             (W.spend_policy work 2;finite:=SOME prepared))
+          val _=checkpoint "finite.prepare.after"
           val source_nodes=GP.query_nodes_with_policy_for work query
           (* Observe genuine retained opaque leaves directly. A completed
              no-op scan may supply an existing profile; no discovered view
@@ -202,6 +212,7 @@ struct
                 val inputs=append(#assumptions source_nodes)
                   [#denied source_nodes,#goal source_nodes]
             in walk(roots inputs)end)
+          val _=checkpoint "opening.before"
           val opening=Opening.transport_with_conversions_with_policy work
             {validation=validation,openings= !rows,
              native_contract=contract,profiles= !profiles,ordinal=0,
@@ -219,25 +230,32 @@ struct
                             (binding::nested,law::laws)))
                      in bodies rest saved nodes end
                  | Body.NestedNeeds _=>bodies rest nested laws)
+          val _=checkpoint "body.laws.before"
           val(nested,laws)=bodies(#bodies prepared)[][]
           val _=W.with_step work(fn()=>
             (W.spend_policy work 2;
              held_bindings:=laws;held_nested:=nested))
           (* This actual root programme reports ALL remaining requirements;
              private completed body laws discharge only their own ports. *)
+          val _=checkpoint "body.query.before"
           val output=Finite.execute_body_query_with_policy work
             (#plan prepared){opening=opening,bindings=laws}
+          val _=checkpoint "body.query.after"
         in case output of Finite.QueryNeeds requirements=>
             (W.with_step work(fn()=>
                (W.spend_policy work 1;phase:=Pending));
              FiniteNeeds{invocation=saved,requirements=requirements})
           | Finite.QueryRewritten{preprocessing,...}=>
-            let val actual=GP.prepare_query_with_policy work preprocessing
+            let val _=checkpoint "query.prepare.before"
+                val actual=GP.prepare_query_with_policy work preprocessing
+                val _=checkpoint "query.prepare.after"
                 val _=W.with_step work(fn()=>
                   (W.spend_policy work 1;current:=actual))
+                val _=checkpoint "emit.before"
                 val receipt=E.emit_with_assertions work
                   {query=actual,backend= #backend prepared,options=options,
                    prefix="value_solver_",open_opaque=open_view}
+                val _=checkpoint "emit.after"
                 val _=W.with_step work(fn()=>
                   (W.spend_policy work 3;emission:=SOME receipt;
                    live work saved;phase:=Ready))

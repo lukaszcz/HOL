@@ -4763,7 +4763,7 @@ local
     profile "word-decide(1)(BBLAST)"
       (word_decider_attempt "word_decide(BBLAST)"
         (Feedback.trace ("print blast counterexamples", 0)
-          blastLib.BBLAST_PROVE)) target
+          Library.replay_bblast_prove)) target
 
   fun word_decide target =
     bv_resource_prove "word-decide" word_decide_raw target
@@ -4915,7 +4915,7 @@ local
                 (rewrite_profile "rewrite(18)(BBLAST)"
                   (word_decider_attempt "z3_rewrite(BBLAST)"
                     (Feedback.trace ("print blast counterexamples", 0)
-                      blastLib.BBLAST_PROVE)))
+                      Library.replay_bblast_prove)))
             in
               if boolean_residue then
                 bv_next_rung propositional word_route target

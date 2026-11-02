@@ -237,8 +237,10 @@ struct
     | recipe_policy_int_limit (SmtReplayResourcePolicy.AtMost limit) =
         (SOME (IntInf.toInt limit) handle Overflow => NONE)
   (* Same unfolded public-constructor metric, with exact IntInf result.
-     count_body remains the genuine old count-only binder transformation. *)
-  fun exact_size_with_policy binder_slot limit root =
+     Keep opening lazy so a finite ceiling rejects before expanding an
+     unadmitted body. Neither marker identity nor this count grants FV or
+     Source authority. *)
+  fun exact_size_program open_body binder_slot limit root =
     if not (SmtReplayResourcePolicy.allows limit 0) then NONE
     else
       let
@@ -253,15 +255,20 @@ struct
                 if binder_slot andalso
                     not (SmtReplayResourcePolicy.allows limit (count+2))
                 then NONE
-                else walk (count_body term :: rest,
+                else walk (open_body term :: rest,
                   count + (if binder_slot then 2 else 1))
               else walk (rest, count + 1)
       in walk ([root], 0) end
+  val exact_size_with_policy = exact_size_program count_body
   fun size_with_policy binder_slot limit root =
     case recipe_policy_int_limit limit of
         SOME finite => Option.map IntInf.fromInt
           (bounded_size binder_slot finite root)
       | NONE => exact_size_with_policy binder_slot limit root
+  (* A genuinely cold binder must retain the lazy bounded visitor.
+     Standard dest_abs rebuilds even a rejected, shared body in full.
+     Completed admissions can supply raw DATA through Graph's observed
+     getter; a miss here still uses the original count-only programme. *)
   val raw_size_with_policy = size_with_policy false
   val binder_size_with_policy = size_with_policy true
 

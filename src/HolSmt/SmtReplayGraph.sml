@@ -22,7 +22,8 @@ struct
     {identity : unit ref,owner : unit ref,scope : scope,first_input :
       Term.term,
      binder_term : Term.term,binder : node,frame : scope,
-     body_frame : scope,body : source,node : node,first_whole : source}
+     body_frame : scope,body : source,node : node,first_whole : source,
+     raw : IntInf.int,epoch : int,symbols : int}
   datatype binder_origin = BinderOrigin of
     {owner : unit ref,scope : scope,original : node,whole : source,
      admission : admitted_binder_origin}
@@ -145,8 +146,13 @@ struct
      validation_changes : IntInf.int ref,
      nodes : entry R.int_map ref,
      scopes : frame R.int_map ref,
+     (* Alias of the SAME root frame's retirement cell, never a lease. *)
+     root_active : bool ref,
      indices : semantic_indices,
      imports : (Term.term * int * source) list Array.array,
+     (* Immutable native geometry only, NOT saved profile/lifetime authority.
+        Rows are published solely by completed genuine policy captures. *)
+     native_raw_geometry : (node * Term.term * IntInf.int) list ref,
      binders : (int, (Term.term, admitted_binder_origin) Redblackmap.dict)
                Redblackmap.dict ref,
      binder_origins : (int, admitted_binder_origin) Redblackmap.dict ref,
@@ -203,7 +209,9 @@ struct
       (SOME x, SOME y) => SOME (plus 1 (plus x y))
     | _ => NONE
   fun new () : graph =
-    let val owner = ref () in
+    let val owner = ref ()
+        val root_active = ref true
+    in
       {owner = owner, next = ref 0, next_scope = ref 1,
        node_observation = ref NONE,
        scope_retirements = ref 0,
@@ -211,13 +219,15 @@ struct
        nodes = ref (R.empty_int ()),
        scopes = ref (R.put_int
          (R.empty_int (), 0,
-          {parent = NONE, active = ref true,
+          {parent = NONE, active = root_active,
            bindings = Redblackmap.mkDict
              (pair_compare String.compare Int.compare)})),
+       root_active = root_active,
        indices = LegacyIndices
          {keys=ref (Redblackmap.mkDict key_compare),
           types=ref (Redblackmap.mkDict type_compare),recent=ref []},
        imports = Array.array (4093, []),
+       native_raw_geometry = ref [],
        binders = ref (Redblackmap.mkDict Int.compare),
        binder_origins = ref (Redblackmap.mkDict Int.compare),
        binder_closures = ref (Redblackmap.mkDict Int.compare),
@@ -388,7 +398,37 @@ struct
     else raise ERR "binding_scope_path" "different graph or visibility pair"
 
 
-  fun check_scope g scope =
+  fun check_scope (g : graph) scope =
+    case scope of Scope {owner,id=0} =>
+      let
+        (* Only this graph's genuine root has no ancestor. The active cell
+           aliases its actual frame, so retirement is read afresh below.
+           Paid root tariff64 covers Scope/indices dispatch, field/payload
+           holds, owner/epoch checks, active read/branch and return or ERR;
+           there is no map comparison or ancestor walk to invoice. Keep
+           billing and authentication before liveness, as in scope_frame. *)
+        val _ = case #indices g of
+            LegacyIndices _ =>
+              if owner <> #owner g then
+                raise ERR "scope" "scope belongs to a different graph"
+              else ()
+          | PaidIndices p =>
+              let val meter= #meter p
+                  val _=R.scope_meter_charge meter 64
+                  val _=if owner= #owner g then () else
+                    raise ERR "scope" "scope belongs to a different graph"
+                  val _=if #owner p= #owner g then () else
+                    raise ERR "paid_indices" "different graph owner"
+                  val _=if Type.type_epoch ()= #epoch p andalso
+                      Term.term_epoch ()= #symbols p then () else
+                    raise ERR "paid_indices" "Type or Term epoch changed"
+              in () end
+      in
+        if not (!(#root_active g)) then
+          raise ERR "scope" "scope is closed"
+        else ()
+      end
+    | _ =>
     let val {parent,active,...} = scope_frame g scope in
       if not (!active) then raise ERR "scope" "scope is closed"
       else case parent of NONE => () | SOME parent => check_scope g parent
@@ -1618,9 +1658,10 @@ struct
       val _ = check_scope g scope
       val _ = if Term.is_abs original then () else
         raise ERR "admit_binder" "not an abstraction"
-      val _ = case SmtReplayImport.bounded_raw_size maximum original of
-          SOME _ => ()
+      val raw = case SmtReplayImport.bounded_raw_size maximum original of
+          SOME count => IntInf.fromInt count
         | NONE => raise ERR "admit_binder" "bounded binder budget exhausted"
+      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
       val table = Option.getOpt
         (Redblackmap.peek (!(#binders g),scope_id scope),
          Redblackmap.mkDict Term.compare)
@@ -1676,7 +1717,7 @@ struct
              first_input = original,
              binder_term = binder_term,binder = binder,frame = frame,
              body_frame = body_frame,body = body,node = node,
-             first_whole = source}
+             first_whole = source,raw = raw,epoch = epoch,symbols = symbols}
           val _ = case Redblackmap.peek (!(#binder_origins g),node_id node) of
               NONE => ()
             | SOME _ => raise ERR "admit_binder"
@@ -4268,6 +4309,204 @@ struct
      profiles:policy_opaque_profile list}
   fun policy_discovery_plus (a:IntInf.int) (b:IntInf.int) = a+b
 
+  (* Each registry read/list/comparison is paid by the active programme.
+     No profile guard, observer, Source or admission permission is saved. *)
+  fun native_raw_geometry_rows_peek observe registry node =
+    let
+      val _ = observe ()
+      val rows = !registry
+      fun seek [] = (observe ();NONE)
+        | seek ((held,original,raw)::rest) =
+            (observe ();observe ();
+             if held=node then (observe ();SOME (original,raw))
+             else seek rest)
+    in seek rows end
+
+  fun native_raw_geometry_peek observe (g:graph) node =
+    native_raw_geometry_rows_peek observe (#native_raw_geometry g) node
+
+  (* Only opaque tokens from completed genuine captures can enter this
+     optional programme. Stage all writes; neither an exhausted optional
+     allowance nor an observer exception publishes an incomplete batch. *)
+  fun remember_policy_native_raws (g:graph) caller observe registry profiles =
+    let
+      fun save [] = observe ()
+        | save (PolicyOpaqueProfile
+            {owner,scope,node,original,raw,...}::rest) =
+          let
+            val _ = observe ()
+            val _ = if owner= #owner g andalso scope=caller then () else
+              raise ERR "native_raw_geometry" "different capture owner/caller"
+            (* The sealed profile was made from this exact representative
+               by the genuine collector. No semantic index, graph entry,
+               saved guard or old lifetime lease is needed for raw DATA.
+               The eventual getter independently authenticates the actual
+               physical root import before borrowing this row. *)
+            val _ = observe ()
+            val _ = case native_raw_geometry_rows_peek observe registry
+                node of
+                SOME (held,count) =>
+                  (observe ();
+                   if Portable.pointer_eq (held,original) andalso count=raw
+                     then () else raise ERR "native_raw_geometry"
+                       "changed native geometry")
+              | NONE =>
+                  (observe ();observe ();
+                   registry := (node,original,raw) :: !registry)
+          in save rest end
+    in save profiles end
+
+  (* Publication is deliberately NOT a discovery suffix: its old step
+     callback and scan_limit cannot pay for an optional acceleration.
+     The selecting consumer supplies a separate envelope on its SAME Work,
+     leaving any later mandatory work/action-return guards funded. Only
+     our private allowance exception is caught, never a caller Primary. *)
+  fun publish_policy_native_raw_geometry_observed (g:graph)
+      (caller as Scope {owner,id}) {profiles,remaining_work,observe} =
+    if owner <> #owner g then
+      raise ERR "native_raw_geometry" "different graph scope"
+    else if id <> 0 then false
+    else let
+      exception OptionalAllowance
+      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
+      val used = ref (0:IntInf.int)
+      fun valid () =
+        (if !(#root_active g) then () else
+           raise ERR "native_raw_geometry" "root scope is closed";
+         if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then
+           () else raise ERR "native_raw_geometry" "capture epoch changed";
+         (* This programme touches no semantic index. Its own fixed
+            observer-funded guards must not debit a coupled index meter
+            outside the selected optional envelope. *)
+         case #indices g of LegacyIndices _ => ()
+           | PaidIndices p =>
+               if #owner p=owner andalso #root p=caller andalso
+                  #epoch p=epoch andalso #symbols p=symbols then ()
+               else raise ERR "native_raw_geometry" "changed graph owner")
+      fun charge amount =
+        if SmtReplayResourcePolicy.allows remaining_work (!used+amount) then
+          (valid ();observe amount;valid ();used := !used+amount)
+        else raise OptionalAllowance
+      (* Header, staging and constant-size fresh callback guards are paid
+         before effect. Registry reads/copies/comparisons remain metered. *)
+      fun note () = charge 65
+      fun publish () =
+        let
+          val _ = charge 32
+          val registry = ref (!(#native_raw_geometry g))
+          val _ = remember_policy_native_raws g caller note registry profiles
+          val _ = note ()
+        in #native_raw_geometry g := !registry;true end
+    in publish () handle OptionalAllowance => false end
+
+  (* Optional ROOT-only native-shape DATA, not raw/native admission.
+     Every occurrence resolves through the exact physical root memo.
+     Audit of ALL memo_save producers: execute_import and its policy twin
+     use atomic ALPHA, REFL for opaque abs, and congruence of child ALPHAs;
+     retain_source uses exact REFL. The two bounded binder-body producers
+     also preserve ALPHA shape, but ALWAYS save in fresh non-root frames.
+     None accepts an arbitrary caller Source or a rewrite proof. Thus the
+     private root memo authenticates node/original provenance without an
+     entry/usable/canonical-child lookup. Walk ACTUAL public Apps/atoms;
+     every abs needs a genuine cached native count for SAME node/Term.
+     Never open opaque syntax. Cold/incomplete/over-budget returns NONE.
+     No profile guard or saved lifetime lease is adopted. *)
+  fun imported_native_raw_geometry_observed (g:graph)
+      (caller as Scope {owner,id}) {original,maximum,observe} =
+    (* Foreign immutable header first, before ANY retained payload. *)
+    if owner <> #owner g then
+      raise ERR "native_raw_geometry" "different graph scope"
+    else if id <> 0 then (observe 8;NONE)
+    else let
+      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
+      fun valid () =
+        (if !(#root_active g) then () else
+           raise ERR "native_raw_geometry" "root scope is closed";
+         if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then
+           () else raise ERR "native_raw_geometry" "capture epoch changed";
+         case #indices g of LegacyIndices _ => ()
+           | PaidIndices p => paid_indices_live g p)
+      (* Fixed header/epoch capture is paid before payload. An observer can
+         retire root/epochs, so validate afresh AFTER every callback too.
+         PaidIndices retains its OWN coupled-meter guard; legacy hot notes
+         never traverse ScopeMap, ancestor paths or NodeMap. *)
+      val _ = valid ()
+      val _ = observe 32
+      val _ = valid ()
+      (* Prepay both constant guards plus the callback-free byte fold.
+         Bulk IntInf charges stay bulk; no per-byte liveness traversal. *)
+      fun charge (amount:IntInf.int) =
+        (valid ();observe (amount+64);valid ())
+      fun note () = charge 1
+      fun imported term =
+        let
+          val bucket = SmtReplayImport.pointer_bucket_observed charge
+            4 4093 term
+          val _ = note ()
+          val rows = Array.sub (#imports g,bucket)
+          fun seek [] = (note ();NONE)
+            | seek ((held,frame,source:source)::rest) =
+                (note ();note ();
+                 if frame=0 then
+                   (note ();if Portable.pointer_eq (held,term) then
+                     (note ();if Portable.pointer_eq (#original source,term)
+                       then SOME source else NONE)
+                    else seek rest)
+                 else seek rest)
+        in seek rows end
+      (* Completed admission already measured this exact native input.
+         Borrow its count only, not its opened body or proof authority.
+         A red-black lookup has at most twice the bit-length comparisons;
+         prepay that conservative metadata envelope before reading it. *)
+      fun admitted term node =
+        let
+          val _ = note ()
+          val table = !(#opened_views g)
+          fun bits 0 = 0 | bits n = 1 + bits (n div 2)
+          val _ = charge (8 * IntInf.fromInt
+            (1 + 2 * bits (Redblackmap.numItems table)))
+        in case Redblackmap.peek (table,(0,node_id node)) of
+            SOME {recipe=OpenedBinder admission,...} =>
+              (charge 16;
+               if #owner admission=owner andalso #scope admission=caller
+                   andalso #epoch admission=epoch
+                   andalso #symbols admission=symbols andalso
+                   Portable.pointer_eq (#first_input admission,term) then
+                 SOME (#first_input admission,#raw admission)
+               else NONE)
+          | _ => NONE
+        end
+      fun geometry term node =
+        case native_raw_geometry_peek note g node of
+            SOME saved => SOME saved
+          | NONE => admitted term node
+      fun walk [] (count:IntInf.int) = (note ();SOME count)
+        | walk (term::rest) count =
+          (note ();
+           if not (SmtReplayResourcePolicy.allows maximum (count+1)) then NONE
+           else case imported term of NONE => NONE
+             | SOME {node,...} =>
+               let
+                 fun next amount = (note ();walk rest (count+amount))
+                 val _ = note ()
+               in if Term.is_comb term then
+                   let val _ = note ()
+                       val (f,x) = Term.dest_comb term
+                       val _ = note () val _ = note ()
+                   in walk (f::x::rest) (count+1) end
+                 else (note ();if Term.is_abs term then
+                   (case geometry term node of
+                      NONE => NONE
+                    | SOME (held,raw) =>
+                        (note ();if Portable.pointer_eq (held,term) then
+                           next raw else NONE))
+                   else (note ();if Term.is_var term then next 1
+                     else (note ();if Term.is_const term then next 1
+                       else NONE)))
+               end)
+      val _ = note ()
+    in walk [original] 0 end
+
   datatype policy_metric_task = PolicyMetricVisit of node
     | PolicyMetricJoin of node * int * node list
   (* Memoize real owned constructors, then sum each child incidence. No
@@ -4383,9 +4622,10 @@ struct
       val _ = check_scope g scope
       val _ = if Term.is_abs original then () else
         raise ERR "admit_binder" "not an abstraction"
-      val _ = case SmtReplayImport.raw_size_with_policy maximum original of
-          SOME _ => ()
+      val raw = case SmtReplayImport.raw_size_with_policy maximum original of
+          SOME count => count
         | NONE => raise ERR "admit_binder" "bounded binder budget exhausted"
+      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
       val table = Option.getOpt
         (Redblackmap.peek (!(#binders g),scope_id scope),
          Redblackmap.mkDict Term.compare)
@@ -4441,7 +4681,7 @@ struct
              first_input = original,
              binder_term = binder_term,binder = binder,frame = frame,
              body_frame = body_frame,body = body,node = node,
-             first_whole = source}
+             first_whole = source,raw = raw,epoch = epoch,symbols = symbols}
           val _ = case Redblackmap.peek (!(#binder_origins g),node_id node) of
               NONE => ()
             | SOME _ => raise ERR "admit_binder"
@@ -6736,6 +6976,8 @@ struct
       val semantic_keys : node R.graph_key_map=
         R.scope_empty_graph_key meter
       val empty_placeholders : Term.term R.int_map=R.empty_int ()
+      (* Geometry registry cell and SAME-root active alias, on birth meter. *)
+      val _=R.scope_meter_charge meter 2
     in
       {owner = owner, next = ref 0, next_scope = ref 1,
        node_observation = ref NONE,
@@ -6743,12 +6985,14 @@ struct
        validation_changes = ref 0,
        nodes = ref (R.empty_int ()),
        scopes = ref scopes,
+       root_active = #active frame,
        indices = PaidIndices
          {owner=owner,root=Scope {owner=owner,id=0},meter=meter,
           epoch=Type.type_epoch (),symbols=Term.term_epoch (),
           types=ref semantic_types,keys=ref semantic_keys,recent=ref [],
           empty_placeholders=empty_placeholders},
        imports = Array.array (4093, []),
+       native_raw_geometry = ref [],
        binders = ref (Redblackmap.mkDict Int.compare),
        binder_origins = ref (Redblackmap.mkDict Int.compare),
        binder_closures = ref (Redblackmap.mkDict Int.compare),

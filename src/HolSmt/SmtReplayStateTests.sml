@@ -21,16 +21,22 @@ struct
     in print ("TASK51_LIVE phase=" ^ phase ^ " bytes=" ^
          LargeInt.toString bytes ^ "\n"); bytes end
 
-  (* The cache owns fresh equality syntax from discarded successful
+  (* Native result geometry travels on its Edge; the block no longer
+     registers discarded native result roots. Feed genuine legacy edges
+     to the native consumer instead: their cold operand profiles/ordinal
+     entries still belong to the block's optional metadata cache.
+     The cache owns fresh equality syntax from discarded successful
      alternatives. None is reachable from the final Source proof. *)
   fun populate w b node count =
     let fun loop 0 keys = keys
           | loop n keys =
               let val key = W.with_step w (fn () =>
-                    let val edge = P.execute_primitive w
-                          (P.prepare_primitive w b
-                            (P.ReflexiveName node) [])
-                    in weak (Thm.concl (P.theorem b edge)) end)
+                    let val edge = P.derive_primitive b
+                          (P.ReflexiveName node) []
+                        val key = weak (Thm.concl (P.theorem b edge))
+                        val _ = P.execute_primitive w
+                          (P.prepare_primitive w b P.Symmetry [edge])
+                    in key end)
               in loop (n-1) (key::keys) end
     in loop count [] end
 
@@ -52,8 +58,13 @@ struct
           val base = if diagnostic then live "empty" else 0
           val keys = populate w b node count
           val edge = W.with_step w (fn () => P.source b 0)
+          (* The selected closed assembly is an immutable receipt input
+             for later scoped closure. Observe an unused alternative's
+             assembly instead, not that deliberately retained input. *)
           val law_key = W.with_step w (fn () =>
-            weak (Thm.concl (P.assemble b edge)))
+            let val alternative = P.derive_primitive b
+                  (P.ReflexiveName node) []
+            in weak (Thm.concl (P.assemble b alternative)) end)
           val _ = PolyML.fullGC ()
           val held = alive keys
           val _ = require "fixture did not retain discarded syntax/assembly"

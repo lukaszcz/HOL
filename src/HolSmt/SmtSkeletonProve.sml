@@ -754,8 +754,29 @@ struct
   fun new_semantic_order () =
     let
       val count = 4093
-      val pairs = Array.array
-        (count, [] : (term * term * order) list)
+      (* A shallow structural hash sends every suffix of a homogeneous
+         spine to one bucket. A flat list of term PAIRS there is quadratic
+         even for lookup. Assign physical IDs in single-term buckets, then
+         index the pair memo by integer pairs. IDs only route memo entries;
+         the semantic order below still determines every returned result. *)
+      val physical = Array.array (count, [] : (term * int) list)
+      val next_physical = ref 0
+      fun physical_id term =
+        let val bucket = SmtResource.pointer_bucket count term in
+          case List.find (fn (saved, _) =>
+              Portable.pointer_eq (term, saved))
+              (Array.sub (physical, bucket)) of
+            SOME (_, id) => id
+          | NONE =>
+              let val id = !next_physical in
+                next_physical := id + 1;
+                Array.update (physical, bucket,
+                  (term, id) :: Array.sub (physical, bucket));
+                id
+              end
+        end
+      val pairs = ref (Redblackmap.mkDict
+        (Lib.pair_compare (Int.compare, Int.compare)))
       val type_pairs = Array.array
         (count, [] : (hol_type * hol_type * order) list)
       fun type_bucket ty =
@@ -808,15 +829,13 @@ struct
             Portable.pointer_eq (left, right) then EQUAL
         else
           let
-            val bucket = (SmtResource.pointer_bucket count left +
-              SmtResource.pointer_bucket count right) mod count
+            val key = if null left_env andalso null right_env then
+                SOME (physical_id left, physical_id right)
+              else NONE
           in
-            case (if null left_env andalso null right_env then
-              List.find (fn (l, r, _) =>
-                Portable.pointer_eq (left, l) andalso
-                Portable.pointer_eq (right, r)) (Array.sub (pairs, bucket))
-              else NONE) of
-              SOME (_, _, result) => result
+            case Option.mapPartial
+                (fn key => Redblackmap.peek (!pairs, key)) key of
+              SOME result => result
             | NONE =>
                 let
                   val result = case Int.compare
@@ -858,10 +877,9 @@ struct
                                  (rv :: right_env) (lb, rb) end
                            | result => result)
                     | result => result
-                  val _ = if null left_env andalso null right_env then
-                    Array.update (pairs, bucket,
-                      (left, right, result) :: Array.sub (pairs, bucket))
-                    else ()
+                  val _ = case key of NONE => ()
+                    | SOME key => pairs := Redblackmap.insert
+                        (!pairs, key, result)
                 in result end
           end
     in compare_env [] [] end

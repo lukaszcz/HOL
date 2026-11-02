@@ -110,13 +110,20 @@ struct
       val diagnostics =
         (OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" = SOME "1")
         handle _ => false
-      fun phase label describe = if not diagnostics then () else
-        ((let val audit = W.audit work
-          in TextIO.output (TextIO.stdErr,
-            "CORE_WORK phase=" ^ label ^ " charged=" ^
-            Int.toString (#charged audit) ^ " retired=" ^
-            Bool.toString (#retired audit) ^ describe () ^ "\n");
-            TextIO.flushOut TextIO.stdErr end) handle _ => ())
+      (* Full owner/lexical/epoch validation brackets each pure quote
+         segment even when diagnostics are disabled. No caller callback
+         runs in these segments; G/receipt operations keep their own checks.
+         Bookkeeping ticks below still debit this SAME live original Work,
+         but do not recursively revalidate the owner for every list cell. *)
+      fun phase label describe =
+        (active owner;
+         if not diagnostics then () else
+           ((let val audit = W.audit work
+             in TextIO.output (TextIO.stdErr,
+               "CORE_WORK phase=" ^ label ^ " charged=" ^
+               Int.toString (#charged audit) ^ " retired=" ^
+               Bool.toString (#retired audit) ^ describe () ^ "\n");
+               TextIO.flushOut TextIO.stdErr end) handle _ => ()))
       val _ = phase "prepare.entry" (fn () =>
         " ordinal=" ^ Int.toString ordinal)
       val converted = conversion
@@ -125,7 +132,7 @@ struct
       val cap = IntInf.fromInt (#template_limit limits)
       fun plus a b = IntInf.min (ceiling+1,a+b)
       fun times a b = IntInf.min (ceiling+1,a*b)
-      fun charge () = (active owner;W.spend work 1)
+      fun charge () = W.spend work 1
       fun lookup key [] = NONE
         | lookup key ((old,value)::rest) =
             (charge ();if old = key then SOME value else lookup key rest)
@@ -339,6 +346,7 @@ struct
         {frame = #frame owner,roots = roots,closed_facts = facts,
          conversions = conversions}
       val frontier_data = P.realization_frontier_data_for work frontier
+      val _ = phase "frontier.data.after" (fn () => "")
       val reachable = #reachable frontier_data
       val atoms = #atoms frontier_data
       val _ = phase "frontier.after" (fn () => "")
@@ -359,6 +367,7 @@ struct
             case definition node of NONE => definitions rest result
             | SOME pair => (charge ();definitions rest (pair::result)))
       val definition_leaves = definitions reachable []
+      val _ = phase "geometry.definitions.after" (fn () => "")
       fun closed_leaves [] result = List.rev result
         | closed_leaves (fact::rest) result = (charge ();
             let val node = P.closed_node fact in
@@ -394,6 +403,7 @@ struct
             (charge ();join (context actual a) (context actual b))
       val compact_context = context false tree
       val comparison_context = context true tree
+      val _ = phase "geometry.contexts.after" (fn () => "")
       val _ = bound "compact P context" compact_context
       val _ = bound "P comparison skeleton" comparison_context
       val _ = charge () val assembly_work = ref (0 : IntInf.int)
@@ -535,6 +545,7 @@ struct
             realized (join (tree_proof a) (tree_proof b))
       val _ = tree_proof tree
       val _ = realized target_actual (* MP *)
+      val _ = phase "native.forecast.after" (fn () => "")
       (* Quote render trees and every supplied policy argument BEFORE either
          Type.mk_type or the first callback. Policies are not cost authority. *)
       val _ = save_shape (Arrow (Boolean,Arrow (Boolean,Boolean)))

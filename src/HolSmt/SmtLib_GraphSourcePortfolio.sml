@@ -151,11 +151,19 @@ struct
         val _ = W.validate work graph scope sources limits
     in {graph = graph,scope = scope,sources = sources,
         template = #template_limit limits} end
-  (* Private row/object inspection precedes every legacy getter. Every row
-     visit, memo comparison and insertion pays original Work, after immutable
-     Original/PolicyOriginal Sources headers reject foreign owners. The
-     balanced local index avoids quadratic shared-dependency membership scans.
-     This memo is local to ONE synchronous callback-free guard operation;
+  (* Private row/object inspection precedes every legacy getter. Immutable
+     graph/scope/Original Sources headers reject foreign owners before payment.
+     Old begin retains the original visit/comparison/insertion programme.
+     Other modes' Original/PolicyOriginal occurrences pay a fixed quote24:
+     <=8 fact-field/row dispatch events, <=8 expected-header projection,
+     comparison-argument and equality events, <=8 successful branch/list/call/
+     return events. Work's own active/scope/payment costs are additional.
+     These private immutable leaves have no children or observer callbacks;
+     even repeated leaves are checked and paid, never looked up or inserted.
+     Their genuine private counter IDs cannot alias another fact (overflow
+     raises), so omitting their collision check loses no admissibility check.
+     Other rows retain paid visits/comparisons/insertions in a balanced index
+     for shared dependencies, local to ONE synchronous guard operation;
      neither template incidence nor earlier validation supplies credit. *)
   fun guard_facts work (expected : expectation) inputs =
     let fun charge () = W.spend_guard_policy work 1
@@ -174,8 +182,12 @@ struct
                   if Portable.pointer_eq (sources,#sources expected) then ()
                   else raise ERR "guard_facts" "different original Sources"
               | _ => ());
-           charge ();
-           case Redblackmap.peek (!completed,identity) of SOME held =>
+           case (W.ordinary_legacy_guard_mode work,row) of
+                (false,Original _) => W.spend_guard_policy work 24
+              | (false,PolicyOriginal _) => W.spend_guard_policy work 24
+              | _ =>
+           (charge ();
+            case Redblackmap.peek (!completed,identity) of SOME held =>
              if Portable.pointer_eq (fact,held) then () else
                raise ERR "guard_facts" "private fact identity collision"
            | NONE =>
@@ -192,7 +204,7 @@ struct
                   (P.validate_conversion_for work conversion;visit source)
               | Apply {law,premises} => (visit law;List.app visit premises);
             charge ();
-            completed := Redblackmap.insert (!completed,identity,fact)))
+            completed := Redblackmap.insert (!completed,identity,fact))))
     in List.app visit inputs end
   fun transport_with_work work conversion fact =
     ((let val expected = expected_work work
@@ -518,17 +530,15 @@ struct
                         val _ = List.app (fn _=>charge 1) more
                     in walk (source::rest) (more@roots) end
                 | BinderTransport (conversion,source) =>
-                    (P.validate_conversion_for work conversion;
-                     P.validate_conversion_with_policy
-                       graph scope template conversion;
-                     if P.conversion_source conversion=endpoint source andalso
-                         P.conversion_target conversion=node then () else
-                       raise ERR "validate_with_policy" "binder endpoints";
-                     charge 3;charge 1;
-                     conversions := conversion :: !conversions;
-                     walk (source::rest)
-                       (P.conversion_source conversion::
-                        P.conversion_target conversion::roots))
+                    let val endpoints=P.conversion_endpoints_with_policy_for
+                          work graph scope template conversion
+                        val _=if #source endpoints=endpoint source andalso
+                            #target endpoints=node then ()else
+                          raise ERR "validate_with_policy" "binder endpoints"
+                        val _=charge 3 val _=charge 1
+                        val _=conversions:=conversion:: !conversions
+                    in walk(source::rest)
+                      (#source endpoints:: #target endpoints::roots)end
                 | Apply {law,premises} =>
                     (charge 1;List.app (fn _=>charge 1) premises;
                      walk (law::premises@rest) roots)

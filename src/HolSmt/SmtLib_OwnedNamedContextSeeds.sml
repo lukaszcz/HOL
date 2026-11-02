@@ -23,7 +23,11 @@ struct
     rigid:G.node list option}
   datatype plan=Plan of
     {owner:owner,rows:row list,paths:G.node list,used:bool ref}
-  datatype catalogue=Catalogue of {owner:owner,block:P.block,seeds:seed list}
+  datatype shared_prefix=SharedPrefix of
+    {occurrence:int,node:G.node,path:bool list,
+     receipt:P.source_realization option ref}
+  datatype catalogue=Catalogue of
+    {owner:owner,block:P.block,seeds:seed list,prefixes:shared_prefix list}
   and seed=Seed of {owner:owner,block:P.block,row:row,edge:P.edge}
   datatype projected_rule=ProjectedRule of
     {owner:owner,row:row,proof:P.source_realization,
@@ -85,8 +89,19 @@ struct
     in make work (RuleStripped query) (#frame d) (#assumptions d)
       (#goal d) (#denied d) check_type end
     handle primary=>(W.close work;raise primary)
-  fun tick (owner as Owner {work,...}) n=
-    (active owner;W.spend work n;active owner)
+  (* A tick is callback-free bookkeeping inside an entry/exit checked
+     span. W.spend still debits the SAME live original Work. In particular
+     call/effect retain BOTH guards around every public callback. *)
+  fun tick (Owner {work,...}) n=W.spend work n
+  fun diagnostic (Owner {work,...}) label describe=
+    if not ((OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS"=SOME "1")
+        handle _=>false) then () else
+      ((let val audit=W.audit work
+        in TextIO.output (TextIO.stdErr,
+          "TABLES_WORK phase=catalogue." ^ label ^ " charged=" ^
+          Int.toString (#charged audit) ^ " retired=" ^
+          Bool.toString (#retired audit) ^ describe () ^ "\n");
+          TextIO.flushOut TextIO.stdErr end) handle _=>())
   fun rigid owner node=case owner of Owner {graph,...}=>
     (tick owner 1;call owner (fn()=>G.free_variable_nodes graph node))
   fun binary (owner as Owner {graph,...}) node=
@@ -100,8 +115,8 @@ struct
      | _=>NONE)
   fun prepare (owner as Owner {work,graph,sources,receiver,assumptions,
                               goal,phase,...})=
-    protect owner (fn()=>W.with_step work (fn()=>
-    let val _=active owner
+    protect owner (fn()=>W.with_step work (fn()=>call owner (fn()=>
+    let val _=diagnostic owner "prepare.before" (fn()=>"")
         val _=if !phase=Fresh then phase:=Prepared else
           raise ERR "prepare" "context plan consumed"
         fun nonnum node=case rigid owner node of NONE=>
@@ -143,9 +158,11 @@ struct
           in walk assumption [] end
         val rows=List.concat (Portable.mapi (fn index=>fn assumption=>
           slot (index,assumption)) assumptions)
+        val _=diagnostic owner "prepare.after"
+          (fn()=>" rows=" ^ Int.toString (length rows))
     in Plan {owner=owner,rows=rows,
       paths=List.map #2 (Redblackmap.listItems (!paths)),used=ref false}
-    end))
+    end)))
   (* Actual compact theorem grammar only, including every Hyp/name/type
      occurrence. No expanded Source Gamma is passed to this preflight. *)
   fun quote (owner as Owner {limits,...}) terms=
@@ -170,7 +187,8 @@ struct
                else walk rest raw inc end
     in List.app (fn t=>walk [t] 0 0) terms;List.rev (!types) end
   fun effect (owner as Owner {work,check_type,...}) terms operation=
-    let val types=W.with_step work (fn()=>quote owner terms)
+    let val types=W.with_step work (fn()=>call owner
+          (fn()=>quote owner terms))
     in W.with_step work (fn()=>
       (List.app (fn ty=>call owner (fn()=>check_type ty)) types;
        call owner operation)) end
@@ -200,8 +218,9 @@ struct
     in effect owner terms (fn()=>P.compose block operation premises) end
   fun execute (Plan {owner=owner as Owner {work,frame,receiver,assumptions,
                        goal,denied,graph,scope,phase,...},rows,paths,used})=
-    protect owner (fn()=>
-    let val _=active owner
+    protect owner (fn()=>call owner (fn()=>
+    let val _=diagnostic owner "execute.before"
+          (fn()=>" rows=" ^ Int.toString (length rows))
         val _=if !used then raise ERR "execute" "plan consumed" else used:=true
         val bottom=W.with_step work (fn()=>
           (tick owner 1;call owner (fn()=>
@@ -210,35 +229,140 @@ struct
         fun sparse extras=P.prepare_needed_sources_with_work work
           {frame=frame,roots=roots,additional_sources=extras,
            closed_facts=[],conversions=[]}
+        val _=diagnostic owner "freeze.before" (fn()=>"")
         val block=case receiver of Original=>sparse []
           | RuleOriginal=>sparse []
           | RuleStripped _=>sparse (assumptions @ [denied])
           | Stripped query=>Q.freeze_for work query
               {roots=roots,closed_facts=[],conversions=[]}
+        val _=diagnostic owner "freeze.after" (fn()=>"")
         val _=phase:=Live
-        fun project node [] edge=edge
-          | project node (left::path) edge=
-            (case metadata owner (fn()=>binary owner node) of NONE=>
-                raise ERR "execute" "genuine conjunction path changed"
-             | SOME (a,b)=>
-               let val law=constructor owner block node
-                   val conjunction=metadata owner (fn()=>
-                     boolSyntax.mk_conj (P.name block a,P.name block b))
-                   val both=compose owner block conjunction [law,edge]
-                     (fn [eq,p]=>Thm.EQ_MP eq p
-                       | _=>raise ERR "execute" "projection premises")
-                   val child=if left then a else b
-                   val next=compose owner block
-                     (named owner block child) [both]
-                     (fn [p]=>if left then Thm.CONJUNCT1 p else Thm.CONJUNCT2 p
-                       | _=>raise ERR "execute" "conjunct premise")
-               in project child path next end)
-        fun seed row=let val source=List.nth (assumptions,#slot row)
-              val edge=W.with_step work (fn()=>call owner
-                (fn()=>P.source block (#occurrence row)))
-              val proof=project source (#path row) edge
-            in Seed {owner=owner,block=block,row=row,edge=proof} end
-    in Catalogue {owner=owner,block=block,seeds=List.map seed rows} end)
+        (* This trie holds genuine edges in the SAME unconsumed block.
+           Roots are actual occurrences, never graph-node identities. *)
+        datatype branch=Branch of
+          {node:G.node,edge:P.edge,left:branch option ref,
+           right:branch option ref}
+        (* Local metadata ledger, on the SAME Work: setup24 pays the
+           map/ref/closure fields; edge20 pays branch/path dispatch;
+           cache16 pays option/ref reads, stores and branch allocation.
+           List-cell16 pays lookupNode's case/fields/index/tail call and
+           common's two cell views/comparison/cons; its terminal fee is8.
+           Neither setup nor a cache fee buys a tree search: EACH actual
+           balanced-map comparison below has its own debit, before compare.
+           All uses of these helpers are inside metadata's Busy span. *)
+        fun compareOccurrence keys=(tick owner 1;Int.compare keys)
+        fun branch node edge=(tick owner 16;Branch
+          {node=node,edge=edge,left=ref NONE,right=ref NONE})
+        fun lookupNode slot=
+          let fun nth nodes index=(tick owner 16;case nodes of
+                  []=>raise Subscript
+                | node::rest=>if index=0 then node else nth rest (index-1))
+          in nth assumptions slot end
+        val branches=metadata owner (fn()=>(tick owner 24;
+          ref (Redblackmap.mkDict compareOccurrence)))
+        fun project saved path=
+          let val Branch {node,edge,left,right}=metadata owner (fn()=>
+                (tick owner 20;saved))
+          in case path of
+            []=>edge
+          | direction::rest=>
+            let val port=if direction then left else right
+                val held=metadata owner (fn()=>(tick owner 16;!port))
+                val next=case held of SOME saved=>saved
+                  | NONE=>
+                    (case metadata owner (fn()=>binary owner node) of NONE=>
+                       raise ERR "execute" "genuine conjunction path changed"
+                     | SOME (a,b)=>
+                       let val law=constructor owner block node
+                           val conjunction=metadata owner (fn()=>
+                             boolSyntax.mk_conj
+                               (P.name block a,P.name block b))
+                           val both=compose owner block conjunction [law,edge]
+                             (fn [eq,p]=>Thm.EQ_MP eq p
+                               | _=>raise ERR "execute" "projection premises")
+                           val child=if direction then a else b
+                           val proof=compose owner block
+                             (named owner block child) [both]
+                             (fn [p]=>if direction then Thm.CONJUNCT1 p
+                               else Thm.CONJUNCT2 p
+                               | _=>raise ERR "execute" "conjunct premise")
+                           val saved=metadata owner (fn()=>
+                             let val _=tick owner 16
+                                 val saved=branch child proof
+                             in port:=SOME saved;saved end)
+                       in saved end)
+            in project next rest end end
+        fun seed (row:row)=
+          let val held=metadata owner (fn()=>(tick owner 20;
+                Redblackmap.peek (!branches,#occurrence row)))
+              val root=case held of SOME saved=>saved | NONE=>
+                let val edge=W.with_step work (fn()=>call owner
+                      (fn()=>P.source block (#occurrence row)))
+                    val saved=metadata owner (fn()=>
+                      let val _=tick owner 16
+                          val saved=branch (lookupNode (#slot row)) edge
+                      in branches:=Redblackmap.insert
+                        (!branches,#occurrence row,saved);saved end)
+                in saved end
+              val proof=project root (#path row)
+          in Seed {owner=owner,block=block,row=row,edge=proof} end
+        val _=diagnostic owner "seeds.before" (fn()=>"")
+        val seeds=List.map seed rows
+        val _=diagnostic owner "seeds.after" (fn()=>"")
+        val prefixes=metadata owner (fn()=>
+          let
+            val _=tick owner 24
+            fun common (a::xs) (b::ys)=
+                  (tick owner 16;if a=b then a::common xs ys else [])
+              | common _ _=(tick owner 8;[])
+            fun insert (row:row,table)=
+              let val _=tick owner 20 val key= #occurrence row
+                  val value=case Redblackmap.peek (table,key) of
+                      NONE=>(row,#path row,false)
+                    | SOME (first,path,_)=>
+                        (first,common path (#path row),true)
+              in tick owner 16;Redblackmap.insert (table,key,value) end
+            fun endpoint node path=(tick owner 20;case path of []=>node
+              | left::rest=>case binary owner node of
+                  SOME (a,b)=>endpoint (if left then a else b) rest
+                | NONE=>raise ERR "execute" "common Source path changed")
+            val Owner {limits,...}=owner
+            (* unfolded_nodes reserves its maximum as a saturation value.
+               This is only a sharing forecast, not a changed Source cap. *)
+            val maximum=case Int.maxInt of SOME n=>n | NONE=>1073741823
+            val cap=Int.min (maximum-1,
+              Int.min (#output_limit limits,#template_limit limits))
+            fun compact node metric=case G.unfolded_nodes_observed
+                (fn()=>tick owner 1) graph metric cap node of
+                  SOME n=>n<=cap | NONE=>false
+            fun retain (_,((row:row),path,multiple))=
+              (tick owner 20;
+              if not multiple orelse null path then NONE else
+              let val node=endpoint (lookupNode (#slot row)) path
+              (* Optional planning only. Unknown/large common clauses keep
+                 the old independent producer; no new admission/refusal.
+                 A cut target aliasing an ordinary Source slot would add
+                 that slot to sparse incidence. Leave it ordinary. *)
+              in if not (List.exists (fn original=>(tick owner 16;
+                    original=node)) (denied::assumptions)) andalso
+                  compact node G.RawNodes andalso
+                  compact node G.BinderInclusiveNodes then
+                (tick owner 16;
+                 SOME (SharedPrefix {occurrence= #occurrence row,
+                   node=node,path=path,receipt=ref NONE})) else NONE end)
+          in case receiver of RuleOriginal=>
+              let val table=List.foldl insert
+                    (Redblackmap.mkDict compareOccurrence) rows
+                  (* Exact entry count, not a root-call or logarithmic
+                     guess. Per entry24 covers the tree view/fields,
+                     recursive control/empty leaves, pair/list words and
+                     mapPartial's input/output cells; setup/last leaf8.
+                     Pay BEFORE listItems traverses/allocates anything. *)
+                  val _=tick owner (8+24*Redblackmap.numItems table)
+              in List.mapPartial retain (Redblackmap.listItems table) end
+            | _=>[] end)
+    in Catalogue {owner=owner,block=block,seeds=seeds,
+      prefixes=prefixes} end))
   fun seeds_for work (Catalogue {owner,seeds,...})=
     (expected work owner;seeds)
   fun description_for work (Seed {owner,row,...})=
@@ -299,7 +423,7 @@ struct
   (* Exact typed graph IDs are ground matching keys, not semantic equations.
      No INST/INST_TYPE or schematic generalization is performed. *)
   fun close_ground_goal work (Catalogue
-      {owner=owner as Owner {graph,goal,...},block,seeds})=
+      {owner=owner as Owner {graph,goal,...},block,seeds,...})=
     ((expected work owner;protect owner (fn()=>
     let
       fun boolean node=Type.compare (G.type_of graph node,Type.bool)=EQUAL
@@ -314,9 +438,9 @@ struct
              | _=>NONE)
            | _=>NONE)
          | _=>NONE end
-      val equations=W.with_step work (fn()=>
-        List.mapPartial (fn seed=>(tick owner 1;equation seed)) seeds)
-      val program=W.with_step work (fn()=>
+      val equations=W.with_step work (fn()=>call owner (fn()=>
+        List.mapPartial (fn seed=>(tick owner 1;equation seed)) seeds))
+      val program=W.with_step work (fn()=>call owner (fn()=>
         let val known=ref (Redblackmap.mkDict Int.compare)
             fun lookup node=(tick owner 1;
               Redblackmap.peek (!known,G.node_id node))
@@ -336,7 +460,7 @@ struct
             fun complete ()=case lookup goal of SOME proof=>proof
               | NONE=>if pass equations false then complete () else
                   raise ERR "close_ground_goal" "no exact ground context proof"
-        in complete () end)
+        in complete () end))
       fun run (Given (Seed {edge,...}))=edge
         | run (Forward (seed,inner))=transfer false seed inner
         | run (Backward (seed,inner))=transfer true seed inner
@@ -399,7 +523,7 @@ struct
     in List.rev (!types) end
   fun project_rule work (Catalogue {owner=owner as Owner
       {marker,receiver,graph,frame,scope,assumptions,check_type,...},
-       block,...})
+       block,prefixes,...})
       (Seed {owner=Owner {marker=other,...},block=otherblock,row,edge})=
     ((expected work owner;
       if Portable.pointer_eq (marker,other) andalso
@@ -418,11 +542,10 @@ struct
           val extras=case receiver of RuleStripped _=>
                 assumptions @ [#denied (case owner of Owner d=>d)]
             | _=>[]
-          val fresh=P.prepare_needed_sources_with_work work
-            {frame=frame,roots=[bottom,#node row],
-             additional_sources=extras,closed_facts=[],conversions=[]}
-          fun project node [] edge=edge
-            | project node (left::path) edge=
+          val _=diagnostic owner "rule.freeze.before"
+            (fn()=>" slot=" ^ Int.toString (#slot row))
+          fun project fresh node [] edge=edge
+            | project fresh node (left::path) edge=
               (case metadata owner (fn()=>binary owner node) of NONE=>
                   raise ERR "project_rule" "Source conjunction path changed"
                | SOME (a,b)=>
@@ -439,11 +562,91 @@ struct
                        (fn [p]=>if left then Thm.CONJUNCT1 p
                          else Thm.CONJUNCT2 p
                          | _=>raise ERR "project_rule" "conjunct premise")
-                 in project child path next end)
+                 in project fresh child path next end)
           val source=List.nth (assumptions,#slot row)
-          val initial=W.with_step work (fn()=>call owner
-            (fn()=>P.source fresh (#occurrence row)))
-          val projected=project source (#path row) initial
+          fun validate target proof=
+            let val _=active owner
+                val d=P.source_realization_data_for work proof
+                val _=metadata owner (fn()=>
+                  if Portable.pointer_eq (#frame d,frame) andalso
+                      #scope d=scope andalso #target d=target andalso
+                      List.exists (fn (index,node)=>(tick owner 1;
+                        index= #occurrence row andalso node=source))
+                        (#source_occurrences d) then () else
+                    raise ERR "project_rule" "Source incidence changed")
+            in active owner end
+          fun independent ()=
+            let val fresh=P.prepare_needed_sources_with_work work
+                  {frame=frame,roots=[bottom,#node row],
+                   additional_sources=extras,closed_facts=[],conversions=[]}
+                val initial=W.with_step work (fn()=>call owner
+                  (fn()=>P.source fresh (#occurrence row)))
+            in (fresh,source,#path row,initial,fn projected=>
+              P.realize_source_owned_receipt work fresh
+                (#node row) projected) end
+          fun shared (SharedPrefix {node,path,receipt,...})=
+            let
+              val held=metadata owner (fn()=>(tick owner 1;!receipt))
+              val proof=case held of SOME completed=>
+                    (validate node completed;
+                     diagnostic owner "rule.prefix.hit" (fn()=>
+                       " occurrence=" ^ Int.toString (#occurrence row));
+                     completed)
+                | NONE=>
+                  let
+                    (* Empty receipt-owned preparation gives the actual
+                       original ordered slots OriginalPrefixSlot origins.
+                       A normal block receipt would mint block-local support
+                       origins and append Gamma on every subsequent cut. *)
+                    val prefix=P.prepare_source_cut_block work
+                      {frame=frame,roots=[bottom,node],
+                       additional_sources=[],closed_facts=[],conversions=[],
+                       receipts=[]}
+                    val producer=P.source_cut_block_for work prefix
+                    val initial=W.with_step work (fn()=>call owner
+                      (fn()=>P.source producer (#occurrence row)))
+                    val _=diagnostic owner "rule.prefix.project.before"
+                      (fn()=>"")
+                    val projected=project producer source path initial
+                    val _=active owner
+                    val _=diagnostic owner "rule.prefix.realize.before"
+                      (fn()=>"")
+                    val completed=P.realize_source_cut_receipt work prefix
+                      node projected
+                    val _=validate node completed
+                    val _=metadata owner (fn()=>(tick owner 1;
+                      receipt:=SOME completed))
+                    val _=diagnostic owner "rule.prefix.realize.after"
+                      (fn()=>"")
+                  in completed end
+              val _=active owner
+              (* No consumed edge crosses this boundary. The genuine
+                 completed Source proof supplies a NEW one-shot native
+                 programme with its actual opaque Gamma witnesses. *)
+              val cut=P.prepare_source_cut_constructor_block work
+                {frame=frame,roots=[bottom,#node row],
+                 additional_sources=[],closed_facts=[],conversions=[],
+                 receipts=[proof]}
+              val fresh=P.source_cut_block_for work cut
+              val initial=P.source_cut_edge_for work cut proof
+              val rest=metadata owner (fn()=>
+                let fun drop [] rest=rest
+                      | drop (a::xs) (b::ys)=
+                          (tick owner 1;if a=b then drop xs ys else
+                            raise ERR "project_rule" "common path differs")
+                      | drop _ _=raise ERR "project_rule" "short Source path"
+                in drop path (#path row) end)
+            in (fresh,node,rest,initial,fn projected=>
+              P.realize_source_cut_receipt work cut
+                (#node row) projected) end
+          val prefix=metadata owner (fn()=>List.find
+            (fn SharedPrefix {occurrence,...}=>
+              (tick owner 1;occurrence= #occurrence row)) prefixes)
+          val (fresh,start,path,initial,realize)=case prefix of
+              NONE=>independent () | SOME saved=>shared saved
+          val _=diagnostic owner "rule.project.before" (fn()=>"")
+          val projected=project fresh start path initial
+          val _=diagnostic owner "rule.profile.before" (fn()=>"")
           val term=G.representative graph (#node row)
           val types=metadata owner (fn()=>clause_profile owner term)
           (* CONJUNCT source incidence fixes every free variable/type of
@@ -457,15 +660,10 @@ struct
           val _=active owner
           (* This genuine provider OWNS its action; never wrap it in
              metadata/effect/with_step. It derives actual sparse slots. *)
-          val proof=P.realize_source_owned_receipt work fresh
-            (#node row) projected
-          val d=P.source_realization_data_for work proof
-          val _=if Portable.pointer_eq (#frame d,frame) andalso
-              #scope d=scope andalso #target d= #node row andalso
-              List.exists (fn (index,node)=>index= #occurrence row andalso
-                node=List.nth (assumptions,#slot row)) (#source_occurrences d)
-            then () else raise ERR "project_rule" "Source incidence changed"
-          val _=active owner
+          val _=diagnostic owner "rule.realize.before" (fn()=>"")
+          val proof=realize projected
+          val _=diagnostic owner "rule.realize.after" (fn()=>"")
+          val _=validate (#node row) proof
       in ProjectedRule {owner=owner,row=row,proof=proof,
         fixed=fixed,rigid_types=rigid_types} end))
     handle primary=>(W.close work;raise primary))
@@ -518,8 +716,8 @@ struct
                   val Catalogue {seeds=original_seeds,...}=original
               in List.map (project_rule work original) original_seeds end
           | _=>raise ERR "project_context" "Source receiver changed"
-        val (variables,rigid_types)=W.with_step work (fn()=>
-          let
+        val (variables,rigid_types)=W.with_step work (fn()=>call owner
+          (fn()=>let
             fun variable_member _ []=false
               | variable_member term (held::rest)=
                   (tick owner 1;
@@ -540,7 +738,7 @@ struct
               in (List.foldl insert_variable variables (#fixed_variables d),
                 List.foldl insert_type rigid_types
                   (#rigid_types d)) end
-          in List.foldl collect ([],[]) (origin_rules @ rules) end)
+          in List.foldl collect ([],[]) (origin_rules @ rules) end))
         val result=RuleContext {catalogue=catalogue,rules=rules,
           origin_rules=origin_rules,variables=variables,
           rigid_types=rigid_types}
@@ -576,7 +774,7 @@ struct
       case receiver of RuleOriginal=>() | RuleStripped _=>()
         | _=>raise ERR "prepare_context_metadata"
             "not an independent context catalogue";
-      W.with_step work (fn()=>
+      W.with_step work (fn()=>call owner (fn()=>
       let
         val roots=roots(sources,assumptions)
         val selected_data=List.map (projected_rule_for work) selected
@@ -677,7 +875,7 @@ struct
           candidates=candidates,held= !held,profiles= !profiles,
           closures= !closures,selected=selected}
         val _=ignore(context_metadata_for work result)
-      in result end)) handle primary=>(W.close work;raise primary))
+      in result end))) handle primary=>(W.close work;raise primary))
   fun capture_context_metadata work selected (catalogue as Catalogue
       {owner=Owner {sources,assumptions,...},...})=
     capture_context_metadata_roots work selected
@@ -714,11 +912,11 @@ struct
         {owner=owner as Owner {sources,assumptions,...},...},selected,...})
       origin=
     ((ignore(context_metadata_for work whole);
-      W.with_step work(fn()=>
+      W.with_step work(fn()=>call owner (fn()=>
         if List.exists(fn node=>(tick owner 1;node=origin))
             (S.assumption_nodes sources @ assumptions)then ()else
           raise ERR "context_origin_metadata"
-            "node is not an authentic context assumption origin");
+            "node is not an authentic context assumption origin"));
       let val slice=capture_context_metadata_roots work selected
             (fn _=>[origin])
             (case whole of ContextMetadata {catalogue,...}=>catalogue)

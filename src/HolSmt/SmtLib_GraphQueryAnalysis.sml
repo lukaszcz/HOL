@@ -124,7 +124,23 @@ struct
           | _ => ()
       in W.with_step expected (fn () =>
         let
-          fun valid () = GP.validate_query_with_policy expected query
+          fun full_valid () = GP.validate_query_with_policy expected query
+          (* The fixed traversal and each private carrier operation are
+             callback-free between their external boundaries. Validate the
+             complete retained query at those boundaries, not recursively
+             for every borrowed syntax field. Scope/closure checks and all
+             original Work debits still run at every observation. *)
+          val pure = ref true
+          fun valid () = if !pure then W.spend_policy expected 0
+            else full_valid ()
+          fun external operation argument =
+            let val _=full_valid ()
+                val answer=operation argument
+                val _=full_valid ()
+            in answer end
+          val declared_const_arity=external declared_const_arity
+          fun call_open caller node = external
+            (fn (caller,node)=>open_opaque caller node) (caller,node)
           fun spend n = W.spend_policy expected n
           val positions = ref (Redblackmap.mkDict compare_key)
           val opened = ref (Redblackmap.mkDict compare_key)
@@ -198,7 +214,7 @@ struct
                   G.OpaqueRetained =>
                     let
                       val _ = spend 16
-                      val _ = open_opaque (scope term) (node term)
+                      val _ = call_open (scope term) (node term)
                       val _ = valid ()
                       val source = G.cached_opened_view graph
                         (scope term) (node term)
@@ -552,8 +568,21 @@ struct
                   in result end
             end
           fun lexical_same (left,right) = lexical_compare [] [] left right
-          fun collect_native (syntax:native_syntax) seeds =
+          fun collect_native (raw:native_syntax) seeds =
             let
+              val syntax:native_syntax =
+                {set_role=external (#set_role raw),
+                 bag_role=external (#bag_role raw),
+                 is_set_type=external (#is_set_type raw),
+                 is_bag_type=external (#is_bag_type raw),
+                 is_cond=external (#is_cond raw),
+                 is_let=external (#is_let raw),
+                 is_uncurry=external (#is_uncurry raw),
+                 pair_constant=external (#pair_constant raw),
+                 is_integer_coercion=external (#is_integer_coercion raw),
+                 is_num_head=external (#is_num_head raw),
+                 is_bag_card_head=external (#is_bag_card_head raw),
+                 number_type= #number_type raw}
               fun seed ({scope=caller,node}:scoped_node) =
                 (G.validate_scope graph caller;
                  if G.scope_visible graph caller root then
@@ -804,7 +833,8 @@ struct
             (fn (_,term,()) => guard term) () (!positions)
           val _ = List.app (fn (scope,original,source) =>
             G.validate_opened_view graph scope original source) (!openings)
-          val _ = valid ()
+          val _ = pure := false
+          val _ = full_valid ()
           fun result (computed,mixed,bound_application,bound_visits) =
             {roots=List.map describe roots,inventory=List.map describe ordered,
              openings=List.map (fn (scope,original,source) =>
@@ -825,8 +855,13 @@ struct
                 raise ERR "borrow" "borrowed graph analysis expired"
               fun protected compute =
                 ((borrowed ();
-                  let val _ = valid () val answer = compute ()
-                      val _ = borrowed () val _ = valid ()
+                  let val _ = full_valid ()
+                      val old = !pure
+                      val _ = pure := true
+                      val outcome = Exn.capture compute ()
+                      val _ = pure := old
+                      val answer = Exn.release outcome
+                      val _ = borrowed () val _ = full_valid ()
                   in answer end)
                  handle primary => (W.close expected;raise primary))
               fun unary function current = protected (fn () =>

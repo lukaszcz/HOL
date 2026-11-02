@@ -110,13 +110,15 @@ struct
   (* TRUST's existing FP/private-marker rung precedes String. An incidental
      String operand must not turn its deferred assumption into a supposedly
      closed String law. This is syntax-only priority, not FP admission. *)
-  fun has_fp_trust_operand graph = has_operand_using (fn node => fn _ =>
-    case G.view graph node of
-      G.Constant _ =>
-        let val {Thy,...} = Term.dest_thy_const (G.representative graph node)
-        in Thy = "smtfloat" orelse Thy = "binary_ieee" end
-    | G.Variable (_,term) => String.isPrefix "@fp." (#1 (Term.dest_var term))
-    | _ => false) graph
+  fun has_fp_trust_operand graph scope (input as {inputs,observe}) =
+    has_operand_using (fn node => fn _ =>
+      case G.view graph node of
+        G.Constant _ =>
+          let val {Thy,...} = Term.dest_thy_const (G.representative graph node)
+          in Thy = "smtfloat" orelse Thy = "binary_ieee" end
+      | G.Variable (_,term) =>
+          CPC_ProofParser.is_cpc_fp_private_marker_observed observe term
+      | _ => false) graph scope input
 
   fun has_sequence_operand graph = has_sequence_operand_using true graph
 

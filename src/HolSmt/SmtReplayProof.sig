@@ -120,6 +120,11 @@ sig
      check_type : Type.hol_type -> unit} -> closed_conversion
   val conversion_source : closed_conversion -> SmtReplayGraph.node
   val conversion_target : closed_conversion -> SmtReplayGraph.node
+  val conversion_endpoints_with_policy_for :
+    SmtReplayInvocationWork.portfolio -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> SmtReplayResourcePolicy.limit ->
+    closed_conversion ->
+    {source:SmtReplayGraph.node,target:SmtReplayGraph.node}
   val validate_conversion : SmtReplayGraph.graph -> SmtReplayGraph.scope ->
     int -> closed_conversion -> unit
   val freeze_with_conversions : SmtReplayGraph.graph ->

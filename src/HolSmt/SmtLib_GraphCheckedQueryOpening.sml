@@ -214,8 +214,26 @@ struct
       fun conversion node =
         if not (#changed (saved node)) then NONE else
           let val _ = build [Visit node]
-              val result = close (completed node)
-              val converted = Core.conversion_with_policy_for work result
+              val recipe = completed node
+              (* build closes every changed App on its actual child cuts;
+                 an opened leaf already carries its checked conversion.
+                 A sole exact root slot is the completed proof, not a new
+                 native admission. Keep the established priced programme. *)
+              val direct = if not (W.ordinary_policy_guard_mode work) then
+                  NONE else action (fn observe =>
+                    (observe ();
+                     case C.graph_conversions_for work recipe of
+                       [converted] =>
+                         if P.conversion_source converted=node andalso
+                             P.conversion_target converted=
+                               C.graph_result recipe then
+                           (W.validate_policy_ordinal_minimum work ordinal;
+                            SOME converted)
+                         else NONE
+                     | _ => NONE))
+              val converted = case direct of SOME converted => converted
+                | NONE => Core.conversion_with_policy_for work
+                    (close recipe)
               val _ = P.validate_conversion_for work converted
               val _ = if P.conversion_source converted=node then () else
                 raise ERR "transport" "final proof source differs"

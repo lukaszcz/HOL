@@ -24,6 +24,9 @@ struct
     | PolicyPriced of {kind:priced_kind,parent:receipt option}
   fun protected work action = action ()
     handle primary => (W.close work;raise primary)
+  (* Every executed receipt visit debits the SAME original Work, including
+     ordinary portfolios and recursive parent/lifetime validation. *)
+  fun scope_guard_payment work = W.spend_guard_policy work 1
   (* These helpers accept only the private policy case. Callbacks below
      are the module's own recursive description/lifetime functions. *)
   fun describe_policy expected (saved as PolicyReceipt {work,...})
@@ -32,7 +35,7 @@ struct
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "description_for" "different original Work";
        let
-         val _=W.spend_guard_policy work 1
+         val _=scope_guard_payment work
          val PolicyReceipt
            {graph,root,scope,sources,limits,epoch,symbols,mode,...}=saved
          val _=case mode of PolicyUnpriced {guard,...} =>
@@ -65,7 +68,7 @@ struct
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "validate_lifetime_for" "different original Work";
        let
-         val _=W.spend_guard_policy work 1
+         val _=scope_guard_payment work
          val PolicyReceipt
            {graph,root,scope,sources,limits,epoch,symbols,mode,...}=saved
          fun ordinary () =
@@ -102,7 +105,7 @@ struct
     protected expected (fn () =>
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "description_for" "different original Work";
-       W.spend_guard_policy work 1;
+       scope_guard_payment work;
        W.validate work graph root sources limits;G.validate_scope graph scope;
        if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
          then () else raise ERR "description_for" "retirement epoch changed";
@@ -113,7 +116,7 @@ struct
       protected expected (fn () =>
         (if Portable.pointer_eq (expected,work) then () else
            raise ERR "description_for" "different original Work";
-         W.spend_guard_policy work 1;
+         scope_guard_payment work;
          (case kind of PricedRoot path =>
              W.validate_priced_scope_frame work
                {graph=graph,root=root,scope=scope,sources=sources,
@@ -136,7 +139,7 @@ struct
     protected expected (fn () =>
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "validate_lifetime_for" "different original Work";
-       W.spend_guard_policy work 1;
+       scope_guard_payment work;
        W.validate work graph root sources limits;
        G.validate_scope graph scope;
        if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then ()
@@ -152,7 +155,7 @@ struct
         let
           val _ = if Portable.pointer_eq (expected,work) then () else
             raise ERR "validate_lifetime_for" "different original Work"
-          val _ = W.spend_guard_policy work 1
+          val _ = scope_guard_payment work
           fun guard () = case kind of PricedRoot path =>
                 W.validate_priced_scope_frame work
                   {graph=graph,root=root,scope=scope,sources=sources,

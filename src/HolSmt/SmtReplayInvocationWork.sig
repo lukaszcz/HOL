@@ -152,6 +152,9 @@ sig
      unpriced PolicyWork, validates its live original owner in Idle/Busy,
      and spends the SAME allowance without changing phase or entitlement.
      Neither operation admits a native action or permits nested with_step. *)
+  (* Passive constructor DATA. Only old begin selects true; do not infer
+     this from a missing priced path (policy Work is distinct). *)
+  val ordinary_legacy_guard_mode : portfolio -> bool
   val ordinary_policy_guard_mode : portfolio -> bool
   val spend_ordinary_guard_policy : portfolio -> IntInf.int -> unit
   (* Same-counter bookkeeping in Idle or Busy, for all Work modes. No
@@ -299,5 +302,8 @@ sig
      authoritative. Prefer the next role ordinal at or above minimum; if
      that successor overflows, find a genuine available gap in that range. *)
   val unused_policy_ordinal : portfolio -> {role:role,minimum:int} -> int
+  (* Caller owns the action. Same final malformed-minimum rejection when
+     exporting a completed slot; no name search/reservation or Work credit. *)
+  val validate_policy_ordinal_minimum : portfolio -> int -> unit
 
 end

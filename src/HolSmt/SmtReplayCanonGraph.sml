@@ -897,7 +897,25 @@ struct
     in case owner of NONE=>() | SOME work=>
       if Portable.pointer_eq(expected,work) then () else
         raise ERR "policy_graph" "different original Work" end
-  fun legacy_validate_conversion_using pay expected conversion =
+  (* A plain terminal has no Work header or witness outside its immutable
+     slot projection. Move its existing dispatch quote (8) before the cache
+     read: it covers constructor/field selection, ref read, option/list
+     tests and return. SOME [] is the published all-NONE map projection,
+     not a cached guard result. The paid entry still guards original Work
+     on EVERY call, before this read, even for a shared empty terminal.
+     Cold/nonempty fallback retains the original empty-memo probe (1),
+     map validation and remember (1), with no extra payment or payload.
+     Only the callback-free first two payments exchange order (1,8 -> 8,1).
+     Composite visits below keep their original memo/de-dup itinerary. *)
+  fun legacy_validate_conversion_using pay expected
+      (saved as GraphConversion _) =
+    let
+      val _ = pay 8
+      val GraphConversion {steps,guard_slots,...} = saved
+    in case !guard_slots of SOME [] => ()
+      | _ => (pay 1;validate_step_map pay expected steps guard_slots;pay 1)
+    end
+    | legacy_validate_conversion_using pay expected conversion =
     let
       (* Only an ordinary root owns this structural projection. A cold
          root keeps the original traversal and first-error order, even if
@@ -991,7 +1009,10 @@ struct
             (pay 8;
              case saved of
                 GraphConversion {steps,guard_slots,...} =>
-                  validate_step_map pay expected steps guard_slots
+                  (* The common dispatch payment precedes this projection
+                     read too; a warm empty terminal has no slot guard. *)
+                  (case !guard_slots of SOME [] => ()
+                   | _ => validate_step_map pay expected steps guard_slots)
               | SequenceGraphConversion {first,second,...} =>
                   (visit first;visit second)
               | DirectRealizedSequence {first,second,...} =>

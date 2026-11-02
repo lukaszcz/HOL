@@ -13466,13 +13466,16 @@ in
        #scope data = #s e andalso null (Thm.hyp (#theorem old)) andalso
        not (#retired (W.audit (#work e)))) end
 
-  val _ = testutils.tprint "D conversion description allowed Busy no credit"
+  val _ = testutils.tprint "D conversion description Busy pays only guards"
   val _ = let val e = setup () val c = converted e
       val charged = #charged (W.audit (#work e))
       val data = W.with_step (#work e)
         (fn () => D.conversion_description_for (expected e) c)
+    (* The target focus and the conversion backing each validate Beta.
+       Each warm retained probe pays one header and four list-tail probes;
+       the ordinary with_step itself has no charge or new entitlement. *)
     in ensure "metadata nested an action or changed original entitlement"
-      (#scope data = #s e andalso #charged (W.audit (#work e)) = charged
+      (#scope data = #s e andalso #charged (W.audit (#work e)) = charged+10
        andalso not (#retired (W.audit (#work e)))) end
 
   val _ = testutils.tprint "D conversion description foreign owner first"
@@ -24184,9 +24187,11 @@ in
       val paid= #charged(W.audit work)
       val(exact,counts)=observed(fn()=>
         ((ignore(portfolio e token);false)
+          (* With one unit left, the retained Scope guards exhaust Work
+             before the first semantic spend. Preserve that exact Primary. *)
           handle Feedback.HOL_ERR error=>
             Feedback.top_structure_of error="SmtReplayInvocationWork"andalso
-            Feedback.top_function_of error="admit"andalso
+            Feedback.top_function_of error="value_binding_guard"andalso
             Feedback.message_of error=
               "original cumulative work allowance exhausted"))
     in ensure "metadata proof-free refusal hid original quota Primary"
@@ -24636,9 +24641,10 @@ in
       val _=W.with_step work(fn()=>W.spend work amount)
       val(exact,counts)=observed(fn()=>
         ((ignore(footprint e token);false)
+          (* The delegated portfolio's retained guards are paid first. *)
           handle Feedback.HOL_ERR error=>
             Feedback.top_structure_of error="SmtReplayInvocationWork"andalso
-            Feedback.top_function_of error="admit"andalso
+            Feedback.top_function_of error="value_binding_guard"andalso
             Feedback.message_of error=
               "original cumulative work allowance exhausted"))
     in ensure "metadata deferral swallowed genuine original quota failure"
@@ -27409,8 +27415,10 @@ in
       val plan=N.prepare (begin e (fn _ => ()) (fn _ => ()))
       val _=N.execute plan val charge= #charged (W.audit (#work e))
       val stopped=refuses (fn () => N.execute plan)
+      (* active validates the warm scheduler: two frame-list probes and
+         the root Scope guard. The consumed check precedes quota/policy. *)
     in ensure "consumed plan reissued quota or effects"
-      (stopped andalso #charged (W.audit (#work e))=charge andalso
+      (stopped andalso #charged (W.audit (#work e))=charge+3 andalso
        #retired (W.audit (#work e))) end
 
   val _=testutils.tprint
@@ -27420,9 +27428,10 @@ in
       val theorem=N.close_proof (#work e) r evidence
       val charge= #charged (W.audit (#work e))
       val stopped=refuses (fn () => N.close_proof (#work e) r evidence)
+      (* held pays the same three scheduler guards before finished. *)
     in ensure "closed original theorem reissued a receiver entitlement"
       (good e theorem andalso stopped andalso
-       #charged (W.audit (#work e))=charge) end
+       #charged (W.audit (#work e))=charge+3) end
 
     in () end)
 end
@@ -27818,9 +27827,13 @@ in
       val _=ignore (T.source_target_for (#work e) owner target)
       val _=ignore (T.source_target_for (#work e) owner target)
       val _=T.revalidate_for (#work e) owner
+      (* Each warm handoff pays 3+3 for its two cached descriptions,
+         one empty receipt-list probe, then 3 for validate. Revalidation
+         pays 3 for frames and 2 for the singleton backing list; its
+         original Q/D guards and empty law cache add no semantic debit. *)
     in ensure "metadata memo issued/debited semantic Work or mutated graph"
       (G.validation_revision (#graph e) (#root e)=prior andalso
-       #charged (W.audit (#work e))=charged andalso
+       #charged (W.audit (#work e))=charged+2*(3+3+1+3)+(3+2) andalso
        not (#retired (W.audit (#work e)))) end
 
   val _=testutils.tprint "Cached traversal refuses retired original body"
@@ -29182,9 +29195,11 @@ in
       val theorem=Q.close_for (#work e) q block edge
       val charge= #charged (W.audit (#work e))
       val stopped=refuses (fn () => Q.close_for (#work e) q block edge)
+      (* held validates N twice (3 scheduler guards each), then the root
+         and single GEN-body Scope descriptions (1+2), before phase. *)
     in ensure "receiver replay renewed closure effects or Work"
       (good e theorem andalso stopped andalso
-       #charged (W.audit (#work e))=charge) end
+       #charged (W.audit (#work e))=charge+2*3+1+2) end
 
     in () end)
 end
@@ -29384,9 +29399,11 @@ in
       val theorem=Q.close_solved (#work e) q
       val charge= #charged (W.audit (#work e))
       val stopped=refuses (fn () => Q.close_solved (#work e) q)
+      (* No GEN/CHOOSE frame here: held pays two N guards (3 each) and
+         the root Scope description, then refuses before proof effects. *)
     in ensure "terminal proof replay renewed an owned closure entitlement"
       (good e theorem andalso stopped andalso
-       #charged (W.audit (#work e))=charge) end
+       #charged (W.audit (#work e))=charge+2*3+1) end
 
     in () end)
 end
@@ -31589,9 +31606,12 @@ in
       val plan=Ctx.prepare (owner e (fn _=>()))
       val _=Ctx.execute plan val charged= #charged (W.audit (#work e))
       val stopped=refuses (fn()=>Ctx.execute plan)
+      (* active describes Q: two N guards (3 each), root and GEN-body
+         descriptions (1+2), then describes that body frame again (2).
+         The phase check precedes the replay/tick/policy loop. *)
     in ensure "consumed context plan reissued work"
       (stopped andalso #retired (W.audit (#work e)) andalso
-       #charged (W.audit (#work e))=charged) end
+       #charged (W.audit (#work e))=charged+2*3+1+2+2) end
 
   val _=testutils.tprint
     "Local context policy Primary is exact before proof mint"
@@ -32562,10 +32582,36 @@ in
       val child=Scope.binding work parent (valOf (#origin opened))
       val before= #charged (W.audit work)
       val _=ignore (Scope.description_for work child)
-      val same= #charged (W.audit work) = before andalso before=2
+      (* Root birth and binding birth pay one each. Binding preparation
+         describes the root twice; this child description pays both the
+         child and its retained parent, without selecting priced Work. *)
+      val same= #charged (W.audit work) = before+2 andalso before=4
       val _=(#close opened) () val _=W.close work
       val _=G.close_scope graph root
     in ensure "ordinary portfolio silently selected new pricing" same end
+
+  val _=testutils.tprint "Ordinary Scope guards refuse exhausted birth Work"
+  val _=let
+      fun check description =
+        let val graph=G.new () val root=G.root_scope graph
+            val work=W.begin graph root (sources graph root)
+              {limits=caps,work_limit=1}
+            val frame=Scope.root work
+            val prior=Count.thm_count ()
+            val denied=((if description then
+                ignore(Scope.description_for work frame)
+              else Scope.validate_lifetime_for work frame);NONE)
+              handle Feedback.HOL_ERR detail=>SOME
+                (Feedback.top_structure_of detail,
+                 Feedback.top_function_of detail,Feedback.message_of detail)
+            val final=W.audit work
+            val _=W.close work val _=G.close_scope graph root
+        in denied=SOME("SmtReplayInvocationWork","value_binding_guard",
+             "original cumulative work allowance exhausted") andalso
+           #charged final=1 andalso #retired final andalso
+           Count.thm_count ()=prior end
+    in ensure "ordinary lifetime/description waived original guard debit"
+      (check true andalso check false) end
 
     in () end)
 end;
@@ -32996,7 +33042,9 @@ local
     (W.close work;G.close_scope graph root)
   fun active_cost work = 12 + IntInf.toInt
     (G.scope_path_validation_work (valOf (W.priced_root_scope_path work)))
-  fun lifetime_cost work = active_cost work + 32 + IntInf.toInt
+  (* Scope's one-unit guard first validates the priced Work; the frame
+     programme then pays its own active guard and genuine path pass. *)
+  fun lifetime_cost work = 2*active_cost work + 1 + 32 + IntInf.toInt
     (G.scope_path_validation_work (valOf (W.priced_root_scope_path work)))
   exception Primary of unit ref
 in
@@ -33069,9 +33117,15 @@ in
       val denied=refuses (fn () =>
         Scope.validate_lifetime_for work (#frame e))
       val final=W.audit work val _=finish e
-    in ensure "tiny remainder lost the first actual guard debit"
+    (* The first active guard AND Scope's one-unit guard payment fit.
+       The next active guard fails before the frame programme can run. *)
+    in ensure ("tiny remainder lost the first actual guard debit: delta=" ^
+        Int.toString(#charged final-initial) ^ " expected=" ^
+        Int.toString(active+1) ^ " denied=" ^ Bool.toString denied ^
+        " retired=" ^ Bool.toString(#retired final))
       (denied andalso #retired final andalso
-       #charged final=initial+active andalso #charged final<=allowance) end
+       #charged final=initial+active+1 andalso
+       #charged final<=allowance) end
 
   val _=testutils.tprint "Priced root keeps genuine Binding lexical guards"
   val _=let val e=setup true
@@ -33092,7 +33146,8 @@ in
   val _=testutils.tprint "Ordinary root lifetime keeps original debit behavior"
   val _=let val e=setup false val initial= #charged (W.audit (#work e))
       val _=Scope.validate_lifetime_for (#work e) (#frame e)
-      val exact= #charged (W.audit (#work e))=initial val _=finish e
+      (* Ordinary lifetime still visits and pays its root receipt once. *)
+      val exact= #charged (W.audit (#work e))=initial+1 val _=finish e
     in ensure "priced root optimization changed the ordinary Work path"
       exact end
 
@@ -34783,8 +34838,11 @@ in
       val charged= #charged(W.audit(#work e))
       val refused=refuses(fn()=>M.prepare_source_recipe value
         {check_type=fn _=>()})
+      (* active pays the matcher root (1), the projected owner root (1),
+         and two Source getters (2 Scope descriptions each). No match
+         validation/search, Source recipe or policy follows used. *)
     in ensure "consumed match was recharged or reissued"
-      (refused andalso #charged(W.audit(#work e))=charged) end
+      (refused andalso #charged(W.audit(#work e))=charged+1+1+2*2) end
 
     in () end)
 end
@@ -35250,8 +35308,11 @@ in
       val _=execute e prepared
       val charged= #charged(W.audit(#work e))
       val refused=refuses(fn()=>execute e prepared)
+      (* The clause guard pays its leaf recipe's Source guard (2),
+         lifetime and description (1+1), then its own frame (1).
+         used is checked before entering the semantic work action. *)
     in ensure "consumed transformed program spent Work or stayed live"
-      (refused andalso #charged(W.audit(#work e))=charged andalso
+      (refused andalso #charged(W.audit(#work e))=charged+2+1+1+1 andalso
        #retired(W.audit(#work e)))end
 
     in () end)
@@ -36792,8 +36853,13 @@ in
       val plan=P.prepare_effective_source_compact_completion(#work e)
         {view=view,check_type=fn _=>calls:= !calls+1}
       val amount=P.effective_source_completion_work_for(#work e)plan
+      (* Each compact guard costs 4: Source backing/frame (2), GEN frame
+         (1), compact frame (1). Preparation brackets its forecast with
+         two such guards, its single deduplicated Source row pays 3,
+         and the work getter pays one more compact guard. No quote is
+         consumed and no callback runs during this preflight. *)
       val preflight= !calls=0 andalso amount>0 andalso
-        #charged(W.audit(#work e))=before_charge
+        #charged(W.audit(#work e))=before_charge+3*4+3
       val completed=P.execute_effective_source_compact_completion
         (#work e)plan
       val data=P.effective_source_compact_data_for(#work e)view
@@ -36853,7 +36919,10 @@ in
       val plan=P.prepare_effective_source_compact_completion work
         {view=view,check_type=fn _=>calls:= !calls+1}
       val amount=P.effective_source_completion_work_for work plan
-      val preflight= !calls=0 andalso #charged(W.audit work)=before_charge
+      (* This row portfolio pays nineteen authentic one-unit lifetime
+         guards in prepare and the amount getter; no quote is consumed. *)
+      val preflight_charge= #charged(W.audit work)-before_charge
+      val preflight= !calls=0 andalso preflight_charge=19
       val completed=P.execute_effective_source_compact_completion work plan
       val theorem=P.effective_source_completed_witness_for work completed token
       val(left,right)=boolSyntax.dest_eq(Thm.concl theorem)
@@ -36872,7 +36941,10 @@ in
         ListPair.allEq Portable.pointer_eq(Thm.hyp original,Thm.hyp actual)
         andalso length(Thm.hyp actual)=1
       val _=W.close work
-    in ensure "non-Boolean row lost actual ALPHA/type/Source provenance"
+    in ensure
+      ("non-Boolean row lost actual ALPHA/type/Source provenance: " ^
+       "preflight-charge=" ^ Int.toString preflight_charge ^
+       " expected=19 preflight=" ^ Bool.toString preflight)
       valid end
 
     in () end)
@@ -38718,8 +38790,10 @@ in
       val charged= #charged(W.audit(#work e))
       val (denied,counts)=G.with_node_statistics (#graph e)(#root e)(fn()=>
         refuses(fn()=>O.execute (#work e)plan))
+      (* selection_guard reads the unrefined context: only its original
+         owner root lifetime costs 1. available precedes backing/policy. *)
     in ensure "consumed selected plan renewed its quota or minted again"
-      (denied andalso #charged(W.audit(#work e))=charged andalso
+      (denied andalso #charged(W.audit(#work e))=charged+1 andalso
        #node_creations counts=0)end
 
     in () end)
@@ -38948,8 +39022,14 @@ in
       val charged= #charged(W.audit(#work e))
       val (denied,counts)=G.with_node_statistics (#graph e)(#root e)(fn()=>
         refuses(fn()=>F.execute_canonical (#work e)plan))
+      (* The current assertion costs 5 (leaf recipe 4, applied frame 1).
+         Choice freshness/binder guards cost 6 each; refined whole context
+         costs 6, its one unknown Source origin costs 6+6, and the choice
+         frame costs 1. canonical_guard runs before available, with no
+         argument admission, policy or mint after the consumed check. *)
     in ensure "consumed raw plan renewed quota or minted another witness"
-      (denied andalso #charged(W.audit(#work e))=charged andalso
+      (denied andalso
+       #charged(W.audit(#work e))=charged+5+6+6+6+(6+6)+1 andalso
        #node_creations counts=0)end
 
   val _=testutils.tprint
@@ -39213,8 +39293,11 @@ in
       val(denied,counts)=G.with_node_statistics (#graph e)(#root e)(fn()=>
         refuses(fn()=>P.execute_source_canonical_restricted_forall
           (#work e)ready))
+      (* The retained initial assertion pays 5 (leaf recipe 4 plus its
+         applied frame); the restricted guard pays its root lifetime 1.
+         The phase check then precedes every law/policy/graph effect. *)
     in ensure "restricted ready renewed work or law graph after consumption"
-      (denied andalso #charged(W.audit(#work e))=charged andalso
+      (denied andalso #charged(W.audit(#work e))=charged+5+1 andalso
        #node_creations counts=0)end
 
   val _=testutils.tprint "Restricted conversion retains genuine body lifetime"
@@ -42782,9 +42865,11 @@ in
       val(exact,counts)=observed(fn()=>
         ((ignore(P.prepare_source_conditional_post_metadata_refined
             work low);false)
+          (* The base metadata request validates retained Scope before
+             scanning; its second paid guard exhausts the last unit. *)
           handle Feedback.HOL_ERR error=>
             Feedback.top_structure_of error="SmtReplayInvocationWork"andalso
-            Feedback.top_function_of error="admit"andalso
+            Feedback.top_function_of error="value_binding_guard"andalso
             Feedback.message_of error=
               "original cumulative work allowance exhausted"))
     in ensure "refinement borrowed another quota or masked actual Primary"
@@ -51710,7 +51795,7 @@ local
     handle Feedback.HOL_ERR detail=>SOME(Feedback.message_of detail)
   val limits:RP.semantic_policy={input_limit=RP.Uncapped,
     output_limit=RP.Uncapped,template_limit=RP.Uncapped}
-  fun setup goal assumptions allowance template=
+  fun setup_sources goal assumptions allowance template=
     let val g=G.new()val r=G.root_scope g
         val s=S.new_with_policy g r RP.Uncapped
           {goal=goal,assumptions=assumptions}
@@ -51719,12 +51804,16 @@ local
         val native=NC.capture w {semantic_limits={input_limit=100000,
           output_limit=100000,template_limit=template},import_limit=100000,
           type_work_limit=20000000}
-        val portfolio=W.with_step w(fn()=>
-          let val{assumptions,denied}=F.originals_with_policy w
-          in F.validate_portfolio_with_policy w
-            {assumptions=assumptions,goal= #node(S.goal_source s),
-             denied=denied}end)
-    in {g=g,r=r,s=s,w=w,native=native,portfolio=portfolio}end
+    in {g=g,r=r,s=s,w=w,native=native}end
+  fun portfolio w s=W.with_step w(fn()=>
+    let val{assumptions,denied}=F.originals_with_policy w
+    in F.validate_portfolio_with_policy w
+      {assumptions=assumptions,goal= #node(S.goal_source s),
+       denied=denied}end)
+  fun setup goal assumptions allowance template=
+    let val e=setup_sources goal assumptions allowance template
+    in {g= #g e,r= #r e,s= #s e,w= #w e,native= #native e,
+      portfolio=portfolio (#w e)(#s e)}end
   fun owner w portfolio native profiles=N.begin_with_policy w
     {portfolio=portfolio,native_contract=native,profiles=profiles,
      check_type=fn _=>raise Fail "collection must not invoke Type callback"}
@@ -51832,13 +51921,48 @@ in
     (fn()=>let val e=setup boolSyntax.T [] RP.Uncapped 100000
         val held=owner(#w e)(#portfolio e)(#native e)[]
         val _=complete(N.collect_with_policy held)
-        val short=setup boolSyntax.T [] (RP.AtMost 1)100000
-        val limited=owner(#w short)(#portfolio short)(#native short)[]
+        val short=setup_sources boolSyntax.T [] (RP.AtMost 1)100000
+        (* A separate SAME finite payer reaches the collector, not merely
+           portfolio/owner setup. Nine remaining units pay its two getter
+           guards, one node visit, four Type probes and two selector fees.
+           The next head comparison must refuse. Without the collector's
+           semantic spends, the getter/final portfolio guards fit in nine. *)
+        val finite=setup boolSyntax.T [] (RP.AtMost 1000)100000
+        val limited=owner(#w finite)(#portfolio finite)(#native finite)[]
+        val _=W.with_step(#w finite)(fn()=>W.spend_policy(#w finite)
+          (1000-9- #charged(W.audit_policy(#w finite))))
+        val initial_audit=W.audit_policy(#w finite)
         val count=Count.thm_count()
         val twice=refused(fn()=>N.collect_with_policy held)
-        val denied=refused(fn()=>N.collect_with_policy limited)
-    in require "Needed reset its latch or ignored exact cumulative Work"
-      (Option.isSome twice andalso Option.isSome denied andalso
+        (* The sole denied fact's portfolio guard pays once to visit and
+           once to insert. The second unit already exhausts AtMost 1,
+           before Needed.begin/collect. Catch that genuine setup boundary,
+           not just collect; do not enlarge or replace the original Work.
+           Source bridge construction stays before the no-proof baseline. *)
+        val denied=refused(fn()=>
+          let val saved=portfolio (#w short)(#s short)
+              val limited=owner(#w short)saved(#native short)[]
+          in N.collect_with_policy limited end)
+        val collected=(ignore(N.collect_with_policy limited);NONE)
+          handle Feedback.HOL_ERR detail=>SOME
+            (Feedback.top_structure_of detail,
+             Feedback.top_function_of detail,Feedback.message_of detail)
+        val final_audit=W.audit_policy(#w finite)
+    in require ("Needed reset its latch or ignored exact cumulative Work: " ^
+        "collector=" ^ (case collected of NONE=>"success"
+          | SOME(s,f,m)=>s ^ "." ^ f ^ ": " ^ m) ^
+        " charged=" ^ IntInf.toString(#charged final_audit) ^
+        " retired=" ^ Bool.toString(#retired final_audit) ^
+        " native-silent=" ^ Bool.toString(Count.thm_count()=count))
+      (Option.isSome twice andalso
+       denied=SOME "original cumulative work allowance exhausted" andalso
+       #charged(W.audit_policy(#w short))=1 andalso
+       #retired(W.audit_policy(#w short)) andalso
+       not(#retired initial_audit) andalso #charged initial_audit=991 andalso
+       collected=SOME("SmtReplayInvocationWork","admit",
+         "original cumulative work allowance exhausted") andalso
+       #retired final_audit andalso #charged final_audit=1000 andalso
+       #charged final_audit- #charged initial_audit=9 andalso
        Count.thm_count()=count)end)
 
   val _=test "Policy stock selection gates actual SYM and GEN before mint"
@@ -67039,6 +67163,36 @@ in
              null (Thm.hyp proof) andalso
              Term.aconv (Thm.concl proof) (boolSyntax.mk_eq (left,right))
              andalso not (#retired (W.audit_policy (#work e)))) end))
+      val _ = test "Completed opening slot checks negative ordinal last"
+        (fn () => fixture small (fn e =>
+          let
+            val raw = lambda e
+            val source = G.cached_opened_view (#graph e) (#scope e) raw
+            val calls = ref 0 val prior = Count.thm_count ()
+            val denied = error (fn () => Opening.bridge_with_policy
+              (#work e) {frame= #frame e,original=raw,opened= #node source,
+                native_contract= #contract e,profiles=[],ordinal= ~1,
+                check_type=fn _ => calls := !calls+1})
+          in require "completed slot bypassed final ordinal validation"
+            (denied=SOME ("unused_policy_ordinal","negative ordinal minimum")
+             andalso !calls>0 andalso Count.thm_count ()<>prior andalso
+             #retired (W.audit_policy (#work e))) end))
+      val _ = test "Negative opening ordinal does not precede Type Primary"
+        (fn () => fixture small (fn e =>
+          let
+            val raw = lambda e
+            val source = G.cached_opened_view (#graph e) (#scope e) raw
+            exception Primary of unit ref
+            val token = ref () val calls = ref 0
+            val prior = Count.thm_count ()
+            val exact = (Opening.bridge_with_policy (#work e)
+              {frame= #frame e,original=raw,opened= #node source,
+               native_contract= #contract e,profiles=[],ordinal= ~1,
+               check_type=fn _ => (calls := !calls+1;raise Primary token)};
+              false) handle Primary held => Portable.pointer_eq (held,token)
+          in require "ordinal check masked earlier callback or minted first"
+            (exact andalso !calls=1 andalso Count.thm_count ()=prior andalso
+             #retired (W.audit_policy (#work e))) end))
       val _ = test "Shared70 congruence does not require an unfolded root cap"
         (fn () =>
           let val huge = List.foldl (fn (_,tail) =>
@@ -68288,6 +68442,21 @@ in
              andalso Portable.pointer_eq (Thm.concl proof,target) andalso
              List.exists (fn term => Term.aconv term original) (Thm.hyp proof)
              andalso not (retired e)) end))
+      val _ = test "Query opening keeps final negative ordinal rejection"
+        (fn () => fixture [] small (fn e =>
+          let
+            val old = current e (#validation e)
+            val row = opening e (lambda e (#goal old))
+            val calls = ref 0
+            val denied = (ignore (O.transport_with_policy (#work e)
+              {validation= #validation e,openings=[row],
+               native_contract= #contract e,profiles=[],ordinal= ~1,
+               check_type=fn _ => calls := !calls+1});NONE)
+              handle Feedback.HOL_ERR detail => SOME
+                (Feedback.top_function_of detail,Feedback.message_of detail)
+          in require "query accepted malformed ordinal or checked too early"
+            (denied=SOME ("unused_policy_ordinal","negative ordinal minimum")
+             andalso !calls>0 andalso retired e) end))
       val _ = test "Ordered duplicates and unselected opaque siblings survive"
         (fn () => fixture [small,other,small]
           (boolSyntax.mk_conj (small,other)) (fn e =>
@@ -80404,6 +80573,60 @@ local
 in
   val _=run_postlude 420 "owned-z3-composed-programmes-8"(fn()=>
     let
+      (* Use the exact already-imported Source terms. Rebuilding ~goal
+         misses G's physical import memo and can create a fresh bridge
+         inside the strict negative's setup interval. No baseline moves. *)
+      fun graph_assertions (e:env) (data:ZV.proof VP.contents) =
+        W.with_step (#work e) (fn()=>
+          let val (denied,original)=
+                case S.reconciliation_sources (#sources e) of
+                    first::rest=>(first,rest)
+                  | []=>raise Fail "missing retained denied Goal"
+          in List.map (fn source=>PV.import (#context data) (#scope e)
+              (RP.AtMost 16) (#original source)) (original @ [denied]) end)
+      (* Instrument only this composed-programmes group: the sibling
+         postludes have identical outer helpers but independent fixtures.
+         Keep setup inside the strict totalcounts interval. *)
+      fun using (e:env) text callback action =
+        let
+          fun observe phase operation =
+            let
+              val prior=Count.thm_count()
+              val result=Exn.capture operation ()
+              val after=Count.thm_count()
+              fun pair label select =
+                " " ^ label ^ "=" ^ Int.toString(select prior) ^ "->" ^
+                Int.toString(select after)
+              val _=print
+                ("OWNED420_COUNTS prepare_with_owned_programmes " ^
+                 phase ^ ".before/after unchanged=" ^
+                 Bool.toString(after=prior) ^
+                 pair "total" #total ^ pair "SPEC" #SPEC ^
+                 pair "ABS" #ABS ^ pair "ASSUME" #ASSUME ^
+                 pair "REFL" #REFL ^ pair "ALPHA" #ALPHA ^
+                 pair "BETA_CONV" #BETA_CONV ^ "\n")
+            in Exn.release result end
+          val held=observe "packet" (fn()=>packet e text)
+          val saved=ref(NONE:Final.invocation option)
+          val outcome=Exn.capture(fn()=>
+            let
+              val data=observe "contents" (fn()=>
+                W.with_step (#work e) (fn()=>
+                  VP.contents_with_policy_for (#work e) (#query e) held))
+              val assertions=observe "graphassertions"
+                (fn()=>graph_assertions e data)
+              val prepared=observe "prepare" (fn()=>
+                Final.prepare_with_owned_programmes_with_policy
+                  (#work e) (#query e) held
+                  {assertions=assertions,native_contract= #contract e,
+                   profiles= #profiles e,check_type=callback})
+              val _=case prepared of Final.Prepared owner=>
+                  saved:=SOME owner | _=>()
+            in action held data prepared end) ()
+          val cleanup=Exn.capture(fn()=>case !saved of
+              SOME owner=>Final.close owner | NONE=>VP.close held) ()
+        in case outcome of Exn.Exn primary=>raise primary
+          | Exn.Res result=>(Exn.release cleanup;result)end
       val _=test "Actual Bind iff-true MP enters raw proof and original Goal"
         (fn()=>fixture[][]boolSyntax.T(fn e=>
           let val prior=Count.thm_count()
@@ -80444,21 +80667,69 @@ in
       val _=test "Later unsupported Binder prevents ready retained effects"
         (fn()=>fixture bindings assumptions goal(fn e=>
           let val text=certificate(bound
-                "(symm (refl (= x x)) (= x x))"(retained "(or a b)"
+                "(hypothesis (= x x))"(retained "(or a b)"
                   "(unit-resolution (asserted (not alias)) @c @t false)"))
               val prior=Count.thm_count() val calls=ref 0
           in using e text(fn _=>calls:= !calls+1)
             (fn held=>fn _=>fn prepared=>
+            (* Symmetry is now a supported general child programme.
+               A local hypothesis still requires Source closure; it must
+               block every ready retained/native prefix. *)
             let val pending=case prepared of Final.ReplayNeeds rows=>
                   List.exists(fn Receiver.BinderAdmission
-                    (Binder.ChildProgramme _)=>true|_=>false)rows|_=>false
+                    (Binder.GeneralProgramme
+                      (SmtReplayOwnedScopedValueLift.Enclosing
+                        (SmtReplayOwnedScopedValueContext.LocalSourceClosure
+                          _)))=>true|_=>false)rows|_=>false
+                fun detail (Receiver.BinderAdmission
+                      (Binder.GeneralProgramme
+                        (SmtReplayOwnedScopedValueLift.Enclosing
+                          (SmtReplayOwnedScopedValueContext.LocalSourceClosure
+                            _))))="Binder.General.Enclosing.LocalSourceClosure"
+                  | detail (Receiver.BinderAdmission
+                      (Binder.ChildProgramme _))="Binder.ChildProgramme"
+                  | detail (Receiver.BinderAdmission
+                      (Binder.BindingProgramme _))="Binder.BindingProgramme"
+                  | detail (Receiver.BinderAdmission
+                      (Binder.TargetProgramme _))="Binder.TargetProgramme"
+                  | detail (Receiver.BinderAdmission
+                      (Binder.GeneralProgramme _))="Binder.General.Other"
+                  | detail missing=need_name missing
+                val needs=case prepared of Final.ReplayNeeds rows=>
+                      String.concatWith "," (List.map detail rows)
+                    | Final.Prepared _=>"Prepared"
+                val planned=Count.thm_count()
+                val planned_calls= !calls
                 val _=W.with_step(#work e)(fn()=>ignore
                   (VP.contents_with_policy_for(#work e)(#query e)held))
-            in require "retained native prefix preceded whole Binder Needs"
-              (pending andalso !calls=0 andalso Count.thm_count()=prior
-               andalso not(#retired(W.audit_policy(#work e))))end)end))
+                val after=Count.thm_count()
+                val live=not(#retired(W.audit_policy(#work e)))
+                val message=
+                  "retained native prefix preceded whole Binder Needs: " ^
+                  "pending=" ^ Bool.toString pending ^
+                  " calls=" ^ Int.toString(!calls) ^
+                  " thms-unchanged=" ^ Bool.toString(after=prior) ^
+                  " live=" ^ Bool.toString live ^
+                  " needs=[" ^ needs ^ "]" ^
+                  " planned-calls=" ^ Int.toString planned_calls ^
+                  " planned-thms-unchanged=" ^
+                    Bool.toString(planned=prior) ^
+                  " total-delta=" ^ Int.toString(#total after- #total prior) ^
+                  " SPEC-delta=" ^ Int.toString(#SPEC after- #SPEC prior) ^
+                  " ABS-delta=" ^ Int.toString(#ABS after- #ABS prior) ^
+                  " ASSUME-delta=" ^ Int.toString(#ASSUME after- #ASSUME prior) ^
+                  " REFL-delta=" ^ Int.toString(#REFL after- #REFL prior) ^
+                  " ALPHA-delta=" ^ Int.toString(#ALPHA after- #ALPHA prior) ^
+                  " BETA-delta=" ^
+                    Int.toString(#BETA_CONV after- #BETA_CONV prior)
+            in require message
+              (pending andalso !calls=0 andalso after=prior
+               andalso live)end)end))
       val _=test "Unsupported retained result prevents ready Binder effects"
-        (fn()=>fixture bindings[universal]boolSyntax.T(fn e=>
+        (* This certificate references only U and true, not the Source
+           bindings a, b or alias. Omit those unused declarations so packet
+           setup does not request their irrelevant cold native bridges. *)
+        (fn()=>fixture [("U",universal)][universal]boolSyntax.T(fn e=>
           let val text=certificate(bound identity(retained "true"
                 "(unit-resolution (asserted (not true)) @c @t false)"))
               val prior=Count.thm_count() val calls=ref 0
@@ -80467,11 +80738,26 @@ in
             let val pending=case prepared of Final.ReplayNeeds rows=>
                   List.exists(fn Receiver.SpecializationAdmission _=>true
                     | _=>false)rows|_=>false
+                val planned=Count.thm_count()
+                val needs=case prepared of Final.ReplayNeeds rows=>
+                      String.concatWith "," (List.map need_name rows)
+                    | Final.Prepared _=>"Prepared"
                 val _=W.with_step(#work e)(fn()=>ignore
                   (VP.contents_with_policy_for(#work e)(#query e)held))
-            in require "Binder native prefix preceded whole retained Needs"
-              (pending andalso !calls=0 andalso Count.thm_count()=prior
-               andalso not(#retired(W.audit_policy(#work e))))end)end))
+                val after=Count.thm_count()
+                val live=not(#retired(W.audit_policy(#work e)))
+                val message=
+                  "Binder native prefix preceded whole retained Needs: " ^
+                  "pending=" ^ Bool.toString pending ^
+                  " calls=" ^ Int.toString(!calls) ^
+                  " thms-unchanged=" ^ Bool.toString(after=prior) ^
+                  " planned-thms-unchanged=" ^
+                    Bool.toString(planned=prior) ^
+                  " total-delta=" ^ Int.toString(#total after- #total prior) ^
+                  " live=" ^ Bool.toString live ^ " needs=[" ^ needs ^ "]"
+            in require message
+              (pending andalso !calls=0 andalso after=prior andalso live)
+            end)end))
       val _=test "Combined mode preserves exact Type Primary before inference"
         (fn()=>fixture bindings assumptions goal(fn e=>
           let exception Primary of unit ref

@@ -387,6 +387,20 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
   val execute_import_with_policy : policy_import_plan -> source
   val import_with_policy : graph -> scope ->
     SmtReplayResourcePolicy.limit -> Term.term -> source
+  (* Paid immutable native raw geometry only, for SAME live ROOT caller.
+     Non-root callers return NONE before payload; foreign owners fail first.
+     Exact physical root memo and actual public App/atom shape are required;
+     each opaque leaf needs a genuine policy native capture in THIS graph.
+     No legacy scope/entry walk is performed by hot metadata notes. No opening,
+     Source, profile/lifetime or native admission permission is returned.
+     NONE is an incomplete/cold probe: callers MUST retain raw admission.
+     SOME may exceed maximum and MUST still be checked against that limit.
+     The observer pays metadata plus fixed root/epoch guards on the caller's
+     existing meter. Checks are fresh after callbacks, including bulk debits.
+     Paid semantic indices additionally retain their own coupled guard. *)
+  val imported_native_raw_geometry_observed : graph -> scope ->
+    {original:Term.term,maximum:SmtReplayResourcePolicy.limit,
+     observe:IntInf.int -> unit} -> IntInf.int option
 
   (* Same genuine path/mutable frame program, exact optional allowance.
      These require the coupled R policy meter, not an old int projection. *)
@@ -408,6 +422,16 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
     SmtReplayResourcePolicy.limit -> node -> source
   type policy_partial_discovery
   type policy_opaque_profile
+  (* Optional publication, NEVER part of discovery's scan/step programme.
+     The selecting caller must fund observe on its SAME Work, using only
+     allowance spare after mandatory continuation/action-return costs.
+     Insufficient remaining_work discards the staged batch and returns
+     false; paid prefixes remain charged. Observer exceptions propagate
+     unchanged. Genuine completed captures only; no native permission. *)
+  val publish_policy_native_raw_geometry_observed : graph -> scope ->
+    {profiles:policy_opaque_profile list,
+     remaining_work:SmtReplayResourcePolicy.limit,
+     observe:IntInf.int -> unit} -> bool
   val discover_partial_with_policy : graph -> scope ->
     {original:node,maximum:SmtReplayResourcePolicy.limit,
      scan_limit:SmtReplayResourcePolicy.limit,step:unit->unit} ->

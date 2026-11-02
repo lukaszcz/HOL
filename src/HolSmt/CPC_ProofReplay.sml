@@ -5383,11 +5383,16 @@ local
               {redex = old, residue = new}) (old_vars, new_vars)) body)
         in Thm.ALPHA source rhs end
     in
-      replay boolSyntax.list_mk_forall boolSyntax.strip_forall
-      handle Feedback.HOL_ERR _ =>
+      (* Select the source constructor, not whichever replay attempt happens
+         to succeed.  A mapping mismatch must retain its original diagnostic
+         rather than being masked by an unrelated binder-kind retry. *)
+      if boolSyntax.is_forall source then
+        replay boolSyntax.list_mk_forall boolSyntax.strip_forall
+      else if boolSyntax.is_exists source then
         replay boolSyntax.list_mk_exists boolSyntax.strip_exists
-      handle Feedback.HOL_ERR _ =>
+      else if Term.is_abs source then
         replay Term.list_mk_abs Term.strip_abs
+      else raise ERR "alpha_equiv" "expected a quantified source term"
     end
 
   (* If the branches of a Boolean conditional are complements, cvc5 rewrites

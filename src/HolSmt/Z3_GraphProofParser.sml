@@ -195,13 +195,13 @@ struct
           val _ = closures := end_scope :: !closures
         in binding end
       fun binding_session (F.ScopedSession {session, ...}) = session
-      (* Classify only the result spine before opening a proof lambda.
-         Ordinary term lambdas go straight to the frontend: no speculative
+      (* Classify only the result spine before opening a proof LET/lambda.
+         Ordinary term LETs/lambdas go to the frontend: no speculative
          graph construction, binder opening or extra admission is needed.
          This is syntax routing, never a semantic equality decision. It must
          be total even on malformed syntax: normal left-to-right parsing,
          not this lookahead, owns every diagnostic. *)
-      fun proof_lambda aliases raw =
+      fun proof_result aliases raw =
         let
           fun kind local_names (Atom name) =
                 (case Redblackmap.peek
@@ -295,7 +295,14 @@ struct
                   occurrence = #occurrence retained} end
             | NONE => Term (term session aliases raw))
         | List [Atom "let", bindings, body] =>
-            parse_let session aliases bindings body
+            (* A term LET substitutes values, not operand occurrences. Its
+               lexical uses must stay atomic, even for an OR-valued RHS.
+               Only a proof LET retains RHS occurrences in the proof alias
+               table; in particular its asserted OR keeps its recorded
+               boundary. Route before construction, never reparse values. *)
+            if proof_result aliases raw then
+              parse_let session aliases bindings body
+            else Term (term session aliases raw)
         | List (Atom "!" :: body :: _) =>
             (* Attributes are inert S-expressions, including proof names.
                Preserve the body's value kind; term occurrences still keep
@@ -309,7 +316,7 @@ struct
                      token = "!", children = [#occurrence value]}}
              | value => value)
         | List [Atom "lambda", _, _] =>
-            if proof_lambda aliases raw then parse_lambda session aliases raw
+            if proof_result aliases raw then parse_lambda session aliases raw
             else Term (term session aliases raw)
         | List (head :: operands) =>
             let val (name, indices) = case head of

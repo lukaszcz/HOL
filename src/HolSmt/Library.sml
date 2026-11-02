@@ -66,6 +66,52 @@ struct
       (fn () => Feedback.quiet_messages
         (fn () => Tactical.prove_in (proof_context ()) (tm, tac)) ()) ()
 
+  (* Ordinary blastLib deliberately retains its upstream sparse-multiply
+     converter. Its arithmetic normal form need not have a dense literal as
+     the exact left endpoint (notably the all-ones coefficient). Normalize
+     this ring identity explicitly in replay, before that converter runs.
+     The equality is kernel checked; no word proposition is assumed true.
+     Callers retain their existing source-size and step-time envelopes. *)
+  fun replay_minus_one_mul_conv target =
+    let
+      val (coefficient, _) = wordsSyntax.dest_word_mul target
+      val (value, width) = wordsSyntax.dest_mod_word_literal coefficient
+      val successor = Arbnum.+ (value, Arbnum.one)
+      (* Do not allocate 2^width merely to reject a small coefficient at
+         an enormous word Type. A possible power is bounded by the actual
+         coefficient's binary size before it is constructed. *)
+      val _ =
+        if Arbnum.log2 successor = width andalso
+             successor = Arbnum.pow (Arbnum.two, width) then ()
+        else raise Conv.UNCHANGED
+      val one = wordsSyntax.mk_n2w
+        (numSyntax.term_of_int 1, wordsSyntax.dim_of coefficient)
+      val minus_one = wordsSyntax.mk_word_2comp one
+      val equality = Drule.EQT_ELIM (wordsLib.WORD_EVAL_CONV
+        (boolSyntax.mk_eq (coefficient, minus_one)))
+      val normalized = Conv.LAND_CONV (fn _ => equality) target
+      val reduced = Conv.REWR_CONV
+        (Conv.GSYM wordsTheory.WORD_NEG_MUL)
+        (boolSyntax.rhs (Thm.concl normalized))
+    in
+      Thm.TRANS (Thm.REFL target) (Thm.TRANS normalized reduced)
+    end
+
+  val replay_word_normalize_conv =
+    Conv.QCONV (Conv.DEPTH_CONV replay_minus_one_mul_conv)
+
+  val replay_word_simp_conv =
+    Conv.THENC (replay_word_normalize_conv, blastLib.WORD_SIMP_CONV)
+
+  fun replay_bblast_prove target =
+    let
+      val normalization = replay_word_normalize_conv target
+      val theorem = blastLib.BBLAST_PROVE
+        (boolSyntax.rhs (Thm.concl normalization))
+    in
+      Thm.EQ_MP (Thm.SYM normalization) theorem
+    end
+
   (* Permanent coverage-ablation switch.  Replay fast paths consult this
      single predicate; complete rule procedures remain enabled. *)
   fun no_fastpath () =

@@ -228,6 +228,8 @@ struct
          Abort cleanup below preserves the first terminal exception. *)
       val trace_work =
         OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" = SOME "1"
+      val validate_owned_count = if trace_work then
+          SOME (ref (0 : IntInf.int)) else NONE
       fun work_checkpoint phase describe =
         if not trace_work then () else
           ((case owned_work of NONE => () | SOME work =>
@@ -235,7 +237,10 @@ struct
               in TextIO.output (TextIO.stdErr,
                    "CPC_GRAPH_WORK phase=" ^ phase ^ " charged=" ^
                    Int.toString charged ^ " retired=" ^
-                   Bool.toString retired ^ describe () ^ "\n");
+                   Bool.toString retired ^
+                   (case validate_owned_count of NONE => ""
+                    | SOME count => " validateOwnedCount=" ^
+                        IntInf.toString (!count)) ^ describe () ^ "\n");
                  TextIO.flushOut TextIO.stdErr
               end)
            handle error =>
@@ -268,7 +273,9 @@ struct
       fun with_entailment_time operation =
         Timeout.apply SmtResource.max_hypothesis_entailment_time operation ()
       fun validate_owned work =
-        let val original = W.original_sources work
+        let val _ = Option.app (fn count => count := !count+1)
+              validate_owned_count
+            val original = W.original_sources work
             val limits = W.semantic_limits work
             (* Compare expected owner data before held Source/GP activation. *)
             val _ = if Portable.pointer_eq (sources,original) then () else
@@ -750,8 +757,12 @@ struct
           fun premise hypothesis = List.exists
             (Term.aconv hypothesis) ordinary_hypotheses
           val extra = List.filter (not o premise) (Thm.hyp theorem)
-          fun private variable = String.isPrefix "@fp."
-            (#1 (Term.dest_var variable))
+          (* Discovery is Idle. Keep the complete observed lookup in one
+             action, not per comparator event or around the worker. *)
+          fun private term = action (fn () =>
+            CPC_ProofParser.is_cpc_fp_private_marker_observed
+              (fn () => Option.app (fn work => W.spend work 1) owned_work)
+              term)
           fun deferred hypothesis =
             let
               val target = G.representative graph (#node current)
@@ -1295,7 +1306,10 @@ struct
           val owned_symmetry = ref (NONE : K.graph_conversion option)
           fun negative_symmetry work = action (fn () =>
             let
-              fun observe () = (validate_owned work;W.spend work 1)
+              (* action authenticates preprocessing; this observer only
+                 visits owned metadata. Native/caller boundaries below
+                 retain their separate full guards. *)
+              fun observe () = W.spend work 1
               val _ = validate_owned work
               val source = one ()
               fun prepare equation left right =
@@ -1538,8 +1552,9 @@ struct
                       end
                   fun existing_path work (target:F.term) = action (fn () =>
                     let
-                      fun observe () =
-                        (validate_owned work;W.spend work 1)
+                      (* Callback-free DAG search inside the guarded
+                         action; each visit still debits live SAME Work. *)
+                      fun observe () = W.spend work 1
                     in CPC_SharedReplayPlan.relation_path
                       {visit=observe,relation=R.relation graph,
                        map_partial=fn action=>fn nodes=>
@@ -1688,7 +1703,7 @@ struct
                           let
                             val target = #node body
                             fun visible node =
-                              (validate_owned work;W.spend work 1;
+                              (W.spend work 1;
                                if G.scope_visible graph scope
                                    (G.node_scope graph node) andalso
                                    Type.compare (G.type_of graph node,
@@ -1749,7 +1764,10 @@ struct
       fun fixed_alias_normalizer work =
         let
           val _ = validate_owned work
-          fun observe () = (validate_owned work;W.spend work 1)
+          (* The normalizer's internal observer is not a caller callback.
+             Keep full Source/GP checks at entry/exit and at native/type
+             callback boundaries, not at each structural visit. *)
+          fun observe () = W.spend work 1
           fun alias node = case G.view graph node of
               G.Application (partial,right) =>
                 (case G.view graph partial of
@@ -1850,9 +1868,13 @@ struct
                        check_type = type_check}
                     val _ = validate_owned work
                 in SOME recorded end
-          fun normalize node = K.graph_conversion_with_closed graph scope
-            {template_limit = template_limit,revisit = false,
-             propose = propose,observe = observe} node
+          fun normalize node =
+            let val _ = validate_owned work
+                val result = K.graph_conversion_with_closed graph scope
+                  {template_limit = template_limit,revisit = false,
+                   propose = propose,observe = observe} node
+                val _ = validate_owned work
+            in result end
           fun viable node = case alias node of NONE => true
             | SOME (_,extra,_,_,_) =>
                 let val limit = (template_limit-3-extra) div 2
@@ -1890,7 +1912,7 @@ struct
           let
             val _ = validate_owned work
             val (normalize,viable) = fixed_alias_normalizer work
-            fun observe () = (validate_owned work;W.spend work 1)
+            fun observe () = W.spend work 1
             fun allowed node =
               (observe ();
                if G.scope_visible graph scope (G.node_scope graph node) then
@@ -2353,8 +2375,8 @@ struct
                                local_assumptions} end
         end
       (* Each successful chunk exports one genuine rooted Source proof.
-         The median split below changes only grouping: the rule recipes
-         are still assembled by assemble_recipe above. *)
+         Size-guided splits change only grouping: the rule recipes are
+         still assembled by assemble_recipe above. *)
       fun bounded_complete_with_ports work root local_assumptions ancestors
           temporary_ports =
         let
@@ -2363,6 +2385,12 @@ struct
           val cap = IntInf.fromInt template_limit
           fun meta operation = W.with_step work operation
           fun tick amount = W.spend work amount
+          (* Do not introduce a smaller staging cap: extra retained cuts can
+             enlarge later mandatory Source contexts. Group only against the
+             original semantic cap. *)
+          val chunk_limit = cap
+          val planning_epochs = meta (fn () =>
+            (tick 4;(Type.type_epoch (),Term.term_epoch ())))
           fun compare (a,b) = (tick 1;Int.compare (a,b))
           fun valid step =
             (tick 2;ignore (G.node_scope graph (node step)))
@@ -2371,6 +2399,15 @@ struct
           val captured = ref (Redblackmap.mkDict compare :
             (int,P.closed_fact * P.closed_law_spine)
               Redblackmap.dict)
+          (* A successful premise completion is a proof, not a permission
+             or a cached callback result. Keep it only in this exact local
+             Source/ancestor/temporary-port context. Repeated rules must
+             import the genuine receipt again, but need not complete its
+             native proof, close its Hyp and realize it again. No in-flight
+             entry is published, so recursive dependencies still decline. *)
+          val obligation_receipts = meta (fn () =>
+            (tick 4;ref (NONE :
+              (int,P.source_realization) Redblackmap.dict option)))
           fun find step =
             let val result = meta (fn () =>
                   (valid step;Redblackmap.peek (!proofs,serial step)))
@@ -2425,41 +2462,111 @@ struct
           fun record_exact check_owner law theorem = meta (fn () =>
                   let
                     val _ = check_owner ()
-                    fun types [] = tick 1
-                      | types ([]::rest) = (tick 1;types rest)
-                      | types ((ty::more)::rest) =
-                        (tick 2;if Type.is_vartype ty then
-                            types (more::rest)
-                          else (tick 2;types
-                            ((#2 (Type.dest_type ty))::more::rest)))
-                    val seen = ref (Redblackset.empty compare)
-                    fun inspect [] = tick 1
-                      | inspect ((caller,current)::rest) =
-                        (tick 3;ignore (G.node_scope graph current);
-                         ignore (G.closure_root graph caller current);
-                         if Redblackset.member (!seen,G.node_id current)
-                           then inspect rest else
-                           (tick 2;seen := Redblackset.add
-                              (!seen,G.node_id current);
-                            types [[G.type_of graph current]];
-                            case G.view graph current of
-                                G.Application (left,right) =>
-                                  (tick 4;inspect
-                                    ((caller,left)::(caller,right)::rest))
-                              | G.AdmittedBinder _ =>
-                                  let
-                                    val _ = tick 2
-                                    val closure =
-                                      G.binder_closure graph caller current
-                                    val _ = tick 1
-                                    val data = G.binder_closure_data
-                                      graph caller closure
-                                  in tick 4;inspect
-                                    ((#binder_frame data,#binder data)::
-                                     (#body_frame data,#body data)::rest)
-                                  end
-                              | _ => inspect rest))
-                    val _ = inspect [(scope,law)]
+                    val _ =
+                      let
+                        (* ONLY this metadata walk batches SAME Work.
+                           Prepay the audit/header setup, then sample its
+                           actual guard fee (including coupled G/R work).
+                           No allowance, native quote or callback result
+                           is cached; ordinary zero-fee Work stays direct. *)
+                        val _ = tick 64
+                        val charged_before = #charged (W.audit work)
+                        val _ = tick 0
+                        val overhead =
+                          #charged (W.audit work) - charged_before
+                        val ceiling = W.work_limit work
+                        val credit = ref 0
+                        val pay = if overhead=0 then tick else
+                          let val _ = tick 16
+                          in fn payload =>
+                            let val amount = payload+8
+                            in if amount <= !credit then
+                                credit := !credit-amount
+                              else
+                                let val need = amount+48- !credit
+                                    val available = ceiling -
+                                      #charged (W.audit work)
+                                    (* Never drain a short remainder into
+                                       inaccessible speculative credit. *)
+                                    val batch = if available<=256+overhead+48
+                                      then need else Int.max (need,256)
+                                    val _ = tick batch
+                                in credit := !credit+batch-amount-48 end
+                            end
+                          end
+                        (* Hit8 pays dispatch, addition and balance
+                           read/compare/branch/subtract/write. Refill48
+                           pays audit/arithmetic/batching/update. Unused
+                           credit is lost, not refunded. Rich closures
+                           use the original payer between fresh guards;
+                           no prepaid balance crosses either boundary. *)
+                        fun external operation =
+                          let val _ = tick 8
+                              val _ = credit := 0
+                              val result = operation ()
+                              val _ = tick 4
+                              val _ = credit := 0
+                          in result end
+                        fun types [] = pay 1
+                          | types ([]::rest) = (pay 1;types rest)
+                          | types ((ty::more)::rest) =
+                            (pay 2;if Type.is_vartype ty then
+                                types (more::rest)
+                              else (pay 2;types
+                                ((#2 (Type.dest_type ty))::more::rest)))
+                        fun compare pair = (pay 1;Int.compare pair)
+                        val seen = ref (Redblackset.empty compare)
+                        fun inspect [] = pay 1
+                          | inspect ((caller,current)::rest) =
+                            let
+                              val _ = pay 3
+                              val _ = ignore (G.node_scope graph current)
+                              (* view is a fixed pure entry getter. Only
+                                 assume a callback-free closure_root for
+                                 ordinary nodes; fence opaque/binder paths
+                                 rather than retaining that assumption. *)
+                              val _ = pay 4
+                              val plain = case G.view graph current of
+                                  G.OpaqueRetained => false
+                                | G.AdmittedBinder _ => false
+                                | _ => true
+                              fun closure () = ignore
+                                (G.closure_root graph caller current)
+                              val _ = if plain then closure () else
+                                external closure
+                            in
+                              if Redblackset.member
+                                  (!seen,G.node_id current) then inspect rest
+                              else
+                                (pay 2;seen := Redblackset.add
+                                   (!seen,G.node_id current);
+                                 types [[G.type_of graph current]];
+                                 case G.view graph current of
+                                     G.Application (left,right) =>
+                                       (pay 4;inspect
+                                         ((caller,left)::(caller,right)::rest))
+                                   | G.AdmittedBinder _ =>
+                                       let val data = external (fn () =>
+                                             let val _ = tick 2
+                                                 val closure =
+                                                   G.binder_closure graph
+                                                     caller current
+                                                 val _ = tick 1
+                                                 val data =
+                                                   G.binder_closure_data
+                                                     graph caller closure
+                                             in tick 4;data end)
+                                       in inspect
+                                         ((#binder_frame data,#binder data)::
+                                          (#body_frame data,#body data)::rest)
+                                       end
+                                   | _ => inspect rest)
+                            end
+                        val _ = inspect [(scope,law)]
+                        (* Fresh SAME Work guard before any metric/profile
+                           observer or native/type callback below. The
+                           local payer and its credit cannot escape. *)
+                      in tick 0 end
                     val _ = List.app (fn metric =>
                       case G.unfolded_nodes graph metric template_limit law of
                         SOME count => tick count
@@ -2468,9 +2575,22 @@ struct
                       [G.RawNodes,G.BinderInclusiveNodes]
                     fun checked ty =
                       (validate_owned work;check_type ty;validate_owned work)
-                  in P.record_closed_exact graph scope
-                    {node=law,theorem=theorem,
-                     template_limit=template_limit,check_type=checked} end)
+                    (* All non-history entries supply the static no-op
+                       type policy below. There is no external callback in
+                       that record programme: retain one pair of authentic
+                       owner fences, not two whole GP validations per Type
+                       incidence around a function that cannot change state.
+                       The complete actual syntax/Type walk above and the
+                       record's own type portfolio admission are unchanged.
+                       History entries ALWAYS retain every caller fence;
+                       this is not a cache of a policy's successful result. *)
+                    val _ = if history_mode then () else validate_owned work
+                    val fact = P.record_closed_exact graph scope
+                      {node=law,theorem=theorem,
+                       template_limit=template_limit,
+                       check_type=if history_mode then checked else check_type}
+                    val _ = if history_mode then () else validate_owned work
+                  in fact end)
           fun capture step law theorem arguments =
             case meta (fn () =>
                 (valid step;Redblackmap.peek (!captured,serial step))) of
@@ -2484,8 +2604,12 @@ struct
                 val fact = record_exact (fn () => valid step) law theorem
                 val spine = P.prepare_closed_law_spine work
                   {frame=frame,fact=fact,premises=arguments,target=node step}
-                val all = P.closed_law_spine_prefix_for work spine
-                  (length arguments)
+                (* Preparation already checked precisely this shell for
+                   zero/one premise. Re-selecting it would validate the
+                   entire native fact twice without changing the prefix. *)
+                val count = length arguments
+                val all = if count<=1 then spine else
+                  P.closed_law_spine_prefix_for work spine count
                 val _ = meta (fn () =>
                   (valid step;tick 2;captured := Redblackmap.insert
                     (!captured,serial step,(fact,all))))
@@ -2509,42 +2633,63 @@ struct
               val result = P.execute_primitive work prepared
               val _ = checkpoint "bounded.primitive.execute.after"
             in result end
-          fun constructor block current =
-            (tick 2;case G.view graph current of
-              G.Constant _ => P.definition block current
-            | G.Application (operator,operand) =>
-                let val outer = P.definition block current
-                    val inner = constructor block operator
-                    val applied = primitive block
-                      (P.ApplyNamedArgument operand) [inner]
-                in primitive block P.Transitivity [outer,applied] end
-            | _ => primitive block (P.ReflexiveName current) [])
-          fun apply_law block {law=(law,edge),target,premises} =
+          fun law_assembler block =
             let
-              fun consume current incoming [] =
-                    if current=target then incoming else
-                      raise ERR "bounded_completion"
-                        "conditional rule has a different final target"
-                | consume current incoming ((argument,proof)::rest) =
-                  let
-                    val _ = tick 4
-                    val (partial,tail) = case G.view graph current of
-                        G.Application pair => pair
-                      | _ => raise ERR "bounded_completion"
-                          "conditional rule lost its implication shell"
-                    val (head,premise) = case G.view graph partial of
-                        G.Application pair => pair
-                      | _ => raise ERR "bounded_completion"
-                          "conditional rule lost its premise shell"
-                    val _ = if premise=argument andalso
-                        same_constant graph head boolSyntax.implication
-                      then () else raise ERR "bounded_completion"
-                        "conditional rule premise order differs"
-                    val bridge = constructor block current
-                    val named = primitive block P.EqualityMP [bridge,incoming]
-                    val result = primitive block P.ImplicationMP [named,proof]
-                  in consume tail result rest end
-            in consume law edge premises end
+              (* These edges belong to this frozen block ONLY. In particular,
+                 neither a step cache nor a Source receipt can own them.
+                 Reusing an operator spine preserves its genuine definition
+                 dependencies; no MP edge or incoming support is cached. *)
+              val constructors = ref (Redblackmap.mkDict compare :
+                (int,P.edge) Redblackmap.dict)
+              fun constructor current =
+                (tick 2;ignore (G.node_scope graph current);
+                 case Redblackmap.peek (!constructors,G.node_id current) of
+                   SOME edge => edge
+                 | NONE =>
+                   let
+                     val edge = case G.view graph current of
+                         G.Constant _ => P.definition block current
+                       | G.Application (operator,operand) =>
+                           let val outer = P.definition block current
+                               val inner = constructor operator
+                               val applied = primitive block
+                                 (P.ApplyNamedArgument operand) [inner]
+                           in primitive block P.Transitivity
+                             [outer,applied] end
+                       | _ => primitive block (P.ReflexiveName current) []
+                     val _ = tick 2
+                     val _ = constructors := Redblackmap.insert
+                       (!constructors,G.node_id current,edge)
+                   in edge end)
+              fun apply {law=(law,edge),target,premises} =
+                let
+                  fun consume current incoming [] =
+                        if current=target then incoming else
+                          raise ERR "bounded_completion"
+                            "conditional rule has a different final target"
+                    | consume current incoming ((argument,proof)::rest) =
+                      let
+                        val _ = tick 4
+                        val (partial,tail) = case G.view graph current of
+                            G.Application pair => pair
+                          | _ => raise ERR "bounded_completion"
+                              "conditional rule lost its implication shell"
+                        val (head,premise) = case G.view graph partial of
+                            G.Application pair => pair
+                          | _ => raise ERR "bounded_completion"
+                              "conditional rule lost its premise shell"
+                        val _ = if premise=argument andalso
+                            same_constant graph head boolSyntax.implication
+                          then () else raise ERR "bounded_completion"
+                            "conditional rule premise order differs"
+                        val bridge = constructor current
+                        val named = primitive block P.EqualityMP
+                          [bridge,incoming]
+                        val result = primitive block P.ImplicationMP
+                          [named,proof]
+                      in consume tail result rest end
+                in consume law edge premises end
+            in apply end
           fun prepare roots facts conversions receipts targets boolean
               congruence laws =
             P.prepare_source_cut_rule_law_plan work
@@ -2580,88 +2725,299 @@ struct
                 val native = P.source_cut_block_for work block
                 val edge = meta (fn () => source native current)
             in P.realize_source_cut_receipt work block current edge end
+          (* Geometry only: no capture, placeholders, Source authority or
+             caller callback. The checked frontier remains the sole admission.
+             Known law-only definition demand is exact; uncomputed obligation
+             support and mixed Boolean/congruence recipes may add more.
+
+             If A/C are distinct demanded App/constant definitions, S actual
+             Source slots, F witness incidences and V conversions, D has
+               7A+5C+S+F+5V + 3(A+C+S+F+V-1)
+             raw nodes. The named closed law D ==> E adds four. Definitions
+             are deduplicated; Source/witness/conversion incidences are NOT.
+             All prospective Sources participate, not just surviving Hyp.
+             Receipt origins are private: a per-node maximum of their actual
+             occurrence multiplicities is a LOWER bound on promoted support,
+             never permission to identify two equal Source occurrences. *)
+          (* Cache immutable occurrence lists as construction DATA only.
+             The retained receipt is an identity key, not admission on a hit.
+             Each use recomputes and pays the scalar bound; only the eventual
+             checked planner revalidates and imports actual receipt support. *)
+          val source_inventories = ref (Redblackmap.mkDict compare :
+            (int,P.source_realization * (int * G.node) list)
+              Redblackmap.dict)
+          fun source_inventory (step,receipt) =
+            let val held = meta (fn () =>
+                  (valid step;Redblackmap.peek
+                    (!source_inventories,serial step)))
+            in case held of SOME (saved,occurrences) =>
+                 if meta (fn () =>
+                     (tick 2;Portable.pointer_eq (saved,receipt)))
+                   then occurrences else source_inventory_new step receipt
+               | NONE => source_inventory_new step receipt
+            end
+          and source_inventory_new step receipt =
+            let val occurrences = #source_occurrences
+                  (P.source_realization_data_for work receipt)
+                val _ = meta (fn () =>
+                  (valid step;tick 2;source_inventories := Redblackmap.insert
+                    (!source_inventories,serial step,(receipt,occurrences))))
+            in occurrences end
+          fun rejection_minimum entries imported =
+            let
+              val support = map_external source_inventory imported
+            in meta (fn () =>
+              let
+                val definitions = ref (Redblackset.empty compare)
+                val expanded = ref (Redblackset.empty compare)
+                val syntax = ref (0:IntInf.int)
+                val facts = ref (0:IntInf.int)
+                val conversions = ref (0:IntInf.int)
+                val obligations = ref (0:IntInf.int)
+                val ordinary_roots = ref ([]:G.node list)
+                val shell_roots = ref ([]:G.node list)
+                val has_law = ref false
+                val needs_preprocessing = ref false
+                fun ordinary current =
+                  (tick 2;ordinary_roots := current :: !ordinary_roots)
+                fun shell current =
+                  (tick 2;shell_roots := current :: !shell_roots)
+                fun definition current =
+                  (tick 2;ignore (G.node_scope graph current);
+                   if Redblackset.member
+                       (!definitions,G.node_id current) then () else
+                     (tick 2;definitions := Redblackset.add
+                        (!definitions,G.node_id current);
+                      syntax := !syntax + (case G.view graph current of
+                          G.Application _ => 10 | G.Constant _ => 8
+                        | _ => 0)))
+                (* Separate expansion from definition membership: an ordinary
+                   forests still descend through a previously seen shell. *)
+                fun forest current =
+                  (tick 1;
+                   if Redblackset.member (!expanded,G.node_id current) then ()
+                   else (tick 2;expanded := Redblackset.add
+                     (!expanded,G.node_id current);
+                     definition current;
+                     case G.view graph current of
+                       G.Application (left,right) =>
+                         (forest left;forest right)
+                     | _ => ()))
+                fun spine current =
+                  (definition current;
+                   case G.view graph current of
+                     G.Application (operator,_) => spine operator
+                   | _ => ())
+                fun layers _ 0 = tick 1
+                  | layers current count =
+                      (shell current;
+                       case G.view graph current of
+                         G.Application (_,tail) => layers tail (count-1)
+                       | _ => ())
+                fun arity [] total = (tick 1;total)
+                  | arity (_::rest) total =
+                      (tick 1;arity rest (total+1))
+                fun law current arguments =
+                  (tick 3;has_law := true;facts := !facts+1;
+                   layers current arguments)
+                fun fact value =
+                  (tick 2;facts := !facts+1;ordinary (P.closed_node value))
+                fun conversion value =
+                  (tick 3;conversions := !conversions+1;
+                   ordinary (P.conversion_source value);
+                   ordinary (P.conversion_target value))
+                fun alias value =
+                  (tick 3;List.app ordinary (K.graph_roots value);
+                   List.app fact (K.graph_closed_facts value);
+                   List.app conversion (K.graph_conversions value))
+                fun rule step =
+                  (valid step;case recipe step of
+                     ClosedLaw (current,_,_) => law current
+                       (arity (premise_list step) 0)
+                   | ObligationLaw {law=current,obligation,...} =>
+                       (tick 1;obligations := !obligations+1;
+                        shell obligation;
+                        law current (arity (premise_list step) 1))
+                   | PreprocessedSource =>
+                       (tick 1;if null temporary_ports orelse
+                           not (List.exists (fn original =>
+                             (tick 1;node step=original)) canonical_sources)
+                         then needs_preprocessing := true else ())
+                   | BooleanAliases values => List.app alias values
+                   | OwnedAliasTransitivity {premises,target} =>
+                       List.app alias (target::premises)
+                   | BooleanSchemas values => List.app (fn value =>
+                       (tick 1;List.app ordinary (K.graph_roots value))) values
+                   | OwnedNegatedSymmetry value =>
+                       List.app ordinary (K.graph_roots value)
+                   | _ => ())
+                val _ = List.app rule entries
+                (* Even without Boolean expansion, the planner always names
+                   a relation root's equality-definition operator spine. *)
+                fun target current =
+                  (tick 4;case G.view graph current of
+                     G.Application (partial,_) =>
+                       (case G.view graph partial of
+                          G.Application (head,_) =>
+                            if same_constant graph head boolSyntax.equality
+                              then shell current else ()
+                        | _ => ())
+                   | _ => ())
+                val _ = List.app (fn step =>
+                  (valid step;case recipe step of
+                     ClosedLaw _ => () | ObligationLaw _ => ()
+                   | Assumption => () | PreprocessedSource => ()
+                   | Boolean =>
+                       (target (node step);List.app (fn premise =>
+                         (valid premise;target (node premise)))
+                         (premise_list step))
+                   | _ => target (node step))) entries
+                val _ = if not (!needs_preprocessing) then () else
+                  case preprocessing of NONE => raise ERR
+                      "bounded_completion" "missing original preprocessing"
+                  | SOME validation =>
+                      (List.app ordinary preprocessing_roots;
+                       List.app fact (GP.closed_facts validation);
+                       List.app conversion (GP.conversions validation))
+                val _ = List.app ordinary canonical_sources
+                val _ = List.app ordinary extra_sources
+                val _ = List.app (List.app (fn (_,current) =>
+                  (tick 1;ordinary current))) support
+                val _ = List.app (fn (step,_) =>
+                  (valid step;shell (node step))) imported
+                (* A nonempty law list makes the planner propagate every
+                   independent ordinary demand through its WHOLE forest.
+                   Without it, unknown Boolean/receipt holes may stop below
+                   a root, so only that mandatory root is counted here. *)
+                val _ = List.app (if !has_law then forest else definition)
+                  (!ordinary_roots)
+                val _ = List.app spine (!shell_roots)
+                val slots = ref (Redblackmap.mkDict compare :
+                  (int,IntInf.int) Redblackmap.dict)
+                fun increment table current =
+                  let val _ = tick 3 val key = G.node_id current
+                      val n : IntInf.int = Option.getOpt
+                        (Redblackmap.peek (table,key),0)
+                  in Redblackmap.insert (table,key,n+1) end
+                val _ = List.app (fn current =>
+                  slots := increment (!slots) current) canonical_sources
+                val _ = List.app (fn current =>
+                  slots := increment (!slots) current) extra_sources
+                fun supports occurrences =
+                  let val counts = List.foldl (fn ((_,current),table) =>
+                        increment table current)
+                        (Redblackmap.mkDict compare) occurrences
+                  in Redblackmap.foldl (fn (key,n,()) =>
+                    let val _ = tick 3
+                        val held = Option.getOpt
+                          (Redblackmap.peek (!slots,key),0)
+                    in if n<=held then () else
+                      (tick 1;slots := Redblackmap.insert (!slots,key,n)) end)
+                    () counts end
+                val _ = List.app supports support
+                fun count [] total = (tick 1;total)
+                  | count (_::rest) (total:IntInf.int) =
+                      (tick 1;count rest (total+1))
+                val sources = Redblackmap.foldl (fn (_,n,total) =>
+                  (tick 1;total+n))
+                  (count imported 0 + !obligations) (!slots)
+                val leaves = sources + !facts + !conversions
+              in IntInf.max (0,!syntax+4*leaves+4* !conversions-3) end)
+            end
+          (* These walks inspect only our private scheduling tables and
+             callback-free G fields. One authentic owner action covers the
+             whole walk, including its entry/exit lifetime fences. In
+             particular, do NOT put receipt getters, metrics, native hooks
+             or caller type policies inside this transaction. There is no
+             shared in-step flag for an external callback to inherit. *)
+          fun planning operation = meta (fn () =>
+            let
+              fun active () =
+                (tick 8;G.validate_scope graph scope;
+                 if (Type.type_epoch (),Term.term_epoch ())=planning_epochs
+                   then () else raise ERR "bounded_completion"
+                     "planning lifetime changed")
+              val _ = active ()
+              val result = operation ()
+              val _ = active ()
+            in result end)
+          fun reverse [] result = (tick 1;result)
+            | reverse (entry::rest) result =
+                (tick 2;reverse rest (entry::result))
+          fun validate_cuts cuts = List.app (fn (_,receipt) => ignore
+            (P.source_realization_data_for work receipt)) cuts
+          fun dependency_inventory selected =
+            let
+              val result = planning (fn () =>
+                let
+                  val seen = ref (Redblackset.empty compare)
+                  val ordered = ref ([]:step list)
+                  val cuts = ref ([]:(step * P.source_realization) list)
+                  val scopes = ref ([]:step list)
+                  fun visit step =
+                    (valid step;
+                     if Redblackset.member (!seen,serial step) then () else
+                       (tick 1;seen := Redblackset.add (!seen,serial step);
+                        case Redblackmap.peek (!proofs,serial step) of
+                          SOME receipt =>
+                            (tick 2;cuts := (step,receipt) :: !cuts)
+                        | NONE => case recipe step of
+                            Scope _ => (tick 2;scopes := step :: !scopes)
+                          | _ =>
+                              (List.app visit (premise_list step);
+                               tick 2;ordered := step :: !ordered)))
+                  val _ = visit selected
+                in {steps=reverse (!ordered) [],cuts= !cuts,
+                    scopes=reverse (!scopes) []} end)
+              (* The snapshot is scheduling DATA only. Authenticate every
+                 retained receipt before any support/plan use or callout. *)
+              val _ = validate_cuts (#cuts result)
+            in result end
           fun prove selected = case find selected of SOME receipt => receipt
             | NONE =>
               let
-                val seen = ref (Redblackset.empty compare)
-                val ordered = ref ([]:step list)
-                val cuts = ref ([]:(step * P.source_realization) list)
-                fun inventory step = case find step of
-                    SOME receipt => meta (fn () =>
-                      (tick 2;cuts := (step,receipt) :: !cuts))
-                  | NONE =>
-                    let val fresh = meta (fn () =>
-                      (valid step;
-                       if Redblackset.member (!seen,serial step) then false
-                       else (seen := Redblackset.add (!seen,serial step);
-                         true)))
-                    in if not fresh then () else
-                      case recipe step of
-                        Scope {hypothesis,body} =>
-                          let val proof = bounded_source body
-                                (append local_assumptions [hypothesis])
-                              val closed =
-                                P.discharge_source_receipt_with_work work
-                                  proof hypothesis
-                              val _ = save step closed
-                          in meta (fn () =>
-                            (tick 2;cuts := (step,closed) :: !cuts)) end
-                      | _ =>
-                          (List.app inventory (premise_list step);
-                           meta (fn () =>
-                             (tick 2;ordered := step :: !ordered)))
-                    end
-                val _ = inventory selected
-                val steps = meta (fn () =>
-                  let fun reverse [] result = (tick 1;result)
-                        | reverse (step::rest) result =
-                            (tick 2;reverse rest (step::result))
-                  in reverse (!ordered) [] end)
+                (* A cut is a DAG boundary, not a separate occurrence for
+                   every incoming edge. Import it once per step serial; the
+                   receipt still carries ALL its actual Source occurrences.
+                   Scope completion is outside the pure transaction. Save
+                   all missing scopes in discovery order before rescanning;
+                   do not amplify the DAG walk once per sibling scope. *)
+                fun close_scope step = case find step of SOME _ => ()
+                  | NONE => (case recipe step of Scope {hypothesis,body} =>
+                      let val proof = bounded_source body
+                            (append local_assumptions [hypothesis])
+                          val closed =
+                            P.discharge_source_receipt_with_work work
+                              proof hypothesis
+                      in save step closed end
+                    | _ => raise ERR "bounded_completion"
+                        "dependency inventory lost its scope")
+                fun inventory () =
+                  let val result = dependency_inventory selected
+                  in case #scopes result of
+                      [] => result
+                    | missing => (List.app close_scope missing;inventory ())
+                  end
+                val _ = work_checkpoint "bounded.inventory.before" (fn () =>
+                  " serial=" ^ Int.toString (serial selected))
+                val inventory = inventory ()
+                val cuts = ref (#cuts inventory)
+                val steps = #steps inventory
+                val _ = work_checkpoint "bounded.inventory.after" (fn () =>
+                  " serial=" ^ Int.toString (serial selected) ^
+                  " saved_cuts=" ^ Int.toString (List.length (!cuts)))
                 val step_count = length steps
-                (* A lower bound can prove a candidate unfit without
-                   constructing its larger rule frontier. Each captured
-                   law is a real ClosedWitness; its outer actual App
-                   shells are mandatory even when operands become holes.
-                   Inventory is unique by step serial; capture allocates
-                   one distinct fact per such step, even for equal native
-                   theorem pointers. The frontier retains those witness
-                   occurrences. App IDs are deduplicated independently.
-                   Each mandatory App contributes 7 syntax plus 3 join
-                   nodes; each Source/witness contributes 1 plus 3.
-                   Ignoring constants/conversions and subtracting the
-                   final join gives this lower bound, not an exact size. *)
-                val minimum = meta (fn () =>
-                  let
-                    val apps = ref (Redblackset.empty compare)
-                    val app_count = ref (0:IntInf.int)
-                    val fact_count = ref (0:IntInf.int)
-                    fun shell current =
-                      (tick 2;ignore (G.node_scope graph current);
-                       case G.view graph current of
-                         G.Application (operator,_) =>
-                           (if Redblackset.member (!apps,G.node_id current)
-                              then () else
-                              (tick 2;apps := Redblackset.add
-                                (!apps,G.node_id current);
-                               app_count := !app_count+1);
-                            shell operator)
-                       | _ => ())
-                    fun law current nonempty =
-                      (tick 2;fact_count := !fact_count+1;
-                       if nonempty then shell current else ())
-                    val _ = List.app (fn step =>
-                      (valid step;case recipe step of
-                         ClosedLaw (current,_,_) => law current
-                           (not (null (premise_list step)))
-                       | ObligationLaw {law=current,...} => law current true
-                       | _ => ())) steps
-                    fun count [] total = (tick 1;total)
-                      | count (_::rest) total =
-                          (tick 1;count rest (total+1))
-                    val sources = count canonical_sources
-                      (count extra_sources (0:IntInf.int))
-                  in IntInf.max (0,10* !app_count+
-                       4*(!fact_count+sources)-3) end)
+                (* Reject the actual prospective context before capturing
+                   laws or entering the much dearer checked frontier. *)
+                val _ = work_checkpoint "bounded.minimum.before" (fn () =>
+                  " serial=" ^ Int.toString (serial selected) ^
+                  " steps=" ^ Int.toString step_count)
+                val minimum = rejection_minimum steps (!cuts)
+                val _ = work_checkpoint "bounded.minimum.after" (fn () =>
+                  " serial=" ^ Int.toString (serial selected) ^
+                  " minimum=" ^ IntInf.toString minimum ^
+                  " preferred=" ^ IntInf.toString chunk_limit ^
+                  " cap=" ^ IntInf.toString cap)
                 fun planned () =
                 let
                 val facts = ref ([]:P.closed_fact list)
@@ -2722,7 +3078,12 @@ struct
                           copy_append (K.graph_roots value) (!roots)))
                     | _ => ()
                   end
+                fun checkpoint phase = work_checkpoint phase (fn () =>
+                  " serial=" ^ Int.toString (serial selected) ^
+                  " steps=" ^ Int.toString step_count)
+                val _ = checkpoint "bounded.rules.before"
                 val _ = List.app rule steps
+                val _ = checkpoint "bounded.rules.after"
                 val _ = meta (fn () => List.app (fn step =>
                   (valid step;case recipe step of
                      ClosedLaw _ => () | ObligationLaw _ => ()
@@ -2750,19 +3111,40 @@ struct
                 val receipts = meta (fn () =>
                   copy_append (list_map #2 (!cuts))
                     (list_map #2 (!obligations)))
+                (* Checked law MP needs its recorded implication layers,
+                   not the Boolean interior of an incoming receipt target.
+                   Expanding gates there rebuilds the saved conjunction
+                   chain at every cut and can make even one MP unfit.
+                   Preprocessing remains full ordinary constructor demand:
+                   its exact roots/facts/conversions were included above,
+                   and a nonempty law list propagates that whole forest.
+                   Every other recipe retains the general planner flags. *)
+                val law_only = meta (fn () =>
+                  not (null (!laws)) andalso List.all (fn step =>
+                    (valid step;case recipe step of
+                       ClosedLaw _ => true | ObligationLaw _ => true
+                     | Assumption => true | PreprocessedSource => true
+                     | _ => false)) steps)
+                val _ = checkpoint "bounded.frontier.before"
                 val plan = prepare (!roots) (!facts) (!conversions) receipts
-                  (!targets) true true (!laws)
+                  (!targets) (not law_only) (not law_only) (!laws)
+                val _ = checkpoint "bounded.frontier.after"
                 val size = P.source_cut_rule_footprint_for work plan
                 val _ = work_checkpoint "bounded.plan" (fn () =>
                   " serial=" ^ Int.toString (serial selected) ^
                   " recipe=" ^ recipe_label selected ^
                   " steps=" ^ Int.toString step_count ^
+                  " cuts=" ^ Int.toString (List.length (!cuts)) ^
+                  " law_only=" ^ Bool.toString law_only ^
+                  " preferred=" ^ IntInf.toString chunk_limit ^
+                  " cap=" ^ IntInf.toString cap ^
                   " raw=" ^ IntInf.toString (#raw size) ^
                   " inclusive=" ^ IntInf.toString (#inclusive size))
               in if #raw size+4<=cap andalso #inclusive size+4<=cap then
                 let
                   val block = P.freeze_source_cut_rule_plan work plan
                   val native = P.source_cut_block_for work block
+                  val apply_chunk_law = law_assembler native
                   val _ = work_phase "bounded.import.before"
                   val incoming = map_external (fn (step,receipt) =>
                     (serial step,P.source_cut_edge_for work block receipt))
@@ -2808,7 +3190,7 @@ struct
                               premises clauses
                               (fn _ => raise ERR "bounded_completion"
                                 "scoped recipe was not closed before assembly")
-                              local_assumptions (apply_law native) step
+                              local_assumptions apply_chunk_law step
                           | _=>
                               (tick 1;case recipe step of Boolean=>
                                 let val actual=premises ()
@@ -2831,12 +3213,12 @@ struct
                                       (fn _ => raise ERR "bounded_completion"
                                 "scoped recipe was not closed before assembly")
                                       local_assumptions
-                                      (apply_law native) step end
+                                      apply_chunk_law step end
                               | _=>assemble_recipe native law_source derived
                                   premises clauses
                                   (fn _ => raise ERR "bounded_completion"
                                 "scoped recipe was not closed before assembly")
-                                  local_assumptions (apply_law native) step)
+                                  local_assumptions apply_chunk_law step)
                         val _ = tick 2
                         val _ = memo := Redblackmap.insert
                           (!memo,serial step,edge)
@@ -2858,17 +3240,21 @@ struct
                    " steps=" ^ Int.toString step_count ^
                    " raw=" ^ IntInf.toString (#raw size) ^
                    " inclusive=" ^ IntInf.toString (#inclusive size));
-                 split selected steps step_count)
+                 split selected steps step_count
+                   (IntInf.max (#raw size,#inclusive size)))
               end
-              in if minimum+4>cap andalso step_count>1 then
+              in if minimum+4>chunk_limit andalso step_count>1 then
                    (work_checkpoint "bounded.lower-bound" (fn () =>
                       " serial=" ^ Int.toString (serial selected) ^
                       " steps=" ^ Int.toString step_count ^
-                      " minimum=" ^ IntInf.toString minimum);
-                    split selected steps step_count)
+                      " cuts=" ^ Int.toString (List.length (!cuts)) ^
+                      " minimum=" ^ IntInf.toString minimum ^
+                      " preferred=" ^ IntInf.toString chunk_limit ^
+                      " cap=" ^ IntInf.toString cap);
+                    split selected steps step_count minimum)
                  else planned ()
               end
-          and split selected steps step_count =
+          and split selected steps step_count rejected_size =
             if step_count<=1 then
               single selected
             else
@@ -2879,18 +3265,103 @@ struct
                           (tick 2;add rest (index+1)
                             (Redblackmap.insert (table,serial step,index)))
                   in add steps 0 (Redblackmap.mkDict compare) end)
-                val middle = step_count div 2
-                val visited = ref (Redblackset.empty compare)
-                fun close step = case find step of SOME _ => () | NONE =>
-                  let val state = meta (fn () =>
-                    (valid step;
-                     if Redblackset.member (!visited,serial step) then NONE
-                     else (visited := Redblackset.add (!visited,serial step);
-                       Redblackmap.peek (ranks,serial step))))
-                  in case state of NONE => ()
-                    | SOME index => if index<middle then ignore (prove step)
-                      else List.app close (premise_list step) end
-                val _ = close selected
+                (* Size-guided grouping: use the candidate's minimum or
+                   rejected size to aim at the original template cap,
+                   then run the SAME inventory and checked planner. Never
+                   build speculative checked frontiers just to tune a group.
+                   Uneven DAGs need not scale linearly. Reduce by at least a
+                   quarter on every descent, avoiding one-rank retries when
+                   most of the size is fixed support. No Source occurrence
+                   or actual support is removed. *)
+                val proposed = meta (fn () =>
+                  let val _ = tick 5
+                      val maximum = step_count-Int.max (1,step_count div 4)
+                      val estimate = IntInf.fromInt step_count *
+                        IntInf.max (1,chunk_limit-4) div
+                          IntInf.max (1,rejected_size)
+                  in Int.max (1,IntInf.toInt (IntInf.min
+                    (IntInf.fromInt maximum,estimate))) end)
+                (* The prefix walk itself has no callout either. Return
+                   only scheduling candidates; prove/preview and retained
+                   receipt authentication remain outside the transaction. *)
+                fun boundaries prefix =
+                  let
+                    val candidates = planning (fn () =>
+                      let
+                        val visited = ref (Redblackset.empty compare)
+                        val candidates = ref ([]:step list)
+                        fun visit step =
+                          (valid step;
+                           if Redblackset.member (!visited,serial step)
+                             then () else
+                             (tick 1;visited := Redblackset.add
+                                (!visited,serial step);
+                              case Redblackmap.peek (ranks,serial step) of
+                                NONE => ()
+                              | SOME index =>
+                                  (case Redblackmap.peek
+                                      (!proofs,serial step) of
+                                    SOME _ => ()
+                                  | NONE => if index<prefix then
+                                      (tick 2;candidates :=
+                                        step :: !candidates)
+                                    else List.app visit
+                                      (premise_list step))))
+                        val _ = visit selected
+                      in reverse (!candidates) [] end)
+                    (* No receipt or support leaves this scheduling walk.
+                       A retained proof is only a boundary here; preview,
+                       find and the checked planner authenticate it before
+                       actual support use. Avoid validating an otherwise
+                       unused proof forest merely to choose a predecessor. *)
+                  in candidates end
+                (* Before choosing a boundary, inventory its ACTUAL unsaved
+                   dependency DAG. Outer inventory has already closed scopes;
+                   an unavailable scope simply leaves this preview unknown.
+                   No prospective support slots or partial proofs are minted.
+                   A cheap miss shrinks grouping BEFORE capture/frontier work,
+                   not after another expensive unfit plan has been built. *)
+                fun preview candidate =
+                  let val {steps,cuts,scopes} = dependency_inventory candidate
+                  in if not (null scopes) orelse length steps<=1 then NONE
+                     else SOME (rejection_minimum steps cuts)
+                  end
+                fun choose prefix =
+                  let
+                    fun first [] = NONE
+                      | first (step::rest) = case preview step of
+                          SOME size => if size+4>chunk_limit then SOME size
+                            else first rest
+                        | NONE => first rest
+                  in if prefix<=1 then prefix else
+                    case first (boundaries prefix) of NONE => prefix
+                    | SOME size =>
+                        let val smaller = meta (fn () =>
+                              (tick 5;Int.max (1,IntInf.toInt (IntInf.min
+                                (IntInf.fromInt (prefix-1),
+                                 IntInf.fromInt prefix *
+                                   IntInf.max (1,chunk_limit-4) div size)))))
+                            val _ = work_checkpoint "bounded.prefix-reject"
+                              (fn () => " prefix=" ^ Int.toString prefix ^
+                                " minimum=" ^ IntInf.toString size ^
+                                " preferred=" ^ IntInf.toString chunk_limit ^
+                                " next=" ^ Int.toString smaller)
+                        in choose smaller end
+                  end
+                (* Strict progress: 1 <= middle < step_count; preview retries
+                   strictly decrease the prefix. Its unsaved DAG boundaries
+                   are proper predecessors, saved by prove before retrying
+                   selected. A one-rule soft miss always reaches planned (). *)
+                val middle = choose proposed
+                val _ = work_checkpoint "bounded.split" (fn () =>
+                  " serial=" ^ Int.toString (serial selected) ^
+                  " steps=" ^ Int.toString step_count ^
+                  " prefix=" ^ Int.toString middle ^
+                  " rejected=" ^ IntInf.toString rejected_size ^
+                  " preferred=" ^ IntInf.toString chunk_limit ^
+                  " cap=" ^ IntInf.toString cap)
+                val _ = List.app (fn step => ignore (prove step))
+                  (boundaries middle)
               in prove selected end
           and single selected =
             case recipe selected of
@@ -2907,12 +3378,12 @@ struct
                 "one genuine rule still exceeds the original compact cap"
           and sequential selected law theorem arguments =
             let
-              val (_,spine) = capture selected law theorem
+              val (fact,spine) = capture selected law theorem
                 (meta (fn () => list_map #1 arguments))
-              val first = P.closed_law_spine_prefix_for work spine
-                (if null arguments then 0 else 1)
-              val (fact,_) = capture selected law theorem
-                (meta (fn () => list_map #1 arguments))
+              val first = case arguments of
+                  [] => spine
+                | [_] => spine
+                | _ => P.closed_law_spine_prefix_for work spine 1
               val result = use_closed_law (node selected)
                 law fact first arguments
               val _ = save selected result
@@ -2937,7 +3408,8 @@ struct
                         G.Application (_,tail) => tail
                       | _ => raise ERR "bounded_completion"
                           "recorded source law lost its implication")
-                    val edge = meta (fn () => apply_law native
+                    val apply_chunk_law = law_assembler native
+                    val edge = meta (fn () => apply_chunk_law
                       {law=(current,law_edge),target=tail,
                        premises=[(premise,arg_edge)]})
                     val output = P.realize_source_cut_receipt work block
@@ -2956,7 +3428,8 @@ struct
                 | _ => meta (fn () => case G.view graph law of
                     G.Application (_,tail) => tail
                   | _ => raise ERR "bounded_completion" "missing law tail")
-              val edge = meta (fn () => apply_law native
+              val apply_chunk_law = law_assembler native
+              val edge = meta (fn () => apply_chunk_law
                 {law=(law,P.closed native fact),target=target,
                  premises=incoming})
               val proof = P.realize_source_cut_receipt work block target edge
@@ -3300,20 +3773,49 @@ struct
                 (tick 2;validate_force_target obligation)) law closed
               val arguments = meta (fn () =>
                 list_map (fn (_,node,_,_) => node) selected)
-              val spine = P.prepare_closed_law_spine work
+              (* A fresh prepared spine already selects its first shell,
+                 or the law itself when there are no arguments. *)
+              val first = P.prepare_closed_law_spine work
                 {frame=frame,fact=fact,premises=arguments,target=obligation}
-              val first = P.closed_law_spine_prefix_for work spine
-                (if null arguments then 0 else 1)
-              fun occurrence (index,current,_,_) =
-                let val plan = prepare [] [] [] [] [current] false false []
-                    val block = P.freeze_source_cut_rule_plan work plan
-                    val native = P.source_cut_block_for work block
-                    val edge = meta (fn () => P.source native index)
-                in (current,P.realize_source_cut_receipt work
-                  block current edge) end
+              (* Original receipt realization retains EVERY actual Source
+                 occurrence of a used node. Equal original slots therefore
+                 reuse that same genuine receipt, not independently frozen
+                 copies. The argument list itself keeps all duplicates. *)
+              fun occurrence (_,current,_,_) =
+                (current,obligation_source current)
               val incoming = map_external occurrence selected
             in use_closed_law obligation law fact first incoming end
           and obligation_source obligation =
+            let
+              val retained = meta (fn () =>
+                (tick 3;ignore (G.node_scope graph obligation);
+                 case !obligation_receipts of NONE => NONE
+                   | SOME table =>
+                       Redblackmap.peek (table,G.node_id obligation)))
+              fun exact receipt =
+                let val data = P.source_realization_data_for work receipt
+                    val _ = meta (fn () =>
+                      (tick 2;if #target data=obligation then () else
+                         raise ERR "bounded_completion"
+                           "different retained obligation endpoint"))
+                in receipt end
+            in case retained of SOME receipt => exact receipt
+              | NONE =>
+                  let val receipt = complete_obligation_source obligation
+                      (* The successful constructor just authenticated this
+                         exact endpoint. Only a retained hit needs a new
+                         receipt guard; no native proof credit is retained. *)
+                      val _ = meta (fn () =>
+                        let val _ = tick 4
+                            val table = case !obligation_receipts of
+                                NONE => Redblackmap.mkDict compare
+                              | SOME held => held
+                        in obligation_receipts := SOME
+                          (Redblackmap.insert
+                            (table,G.node_id obligation,receipt)) end)
+                  in receipt end
+            end
+          and complete_obligation_source obligation =
             if meta (fn () => List.exists
                 (fn source => (tick 1;source=obligation)) canonical_sources)
               then original obligation
@@ -3489,7 +3991,11 @@ struct
       and actual_dependency_eligible work candidate obligation ancestors =
         W.with_step work (fn () =>
           let
-            fun tick n = (validate_owned work;W.spend work n)
+            (* No caller callback in this eligibility walk. Authenticate
+               preprocessing once, not once per map/type/graph visit.
+               spend still checks live SAME Work on every actual debit. *)
+            val _ = validate_owned work
+            fun tick n = W.spend work n
             fun compare pair = (tick 1;Int.compare pair)
             fun member _ [] = (tick 1;false)
               | member node (saved::rest) =
@@ -3644,6 +4150,7 @@ struct
               " supported=" ^ Bool.toString supported ^
               " forest_fits=" ^ Bool.toString forest_fits ^
               " laws_fit=" ^ Bool.toString laws_fit)
+            val _ = validate_owned work
           in laws_fit end)
       and bounded_complete work root locals ancestors =
         bounded_complete_with_ports work root locals ancestors []
@@ -3785,6 +4292,72 @@ struct
                     " serial=" ^ Int.toString (serial root) ^
                     " minimum=" ^ IntInf.toString source_minimum)
                   val _ = if source_minimum<=
+                      IntInf.fromInt template_limit then () else
+                    bounded_result work
+                  (* All these roots have ordinary forest demand in the
+                     monolithic frontier. Stop as soon as their mandatory
+                     definitions alone exceed the cap, before collecting
+                     closure paths/cuts/tables for a doomed reconstruction.
+                     This is only rejection; the fitting case still uses
+                     the original checked frontier and exact footprint. *)
+                  val syntax_minimum = W.with_step work (fn () =>
+                    let
+                      fun tick n = W.spend work n
+                      fun compare pair = (tick 1;Int.compare pair)
+                      val seen = ref (Redblackset.empty compare)
+                      val maximum = IntInf.fromInt template_limit
+                      val demanded = ref (Redblackset.empty compare)
+                      fun roots_of [] = tick 1
+                        | roots_of (current::rest) =
+                            (tick 2;ignore (G.node_scope graph current);
+                             demanded := Redblackset.add
+                               (!demanded,G.node_id current);roots_of rest)
+                      val _ = List.app roots_of [source_nodes,[closed_target],
+                        preprocessing_roots,!block_roots]
+                      (* Overapproximate cuts with ALL conversion endpoints
+                         (including legacy ones). Descendants of an ordinary
+                         root can still be receipt cuts in this old frontier.
+                         Ignoring even a legacy endpoint only weakens this
+                         rejection bound; it cannot hide demand at a root. *)
+                      val cuts = ref (Redblackset.empty compare)
+                      fun endpoints conversion =
+                        (tick 3;cuts := Redblackset.addList (!cuts,
+                          [G.node_id (P.conversion_source conversion),
+                           G.node_id (P.conversion_target conversion)]))
+                      val _ = List.app endpoints (!alias_conversions)
+                      val _ = List.app endpoints (GP.conversions validation)
+                      fun walk [] total = (tick 1;total)
+                        | walk (current::rest) total =
+                            if total>maximum then total else
+                              (tick 2;
+                               ignore (G.closure_root graph scope current);
+                               if Redblackset.member
+                                   (!seen,G.node_id current) then
+                                 walk rest total
+                               else
+                                 (tick 2;seen := Redblackset.add
+                                    (!seen,G.node_id current);
+                                  if Redblackset.member
+                                      (!cuts,G.node_id current) andalso
+                                      not (Redblackset.member
+                                        (!demanded,G.node_id current)) then
+                                    walk rest total
+                                  else case G.view graph current of
+                                    G.Application (left,right) =>
+                                      (tick 2;walk (left::right::rest)
+                                        (total+10))
+                                  | G.Constant _ => walk rest (total+8)
+                                  | _ => walk rest total))
+                      fun roots [] total = (tick 1;total)
+                        | roots (more::rest) total =
+                            if total>maximum then total else
+                              roots rest (walk more total)
+                    in roots [source_nodes,[closed_target],
+                         preprocessing_roots,!block_roots] source_minimum end)
+                  val _ = work_checkpoint "complete.syntax-bound" (fn () =>
+                    " serial=" ^ Int.toString (serial root) ^
+                    " minimum=" ^ IntInf.toString syntax_minimum)
+                  val _ = if syntax_minimum<=
                       IntInf.fromInt template_limit then () else
                     bounded_result work
                   val _ = complete_phase "frontier.before"

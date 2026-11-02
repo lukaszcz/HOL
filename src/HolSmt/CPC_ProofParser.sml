@@ -51,9 +51,11 @@ local
 
   fun intern_cpc_term term =
     let
-      (* Compound candidates are interned bottom-up.  Structural equality of
-         such candidates is therefore pointer equality of their canonical
-         children; avoid repeatedly alpha-comparing the full shared DAG. *)
+      (* Applications are interned bottom-up by their canonical children.
+         Abstractions remain opaque: CPC alpha_equiv mappings name their
+         source binders, so alpha-equivalent abstractions are not
+         interchangeable parser occurrences.  Do not open them merely to
+         recover sharing, or collect them in one quadratic-search bucket. *)
       fun same_candidate saved candidate =
         Portable.pointer_eq (saved, candidate) orelse
         if Term.is_comb saved andalso Term.is_comb candidate then
@@ -74,8 +76,7 @@ local
         else if Term.is_const saved andalso Term.is_const candidate then
           Term.same_const saved candidate andalso
           Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
-        else Term.is_abs saved andalso Term.is_abs candidate andalso
-          Term.aconv saved candidate
+        else false
       fun lookup bucket candidate = List.find
         (fn saved => same_candidate saved candidate)
         (Array.sub (!cpc_term_intern, bucket))
@@ -87,7 +88,8 @@ local
           candidate
         end
       fun intern candidate =
-        let val bucket = term_intern_hash candidate in
+        if Term.is_abs candidate then candidate
+        else let val bucket = term_intern_hash candidate in
           case List.find (fn saved => Portable.pointer_eq (saved, candidate))
               (Array.sub (!cpc_term_intern, bucket)) of
             SOME saved => saved
@@ -643,6 +645,108 @@ local
   val cpc_fp_private_unbound_markers_ref =
     ref ([] : (Term.term * string) list)
 
+  (* Keys retain only the no-op observer; queries supply their own work
+     gate. Preserve typed variable identity, including separately allocated
+     copies. Pointer hits open nothing, and different names open no Types.
+     All string bytes, Type edges and memo probes are paid BEFORE inspection.
+     The local pair memo prevents expansion of shared annotations and never
+     retains a caller or query Type in the proof-local index. *)
+  fun private_identity_compare ((left,observe_left),(right,observe_right)) =
+    let
+      fun observe () = (observe_left (); observe_right ())
+      fun names (a,b) =
+        (observe ();
+         if Portable.pointer_eq (a,b) then EQUAL else
+         let
+           val na = String.size a
+           val nb = String.size b
+           fun next i =
+             (observe ();
+              if i = na then (if i = nb then EQUAL else LESS)
+              else if i = nb then GREATER
+              else case Char.compare (String.sub (a,i),String.sub (b,i)) of
+                EQUAL => next (i+1)
+              | order => order)
+         in next 0 end)
+      fun types pair =
+        let
+          val saved = ref
+            ([] : (Type.hol_type * Type.hol_type * order) list)
+          fun lookup _ [] = NONE
+            | lookup (a,b) ((l,r,result)::rest) =
+                (observe ();
+                 if Portable.pointer_eq (a,l) andalso
+                    Portable.pointer_eq (b,r) then SOME result
+                 else lookup (a,b) rest)
+          fun operators (a,b) =
+            (observe ();
+             if Portable.pointer_eq (a,b) then EQUAL else
+             let
+               val {Name=an,Thy=at} = KernelSig.name_of_id a
+               val {Name=bn,Thy=bt} = KernelSig.name_of_id b
+             in case names (an,bn) of
+                 EQUAL => (case names (at,bt) of
+                     EQUAL => Int.compare
+                       (KernelSig.epoch_of a,KernelSig.epoch_of b)
+                   | order => order)
+               | order => order
+             end)
+          fun arguments (xs,ys) =
+            (observe ();
+             case (xs,ys) of
+               ([],[]) => EQUAL
+             | ([],_) => LESS
+             | (_,[]) => GREATER
+             | (a::rest,b::tail) =>
+                 (case compare (a,b) of EQUAL => arguments (rest,tail)
+                  | order => order))
+          and compare (a,b) =
+            (observe ();
+             if Portable.pointer_eq (a,b) then EQUAL else
+             case lookup (a,b) (!saved) of SOME order => order
+             | NONE =>
+                 let
+                   val order = if Type.is_vartype a then
+                       if Type.is_vartype b then names
+                         (Type.dest_vartype a,Type.dest_vartype b)
+                       else LESS
+                     else if Type.is_vartype b then GREATER
+                     else
+                       let val {Tyop=ao,Args=ax,...} =
+                             Type.dest_thy_typeid a
+                           val {Tyop=bo,Args=bx,...} =
+                             Type.dest_thy_typeid b
+                       in case operators (ao,bo) of
+                           EQUAL => arguments (ax,bx)
+                         | order => order
+                       end
+                   val _ = saved := (a,b,order) :: !saved
+                 in order end)
+        in compare pair end
+    in
+      observe ();
+      if Portable.pointer_eq (left,right) then EQUAL else
+      let val (ln,lt) = Term.dest_var left
+          val (rn,rt) = Term.dest_var right
+      in case names (ln,rn) of EQUAL => types (lt,rt)
+         | order => order
+      end
+    end
+  fun no_private_identity_observation () = ()
+  fun empty_private_identity_index () =
+    HOLset.empty private_identity_compare
+  val cpc_fp_private_identity_index = ref (empty_private_identity_index ())
+  fun register_cpc_fp_private_identity marker =
+    cpc_fp_private_identity_index := HOLset.add
+      (!cpc_fp_private_identity_index,
+       (marker,no_private_identity_observation))
+  fun is_cpc_fp_private_marker_observed observe term =
+    (observe ();
+     Term.is_var term andalso HOLset.member
+       (!cpc_fp_private_identity_index,(term,observe)))
+  fun is_cpc_fp_private_marker term =
+    is_cpc_fp_private_marker_observed no_private_identity_observation term
+
   fun cpc_fp_private_bindings () = !cpc_fp_private_bindings_ref
   fun cpc_fp_private_unbound_markers () =
     !cpc_fp_private_unbound_markers_ref
@@ -659,7 +763,8 @@ local
   type cpc_fp_private_proof_entry = {
     key : unit ref option ref,
     bindings : cpc_fp_private_binding list,
-    unbound : (Term.term * string) list
+    unbound : (Term.term * string) list,
+    identities : (Term.term * (unit -> unit)) HOLset.set
   }
 
   val cpc_fp_private_proofs =
@@ -683,7 +788,8 @@ local
       else cpc_fp_private_proofs := {
         key = Weak.weak (SOME (cpc_fp_private_proof_key proof)),
         bindings = !cpc_fp_private_bindings_ref,
-        unbound = !cpc_fp_private_unbound_markers_ref
+        unbound = !cpc_fp_private_unbound_markers_ref,
+        identities = !cpc_fp_private_identity_index
       } :: !cpc_fp_private_proofs
     end
 
@@ -697,15 +803,19 @@ local
         | NONE => false
       val saved_bindings = !cpc_fp_private_bindings_ref
       val saved_unbound = !cpc_fp_private_unbound_markers_ref
-      val (bindings, unbound) =
+      val saved_identities = !cpc_fp_private_identity_index
+      val (bindings, unbound, identities) =
         case List.find matches (!cpc_fp_private_proofs) of
-          SOME {bindings, unbound, ...} => (bindings, unbound)
-        | NONE => ([], [])
+          SOME {bindings, unbound, identities, ...} =>
+            (bindings, unbound, identities)
+        | NONE => ([], [], empty_private_identity_index ())
       val _ = cpc_fp_private_bindings_ref := bindings
       val _ = cpc_fp_private_unbound_markers_ref := unbound
+      val _ = cpc_fp_private_identity_index := identities
       fun restore () =
         (cpc_fp_private_bindings_ref := saved_bindings;
-         cpc_fp_private_unbound_markers_ref := saved_unbound)
+         cpc_fp_private_unbound_markers_ref := saved_unbound;
+         cpc_fp_private_identity_index := saved_identities)
     in Portable.finally restore action input end
 
   fun cpc_fp_private_abbreviation token sort_marker source =
@@ -726,6 +836,7 @@ local
           in
             cpc_fp_private_bindings_ref :=
               binding :: !cpc_fp_private_bindings_ref;
+            register_cpc_fp_private_identity marker;
             marker
           end
     end
@@ -742,6 +853,7 @@ local
           in
             cpc_fp_private_unbound_markers_ref :=
               (marker, token) :: !cpc_fp_private_unbound_markers_ref;
+            register_cpc_fp_private_identity marker;
             marker
           end
       | [sort_marker, source] =>
@@ -3844,11 +3956,9 @@ in
   val cpc_fp_private_bindings = cpc_fp_private_bindings
   val with_cpc_fp_private_proof = with_cpc_fp_private_proof
   val with_cpc_fp_private_source_terms = with_cpc_fp_private_source_terms
-  fun is_cpc_fp_private_marker term =
-    List.exists (fn {marker, ...} : cpc_fp_private_binding =>
-      Term.aconv marker term) (cpc_fp_private_bindings ()) orelse
-    List.exists (fn (marker, _) => Term.aconv marker term)
-      (cpc_fp_private_unbound_markers ())
+  val is_cpc_fp_private_marker = is_cpc_fp_private_marker
+  val is_cpc_fp_private_marker_observed =
+    is_cpc_fp_private_marker_observed
   val cpc_fp_private_unbound_markers = cpc_fp_private_unbound_markers
 
   fun parse_stream_with_version (dicts : dicts) version instream : proof =
@@ -3860,6 +3970,7 @@ in
       val _ = cpc_list_names := []
       val _ = cpc_fp_private_bindings_ref := []
       val _ = cpc_fp_private_unbound_markers_ref := []
+      val _ = cpc_fp_private_identity_index := empty_private_identity_index ()
       val _ = cpc_fp_private_parse_avoid := []
       val _ = cpc_fp_private_allocated := Term.empty_varset
       val _ = cpc_source_variables := Redblackmap.mkDict Term.var_compare
@@ -4190,17 +4301,55 @@ in
             {kind=name,hol_type=ty,source=NONE,stable=true}
         end
       fun source_index originals frame position actual =
-        let val source = List.nth (originals,position)
-        in case C.retained_native spend source of
-            SOME term =>
-              (case SmtReplayImport.raw_size_with_policy
-                  (#index_limit limits) term of SOME _ => term
-               | NONE => raise ERR "graph_index"
-                   "expanded private literal index")
-          | NONE => if C.is_numeric_literal spend source then
-              B.small_index_with_policy backend frame
+        let
+          val source = List.nth (originals,position)
+          fun nonliteral () =
+            Term.mk_var ("cpc_nonliteral_index",C.type_of source)
+          fun expanded () = raise ERR "graph_index"
+            "expanded private index operand"
+          fun admitted term =
+            case SmtReplayImport.raw_size_with_policy
+                (#index_limit limits) term of SOME _ => term
+              | NONE => expanded ()
+          (* A lexical source descriptor is not the scalar it denotes.
+             Inspect only the actual argument's stock numeral spine. This
+             neither evaluates arithmetic nor opens a binder or LET, and
+             cannot unfold an arbitrary shared arithmetic DAG. *)
+          fun constant expected value =
+            (spend 1;case B.view backend frame value of
+               B.Atom term => Term.is_const term andalso
+                 Term.same_const term expected
+             | _ => false)
+          fun unary expected value =
+            (spend 1;case B.view backend frame value of
+               B.Apply (f,x) =>
+                 if constant expected f then SOME x else NONE
+             | _ => NONE)
+          fun bits value = constant numSyntax.alt_zero_tm value orelse
+            (case unary numSyntax.bit1_tm value of SOME rest => bits rest
+             | NONE => case unary numSyntax.bit2_tm value of
+                 SOME rest => bits rest | NONE => false)
+          fun natural value = constant numSyntax.zero_tm value orelse
+            (case unary numSyntax.numeral_tm value of
+               SOME rest => bits rest | NONE => false)
+          fun integer value = case unary intSyntax.negate_tm value of
+              SOME rest => integer rest
+            | NONE => case unary intSyntax.int_injection value of
+                SOME rest => natural rest | NONE => false
+          fun scalar () =
+            if natural actual orelse integer actual then
+              (B.small_index_with_policy backend frame
                 (#index_limit limits) actual
-            else Term.mk_var ("cpc_nonliteral_index",C.type_of source)
+               handle error as Feedback.HOL_ERR detail =>
+                 if Feedback.top_function_of detail = "index" andalso
+                    Feedback.message_of detail = "expanded literal index"
+                 then expanded () else raise error)
+            else nonliteral ()
+        in case C.retained_native spend source of
+            SOME term => if Term.is_var term then scalar ()
+              else admitted term
+          | NONE => if C.is_numeric_literal spend source then scalar ()
+              else nonliteral ()
         end
       fun opaque native frame token indices arguments =
         let
@@ -4766,10 +4915,10 @@ in
      terms : 'a F.constructed_session,cvc_version : string}
   type graph_command_reader = G.node constructed_graph_command_reader
 
-  (* The semantic backend eliminates LETs using IDs. Occurrence aliases
-     must do the same without either losing operand boundaries or copying
-     a shared definition tree. Lexical masks are independent of generated
-     private-marker identities. Source atoms deliberately stay atomic. *)
+  (* The semantic backend eliminates LETs using IDs. Definition references
+     retain shared occurrence metadata; term LET uses remain lexical atoms,
+     not copies of their RHS operand boundaries. Lexical masks are independent
+     of generated private-marker identities. Source atoms stay atomic. *)
   fun graph_premise_list (RawList entries) = entries
     | graph_premise_list (raw as RawAtom _) = [raw]
 
@@ -5204,9 +5353,14 @@ in
               let
                 val rhs = List.map (resolve environment)
                   (List.take (children,List.length names))
-                val bindings = ListPair.mapEq (fn ((key,_),occurrence) =>
-                  (key,SOME (binding occurrence))) (names,rhs)
-              in resolve (bindings @ environment) (List.last children) end
+                (* Elaboration substitutes values, not occurrence roles.
+                   Keep a term LET's lexical uses atomic; in particular a
+                   use of c cannot supply the immediate slots of its RHS.
+                   RHSs see the outer frame (simultaneous LET). *)
+                val masks = List.map (fn (key,_) => (key,NONE)) names
+                val body = resolve (masks @ environment)
+                  (List.last children)
+              in rebuild (rhs @ [body]) end
           | P.ConstructionBinder {variables,...} =>
               let val masks = List.concat (List.map (fn (key,name,_) =>
                     [(key,NONE),(symbol_key name,NONE)]) variables)

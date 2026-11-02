@@ -1037,6 +1037,24 @@ struct
             "Sequence" "cleanup-precedence" 1 2) () of
           Exn.Exn error => error
         | _ => raise Fail "missing cleanup resource fixture"
+      (* Private-marker authority comes from parser allocation, not spelling. *)
+      val stream = TextIO.openString
+        "((define @m () (@fp.INF (_ BitVec 1))) \
+        \(assume @p (= @m @m)))"
+      val parsed = Exn.capture (fn () =>
+        CPC_ProofParser.parse_stream_with_version
+          (SmtLib_Logics.parsedicts_of_logic "ALL") "1.3.4" stream) ()
+      val _ = TextIO.closeIn stream
+      (* Keep the weak-keyed proof alive and reinstall its allocation scope
+         at replay/worker/force entry; nested parses may reset global state. *)
+      val marker_proof = Exn.release parsed
+      fun with_marker action input =
+        CPC_ProofParser.with_cpc_fp_private_proof marker_proof action input
+      val marker = case CPC_ProofParser.cpc_fp_private_unbound_markers () of
+          [(marker,"@fp.INF")] => marker
+        | _ => raise Fail "missing cleanup private marker fixture"
+      val _ = require "cleanup marker lacks parser identity"
+        (CPC_ProofParser.is_cpc_fp_private_marker marker)
       fun same_hol expected error = case (expected,error) of
           (Feedback.HOL_ERR left,Feedback.HOL_ERR right) =>
             Feedback.top_structure_of left = Feedback.top_structure_of right
@@ -1059,7 +1077,6 @@ struct
             ``smt_seq_nth ([sequence_cleanup:bool]) 0 = sequence_cleanup``
           (* The native TRUST worker defers private-marker propositions even
              when reflexivity can independently close them during forcing. *)
-          val marker = Term.mk_var ("@fp.sequence_cleanup",Type.bool)
           val goal = if legacy then boolSyntax.mk_eq (marker,marker)
                      else sequence_goal
           val sources = SmtReplaySource.new graph scope limit
@@ -1093,17 +1110,36 @@ struct
           val ends = ref 0
           val invocation_aborts = ref 0
           val invocation_ends = ref 0
-          val worker = CPC_ProofReplay.graph_bounded_worker []
+          val worker_calls = ref 0
+          val private_targets = ref 0
+          val deferred = ref 0
+          fun worker input = with_marker (fn input =>
+            let
+              val _ = worker_calls := !worker_calls+1
+              val (step:CPC_Proof.step,_) = input
+              val term = #term (valOf (#conclusion step))
+              val _ = if List.exists
+                  CPC_ProofParser.is_cpc_fp_private_marker
+                  (Term.free_vars term) then
+                    private_targets := !private_targets+1 else ()
+              val result as (theorem,_) =
+                CPC_ProofReplay.graph_bounded_worker [] input
+              val _ = if List.exists (Term.aconv term) (Thm.hyp theorem)
+                then deferred := !deferred+1 else ()
+            in result end) input
           fun reject _ = (callbacks := !callbacks+1;raise primary)
-          fun force _ =
+          fun force input = with_marker (fn _ =>
             (forced := !forced+1;
+             require "cleanup force lost its private allocation"
+               (not legacy orelse
+                CPC_ProofParser.is_cpc_fp_private_marker marker);
              if carried then
                (* Reenter the public checked entry inside the graph's real
                   consumer scope; do not manufacture its private carrier. *)
                (ignore (SmtSeqProve.seq_prove_with_admission
                   reject sequence_goal);
                 raise Fail "cleanup callback unexpectedly returned")
-             else raise primary)
+             else raise primary)) input
           fun observer event = case event of
               CleanupReplay.ForcedBegin _ => begins := !begins+1
             | CleanupReplay.ForcedEnd _ => ends := !ends+1
@@ -1116,7 +1152,7 @@ struct
             | CleanupReplay.InvocationEnd =>
                 invocation_ends := !invocation_ends+1
             | _ => ()
-          fun replay force observe =
+          fun replay force observe = with_marker (fn () =>
             if legacy then CleanupReplay.check_contradiction_observing
               {graph=graph,scope=scope,sources=sources,proof=proof,
                ordinary_limit=limit,template_limit=limit,worker=worker,
@@ -1128,22 +1164,38 @@ struct
                  force (step,premises),
                completion=fn {prove,...} => (ignore (prove target);NONE),
                direct_deferred=fn _ => NONE,check_type=fn _ => (),
-               observer=observe}
+               observer=observe}) ()
           fun preserved result = case result of Exn.Exn error =>
                 classify error
             | _ => false
           val result = Exn.capture (fn () => replay force observer) ()
-          val _ = require "cleanup force/abort path was not exercised once"
+          val state = "legacy=" ^ Bool.toString legacy ^ " carried=" ^
+            Bool.toString carried ^ " failing=" ^
+            Bool.toString cleanup_fails ^ " worker=" ^
+            Int.toString (!worker_calls) ^ " private=" ^
+            Int.toString (!private_targets) ^ " deferred=" ^
+            Int.toString (!deferred) ^ " forced=" ^ Int.toString (!forced) ^
+            " begins=" ^ Int.toString (!begins) ^
+            " aborts=" ^ Int.toString (!aborts) ^
+            " ends=" ^ Int.toString (!ends) ^
+            " invocation_aborts=" ^ Int.toString (!invocation_aborts) ^
+            " invocation_ends=" ^ Int.toString (!invocation_ends) ^
+            " callbacks=" ^ Int.toString (!callbacks) ^ " got=" ^
+            (case result of Exn.Exn error => Feedback.exn_to_string error
+             | _ => "success")
+          val _ = require
+            ("cleanup force/abort path was not exercised once: " ^ state)
             (!forced=1 andalso !begins=1 andalso !aborts=1 andalso
              !invocation_aborts=1 andalso !ends=0 andalso
              !invocation_ends=0 andalso
              !callbacks=(if carried then 1 else 0))
-          val _ = require ("cleanup replaced or exposed the primary exception: " ^
-            "legacy=" ^ Bool.toString legacy ^ " carried=" ^
-            Bool.toString carried ^ " failing=" ^
-            Bool.toString cleanup_fails ^ " got=" ^
-            (case result of Exn.Exn error => General.exnMessage error
-             | _ => "success")) (preserved result)
+          val _ = require ("cleanup native TRUST selection changed: " ^ state)
+            (!worker_calls=1 andalso
+             !private_targets=(if legacy then 1 else 0) andalso
+             !deferred=(if legacy then 1 else 0))
+          val _ = require
+            ("cleanup replaced or exposed the primary exception: " ^ state)
+            (preserved result)
           (* A leaked consumer scope would expose a carrier here instead of
              the same raw primary. Then recover in the SAME graph and scope. *)
           val reset = Exn.capture (fn () =>

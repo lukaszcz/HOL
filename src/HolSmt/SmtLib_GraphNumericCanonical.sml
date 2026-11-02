@@ -1019,131 +1019,180 @@ struct
       val original_rules = C.originals original
       val original_facts = C.checked_rules original
       val cap = IntInf.fromInt (#template_limit (W.semantic_limits work))
-      val types = ref ([] : ty list)
+      val _ = W.spend work 3
+      val type_chunks = ref ([] : ty list list)
+      val type_count = ref (0 : IntInf.int)
+      val chunk_count = ref (0 : IntInf.int)
       (* Private pointer membership only: no proof, Type-validator result,
          permission or future native quotation is cached by this index. *)
       val _ = active owner
       val _ = W.spend work 128
       val seen = Array.array (127,[] : proof list)
       val total = ref (0 : IntInf.int)
-      (* One callback-free planning pass only. Cache successful immutable
-         compound-Type weights, never annotation incidences, allowances or
-         validator outcomes. Leaf weights retain their original direct
-         inspection. Every annotation is still appended below, in order;
-         policy calls and native Type materialization remain unchanged. *)
-      (* Each basic block below is callback/native-effect free. Authenticate
-         the owner before its reads and pay every performed operation; the
-         miss transition can then debit its actual local index work without
-         repeating the complete backing guard between those pure events. *)
-      fun metadata amount = (active owner;W.spend work amount)
-      val _ = metadata 9
-      val weights = Array.array
-        (8,NONE:(ty * IntInf.int) option)
-      val _ = metadata 2
-      val position = ref (0,0)
-      val recent = ref (NONE:(ty * IntInf.int) option)
-      (* The next overwritten slot is the oldest retained miss. Lookup
-         visits the same last eight misses, newest first; hits do not move
-         history. No prefix cells are copied on a successful miss. *)
-      fun same_pointer (HeldType left,HeldType right) =
-            Portable.pointer_eq (left,right)
-        | same_pointer (left,right) = Portable.pointer_eq (left,right)
-      fun weight value =
+      (* Cache only successful immutable compound-Type weights, never
+         annotation incidences, validator outcomes or Scope permission.
+         Rows can run guarded callbacks between weight calls: only the
+         recursive weight_data subpass is callback/native-effect free.
+         Every annotation and its full native quote remain below. *)
+      val weight =
         let
-          val _ = tick owner
-          fun valid actual = if Type.uptodate_type actual then () else
-            raise ERR "type_weight" "retired actual type"
-          fun cached compute =
-            let
-              fun lookup () =
-                let
-                  (* State read and the initial newest-slot index. *)
-                  val _ = metadata 3
-                  val (next,count) = !position
-                  val newest = if next=0 then 7 else next-1
-                  fun scan 0 _ = (metadata 1;NONE)
-                    | scan remaining index =
-                        let
-                          (* Actual indexed read, option selection and
-                             exact-pointer comparison share one guard. *)
-                          val _ = metadata 4
-                          val (held,result) = case Array.sub (weights,index) of
-                              SOME entry => entry
-                            | NONE => raise ERR "prepare"
-                                "unfilled type-weight history"
-                        in if same_pointer (held,value) then
-                             (active owner;SOME result)
-                           else
-                             let
-                               (* The preceding owner guard still holds:
-                                  only pure local metadata intervenes. *)
-                               val _ = W.spend work 3
-                               val previous = if index=0 then 7 else index-1
-                             in scan (remaining-1) previous end
-                        end
-                in scan count newest end
-              val found = case !recent of SOME (held,result) =>
-                    if same_pointer (held,value) then SOME result else
-                      lookup ()
-                | NONE => lookup ()
-            in case found of SOME result =>
-                (active owner;recent := SOME (value,result);result)
-              | NONE =>
-                let val result = compute ()
-                    (* Actual state read, pair/slot write, cursor and count
-                       arithmetic, then state write; no native callback. *)
-                    val _ = metadata 6
-                    val (next,count) = !position
-                    val _ = Array.update (weights,next,SOME (value,result))
-                    val following = if next=7 then 0 else next+1
-                    val _ = position := (following,Int.min (8,count+1))
-                    val _ = active owner
-                    val _ = recent := SOME (value,result)
-                in result end
+          val _ = active owner
+          (* Private SAME-counter payload carrier: setup16, call8,
+             refill48. No fresh quota, sampled guard fee or refund.
+             credit = sum(successful W.spend payloads)
+                      - sum(n+8) - 48*refills.
+             Guard fees are ADDITIONAL actual W.spend debits, even when
+             overhead sampling is disabled. Zero is only the conservative
+             prefill fee estimate: ScopeMap may grow between calls. Near
+             exhaustion a batch may refuse early; it cannot overspend. *)
+          val _ = W.spend work 16
+          val ceiling = W.work_limit work
+          val credit = ref 0
+          fun weight_pay n =
+            let val amount = n+8
+            in if amount <= !credit then credit := !credit-amount else
+              let val need = amount+48- !credit
+                  val available = ceiling- #charged (W.audit work)
+                  val batch = Int.max (need,Int.min
+                    (256,Int.max (0,available)))
+                  val _ = W.spend work batch
+              in credit := !credit+batch-amount-48 end
             end
-        in case value of Arrow (left,right) =>
-            cached (fn () => 1+weight left+weight right)
-          | HeldType actual =>
-            if Type.is_vartype actual then (valid actual;1)
-            else case #Args (Type.dest_thy_typeid actual) of
-                [] => (valid actual;1)
-              | arguments => cached (fn () =>
-                  (valid actual;List.foldl (fn (argument,total) =>
-                    total+weight (HeldType argument))
-                    (1:IntInf.int) arguments))
-        end
+          (* Payload ledger: array/all eight cells9, state refs2;
+             each AST Type entry1; recent probe4, publication2;
+             history header3, empty1, slot/pointer4, advance3;
+             miss publication6. Each block prepays its local operations. *)
+          val _ = weight_pay 9
+          val weights = Array.array
+            (8,NONE:(ty * IntInf.int) option)
+          val _ = weight_pay 2
+          val position = ref (0,0)
+          val recent = ref (NONE:(ty * IntInf.int) option)
+          (* Newest first, last eight misses; hits never move history. *)
+          fun same_pointer (HeldType left,HeldType right) =
+                Portable.pointer_eq (left,right)
+            | same_pointer (left,right) = Portable.pointer_eq (left,right)
+          fun weight_data value =
+            let
+              val _ = weight_pay 1
+              fun valid actual = if Type.uptodate_type actual then () else
+                raise ERR "type_weight" "retired actual type"
+              fun cached compute =
+                let
+                  fun lookup () =
+                    let
+                      val _ = weight_pay 3
+                      val (next,count) = !position
+                      val newest = if next=0 then 7 else next-1
+                      fun scan 0 _ = (weight_pay 1;NONE)
+                        | scan remaining index =
+                            let
+                              val _ = weight_pay 4
+                              val (held,result) =
+                                case Array.sub (weights,index) of
+                                  SOME entry => entry
+                                | NONE => raise ERR "prepare"
+                                    "unfilled type-weight history"
+                            in if same_pointer (held,value) then SOME result
+                               else
+                                 let val _ = weight_pay 3
+                                     val previous =
+                                       if index=0 then 7 else index-1
+                                 in scan (remaining-1) previous end
+                            end
+                    in scan count newest end
+                  val _ = weight_pay 4
+                  val found = case !recent of SOME (held,result) =>
+                        if same_pointer (held,value) then SOME result else
+                          lookup ()
+                    | NONE => lookup ()
+                  val result = case found of SOME result => result
+                    | NONE =>
+                        let val result = compute ()
+                            val _ = weight_pay 6
+                            val (next,count) = !position
+                            val _ = Array.update
+                              (weights,next,SOME (value,result))
+                            val following = if next=7 then 0 else next+1
+                            val _ = position :=
+                              (following,Int.min (8,count+1))
+                        in result end
+                  val _ = weight_pay 2
+                  val _ = recent := SOME (value,result)
+                in result end
+            in case value of Arrow (left,right) =>
+                cached (fn () => 1+weight_data left+weight_data right)
+              | HeldType actual =>
+                if Type.is_vartype actual then (valid actual;1)
+                else case #Args (Type.dest_thy_typeid actual) of
+                    [] => (valid actual;1)
+                  | arguments => cached (fn () =>
+                      (valid actual;List.foldl (fn (argument,total) =>
+                        total+weight_data (HeldType argument))
+                        (1:IntInf.int) arguments))
+            end
+          (* Only this wrapper escapes. Credit is paid DATA, never cached
+             authorization: fresh full active precedes EVERY external
+             entry, including hits after a row's closed-fact guard. Fixed
+             Kernel Type inspections above cannot invoke caller code or
+             mutate Scope. Final active fences every successful return;
+             outer protected retires the owner on any failure. Unused
+             credit stays charged and never funds callbacks/native work. *)
+          fun weight value =
+            let val _ = active owner
+                val result = weight_data value
+                val _ = active owner
+            in result end
+        in weight end
       (* This callback-free pass frequently admits the very same bridge
-         three times. Retain only its successful immutable syntax profile
-         and its exact Type-incidence prefix. Every repeated native quote
-         and every later Type callback remains in the original order. *)
+         three times. Each miss captures a LOCAL reverse annotation list;
+         hits append just that immutable chunk, never copy its cells.
+         These Type references are DATA, not validation/funding permission.
+         Every incidence still contributes its FULL native quote below. *)
       val previous_profile = ref
-        (NONE : (syntax * profile * ty list * ty list) option)
-      fun copy_annotations current stop tail =
-        (tick owner;
-         if Portable.pointer_eq (current,stop) then tail else
-           case current of annotation::rest =>
-             (tick owner;
-              annotation::copy_annotations rest stop tail)
-           | [] => raise ERR "prepare" "disconnected annotation prefix")
+        (NONE : (syntax * profile * ty list * IntInf.int) option)
+      fun annotation_spend amount =
+        if amount <= IntInf.fromInt (W.work_limit work) then
+          W.spend work (IntInf.toInt amount)
+        else raise ERR "prepare" "annotation bookkeeping exceeds original Work"
+      (* Nominal metadata ledger (no policy/native effect): three initial
+         refs above; four miss-header events and three capture events per
+         cell (ref read, cons, write); twelve cache-probe/update events per
+         admit. Each chunk costs ten: three ref reads/writes, one cons,
+         two count additions and the argument pair. All use the original
+         Work; no per-cell active/with_step is needed for pure metadata. *)
+      fun append_annotations (annotations,count) =
+        (W.spend work 10;
+         type_chunks := annotations:: !type_chunks;
+         type_count := !type_count+count;
+         chunk_count := !chunk_count+1)
       fun admit value =
         let
           val _ = tick owner
-          val prior_types = !types
+          val _ = W.spend work 12
           val cached = case !previous_profile of
-              SOME (held,result,start,stop) =>
+              SOME (held,result,annotations,count) =>
                 if Portable.pointer_eq (held,value) then
-                  let val copied = copy_annotations start stop prior_types
-                      val _ = active owner
-                      val _ = types := copied
-                  in SOME result end
+                  SOME (result,annotations,count)
                 else NONE
             | NONE => NONE
-          val profile = case cached of SOME result => result
-            | NONE => syntax_profile_with_weight owner weight types value
+          val (profile,annotations,count) = case cached of
+              SOME result => result
+            | NONE =>
+                let val _ = W.spend work 4
+                    val captured = ref ([] : ty list)
+                    val result =
+                      syntax_profile_with_weight owner weight captured value
+                    (* By syntax_profile induction: one cell per inc,
+                       including the extra VARIABLE slot at a binder. *)
+                    val count = #inc result
+                    val _ = annotation_spend (3*count)
+                in (result,!captured,count) end
           val _ = if #raw profile <= cap andalso #inc profile <= cap then ()
             else raise ERR "prepare" "primitive rule result exceeds template"
           val _ = tick owner
-          val _ = previous_profile := SOME (value,profile,!types,prior_types)
+          val _ = previous_profile := SOME (value,profile,annotations,count)
+          val _ = append_annotations (annotations,count)
         in total := !total + #raw profile + #inc profile + #ann profile end
       (* This hint reads only the bounded private rule constructors. It
          cannot classify a theorem or authorize skipping a native quote.
@@ -1243,7 +1292,10 @@ struct
             | TypeInstance (bindings,_) => List.app (fn (a,b) =>
                 let val x = weight (HeldType a)
                     val y = weight b
-                in types := HeldType a::b:: !types;
+                    (* Two cons cells and the HeldType DATA constructor.
+                       Reverse chronology is b then a at policy time. *)
+                    val _ = W.spend work 3
+                in append_annotations ([HeldType a,b],2);
                    total := !total+x+y end) bindings
             | TermInstance (bindings,_) => List.app
                 (fn (a,b) => (admit a;admit b)) bindings
@@ -1294,19 +1346,33 @@ struct
       val prepared = rows original_rules original_facts 0
       val _ = diagnostic work "rows.after" (fn () =>
         " quote=" ^ IntInf.toString (!total) ^
-        " callbacks=" ^ Int.toString (List.length (!types)))
+        " callbacks=" ^ IntInf.toString (!type_count))
       val _ = if !total <= IntInf.fromInt (W.work_limit work) then
           W.spend work (IntInf.toInt (!total))
         else raise ERR "prepare" "primitive portfolio exceeds original Work"
       val _ = diagnostic work "quote.debit.after" (fn () => "")
+      (* Prepay ALL enumeration before the first callback: four events per
+         chunk/cell (reverse visit/cons, app visit/call), two inner empty
+         cases per chunk, and four outer header/empty events. Counts include
+         repeated chunks in FULL. Reversal inspects only immutable DATA.
+         No future debit is moved across a policy or its Primary/Scope guard.
+
+         Ordering invariant: if chunks = [Ak,...,A1], the old flat accumulator
+         was Ak @ ... @ A1. Thus rev chunks, then rev each Ai gives EXACTLY
+         the old List.rev order, including all three identical bridge chunks
+         and the direct TypeInstance [HeldType a,b] chunks. *)
+      val _ = active owner
+      val _ = annotation_spend (4* !type_count+6* !chunk_count+4)
+      (* external guards both sides of check_type; materialization still
+         needs its own preceding guard, even between two shared chunks. *)
       fun policy ty =
         let val _ = active owner
             val actual = materialize_type ty
-            val _ = active owner
             val _ = external owner (fn () => check_type actual)
-            val _ = active owner
         in () end
-      val _ = List.app policy (List.rev (!types))
+      val _ = List.app
+        (fn annotations => List.app policy (List.rev annotations))
+        (List.rev (!type_chunks))
       val _ = diagnostic work "policies.after" (fn () => "")
       val _ = active owner
     in Plan {owner=owner,rows=prepared,used=ref false} end)))
@@ -2525,12 +2591,12 @@ struct
           W.spend_policy work (!total)
         else raise ERR "prepare_with_policy"
           "primitive portfolio exceeds original Work"
+      (* external guards both sides of check_type; materialization still
+         needs its own preceding guard. *)
       fun policy ty =
         let val _ = active policy_owner
             val actual = materialize_type ty
-            val _ = active policy_owner
             val _ = external policy_owner (fn () => check_type actual)
-            val _ = active policy_owner
         in () end
       val _ = List.app policy (List.rev (!types))
       val _ = active policy_owner

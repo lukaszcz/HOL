@@ -1633,7 +1633,7 @@ struct
     normalize_using_in (new_context_with_local_laws true) false
       (new_type_admission ())
       (guarded_conversions
-        {word_conversion = blastLib.WORD_SIMP_CONV,
+        {word_conversion = Library.replay_word_simp_conv,
          bit_conversion = blastLib.BIT_BLAST_CONV,
          node_conversion = unchanged_node}) root
 
@@ -1643,7 +1643,7 @@ struct
   fun normalize_with_node_conversion_and_metrics node_conversion root =
     normalize_template_using_in (new_context ()) false (new_type_admission ())
       false {callback_failed = ref false,
-       word_conversion = blastLib.WORD_SIMP_CONV,
+       word_conversion = Library.replay_word_simp_conv,
        bit_conversion = blastLib.BIT_BLAST_CONV,
        node_conversion = fn _ => node_conversion} root
 
@@ -1654,7 +1654,7 @@ struct
 
   fun graph_normalize_in context graph scope source =
     discover_using_in context true (new_type_admission ())
-      (guarded_conversions {word_conversion=blastLib.WORD_SIMP_CONV,
+      (guarded_conversions {word_conversion=Library.replay_word_simp_conv,
        bit_conversion=blastLib.BIT_BLAST_CONV,node_conversion=unchanged_node})
       graph scope source
 
@@ -1728,7 +1728,7 @@ struct
       val source = #node (G.import graph scope maximum target)
       val admission = new_type_admission ()
       val conversions = guarded_conversions
-        {word_conversion=blastLib.WORD_SIMP_CONV,
+        {word_conversion=Library.replay_word_simp_conv,
          bit_conversion=blastLib.BIT_BLAST_CONV,
          node_conversion=node_conversion}
       fun reflexive admission =
@@ -1794,7 +1794,7 @@ struct
                   val normalized = #1 (normalize_template_using_in context true
                     admission true
                     {callback_failed=ref false,
-                     word_conversion=blastLib.WORD_SIMP_CONV,
+                     word_conversion=Library.replay_word_simp_conv,
                      bit_conversion=blastLib.BIT_BLAST_CONV,
                      node_conversion=fn _ => reflexive} template)
                     handle Conv.UNCHANGED => Thm.REFL template

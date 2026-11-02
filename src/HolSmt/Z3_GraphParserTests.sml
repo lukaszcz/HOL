@@ -529,6 +529,44 @@ struct
               | NONE => false) proof)
         | _ => with_native route text (fn e => fn proof =>
             check F.clause_occurrences (source e) proof))) routes end
+  (* Group409 distinguishes substitution DATA from a proof LET's retained
+     clause. A LET with an explicit OR body remains transparent; only its
+     lexical alias uses are atomic. Check every actual parser carrier. *)
+  fun let_clause_boundaries () = List.app (fn (label,body,count,hidden) =>
+    List.app (fn route => test (label ^ " / " ^ route_name route) (fn () =>
+      let
+        fun check clauses (proof:'a Z.constructed_proof) =
+          let
+            val term = #conclusion (alias_rule proof (#root proof))
+            val entries = clauses term
+            val _ = require "LET changed its immediate clause width"
+              (length entries=count)
+          in if hidden then
+              (case #occurrence term of
+                 SmtLib_Parser.ConstructionOccurrence
+                   {role=SmtLib_Parser.ConstructionLet _,children,...} =>
+                     (case List.last children of
+                        SmtLib_Parser.ConstructionOccurrence
+                          {role=SmtLib_Parser.ConstructionAtom,
+                           children=[],...} => ()
+                      | _ => raise Fail "term LET copied RHS occurrences")
+               | _ => raise Fail "term LET occurrence disappeared")
+            else () end
+      in case route of
+          Value => with_value (wrap body) (fn _ => fn _ =>
+            check F.value_clause_occurrences)
+        | _ => with_native route (wrap body) (fn _ =>
+            check F.clause_occurrences)
+      end)) routes)
+    [("term LET OR alias stays one literal",
+      "(asserted (let ((a (or true false))) a))",1,true),
+     ("proof LET preserves the recorded OR",
+      "(let ((a (or true false))) (asserted a))",2,false),
+     ("explicit term LET OR body keeps its operands",
+      "(asserted (let ((a true)) (or a false)))",2,false),
+     ("nested term LET stays one outer OR operand",
+      "(asserted (or (let ((a (or true false))) a) false))",2,false)]
+
   (* Unlike parser-only positives, every inference here is valid. Replay
      the original packet, not an observation rebuilt as a synthetic proof.
      Value projection remains semantic-only; no projection is replayed. *)
@@ -558,6 +596,7 @@ struct
       val _ = bridges := 0
       val _ = failures := []
       val _ = annotated_occurrences ()
+      val _ = let_clause_boundaries ()
       val _ = replay_positive "valid refl with term let"
         "(let ((a (or true false))) (refl (= a a)))"
         ``(T \/ F) = (T \/ F)``

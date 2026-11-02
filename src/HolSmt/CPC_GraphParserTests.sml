@@ -456,6 +456,30 @@ struct
            (Option.isSome expected andalso equivalent (expected,actual))
       end))) routes
   fun negative label text = negative_using (op =) label text
+
+  (* Group390 admits an actual scalar through a lexical private index.
+     The legacy HOL-term parser still sees the unreduced binder variable;
+     preserve that exact negative control, not a false differential refusal.
+     Compare the graph result with the independently literal-indexed term. *)
+  fun lexical_private_index () = List.app (fn route => test
+    ("lexical private constant index / " ^ route_name route) (fn () =>
+      let
+        val text =
+          "((assume @a (let ((i 3)) (= (@const i true) true))))"
+        val control = "((assume @a (= (@const 3 true) true)))"
+        fun check e raw proof =
+          (require "legacy lexical private-index refusal changed"
+             (failure (fn () => ignore (legacy e text)) = SOME
+               ("CPC_ProofParser","@const",
+                "expected a CPC natural-number argument"));
+           require "lexical scalar changed private allocation inventory"
+             (List.map #2 (!(#private_atoms e)) = ["@cpc.const.3"]);
+           compare_commands raw (legacy e control) proof)
+      in case route of
+          Value => with_value text (fn e => fn current =>
+            check e (small_value e (#context current)) (#proof current))
+        | _ => with_native route text (fn e => check e (small_graph e))
+      end)) routes
   fun classified label text =
     let fun class NONE = NONE
           | class (SOME (origin,where_,_)) = SOME (origin,where_)
@@ -506,6 +530,9 @@ struct
       {role=P.ConstructionAnnotation,children=[child],...}) =
         occurrence_shape child
     | occurrence_shape (P.ConstructionOccurrence
+        {role=P.ConstructionLet _,children,...}) =
+        occurrence_shape (List.last children)
+    | occurrence_shape (P.ConstructionOccurrence
         {role=P.ConstructionAtom,...}) = Atom
     | occurrence_shape (P.ConstructionOccurrence {token,children,...}) =
         App (token,List.map occurrence_shape children)
@@ -521,7 +548,9 @@ struct
   fun assumptions (proof:'a C.constructed_graph_proof) =
     List.map (fn C.GraphAssume (_,term) => term
       | _ => raise Fail "expected assumption") (#commands proof)
-  fun located label text expected = List.app (fn route =>
+  fun located_with_contract label text {legacy=prior_shape,
+      occurrence=occurrence_shape_expected,replay=replay_shape} =
+    List.app (fn route =>
     test (label ^ " / " ^ route_name route) (fn () =>
       let
         fun check e raw (proof:'a C.constructed_graph_proof) =
@@ -532,19 +561,23 @@ struct
                     provenance_shape (#provenance term)
                   | _ => raise Fail "expected legacy assumption")
                 (#commands old)
-          in require "legacy aggregate provenance changed" (prior=expected);
+          in require "legacy aggregate provenance changed"
+               (prior=prior_shape);
              require "located alias erased operand order/multiplicity"
-               (List.map (occurrence_shape o #occurrence) terms=expected);
+               (List.map (occurrence_shape o #occurrence) terms=
+                  occurrence_shape_expected);
              require "replay lost the located aggregate boundaries"
                (List.map (provenance_shape o
                   CPC_SharedReplayPlan.occurrence_provenance o #occurrence)
-                  terms=expected);
+                  terms=replay_shape);
              List.app (fn term => G.validate_scope (#graph e) (#scope term))
                terms end
       in case route of Value => with_value text (fn e => fn current =>
            check e (small_value e (#context current)) (#proof current))
        | _ => with_native route text (fn e => check e (small_graph e))
       end)) routes
+  fun located label text expected = located_with_contract label text
+    {legacy=expected,occurrence=expected,replay=expected}
   fun annotations () = List.app (fn route => test
     ("annotation wrappers preserve defined OR / " ^ route_name route)
     (fn () =>
@@ -575,7 +608,13 @@ struct
           "(assume @a (let ((copy a)) (or copy (not copy) copy))))"
         fun check source (proof:''a C.constructed_graph_proof) =
           let val term = hd (assumptions proof)
-              val children = case #occurrence term of
+              (* LET is retained; only its body is the OR occurrence. *)
+              val (binding,body) = case #occurrence term of
+                  P.ConstructionOccurrence
+                    {role=P.ConstructionLet [(_,"copy")],token="let",
+                     children=[binding,body],...} => (binding,body)
+                | _ => raise Fail "source alias lost LET boundary"
+              val children = case body of
                   P.ConstructionOccurrence
                     {token="or",children=[a,b,c],...} => (a,b,c)
                 | _ => raise Fail "source alias lost OR occurrence"
@@ -589,7 +628,8 @@ struct
                     value=node
                 | atomic _ = false
           in require "Source compound was flattened or replaced"
-               (source node andalso atomic left andalso atomic right);
+               (source node andalso atomic binding andalso
+                atomic left andalso atomic right);
              require "negated Source changed identity or occurrence"
                (case negative of P.ConstructionOccurrence
                   {token="not",children=[child],...} => atomic child
@@ -2447,11 +2487,21 @@ struct
           "(step-pop @b true :rule refl :premises (@a @a) :args (true)))")]
       val pair = App ("or",[Atom,Atom])
       val triple = App ("or",[pair,Atom,pair])
-      val _ = located "definition plus LET aggregate boundaries"
+      (* Definitions retain their RHS metadata, but an OR reference is
+         not an immediate OR occurrence (groups417/421). Simultaneous term
+         LET uses are atoms even though legacy provenance substitutes the
+         incoming definition into copy (groups390/407). *)
+      val aliased_pair = App ("<alias>",[pair])
+      val _ = located_with_contract
+        "definition plus LET aggregate boundaries"
         "((define a () (or true false)) (define b () (or a false a)) \
         \(assume @a b) (assume @b (let ((a true) (copy a)) \
         \(or copy a copy))))"
-        [triple,App ("or",[pair,Atom,pair])]
+        {legacy=[triple,App ("or",[pair,Atom,pair])],
+         occurrence=[triple,App ("or",[Atom,Atom,Atom])],
+         replay=[App ("<alias>",
+           [App ("or",[aliased_pair,Atom,aliased_pair])]),
+           App ("or",[Atom,Atom,Atom])]}
       val _ = located "nested conjunction order/multiplicity"
         "((define a () (and true false)) \
         \(assume @a (and a false a)))"
@@ -2462,6 +2512,7 @@ struct
         [App ("or",[Atom,Atom,Atom])]
       val _ = annotations ()
       val _ = source_occurrences ()
+      val _ = lexical_private_index ()
       val _ = binder_scopes ()
       val _ = positive "bounded shared lexical capture" (captured_text 3)
       val _ = List.app captured_dag [40,80]
@@ -2490,8 +2541,6 @@ struct
         [("lexical flattened repeat index",
           "(let ((n 2)) (= (repeat n #b1) #b11))"),
          ("lexical CPC word index","(let ((n 2)) (@bv n 4))"),
-         ("lexical private constant index",
-          "(let ((i 3)) (= (@const i true) true))"),
          ("private constant index type","(@const true true)"),
          ("private constant Num index","(@const task35_num true)"),
          ("String parameterized sort","(@strings_stoi_result 0)"),

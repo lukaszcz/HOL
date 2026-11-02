@@ -374,9 +374,17 @@ struct
                 val left_abs=G.recorded_abstraction_with_policy graph root
                   (RP.AtMost(IntInf.fromInt(#template_limit finite)))
                   {binder=variable_node,body=left_node,body_frame=inner}
-                val right_abs=G.recorded_abstraction_with_policy graph root
-                  (RP.AtMost(IntInf.fromInt(#template_limit finite)))
-                  {binder=variable_node,body=right_node,body_frame=inner}
+                (* A recorded abstraction is a fresh closure identity, not
+                   a hash-consed App. A shared target lambda must therefore
+                   receive one closure when its actual child is identical;
+                   otherwise its repeated cursor gets conflicting aliases
+                   during original Source realization. Both sides retain
+                   the same binder/body frame and the full native quote. *)
+                val _=tick()
+                val right_abs=if left_node=right_node then left_abs else
+                  G.recorded_abstraction_with_policy graph root
+                    (RP.AtMost(IntInf.fromInt(#template_limit finite)))
+                    {binder=variable_node,body=right_node,body_frame=inner}
                 val quantifier_node=case quantifier of NONE=>NONE
                   | SOME(operator,_)=>
                       (pay 3;SOME(G.constant graph root operator))

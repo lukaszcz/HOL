@@ -14423,6 +14423,77 @@ in
     [beta, eta, alpha]
 end
 
+(* Alpha interning must retain the exact source binder and mapping. *)
+fun cpc_alpha_equiv_source_identity_success () =
+let
+  fun check (kind, dest) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((define @x () (@var \"x\" Bool)) " ^
+         "(define @y () (@var \"y\" Bool)) " ^
+         "(define @z () (@var \"z\" Bool)) " ^
+         "(define @q0 () (" ^ kind ^ " (@list @x) @x)) " ^
+         "(define @q1 () (" ^ kind ^ " (@list @y) @y)) " ^
+         "(define @q2 () (" ^ kind ^ " (@list @z) @z)) " ^
+         "(step @p :rule alpha_equiv " ^
+         ":args (@q2 (@list @z) (@list @y))))")
+      val source = case CPC_Proof.proof_commands proof of
+          [CPC_Proof.STEP {args = source :: _, ...}] => #term source
+        | _ => raise Fail "unexpected CPC alpha test commands"
+      val (bound, _) = dest source
+      val _ = assert (Term.aconv bound (Term.mk_var ("z", Type.bool)),
+        kind ^ " parser interning replaced the source binder")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+      val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+      val (left_bound, _) = dest left
+      val (right_bound, _) = dest right
+    in
+      assert (Term.aconv left source andalso Term.aconv left right,
+        kind ^ " alpha replay changed its checked endpoints");
+      assert (Term.aconv left_bound (Term.mk_var ("z", Type.bool)) andalso
+          Term.aconv right_bound (Term.mk_var ("y", Type.bool)),
+        kind ^ " alpha replay lost the source/target binder mapping");
+      assert_no_hyps (kind ^ " CPC source-identity alpha replay", theorem);
+      check_oracle_tags (kind ^ " CPC source-identity alpha replay") theorem
+    end
+in
+  List.app check [("forall", boolSyntax.dest_forall),
+                  ("exists", boolSyntax.dest_exists),
+                  ("lambda", Term.dest_abs)]
+end
+
+fun cpc_alpha_equiv_bad_mapping_failure () =
+let
+  fun proof mapping = parse_cpc_proof_string
+    ("((define @x () (@var \"x\" Bool)) " ^
+     "(define @y () (@var \"y\" Bool)) " ^
+     "(define @z () (@var \"z\" Bool)) " ^
+     "(define @q0 () (forall (@list @x) @x)) " ^
+     "(define @q1 () (forall (@list @z) @z)) " ^
+     "(step @p :rule alpha_equiv :args (@q1 " ^ mapping ^ ")))")
+  fun reject label diagnostic mapping =
+    let val parsed = proof mapping in
+      expect_hol_error_contains label diagnostic
+        (fn () => ignore (CPC_ProofReplay.replay_root_for_test parsed))
+    end
+  val capture = parse_cpc_proof_string
+    "((define @y () (@var \"y\" Bool)) \
+    \(define @z () (@var \"z\" Bool)) \
+    \(define @q () (forall (@list @z) (= @z @y))) \
+    \(step @p :rule alpha_equiv :args (@q (@list @z) (@list @y))))"
+in
+  reject "CPC alpha wrong old binder"
+    "source binders do not match CPC mapping" "(@list @x) (@list @y)";
+  reject "CPC alpha mapping arity"
+    "binder mapping arity does not match source" "(@list @z)";
+  reject "CPC alpha nonvariable target"
+    "target CPC binders are not variables" "(@list @z) (@list true)";
+  (* The attempted renaming captures free y. Only kernel ALPHA checks the
+     final endpoints; successful syntactic substitution is not authority. *)
+  expect_hol_error_contains "CPC alpha captures a free variable" ""
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test capture))
+end
+
 fun cpc_proof_replay_ho_cong_and_ite_success () =
 let
   val ho_proof = parse_cpc_proof_string
@@ -16454,6 +16525,46 @@ in
   rejected (boolSyntax.mk_imp (left, collision))
 end
 
+(* Retained proof metadata, not the most recent parse or a name prefix,
+   selects the real native TRUST deferral used by the graph force tests. *)
+fun cpc_fp_private_proof_scope_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @m () (@fp.INF (_ BitVec 1))) \
+    \(step @p (= @m @m) :rule trust :args ((= @m @m))))"
+  val step = case CPC_Proof.proof_commands proof of
+      [CPC_Proof.STEP step] => step
+    | _ => raise Fail "unexpected private scope fixture commands"
+  val target = #term (valOf (#conclusion step))
+  val marker = boolSyntax.lhs target
+  val lookalike = Term.mk_var ("@fp.scope_lookalike",Term.type_of marker)
+  val _ = ignore (parse_cpc_proof_string "((assume @plain true))")
+  val _ = assert (not (CPC_ProofParser.is_cpc_fp_private_marker marker),
+    "unrelated parse did not reset private marker identity")
+  exception ScopeAbort
+  fun active () =
+    assert (CPC_ProofParser.is_cpc_fp_private_marker marker andalso
+        not (CPC_ProofParser.is_cpc_fp_private_marker lookalike),
+      "retained private proof scope lost allocation identity")
+  val (theorem,located) =
+    CPC_ProofParser.with_cpc_fp_private_proof proof (fn () =>
+    (active ();CPC_ProofReplay.graph_bounded_worker [] (step,[]))) ()
+  val _ = assert (Thm.concl theorem ~~ target andalso
+      #term located ~~ target andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.add (Term.empty_tmset,target)),
+    "scoped native TRUST did not retain its exact deferred target")
+  val aborted =
+    ((CPC_ProofParser.with_cpc_fp_private_proof proof
+        (fn () => (active ();raise ScopeAbort)) ();false)
+     handle ScopeAbort => true)
+in
+  assert (aborted andalso
+      not (CPC_ProofParser.is_cpc_fp_private_marker marker),
+    "private proof scope was not restored after callback failure");
+  check_oracle_tags "CPC scoped private TRUST" theorem
+end
+
 fun cpc_fp_private_witness_search_success () =
 let
   val x = ``x : (3,5) smtfp``
@@ -18466,7 +18577,7 @@ let
     ``!(b0 b1 :word12). b0 <=+ b1 ==>
         b0 <=+ b0 +
           (0w :word1 @@ ((11 >< 1) (4095w * b0 + b1)) :word11)``
-  val theorem = blastLib.BBLAST_PROVE goal
+  val theorem = Z3_ProofReplay.word_decide_for_test goal
 in
   assert (null (Thm.hyp theorem),
     "width-12 dense-literal BBLAST retained hypotheses");
@@ -23001,14 +23112,12 @@ in
     (assert (profile_call_count "rewrite(9)(proforma)_OK" = 11 andalso
         profile_call_count "rewrite(18)(BBLAST)_OK" = 0,
       "width rewrite caches were not consumed exactly 11 times");
-     (* The bounded skeleton is the first propositional route for arithmetic
-        th-lemmas, so these four clauses no longer reach the redundant
-        proforma cache. *)
-     assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 0 andalso
-        profile_call_count
-          "th_lemma[general](success)_OK" = 4 andalso
+     (* Arithmetic tries the redundant proforma first. Cache misses use
+        bounded general reduction; both routes return checked proofs. *)
+     assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" +
+        profile_call_count "th_lemma[general](success)_OK" = 4 andalso
         profile_call_count "th_lemma[arith](4)(bv)_OK" = 0,
-      "width th-lemmas did not use exactly four bounded skeleton proofs: " ^
+      "width th-lemmas did not use four checked cache/general proofs: " ^
       Int.toString
         (profile_call_count "th_lemma[arith](1)(proforma)_OK") ^ "/" ^
       Int.toString
@@ -30051,7 +30160,7 @@ let
         val plan=C.graph_conversion g r false
           (fn _ => (rows:= !rows+1;NONE)) node
     (* Policy Work without a wrapper: dispatch8, map quote4+8*rows,
-       reverse terminal1 cold; dispatch8 and empty slot terminal1 warm. *)
+       reverse terminal1 cold; paid dispatch8 covers warm empty slots. *)
     in (plan,13+8*IntInf.fromInt (!rows)) end
   fun leave w amount =
     case W.remaining_policy w of
@@ -30073,7 +30182,7 @@ in
     (fn () => List.app (fn size =>
       let val e=setup 1000000
           val (plan,fee)=recipe (#g e) (#r e) size
-      in verify (#w e) plan fee 9;W.close (#w e) end) [1,128]);
+      in verify (#w e) plan fee 8;W.close (#w e) end) [1,128]);
   test "Checked schema and shared sequence pay exact cold/warm occurrences"
     (fn () =>
       let val e=setup 1000000 val g= #g e val r= #r e val w= #w e
@@ -30090,8 +30199,8 @@ in
           val shared=C.graph_sequence g r
             {first=sequence,second=identity,observe=fn()=>()}
           (* plan is warm before shared: two sequence dispatches16,
-             plan9, identity21 then9 cold; all three leaves9 warm. *)
-      in verify w plan 21 9;verify w shared 55 43;W.close w end);
+             plan8, identity21 then8 cold; all three leaves8 warm. *)
+      in verify w plan 21 8;verify w shared 53 40;W.close w end);
   test "Processed GP owner guards pay duplicate assumptions on every call"
     (fn () =>
       let val g=G.new () val r=G.root_scope g
@@ -30116,10 +30225,10 @@ in
           val _=GP.validate_with_policy w validation
           val middle=charged w
           val _=W.with_step w (fn()=>GP.validate_with_policy w validation)
-          (* Each of three distinct five-row maps costs53 cold,9 warm;
+          (* Each of three distinct five-row maps costs53 cold,8 warm;
              two assumption links2 each and the list terminal1 add5. *)
       in require "GP owner guard omitted legacy rows/duplicate occurrences"
-        (middle=prior+164 andalso charged w=middle+32 andalso
+        (middle=prior+164 andalso charged w=middle+29 andalso
          Count.thm_count ()=native);W.close w end);
   test "Full cold validation admits exactly its fee, not one unit less"
     (fn () =>
@@ -30179,12 +30288,11 @@ in
             (activation=(case W.priced_root_scope_path w of
                 NONE=>0
               | SOME path=>12+G.scope_path_validation_work path))
-          (* Legacy visitation adds member1 and remember1 to policy fee.
-             Cold has five guard payments, warm four; each pays activation
-             (not spend_policy's Busy/arithmetic overhead). with_step adds
-             two activations and, only for priced Work, two phase fees9. *)
+          (* Cold retains member1/remember1 and five guard payments.
+             Warm empty terminal has only dispatch8 and one activation.
+             with_step adds two activations and priced phase fees18. *)
           val cold=fee+2+5*activation
-          val warm=11+6*activation+(if priced then 18 else 0)
+          val warm=8+3*activation+(if priced then 18 else 0)
           val prior=charged w val native=Count.thm_count ()
           val _=C.validate_conversion_with_policy w plan
           val middle=charged w
@@ -30197,7 +30305,7 @@ in
   test "Paid legacy validation does not waive later Scope expiry"
     (fn () =>
       let val e=setup 1000000 val (plan,fee)=recipe (#g e) (#r e) 1
-          val _=verify (#w e) plan fee 9
+          val _=verify (#w e) plan fee 8
           val _=G.close_scope (#g e) (#r e)
           val native=Count.thm_count ()
           val denied=refused
@@ -33772,7 +33880,8 @@ let
     ("cpc_deferred_graph_closure", CPC_DeferredGraphTests.run),
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
-    ("cpc_graph_typed_parser", CPC_GraphParserTests.run),
+    ("cpc_graph_typed_parser", fn () =>
+      (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
@@ -34274,6 +34383,10 @@ let
       cpc_proof_parser_lambda_inline_var_apply_success),
     ("cpc_proof_replay_ho_conversion_rules_success",
       cpc_proof_replay_ho_conversion_rules_success),
+    ("cpc_alpha_equiv_source_identity_success",
+      cpc_alpha_equiv_source_identity_success),
+    ("cpc_alpha_equiv_bad_mapping_failure",
+      cpc_alpha_equiv_bad_mapping_failure),
     ("cpc_proof_replay_ho_cong_and_ite_success",
       cpc_proof_replay_ho_cong_and_ite_success),
     ("cpc_proof_replay_ho_cong_nary_success",
@@ -34355,6 +34468,8 @@ let
     ("cpc_boolean_circuit_xor_success", cpc_boolean_circuit_xor_success),
     ("cpc_boolean_circuit_shared_projection_success",
       cpc_boolean_circuit_shared_projection_success),
+    ("cpc_fp_private_proof_scope_success",
+      cpc_fp_private_proof_scope_success),
     ("cpc_fp_private_witness_search_success",
       cpc_fp_private_witness_search_success),
     ("smtfp_ground_eval_shared_open_dag_rejected",
@@ -34796,7 +34911,9 @@ let
     ("holsmt_solver_result_negative_diagnostics",
       holsmt_solver_result_negative_diagnostics),
     ("solver_spec_rejects_bad_proof_theorem",
-      solver_spec_rejects_bad_proof_theorem)
+      solver_spec_rejects_bad_proof_theorem),
+    (* Retires private canaries to test both declaration epochs. *)
+    ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run)
   ]
   val selected =
     case OS.Process.getEnv "HOL4_UNITTEST_FILTER" of
@@ -34809,8 +34926,35 @@ let
             die ("FAIL: unknown HOL4_UNITTEST_FILTER=" ^ name)
           else ()
         in matches end
-  val () = List.app run_test selected
-  val () = print "\ndone, all unit tests successful.\n"
+  (* Honour the normal runner's keep-going request in the unit phase too.
+     A failed group remains a failure; report all groups before aborting,
+     rather than leaving the rest without an outcome. Default is fail-fast. *)
+  val keep_going =
+    OS.Process.getEnv "HOL4_SELFTEST_KEEP_GOING" = SOME "1"
+  val failed = ref ([] : string list)
+  fun run entry = if not keep_going then run_test entry else
+    let
+      val interactive = !Globals.interactive
+      val diemode = !testutils.diemode
+      fun restore () =
+        (Globals.interactive := interactive;testutils.diemode := diemode)
+      val _ = Globals.interactive := true
+      val _ = testutils.diemode := testutils.FailException
+      val result = Exn.capture run_test entry
+      val _ = restore ()
+    in case result of Exn.Res () => ()
+      | Exn.Exn error =>
+          (Profile.reset_all ();SmtLib.include_theorems := true;
+           failed := #1 entry :: !failed;
+           print ("\nUNITTEST_FAIL " ^ #1 entry ^ ": " ^
+             General.exnMessage error ^ "\n");
+           TextIO.flushOut TextIO.stdOut)
+    end
+  val () = List.app run selected
+  val () = if null (!failed) then
+      print "\ndone, all unit tests successful.\n"
+    else raise Fail ("unit tests failed: " ^
+      String.concatWith ", " (List.rev (!failed)))
 in
   ()
 end

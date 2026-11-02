@@ -158,18 +158,32 @@ struct
   fun emit_using retain work {query,backend,options,prefix,open_opaque} =
     ((let
       val options:SmtLib_TranslationEmissions.options = options
+      fun checkpoint label =
+        if OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" <>
+            SOME "1" then () else
+          let val audit = W.audit_policy work
+          in TextIO.output (TextIO.stdErr,
+            "QUERY_EMISSION_WORK phase=" ^ label ^ " charged=" ^
+            IntInf.toString (#charged audit) ^ " retired=" ^
+            Bool.toString (#retired audit) ^ "\n");
+            TextIO.flushOut TextIO.stdErr end
+      val _ = checkpoint "query.before"
       val input = GP.query_nodes_with_policy_for work query
+      val _ = checkpoint "query.after"
       val graph = #graph input val scope = #scope input
       val sources = #sources input val limits = W.semantic_policy work
       val original_target = B.target_for_transport work backend
       val _ = if #target options=original_target then () else
         raise ERR "emit" "different original solver target"
+      val _ = checkpoint "original.before"
       val _ = B.with_original_context_with_policy work backend open_opaque
         (fn {context,sequence_emission,target} =>
           original_preflight context sequence_emission target)
+      val _ = checkpoint "original.after"
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
       val output:Fragments.doc SmtLib.outbound_output_operations =
         {text=Fragments.text,concat=Fragments.concat,join=Fragments.join}
+      val _ = checkpoint "transport.before"
       val (description,document,held) =
         B.with_transported_context_with_policy work backend query open_opaque
           (fn (context,installed) =>
@@ -184,23 +198,27 @@ struct
               {operations=operations,
                request=SmtLib.AutomaticRegime (#dialect options)}
             val regime = #regime selected
+            val _ = checkpoint "dispatcher.before"
             val numbered = Lib.mapi (fn index => fn current =>
               (index,current)) roots
             val emission = Dispatcher.emit context
               {operations=operations,regime=regime,
                apply_operator= #apply_operator options,prefix=prefix,
                roots=numbered}
+            val _ = checkpoint "dispatcher.after"
             val freeze=if retain then Metadata.freeze_with_assertions
               else Metadata.freeze
             val metadata = freeze context
               {graph=graph,scope=scope,regime=regime,backend=installed,
                operations=operations,emission=emission}
+            val _ = checkpoint "metadata.after"
             val declaration_inputs = List.map
               (fn (symbol:SmtLib_GraphCarrierStore.symbol) =>
                 (#syntax symbol,#arity symbol)) (#symbols emission)
             val features = #features (Features.infer_features context
               {operations=operations,state=state,regime=regime,roots=roots,
                types= #types emission,declarations=declaration_inputs})
+            val _ = checkpoint "features.after"
             val _ = live ()
             val logic = SmtLib.outbound_select_logic regime
               (#policy options) features
@@ -228,11 +246,14 @@ struct
               SmtLib.outbound_query_tail output (#get_proof options)
             val _ = live ()
           in (description,Fragments.concat commands,held) end)
+      val _ = checkpoint "transport.after"
       val receipt = Receipt {work=work,query=query,graph=graph,scope=scope,
         sources=sources,limits=limits,epoch=epoch,symbols=symbols,held=held,
         description=description,document=document,
         validated_revision=ref (~1:IntInf.int)}
+      val _ = checkpoint "receipt.before"
       val _ = validate work query receipt
+      val _ = checkpoint "receipt.after"
     in receipt end)
      handle primary => (W.close work;raise primary))
   fun emit work options=emit_using false work options

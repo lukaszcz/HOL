@@ -1197,11 +1197,29 @@ struct
                "original declaration lifetime changed")
         fun tick () = (guard ();W.spend_policy work 1)
         val _ = guard ()
-        val original = V.current_facts_with_policy_for work validation
-        val current = V.current_facts_with_policy_for work
-          (#validation opening)
+        fun checkpoint label =
+          if OS.Process.getEnv "HOL4_HOLSMT_REPLAY_DIAGNOSTICS" <>
+              SOME "1" then () else
+            let val audit = W.audit_policy work
+            in TextIO.output (TextIO.stdErr,
+              "FINITE_QUERY_WORK phase=" ^ label ^ " charged=" ^
+              IntInf.toString (#charged audit) ^ " retired=" ^
+              Bool.toString (#retired audit) ^ "\n");
+              TextIO.flushOut TextIO.stdErr end
+        fun observed label action =
+          (checkpoint (label ^ ".before");
+           let val result = action ()
+           in checkpoint (label ^ ".after");result end)
+          handle primary =>
+            (ignore (Exn.capture checkpoint (label ^ ".failed"));
+             raise primary)
+        val original = observed "original" (fn () =>
+          V.current_facts_with_policy_for work validation)
+        val current = observed "opened" (fn () =>
+          V.current_facts_with_policy_for work (#validation opening))
         val owner = {work=work,graph=graph,scope=scope,sources=sources}
-        val _ = List.app (A.validate_with_policy_for owner) focus
+        val _ = observed "focus" (fn () =>
+          List.app (A.validate_with_policy_for owner) focus)
         fun conversion old fresh NONE =
               if old=fresh then () else raise ERR "execute_body_query"
                 "changed current root has no checked opening conversion"
@@ -1223,11 +1241,12 @@ struct
                assumptions_check olds news ports (index+1:IntInf.int))
           | assumptions_check _ _ _ _ = raise ERR "execute_body_query"
               "different ordered opening assumption list"
-        val _ = assumptions_check (#assumptions original)
-          (#assumptions current) (#assumptions opening) 0
-        val _ = conversion (#goal original) (#goal current) (#goal opening)
-        val _ = conversion (V.endpoint (#denied original))
-          (V.endpoint (#denied current)) (#denied opening)
+        val _ = observed "conversions" (fn () =>
+          (assumptions_check (#assumptions original)
+             (#assumptions current) (#assumptions opening) 0;
+           conversion (#goal original) (#goal current) (#goal opening);
+           conversion (V.endpoint (#denied original))
+             (V.endpoint (#denied current)) (#denied opening)))
 
         (* The conversion ports establish the root correspondence. Follow
            actual paired App edges to locate its internal original/opened
@@ -1268,8 +1287,9 @@ struct
         val root_pairs = ListPair.mapEq
           (fn (old,fresh) => (V.endpoint old,V.endpoint fresh))
           (#assumptions original,#assumptions current)
-        val _ = paired (root_pairs @ [(#goal original,#goal current),
-          (V.endpoint (#denied original),V.endpoint (#denied current))])
+        val _ = observed "aliases" (fn () =>
+          paired (root_pairs @ [(#goal original,#goal current),
+            (V.endpoint (#denied original),V.endpoint (#denied current))]))
         fun mapped (position:scoped) =
           let val _ = tick ()
               val _ = G.validate_scope graph (#scope position)
@@ -1479,14 +1499,18 @@ struct
                 val incoming = current_fact fact
             in case equality of NONE => incoming
               | SOME proof => schema forward [proof,incoming] target end
-          val selected = List.map assertion assumptions
-          val (positive,equality) = transformed goal
+          val selected = observed "assumptions" (fn () =>
+            List.map assertion assumptions)
+          val (positive,equality) = observed "goal" (fn () =>
+            transformed goal)
           val denied = case equality of NONE => #denied current
             | SOME proof => schema negative [proof,#denied current]
                 ((#negate nodes) positive)
-          val validation = V.validate_portfolio_with_policy work
-            {assumptions=selected,goal=positive,denied=denied}
-          val preprocessing = GP.from_portfolio_with_policy work validation
+          val validation = observed "portfolio" (fn () =>
+            V.validate_portfolio_with_policy work
+              {assumptions=selected,goal=positive,denied=denied})
+          val preprocessing = observed "preprocess" (fn () =>
+            GP.from_portfolio_with_policy work validation)
           val _ = guard ()
         in QueryRewritten {validation=validation,preprocessing=preprocessing,
           backend=backend,markers=markers} end

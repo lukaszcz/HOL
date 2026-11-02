@@ -15,7 +15,7 @@ struct
   fun compare_pair ((a,b),(c,d)) =
     case Int.compare (a,c) of EQUAL => Int.compare (b,d) | order => order
 
-  fun bridge_internal finish work
+  fun bridge_internal generated finish work
       {frame,original,opened,native_contract,profiles,ordinal,check_type} =
     ((let
       val owner = Scope.description_with_policy_for work frame
@@ -149,8 +149,25 @@ struct
               val _ = save (left,right) recipe
             in run rest end
       val recipe = run [Visit (original,opened)]
-      val result = close recipe
-      val conversion = Core.conversion_with_policy_for work result
+      (* A canonical alpha fact or a completed parent cut already owns the
+         exact closed conversion. Export that genuine slot, not another
+         compact realization of the same equality. Generated metadata still
+         needs its actual realization receipt; priced itineraries stay put. *)
+      val direct = if generated orelse
+          not (W.ordinary_policy_guard_mode work) then NONE else
+        action (fn observe =>
+          (observe ();case C.graph_conversions_for work recipe of
+             [converted] =>
+               if P.conversion_source converted=original andalso
+                   P.conversion_target converted=opened then
+                 (W.validate_policy_ordinal_minimum work ordinal;
+                  SOME converted)
+               else NONE
+           | _ => NONE))
+      val (result,conversion) = case direct of
+          SOME converted => (NONE,converted)
+        | NONE => let val result = close recipe
+          in (SOME result,Core.conversion_with_policy_for work result) end
       val _ = P.validate_conversion_for work conversion
       val _ = if P.conversion_source conversion=original andalso
           P.conversion_target conversion=opened then () else
@@ -160,12 +177,14 @@ struct
      handle primary => (W.close work;raise primary))
 
   fun bridge_with_policy work input =
-    bridge_internal (fn _ => fn conversion => conversion) work input
+    bridge_internal false (fn _ => fn conversion => conversion) work input
 
   fun bridge_generated_with_policy work
       (input as {profiles,frame,native_contract,...}) =
-    bridge_internal (fn result => fn conversion =>
-      let val generated = W.with_step work (fn () =>
+    bridge_internal true (fn held => fn conversion =>
+      let val result = case held of SOME result => result
+            | NONE => raise ERR "bridge" "missing generated realization"
+          val generated = W.with_step work (fn () =>
             (ignore (Scope.description_with_policy_for work frame);
              NC.validate_for work native_contract;W.spend_policy work 1;
              P.policy_source_realization_generated_equality_for work

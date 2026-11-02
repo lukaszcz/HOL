@@ -282,55 +282,56 @@ struct
   (* Comparison operands are actual immutable Type objects, never a caller
      tree count. Name bytes and each public type incidence are admitted
      before the fixed Type.compare; hidden kernel forcing is not priced. *)
-  fun variable_type_work work ty =
+  fun variable_type_work_using spend ty =
     let
       fun walk [] total = total
         | walk (pending::more) total =
-          (W.spend work 1;case pending of [] => walk more total
+          (spend 1;case pending of [] => walk more total
            | current::rest =>
-             let val _ = W.spend work 1
+             let val _ = spend 1
                  val variable = Type.is_vartype current
              in if variable then
-                  let val _ = W.spend work 2
+                  let val _ = spend 2
                       val text = Type.dest_vartype current
                       val bytes = String.size text
-                      val _ = W.spend work bytes
-                      val _ = W.spend work 1
+                      val _ = spend bytes
+                      val _ = spend 1
                   in walk (rest::more)
                        (total+IntInf.fromInt (1+bytes)) end
                 else
-                  let val _ = W.spend work 4
+                  let val _ = spend 4
                       val {Thy,Tyop,Args} = Type.dest_thy_type current
                       val bytes = String.size Thy + String.size Tyop
-                      val _ = W.spend work bytes
-                      val _ = W.spend work 2
+                      val _ = spend bytes
+                      val _ = spend 2
                   in walk (Args::rest::more)
                        (total+IntInf.fromInt (1+bytes)) end
              end)
-      val _ = W.spend work 2
+      val _ = spend 2
     in walk [[ty]] (0 : IntInf.int) end
+  fun variable_type_work work = variable_type_work_using (W.spend work)
   (* Private query within one already guarded callback-free inspection.
      Outer guard validates all incoming paths before and after this span. *)
-  fun fixed_names_member expected (FixedNames
+  fun fixed_names_member_using spend metadata_pay expected (FixedNames
       {work,strings,types,...}) term =
     ((if Portable.pointer_eq (expected,work) then () else
         raise ERR "fixed_names_member" "different original Work";
       W.spend expected 0;
-      let val _ = W.spend expected 1
+      let val _ = spend 1
           val (name,ty) = Term.dest_var term
       in case strings of NONE =>
           let fun lookup index =
                 let val query = W.legacy_plan_lookup_int expected (types,index)
                 in R.int_lookup_value (types,query) end
-          in case fixed_suffix_name (pay expected) lookup name of
+          in case fixed_suffix_name metadata_pay lookup name of
               NONE => false
             | SOME wanted =>
               (* The actual name/index/spelling lookup already succeeded.
                  Immutable Type identity needs no forest or comparator. *)
-              (W.spend expected 2;
+              (spend 2;
                if Portable.pointer_eq (ty,wanted) then true else
-                 let val a = variable_type_work expected ty
-                     val b = variable_type_work expected wanted
+                 let val a = variable_type_work_using spend ty
+                     val b = variable_type_work_using spend wanted
                      val _ = pay expected (1+a+b)
                  in Type.compare (ty,wanted) = EQUAL end)
           end
@@ -343,16 +344,16 @@ struct
             val (exact,wanted) = case R.int_lookup_value (types,slot) of
                 SOME pair => pair | NONE =>
                   raise ERR "fixed_names_member" "missing authentic typed name"
-            val _ = W.spend expected (String.size exact + String.size name + 1)
+            val _ = spend (String.size exact + String.size name + 1)
             val _ = if exact = name then () else
               raise ERR "fixed_names_member" "different authentic spelling"
             (* Same authentic immutable-Type reflexivity, after the full
                string/name/index/spelling lookup. Distinct objects retain
                both original forests and the exact Type.compare. *)
-            val _ = W.spend expected 2
+            val _ = spend 2
         in if Portable.pointer_eq (ty,wanted) then true else
-          let val a = variable_type_work expected ty
-              val b = variable_type_work expected wanted
+          let val a = variable_type_work_using spend ty
+              val b = variable_type_work_using spend wanted
               val _ = pay expected (1+a+b)
               val equal = Type.compare (ty,wanted) = EQUAL
           in equal end
@@ -361,17 +362,19 @@ struct
       end)
      handle primary => (W.close expected;raise primary))
 
-  fun bound_variable_member work term binders =
+  fun fixed_names_member work =
+    fixed_names_member_using (W.spend work) (pay work) work
+
+  fun bound_variable_member_using spend work term binders =
     let val (name,ty) = Term.dest_var term
         fun member [] = false
           | member (binder::rest) =
-            let val _ = W.spend work 1
+            let val _ = spend 1
                 val (old,wanted) = Term.dest_var binder
-                val _ = W.spend work
-                  (String.size name + String.size old + 1)
+                val _ = spend (String.size name + String.size old + 1)
             in if name <> old then member rest else
-              let val a = variable_type_work work ty
-                  val b = variable_type_work work wanted
+              let val a = variable_type_work_using spend ty
+                  val b = variable_type_work_using spend wanted
                   val _ = pay work (1+a+b)
               in Type.compare (ty,wanted) = EQUAL orelse member rest end
             end
@@ -386,15 +389,39 @@ struct
      definition_plan:int fixed_table_plan,
      definition_rows:(int * int) list,used:bool ref}
 
+  (* Private DATA, never a completed lifetime/Scope/policy observation.
+     Slots below are addressed by a genuine dependency ordinal, then fenced
+     by the actual theorem pointer. A shared dependency with a different
+     output replaces ONE slot: it cannot create a theorem-list search. *)
+  type primitive_term_data =
+    {term:Term.term,value:SmtReplayNamedContext.profile,
+     bytes:IntInf.int option ref}
+  type primitive_hyp_data =
+    {reversed:Term.term list,unique:Term.term list,without:Term.term list,
+     entries:primitive_term_data list,
+     unique_entries:primitive_term_data list,
+     without_entries:primitive_term_data list,
+     count:IntInf.int,others:IntInf.int,common:bool,
+     common_weight:IntInf.int,
+     full:SmtReplayNamedContext.profile,
+     noncommon:SmtReplayNamedContext.profile,
+     maximum:SmtReplayNamedContext.profile,
+     admitted:IntInf.int option ref}
+  type primitive_edge_data =
+    {conclusion:primitive_term_data option ref,
+     equation:(primitive_term_data * primitive_term_data) option ref,
+     implication:primitive_term_data option ref,
+     hypotheses:primitive_hyp_data option ref}
   datatype primitive_metadata = PrimitiveMetadata of
     {revision:IntInf.int,epoch:int,symbols:int,
      profiles:(Term.term * SmtReplayNamedContext.profile) list Array.array,
      bytes:(Term.term * IntInf.int) list Array.array,
      operands:(Term.term * int) list Array.array,
-     pending:(Term.term * SmtReplayNamedContext.profile) option ref}
+     edges:(Thm.thm * primitive_edge_data) option Array.array ref}
   type compact_assembly =
     {proof:Thm.thm,indices:int list option,tree:boundary,
-     context:Term.term,projections:Thm.thm vector,law:Thm.thm}
+     context:Term.term,projections:Thm.thm vector,law:Thm.thm,
+     geometry:(int * int * int) option}
   datatype block = Block of
     {owner : unit ref, graph : G.graph, scope : G.scope,
      nodes : (G.node * Term.term) table,
@@ -410,7 +437,8 @@ struct
      assembly : compact_assembly option ref,
      owned_frame : (W.portfolio * Scope.receipt) option}
   datatype edge = Edge of
-    {owner : unit ref, theorem : Thm.thm, dependencies : dependency}
+    {owner : unit ref, theorem : Thm.thm, dependencies : dependency,
+     primitive : (int * int * primitive_edge_data) option}
 
   datatype retained_source_frame = RetainedSourceFrame of
     {block : block,work : W.portfolio,frame : Scope.receipt,
@@ -436,7 +464,7 @@ struct
      parents : source_realization list,epoch : int,symbols : int}
   and source_compact = SourceCompact of
     {block : block,edge : edge,target_name : Term.term,proof : Thm.thm,
-     needed : int list,
+     needed : int list,closed : compact_assembly option,
      names : (G.node * Term.term) list,extra_leaves : leaf list,
      cuts : (int * Term.term * source_realization) list}
 
@@ -1616,20 +1644,51 @@ struct
       in frontier end)
      handle primary => (W.close work;raise primary))
 
+  (* Private callback-free microsteps may share a charged carrier. Each
+     native-rule quotation remains fresh; this only removes repeated Work
+     scope-path metadata checks while no callback can change that path.
+     Charge setup, hit/refill arithmetic and all unused credit. Unpriced
+     Work needs no guard batching: pay only the actual request there.
+     Near the original limit a priced refill must also be exact, never a
+     speculative batch truncated to absorb the remaining allowance. *)
+  fun compact_callback_free_payer_with_quantum quantum work =
+    let val credit=ref 0
+        val ceiling=W.work_limit work
+        val overhead=case W.priced_root_scope_path work of NONE=>0
+          | SOME path=>33+
+              IntInf.toInt (G.scope_path_validation_work path)
+        val _=W.spend work 16
+    in if overhead=0 then fn payload=>W.spend work (payload+8)
+       else fn payload=>
+      let val amount=payload+8
+      in if amount<= !credit then credit:= !credit-amount else
+        let val need=amount+48- !credit
+            val available=ceiling- #charged (W.audit work)
+            val batch=if available<=quantum+overhead+48 then need
+              else Int.max (need,quantum)
+            val _=W.spend work batch
+        in credit:= !credit+batch-amount-48 end
+      end
+    end
+
+  fun compact_callback_free_payer work =
+    compact_callback_free_payer_with_quantum 256 work
+
   (* New sparse owned projections see only the actual named leaf terms.
      Quote BOTH existing dimensions and repeated actual type occurrences
      before the first ASSUME or term-key index comparison. No total type
      incidence is bounded by the syntax cap; SAME Work is cumulative. *)
   fun owned_sparse_projection_quote work limit terms =
     let
+      val pay=compact_callback_free_payer work
       fun types [] = ()
         | types (ty::rest) =
-            (W.spend work 1;
+            (pay 1;
              types ((if Type.is_vartype ty then [] else
                #2 (Type.dest_type ty)) @ rest))
       fun syntax [] = ()
         | syntax (term::rest) =
-            (W.spend work 1;types [Term.type_of term];
+            (pay 1;types [Term.type_of term];
              if Term.is_comb term then
                let val (operator,operand) = Term.dest_comb term
                in syntax (operator::operand::rest) end
@@ -1638,20 +1697,20 @@ struct
                in syntax (binder::body::rest) end
              else syntax rest)
       fun quote term =
-        let val _ = W.spend work 1
+        let val _ = pay 1
             val raw = case SmtReplayImport.bounded_raw_size limit term of
                 SOME count => count
               | NONE => raise ERR "owned_sparse_projection"
                   "compact leaf exceeds original raw cap"
-            val _ = W.spend work 1
+            val _ = pay 1
             val inclusive =
               case SmtReplayImport.bounded_binder_size limit term of
                 SOME count => count
               | NONE => raise ERR "owned_sparse_projection"
                   "compact leaf exceeds original binder cap"
             (* The ASSUME conclusion and sole Hyp are the SAME term. *)
-            val _ = W.spend work raw val _ = W.spend work inclusive
-            val _ = W.spend work raw val _ = W.spend work inclusive
+            val _ = pay raw val _ = pay inclusive
+            val _ = pay raw val _ = pay inclusive
         in syntax [term];syntax [term] end
     in Vector.app quote terms end
 
@@ -2108,7 +2167,7 @@ struct
     (active block;
      observe_proof graph #edges;
      Edge {owner = owner, theorem = Vector.sub (projections, index),
-       dependencies = new_dependency block (Leaves [index])})
+       dependencies = new_dependency block (Leaves [index]),primitive=NONE})
 
   fun source (block as Block {source_count, ...}) index =
     if index >= 0 andalso index < source_count then projection block index
@@ -2180,42 +2239,60 @@ struct
      refusal order. dest_abs is alpha-preserving; no count_body proof rule
      is manufactured for this raw occurrence count. Hidden closure forcing
      remains outside this nominal public-path envelope. *)
-  fun fixed_guard_operand work names limit term =
+  fun fixed_guard_operand_using spend metadata_pay work names limit term =
     let
       fun raw [] count = count
         | raw (current::rest) count =
-          (W.spend work 1;
+          (spend 1;
            if count >= limit then
              raise ERR "guard" "expanded compact proof template"
            else if Term.is_comb current then
-             let val _ = W.spend work 4
+             let val _ = spend 4
                  val (operator,operand) = Term.dest_comb current
              in raw (operator::operand::rest) (count+1) end
            else if Term.is_abs current then
-             let val _ = W.spend work 3
+             let val _ = spend 3
                  val (_,body) = Term.dest_abs current
              in raw (body::rest) (count+1) end
            else raw rest (count+1))
       fun visit binders under current =
-        (W.spend work 1;
+        (spend 1;
          if Term.is_var current then
-           let val owned = fixed_names_member work names current
+           let val owned = fixed_names_member_using spend metadata_pay
+                 work names current
            in if under andalso owned then
                 raise ERR "guard" "graph insertion below a binder"
-              else if owned orelse bound_variable_member work current binders
+              else if owned orelse
+                  bound_variable_member_using spend work current binders
                 then () else raise ERR "guard" "unowned compact variable" end
          else if Term.is_comb current then
-           let val _ = W.spend work 2
+           let val _ = spend 2
                val (operator,operand) = Term.dest_comb current
            in visit binders under operator;visit binders under operand end
          else if Term.is_abs current then
-           let val _ = W.spend work 3
+           let val _ = spend 3
                val (binder,body) = Term.dest_abs current
            in visit (binder::binders) true body end
          else ())
-      val _ = W.spend work 1
+      val _ = spend 1
       val _ = raw [term] 0
     in visit [] false term end
+  fun fixed_guard_operand work =
+    fixed_guard_operand_using (W.spend work) (pay work) work
+
+  (* The source receipt's admission visitor is callback-free too. Keep all
+     genuine name lookups, each original zero-spend lifetime check and the
+     separate native Type.compare quotes, but do not run the whole Work
+     scope path again for every raw/Type/suffix metadata microstep. *)
+  fun fixed_guard_retained_operands work names limit terms =
+    let val spend=compact_callback_free_payer_with_quantum 1024 work
+        val ceiling=IntInf.fromInt (W.work_limit work)
+        fun metadata_pay amount =
+          if amount>=0 andalso amount<=ceiling then spend (IntInf.toInt amount)
+          else (W.close work;raise ERR "private_table"
+            "original Work exhausted")
+    in List.app
+      (fixed_guard_operand_using spend metadata_pay work names limit) terms end
   (* Ordinary checked/compose keep their semantic entry behavior, including
      supported calls outside an owned action. These plain queries confer no
      Work credit. Only the private fixed prepare path uses the paid visitor
@@ -2295,38 +2372,58 @@ struct
           (Vector.sub (projections, index)) result)
         proof dependencies
     in observe_proof graph #edges;Edge {owner = owner, theorem = lifted,
-      dependencies = new_dependency block (Leaves dependencies)} end
+      dependencies = new_dependency block (Leaves dependencies),
+      primitive=NONE} end
 
   (* Prospectively inspect bounded compact operands. In contrast to the
      older sparse admission helper, every syntax/Type edge is paid before
      visiting it; a failed quote cannot construct a term or theorem. *)
-  fun assembly_term_quote pay limit term =
+  type assembly_metrics =
+    {raw:int,inc:int,ann:int,text:int,plain:bool,cmp:int}
+  fun assembly_term_quote pay limit =
     let
+      (* Walk each actual annotation, including structurally equal fresh
+         Types from Term.type_of. A pointer-list memo makes those cheap
+         shallow walks quadratic in the number of distinct allocations. *)
       fun type_size ty =
         (pay 2;if Type.is_vartype ty then
            let val bytes=String.size (Type.dest_vartype ty)
                val _=pay bytes
-           in 1+bytes end
-         else List.foldl (fn (child,n) => n+type_size child) 1
-           (#2 (Type.dest_type ty)))
+           in (1+bytes,0) end
+         else
+           let val {Thy,Tyop,Args}=Type.dest_thy_type ty
+               val bytes=String.size Thy+String.size Tyop
+               val _=pay (3+bytes)
+           in List.foldl (fn (child,(nodes,text))=>
+             let val (n,t)=type_size child val _=pay 4
+             in (nodes+n,text+t) end) (1,bytes) Args end)
+      fun quote term : assembly_metrics =
+      let
       val raw = ref 0 val inclusive = ref 0
       val annotations = ref 0 val text = ref 0
+      val _=pay 4
+      val plain = ref true val compare = ref 0
       fun visit current =
         let val _=pay 5
             val _=raw := !raw+1 val _=inclusive := !inclusive+1
             val _=if !raw<=limit andalso !inclusive<=limit then () else
               raise ERR "owned_sparse_projection"
                 "compact leaf exceeds original binder cap"
-            val own=type_size (Term.type_of current)
+            val _=pay 8
+            val (own,type_text)=type_size (Term.type_of current)
+            val _=text := !text+type_text
+            val _=compare := !compare+4
             val _=annotations := !annotations+own
         in if Term.is_comb current then
              let val (a,b)=Term.dest_comb current
              in visit a;visit b end
            else if Term.is_abs current then
              let val (binder,body)=Term.dest_abs current
-                 val _=pay 3 val _=inclusive := !inclusive+1
-                 val _=annotations := !annotations+
-                   type_size (Term.type_of binder)
+                 val _=pay 4 val _=inclusive := !inclusive+1
+                 val _=plain := false
+                 val (own,bytes)=type_size (Term.type_of binder)
+                 val _=annotations := !annotations+own
+                 val _=text := !text+bytes
              in visit body end
            else
              let val bytes=if Term.is_var current then
@@ -2334,14 +2431,36 @@ struct
                  else if Term.is_const current then
                    let val {Thy,Name,...}=Term.dest_thy_const current
                    in String.size Thy+String.size Name end else 0
-                 val _=pay bytes
+                 val _=pay (bytes+10)
+                 val _=compare := !compare+14+bytes+7*own+2*type_text
              in text := !text+bytes end
         end
       val _=visit term
-      (* Native input/result/Hyp incidence and bounded name/Type matches;
-         metadata inspection above is additional, not future credit. *)
-      val _=pay (2*(!raw+ !inclusive+ !annotations+ !text))
-    in () end
+      val _=pay 9
+      val _=if !inclusive<=limit then () else
+        raise ERR "owned_sparse_projection"
+          "compact leaf exceeds original binder cap"
+      (* Immutable geometry, NOT future native credit. Admission below
+         counts every port again; kernel work has a separate fresh quote. *)
+    in {raw= !raw,inc= !inclusive,ann= !annotations,text= !text,
+        plain= !plain,cmp= !compare} end
+      (* An App borrows both children. Combine their actual geometry but
+         inspect this actual App's annotation separately: in particular an
+         intermediate rator has a different Type from the full application.
+         This is DATA composition, not an admission or native allowance. *)
+      fun application term (a:assembly_metrics) (b:assembly_metrics)
+          : assembly_metrics =
+        let val _=pay 45
+            val (own,bytes)=type_size (Term.type_of term)
+            val raw=1+ #raw a+ #raw b
+            val inc=1+ #inc a+ #inc b
+            val _=if raw<=limit andalso inc<=limit then () else
+              raise ERR "owned_sparse_projection"
+                "compact leaf exceeds original binder cap"
+        in {raw=raw,inc=inc,ann=own+ #ann a+ #ann b,
+            text=bytes+ #text a+ #text b,
+            plain= #plain a andalso #plain b,cmp=4+ #cmp a+ #cmp b} end
+    in {term=quote,application=application} end
 
   (* Capture actual Hyp before lifting. Only successful leaves enter D;
      semantic rewrites are never assumed as syntax definitions. Cache the
@@ -2353,33 +2472,34 @@ struct
       val _ = case (leaf_index,nodes) of
           (SOME _,FixedTable {work,...}) => W.spend work 3
         | _ => ()
+      fun phase label describe = case (leaf_index,nodes) of
+          (SOME _,FixedTable {work,...}) =>
+            tables_phase work ("assembly." ^ label) describe
+        | _ => ()
       fun build () =
         let
+          val _ = phase "before" (fn () => "")
           (* Callback-free microsteps share prepaid credit from the SAME
              Work. This avoids revalidating the entire priced scope path
              for each Type edge. No credit survives this assembly; at most
-             255 unused units remain charged, never refunded or reset. *)
-          val credit = ref 0
+             4095 unused payload units remain charged, never refunded or
+             reset. The carrier's own setup/hit/refill events are paid too:
+             16 at setup, 8 per invocation, 48 more per refill.
+             The hoisted payer's hit has eight SourceWork events:
+             payload+8 (1), credit read/compare/branch (3), credit
+             read/subtract/write (3), function dispatch (1). High-level
+             let bindings are not events. Refill reserves another 48 for
+             audit, Int/IntInf arithmetic, batching and the final update;
+             priced scope-path guards still run in the actual W.spend. *)
           val payer = case (leaf_index,nodes) of
               (SOME _,FixedTable {work,...}) =>
-                let val ceiling = W.work_limit work
-                    val overhead = case W.priced_root_scope_path work of
-                        NONE => 0
-                      | SOME path => 33 +
-                          IntInf.toInt (G.scope_path_validation_work path)
-                in fn amount =>
-                  if amount <= !credit then credit := !credit-amount else
-                    let val need = amount- !credit
-                        val available = ceiling- #charged (W.audit work)
-                        val batch = Int.max
-                          (need,Int.min (256,Int.max (0,available-overhead)))
-                        val _ = W.spend work batch
-                    in credit := !credit+batch-amount end
-                end
+                compact_callback_free_payer_with_quantum 4096 work
             | _ => fn _ => ()
           val indices = case leaf_index of NONE => NONE
             | SOME _ => SOME (needed_leaves block edge)
           val chosen = Option.getOpt (indices,[])
+          val _ = phase "selected" (fn () =>
+            " leaves=" ^ Int.toString (length chosen))
           val terms = Vector.fromList (List.map (fn index =>
             (payer 3;Thm.concl (Vector.sub (projections,index)))) chosen)
           (* Subselection cannot exceed the already admitted full context.
@@ -2399,12 +2519,26 @@ struct
             | SOME _ => boundary 0 (Vector.length terms)
           val d = case indices of NONE => context
             | SOME _ => syntax boundary
-          (* Query-local syntax-cost memo, never a proof or permission.
-             Charge lookup/storage as well as every future native use.
-             No callbacks/declaration changes intervene in this assembly. *)
+          (* Geometry is immutable DATA, not a native-work allowance.
+             In particular DISCH/MP do not walk borrowed conclusions or
+             every borrowed Hyp term. They operate on persistent sets.
+             Admit ALL prospective ports below, but prepay the actual
+             constructor/set/comparison programme separately. *)
+          val sparse = case (leaf_index,nodes) of
+              (SOME _,FixedTable _) => true | _ => false
+          val ceiling = case nodes of FixedTable {work,...} =>
+                W.work_limit work
+            | _ => template_limit
           val _ = payer 128
-          val costs = Array.array (127,[] : (Term.term * int) list)
-          fun term_quote term =
+          val costs = Array.array
+            (127,[] : (Term.term * assembly_metrics) list)
+          val _ = payer 2
+          val hot_geometry = ref
+            (NONE : ((Term.term * assembly_metrics) *
+                     (Term.term * assembly_metrics)) option)
+          val metric_reader=assembly_term_quote payer template_limit
+          val quote_metric= #term metric_reader
+          fun bucket_metric term =
             let val index = SmtReplayImport.pointer_bucket_observed
                   (fn n => payer (IntInf.toInt n)) 4 127 term
                 fun find [] = (payer 1;NONE)
@@ -2412,57 +2546,817 @@ struct
                       (payer 2;if Portable.pointer_eq (held,term) then
                          SOME amount else find rest)
             in case find (Array.sub (costs,index)) of
-                SOME amount => payer amount
+                SOME amount => amount
               | NONE =>
-                let val amount = ref 0
-                    fun record n = (payer n;amount := !amount+n)
-                    val _ = assembly_term_quote record template_limit term
+                let val amount = quote_metric term
                     val _ = payer 4
                     val _ = Array.update (costs,index,
-                      (term,!amount)::Array.sub (costs,index))
-                in () end
+                      (term,amount)::Array.sub (costs,index))
+                in amount end
             end
-          (* Non-sparse owned callers retain their authenticated native
-             preflight quotation; do not bill it twice. Sparse uses pay the
-             repeated D/Hyp portfolios, not only the leaf conclusions. *)
-          fun quote terms = case (leaf_index,nodes) of
-              (SOME _,FixedTable {work,...}) =>
-                (W.spend work 0;payer 20;List.app term_quote terms)
+          (* Build-local, pointer-authenticated geometry only. The six
+             events cover cell read/case and two pointer tests/branches.
+             Misses retain the collision-safe, fully observed bucket.
+             Neither a hit nor this cell grants any native-work credit. *)
+          fun metric term =
+            (payer 6;case !hot_geometry of
+               SOME ((left,a),(right,b)) =>
+                 if Portable.pointer_eq (left,term) then a
+                 else if Portable.pointer_eq (right,term) then b
+                 else bucket_metric term
+             | NONE => bucket_metric term)
+          fun weight ({raw,inc,ann,text,...}:assembly_metrics) =
+            raw+inc+ann+text
+          (* Build-local name identities, not native comparison credit.
+             Hash EVERY byte once per captured prefix, including the fold
+             carrier, then authenticate the bucket by pointer or an exact
+             paid String.compare. Equal spellings hash to the same bucket
+             and reuse its ID; fresh IDs therefore prove unequal spellings.
+             Unequal string pointers prove nothing. 128 array cells/header
+             plus counter/ref and table bindings. *)
+          val _=payer 132
+          val prefix_names=Array.array (127,[] : (string * int) list)
+          val next_prefix_name=ref 0
+          fun prefix_name name =
+            let val bytes=String.size name
+                val _=payer (8+8*bytes)
+                val hash=CharVector.foldl (fn (c,h)=>
+                  Word.+ (Word.* (h,0w33),Word.fromInt (Char.ord c)))
+                  0w17 name
+                val _=payer 5
+                val index=Word.toInt (Word.mod (hash,0w127))
+                val rows=Array.sub (prefix_names,index)
+                fun find [] = (payer 1;NONE)
+                  | find ((held,id)::rest) =
+                      (payer 4;
+                       if Portable.pointer_eq (held,name) then SOME id
+                       else (payer (4+bytes+String.size held);
+                         if String.compare (held,name)=EQUAL then SOME id
+                         else find rest))
+            in case find rows of SOME id=>id
+              | NONE=>
+                  let val _=payer 12
+                      val id= !next_prefix_name
+                      val _=next_prefix_name:=id+1
+                      val _=Array.update
+                        (prefix_names,index,(name,id)::rows)
+                  in id end
+            end
+          type native_prefix =
+            {nameID:int,headTerm:Term.term,headCmp:int,nameBytes:int}
+          fun capture_prefix term : native_prefix option =
+            (payer 3;if Term.is_comb term then
+               let val _=payer 4
+                   val (left,_)=Term.dest_comb term
+               in if Term.is_comb left then
+                    let val _=payer 6
+                        val (head,arg)=Term.dest_comb left
+                    in if Term.is_const head andalso Term.is_var arg then
+                         let val _=payer 4
+                             val (name,_)=Term.dest_var arg
+                             val id=prefix_name name
+                             (* Direct quotes, NOT bucket_metric: a
+                                constant's instantiated Type can have a
+                                fresh pointer on every type_of call. *)
+                             val headCmp= #cmp (quote_metric head)
+                             (* Distinct names stop var_compare BEFORE
+                                Type.compare in both kernels. No Type
+                                profile of arg is needed for this fork. *)
+                             val nameBytes=String.size name
+                             val _=payer 7
+                         in SOME {nameID=id,headTerm=head,
+                           headCmp=headCmp,nameBytes=nameBytes}
+                         end
+                       else NONE end
+                  else NONE end
+             else NONE)
+          datatype native_root = NativeVariable of {id:int,bytes:int}
+            | NativeConstant
+            | NativeApplication of native_prefix option
+            | NativeAbstraction
+          fun capture_root value =
+            (payer 8;if Term.is_var value then
+               let val (name,_)=Term.dest_var value
+                   val id=prefix_name name val _=payer 5
+               in NativeVariable {id=id,bytes=String.size name} end
+             else if Term.is_comb value then
+               NativeApplication (capture_prefix value)
+             else if Term.is_const value then NativeConstant
+             else NativeAbstraction)
+          datatype port = Port of
+            {term:Term.term,metrics:assembly_metrics,aliases:Term.term list,
+             against_d:(order * int) option ref,
+             prefix:native_root option ref}
+          fun measured_port term metrics =
+            (* Root descriptor is captured once from this actual term.
+               It is immutable geometry, never native comparison credit. *)
+            (payer 10;Port {term=term,metrics=metrics,aliases=[term],
+              against_d=ref NONE,prefix=ref NONE})
+          fun port term = measured_port term (metric term)
+          fun prefix (Port {term,prefix,...}) =
+            (payer 4;case !prefix of SOME saved=>saved
+             | NONE=>let val saved=capture_root term val _=payer 3
+                     in prefix:=SOME saved;saved end)
+          fun term (Port {term,...}) = term
+          fun metrics (Port {metrics,...}) = metrics
+          fun map action [] = (payer 1;[])
+            | map action (value::rest) =
+                (payer 2;action value::map action rest)
+          fun append [] tail = (payer 1;tail)
+            | append (value::rest) tail =
+                (payer 2;value::append rest tail)
+          fun count [] = (payer 1;0)
+            | count (_::rest) = (payer 1;1+count rest)
+          (* Re-admit EVERY actual input/result/Hyp incidence, including
+             repeated ports. A cached scalar avoids a syntax rescan, not
+             any bound. No aggregate raw cap is imposed on a Hyp forest.
+             The Type-incidence sum is fresh for each native rule. *)
+          fun quote ports extra = if not sparse then () else
+            let
+              fun add (p:assembly_metrics) annotations =
+                (payer 8;
+                 if #raw p<=template_limit andalso
+                    #inc p<=template_limit andalso #ann p<=ceiling
+                 then annotations+ #ann p else
+                   raise ERR "assemble" "prospective compact port bound")
+              fun scan [] total = (payer 1;total)
+                | scan (value::rest) total =
+                    scan rest (add (metrics value) total)
+              val annotations=List.foldl (fn (p,n)=>add p n)
+                (scan ports 0) extra
+              val _=payer 2
+            in if annotations<=ceiling then () else
+              raise ERR "assemble" "prospective compact Type portfolio"
+            end
+          (* A Hyp forest has no aggregate raw/inc cap. Its maxima and
+             annotation SUM are immutable geometry, not admitted-success
+             credit. Seed maxima from actual initial Hyp union {D}; every
+             later forest is a subset of that set. Keep its ACTUAL sum by
+             subtracting removed representatives / adding union deltas in
+             the existing set-forecast traversals. All terms still undergo
+             native comparison and every result Hyp is certified below. *)
+          type hyp_summary = {raw:int,inc:int,ann:int}
+          fun subtract (s:hyp_summary) removed : hyp_summary =
+            (payer 8;{raw= #raw s,inc= #inc s,ann= #ann s-removed})
+          fun augment (s:hyp_summary) added : hyp_summary =
+            (payer 8;{raw= #raw s,inc= #inc s,ann= #ann s+added})
+          (* Fresh scalar admission for EACH rule. The two forests are
+             counted separately even when identical; extra ports likewise
+             retain full multiplicity. ann <= total makes the old per-port
+             ann cap redundant, never a Type-incidence waiver. Maxima may
+             include a deleted term, but were bounded at seeding and the
+             caps are immutable, so this gives exactly the old admission
+             predicate, not an extra restriction on any later forest. *)
+          fun quote_summaries (a:hyp_summary) (b:hyp_summary) extra =
+            let val _=payer 24
+                val _=if #raw a<=template_limit andalso
+                    #inc a<=template_limit andalso
+                    #raw b<=template_limit andalso
+                    #inc b<=template_limit then () else
+                  raise ERR "assemble" "prospective compact port bound"
+                fun add (p:assembly_metrics,n) =
+                  (payer 8;
+                   if #raw p<=template_limit andalso
+                      #inc p<=template_limit andalso #ann p<=ceiling
+                   then n+ #ann p else
+                     raise ERR "assemble" "prospective compact port bound")
+                val annotations=List.foldl add (#ann a+ #ann b) extra
+                val _=payer 2
+            in if annotations<=ceiling then () else
+              raise ERR "assemble" "prospective compact Type portfolio"
+            end
+          (* Both Term.compare implementations are rator-first (not the
+             standard kernel's aconv order). Split the old two-copy quote:
+             inspect metadata now, return a scalar for ONE future native
+             comparison. This scalar is geometry, never reusable credit.
+             Binder fallback retains the experimental environment-map
+             envelope. Charge the scalar bookkeeping before each update. *)
+          fun comparison a b =
+            let
+              val _=payer 12
+              val native=ref 0
+              fun charge n = (payer (n+4);native := !native+n)
+              fun order a b =
+                (charge 8;
+                 if Portable.pointer_eq (a,b) then EQUAL
+                 else if Term.is_comb a andalso Term.is_comb b then
+                   let val (f,x)=Term.dest_comb a
+                       val (g,y)=Term.dest_comb b
+                   in case order f g of EQUAL=>order x y | other=>other end
+                 else if Term.is_var a andalso Term.is_var b then
+                   let val (x,_)=Term.dest_var a val (y,_)=Term.dest_var b
+                       val _=charge (4+String.size x+String.size y)
+                   in case String.compare (x,y) of EQUAL=>atomic a b
+                        | other=>other end
+                 else if Term.is_abs a andalso Term.is_abs b then
+                   let val amount=weight (metric a)+weight (metric b)
+                       val _=charge (16+2*amount*amount)
+                   in Term.compare (a,b) end
+                 else if Term.is_const a andalso Term.is_const b then
+                   let val x= #Name (Term.dest_thy_constid a)
+                       val y= #Name (Term.dest_thy_constid b)
+                       val {Thy=at,Name=an}=KernelSig.name_of_id x
+                       val {Thy=bt,Name=bn}=KernelSig.name_of_id y
+                       val _=charge (12+String.size at+String.size an+
+                         String.size bt+String.size bn)
+                   in case KernelSig.id_compare (x,y) of
+                        EQUAL=>atomic a b | other=>other end
+                 else Term.compare (a,b))
+              and atomic a b =
+                let
+                  fun type_work ty =
+                    (charge 3;if Type.is_vartype ty then
+                       let val bytes=String.size (Type.dest_vartype ty)
+                       in charge bytes;1+bytes end
+                     else
+                       let val {Thy,Tyop,Args}=Type.dest_thy_type ty
+                           val bytes=String.size Thy+String.size Tyop
+                           val _=charge (3+bytes)
+                       in List.foldl (fn (child,n)=>n+type_work child)
+                         (1+bytes) Args end)
+                  val left=Term.type_of a val right=Term.type_of b
+                  val amount=type_work left+type_work right
+                  val _=charge (16+amount)
+                in Type.compare (left,right) end
+              val result=order a b
+              val _=payer 3
+            in (result,!native) end
+          (* A red-black tree with n nodes has height <= 2*ceil(log2(n+1)).
+             delete and singleton union compare distinct nodes on ONE
+             search path. With sum S, maximum M and minimum m, prepay
+             min(S,H*M,S-max(0,n-H)*m): any omitted nodes each cost >=m.
+             This also handles a few expensive outliers without paying
+             H copies of the largest cost. ALL metadata work stays paid;
+             no dependence on native shape, pointer identity, or aconv. *)
+          fun height n =
+            let fun bits 0 total = (payer 2;2*total)
+                  | bits n total = (payer 4;bits (n div 2) (total+1))
+            in bits n 0 end
+          fun candidates compare values =
+            let
+              fun scan [] n total largest smallest =
+                    (payer 10;([],n,total,largest,smallest))
+                | scan (value::rest) n total largest smallest =
+                    let val _=payer 28
+                        val (ordering,cost)=compare value
+                        val (tail,k,sum,big,small)=scan rest (n+1)
+                          (total+cost) (Int.max (largest,cost))
+                          (if n=0 then cost else Int.min (smallest,cost))
+                    in ((value,ordering)::tail,k,sum,big,small) end
+              val (pairs,n,total,largest,smallest)=scan values 0 0 0 0
+              val h=height n
+              val _=payer (16+Int.min (h*largest,
+                total-Int.max (0,n-h)*smallest))
+            in (pairs,n,h) end
+          (* With at least one binder-free operand, comparison cannot
+             enter a pair of Abs bodies. Every visited pair costs eight;
+             split this as four per syntax node of each operand. An atom
+             adds at most 28 plus BOTH names and Type forests. For one
+             Type forest, type_work + its returned size is bounded by
+             7*ann + 2*type_text: ann includes every Type node and
+             variable byte, type_text counts Type-operator bytes. cmp
+             sums four per syntax node, fourteen plus name bytes per
+             atom, and that atom's FULL Type-forest bound. Unlike port
+             admission, comparison does not inspect App annotations.
+             Bound construction was paid in assembly_term_quote; the
+             scalar bounds ONE native comparison, never reusable credit. *)
+          (* Once singleton {D} has been joined, retain an aggregate of
+             the ACTUAL forest's comparisons against D. Deletion updates
+             its count and sum; immutable initial extrema remain safe
+             bounds for every subset. This never retains native credit:
+             union pays a fresh search-path bound on every use. *)
+          val _=payer 10
+          val d_forest=ref
+            (NONE : {n:int,total:int,largest:int,smallest:int} option)
+          fun removed_from_d (Port {against_d,...}) =
+            (payer 8;case !d_forest of NONE=>()
+             | SOME {n,total,largest,smallest}=>
+                 (case !against_d of SOME (ordering,cost)=>
+                    (payer 9;
+                     d_forest:=if ordering=EQUAL then NONE else
+                       SOME {n=n-1,total=total-cost,
+                         largest=largest,smallest=smallest})
+                  | NONE=>d_forest:=NONE))
+          (* A subset envelope is DATA over the initial actual Hyp. It
+             bounds root-discriminated comparisons without rebuilding a
+             row-by-forest cost vector. Distinct first names are required;
+             aliases that change actual representatives invalidate it. *)
+          type delete_envelope =
+            {variableBytes:int,applicationBytes:int,headCmp:int,
+             commonHead:Term.term option,otherApplicationCmp:int}
+          val _=payer 3
+          val delete_envelope=ref (NONE:delete_envelope option)
+          fun without row values =
+            let
+              fun precise () =
+                let val (pairs,n,h)=candidates
+                      (fn value=>comparison (term row) (term value)) values
+                    fun retain [] = (payer 2;([],0))
+                      | retain ((value,ordering)::rest) =
+                          let val _=payer 4
+                              val (tail,removed)=retain rest
+                          in if ordering=EQUAL then
+                               (payer 4;removed_from_d value;
+                                (tail,removed+ #ann (metrics value)))
+                             else (value::tail,removed) end
+                    val (retained,removed)=retain pairs
+                in (retained,n,h,removed) end
+              (* Actual Hyp is a set. If its representative is the SAME
+                 pointer as row, that is the unique equal member: no
+                 ordering forecast is needed to remove it. Still prepay
+                 the entire future native search path. D can be much
+                 larger than any row, so compare that outlier precisely,
+                 rather than putting its whole geometry into the bound.
+                 Misses and binders retain the original comparison path.
+                 Certification below still checks EVERY actual result. *)
+              fun pointer_path () =
+                let val _=payer 12
+                    val bound= #cmp (metrics row)
+                    (* Hoist the row descriptor and its arithmetic. Each
+                       other port uses ONE paid cached getter, not a name
+                       comparison per row x Hyp. Same-name/shape misses
+                       retain the full old cmp bound. *)
+                    val _=payer 6
+                    val root=prefix row
+                    fun pair_bound value =
+                      let val other=prefix value val _=payer 16
+                          fun fallback ()=bound+ #cmp (metrics value)
+                      in case (root,other) of
+                          (NativeVariable {id,bytes},
+                           NativeVariable {id=other,bytes=otherBytes})=>
+                            if id=other then fallback ()
+                            else 20+bytes+otherBytes
+                        | (NativeApplication (SOME
+                             {nameID,headTerm,headCmp,nameBytes}),
+                           NativeApplication (SOME
+                             {nameID=other,headTerm=otherHead,
+                              headCmp=otherCmp,nameBytes=otherBytes}))=>
+                            if nameID=other then fallback ()
+                            else 36+nameBytes+otherBytes+
+                              (if Portable.pointer_eq
+                                  (headTerm,otherHead) then 8
+                               else headCmp+otherCmp)
+                        | (NativeApplication _,NativeApplication _)=>
+                            fallback ()
+                        | (NativeConstant,NativeConstant)=>fallback ()
+                        | (NativeAbstraction,NativeAbstraction)=>fallback ()
+                        | _=>8
+                      end
+                    (* Both kernels compare the two App rators first.
+                       Different constant IDs or Types stop at the head;
+                       equal heads reach the first variables, whose
+                       DISTINCT interned names stop before the RHS (and
+                       before their Types). Distinct first names also
+                       exclude pointer-equal terms or inner rators. Thus
+                       16 covers the two App pairs; the head costs eight
+                       ONLY on an authenticated pointer hit (both kernels
+                       are at binder depth zero), otherwise both full head
+                       quotes. The variable pair costs 12 + both name
+                       lengths + eight for the experimental empty-env
+                       lookups, with NO Type work on unequal names.
+                       This is ONLY a future bound: found below is still
+                       required, then each native path is freshly paid. *)
+                    fun scan [] found n total largest smallest =
+                          (payer 11;([],found,n,total,largest,smallest,0))
+                      | scan (value::rest) found n total largest smallest =
+                          let val _=payer 44
+                              val same=Portable.pointer_eq
+                                (term row,term value)
+                              val cost=if same then 8
+                                else if Portable.pointer_eq (term value,d)
+                                then #2 (comparison (term row) d)
+                                else pair_bound value
+                              val (tail,seen,k,sum,big,small,removed)=scan rest
+                                (found orelse same) (n+1) (total+cost)
+                                (Int.max (largest,cost))
+                                (if n=0 then cost else
+                                   Int.min (smallest,cost))
+                              val removed=if same then
+                                (payer 4;removed_from_d value;
+                                 removed+ #ann (metrics value))
+                                else removed
+                          in (if same then tail else value::tail,
+                              seen,k,sum,big,small,removed) end
+                    val (retained,found,n,total,largest,smallest,removed)=
+                      scan values false 0 0 0 0
+                    val _=payer 3
+                in if not found then precise () else
+                     let val h=height n
+                         val _=payer (16+Int.min (h*largest,
+                           total-Int.max (0,n-h)*smallest))
+                     in (retained,n,h,removed) end
+                end
+              fun enveloped (e:delete_envelope) root =
+                let val _=payer 24
+                    val regular=case root of
+                        NativeVariable {bytes,...}=>
+                          20+bytes+ #variableBytes e
+                      | NativeApplication (SOME
+                          {headTerm,headCmp,nameBytes,...})=>
+                          Int.max (bound_for_missing e,
+                            36+nameBytes+ #applicationBytes e+
+                            (case #commonHead e of SOME held=>
+                               if Portable.pointer_eq (held,headTerm)
+                               then 8 else headCmp+ #headCmp e
+                             | NONE=>headCmp+ #headCmp e))
+                      | _=>0
+                    fun scan [] found n outlier removed =
+                          (payer 8;([],found,n,outlier,removed))
+                      | scan (value::rest) found n outlier removed =
+                          let val _=payer 18
+                              val same=Portable.pointer_eq
+                                (term row,term value)
+                              val is_d=Portable.pointer_eq (term value,d)
+                              val outlier=if is_d then
+                                SOME (#2 (comparison (term row) d))
+                                else outlier
+                              val (tail,seen,k,cost,removed)=scan rest
+                                (found orelse same) (n+1) outlier removed
+                          in if same then
+                               (payer 4;removed_from_d value;
+                                (tail,seen,k,cost,
+                                  removed+ #ann (metrics value)))
+                             else (value::tail,seen,k,cost,removed) end
+                    val (retained,found,n,outlier,removed)=
+                      scan values false 0 NONE 0
+                in if not found then precise () else
+                     let val h=height n
+                         val slots=Int.min (n,h)
+                         (* At most ONE D is present in an actual set.
+                            Pay the worst path even when that outlier is
+                            not visited. No native tree shape is assumed. *)
+                         val cost=case outlier of NONE=>slots*regular
+                           | SOME amount=>slots*regular+
+                               Int.max (0,amount-regular)
+                         val _=payer (24+cost)
+                     in (retained,n,h,removed) end
+                end
+              and bound_for_missing (e:delete_envelope) =
+                (payer 3;if #otherApplicationCmp e=0 then 8
+                 else #cmp (metrics row)+ #otherApplicationCmp e)
+              val _=payer 7
+            in if #plain (metrics row) then
+                 if Portable.pointer_eq (term row,d) then pointer_path () else
+                 (case (!delete_envelope,prefix row) of
+                    (SOME e,root as NativeVariable _)=>enveloped e root
+                  | (SOME e,root as NativeApplication (SOME _))=>
+                      enveloped e root
+                  | _=>pointer_path ())
+               else precise () end
+          fun maximum (a:assembly_metrics) (b:assembly_metrics)
+              : assembly_metrics =
+            (payer 19;{raw=Int.max (#raw a,#raw b),
+              inc=Int.max (#inc a,#inc b),ann=Int.max (#ann a,#ann b),
+              text=Int.max (#text a,#text b),
+              plain= #plain a andalso #plain b,
+              cmp=Int.max (#cmp a,#cmp b)})
+          fun merge (a as Port {term=t,metrics=p,aliases=xs,...})
+              (Port {term=u,metrics=q,aliases=ys,...}) =
+            (payer 6;if Portable.pointer_eq (t,u) then a else
+               (* Term.compare EQUAL preserves raw/inc and ann (alpha
+                  renaming changes no Type incidence). Thus maximum's ann
+                  is exact for EVERY alias, not an upper-bound substitute
+                  for the full-multiplicity sums. Text/cmp may differ.
+                  Pay the added prefix field/ref; as with against_d,
+                  merged aliases must not retain a descriptor cache. *)
+               (payer 3;
+                Port {term=t,metrics=maximum p q,aliases=append xs ys,
+                  against_d=ref NONE,prefix=ref NONE}))
+          (* The projection Hyp is ALWAYS the singleton {D}. Cache only
+             its immutable comparison geometry, never a native allowance.
+             Each use prepays a fresh path bound. Certification invalidates
+             the cache if the actual representative pointer changes.
+             Costs are symmetric, also covering union's reversed insertion
+             direction when BOTH operand sets happen to be singletons. *)
+          fun union left row =
+            let
+              (* If D is already in the certified forest, singleton union
+                 cannot change that set. The alias established by the first
+                 merge remains available to certify native representatives,
+                 including the singleton/singleton operand-order case. *)
+              fun retained {n,total,largest,smallest} =
+                let val h=height n
+                    val _=payer (28+Int.min (h*largest,
+                      total-Int.max (0,n-h)*smallest))
+                in (left,n,h,0) end
+              fun initial () =
+            let fun against (Port {term=held,against_d,...}) =
+                  (payer 4;case !against_d of SOME saved=>saved
+                   | NONE=>let val saved=comparison (term row) held
+                               val _=payer 3
+                           in against_d:=SOME saved;saved end)
+                (* Keep candidates' fresh path payment. *)
+                val (comparisons,n,h)=candidates against left
+                fun remaining values=map (fn (value,_)=>value) values
+                fun insert [] =
+                      (payer 5;([row],#ann (metrics row)))
+                  | insert ((value,comparison)::rest) =
+                      (payer 4;case comparison of
+                         LESS=>(payer 3;
+                           (row::value::remaining rest,#ann (metrics row)))
+                       | EQUAL=>
+                           let val joined=merge value row val _=payer 6
+                           in (joined::remaining rest,
+                             #ann (metrics joined)- #ann (metrics value)) end
+                       | GREATER=>let val (tail,added)=insert rest
+                                  in (value::tail,added) end)
+                val _=payer 2
+                val (joined,added)=insert comparisons
+                (* Locate the D representative once. Its future comparison
+                   is eight only for the SAME pointer; merged aliases may
+                   select another pointer, so use a full paid comparison. *)
+                fun finish [] count sum big small =
+                      (payer 12;d_forest:=SOME {n=count,total=sum,
+                        largest=big,smallest=small})
+                  | finish ((value as Port {against_d,...})::rest)
+                      count sum big small =
+                      let val _=payer 18
+                          val saved=case !against_d of SOME saved=>saved
+                            | NONE=>let val saved=comparison (term row)
+                                          (term value) val _=payer 3
+                                    in against_d:=SOME saved;saved end
+                          val cost= #2 saved
+                      in finish rest (count+1) (sum+cost)
+                           (Int.max (big,cost))
+                           (if count=0 then cost else Int.min (small,cost))
+                      end
+                val _=finish joined 0 0 0 0
+            in (joined,n,h,added) end
+            in payer 3;case !d_forest of SOME summary=>retained summary
+              | NONE=>initial () end
+          (* Native sets are sorted. After each lift, authenticate EVERY
+             actual Hyp pointer against its forecast position/aliases.
+             Pay list extraction, pointer tests and new port cells BEFORE
+             the native operation, not on a later successful rule. *)
+          fun verification_quote ports =
+            let fun aliases (Port {aliases,...},n)=
+                  n+count aliases
+                (* Four extra events per result port cover the prefix
+                   field/branch and, on change, a fresh empty ref. *)
+            in payer (16+19*count ports+
+              4*List.foldl aliases 0 ports) end
+          fun certify [] [] = []
+            | certify (Port {term=held,metrics,aliases,against_d,prefix}::rest)
+                (actual::tail) =
+                if List.exists (fn held=>
+                    Portable.pointer_eq (actual,held)) aliases then
+                  let val same=Portable.pointer_eq (actual,held)
+                      (* A different native representative can change an
+                         eight-event pointer comparison into a structural
+                         comparison. Drop the aggregate, never that work. *)
+                      val _=if same then () else
+                        (d_forest:=NONE;delete_envelope:=NONE)
+                  in Port {term=actual,metrics=metrics,aliases=aliases,
+                    against_d=if same then against_d else ref NONE,
+                    prefix=if same then prefix else ref NONE}::
+                    certify rest tail end
+                else raise ERR "assemble" "actual native Hyp pointer changed"
+            | certify _ _ = raise ERR "assemble" "actual native Hyp changed"
+          (* The newly built conjunction spine owns these exact children.
+             Measure each leaf once and each of the two actual App nodes
+             once, bottom-up. Keeping the child ports avoids remeasuring
+             every descendant when projection later reaches that child.
+             Actual theorem conclusions are still authenticated below;
+             destructor clones retain the independently paid fallback. *)
+          datatype projection_geometry = NoGeometry
+            | Geometry of port * projection_geometry * projection_geometry
+          fun projection_geometry boundary actual =
+            (payer 6;case boundary of
+               Split (a,b) =>
+                 let val _=payer 10
+                     val (partial,right)=Term.dest_comb actual
+                     val (head,left)=Term.dest_comb partial
+                     val ga=projection_geometry a left
+                     val gb=projection_geometry b right
+                     fun root (Geometry (p,_,_))=metrics p
+                       | root NoGeometry=raise ERR "assemble"
+                           "missing projection geometry"
+                     val hm=metric head
+                     val pm= #application metric_reader partial hm (root ga)
+                     val amount= #application metric_reader actual pm
+                       (root gb)
+                 in Geometry (measured_port actual amount,ga,gb) end
+             | _ => Geometry (port actual,NoGeometry,NoGeometry))
+          val projection_geometry=if sparse then
+              projection_geometry boundary d else NoGeometry
+          val dport=case projection_geometry of
+              Geometry (p,_,_)=>SOME p | NoGeometry=>NONE
+          val conclusion=if sparse then SOME (port (Thm.concl proof)) else NONE
+          (* Seed once from the actual ports' already measured immutable
+             terms, before project_paid. All future prospective port caps
+             and admissions remain fresh, including on hot hits. *)
+          val _ = payer 12
+          val _ = case (dport,conclusion) of
+              (SOME dp,SOME cp) => hot_geometry :=
+                SOME ((term dp,metrics dp),(term cp,metrics cp))
             | _ => ()
-          fun project_paid Empty _ = []
-            | project_paid (Leaf _) held = [held]
-            | project_paid (Split (a,b)) held =
-                let val (left,right) = boolSyntax.dest_conj (Thm.concl held)
-                    val _ = quote [d,Thm.concl held,left]
+          fun required (SOME value)=value
+            | required NONE=raise ERR "assemble" "missing sparse geometry"
+          val implication_constant=if sparse then
+              SOME (metric boolSyntax.implication) else NONE
+          (* prim_mk_imp borrows both children. Its two Apps add two raw,
+             two inclusive and four Boolean annotation incidences. Admit
+             the FULL prospective result without constructing that term. *)
+          fun implication row conclusion : assembly_metrics =
+            let val a=metrics row val b=metrics conclusion
+                val c=required implication_constant val _=payer 35
+            in {raw= #raw a+ #raw b+ #raw c+2,
+                inc= #inc a+ #inc b+ #inc c+2,
+                ann= #ann a+ #ann b+ #ann c+4,
+                text= #text a+ #text b+ #text c,
+                plain= #plain a andalso #plain b andalso #plain c,
+                cmp= #cmp a+ #cmp b+ #cmp c+8} end
+          fun discharge_quote row conclusion hyp summary =
+            let val (retained,n,h,removed)=without row hyp
+                val retained_summary=subtract summary removed
+                val next=implication row conclusion
+                val _=payer 6
+                val _=quote_summaries summary retained_summary
+                  [metrics row,metrics conclusion,next]
+                (* is_bool/type_of(row), persistent-set delete/rebalance,
+                   two App constructors, Count and theorem record. No
+                   native FVL/varset traversal occurs in DISCH or MP. *)
+                (* del visits <=H nodes; append then follows at most two
+                   height-H spines, with constant-time balancing per node.
+                   These visits are also distinct in the original tree. *)
+                val _=payer (128+weight (metrics row)+
+                  32*Int.min (n,3*h+1))
+            in (retained,retained_summary,next) end
+          (* Reuse only pointer-authenticated geometry. A valid closure
+             alias may have another pointer: measure that actual port,
+             rather than rejecting it or borrowing the forecast's size. *)
+          fun actual_port held saved = if not sparse then NONE else
+            let val _=payer 6 val actual=Thm.concl held
+            in case saved of SOME old=>
+                 if Portable.pointer_eq (actual,term old) then saved
+                 else SOME (port actual)
+               | NONE=>SOME (port actual)
+            end
+          fun child_port actual geometry =
+            (payer 6;case geometry of Geometry (p,_,_)=>
+               if Portable.pointer_eq (actual,term p) then SOME p
+               else if sparse then SOME (port actual) else NONE
+             | NoGeometry=>if sparse then SOME (port actual) else NONE)
+          fun project_paid Empty _ _ _ = []
+            | project_paid (Leaf _) held saved _ =
+                let val actual=actual_port held saved val _=payer 3
+                in [(held,actual)] end
+            | project_paid (Split (a,b)) held saved geometry =
+                let val parent=actual_port held saved
+                    val _=payer 7
+                    val (ga,gb)=case geometry of Geometry (_,ga,gb)=>(ga,gb)
+                      | NoGeometry=>(NoGeometry,NoGeometry)
+                    val (left,right)=boolSyntax.dest_conj (Thm.concl held)
+                    val lp=child_port left ga
+                    val rp=child_port right gb
+                    (* ALL four incidences are admitted for EACH rule;
+                       carrying ports removes only repeated geometry work. *)
+                    val _=if sparse then quote
+                      [required lp,required dport,required parent,
+                       required dport] [] else ()
+                    val _ = payer 128
                     val l = SmtReplayRuleObservation.CONJUNCT1 held
-                    val _ = quote [d,Thm.concl held,right]
+                    val _=if sparse then quote
+                      [required rp,required dport,required parent,
+                       required dport] [] else ()
+                    val _ = payer 128
                     val r = SmtReplayRuleObservation.CONJUNCT2 held
-                in project_paid a l @ project_paid b r end
-          val projected = case indices of NONE => projections
+                in project_paid a l lp ga @ project_paid b r rp gb end
+          (* Private geometry parallels the public theorem vector. It is
+             authenticated again on lift, never exported as permission. *)
+          val (projected,projection_ports) = case indices of NONE =>
+                (projections,Vector.fromList [])
             | SOME _ =>
-                (quote [d,d];Vector.fromList
-                  (project_paid boundary
-                    (SmtReplayRuleObservation.ASSUME d)))
-          fun lift (premise,result) =
-            let val hyp = Thm.hyp result
-                (* D is present at most once in Hyp; do not re-traverse
-                   it for every other leaf. Source leaves are names and
-                   generated leaves have fixed equality heads, distinct
-                   from a multi-leaf conjunction's head. *)
-                val _ = List.app (fn term =>
-                  quote [term,Thm.concl premise]) hyp
-                val _ = quote (Thm.concl result :: d :: hyp)
-            in SmtReplayRuleObservation.D_PROVE_HYP premise result end
-          val lifted = case indices of NONE => proof
-            | SOME _ => Vector.foldl lift proof projected
-          val _ = quote (d :: Thm.concl lifted :: Thm.hyp lifted)
+                let val _=if sparse then quote
+                      [required dport,required dport] [] else ()
+                    val _=if sparse then
+                      payer (128+weight (metrics (required dport)))
+                      else payer 1
+                    val rows=project_paid boundary
+                      (SmtReplayRuleObservation.ASSUME d) dport
+                      projection_geometry
+                    val _=payer (4+12*count rows)
+                    val rows=Vector.fromList rows
+                in (Vector.map #1 rows,Vector.map #2 rows) end
+          val _ = phase "projected" (fn () => "")
+          val (hypotheses,hyp_summary) = if not sparse then
+              ([],{raw=0,inc=0,ann=0}) else
+            let val _=payer 8
+                val dp=metrics (required dport)
+                fun seed [] summary = (payer 2;([],summary))
+                  | seed (held::rest) (s:hyp_summary) =
+                      let val _=payer 32
+                          val value=port held val p=metrics value
+                          val _=if #raw p<=template_limit andalso
+                              #inc p<=template_limit then () else
+                            raise ERR "assemble"
+                              "prospective compact port bound"
+                          val next={raw=Int.max (#raw s,#raw p),
+                            inc=Int.max (#inc s,#inc p),ann= #ann s+ #ann p}
+                          val (tail,summary)=seed rest next
+                      in (value::tail,summary) end
+            in seed (Thm.hyp proof) {raw= #raw dp,inc= #inc dp,ann=0} end
+          (* Capture root geometry once. A bit per interned name detects
+             duplicate variable/application prefixes; those forests keep
+             the complete pairwise fallback. Maxima stay safe for subsets.
+             D is handled separately and precisely in every deletion. *)
+          val _=if not sparse then () else
+            let val roots=map (fn value=>(value,prefix value)) hypotheses
+                val size= !next_prefix_name
+                val _=payer (24+size)
+                val seen=Array.array (size,0)
+                fun unique id bit =
+                  let val _=payer 12 val old=Array.sub (seen,id)
+                  in if old=bit orelse old=3 then false else
+                       (Array.update (seen,id,old+bit);true) end
+                fun seed [] vb ab hc common missing valid =
+                      (payer 8;if valid then delete_envelope:=SOME
+                        {variableBytes=vb,applicationBytes=ab,headCmp=hc,
+                         commonHead=common,otherApplicationCmp=missing}
+                       else ())
+                  | seed ((value,root)::rest) vb ab hc common missing valid =
+                      let val _=payer 26
+                      in case root of NativeVariable {id,bytes}=>
+                           seed rest (Int.max (vb,bytes)) ab hc common missing
+                             (unique id 1 andalso valid)
+                       | NativeApplication (SOME
+                           {nameID,headTerm,headCmp,nameBytes})=>
+                           let val common=if hc=0 then SOME headTerm else
+                                 case common of SOME held=>
+                                   if Portable.pointer_eq (held,headTerm)
+                                   then common else NONE
+                                 | NONE=>NONE
+                           in seed rest vb (Int.max (ab,nameBytes))
+                             (Int.max (hc,headCmp)) common missing
+                             (unique nameID 2 andalso valid) end
+                       | NativeApplication NONE=>seed rest vb ab hc common
+                           (if Portable.pointer_eq (term value,d) then missing
+                            else Int.max (missing,#cmp (metrics value))) valid
+                       | _=>seed rest vb ab hc common missing valid
+                      end
+            in seed roots 0 0 0 NONE 0 true end
+          fun lift ((premise,saved),(result,hyp,summary)) = if not sparse then
+              (SmtReplayRuleObservation.D_PROVE_HYP premise result,[],summary)
+            else let
+              val row=required (actual_port premise saved)
+              val current=required conclusion val dp=required dport
+              val _=payer 5
+              val _=case Thm.hyp premise of [held]=>
+                  if Portable.pointer_eq (held,d) then () else
+                    raise ERR "assemble" "projection Hyp pointer changed"
+                | _=>raise ERR "assemble" "projection Hyp changed"
+              (* PROVE_HYP = MP (DISCH row result) premise, unchanged.
+                 Both COMPLETE portfolios and both kernel programmes are
+                 prepaid before entering that two-rule native wrapper. *)
+              val _=phase "lift.disch.before" (fn()=>
+                " hypotheses=" ^ Int.toString (length hyp))
+              val (retained,retained_summary,next)=
+                discharge_quote row current hyp summary
+              val _=phase "lift.mp.before" (fn()=>"")
+              val (joined,n,h,added)=union retained dp
+              val joined_summary=augment retained_summary added
+              (* Four list cells, three metric getters and the additional
+                 carried-summary field in the returned lift state. *)
+              val _=payer 8
+              val _=quote_summaries retained_summary joined_summary
+                [metrics row,metrics dp,metrics current,next]
+              (* dest_imp, SAME-pointer antecedent aconv, singleton set
+                 union/rebalance, Tag.merge with projection's empty tag,
+                 Count and theorem record. Comparisons were paid above. *)
+              val _=payer (128+32*Int.min (n,h+1))
+              val _=verification_quote joined
+              val _=phase "lift.quoted" (fn()=>"")
+              val lifted=SmtReplayRuleObservation.D_PROVE_HYP premise result
+              val actual=certify joined (Thm.hyp lifted)
+              (* Carry the sum ONLY after every actual representative has
+                 been authenticated. No summary grants permission to skip
+                 native work, subsequent cap checks, or certification. *)
+              val _=if Portable.pointer_eq
+                  (Thm.concl lifted,term current) then () else
+                raise ERR "assemble" "actual native conclusion changed"
+            in (lifted,actual,joined_summary) end
+          val (lifted,lifted_hyp,lifted_summary) = case indices of NONE =>
+                (proof,[],hyp_summary)
+            | SOME _ => Vector.foldli (fn (index,premise,state)=>
+                (payer 4;lift ((premise,
+                  Vector.sub (projection_ports,index)),state)))
+                (proof,hypotheses,hyp_summary) projected
+          val _ = phase "close.disch.before" (fn () => "")
+          val closed_geometry = if sparse then
+              let val (_,_,m)=discharge_quote (required dport)
+                    (required conclusion) lifted_hyp lifted_summary
+                  val _=payer 4
+              in SOME (#raw m,#inc m,#ann m) end else NONE
+          val _ = phase "close.disch.quoted" (fn () => "")
           val law = SmtReplayRuleObservation.DISCH d lifted
           val _ = guard block [Thm.concl law]
           val _ = if null (Thm.hyp law) andalso clean law then () else
             raise ERR "assemble" "compact proof is not closed"
           val result = {proof=proof,indices=indices,tree=boundary,context=d,
-            projections=projected,law=law}:compact_assembly
+            projections=projected,law=law,
+            geometry=closed_geometry}:compact_assembly
           val _ = assembly := SOME result
+          val _ = phase "after" (fn () => "")
         in result end
     in case !assembly of SOME held =>
          if Portable.pointer_eq (proof,#proof held) then held else build ()
@@ -2630,7 +3524,7 @@ struct
         val actual = List.map lookup (Thm.hyp proof)
         val dependency = new_dependency next (Leaves actual)
         val transferred = Edge {owner = owner,theorem = proof,
-          dependencies = dependency}
+          dependencies = dependency,primitive=NONE}
         val _ = needed_leaves next transferred
         val _ = assemble next transferred
         val _ = retained_source_guard expected source_frame
@@ -2657,7 +3551,7 @@ struct
       val dependencies = new_dependency block (Union (List.map
         (fn Edge {dependencies, ...} => dependencies) premises))
     in observe_proof graph #edges;Edge {owner = owner, theorem = result,
-      dependencies = dependencies} end
+      dependencies = dependencies,primitive=NONE} end
 
   (* No external theorem operation/callback or raw operand is supplied.
      Every premise belongs to THIS block before the fixed recipe executes.
@@ -2692,15 +3586,34 @@ struct
   datatype primitive_plan = PrimitivePlan of
     {work:W.portfolio,block:block,recipe:compact_primitive,
      premises:edge list,proofs:Thm.thm list,result:primitive_profile,
-     shape:primitive_shape,hypotheses:Term.term list,
-     dependencies:dependency list,publish_result:Term.term -> unit,
-     used:bool ref}
+     result_equation:(primitive_profile * primitive_profile) option,
+     shape:primitive_shape,hypotheses:primitive_term_data list list,
+     certify_hypotheses:Term.term list -> primitive_hyp_data,
+     dependencies:dependency list,
+     epoch:int,symbols:int,used:bool ref}
   fun primitive_work expected (Block {owned_frame,...}) =
     case owned_frame of SOME (work,_) =>
       if Portable.pointer_eq (expected,work) then () else
         (W.close expected;raise ERR "primitive_work" "different original Work")
     | NONE => (W.close expected;
         raise ERR "primitive_work" "unowned fixed-rule block")
+  (* Fixed native rules union, rather than concatenate, premise Hyp.
+     Keep one occurrence of the SAME authentic common-context pointer in
+     the prospective result portfolio. Every other candidate is retained.
+     This reader is fresh for ONE preparation, not a completed quotation
+     cache: the first occurrence pays its full raw/inclusive/Type weight.
+     Filtering and allocation are paid as well as the downstream quote. *)
+  fun common_hypotheses_using (pay:IntInf.int -> unit) common observe =
+    let val _ = pay 5
+        val seen = ref false
+        fun copy [] = (pay 1;[])
+          | copy (term::rest) =
+              (pay 4;if Portable.pointer_eq (term,common) then
+                 (pay 2;if !seen then copy rest else
+                    (pay 3;seen := true;term::copy rest))
+               else (pay 1;term::copy rest))
+    in fn proof => (pay 1;copy (observe proof)) end
+
   fun validate_primitive_owner expected block =
     ((primitive_work expected block;W.spend expected 0;active block)
      handle primary => (W.close expected;raise primary))
@@ -2715,12 +3628,71 @@ struct
         else ()
       | NONE => ()
   fun prepare_primitive expected block recipe premises =
-    ((primitive_work expected block;W.spend expected 0;active block;
+    ((primitive_work expected block;
+      (* SAME immutable Work header first, including on exhausted Work.
+         Prepay 64 fixed metadata events BEFORE the passive audit reads:
+         two audit calls/matches/used+phase reads/branches/records and
+         charged projections (<=20), delta and mode dispatch (<=4), plus
+         <=40 for header control, arguments and payer setup. This spend
+         performs the ordinary Scope guard before its budget decision;
+         no held block is activated or consulted to bill these reads. *)
+      W.spend expected 64;
       let
+        val charged_before = #charged (W.audit expected)
+        val _ = W.spend expected 0
+        val overhead = #charged (W.audit expected) - charged_before
+        val _ = active block
         val _ = tables_phase expected "primitive.entry" (fn () => "")
         val cap = IntInf.fromInt (template_limit block)
         val ceiling = IntInf.fromInt (W.work_limit expected)
-        fun spend n = W.spend expected n
+        (* This preparation has no caller callback or new G Scope. The
+           ScopeMap and ancestor path therefore stay fixed: a successful
+           zero spend samples the exact guard programme on THIS counter.
+           In particular PaidIndices can bill its coupled R meter even
+           when priced_root_scope_path is NONE. No guard is run against a
+           fresh quota, and the delta is neither refunded nor credit.
+           Batch only when the original Work actually pays a guard fee;
+           native quotes and full final guards remain separate below. *)
+        val spend = if overhead=0 then W.spend expected else
+              let val _=W.spend expected 16
+                  val credit = ref 0
+              in fn n =>
+                let
+                  (* The immutable mode dispatch is outside the hot loop.
+                     Eight carrier events: call, payload addition, balance
+                     read/comparison/branch, balance read/subtraction/write.
+                     A miss additionally reserves 48 balance/audit/refill
+                     events. After each call, credit is total refill
+                     payload debits minus sum(n+8) minus 48 per refill.
+                     It stays nonnegative; <1024 unused units are dropped
+                     at return, never refunded or used by native quotes.
+                     Below the low-water mark refill only the exact need;
+                     never absorb the remainder as speculative credit.
+                     Guard fees are additional original-Work debits. *)
+                  val amount=n+8
+                in if amount <= !credit then credit:= !credit-amount else
+                  let val need=amount+48- !credit
+                      val available=IntInf.toInt ceiling -
+                        #charged (W.audit expected)
+                      val batch=if available<=1024+overhead+48 then need
+                        else Int.max (need,1024)
+                      val _=W.spend expected batch
+                  in credit:= !credit+batch-amount-48 end
+                end
+              end
+        (* Added fixed carrier setup: <=64 closures/records/selectors,
+           <=128 scalar dispatch/projection events, and <=128 branch/call
+           events, independently of every miss/walk/hit invoice below. *)
+        val _ = spend 320
+        (* The suffix parser's byte operations are metadata too. Its
+           carrier admits the SAME actual bytes before their traversal,
+           without four extra remaining/Scope walks per variable. The
+           native Type-comparison quotes retain their original pay calls. *)
+        fun metadata_pay amount =
+          if amount>=0 andalso amount<=ceiling then
+            spend (IntInf.toInt amount)
+          else (W.close expected;
+            raise ERR "private_table" "original Work exhausted")
         fun plus a b = IntInf.min (ceiling+1,a+b)
         fun times a b = IntInf.min (ceiling+1,a*b)
         val Block {graph,scope,primitive_metadata,...} = block
@@ -2728,44 +3700,133 @@ struct
            when an exception requires dropping this private metadata. *)
         val _ = spend 1
         (* Only successful syntax metadata belongs in this private cache.
-           Its entries contain no theorem, Source proof or callback result.
+           Its geometry contains no Source proof or callback result;
+           ordinal slots retain only an authentic theorem as a pointer key.
            The original owner/frame guard precedes every use. Naming
            admission stays at its original later position below. *)
         fun metadata () =
           let
-            val _ = active block
-            val _ = spend 4
+            (* Header/final guards bracket this callback-free preparation.
+               These immutable syntax tables need no additional complete
+               Scope walk at each internal lookup. Epoch/revision fences
+               and each observation's original Work charge remain. *)
+            (* One prepaid fixed header rather than four carrier calls:
+               revision/epochs, both epoch tests and revision dispatch. *)
+            val _ = spend 7
             val revision = G.validation_revision graph scope
             val epoch = Type.type_epoch ()
             val symbols = Term.term_epoch ()
             fun fresh () =
               let
-                  (* Each array allocation and all 127 initialized cells
-                     are paid in addition to the original publication. *)
-                  val _ = spend (8+3*128)
+                  (* Three 127-cell tables, a 128-cell ordinal table,
+                     ref headers, record and publication are prepaid. *)
+                  val _ = spend (12+4*128)
                   val saved = PrimitiveMetadata
                     {revision=revision,epoch=epoch,symbols=symbols,
                      profiles=Array.array(127,[]),
                      bytes=Array.array(127,[]),operands=Array.array(127,[]),
-                     pending=ref NONE}
+                     edges=ref(Array.array(128,NONE))}
                   val _ = primitive_metadata := SOME saved
               in saved end
-            fun same old types terms =
-              (spend 1;old=revision andalso
-               (spend 1;types=epoch andalso (spend 1;terms=symbols)))
+            (* Profiles contain only raw/inclusive/Type incidence; bytes
+               contain only variable spelling lengths. Their saturation
+               ceiling belongs to this block's SAME immutable Work limit.
+               Graph growth changes none of these values. Operands and
+               per-Hyp admitted flags memoize only name-class permission
+               for their exact revision, never a lifetime/policy guard. *)
+            fun refresh profiles bytes edges =
+              let
+                  (* One array plus its 127 initialized cells, the new
+                     record and its publication; no new Work or credit. *)
+                  val _ = spend (8+128)
+                  val saved = PrimitiveMetadata
+                    {revision=revision,epoch=epoch,symbols=symbols,
+                     profiles=profiles,bytes=bytes,
+                     operands=Array.array(127,[]),
+                     edges=edges}
+                  val _ = primitive_metadata := SOME saved
+              in saved end
+            fun same_epochs types terms =
+              types=epoch andalso terms=symbols
           in case !primitive_metadata of
               SOME (saved as PrimitiveMetadata
-                {revision=old,epoch=types,symbols=terms,...}) =>
-                  if same old types terms then saved else fresh ()
+                {revision=old,epoch=types,symbols=terms,
+                 profiles,bytes,edges,...}) =>
+                  if same_epochs types terms then
+                    (if old=revision then saved else
+                       refresh profiles bytes edges)
+                  else fresh ()
             | NONE => fresh ()
           end
         fun lookup_rows _ [] = (spend 1;NONE)
           | lookup_rows term ((held,value)::rest) =
               (spend 2;if Portable.pointer_eq (term,held) then SOME value
                else lookup_rows term rest)
+        (* A route is only a collision-tolerant hint. Sample at most two
+           App layers and the final two variable-name bytes, not a complete
+           repeated name fold. Arbitrary names and collisions are safe:
+           lookup_rows ALWAYS authenticates the exact physical term.
+           Full spelling and Type admission below is independent of this
+           hint. No binder body is opened by routing. *)
+        fun route_code depth term =
+          (spend 2;if Term.is_var term then
+             let val _=spend 24
+                 val name= #1(Term.dest_var term)
+                 val size=String.size name
+                 fun byte offset=if size<offset then 0w0 else
+                   Word.fromInt(Char.ord(String.sub(name,size-offset)))
+             in Word.+(Word.fromInt size,
+                  Word.+(Word.*(byte 1,0w37),byte 2)) end
+           else (spend 2;if Term.is_const term then
+             (spend 6;Word.fromInt(KernelSig.epoch_of
+               (#Name(Term.dest_thy_constid term))))
+           else (spend 2;if depth=0 orelse not(Term.is_comb term) then
+             (spend 1;0w19) else
+             let val _=spend 8
+                 val (left,right)=Term.dest_comb term
+                 val a=route_code (depth-1) left
+                 val b=route_code (depth-1) right
+             in Word.+(Word.*(a,0w37),Word.*(b,0w17)) end)))
+        fun route_bucket term =
+          let val _=spend 4
+              (* Named binary ports are distinguished by their first
+                 operand. Sampling the other branch again serves no
+                 admission purpose: every collision still probes the full
+                 physical key, and all spellings/Types are admitted below. *)
+              val sample=if Term.is_comb term then
+                let val _=spend 6
+                    val (left,right)=Term.dest_comb term
+                in if Term.is_comb left then
+                     (spend 3;#2 (Term.dest_comb left)) else right end
+                else term
+              val code=route_code 0 sample val _=spend 4
+          in Word.toInt(Word.mod(code,0w127)) end
+        (* All three geometry/permission tables use the SAME immutable
+           routing programme. Keep a bounded, prepare-local pointer view of
+           that DATA, not a completed lookup or admission. Repeated profile,
+           operand and byte queries still probe their actual current rows;
+           only the redundant name-fold/syntax sampling is absent on hits.
+           No scope, callback result, native incidence or permission is held.
+           A full view falls back to the original paid programme. *)
+        val _ = spend 8
+        val routes = ref ([] : (Term.term * int) list)
+        val route_count = ref 0
+        fun route term =
+          let fun find [] = (spend 1;NONE)
+                | find ((held,index)::rest) =
+                    (spend 3;if Portable.pointer_eq(term,held) then
+                       SOME index else find rest)
+          in spend 2;case find (!routes) of SOME index=>index
+            | NONE=>
+                let val index=route_bucket term
+                    val _=spend 2
+                    val _=if !route_count<16 then
+                        (spend 6;routes:=(term,index):: !routes;
+                         route_count:= !route_count+1) else ()
+                in index end
+          end
         fun lookup table term =
-          let val index=SmtReplayImport.pointer_bucket_observed
-                (W.spend_policy expected) 2 127 term
+          let val index=route term
               val _=spend 1
               val rows=Array.sub(table,index)
           in (index,lookup_rows term rows)end
@@ -2775,36 +3836,124 @@ struct
         fun publish saved update =
           let val current = metadata () val _ = spend 1
           in if Portable.pointer_eq (saved,current) then update () else () end
-        (* Executed roots wait in ONE stamped metadata cell. Promotion
-           pays the existing hash/probe/insertion programme here, before
-           any next native rule. A changed revision/epoch discards the cell
-           through the ordinary metadata() invalidation above. *)
-        fun promote (saved as PrimitiveMetadata {profiles,pending,...}) =
-          (spend 1;case !pending of NONE => ()
-            | SOME (term,value) =>
-                let val (index,found) = lookup profiles term
-                    val _ = case found of SOME _ => spend 1
-                      | NONE => publish saved (fn () =>
-                          insert profiles index term value)
-                in publish saved (fn () =>
-                  (spend 1;pending := NONE)) end)
-        (* Borrow type argument spines. Type-name bytes precede comparison
-           work; no comparison/callback is delegated to a caller. *)
+        (* Native output geometry already travels on its exact Edge,
+           including its actual equality operands. Do not also publish
+           every output through the general syntax table: that redundant
+           routing/insertion programme served the same future input twice.
+           Non-edge syntax still uses the full fresh table path below. *)
+        (* Borrow Type argument spines; name bytes precede comparisons.
+           This callback-free preparation may see the same immutable Type
+           DAG at every compact node. Memoize inspection, NOT incidence:
+           each parent still adds the full weight of each argument slot.
+           The memo never escapes this prepare or supplies native credit. *)
+        (* As with term metadata above, a bounded public-metadata hash
+           only routes pointer probes. Never hash the expanded Type DAG
+           or treat a hash collision as equality. Sample both function
+           arguments so ordinary arrow annotations do not all share the
+           outer fun Tyop's bucket. No liveness/admission check is added. *)
+        val _ = spend (2+128)
+        val type_weights = Array.array
+          (127,[] : (Type.hol_type * IntInf.int) list)
+        fun type_hash depth ty =
+          (spend 2;if Type.is_vartype ty then
+             let val _ = spend 3
+                 val name = Type.dest_vartype ty
+                 val _ = spend (6*String.size name)
+             in CharVector.foldl
+               (fn (c,h) => Word.+ (Word.* (h,0w33),
+                 Word.fromInt (Char.ord c))) 0w17 name end
+           else
+             let val _ = spend 4
+                 val {Tyop,Args,...} = Type.dest_thy_typeid ty
+                 val code = Word.fromInt (KernelSig.epoch_of Tyop)
+             in if depth=0 then (spend 1;code) else
+               let
+                 (* Inspect at most two slots at each bounded level;
+                    the complete argument spine is still weighed below. *)
+                 fun sample [] = (spend 1;0w19)
+                   | sample (child::_) =
+                       (spend 2;type_hash (depth-1) child)
+                 val _ = spend 1
+                 val (left,right) = case Args of
+                     [] => (spend 1;(0w17,0w19))
+                   | child::rest =>
+                       (spend 2;(type_hash (depth-1) child,sample rest))
+                 val _ = spend 4
+               in Word.+ (Word.* (code,0w37),
+                    Word.+ (Word.* (left,0w17),right)) end
+             end)
+        (* A bounded exact-pointer front view avoids re-running the
+           recursive routing hash for frequent arrow annotations. Every
+           parent still adds the entire annotation incidence below. *)
+        val _=spend 8
+        val recent_types=ref ([] : (Type.hol_type * IntInf.int) list)
+        val recent_type_count=ref 0
+        (* Fresh shallow annotations cannot benefit from building another
+           routing hash/table entry. Inspect their complete actual forest
+           directly. Deep Types retain the shared-DAG table below. This
+           bounded attempt neither limits Types nor supplies native credit;
+           every argument slot still contributes its full repeated weight. *)
+        fun shallow_type depth ty =
+          (spend 8;if Type.is_vartype ty then
+             let val _=spend 4
+                 val bytes=String.size (Type.dest_vartype ty)
+                 val _=spend bytes
+             in SOME (plus 1 (IntInf.fromInt bytes)) end
+           else
+             let val _=spend 4
+                 val {Args,...}=Type.dest_thy_typeid ty
+             in case Args of []=>SOME 1
+               | _=>if depth=0 then NONE
+                    else shallow_arguments (depth-1) Args 1 end)
+        and shallow_arguments depth [] total = (spend 2;SOME total)
+          | shallow_arguments depth (ty::rest) total =
+              (spend 6;case shallow_type depth ty of NONE=>NONE
+               | SOME n=>shallow_arguments depth rest (plus total n))
         fun type_weight ty =
-          let fun walk [] total = total
-                | walk (pending::more) total =
-                  (spend 1;case pending of [] => walk more total
-                   | current::rest =>
-                     let val _ = spend 1
-                         val variable = Type.is_vartype current
-                         val bytes = if variable then
-                           String.size (Type.dest_vartype current) else 0
-                         val _ = spend bytes
-                         val next = plus total (IntInf.fromInt (1+bytes))
-                     in if variable then walk (rest::more) next
-                        else walk (#2 (Type.dest_type current)::rest::more)
-                          next end)
-          in walk [[ty]] 0 end
+          (* Atomic immutable geometry is cheaper to read than to hash or
+             memoize. Every annotation incidence still adds its FULL size;
+             this is not a Type check or native admission exemption. *)
+          (spend 2;if Type.is_vartype ty then
+             let val _ = spend 4
+                 val bytes = String.size (Type.dest_vartype ty)
+                 val _ = spend bytes
+             in plus 1 (IntInf.fromInt bytes) end
+           else
+             let val _ = spend 4
+                 val {Args,...} = Type.dest_thy_typeid ty
+             in case Args of [] => 1
+               | _ =>
+                 let
+                   val _=spend 2
+                   val recent=lookup_rows ty (!recent_types)
+                 in case recent of SOME amount=>amount | NONE=>
+                   let
+                     val amount=case shallow_arguments 1 Args 1 of
+                         SOME amount=>amount
+                       | NONE=>
+                         let val hash=type_hash 2 ty val _=spend 3
+                             val index=Word.toInt (Word.mod (hash,0w127))
+                             val _=spend 1
+                             val found=lookup_rows ty
+                               (Array.sub (type_weights,index))
+                         in case found of SOME amount=>(spend 1;amount)
+                           | NONE=>
+                             let val _=spend 1
+                                 fun arguments [] total=(spend 1;total)
+                                   | arguments (child::rest) total=
+                                       (spend 2;arguments rest
+                                         (plus total (type_weight child)))
+                                 val amount=arguments Args 1
+                                 val _=insert type_weights index ty amount
+                             in amount end
+                         end
+                     val _=spend 2
+                     val _=if !recent_type_count<8 then
+                         (spend 6;recent_types:=(ty,amount):: !recent_types;
+                          recent_type_count:= !recent_type_count+1) else ()
+                   in amount end
+                 end
+             end)
         fun profile_uncached term : primitive_profile =
           let val _ = spend 1
               val own = type_weight (Term.type_of term)
@@ -2826,9 +3975,8 @@ struct
                     spend (String.size (#1 (Term.dest_var term))) else ()
               in {raw = 1,inc = 1,ann = own,ty = own} end
           end
-        fun profile term =
+        fun profile_table term =
           let val saved as PrimitiveMetadata {profiles,...} = metadata ()
-              val _ = promote saved
               val _ = spend 1
               val(index,found)=lookup profiles term
           in case found of SOME value => (spend 1;value)
@@ -2838,6 +3986,24 @@ struct
                       insert profiles index term value)
                 in value end
           end
+        (* At most two native inputs and four equality operands. This
+           fixed-size hot geometry view bypasses the 127-bucket table; it
+           is not an unbounded list of theorems or hypotheses. *)
+        val _ = spend 4
+        val hot = ref ([]:primitive_term_data list)
+        fun hot_find _ [] = (spend 1;NONE)
+          | hot_find term ((data:primitive_term_data)::rest) =
+              (spend 4;if Portable.pointer_eq(term,#term data) then
+                 SOME data else hot_find term rest)
+        fun remember data = (spend 3;hot := data :: !hot)
+        fun profile term =
+          (spend 2;case hot_find term (!hot) of
+             SOME data => (spend 2;#value data)
+           | NONE => profile_table term)
+        fun term_data term : primitive_term_data =
+          let val value=profile_table term
+              val _=spend 6
+          in {term=term,value=value,bytes=ref NONE} end
         fun equality (a:primitive_profile) (b:primitive_profile) =
           {raw = plus 3 (plus (#raw a) (#raw b)),
            inc = plus 3 (plus (#inc a) (#inc b)),
@@ -2854,11 +4020,81 @@ struct
         fun proof_list [] = []
           | proof_list (edge::rest) =
               (spend 2;theorem block edge :: proof_list rest)
+        (* Reject malformed arity before constructing the bounded hot
+           view. All seven accepted recipes keep their original rules. *)
+        val _ = spend 8
+        val arity = case recipe of ReflexiveName _ => 0
+          | Symmetry => 1 | ApplyNamedArgument _ => 1 | _ => 2
+        val _ = case (arity,premises) of (0,[]) => ()
+          | (1,[_]) => () | (2,[_,_]) => ()
+          | _ => raise ERR "prepare_primitive" "incorrect fixed recipe arity"
         val _ = tables_phase expected "primitive.profile.before"
           (fn () => "")
         val proofs = proof_list premises
-        val _ = List.app (fn proof =>
-          (spend 1;ignore (profile (Thm.concl proof)))) proofs
+        val edge_store as PrimitiveMetadata {edges,epoch,symbols,...} =
+          metadata ()
+        fun edge_data
+            (edge as Edge {primitive=SOME(types,terms,data),...}) proof =
+              (spend 12;if types=epoch andalso terms=symbols then data
+               else edge_ordinal edge proof)
+          | edge_data edge proof = (spend 2;edge_ordinal edge proof)
+        and edge_ordinal
+            (Edge {dependencies=Dependency(id,_),...}) proof =
+          let
+            (* Genuine block theorem ownership was checked by proof_list.
+               No public theorem/ordinal pair reaches this function. The
+               enclosing callback-free header/final guards stay fresh. *)
+            val _=spend 24
+            val old= !edges
+            val size=Array.length old
+            val rows=if id<size then old else
+              let val size'=Int.max(id+1,2*size)
+                  (* Array header/cells, all copied rows and loop events,
+                     ref publication, scalar arithmetic and closures. *)
+                  val _=spend 32
+                  val _=spend size'
+                  val _=spend size'
+                  val _=spend size'
+                  val _=spend (8*size)
+                  val next=Array.array(size',NONE)
+                  fun copy i=if i=size then () else
+                    (Array.update(next,i,Array.sub(old,i));copy(i+1))
+                  val _=copy 0
+                  val _=edges:=next
+              in next end
+          in case Array.sub(rows,id) of
+              SOME(held,data) =>
+                if Portable.pointer_eq(held,proof) then data else
+                  fresh_edge rows id proof
+            | NONE => fresh_edge rows id proof
+          end
+        and fresh_edge rows id proof : primitive_edge_data =
+          let val _=spend 32
+              val data={conclusion=ref NONE,equation=ref NONE,
+                implication=ref NONE,hypotheses=ref NONE}
+              val _=Array.update(rows,id,SOME(proof,data))
+          in data end
+        fun input_data [] [] = (spend 1;[])
+          | input_data (edge::tail) (proof::rest) =
+              let val data:primitive_edge_data=edge_data edge proof
+                  val _=spend 8
+                  val root=case !(#conclusion data) of SOME value=>value
+                    | NONE=>
+                        let val value=term_data(Thm.concl proof)
+                            val _=spend 3
+                            val _= #conclusion data := SOME value
+                        in value end
+                  val _=remember root
+                  val _=spend 4
+              in (proof,data)::input_data tail rest end
+          | input_data _ _ = raise ERR "prepare_primitive" "input arity"
+        val inputs = input_data premises proofs
+        fun input proof =
+          let fun find [] = raise ERR "prepare_primitive" "foreign input"
+                | find ((held,data)::rest) =
+                    (spend 4;if Portable.pointer_eq(proof,held) then data
+                     else find rest)
+          in spend 2;find inputs end
         (* The fixed recipes below observe at most two genuine premise
            theorems. Keep their first actual equality operands within THIS
            prepare: standard lazy destructors may otherwise reopen them as
@@ -2867,64 +4103,75 @@ struct
         val _ = spend 5
         val equation_epoch = Type.type_epoch ()
         val equation_symbols = Term.term_epoch ()
-        val equation_memo = ref
-          ([] : (Thm.thm * (Term.term * Term.term)) list)
         fun equation_guard () =
-          (primitive_work expected block;spend 2;active block;
-           (* Two epoch reads/comparisons and the actual branch. *)
+          (primitive_work expected block;spend 2;
+           (* The enclosing preparation retains its full entry/exit Scope
+              guards; no callback can change it during this observation.
+              Two epoch reads/comparisons and the actual branch. *)
            spend 5;
            if equation_epoch = Type.type_epoch () andalso
                equation_symbols = Term.term_epoch () then () else
              raise ERR "prepare_primitive" "native operand epochs changed")
         fun equation proof =
-          let
-            val _ = equation_guard ()
-            val _ = spend 1
-            fun find [] = (spend 1;NONE)
-              | find ((held,parts)::rest) =
-                  (spend 2;
-                   if Portable.pointer_eq (proof,held) then
-                     (spend 1;SOME parts)
-                   else find rest)
-            val _ = spend 1
-            val found = find (!equation_memo)
-            val _ = spend 1
-          in case found of SOME parts => parts
-            | NONE =>
-                let
-                  (* The SAME original checked observation, once per actual
-                     theorem; its getter fee remains on this miss path. *)
-                  val _ = spend 1
-                  val parts = boolSyntax.dest_eq (Thm.concl proof)
-                  val _ = equation_guard ()
-                  (* Ref read, pair, list cell and ref publication. All are
-                     paid before allocation, without a native callback. *)
-                  val _ = spend 4
-                  val _ = equation_memo :=
-                    (proof,parts):: !equation_memo
-                in parts end
-          end
-        val result = case (recipe,proofs) of
+          let val _=equation_guard ()
+              val data:primitive_edge_data=input proof
+              val _=spend 8
+              val (a,b)=case !(#equation data) of SOME parts=>parts
+                | NONE=>
+                    let val _=spend 4
+                        val (a,b)=boolSyntax.dest_eq(Thm.concl proof)
+                        val parts=(term_data a,term_data b)
+                        val _=equation_guard ()
+                        val _=spend 4
+                        val _= #equation data := SOME parts
+                    in parts end
+              (* One installation per use, not per shape/profile query. *)
+              val _=spend 2
+              val _=if Option.isSome(hot_find (#term a) (!hot)) then ()
+                else remember a
+              val _=if Option.isSome(hot_find (#term b) (!hot)) then ()
+                else remember b
+              val _=spend 3
+          in (#term a,#term b) end
+        fun implication proof =
+          let val _=equation_guard ()
+              val data:primitive_edge_data=input proof
+              val _=spend 8
+              val right=case !(#implication data) of SOME value=>value
+                | NONE=>
+                    let val _=spend 3
+                        val (_,term)=boolSyntax.dest_imp_only(Thm.concl proof)
+                        val value=term_data term
+                        val _=equation_guard ()
+                        val _=spend 3
+                        val _= #implication data := SOME value
+                    in value end
+              val _=spend 2
+              val _=if Option.isSome(hot_find (#term right) (!hot)) then ()
+                else remember right
+          in #term right end
+        fun equation_result a b = (spend 4;(equality a b,SOME(a,b)))
+        val (result,result_equation) = case (recipe,proofs) of
             (ReflexiveName node,[]) =>
               let val operand = profile (name block node)
-              in equality operand operand end
+              in equation_result operand operand end
           | (Symmetry,[proof]) =>
               let val (a,b) = equation proof
-              in equality (profile b) (profile a) end
+              in equation_result (profile b) (profile a) end
           | (Transitivity,[left,right]) =>
               let val (a,_) = equation left val (_,c) = equation right
-              in equality (profile a) (profile c) end
+              in equation_result (profile a) (profile c) end
           | (Congruence,[left,right]) =>
               let val (a,b) = equation left val (x,y) = equation right
-              in equality (application a x) (application b y) end
+              in equation_result (application a x) (application b y) end
           | (EqualityMP,[equality,proof]) =>
-              let val (_,right) = equation equality in profile right end
+              let val (_,right) = equation equality
+              in (profile right,NONE) end
           | (ApplyNamedArgument node,[proof]) =>
               let val (a,b) = equation proof val x = name block node
-              in equality (application a x) (application b x) end
+              in equation_result (application a x) (application b x) end
           | (ImplicationMP,[law,_]) =>
-              let val (_,right) = boolSyntax.dest_imp_only (Thm.concl law)
-              in profile right end
+              (profile (implication law),NONE)
           | _ => raise ERR "prepare_primitive" "incorrect fixed recipe arity"
         (* Same existing RAW guard boundary. Inclusive/annotation incidence
            is Work, not a new syntax limit or caller cap override. *)
@@ -2934,32 +4181,94 @@ struct
           raise ERR "prepare_primitive" "expanded compact proof template"
         fun weight (value:primitive_profile) =
           plus (#raw value) (plus (#inc value) (#ann value))
-        val _ = spend 1
-        val context_profile = ref (NONE : primitive_profile option)
-        fun hypothesis_profile term =
-          if Portable.pointer_eq (term,context block) then
-            case !context_profile of SOME value => value
-              | NONE => let val value = profile term
-                            val _ = spend 1
-                            val _ = context_profile := SOME value
-                        in value end
-          else profile term
-        fun hypotheses [] total = total
-          | hypotheses (proof::rest) total =
-              let fun visit [] amount = amount
-                    | visit (term::tail) amount =
-                        (spend 1;visit tail (plus amount
-                          (weight (hypothesis_profile term))))
-              in spend 1;hypotheses rest (visit (Thm.hyp proof) total) end
+        val _ = spend 4
+        val common_quoted = ref false
+        val common_term = context block
+        val zero:primitive_profile={raw=0,inc=0,ann=0,ty=0}
+        fun sum (a:primitive_profile) (b:primitive_profile)
+            : primitive_profile =
+          {raw=plus (#raw a) (#raw b),inc=plus (#inc a) (#inc b),
+           ann=plus (#ann a) (#ann b),ty=plus (#ty a) (#ty b)}
+        fun maximum (a:primitive_profile) (b:primitive_profile)
+            : primitive_profile =
+          {raw=IntInf.max(#raw a,#raw b),inc=IntInf.max(#inc a,#inc b),
+           ann=IntInf.max(#ann a,#ann b),ty=IntInf.max(#ty a,#ty b)}
+        (* Pure DATA constructor. Its actual input is certified native
+           Hyp, never a candidate union. Source misses prepay each entry;
+           the native suffix prepays count*128 plus setup below. No hidden
+           payer, fresh quota or policy callback runs in this constructor. *)
+        fun make_hyp_summary entries admitted =
+          let
+            fun walk [] reversed unique without all one none count others
+                common cw full noncommon high : primitive_hyp_data =
+                  {reversed=reversed,unique=unique,without=without,
+                   entries=all,unique_entries=one,without_entries=none,
+                   count=count,others=others,common=common,
+                   common_weight=cw,full=full,noncommon=noncommon,
+                   maximum=high,admitted=ref admitted}
+              | walk ((entry:primitive_term_data)::rest) reversed unique
+                  without all one none count others common cw full
+                  noncommon high =
+                  let val term= #term entry val value= #value entry
+                      val full'=sum full value
+                      val high'=maximum high value
+                  in if Portable.pointer_eq(term,common_term) then
+                      walk rest (term::reversed)
+                        (if common then unique else term::unique) without
+                        (entry::all) (if common then one else entry::one)
+                        none (count+1) others true (weight value)
+                        full' noncommon high'
+                    else walk rest (term::reversed) (term::unique)
+                      (term::without) (entry::all) (entry::one) (entry::none)
+                      (count+1) (others+1) common cw
+                      full' (sum noncommon value) high'
+                  end
+          in walk entries [] [] [] [] [] [] 0 0 false 0 zero zero zero end
+        fun summarize proof (data:primitive_edge_data) =
+          (spend 8;case !(#hypotheses data) of SOME value=>value
+           | NONE=>
+             let
+               (* Only original/non-native producers reach this miss.
+                  Their authentic theorem is owner checked above. *)
+               val _=spend 64
+               fun entries [] = (spend 2;[])
+                 | entries (term::rest) =
+                     (spend 160;term_data term :: entries rest)
+               val value=make_hyp_summary (entries (Thm.hyp proof)) NONE
+               val _=spend 4
+               val _= #hypotheses data := SOME value
+             in value end)
+        fun summaries [] = (spend 1;[])
+          | summaries ((proof,data)::rest) =
+              (spend 5;summarize proof data :: summaries rest)
+        fun hypotheses [] total = (spend 1;total)
+          | hypotheses ((data:primitive_hyp_data)::rest) total =
+              let val _=spend 24
+                  val extra=if #common data andalso not(!common_quoted)
+                    then (common_quoted:=true;#common_weight data) else 0
+              in hypotheses rest
+                (plus total (plus (weight(#noncommon data)) extra)) end
         (* This boundary owns its actual future result/Hyp portfolio. An
            earlier Core reservation is not an external allowance or credit.
-           Every candidate Hyp incidence is retained, including duplicates;
-           raw/inclusive/type work is debited BEFORE the first kernel rule. *)
+           The result Hyp is a union: the pointer-identical authentic
+           common context occurs at most once. Quote its FULL geometry
+           once, not once per premise. Other candidates remain conservative
+           (even alpha-equivalent/cloned contexts); no syntax comparison or
+           cross-rule credit is used. Raw/inclusive/type work is debited
+           BEFORE the first kernel rule. The original candidate list and
+           the complete result/Hyp checks below are unchanged. *)
         val _ = tables_phase expected "primitive.hyp.forecast.before"
           (fn () => "")
-        val quote = hypotheses proofs (plus 1 (weight result))
+        val hypothesis_data = summaries inputs
+        (* Every use, including a geometry hit, pays the FULL native
+           raw/inclusive/annotation incidence. This is never Work credit. *)
+        val quote = hypotheses hypothesis_data (plus 1 (weight result))
         val _ = tables_phase expected "primitive.hyp.debit.before"
-          (fn () => " amount=" ^ IntInf.toString quote)
+          (fn () => " amount=" ^ IntInf.toString quote ^
+            " result.raw=" ^ IntInf.toString (#raw result) ^
+            " result.inc=" ^ IntInf.toString (#inc result) ^
+            " result.ann=" ^ IntInf.toString (#ann result) ^
+            " common=" ^ Bool.toString (!common_quoted))
         val remaining = IntInf.fromInt
           (W.work_limit expected - #charged (W.audit expected))
         val _ = if quote <= remaining then W.spend expected (IntInf.toInt quote)
@@ -2990,7 +4299,7 @@ struct
               let val (a,b) = equation proof val x = name block node
               in eq (app (held a) (held x)) (app (held b) (held x)) end
           | (ImplicationMP,[law,_]) =>
-              held (#2 (boolSyntax.dest_imp_only (Thm.concl law)))
+              held (implication law)
           | _ => raise ERR "prepare_primitive" "incorrect fixed recipe arity"
         val (names,common,limit) = case block of
           Block {owned_names = SOME names,context,template_limit,...} =>
@@ -3003,7 +4312,8 @@ struct
               val(index,found)=lookup operands term
               val _ = spend 1
           in if found=SOME limit then () else
-              (fixed_guard_operand expected names limit term;
+              (fixed_guard_operand_using spend metadata_pay
+                 expected names limit term;
                publish saved (fn () =>
                  insert operands index term limit))
           end
@@ -3014,21 +4324,45 @@ struct
            | EqualitySyntax (a,b) => (admit false a;admit false b)
            | ApplicationSyntax (a,b) => (admit false a;admit false b))
         val _ = admit true shape
-        fun collect [] rest = rest
-          | collect (proof::tail) rest =
-              let fun terms [] result = result
-                    | terms (term::more) result =
-                        (spend 3;terms more (term::result))
-                  val _ = spend 1
-              in collect tail (terms (Thm.hyp proof) rest) end
-        val candidates = collect proofs []
-        fun admit_hypotheses [] count = count
-          | admit_hypotheses (term::rest) count =
-            (spend 1;
-             if Portable.pointer_eq (term,common) then () else
-               admit_operand term;
-             admit_hypotheses rest (count+1))
-        val candidate_count = admit_hypotheses candidates (0 : IntInf.int)
+        (* Keep the original candidate order/aliases, but borrow cached
+           immutable list SEGMENTS instead of rebuilding a flattened list.
+           A two-input recipe removes only repeated authentic common
+           pointers, exactly as common_hypotheses_using did before. *)
+        val _=spend 12
+        fun collect [] _ segments count = (spend 2;(segments,count))
+          | collect ((data:primitive_hyp_data)::rest) seen segments count =
+              let val _=spend 24
+                  val keep= #common data andalso not seen
+                  val terms=if arity=2 then
+                      (if seen then #without_entries data
+                       else #unique_entries data)
+                    else #entries data
+                  val n=if arity=2 then #others data+
+                      (if keep then 1 else 0) else #count data
+              in collect rest (seen orelse #common data)
+                (terms::segments) (count+n) end
+        val (candidates,candidate_count)=collect hypothesis_data false [] 0
+        val PrimitiveMetadata {revision=admission_revision,...}=edge_store
+        fun admit_hypotheses (data:primitive_hyp_data) =
+          let
+            (* Fresh original owner/name guard BEFORE permission flags.
+               Only actual name-class admission is memoized per revision;
+               no lifetime, policy, observer or Scope result is cached. *)
+            val _=fixed_names_guard expected names
+            val _=spend 12
+          in if !(#admitted data)=SOME admission_revision then () else
+              let fun visit [] = spend 1
+                    | visit (term::rest) =
+                        (spend 4;
+                         if Portable.pointer_eq(term,common) then () else
+                           admit_operand term;
+                         visit rest)
+                  val _=visit (#reversed data)
+                  val _=spend 4
+                  val _= #admitted data := SOME admission_revision
+              in () end
+          end
+        val _=List.app admit_hypotheses hypothesis_data
         val _ = tables_phase expected "primitive.admission.after"
           (fn () => " candidates=" ^ IntInf.toString candidate_count)
         (* The trusted fixed rules only retain/union premise hypotheses.
@@ -3055,7 +4389,7 @@ struct
               in plus (term_bytes_uncached binder)
                 (term_bytes_uncached body) end
              else 0 end
-        fun term_bytes term =
+        fun term_bytes_table term =
           let val saved as PrimitiveMetadata {bytes,...} = metadata ()
               val _ = spend 1
               val(index,found)=lookup bytes term
@@ -3066,6 +4400,15 @@ struct
                       insert bytes index term value)
                 in value end
           end
+        fun term_bytes term =
+          (spend 4;case hot_find term (!hot) of
+             NONE=>term_bytes_table term
+           | SOME (data:primitive_term_data)=>
+               (spend 5;case !(#bytes data) of SOME value=>value
+                | NONE=>let val value=term_bytes_table term
+                            val _=spend 4
+                            val _= #bytes data := SOME value
+                        in value end))
         fun check_work (HeldSyntax term) =
               if Thm.kernelid = "stdknl" then
                 plus 1 (times 2
@@ -3092,8 +4435,14 @@ struct
            There is no post-native Work spend or unquoted hash traversal. *)
         val _ = tables_phase expected "primitive.future.forecast.before"
           (fn () => "")
+        (* Keep the original matcher/Hyp/tag envelope. Extra fixed224
+           pays actual-AST/result-cache binding and summary setup. Each
+           candidate reserves128 for <=2 segment probes, witness/list
+           creation and the actual-Hyp summary (<=actual output count).
+           This is fresh payment on EVERY use, including geometry hits. *)
+        val segment_carrier = 224 + 128*candidate_count
         val future = check_work shape + candidate_count *
-          (candidate_count+2) + tags proofs 2 + 9 + 5
+          (candidate_count+2) + tags proofs 2 + 9 + 5 + segment_carrier
         val _ = tables_phase expected "primitive.future.debit.before"
           (fn () => " amount=" ^ IntInf.toString future)
         val _ = pay expected future
@@ -3103,28 +4452,42 @@ struct
           | dependency_inputs (Edge {dependencies,...}::tail) =
               (spend 3;dependencies::dependency_inputs tail)
         val dependencies = dependency_inputs premises
-        val PrimitiveMetadata {pending,...} = metadata ()
-        (* The executor publishes only genuine geometry, never spelling
-           bytes, a theorem or Source permission. Alpha may rename term
-           variables while preserving raw/inclusive/Type annotations. *)
-        fun publish_result term = pending := SOME (term,result)
-        (* One private closure and its additional plan-record field. *)
-        val _ = spend 2
+        (* The original N-square membership search now returns the exact
+           retained geometry witness. It neither compares Types nor opens
+           Terms. Build output DATA only from the actual certified Hyp. *)
+        fun retained_entry term [] = NONE
+          | retained_entry term ((entry:primitive_term_data)::rest) =
+              if Portable.pointer_eq(term,#term entry) then SOME entry
+              else retained_entry term rest
+        fun retained_segments term [] = NONE
+          | retained_segments term (segment::rest) =
+              (case retained_entry term segment of SOME entry=>SOME entry
+               | NONE=>retained_segments term rest)
+        fun certify_hypotheses actual =
+          let fun entries [] = []
+                | entries (term::rest) =
+                    (case retained_segments term candidates of
+                       SOME entry=>entry::entries rest
+                     | NONE=>raise ERR "compose"
+                         "invalid common-context proof")
+          in make_hyp_summary (entries actual) (SOME admission_revision) end
         val _ = fixed_names_guard expected names
         val _ = active block
         val _ = spend 2
         val _ = tables_phase expected "primitive.guards.after"
           (fn () => "")
       in PrimitivePlan {work = expected,block = block,recipe = recipe,
-        premises = premises,proofs = proofs,result = result,shape = shape,
-        hypotheses = candidates,dependencies = dependencies,
-        publish_result = publish_result,used = ref false} end)
+        premises = premises,proofs = proofs,result = result,
+        result_equation=result_equation,shape = shape,
+        hypotheses = candidates,certify_hypotheses=certify_hypotheses,
+        dependencies = dependencies,
+        epoch=epoch,symbols=symbols,used = ref false} end)
      handle primary =>
        (clear_primitive_metadata expected block;W.close expected;
         raise primary))
   fun execute_primitive expected (PrimitivePlan
-      {work,block,recipe,proofs,shape,hypotheses,dependencies,
-       publish_result,used,...}) =
+      {work,block,recipe,proofs,result,result_equation,shape,dependencies,
+       certify_hypotheses,epoch,symbols,used,...}) =
     ((if Portable.pointer_eq (expected,work) then () else
         raise ERR "execute_primitive" "different original Work";
       primitive_work expected block;W.spend expected 0;active block;
@@ -3174,22 +4537,28 @@ struct
                 in Term.is_const operator andalso
                   Term.same_const operator boolSyntax.equality andalso
                   matches a left andalso matches b right end end
-        fun retained term [] = false
-          | retained term (candidate::rest) =
-              Portable.pointer_eq (term,candidate) orelse retained term rest
-        val _ = if matches shape (Thm.concl proof) andalso clean proof andalso
-            List.all (fn term => retained term hypotheses) (Thm.hyp proof)
+        val _ = if matches shape (Thm.concl proof) andalso clean proof
           then () else raise ERR "compose" "invalid common-context proof"
+        val actual_hypotheses = certify_hypotheses (Thm.hyp proof)
+        (* Bind geometry to THIS actual kernel AST, only after actual
+           shape/tag/Hyp certification. Do not retain speculative operand
+           pointers, alpha-observer results or predicted spelling bytes. *)
+        val actual_equation = case result_equation of NONE=>NONE
+          | SOME(a,b)=>
+              let val (left,right)=boolSyntax.dest_eq(Thm.concl proof)
+              in SOME({term=left,value=a,bytes=ref NONE},
+                      {term=right,value=b,bytes=ref NONE}) end
+        val result_data : primitive_edge_data =
+          {conclusion=ref(SOME{term=Thm.concl proof,value=result,
+             bytes=ref NONE}),equation=ref actual_equation,
+           implication=ref NONE,hypotheses=ref(SOME actual_hypotheses)}
         val _ = fixed_names_guard expected names
         val _ = active block
         val Block {owner,...} = block
         val dependency = new_dependency block (Union dependencies)
         val edge = Edge
-          {owner = owner,theorem = proof,dependencies = dependency}
-        (* These four pure metadata events were quoted before the native
-           rule. The actual owner guard above precedes this callback-free
-           block; the existing observer stays after successful assembly. *)
-        val _ = publish_result (Thm.concl proof)
+          {owner = owner,theorem = proof,dependencies = dependency,
+           primitive=SOME(epoch,symbols,result_data)}
       in observe_proof graph #edges;edge end)
      handle primary =>
        (clear_primitive_metadata expected block;W.close expected;
@@ -3421,7 +4790,8 @@ struct
         val _ = active block
         val dependency = new_dependency block (Leaves [])
       in observe_proof graph #edges;
-         Edge {owner=owner,theorem=proof,dependencies=dependency} end)
+         Edge {owner=owner,theorem=proof,dependencies=dependency,
+           primitive=NONE} end)
      handle primary => (W.close expected;raise primary))
 
   fun constructor (block as Block {graph, ...}) node =
@@ -3453,7 +4823,8 @@ struct
     ((primitive_work expected block;W.spend expected 0;active block;
       policy_legacy_block_only "prepare_boolean_projection" block;
       let
-        val Block {graph,scope,owned_names,template_limit=limit,...}=block
+        val Block {graph,scope,owned_names,context=common,
+          template_limit=limit,...}=block
         val names=case owned_names of SOME held=>held | NONE=>
           raise ERR "prepare_boolean_projection" "missing owned names"
         (* New local closures/records and actual inspector setup, not a
@@ -3558,7 +4929,9 @@ struct
               val _=if same_term(Thm.concl proof,term) andalso clean proof
                 then ()else fail "actual premise endpoint or tag differs"
           in(node,edge)end
+        val _=tables_phase expected "projection.inputs.before"(fn()=>"")
         val inputs=copy incoming premises
+        val _=tables_phase expected "projection.inputs.after"(fn()=>"")
         fun conjunct node=
           (spend 2;ignore(G.node_scope graph node);
            case G.view graph node of G.Application(f,right)=>
@@ -3597,7 +4970,9 @@ struct
         val truth=(spend 1;case G.view graph target of G.Constant _=>
             (spend 1;Term.same_const(G.representative graph target)
               boolSyntax.T)|_=>false)
+        val _=tables_phase expected "projection.select.before"(fn()=>"")
         val selected=if truth then NONE else select inputs
+        val _=tables_phase expected "projection.select.after"(fn()=>"")
       in if not truth andalso not(Option.isSome selected)then
           (guard ();NONE)
         else let
@@ -3709,11 +5084,16 @@ struct
           fun fixed_step recipe proofs=
             let val _=guard ()
                 val ids=copy index proofs
-                (* Shared preview observes authentic private input views;
-                   it performs and quotes the SAME fixed native programme. *)
-                val _=spend 18
+                (* Shared preview quotes the native RESULT Hyp union.
+                   A common pointer contributes its full geometry once;
+                   finish still collects all real input aliases separately.
+                   This reader is fresh per rule, never native credit. *)
+                val _=spend 19
+                val result_hypotheses=case proofs of [_,_]=>
+                    common_hypotheses_using debit common hypotheses
+                  | _=>hypotheses
                 val prepared=BP.prepare_fixed_observed conclusion
-                  hypotheses fixed profile identity recipe proofs
+                  result_hypotheses fixed profile identity recipe proofs
                 fun join(a,b)=if same_term(a,b)then ()else
                   fail "actual fixed operands differ"
                 val _=case(recipe,proofs)of
@@ -3752,6 +5132,8 @@ struct
                 val conjunction=fixed_step BP.EqualityMP[bridge,proof]
                 val child=project side conjunction
               in descend child rest end
+          val _=tables_phase expected "projection.programme.before"
+            (fn()=>"")
           val answer=if truth then
               let val _=spend 2
                   val term=Thm.concl boolTheory.TRUTH
@@ -3765,6 +5147,8 @@ struct
               in fixed_step BP.EqualityMP[symmetry,given]end
             else case selected of SOME(edge,path)=>descend(seed edge)path
               | NONE=>fail "missing selected actual premise"
+          val _=tables_phase expected "projection.programme.after"
+            (fn()=>" steps=" ^ Int.toString(!next))
           val _=if same_term(conclusion answer,wanted)then ()else
             fail "prepared projection endpoint differs"
           fun reverse [] result=(spend 1;result)
@@ -3857,7 +5241,8 @@ struct
         val ProjectionStep{dependency,...}=Vector.sub(steps,result)
         val proof=get result val _=guard ()
       in observe_proof graph #edges;
-         Edge{owner=owner,theorem=proof,dependencies=dependency}end)
+         Edge{owner=owner,theorem=proof,dependencies=dependency,
+           primitive=NONE}end)
      handle primary=>(W.close expected;raise primary))
 
   fun discharge_sources (old as Block
@@ -4176,7 +5561,8 @@ struct
         val _ = validate_block_for expected next
         val _ = retire_block old
       in observe_proof graph #edges;{block = next,target = target,
-        edge = Edge {owner = owner,theorem = result,dependencies = dependency}}
+        edge = Edge {owner = owner,theorem = result,dependencies = dependency,
+          primitive=NONE}}
       end)) handle primary => (W.close expected;raise primary))
 
   (* Cross-block witnesses already use retained endpoints and canonical
@@ -4373,7 +5759,13 @@ struct
           (W.close expected;raise ERR "source_realization_guard"
             "different original Work")
       val _ = List.app fence receipts
-      fun charge amount = if metered then W.spend expected amount else ()
+      (* Only private receipt-data observers occur here, never user
+         callbacks. Every original owner/frame/epoch/path/endpoint/origin
+         check below still runs in order. Share their metadata carrier,
+         NOT a completed guard or any lifetime permission. *)
+      val charge=if metered then
+          compact_callback_free_payer_with_quantum 1024 expected
+        else fn _=>()
       val _ = charge 1
       val done = ref ([] : source_realization list)
       fun completed receipt [] = (charge 1;false)
@@ -4528,8 +5920,8 @@ struct
         val proof = theorem block edge
         val target_name = name block target
         val terms = Thm.concl proof :: Thm.hyp proof
-        val _ = List.app
-          (fixed_guard_operand expected names template_limit) terms
+        val _ = fixed_guard_retained_operands expected names
+          template_limit terms
         val _ = owned_sparse_projection_quote expected template_limit
           (Vector.fromList terms)
         val indices = needed_leaves block edge
@@ -4572,6 +5964,7 @@ struct
           [] leaves
         val _ = List.app (validate_conversion_for expected) conversions
         val _ = retained_source_guard expected source_frame
+        val closed=assemble_internal block edge
         val result = realize block target edge
         val receipt = SourceRealization
           {work = expected,source_frame = source_frame,graph = graph,
@@ -4584,7 +5977,7 @@ struct
            compact = SourceCompact {block = block,edge = edge,
              target_name = target_name,proof = proof,needed = indices,
              names = List.map #2 (table_list nodes),extra_leaves = [],
-             cuts = []},
+             cuts = [],closed = SOME closed},
            held = held,
            facts = facts,conversions = conversions,
            template_limit = template_limit,parents = [],
@@ -4852,7 +6245,8 @@ struct
             raise ERR operation "endpoint or tags changed"
           val _=retire_block block
         in result end
-    in {run=run,endpoint=endpoint,hypotheses=hypotheses} end
+    in {run=run,endpoint=endpoint,hypotheses=hypotheses,
+        assembly=compact} end
 
 
   (* Each target is an additional ordinary block Source with an authentic
@@ -5388,7 +6782,32 @@ struct
         val (frontier,rows,slot_origins) = W.with_step expected (fn () =>
           let
             val _ = source_realization_guards_with_work expected receipts
-            fun pay n = W.spend expected n
+            (* This frontier visitor has no discovery/policy callbacks.
+               Keep all actual Source occurrences, constructor incidence,
+               gate traversal and lifetime guards, but share its metadata
+               carrier rather than walking Work's scope path per list cell. *)
+            val pay=compact_callback_free_payer_with_quantum 1024 expected
+            (* Exact structural membership only, never Source occurrence
+               authority. Keep every original occurrence in the lists/rows
+               below; replace just repeated linear membership scans by
+               bounded routing and full node probes on every collision. *)
+            fun node_set () =
+              (pay 130;Array.array (127,[] : G.node list))
+            fun node_bucket node =
+              (pay 5;Int.mod (G.node_id node,127))
+            fun node_member table node =
+              let val index=node_bucket node
+                  fun seek [] = (pay 1;false)
+                    | seek (old::rest) =
+                        (pay 2;node=old orelse seek rest)
+              in seek (Array.sub (table,index)) end
+            fun node_add table node =
+              let val index=node_bucket node val _=pay 4
+              in Array.update (table,index,node::Array.sub (table,index)) end
+            fun node_index nodes =
+              let val table=node_set ()
+                  val _=List.app (node_add table) nodes
+              in table end
             fun include_laws [] = closed_facts
               | include_laws (ClosedLawSpine {fact,...}::rest) =
                   (pay 2;fact :: include_laws rest)
@@ -5640,23 +7059,24 @@ struct
               handle R.Limit => W.abort_work_limit expected
             val demanded = (if null law_spines then ordinary_roots
               else ordinary_closure ()) @ constructor_roots
-            fun member node [] = false
-              | member node (old::rest) =
-                  (pay 1;node = old orelse member node rest)
+            val demand_index=node_index demanded
+            val cut_index=node_index cut_targets
+            val seen_index=node_set ()
             val seen = ref ([] : G.node list)
             val atoms = ref ([] : G.node list)
             fun visit [] = ()
               | visit (node::rest) =
-                (pay 1;if member node (!seen) then visit rest else
+                (pay 1;if node_member seen_index node then visit rest else
                  let
                    val _ = pay 2
                    val _ = seen := node :: !seen
+                   val _ = node_add seen_index node
                    val _ = if G.scope_visible graph scope
                        (G.node_scope graph node) then () else
                      raise ERR "prepare_source_cut_rule_block"
                        "node escaped frame"
-                   val cut = member node cut_targets andalso
-                     not (member node demanded)
+                   val cut = node_member cut_index node andalso
+                     not (node_member demand_index node)
                    val children = if cut then
                        (pay 2;atoms := node :: !atoms;[]) else
                      case G.view graph node of
@@ -5880,8 +7300,8 @@ struct
         val proof = theorem block edge
         val target_name = name block target
         val terms = Thm.concl proof :: Thm.hyp proof
-        val _ = List.app
-          (fixed_guard_operand expected names template_limit) terms
+        val _ = fixed_guard_retained_operands expected names
+          template_limit terms
         val _ = owned_sparse_projection_quote expected template_limit
           (Vector.fromList terms)
         val indices = needed_leaves block edge
@@ -5960,7 +7380,7 @@ struct
            compact = SourceCompact {block = block,edge = edge,
              target_name = target_name,proof = proof,needed = indices,
              names = List.map #2 (table_list nodes),extra_leaves = [],
-             cuts = compact_cuts},
+             cuts = compact_cuts,closed = SOME (#assembly prepared)},
            held = held,
            facts = facts,conversions = conversions,
            template_limit = template_limit,parents = receipts,
@@ -5971,6 +7391,201 @@ struct
       in finish result end))
      handle primary => (W.close expected;raise primary)) end
 
+
+  (* A retained closure borrows the same compact operands at many rule
+     ports. Keep only immutable geometry, with exact pointer probes on every
+     hit. In particular, a hit is NOT a future native-work allowance: quote
+     below pays both complete portfolios afresh, including every repeated
+     annotation. Bottom-up App composition avoids walking borrowed children
+     again as the balanced context is projected and lifted. *)
+  type retained_geometry={raw:int,inc:int,ann:int}
+  fun retained_sparse_quoter work limit =
+    let
+      val pay=compact_callback_free_payer_with_quantum 4096 work
+      type geometry=retained_geometry
+      val _=pay 130
+      val rows=Array.array (127,[] : (Term.term * geometry) list)
+      val _=pay 4
+      val hot=ref ([] : (Term.term * geometry) list)
+      (* Only route the pointer probe. One borrowed operand distinguishes
+         ordinary named equations; do not repeatedly sample BOTH App
+         branches. Collisions always receive full exact-pointer probes. *)
+      fun code term =
+        (pay 2;if Term.is_var term then
+           let val _=pay 24
+               val name= #1 (Term.dest_var term)
+               val size=String.size name
+               fun byte n=if size<n then 0w0 else
+                 Word.fromInt (Char.ord (String.sub (name,size-n)))
+           in Word.+ (Word.fromInt size,
+                Word.+ (Word.* (byte 1,0w37),byte 2)) end
+         else (pay 2;if Term.is_const term then
+           (pay 6;Word.fromInt (KernelSig.epoch_of
+             (#Name (Term.dest_thy_constid term))))
+         else (pay 1;0w19)))
+      fun bucket term =
+        let val _=pay 4
+            val sample=if Term.is_comb term then
+              let val _=pay 6 val (left,right)=Term.dest_comb term
+              in if Term.is_comb left then
+                   (pay 3;#2 (Term.dest_comb left)) else right end
+              else term
+            val value=code sample val _=pay 4
+        in Word.toInt (Word.mod (value,0w127)) end
+      fun find _ [] = (pay 1;NONE)
+        | find term ((held,value)::rest) =
+            (pay 3;if Portable.pointer_eq (term,held) then SOME value
+             else find term rest)
+      fun bounded ({raw,inc,...}:geometry) =
+        (pay 4;if raw<=limit andalso inc<=limit then () else
+          raise ERR "owned_sparse_projection"
+            "compact leaf exceeds original binder cap")
+      val _=pay 5
+      val type_geometry=ref ([] : (Type.hol_type * int) list)
+      val type_count=ref 0
+      fun type_hit _ [] = (pay 1;NONE)
+        | type_hit ty ((held,n)::rest) =
+            (pay 3;if Portable.pointer_eq (ty,held) then SOME n
+             else type_hit ty rest)
+      fun types ty =
+        (pay 3;if Portable.pointer_eq (ty,Type.bool) then 1
+         else case type_hit ty (!type_geometry) of SOME n=>n
+         | NONE=>
+           let val _=pay 5
+               val n=if Type.is_vartype ty then 1 else
+                 let val args= #2 (Type.dest_type ty)
+                 in List.foldl (fn (arg,n)=>
+                   let val count=types arg val _=pay 3
+                   in n+count end) 1 args end
+               val _=pay 2
+               val _=if !type_count<4 then
+                   (pay 7;type_geometry:=(ty,n):: !type_geometry;
+                    type_count:= !type_count+1) else ()
+           in n end)
+      (* Cold roots need one annotation walk, NOT a hashed lookup and two
+         more size walks at every subtree. Only roots that are actually
+         borrowed by a rule enter the geometry table. *)
+      fun annotations term =
+        let val _=pay 8
+            val own=types (Term.type_of term)
+        in if Term.is_comb term then
+             let val _=pay 6 val (a,b)=Term.dest_comb term
+                 val left=annotations a val right=annotations b
+                 val _=pay 3
+             in own+left+right end
+           else if Term.is_abs term then
+             let val _=pay 8 val (binder,body)=Term.dest_abs term
+                 val left=annotations binder val right=annotations body
+                 val _=pay 3
+             in own+left+right end
+           else (pay 2;own)
+        end
+      fun metric term =
+        (pay 2;case find term (!hot) of SOME value=>value | NONE=>
+        let val index=bucket term val _=pay 2
+        in case find term (Array.sub (rows,index)) of SOME value=>value
+          | NONE=>
+            let
+              (* The original raw-before-annotation/binder admission on a
+                 cold operand is unchanged. Cached child geometry was
+                 measured from those exact immutable children. *)
+              val _=pay 2
+              val raw=case SmtReplayImport.bounded_raw_size limit term of
+                  SOME n=>n | NONE=>raise ERR "owned_sparse_projection"
+                    "compact leaf exceeds original raw cap"
+              val inc=case SmtReplayImport.bounded_binder_size limit term of
+                  SOME n=>n | NONE=>raise ERR "owned_sparse_projection"
+                    "compact leaf exceeds original binder cap"
+              val ann=annotations term val _=pay 4
+              val value={raw=raw,inc=inc,ann=ann}
+              val _=pay 5
+              val _=Array.update (rows,index,
+                (term,value)::Array.sub (rows,index))
+            in value end
+        end)
+      fun application term (a:geometry) (b:geometry) : geometry =
+        let val _=pay 14
+            val own=types (Term.type_of term)
+            val value={raw=1+ #raw a+ #raw b,inc=1+ #inc a+ #inc b,
+              ann=own+ #ann a+ #ann b}
+            val _=bounded value
+        in value end
+      fun binary make (left,right) =
+        let val a=metric left val b=metric right val _=pay 12
+            val term=make (left,right)
+            val (partial,_)=Term.dest_comb term
+            val (head,_)=Term.dest_comb partial
+            val c=metric head
+            val value=application term (application partial c a) b
+            val index=bucket term val _=pay 5
+            val _=Array.update (rows,index,
+              (term,value)::Array.sub (rows,index))
+        in term end
+      val conjunction_metric=metric boolSyntax.conjunction
+      fun conjunction (left,a) (right,b) =
+        let val _=pay 10
+            val term=boolSyntax.mk_conj (left,right)
+            val partial= #1 (Term.dest_comb term)
+            val value=application term
+              (application partial conjunction_metric a) b
+        in (term,value) end
+      (* A binary kernel constructor allocates another pair of Apps around
+         the SAME operands. Prepay the output inspection and publication,
+         then authenticate those children before borrowing the forecast's
+         geometry. No post-native spend or native credit is introduced. *)
+      fun binary_result_known forecast value =
+        let val index=bucket forecast
+            val _=pay 48
+            val (partial,right)=Term.dest_comb forecast
+            val (head,left)=Term.dest_comb partial
+        in fn actual=>
+          let val (partial,r)=Term.dest_comb actual
+              val (h,l)=Term.dest_comb partial
+              val _=if Portable.pointer_eq (left,l) andalso
+                  Portable.pointer_eq (right,r) andalso
+                  Term.same_const head h then () else
+                raise ERR "discharge_source_receipt_with_work"
+                  "binary constructor operands changed"
+          in Array.update (rows,index,
+               (actual,value)::Array.sub (rows,index)) end
+        end
+      fun binary_result forecast =
+        binary_result_known forecast (metric forecast)
+      fun publish term value =
+        let val index=bucket term val _=pay 5
+        in Array.update (rows,index,
+             (term,value)::Array.sub (rows,index)) end
+      (* Assembly's annotation scalar includes variable-name bytes, hence
+         is an upper bound for this unweighted annotation forest. Raw and
+         inclusive geometry are exact. This is data about its actual closed
+         law, retained with that law, never native-work/admission credit. *)
+      fun remember term (raw,inc,ann) =
+        let val value={raw=raw,inc=inc,ann=ann}
+            val _=bounded value val index=bucket term val _=pay 5
+        in Array.update (rows,index,
+             (term,value)::Array.sub (rows,index)) end
+      fun retain terms =
+        let val values=List.map (fn term=>(term,metric term)) terms
+            val _=pay 3
+        in hot:=values end
+      fun quote_metrics values =
+        let fun add (m:geometry,(raw,inc,total)) =
+              (pay 12;(Int.max (raw,#raw m),Int.max (inc,#inc m),
+                total+2*(#raw m+ #inc m+ #inc m+ #ann m)))
+            val (raw,inc,total)=List.foldl add (0,0,0) values
+            val _=pay 5
+            val _=if raw<=limit andalso inc<=limit then () else
+              raise ERR "owned_sparse_projection"
+                "compact leaf exceeds original binder cap"
+            (* Exactly the old two raw, two inclusive, two syntax and two
+               full annotation forests. Arithmetic replaces repeated walks,
+               never any port or occurrence in the prospective portfolio. *)
+        in pay total end
+      fun quote terms=quote_metrics (List.map metric terms)
+    in {quote=quote,metric=metric,quote_metrics=quote_metrics,pay=pay,
+        retain=retain,binary=binary,binary_result=binary_result,
+        remember=remember,conjunction=conjunction,publish=publish,
+        binary_result_known=binary_result_known} end
 
   (* DISCH executes on the retained named proof. An incoming cut is replaced
      by its genuine scoped implication BEFORE that proof is discharged; a
@@ -5999,18 +7614,21 @@ struct
           let
             val SourceCompact {block = block as Block
                 {leaves,nodes,owned_frame,...},edge,proof,target_name,
-                needed,names,extra_leaves,cuts} = compact
+                needed,names,extra_leaves,cuts,closed=retained_assembly,...} =
+              compact
+            val original_proof=proof
             val _ = W.with_step expected (fn () =>
               (W.spend expected 1;
                ignore (G.closure_root graph scope hypothesis)))
             fun used term = List.exists (fn old =>
               (W.spend expected 1;Term.aconv old term))
               (Thm.hyp proof)
-            val selected_cuts = W.with_step expected (fn () =>
-              (owned_sparse_projection_quote expected template_limit
-                 (Vector.fromList (Thm.concl proof :: Thm.hyp proof));
-               List.filter (fn (_,term,_) =>
-                 (W.spend expected 1;used term)) cuts))
+            val (quoter,selected_cuts) = W.with_step expected (fn () =>
+              let val quoter=retained_sparse_quoter expected template_limit
+                  val _=(#quote quoter) (Thm.concl proof :: Thm.hyp proof)
+                  val selected=List.filter (fn (_,term,_) =>
+                    (W.spend expected 1;used term)) cuts
+              in (quoter,selected) end)
             val closed = List.map (fn (index,term,parent) =>
               (index,term,close parent)) selected_cuts
             val result = W.with_step expected (fn () =>
@@ -6036,17 +7654,22 @@ struct
                             "discharge_source_receipt_with_work"
                             "missing authentic hypothesis name"
                     in (variable,(hypothesis,variable)::names) end
-              fun quote terms = owned_sparse_projection_quote expected
-                template_limit (Vector.fromList terms)
+              val quote= #quote quoter
+              val payer= #pay quoter
+              val binary= #binary quoter
               fun assume term =
                 (quote [term];SmtReplayRuleObservation.ASSUME term)
               fun implication left right =
-                (W.spend expected 3;boolSyntax.mk_imp (left,right))
+                (payer 3;binary boolSyntax.mk_imp (left,right))
               fun discharge antecedent theorem =
                 let val result = implication antecedent (Thm.concl theorem)
                     val _ = quote (result :: antecedent ::
                       Thm.concl theorem :: Thm.hyp theorem)
-                in SmtReplayRuleObservation.DISCH antecedent theorem end
+                    val finish=(#binary_result quoter) result
+                    val discharged=SmtReplayRuleObservation.DISCH
+                      antecedent theorem
+                    val _=finish (Thm.concl discharged)
+                in discharged end
               fun apply implication argument =
                 let val (_,result) = boolSyntax.dest_imp
                       (Thm.concl implication)
@@ -6062,8 +7685,8 @@ struct
                 let val next = implication hyp_name term
                     val witness = apply (assume next) (assume hyp_name)
                 in (replace witness theorem,(index,next,parent)::rows) end
-              val (proof,cut_rows) = List.foldl cut (proof,[]) closed
-              val proof = discharge hyp_name proof
+              val (proof,cut_rows)=List.foldl cut (proof,[]) closed
+              val proof=discharge hyp_name proof
               val scoped_expression = implication hyp_name target_name
               val _ = W.spend expected 3
               val implication_node = G.constant graph scope
@@ -6076,7 +7699,7 @@ struct
                 (W.spend expected 1;
                  ignore (G.closure_root graph scope node))) constructors
               fun missing node = not (List.exists (fn (old,_) =>
-                (W.spend expected 1;node=old)) names)
+                (payer 1;node=old)) names)
               val missing_nodes = List.filter missing constructors
               val plan = W.legacy_plan_placeholders expected graph scope
                 {nodes = missing_nodes}
@@ -6123,37 +7746,238 @@ struct
                 | _ => raise ERR "discharge_source_receipt_with_work"
                     "missing authentic implication definitions"
               val (left,right) = boolSyntax.dest_eq (Thm.concl bridge)
-              val _ = quote (scoped_expression :: left :: right ::
-                (Thm.hyp bridge @ Thm.hyp proof))
               val _ = quote (boolSyntax.mk_eq (right,left) ::
                 Thm.concl bridge :: Thm.hyp bridge)
               val reverse = SmtReplayRuleObservation.SYM bridge
-              val proof = SmtReplayRuleObservation.EQ_MP reverse proof
+              val _=quote (scoped_expression::left::right::
+                (Thm.hyp bridge @ Thm.hyp proof))
+              val proof=SmtReplayRuleObservation.EQ_MP reverse proof
               val target_name = named scoped_target
               fun row_term index = case List.find
                   (fn (slot,_,_) => slot = index) cut_rows of
                   SOME (_,term,_) => term
                 | NONE => leaf_term named (leaf index)
-              val _ = quote (Thm.concl proof :: Thm.hyp proof)
-              fun needed_hyp index =
-                let val term = row_term index
-                    val _ = W.spend expected 1
-                in List.exists (fn old =>
-                  (W.spend expected 1;Term.aconv old term)) (Thm.hyp proof) end
-              val indices = List.filter needed_hyp (needed @ next_indices)
-              val terms = Vector.fromList (List.map row_term indices)
-              val tree = make_tree 0 (Vector.length terms)
-              val context = tree_term terms tree
-              val _ = quote [context,implication context target_name]
-              val projections = project tree (assume context)
-              val lifted = List.foldl (fn (premise,theorem) =>
-                replace premise theorem) proof projections
-              val law = discharge context lifted
+              val model_hyp=Thm.hyp proof
+              val _ = quote (target_name :: model_hyp)
+              fun selected_rows [] = (payer 1;[])
+                | selected_rows (index::rest) =
+                    let val term=row_term index val _=payer 2
+                        fun find [] = (payer 1;NONE)
+                          | find (old::tail) =
+                              (payer 2;if Term.aconv old term then SOME old
+                               else find tail)
+                    in case find model_hyp of NONE=>selected_rows rest
+                      | SOME actual=>
+                          (index,actual)::selected_rows rest end
+              (* Borrow the actual, already authenticated Hyp representative
+                 found by the SAME complete row comparison. Reconstructing
+                 that named equation again would lose its physical geometry
+                 and make every later quote inspect an identical fresh tree. *)
+              val selected=selected_rows (needed @ next_indices)
+              val indices=List.map #1 selected
+              val terms=Vector.fromList (List.map #2 selected)
+              val metric= #metric quoter val payer= #pay quoter
+              val _=payer (offset+7)
+              val positions=Array.array (offset+3,NONE : int option)
+              fun position_rows [] _ = ()
+                | position_rows (index::rest) n =
+                    (payer 7;Array.update (positions,index,SOME n);
+                     position_rows rest (n+1))
+              val _=position_rows indices 0
+              fun position index = (payer 3;Array.sub (positions,index))
+              fun local_leaf index =
+                let val term=case List.find (fn (slot,_,_)=>
+                      (payer 2;slot=index)) cuts of
+                        SOME (_,term,_)=>term
+                      | NONE=>leaf_term named (leaf index)
+                    val _=payer 2
+                in Term.aconv term hyp_name end
+              fun available index = case position index of
+                  SOME _=>true | NONE=>local_leaf index
+              fun changed index=List.exists (fn (slot,_,_)=>
+                (payer 2;slot=index)) cut_rows
+              datatype surgery = Unchanged | ChangedLeaf of bool
+                | ChangedSplit of surgery * surgery
+              fun adapt old_indices boundary =
+                let fun walk Empty = (Empty,Unchanged,[])
+                      | walk (Leaf n) =
+                          let val _=payer 4
+                              val index=Vector.sub (old_indices,n)
+                          in case position index of SOME p=>
+                               (Leaf p,if changed index then
+                                  ChangedLeaf true else Unchanged,[p])
+                             | NONE=>(Empty,ChangedLeaf false,[]) end
+                      | walk (Split (a,b)) =
+                          let val (a,sa,pa)=walk a
+                              val (b,sb,pb)=walk b val _=payer 8
+                              val s=case (sa,sb) of
+                                  (Unchanged,Unchanged)=>Unchanged
+                                | _=>ChangedSplit (sa,sb)
+                          in (Split (a,b),s,pa @ pb) end
+                in walk boundary end
+              datatype geometry_tree = Geometry of
+                retained_geometry * geometry_tree list
+              fun root_geometry (Geometry (m,_))=m
+              fun context_term Empty =
+                    let val term=boolSyntax.T val m=metric term
+                    in (term,Geometry (m,[])) end
+                | context_term (Leaf index) =
+                    let val term=Vector.sub (terms,index) val m=metric term
+                    in (term,Geometry (m,[])) end
+                | context_term (Split (a,b)) =
+                    let val (left,ga)=context_term a
+                        val (right,gb)=context_term b
+                        val (term,m)=(#conjunction quoter)
+                          (left,root_geometry ga) (right,root_geometry gb)
+                    in (term,Geometry (m,[ga,gb])) end
+              val ordinary_tree=make_tree 0 (Vector.length terms)
+              val candidate=case retained_assembly of
+                  SOME (held:compact_assembly)=>
+                    if Portable.pointer_eq (#proof held,original_proof) then
+                      (case #indices held of SOME old_indices=>
+                         if List.all available old_indices then
+                           let val (old_tree,surgery,order)=adapt
+                                 (Vector.fromList old_indices) (#tree held)
+                               val positions=List.map (fn index=>
+                                 case position index of SOME n=>n
+                                   | NONE=>raise ERR
+                                     "discharge_source_receipt_with_work"
+                                     "missing scoped definition") next_indices
+                               val _=payer (8+List.length order)
+                           in if order @ positions =
+                               List.tabulate (List.length indices,fn n=>n)
+                             then SOME (held,surgery,Split (old_tree,
+                               make_tree (List.length order) 3)) else NONE
+                           end
+                         else NONE
+                       | NONE=>NONE)
+                    else NONE
+                | NONE=>NONE
+              (* Preserve the old balanced subtrees, with T holes for the
+                 discharged local Source. Only changed paths will need new
+                 CONJ rules. A candidate that needs more syntax than the
+                 original cap simply uses the established balanced closure. *)
+              val (tree,fusion)=case candidate of
+                  SOME (held,surgery,tree)=>
+                    let val context=tree_term terms tree
+                        val _=payer (12*List.length indices+8)
+                    in case (SmtReplayImport.bounded_raw_size
+                          (template_limit-4) context,
+                        SmtReplayImport.bounded_binder_size
+                          (template_limit-4) context) of
+                        (SOME _,SOME _)=>(tree,SOME (held,surgery))
+                      | _=>(ordinary_tree,NONE)
+                    end
+                | NONE=>(ordinary_tree,NONE)
+              val (context,context_geometry)=context_term tree
+              val _=(#publish quoter) context (root_geometry context_geometry)
+              val prospective_law=implication context target_name
+              val _=quote [context,prospective_law]
+              val law_geometry=let val m=metric prospective_law
+                  val _=payer 4
+                in SOME (#raw m,#inc m,#ann m) end
+              val _=(#retain quoter) [context,target_name]
+              datatype projection_tree = Projection of
+                Thm.thm * retained_geometry * projection_tree list
+              fun project_held Empty (Geometry (m,_)) theorem =
+                    (payer 4;([],Projection (theorem,m,[])))
+                | project_held (Leaf _) (Geometry (m,_)) theorem =
+                    (payer 5;([theorem],Projection (theorem,m,[])))
+                | project_held (Split (a,b)) (Geometry (m,[ga,gb])) theorem =
+                    let val _=payer 12
+                        val (left,pa)=project_held a ga
+                          (SmtReplayRuleObservation.CONJUNCT1 theorem)
+                        val (right,pb)=project_held b gb
+                          (SmtReplayRuleObservation.CONJUNCT2 theorem)
+                    in (left @ right,Projection (theorem,m,[pa,pb])) end
+                | project_held _ _ _=raise ERR
+                    "discharge_source_receipt_with_work"
+                    "projection geometry shape changed"
+              val (projections,projection_tree)=
+                project_held tree context_geometry (assume context)
+              fun ordinary_law () =
+                let val lifted=List.foldl (fn (premise,theorem)=>
+                      replace premise theorem) proof projections
+                in discharge context lifted end
+              (* The retained assembly has already closed the SAME proof.
+                 Fuse context introduction with its elimination instead of
+                 expanding its entire Hyp forest and closing it a second
+                 time. Each old leaf is witnessed by a genuine projection
+                 (or the local hypothesis); changed cuts use the genuinely
+                 scoped projection and MP. No discovery or law is assumed.
+                 Receipts with a different compact proof, or an assembly
+                 containing unused dependencies, retain the ordinary path. *)
+              fun projected index =
+                let fun seek [] [] = NONE
+                      | seek (slot::rest) (premise::tail) =
+                          (payer 3;if slot=index then SOME premise
+                           else seek rest tail)
+                      | seek _ _ = raise ERR
+                          "discharge_source_receipt_with_work"
+                          "projection incidence changed"
+                in seek indices projections end
+              fun fused_law (held:compact_assembly) surgery =
+                let
+                  fun rebuild Unchanged (Projection (theorem,m,_)) =
+                        (theorem,m)
+                    | rebuild (ChangedLeaf scoped)
+                        (Projection (theorem,_,_)) =
+                        let val proof=if scoped then
+                              apply theorem (assume hyp_name)
+                            else assume hyp_name
+                        in (proof,metric (Thm.concl proof)) end
+                    | rebuild (ChangedSplit (a,b))
+                        (Projection (_,_,[pa,pb])) =
+                        let val (left,ma)=rebuild a pa
+                            val (right,mb)=rebuild b pb
+                            val (result,m)=(#conjunction quoter)
+                              (Thm.concl left,ma) (Thm.concl right,mb)
+                            val hypotheses=List.map metric
+                              (Thm.hyp left @ Thm.hyp right)
+                            val _=(#quote_metrics quoter)
+                              (m::ma::mb::hypotheses)
+                            val finish=(#binary_result_known quoter) result m
+                            val joined=SmtReplayRuleObservation.CONJ left right
+                            val _=finish (Thm.concl joined)
+                        in (joined,m) end
+                    | rebuild _ _=raise ERR
+                        "discharge_source_receipt_with_work"
+                        "retained projection shape changed"
+                  val original_projection=case projection_tree of
+                      Projection (_,_,[old,_])=>old
+                    | _=>raise ERR "discharge_source_receipt_with_work"
+                        "missing retained context projection"
+                  val (antecedent,_)=rebuild surgery original_projection
+                  val _=case #geometry held of SOME geometry=>
+                      (#remember quoter) (Thm.concl (#law held)) geometry
+                    | NONE=>()
+                  val named_proof=apply (#law held) antecedent
+                  val scoped_proof=discharge hyp_name named_proof
+                  val bridge=List.foldl (fn (index,theorem)=>
+                    case projected index of SOME premise=>
+                        replace premise theorem
+                      | NONE=>raise ERR
+                          "discharge_source_receipt_with_work"
+                          "missing scoped definition projection")
+                    bridge next_indices
+                  val (left,right)=boolSyntax.dest_eq (Thm.concl bridge)
+                  val _=quote (boolSyntax.mk_eq (right,left)::
+                    Thm.concl bridge::Thm.hyp bridge)
+                  val reverse=SmtReplayRuleObservation.SYM bridge
+                  val _=quote (target_name::Thm.concl reverse::
+                    Thm.concl scoped_proof::
+                    (Thm.hyp reverse @ Thm.hyp scoped_proof))
+                  val result=SmtReplayRuleObservation.EQ_MP
+                    reverse scoped_proof
+                in discharge context result end
+              val law=case fusion of SOME (held,surgery)=>
+                    fused_law held surgery
+                | NONE=>ordinary_law ()
               val _ = if null (Thm.hyp law) andalso clean law then () else
                 raise ERR "discharge_source_receipt_with_work"
                   "retained scoped compact law is not closed"
               val sigma = List.map (fn (node,variable) =>
-                (W.spend expected 1;
+                (payer 1;
                  {redex = variable,residue = G.representative graph node}))
                 names
               (* Residues come only from retained authentic graph names.
@@ -6285,7 +8109,10 @@ struct
                  origins = List.map #2 retained,theorem = theorem,
                  compact = SourceCompact {block = block,edge = edge,
                    proof = proof,target_name = target_name,needed = indices,
-                   names = names,extra_leaves = extra_leaves,cuts = cut_rows},
+                   names = names,extra_leaves = extra_leaves,cuts = cut_rows,
+                   closed = SOME {proof=proof,indices=SOME indices,tree=tree,
+                     context=context,projections=Vector.fromList projections,
+                     law=law,geometry=law_geometry}},
                  held = List.map (G.closure_root graph scope) constructors @
                    (G.closure_root graph scope hypothesis :: held),
                  facts = facts,conversions = conversions,
@@ -14130,11 +15957,13 @@ struct
      These groups count written Source events, not a whole kernel tariff. *)
   val ncc_origin_export_group=length
     ["entry","singleton pattern","thunk call","unit argument",
+     "private producer cell read",
      "statement capture","proof capture","bare capture","closed capture",
      "passive Tag call","Tag result","record statement","record tag",
      "record bare","record closed","record publication","return"]
   val ncc_old_export_group=length
     ["entry","singleton pattern","thunk call","unit argument",
+     "private producer cell read",
      "proof capture","first capture","second capture","third capture",
      "record proof","record first","record second","record third",
      "record publication","return"]
@@ -18949,7 +20778,9 @@ struct
   fun source_scalar_type_data_for expected
       (value as SourceScalarTypeData
         {complete,reason,operations,ports,arrows,annotations,...})=
-    ((source_scalar_type_data_guard expected value;
+    ((tables_phase expected "scalar.type.getter.before"(fn()=>"");
+      source_scalar_type_data_guard expected value;
+      tables_phase expected "scalar.type.getter.after"(fn()=>"");
       {complete=complete,reason=reason,operations=operations,
        ports=ports,arrows=arrows,annotations=annotations})
      handle primary=>(W.close expected;raise primary))
@@ -18957,8 +20788,12 @@ struct
      uses the held fun_tyc and never performs a symbol-table lookup. *)
   fun source_scalar_type_data_arrow pair=Type.--> pair
   fun prepare_source_scalar_type_data expected completed=
-    (let val footprint=prepare_source_scalar_syntax_footprint
+    (let val _=tables_phase expected "scalar.type.footprint.before"
+          (fn()=>"")
+         val footprint=prepare_source_scalar_syntax_footprint
           expected completed
+         val _=tables_phase expected "scalar.type.footprint.after"
+          (fn()=>"")
     in W.with_step expected(fn()=>
     let
       val _=source_scalar_syntax_footprint_guard expected footprint
@@ -18966,7 +20801,15 @@ struct
         {held,complete,reason,operations=rows,programme,...}=footprint
       val SourceConditionalNativePortfolio{forests,hyp,...}=held
       fun live()=source_scalar_syntax_footprint_guard expected footprint
-      fun tick amount=(live();W.spend expected amount)
+      (* Collection and compilation below read only private immutable
+         forests and build DATA. They cannot call a policy or native rule.
+         Bracket those pure segments with the FULL original guard instead
+         of recursively validating the completed proof for each list cell.
+         Every bookkeeping event still pays SAME live original Work. The
+         Type constructor loop retains its before/after guard PER arrow;
+         no guard completion, schedule or nominal debit survives a call. *)
+      fun tick amount=W.spend expected amount
+      fun phase label describe=(live();tables_phase expected label describe)
       fun reverse values result=
         (tick 1;case values of []=>result | value::rest=>
           (tick 3;reverse rest(value::result)))
@@ -19005,7 +20848,10 @@ struct
           in collect rest next(count+1)end
         | collect _ _ _=raise ERR "scalar_type_data"
             "private operation/programme cardinality changed"
+      val _=phase "scalar.type.collect.before"(fn()=>"")
       val operation_count=if complete then collect rows programme 0 else 0
+      val _=phase "scalar.type.collect.after"
+        (fn()=>" ports=" ^ Int.toString(!ports))
       val _=if complete andalso operation_count<>28 then raise ERR
         "scalar_type_data" "private finite itinerary changed"else ()
       datatype inspect=Visit of sr_type | Join
@@ -19027,8 +20873,11 @@ struct
         (tick 1;case values of []=>() | value::rest=>
           (tick 4;compile[Visit value];instruction Export 7;
            compile_roots rest))
+      val _=phase "scalar.type.compile.before"(fn()=>"")
       val _=compile_roots(reverse(!roots)[])
       val executable=reverse(!instructions)[]
+      val _=phase "scalar.type.compile.after"
+        (fn()=>" nominal=" ^ IntInf.toString(!subtotal))
       (* No Type constructor is called until this entire fixed schedule's
          new nominal execution group has been paid by SAME original Work.
          Existing guard/payer fees still execute separately and can fail. *)
@@ -19047,7 +20896,10 @@ struct
             run rest[](ty::answers)arrows
         | run _ _ _ _=raise ERR "scalar_type_data"
             "private Type materialization stack changed"
+      val _=phase "scalar.type.run.before"(fn()=>"")
       val(types,arrows)=run executable[][]0
+      val _=phase "scalar.type.run.after"
+        (fn()=>" arrows=" ^ Int.toString arrows)
       val _=tick 12
       val answer=SourceScalarTypeData
         {work=expected,footprint=footprint,complete=complete,reason=reason,
@@ -20922,6 +22774,38 @@ struct
             else raise ERR "conversion" "realized owner or cap differs" end
         else raise ERR "conversion" "realized owner or cap differs"
 
+  (* Fixed, callback-free DATA projection. Authenticate the exact Work
+     before any receipt backing, then retain the original graph/cap/Scope
+     fences. A realized conversion's immutable endpoints require neither a
+     second identical backing walk nor two separately guarded getters. No
+     validation result or permission escapes to another operation. *)
+  fun conversion_endpoints_with_policy_for expected graph scope maximum saved =
+    ((let
+        val _=validate_conversion_for expected saved
+        (* Legacy closed proofs have no Work header of their own. This
+           new owned projection must still authenticate and debit its
+           requested original portfolio, even for that fallback. *)
+        val sources=W.original_sources expected
+        val _=W.validate_policy expected graph
+          (SmtReplaySource.owning_scope sources) sources
+          (W.semantic_policy expected)
+        val _=W.spend_guard_policy expected 4
+      in case saved of PolicyRealizedConversion
+          {graph=owner,scope=frame,source,target,template_limit,...}=>
+            let
+              val _=if Portable.pointer_eq(graph,owner)then ()else
+                raise ERR "conversion" "different graph owner"
+              val _=if maximum=template_limit then ()else
+                raise ERR "conversion" "different original policy"
+              val _=G.validate_scope graph scope
+              val _=if G.scope_visible graph scope frame then ()else
+                raise ERR "conversion" "realized endpoint escapes actual frame"
+            in {source=source,target=target}end
+        | _=>
+            (validate_conversion_with_policy graph scope maximum saved;
+             {source=conversion_source saved,target=conversion_target saved})
+      end)handle primary=>(W.close expected;raise primary))
+
   (* This closure is created only inside the four public producer methods.
      Neither its query, guard nor retained-list producer is caller supplied. *)
   fun pg_metric_collector graph scope profiles =
@@ -21845,12 +23729,19 @@ struct
           val profile= #profile inspect
           val proofs=List.map (fn edge=>
             (pp_spend work 2;theorem block edge)) premises
-          val prepared = SmtReplayNamedContext.prepare_fixed_using
+          val hypotheses=common_hypotheses_using (pp_pay work)
+            (#common inspect) Thm.hyp
+          val _=tables_phase work "policy.primitive.forecast.before"
+            (fn()=>"")
+          val prepared = SmtReplayNamedContext.prepare_fixed_observed
+            Thm.concl hypotheses
             {pay=pp_pay work,guard=fn () => (),
              template_limit= #template_limit (#semantic_limits native),
              type_work_limit= #type_work_limit native,
              error=ERR "policy_primitive"}
             profile (name block) (named_primitive recipe) proofs
+          val _=tables_phase work "policy.primitive.forecast.after"
+            (fn()=>"")
           val shape= #shape prepared
           val hypotheses= #hypotheses prepared
           val dependencies=List.map
@@ -21899,7 +23790,8 @@ struct
           val Block {owner,graph,...}=block
           val dependency=new_dependency block (Union dependencies)
       in observe_proof graph #fixed;observe_proof graph #edges;
-         Edge {owner=owner,theorem=proof,dependencies=dependency} end)
+         Edge {owner=owner,theorem=proof,dependencies=dependency,
+           primitive=NONE} end)
      handle primary=>(W.close expected;raise primary))
 
   (* The old constructor's exact operator-spine proof recipe. Every new
@@ -21991,7 +23883,8 @@ struct
           raise ERR "policy_closed_inst" "native lifetime changed"
         val dependency = new_dependency block (Leaves [])
       in observe_proof graph #edges;
-         Edge {owner=owner,theorem=proof,dependencies=dependency} end)
+         Edge {owner=owner,theorem=proof,dependencies=dependency,
+           primitive=NONE} end)
      handle primary => (W.close expected;raise primary))
 
   (* A compact law is closed BEFORE simultaneous variable-only INST.
@@ -22498,7 +24391,10 @@ struct
           val profile= #profile inspect
           val proofs=List.map (fn edge=>
             (pp_spend work 2;theorem block edge)) premises
-          val prepared=SmtReplayNamedContext.prepare_boolean_using
+          val hypotheses=common_hypotheses_using (pp_pay work)
+            (#common inspect) Thm.hyp
+          val prepared=SmtReplayNamedContext.prepare_boolean_observed
+            Thm.concl hypotheses
             {pay=pp_pay work,guard=fn()=>(),
              template_limit= #template_limit (#semantic_limits native),
              type_work_limit= #type_work_limit native,
@@ -22549,7 +24445,8 @@ struct
           val Block {owner,graph,...}=block
           val dependency=new_dependency block (Union dependencies)
       in observe_proof graph #fixed;observe_proof graph #edges;
-         Edge {owner=owner,theorem=proof,dependencies=dependency} end)
+         Edge {owner=owner,theorem=proof,dependencies=dependency,
+           primitive=NONE} end)
      handle primary=>(W.close expected;raise primary))
 
   (* Borrowed DATA queries retain actual Block/Work/NC admission. No
@@ -23205,7 +25102,8 @@ struct
         val _=valid ()val _=ignore(pp_owner expected next)
         val _=retire_block old
       in {block=next,target=target,
-        edge=Edge {owner=next_owner,theorem=result,dependencies=dependency}}end)
+        edge=Edge {owner=next_owner,theorem=result,dependencies=dependency,
+          primitive=NONE}}end)
       end)
      handle primary=>(W.close expected;raise primary))
 
@@ -23461,7 +25359,7 @@ struct
           raise ERR "policy_block_join" "combined Source occurrences changed"
         val a=run_left next val b=run_right next
         val Block{owner=next_owner,leaves=next_leaves,...}=next
-        fun publish proof=Edge{owner=next_owner,theorem=proof,
+        fun publish proof=Edge{owner=next_owner,theorem=proof,primitive=NONE,
           dependencies=new_dependency next
             (Leaves(List.tabulate(Vector.length next_leaves,Lib.I)))}
         val a=publish a val b=publish b
@@ -24016,8 +25914,46 @@ struct
               val _=validate_closed_fact_with_policy
                 graph scope maximum fact
           in ()end
-        val _=validate()
-        val equality=closed_node fact
+        (* This is duplicate-getter factoring, not a guard cache. The
+           authentic fact guard may run an external observer: call it
+           afresh, BEFORE the original first cap check, on EVERY use.
+           Only the realized constructor has immutable sealed payload. *)
+        fun realized_payload()=
+          let
+            val current=context()
+            val _=if #root current= #root data andalso
+                #scope current=scope andalso Type.type_epoch()=types andalso
+                Term.term_epoch()=symbols then ()else
+              raise ERR "closed_fact_conversion" "frame or epoch changed"
+            val _=pcf_for expected fact
+            (* Fixed own-metadata envelope: realized dispatch/header and
+               graph/cap branches, post-observer root/scope/epoch checks,
+               sealed pair projection and retained node/proof comparisons.
+               Work/Scope/graph validators retain their own accounting.
+               Quote before projection; no payer or observer follows it. *)
+            val _=W.spend_guard_policy expected 32
+            val PolicyRealizedClosedFact
+              {graph=owner,scope=held,template_limit,...}=fact
+            val _=if Portable.pointer_eq(graph,owner)then ()else
+              raise ERR "freeze" "different graph owner"
+            val _=if maximum=template_limit then ()else
+              raise ERR "freeze" "different original policy"
+            val _=G.validate_scope graph scope
+            val _=if G.scope_visible graph scope held then ()else
+              raise ERR "freeze" "closed fact escapes actual frame"
+            (* NEVER reuse the pre-observer context. In particular, Scope
+               retirement and Type/Term mutations must fail before either
+               payload read, even when the fact's observer returns (). *)
+            val fresh=context()
+            val _=if #root fresh= #root data andalso
+                #scope fresh=scope andalso Type.type_epoch()=types andalso
+                Term.term_epoch()=symbols then ()else
+              raise ERR "closed_fact_conversion" "frame or epoch changed"
+            val PolicyRealizedClosedFact{node,theorem,...}=fact
+          in (node,theorem)end
+        val equality=case fact of PolicyRealizedClosedFact _=>
+              #1(realized_payload())
+          | _=>(validate();closed_node fact)
         val(partial,target)=case G.view graph equality of
             G.Application pair=>pair
           | _=>raise ERR "closed_fact_conversion" "fact is not equality"
@@ -24029,7 +25965,10 @@ struct
             Term.same_const constant boolSyntax.equality andalso
             G.type_id graph source=G.type_id graph target then ()else
           raise ERR "closed_fact_conversion" "fact is not typed equality"
-        val proof=closed_proof fact
+        (* The realized suffix since realized_payload is fixed inspection
+           only: no external callback separates these sealed reads. *)
+        val proof=case fact of PolicyRealizedClosedFact{theorem,...}=>theorem
+          | _=>closed_proof fact
         val(left,right)=boolSyntax.dest_eq(Thm.concl proof)
         val _=if HOLset.numItems(Thm.hypset proof)=0 andalso
             clean proof andalso
@@ -24038,11 +25977,17 @@ struct
             Portable.pointer_eq(left,G.representative graph source)andalso
             Portable.pointer_eq(right,G.representative graph target)then ()else
           raise ERR "closed_fact_conversion" "canonical equality differs"
-        fun guard()=pr_with_pure_validation expected(fn()=>
-          (validate();
-           if equality=closed_node fact andalso
-               Portable.pointer_eq(proof,closed_proof fact)then ()else
-             raise ERR "closed_fact_conversion" "retained fact changed"))
+        fun guard()=case fact of PolicyRealizedClosedFact _=>
+            let val(node,theorem)=realized_payload()
+            in if equality=node andalso Portable.pointer_eq(proof,theorem)
+              then ()else
+                raise ERR "closed_fact_conversion" "retained fact changed"
+            end
+          | _=>pr_with_pure_validation expected(fn()=>
+              (validate();
+               if equality=closed_node fact andalso
+                   Portable.pointer_eq(proof,closed_proof fact)then ()else
+                 raise ERR "closed_fact_conversion" "retained fact changed"))
         val _=guard()
       in PolicyRealizedConversion{work=expected,graph=graph,scope=scope,
           source=source,target=target,theorem=proof,template_limit=maximum,
@@ -24878,7 +26823,7 @@ struct
                       Portable.pointer_eq(hyp,next_context))(Thm.hyp result)
                     then ()else fail "actual named replay result/Hyp changed"
               in(node,Edge{owner=next_owner,theorem=result,
-                dependencies=dependency})end
+                dependencies=dependency,primitive=NONE})end
             val published=List.map(fn(saved,outputs)=>
               {snapshot=saved,targets=List.map output outputs})rows
             val _=both()
@@ -25291,7 +27236,8 @@ struct
           val Block{owner,graph,...}=block
           val dependency=new_dependency block(Union dependencies)
       in observe_proof graph #fixed;observe_proof graph #edges;
-        Edge{owner=owner,theorem=result,dependencies=dependency}end)
+        Edge{owner=owner,theorem=result,dependencies=dependency,
+          primitive=NONE}end)
     handle primary=>(W.close expected;raise primary))
 
   fun validate_closed_fact_in_scope_with_policy_for expected {frame,fact} =
