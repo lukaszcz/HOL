@@ -391,6 +391,10 @@ def main():
     p.add_argument("--batch-seconds", type=float, default=0.2)
     p.add_argument("--batch-iterations", type=int,
                    help="predeclared common matrix calibration/batch count")
+    p.add_argument("--batch-schedule", choices=("ramp", "warmup"),
+                   help="fixed-count schedule: ramp (default, the doubling "
+                   "history 1..N) or warmup (one batch of N); needs "
+                   "--batch-iterations, which may then be any count")
     p.add_argument("--layout-seed",
                    help="randomize matrix code layout per fresh process")
     args = p.parse_args()
@@ -429,11 +433,17 @@ def main():
             from matrix_schema import get_case
             matrix_fixture = get_case(args.performance_case,
                                       args.performance_size)
+    if args.batch_schedule == "ramp":
+        args.batch_schedule = None  # the historical protocol names no field
+    if args.batch_schedule is not None and args.batch_iterations is None:
+        p.error("--batch-schedule requires --batch-iterations")
     if args.batch_iterations is not None:
         if not args.matrix_performance:
             p.error("--batch-iterations requires --matrix-performance")
         try:
-            performance.batch_iterations(args.batch_iterations)
+            performance.batch_iterations(
+                args.batch_iterations,
+                performance.batch_schedule(args.batch_schedule))
         except ValueError as error:
             p.error(str(error))
     if args.layout_seed is not None:
@@ -482,6 +492,9 @@ def main():
             if args.batch_iterations is not None:
                 manifest["performance"]["batch_iterations"] = \
                     args.batch_iterations
+            if args.batch_schedule is not None:
+                manifest["performance"]["batch_schedule"] = \
+                    args.batch_schedule
             if args.layout_seed is not None:
                 manifest["performance"]["layout_seed"] = args.layout_seed
                 manifest["performance"]["layout_units"] = \
@@ -797,6 +810,8 @@ def main():
                             if args.batch_iterations is not None:
                                 runenv["PERF_ITERATIONS"] = \
                                     str(args.batch_iterations)
+                            if args.batch_schedule is not None:
+                                runenv["PERF_SCHEDULE"] = args.batch_schedule
                             if args.layout_seed is not None:
                                 runenv["PERF_LAYOUT"] = str(
                                     performance.layout_units(

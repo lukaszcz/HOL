@@ -88,6 +88,53 @@ confidence-interval or pass/fail threshold changes with this mode. In particular
 equal counts cannot turn uncertain B/B controls or zero/zero GC into passes.
 See `TASK_29_HANDOFF.md` for the still-failing ten-pair equal-count experiment.
 
+#### The `warmup` schedule
+
+The doubling history costs 20-26% of a process of the TASK30 grid. Add
+`--batch-schedule warmup` (with `--batch-iterations N`; the environment
+`PERF_SCHEDULE=warmup`, the option `batch_schedule` of the manifest) for a
+second fixed-count schedule: a process runs **one warm-up batch of exactly N
+iterations** and then the samples of N, instead of the batches 1, 2, ..., N.
+`N` is then any integer in 1..1073741824, not only a power of two. Both
+selections of every experiment get the same N and schedule.
+
+- **Records.** The warm-up is observed as `warmup.<label>` (the SML drivers
+  still write its runtime record under the stage `calibration`), is kept as
+  the only entry of the label's `calibration` and the workload says
+  `schedule: warmup`. It is not a sample. The warm-up and every sample must
+  last at least half of `--batch-seconds`; a short one fails closed, as
+  above (the warm-up as "warm-up batch too short; new experiment required",
+  a sample as "batch too short; recalibrate"), without recalibrating one
+  side. The consumed-result count of the warm-up is checked like a
+  sample's.
+- **`ramp` is the default and is not written down.** An option, environment
+  or event of one schedule in a record of the other is refused, and a
+  literal `ramp` in an option or environment is refused too: the historical
+  protocol is the absence of the field, so every record made before this
+  schedule existed validates, audits and replays byte for byte as before.
+  `analyze(..., schedule=...)` must match the requested schedule, as
+  `iterations` does, and `PERF_SCHEDULE` is bound by `audit_evidence.py` for
+  every receipt.
+- **The count rule** (`timing_grid.warmup_count`, used by a table of this
+  schedule): `N = max over the develop-only pilot processes of
+  ceil(HEADROOM * seconds * n / wall)`, where `n` iterations and `wall`
+  seconds are the final calibration batch of one process and `seconds` the
+  cell's batch seconds, computed in exact arithmetic on the recorded decimals.
+  New tables use `HEADROOM` 1, so that a batch lasts about the target: N is
+  the count that takes `seconds` in the process of the pilot that was fastest
+  per iteration at its final batch, so a batch of any pilot process would
+  last at least the target at that speed, and a batch is shorter than half of
+  it only if a process (a candidate included) runs more than twice as fast
+  per iteration as that fastest pilot process. TASK_30 candidate ratios lie
+  in 0.79-1.06, far from 2, and a slower process only lengthens its batches.
+  A cell where it does happen fails closed, and the revision path below
+  multiplies its count by 4 (reason "fixed batch too short" for this
+  schedule). The counts file records the schedule, the rule and the headroom;
+  `verify-counts` and every replay derive them again from the pilot.
+- **The TASK30 table keeps `ramp`**, its counts file, pilot, grid and ledger,
+  as does the TASK29A grid; their archives replay unchanged at this code (the
+  seals of the files this schedule changed are in the table's history).
+
 ### Precompiled experiment driver
 
 Both matrix fixtures now compile calibration AND sampling inside `experiment`
@@ -105,7 +152,7 @@ suffixes through the same HOLSource reader as QUse. A compiler-entry serial
 must remain fixed from first calibration to last sample. Synthetic durations
 exercise adaptive and fixed schedules, complete observation fields and short
 calibration rejection. Reinstating the old top-level count must trigger the
-serial guard for BOTH fixtures. These 36 assertions are scheduling tests, not
+serial guard for BOTH fixtures. These 56 assertions are scheduling tests, not
 HOL timing or allocation measurements. Run separately from the repository root:
 
 ```sh
@@ -426,7 +473,8 @@ has no disposition.
   are two kinds of link, and `predeclare --revises PREVIOUS` takes one:
 
       --rescale CELL [CELL ...]   the same pilot: the named cells multiplied
-                                  by 4 (reason "fixed calibration too short")
+                                  by 4 (reason "fixed calibration too short",
+                                  "fixed batch too short" for `warmup`)
       --repilot REASON            a fresh pilot (`--grid` is the new one)
                                   for a change that alters what is measured,
                                   such as a fixture bug, with the stated

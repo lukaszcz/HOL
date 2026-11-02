@@ -15,6 +15,7 @@ struct
   val first = ref (NONE : int option)
   val stages = ref ([] : (string * int) list)
   val fixed = ref (NONE : int option)
+  val warmup = ref false
   val sink = ref 0
   val observations = ref ([] : (string * string list) list)
   val checks = ref 0
@@ -29,7 +30,7 @@ struct
     val _ = sink := !sink + n
   in (if n >= 2 then 0.25 else 0.01, [Int.toString n]) end
   fun reset count =
-    (first := NONE; stages := []; fixed := count; sink := 0;
+    (first := NONE; stages := []; fixed := count; warmup := false; sink := 0;
      observations := []; checks := 0)
 end
 
@@ -59,6 +60,7 @@ end
 val prefix =
   "open DriverStaging\n" ^
   "val iterations = !fixed\nval fixedIterations = !fixed\n" ^
+  "val warmup = !warmup\n" ^
   "val label = \"staging\"\nval selected = label\n" ^
   "val seconds = 0.2\nval samples = 3\nfun I x = x\n" ^
   "structure Paired = struct fun check label yes = " ^
@@ -80,30 +82,34 @@ fun expected n = let
   fun history k = ("calibration",k) ::
     (if k = n then [] else history (k*2))
 in history 1 @ List.tabulate (3,fn _ => ("sample",n)) end
-fun run name driver count n = let
+fun expectedWarmup n =
+  ("calibration",n) :: List.tabulate (3,fn _ => ("sample",n))
+fun run warm name driver count n = let
   val _ = DriverStaging.reset count
+  val _ = DriverStaging.warmup := warm
   val _ = execute driver
   val actual = rev (!DriverStaging.stages)
   val total = List.foldl (fn ((_,k),a) => a+k) 0 actual
   val observations = rev (!DriverStaging.observations)
   val calibration = List.filter (fn (stage,_) => stage = "calibration") actual
   val expectedObservations = map (fn (_,k) =>
-    ("calibration.staging",[Int.toString k,Int.toString k])) calibration @
+    ((if warm then "warmup.staging" else "calibration.staging"),
+     [Int.toString k,Int.toString k])) calibration @
     List.tabulate (3,fn i =>
       ("batch.staging",map Int.toString [i,n,n]))
 in
   check (name ^ " uninterrupted compiler serial")
     (Option.isSome (!DriverStaging.first));
   check (name ^ " complete calibration/sample schedule")
-    (actual = expected n);
+    (actual = (if warm then expectedWarmup n else expected n));
   check (name ^ " consumption and all result checks")
     (!DriverStaging.sink = total andalso !DriverStaging.checks = 3);
   check (name ^ " observation ordering/counts/indices")
     (observations = expectedObservations)
 end
 fun controls name driver = let
-  val _ = run (name ^ " adaptive") driver NONE 2
-  val _ = List.app (fn n => run (name ^ " fixed " ^ Int.toString n)
+  val _ = run false (name ^ " adaptive") driver NONE 2
+  val _ = List.app (fn n => run false (name ^ " fixed " ^ Int.toString n)
     driver (SOME n) n) [2,4,16]
   val _ = DriverStaging.reset (SOME 1)
   val short = (execute driver; false)
@@ -119,10 +125,31 @@ in check (name ^ " actual top-level-count regression rejects")
    [("calibration",1),("calibration",2),("calibration",4)] andalso
    !DriverStaging.checks = 0)
 end
+(* The warmup schedule: one recorded batch of N, any N, then the samples. *)
+fun warmControls name driver = let
+  val _ = List.app (fn n => run true (name ^ " warmup " ^ Int.toString n)
+    driver (SOME n) n) [3,16]
+  val _ = DriverStaging.reset (SOME 1)
+  val _ = DriverStaging.warmup := true
+  val short = (execute driver; false)
+    handle DriverStaging.ShortCalibration => true
+  val _ = check (name ^ " short warm-up rejects before samples")
+    (short andalso rev (!DriverStaging.stages) = [("calibration",1)] andalso
+     !DriverStaging.checks = 0)
+  val _ = DriverStaging.reset (SOME 4)
+  val _ = DriverStaging.warmup := true
+  val gap = (execute (reverted driver); false)
+    handle DriverStaging.CompilerDuringMeasurement => true
+in check (name ^ " warm-up top-level-count regression rejects")
+  (gap andalso rev (!DriverStaging.stages) = [("calibration",4)] andalso
+   !DriverStaging.checks = 0)
+end
 val root = case OS.Process.getEnv "TASK29_STAGING_ROOT" of
     SOME path => path
   | NONE => raise Fail "set TASK29_STAGING_ROOT to the configured HOL root"
-val _ = List.app (fn name => controls name (suffix (contents
-  (OS.Path.concat (root,"src/simp/tests/performance/" ^ name)))))
+val _ = List.app (fn name => let
+    val driver = suffix (contents
+      (OS.Path.concat (root,"src/simp/tests/performance/" ^ name)))
+  in (controls name driver; warmControls name driver) end)
   ["MatrixPerformance.sml","ClientPerformance.sml"]
-val _ = print "@@TASK29_DRIVER_STAGING\tcomplete\t36\n"
+val _ = print "@@TASK29_DRIVER_STAGING\tcomplete\t56\n"

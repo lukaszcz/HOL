@@ -6,6 +6,7 @@ checked, and the engine runs it whole (144 cells) on synthetic stand-ins.
 """
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
@@ -107,7 +108,7 @@ class Table(unittest.TestCase):
     def test_the_baseline_sources_and_sealed_files_are_named(self):
         table = t30.TABLE
         self.assertEqual(table.baseline, a.BASE)
-        self.assertEqual(table.engines, ())
+        self.assertEqual(table.engines, t30.ENGINES)
         self.assertEqual(table.sources, cases.SOURCES)
         self.assertEqual(len(set(cases.SOURCES)), len(cases.SOURCES))
         for path in cases.SOURCES:
@@ -121,6 +122,20 @@ class Table(unittest.TestCase):
                                         "sealed", "pins"))
         self.assertIn("task30_cases.py", table.sealed)
         self.assertEqual(table.pin_file, "task30_pins.py")
+
+    def test_the_table_keeps_the_ramp_schedule(self):
+        # The warmup schedule is for new tables; this one, its counts, pilot
+        # and grid are those of the historical schedule.
+        table = t30.TABLE
+        self.assertEqual((table.schedule, table.headroom), ("ramp", 2))
+        if not t30.COUNTS.exists():
+            self.skipTest("the counts are not committed")
+        counts = a.load(t30.COUNTS)
+        self.assertNotIn("schedule", counts)
+        self.assertEqual(tg.schedule_of(counts), "ramp")
+        self.assertEqual(counts["rule"], tg.RAMP_RULE)
+        self.assertEqual(counts["rule"],
+                         "HEADROOM * max develop calibration count in B/B")
 
     def test_the_pins_are_recorded_apart_from_the_sealed_files(self):
         # A pin is bumped after a production fix, and must not change the
@@ -226,6 +241,72 @@ class Table(unittest.TestCase):
     def test_the_allocation_text_names_the_task_selection(self):
         self.assertIn("--task task30", t30.TABLE.allocation)
         self.assertNotIn("outside", t30.TABLE.allocation)
+
+
+# The commit the first-stage grid and the pilot were made at (before the
+# warmup schedule changed some of the sealed files).
+GRID_COMMIT = "63ac28189"
+
+
+def seal_at(rev, path):
+    """The seal of `path` (relative to the performance directory) as of
+    commit `rev`, or None when the commit has no such file."""
+    relative = os.path.normpath(str(a.HERE.relative_to(REPO) / path))
+    found = subprocess.run(["git", "-C", str(REPO), "show",
+                            "%s:%s" % (rev, relative)],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if found.returncode != 0:
+        return None
+    return dict(sha256=hashlib.sha256(found.stdout).hexdigest(),
+                bytes=len(found.stdout))
+
+
+@unittest.skipIf(git("cat-file", "-e", GRID_COMMIT + "^{commit}") is None,
+                 "needs a checkout holding the commit of the grid")
+class History(unittest.TestCase):
+    """The code of the grid made at GRID_COMMIT is still accepted here."""
+
+    def code_then(self):
+        table = t30.TABLE
+        code = dict(driver=seal_at(GRID_COMMIT, "task30_grid.py"),
+                    engine=seal_at(GRID_COMMIT, "timing_grid.py"),
+                    acceptance=seal_at(GRID_COMMIT, "acceptance.py"),
+                    sealed={n: seal_at(GRID_COMMIT, n)
+                            for n in table.sealed},
+                    pins=seal_at(GRID_COMMIT, table.pin_file))
+        self.assertNotIn(None, list(code["sealed"].values()))
+        return code
+
+    def test_the_seals_of_the_files_that_moved_are_in_the_history(self):
+        table = t30.TABLE
+        moved = {n: seal_at(GRID_COMMIT, n) for n in table.sealed
+                 if seal_at(GRID_COMMIT, n) != a.seal(table.home / n)}
+        # The files the warmup schedule changed are among them.
+        self.assertGreaterEqual(set(moved), {
+            "MatrixPerformance.sml", "performance_schema.py",
+            "../compatibility/run_paired.py"})
+        for name, seal in moved.items():
+            self.assertIn(seal, table.sealed_history[name], name)
+        for field, seals in (("driver", table.drivers),
+                             ("engine", table.engines),
+                             ("acceptance", table.layout_acceptance)):
+            old = self.code_then()[field]
+            self.assertIn(old, seals, field)
+
+    def test_a_record_of_the_code_then_is_accepted_now(self):
+        code = self.code_then()
+        t30.ENGINE.check_code(code, True)
+        t30.ENGINE.check_code(code, False)
+        for field in ("driver", "engine", "acceptance"):
+            bad = copy.deepcopy(code)
+            bad[field] = dict(sha256="0" * 64, bytes=1)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                t30.ENGINE.check_code(bad, True)
+        bad = copy.deepcopy(code)
+        bad["sealed"]["MatrixPerformance.sml"] = dict(sha256="0" * 64,
+                                                      bytes=1)
+        with self.assertRaisesRegex(ValueError, "changed Matrix"):
+            t30.ENGINE.check_code(bad, True)
 
 
 class Whole(ttg.Rig):

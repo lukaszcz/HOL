@@ -67,12 +67,27 @@ def timing(value, prefix=0):
     return data[:prefix], ts
 
 
-def batch_iterations(value):
-    """A predeclared common doubling endpoint, never selected by one side."""
+def batch_iterations(value, schedule="ramp"):
+    """A predeclared common doubling endpoint (`ramp`) or batch size
+    (`warmup`), never selected by one side."""
+    if schedule == "warmup":
+        require(type(value) is int and 1 <= value <= 1073741824,
+                "warmup batch iterations must be in 1..1073741824")
+        return value
+    require(schedule == "ramp", "unknown batch schedule")
     require(type(value) is int and 1 <= value <= 1073741824 and
             value & (value - 1) == 0,
             "batch iterations must be a power of two in 1..1073741824")
     return value
+
+
+def batch_schedule(value):
+    """The fixed-count schedule named by an option, a command line or an
+    environment. `ramp` (every count 1, 2, 4, ..., N, then the samples) is
+    the absence of any field and the historical protocol; only `warmup`
+    (one batch of N, then the samples) is ever written down."""
+    require(value in (None, "warmup"), "unknown batch schedule")
+    return "ramp" if value is None else value
 
 
 # Code-layout randomization: each fresh process compiles a seed-derived
@@ -102,8 +117,11 @@ def layout_units(seed, pair, selection):
 def suite_options(options):
     suite = options.get("suite", "simplifier")
     fixed = options.get("batch_iterations")
+    schedule = batch_schedule(options.get("batch_schedule"))
+    require("batch_schedule" not in options or "batch_iterations" in options,
+            "a batch schedule needs a fixed batch count")
     if "batch_iterations" in options:
-        batch_iterations(fixed)
+        batch_iterations(fixed, schedule)
         require(suite == "matrix", "fixed batches require matrix suite")
     if "layout_seed" in options:
         layout_seed(options["layout_seed"])
@@ -121,6 +139,8 @@ def suite_options(options):
                       consumed={options["case"]: 1}, storage=False)
         if fixed is not None:
             result["iterations"] = fixed
+        if schedule != "ramp":
+            result["schedule"] = schedule
         return result
     if suite == "traversal":
         return dict(labels=TRAVERSAL_LABELS, consumed=TRAVERSAL_CONSUMED,
@@ -163,9 +183,11 @@ def graphs(lines, case, size):
 
 
 def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
-             storage=True, iterations=None):
+             storage=True, iterations=None, schedule="ramp"):
     if iterations is not None:
-        batch_iterations(iterations)
+        batch_iterations(iterations, schedule)
+    require(iterations is not None or schedule == "ramp",
+            "a batch schedule needs a fixed batch count")
     require(labels and len(set(labels)) == len(labels) and
             all(label in consumed for label in labels), "invalid workload schema")
     es = [e for e in events if e[0] in ("observation", "check", "exception")]
@@ -202,7 +224,20 @@ def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
     for label in labels:
         calibrations = []
         n = 1
-        while True:
+        if schedule == "warmup":
+            # One warm-up batch of exactly N iterations, kept as the only
+            # calibration (the fixture's runtime record is one, too).
+            n = iterations
+            value = take("observation", "warmup." + label)
+            (actual,), ts = timing(value, 1)
+            require(actual == n, "wrong warm-up count")
+            require(ts["consumed"] == consumed[label] * n,
+                    "wrong warm-up result consumption")
+            total_consumed += ts["consumed"]
+            require(ts["wall"] >= seconds / 2,
+                    "warm-up batch too short; new experiment required")
+            calibrations.append(dict(iterations=n, **ts))
+        while schedule == "ramp":
             value = take("observation", "calibration." + label)
             (actual,), ts = timing(value, 1)
             require(actual == n, "non-doubling calibration")
@@ -231,6 +266,8 @@ def validate(events, samples, seconds, *, labels=LABELS, consumed=CONSUMED,
             batches.append(dict(sample=i, iterations=n, **ts))
             take("check", "results " + label, "pass")
         workloads[label] = dict(calibration=calibrations, batches=batches)
+        if schedule != "ramp":
+            workloads[label]["schedule"] = schedule
     sink, = numbers(take("observation", "sink"), 1)
     require(sink == total_consumed and sink.is_integer(),
             "missing/inconsistent sink consumption")

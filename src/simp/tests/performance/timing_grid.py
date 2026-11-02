@@ -40,11 +40,23 @@ and a replay needs the grid's opening line in it and prints every attempt of
 the table. The ledger is a discipline and not a proof. A counts file is
 never edited: a revision is a new file named in the table, derived from the
 file before it, by rescaling cells or by a fresh pilot.
+
+A table declares its fixed-count schedule. `ramp` (the default; the counts
+file names no schedule) is the historical one: every process calibrates 1, 2,
+4, ..., N and then takes its samples of N, N a power of two, HEADROOM times
+the largest final calibration count of the pilot. `warmup` runs one recorded
+warm-up batch of N and then the samples of N, N any integer: the largest over
+the pilot's processes of ceil(HEADROOM * seconds * n / wall) of the final
+calibration batch (`warmup_count`), the headroom being 1 for a new table. The
+counts file records the schedule and the rule, and a replay derives both
+again; a counts revision of a warmup table rescales a cell whose warm-up or
+batch was too short by the same factor.
 """
 import argparse
 import contextlib
 import copy
 import datetime
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -65,7 +77,7 @@ import evidence_bundle as bundle
 import matrix_schema as ms
 import private_runtime as pr
 import task29_gate as gate
-from performance_schema import batch_iterations, layout_seed
+from performance_schema import batch_iterations, batch_schedule, layout_seed
 
 # The B/B control for a metric is outside the equivalence window.
 CONTROL = "baseline-control outside equivalence window"
@@ -77,6 +89,43 @@ CLASSES = ("pass", "fail", "inconclusive", "control_limited", "protocol")
 # factor, for the one reason the protocol allows.
 REVISION_FACTOR = 4
 REVISION_REASON = "fixed calibration too short"
+# The same for a table of the warmup schedule, whose too short batch is the
+# warm-up or a sample ("batch too short").
+WARMUP_REVISION_REASON = "fixed batch too short"
+# How the counts are made. `ramp` (the historical schedule): a power of two,
+# HEADROOM times the largest final calibration count of the develop-only
+# pilot. `warmup`: one batch of N iterations, N any integer, large enough
+# that a batch lasts about the target seconds of the pilot's final batch.
+RAMP_RULE = "HEADROOM * max develop calibration count in B/B"
+WARMUP_RULE = ("max over develop processes of ceil(HEADROOM * seconds * n / "
+               "wall), (n, wall) the final calibration batch of a pilot "
+               "process, in exact decimal arithmetic")
+
+
+def schedule_of(counts):
+    """`ramp` or `warmup`, as a counts file (or an inventory) says it. The
+    field names only `warmup`: a ramp record has none, and a record that
+    names `ramp` is refused."""
+    return batch_schedule(counts.get("schedule"))
+
+
+def warmup_count(headroom, seconds, finals):
+    """The count of one cell under the warmup rule: the largest, over the
+    develop-only processes, of ceil(headroom * seconds * n / wall) for the
+    final calibration batch of n iterations that took wall seconds. The
+    arithmetic is exact on the shortest decimal each float is written as
+    (a JSON number read again is the same float, so the same decimal), so
+    that a replay derives the same integer on every host and no product
+    rounds across an integer."""
+    a.require(type(headroom) is int and headroom >= 1 and finals and
+              all(type(n) is int and n >= 1 and type(w) is float and
+                  math.isfinite(w) and w > 0 for n, w in finals) and
+              type(seconds) in (int, float) and math.isfinite(seconds) and
+              seconds > 0, "invalid warm-up count inputs")
+    seconds = Fraction(repr(seconds))
+    return batch_iterations(max(
+        -(-headroom * seconds * n // Fraction(repr(wall)))
+        for n, wall in finals), "warmup")
 
 
 class CheckoutChanged(ValueError):
@@ -133,6 +182,12 @@ class Table:
         docstring): it names each cell's seconds, the layout seed, pairs and
         samples, and a run uses those and no others (a task whose runs
         predate this keeps --batch-seconds, --pairs and --samples free).
+    schedule: the fixed-count schedule of every process of the grid: `ramp`
+        (the default: every count 1, 2, 4, ..., N, a power of two) or
+        `warmup` (one recorded batch of N, any N, then the samples), whose
+        counts follow `warmup_count`; a warmup table needs fixed seconds,
+        and its headroom is 1 unless the table says otherwise (a ramp
+        table's is 2).
     pairs, samples and seed (the layout seed) are then fields of the table,
         as are headroom, target and max_pairs and the seconds: sealed with
         the driver, `predeclare` copies them into the counts file and `run`
@@ -172,7 +227,8 @@ class Table:
     def __init__(self, name, label, cases, driver, counts, *, seconds=0.3,
                  seconds_by_case=None, fixed_seconds=False, pairs=10,
                  samples=3, seed=None, revisions=(), pilot_pairs=10,
-                 pilot_samples=3, headroom=2, target=TARGET,
+                 pilot_samples=3, headroom=None, schedule="ramp",
+                 target=TARGET,
                  max_pairs=MAX_PAIRS, baseline=a.BASE, drivers=(),
                  acceptance=(), layout_acceptance=(), engine=True,
                  engines=(), sealed=(), sealed_history=None, sources=(),
@@ -209,6 +265,11 @@ class Table:
             layout_seed(seed + "-ext")
         a.require(fixed_seconds or not revisions, "counts revisions belong "
                   "to a table with fixed seconds")
+        a.require(schedule in ("ramp", "warmup"), "unknown schedule")
+        a.require(schedule == "ramp" or fixed_seconds, "a table with the "
+                  "warmup schedule has fixed seconds")
+        headroom = (2 if schedule == "ramp" else 1) \
+            if headroom is None else headroom
         names = [Path(p).name for p in (counts, *revisions)]
         a.require(len(set(names)) == len(names), "repeated counts file")
         self.name, self.label, self.cases = name, label, tuple(cases)
@@ -216,6 +277,7 @@ class Table:
         self.seconds, self.seconds_by_case = seconds, dict(extra)
         self.fixed_seconds = fixed_seconds
         self.pairs, self.samples, self.headroom = pairs, samples, headroom
+        self.schedule = schedule
         self.seed, self.revisions = seed, tuple(map(Path, revisions))
         self.tree = tree
         self.pilot_pairs, self.pilot_samples = pilot_pairs, pilot_samples
@@ -899,6 +961,22 @@ class Grid:
         a.require(len(counts) >= 1, "no develop calibration counts")
         return counts
 
+    def calibration_finals(self, folder, case, size):
+        """(iterations, wall) of the final calibration batch of each
+        develop-only process of one archived cell, sorted and without
+        repeats: what the warmup count rule reads."""
+        control = folder / ("%s-%d-control" % (case, size))
+        finals = set()
+        for path in sorted(control.glob("pair-*.json.gz")):
+            receipt = a.load(path)
+            if receipt["fixture"] != "performance":
+                continue
+            last = receipt["measurements"]["workloads"][case][
+                "calibration"][-1]
+            finals.add((last["iterations"], last["wall"]))
+        a.require(len(finals) >= 1, "no develop calibration counts")
+        return sorted(finals)
+
     def check_pilot_settings(self, inventory, seconds=None):
         """Counts follow the pilot's batch seconds; a pilot made with other
         seconds than the counts predeclare (the table's, or the file's own
@@ -929,7 +1007,8 @@ class Grid:
         t = self.t
         return dict(layout_seed=t.seed, pairs=t.pairs, samples=t.samples,
                     headroom=t.headroom, seconds=t.seconds_map(),
-                    target=t.target, max_pairs=t.max_pairs)
+                    target=t.target, max_pairs=t.max_pairs,
+                    schedule=t.schedule)
 
     def file_settings(self, found):
         """The same as a counts file says them: a replay and the derivation
@@ -953,6 +1032,8 @@ class Grid:
         seed, pairs, samples = (settings[k] for k in (
             "layout_seed", "pairs", "samples"))
         headroom = settings["headroom"]
+        schedule = settings.get("schedule", "ramp")
+        a.require(schedule in ("ramp", "warmup"), "unknown schedule")
         inventory = a.load(grid / "inventory.json")
         self.h.check_pilot_settings(inventory, settings["seconds"] or None)
         if t.fixed_seconds:
@@ -984,7 +1065,12 @@ class Grid:
                     found[name] = self.h.check_pilot_cell(
                         folder, inventory, row, counts,
                         settings["seconds"][name])
-                table[name] = batch_iterations(headroom * max(counts))
+                if schedule == "warmup":
+                    table[name] = warmup_count(
+                        headroom, settings["seconds"][name],
+                        self.h.calibration_finals(folder, case, size))
+                else:
+                    table[name] = batch_iterations(headroom * max(counts))
         a.require(set(table) == set(t.names()),
                   "incomplete predeclared counts")
         if t.fixed_seconds:
@@ -993,8 +1079,10 @@ class Grid:
         result = dict(schema=t.schema("iterations"),
                       source=inventory["driver"],
                       baseline=inventory["baseline"], headroom=headroom,
-                      rule="HEADROOM * max develop calibration count in B/B",
+                      rule=WARMUP_RULE if schedule == "warmup" else RAMP_RULE,
                       iterations=table)
+        if schedule == "warmup":
+            result["schedule"] = schedule
         if t.fixed_seconds:
             result.update(
                 seconds=settings["seconds"], layout_seed=seed, pairs=pairs,
@@ -1056,12 +1144,15 @@ class Grid:
                   all(c in found["iterations"] for c in cells),
                   "a revision rescales cells of the previous counts")
         result = copy.deepcopy(found)
+        schedule = schedule_of(found)
         for cell in cells:
             result["iterations"][cell] = batch_iterations(
-                found["iterations"][cell] * REVISION_FACTOR)
+                found["iterations"][cell] * REVISION_FACTOR, schedule)
         result["revises"] = dict(
             previous=a.seal(previous), cells=sorted(cells),
-            factor=REVISION_FACTOR, reason=REVISION_REASON)
+            factor=REVISION_FACTOR,
+            reason=(WARMUP_REVISION_REASON if schedule == "warmup" else
+                    REVISION_REASON))
         return result
 
     def repiloted(self, grid, previous, reason, settings=None,
@@ -1365,7 +1456,7 @@ class Grid:
 
     def check_report(self, folder, report, baseline, candidate, seconds,
                      case, size, iterations, pairs=None, samples=None,
-                     layout_seed=None):
+                     layout_seed=None, schedule=None):
         """Recompute a report under the policy it recorded."""
         t = self.t
         pairs = t.pairs if pairs is None else pairs
@@ -1385,7 +1476,8 @@ class Grid:
                 candidate=baseline if selection == "control" else candidate,
                 pairs=pairs, samples=samples, seconds=seconds,
                 iterations=iterations, policy=policy,
-                layout_seed=layout_seed)
+                layout_seed=layout_seed,
+                **({} if schedule is None else dict(schedule=schedule)))
         for name, value in results["candidate"]["metrics"].items():
             a.apply_control(value, results["control"]["metrics"][name])
         a.require(canonical([results]) == canonical(report["workloads"]),
@@ -1429,6 +1521,14 @@ class Grid:
                   "changed experiment outcome")
         return folder, report
 
+    def schedule_args(self, inventory):
+        """The schedule of the counts of an inventory, as the trailing
+        argument of `check_report` when it is not the historical one (a
+        module that wraps that step keeps the signature its archives
+        used)."""
+        schedule = schedule_of(inventory["iterations"])
+        return () if schedule == "ramp" else (schedule,)
+
     def replay_rows(self, root, inventory):
         """Recompute every archived cell of one inventory."""
         t = self.t
@@ -1450,7 +1550,8 @@ class Grid:
                     self.h.cell_seconds(inventory, name), *key,
                     row["iterations"],
                     row.get("pairs", inventory["pairs"]),
-                    inventory["samples"], inventory.get("layout_seed"))
+                    inventory["samples"], inventory.get("layout_seed"),
+                    *self.schedule_args(inventory))
                 reports[key] = report
             print("REPLAY %s %d" % key, flush=True)
         return reports
@@ -1508,8 +1609,10 @@ class Grid:
                     name = "%s-%d" % (case, size)
                     count = counts[name]
                     seconds = self.h.cell_seconds(inventory, name)
-                    print("START %s N=%d pairs=%d seconds=%s" % (
-                        name, count, pairs, seconds), flush=True)
+                    print("START %s N=%d pairs=%d seconds=%s%s" % (
+                        name, count, pairs, seconds, "" if schedule_of(
+                            inventory["iterations"]) == "ramp" else
+                        " schedule=warmup"), flush=True)
                     self.h.measure_cell(root, inventory, case, size, pairs,
                                         count, seconds, seed, args, reports,
                                         fds)
@@ -1532,7 +1635,9 @@ class Grid:
                 candidate=inventory["candidate"],
                 authorize_measurements=True, case=[case], size=[size],
                 output=folder, mode="isolated", repo=args.repo,
-                build_manifest=None, layout_seed=seed)
+                build_manifest=None, layout_seed=seed,
+                batch_schedule=None if schedule_of(
+                    inventory["iterations"]) == "ramp" else "warmup")
             report = a.run(options)
             archive = root / (name + ".json.xz")
             files = self.h.archive(folder, archive, scratch)
@@ -1547,7 +1652,8 @@ class Grid:
             checkpoint(root / "inventory.json", inventory)
             self.h.check_report(folder, report, inventory["baseline"],
                                 inventory["candidate"], seconds, case, size,
-                                count, pairs, inventory["samples"], seed)
+                                count, pairs, inventory["samples"], seed,
+                                *self.schedule_args(inventory))
             print("END %s exit=%d protocol=%s" % (
                 name, a.report_exit_status(report), report["success"]),
                 flush=True)
@@ -1574,6 +1680,8 @@ class Grid:
                          ("max_pairs", t.max_pairs)):
             a.require(counts.get(key) == own, "the %s of the counts differs "
                       "from the table's" % key.replace("_", " "))
+        a.require(schedule_of(counts) == t.schedule, "the schedule of the "
+                  "counts differs from the table's")
         return t.pairs, t.samples, t.seed
 
     def repo_path(self, repo, path):
@@ -2453,6 +2561,9 @@ class Grid:
         if not second:
             self.h.check_experiment(inventory)
         self.h.check_header(inventory)
+        if schedule_of(inventory["iterations"]) == "warmup":
+            print("%s schedule: warmup; counts rule: %s" % (
+                t.label, inventory["iterations"]["rule"]), flush=True)
         self.h.check_sources(inventory, repo)
         self.h.check_commit(inventory, repo)
         self.h.check_checkout(inventory, repo)
@@ -2559,7 +2670,8 @@ class Grid:
         how = counts.add_mutually_exclusive_group()
         how.add_argument("--rescale", nargs="+", metavar="CELL",
                          help="cells the previous grid rejected as fixed "
-                         "calibration too short")
+                         "calibration too short (a warmup table: as a "
+                         "warm-up or batch too short)")
         how.add_argument("--repilot", metavar="REASON",
                          help="a fresh pilot, for a change that alters "
                          "what is measured; the reason is recorded")

@@ -238,7 +238,8 @@ def archive_protocol(manifest, receipt):
 
 
 def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
-            seconds, iterations=None, policy=POLICY, layout_seed=None):
+            seconds, iterations=None, policy=POLICY, layout_seed=None,
+            schedule=None):
     """Revalidate complete protocol and source binding before statistics."""
     folder = Path(folder)
     manifest = load(folder / "manifest.json")
@@ -252,6 +253,8 @@ def analyze(folder, *, case, size, baseline, candidate, pairs, samples,
     require(options.get("outliers") == "none removed", "changed outlier rule")
     require(options.get("batch_iterations") == iterations,
             "wrong predeclared batch iterations")
+    require(options.get("batch_schedule") == schedule,
+            "wrong predeclared batch schedule")
     require(options.get("layout_seed") == layout_seed,
             "wrong layout randomization seed")
     for side, pin in (("baseline", baseline), ("candidate", candidate)):
@@ -660,7 +663,7 @@ def run_logged(command, output, fds, timeout, stdin=None, append=False):
 
 
 def matrix_command(args, case, size, candidate, folder, iterations=None,
-                   seed=None):
+                   seed=None, schedule=None):
     """The paired runner's command for one baseline-versus-`candidate`
     experiment of one matrix cell. `args.baseline` is the baseline."""
     command = [sys.executable, str(HERE.parent /
@@ -680,6 +683,8 @@ def matrix_command(args, case, size, candidate, folder, iterations=None,
                "--output", str(folder)]
     if iterations is not None:
         command += ["--batch-iterations", str(iterations)]
+    if schedule is not None:
+        command += ["--batch-schedule", schedule]
     if seed is not None:
         command += ["--layout-seed", seed]
     return command
@@ -690,9 +695,14 @@ def run(args):
             0.1 <= args.batch_seconds <= 60 and args.timeout > 0,
             "require >=10 pairs, >=3 samples, 0.1..60s batches, timeout >0")
     iterations = getattr(args, "batch_iterations", None)
+    schedule = getattr(args, "batch_schedule", None)
+    if schedule == "ramp":
+        schedule = None  # the historical protocol names no field
     if iterations is not None:
-        from performance_schema import batch_iterations
-        batch_iterations(iterations)
+        from performance_schema import batch_iterations, batch_schedule
+        batch_iterations(iterations, batch_schedule(schedule))
+    require(iterations is not None or schedule is None,
+            "a batch schedule needs a fixed batch count")
     seed = getattr(args, "layout_seed", None)
     if seed is not None:
         from performance_schema import layout_seed
@@ -739,7 +749,7 @@ def run(args):
                                      args.candidate)
                         command = matrix_command(
                             args, case, size, candidate, folder, iterations,
-                            seed)
+                            seed, schedule)
                         command_result = run_logged(
                             command, output / (tag + ".log"), fds, None)
                         report["commands"].append(command_result)
@@ -754,7 +764,7 @@ def run(args):
                             candidate=candidate, pairs=args.pairs,
                             samples=args.samples, seconds=args.batch_seconds,
                             iterations=iterations, policy=EQUIVALENCE_POLICY,
-                            layout_seed=seed)
+                            layout_seed=seed, schedule=schedule)
                     # Controls are never subtracted as a noise budget.
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():
@@ -801,7 +811,11 @@ def main(argv=None):
     execute.add_argument("--samples", type=int, default=5)
     execute.add_argument("--batch-seconds", type=float, default=0.2)
     execute.add_argument("--batch-iterations", type=int,
-                         help="common predeclared power-of-two matrix count")
+                         help="common predeclared matrix count: a power of "
+                         "two for the ramp schedule, any for warmup")
+    execute.add_argument("--batch-schedule", choices=("ramp", "warmup"),
+                         help="fixed-count schedule: ramp (default) or "
+                         "warmup; needs --batch-iterations")
     execute.add_argument("--timeout", type=int, default=1800)
     execute.add_argument("--output", type=Path, required=True)
     execute.add_argument("--authorize-measurements", action="store_true")

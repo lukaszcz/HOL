@@ -142,7 +142,8 @@ class Rig(unittest.TestCase):
         made once for each table and copied, because every test needs them."""
         t = self.table
         key = repr((t.keys(), t.seconds_map(), t.pairs, t.samples,
-                    t.pilot_pairs, t.pilot_samples, t.seed, t.sealed))
+                    t.pilot_pairs, t.pilot_samples, t.seed, t.sealed,
+                    t.schedule, t.headroom))
         kept = PILOTS.get(key)
         if kept is None:
             self.make_pilot(self.pilot_dir)
@@ -221,11 +222,12 @@ class Rig(unittest.TestCase):
 
     def fake_analyze(self, folder, *, case, size, baseline, candidate, pairs,
                 samples, seconds, iterations=None, policy=a.POLICY,
-                layout_seed=None):
+                layout_seed=None, schedule=None):
         self.analyses.append(dict(
             case=case, size=size, control=candidate == baseline,
             pairs=pairs, samples=samples, seconds=seconds,
-            iterations=iterations, seed=layout_seed, policy=policy))
+            iterations=iterations, seed=layout_seed, policy=policy,
+            **({} if schedule is None else dict(schedule=schedule))))
         return self.analysis(case, size, candidate == baseline, pairs,
                              layout_seed, pilot=iterations is None)
 
@@ -238,12 +240,17 @@ class Rig(unittest.TestCase):
         case = command[command.index("--performance-case") + 1]
         size = int(command[command.index("--performance-size") + 1])
         folder.mkdir(parents=True)
+        seconds = self.table.seconds_for(case)
         for pair in range(2):
+            # The final batch of the first process took 1.5 times the
+            # target, that of the second 1.25 times it (a warmup count
+            # reads the wall seconds).
             receipt = dict(fixture="performance", measurements=dict(
                 workloads={case: dict(calibration=[
-                    dict(iterations=1),
+                    dict(iterations=1, wall=round(seconds / 100, 6)),
                     dict(iterations=self.max_count(case, size) // (
-                        1 + pair))])}))
+                        1 + pair),
+                         wall=round(seconds * (1.5 - 0.25 * pair), 6))])}))
             with gzip.open(folder / ("pair-%02d.json.gz" % pair), "wt") as w:
                 json.dump(receipt, w)
         with gzip.open(folder / "pair-99.json.gz", "wt") as stream:
@@ -3327,6 +3334,235 @@ class Revisions(Rig):
                      revisions=("c2.json",))
         with self.assertRaisesRegex(ValueError, "repeated counts file"):
             self.make_table(revisions=(self.counts,))
+
+
+class WarmupCount(unittest.TestCase):
+    """The count rule of the warmup schedule."""
+
+    def test_the_count_is_a_ceiling_of_the_exact_quotient(self):
+        # 0.1 * 3 / 0.3 is 1.0000000000000002 in floats, exactly 1 here.
+        self.assertEqual(tg.warmup_count(1, 0.1, [(3, 0.3)]), 1)
+        self.assertEqual(tg.warmup_count(1, 0.3, [(3, 0.9)]), 1)
+        self.assertEqual(tg.warmup_count(1, 0.3, [(3, 0.8999)]), 2)
+        self.assertEqual(tg.warmup_count(1, 1.0, [(8, 1.5)]), 6)
+        self.assertEqual(tg.warmup_count(1, 1, [(8, 2.0)]), 4)
+        self.assertEqual(tg.warmup_count(1, 1.0, [(7, 1.0)]), 7)
+
+    def test_the_count_is_the_largest_over_the_processes(self):
+        finals = [(4, 1.0), (8, 1.0), (2, 0.1), (1, 100.0)]
+        self.assertEqual(tg.warmup_count(1, 1.0, finals), 20)
+        self.assertEqual(tg.warmup_count(1, 1.0, finals[::-1]), 20)
+        self.assertEqual(tg.warmup_count(1, 1.0, finals[:2]), 8)
+
+    def test_the_headroom_multiplies_before_the_ceiling(self):
+        finals = [(8, 1.5), (4, 1.25)]
+        self.assertEqual(tg.warmup_count(1, 1.0, finals), 6)
+        self.assertEqual(tg.warmup_count(2, 1.0, finals), 11)
+        self.assertEqual(tg.warmup_count(3, 1.0, finals), 16)
+
+    def test_the_count_is_a_batch_count(self):
+        self.assertEqual(tg.warmup_count(1, 0.001, [(1, 10.0)]), 1)
+        self.assertEqual(tg.warmup_count(1, 1.0, [(2 ** 30, 1.0)]), 2 ** 30)
+        with self.assertRaisesRegex(ValueError, "1..1073741824"):
+            tg.warmup_count(1, 1.0, [(2 ** 30, 0.5)])
+
+    def test_inputs_that_are_not_a_pilot_are_refused(self):
+        for args in ((0, 1.0, [(1, 1.0)]), (True, 1.0, [(1, 1.0)]),
+                     (1.0, 1.0, [(1, 1.0)]), (1, 1.0, []),
+                     (1, 0.0, [(1, 1.0)]), (1, -1.0, [(1, 1.0)]),
+                     (1, float("nan"), [(1, 1.0)]),
+                     (1, float("inf"), [(1, 1.0)]), (1, "1", [(1, 1.0)]),
+                     (1, 1.0, [(0, 1.0)]), (1, 1.0, [(1.0, 1.0)]),
+                     (1, 1.0, [(1, 0.0)]), (1, 1.0, [(1, 1)]),
+                     (1, 1.0, [(1, float("nan"))]),
+                     (1, 1.0, [(1, float("inf"))])):
+            with self.subTest(args=args), self.assertRaisesRegex(
+                    ValueError, "invalid warm-up count inputs"):
+                tg.warmup_count(*args)
+
+    def test_a_schedule_is_ramp_or_warmup_only(self):
+        self.assertEqual(tg.schedule_of({}), "ramp")
+        self.assertEqual(tg.schedule_of({"schedule": "warmup"}), "warmup")
+        for value in ("ramp", "x", 1, ""):
+            with self.assertRaises(ValueError):
+                tg.schedule_of({"schedule": value})
+
+
+class Warmup(Rig):
+    """A table of the warmup schedule, whole: the counts a pilot gives, the
+    run, the replay and the revision."""
+    # The rig's pilot: the final batch of the first process is n iterations
+    # in 1.5 times the target, that of the second n / 2 in 1.25 times it, so
+    # the count of a cell is ceil(2 * n / 3) for n = 2, 4, ..., 32.
+    expected = {0: 2, 1: 2, 10: 3, 100: 6, 1000: 11, 10000: 22}
+
+    def make_table(self, **kw):
+        return super().make_table(schedule="warmup", **kw)
+
+    def cell_counts(self, counts=None):
+        counts = json.loads(self.counts.read_text()) if counts is None \
+            else counts
+        return counts, {k: v for k, v in counts["iterations"].items()}
+
+    def test_the_counts_follow_the_rule_and_name_the_schedule(self):
+        counts, cells = self.cell_counts()
+        self.assertEqual((counts["schedule"], counts["headroom"],
+                          counts["rule"]), ("warmup", 1, tg.WARMUP_RULE))
+        self.assertEqual(cells, {"%s-%d" % key: self.expected[key[1]]
+                                 for key in self.table.keys()})
+        self.assertNotEqual(set(cells.values()), {2 ** n for n in range(6)})
+        self.assertEqual(self.go(["verify-counts", "--grid",
+                                  str(self.pilot_dir)])[0], 0)
+
+    def test_the_headroom_is_a_field_of_the_table(self):
+        self.assertEqual(tg.Table("t", "T", CASES, self.driver, self.counts,
+                                  fixed_seconds=True, seed="s0",
+                                  schedule="warmup").headroom, 1)
+        self.assertEqual(self.table.headroom, 1)
+        self.declare_again(headroom=2)
+        counts, cells = self.cell_counts()
+        self.assertEqual(counts["headroom"], 2)
+        self.assertEqual(cells["exclude_missing-100"], 11)
+        self.assertEqual(cells["exclude_missing-10000"], 43)
+
+    def test_a_warmup_table_has_fixed_seconds_and_a_known_schedule(self):
+        for kw in (dict(schedule="warmup", fixed_seconds=False),
+                   dict(schedule="x", fixed_seconds=True),
+                   dict(schedule=None, fixed_seconds=True)):
+            with self.subTest(**kw), self.assertRaises(ValueError):
+                tg.Table("t", "T", CASES, self.driver, self.counts, **kw)
+
+    def test_the_counts_are_derived_again_from_the_pilot(self):
+        good = self.counts.read_text()
+        value = json.loads(good)
+        for label, changed in (
+                ("count", dict(value, iterations=dict(
+                    value["iterations"], **{"exclude_empty-0": 4}))),
+                ("power of two", dict(value, iterations=dict(
+                    value["iterations"], **{"exclude_missing-100": 8}))),
+                ("rule", dict(value, rule=tg.RAMP_RULE)),
+                ("headroom", dict(value, headroom=2)),
+                ("ramp", {k: v for k, v in value.items()
+                          if k != "schedule"}),
+                ("named ramp", dict(value, schedule="ramp"))):
+            with self.subTest(label):
+                self.counts.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    self.go(["verify-counts", "--grid", str(self.pilot_dir)])
+        self.counts.write_text(good)
+
+    def test_counts_of_the_other_schedule_are_refused_by_a_run(self):
+        good = json.loads(self.counts.read_text())
+        for label, changed in (
+                ("ramp", {k: v for k, v in good.items() if k != "schedule"}),
+                ("named ramp", dict(good, schedule="ramp"))):
+            with self.subTest(label):
+                self.counts.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    self.first(name="g-" + label)
+        self.assertEqual(self.calls, 0)
+
+    def test_a_ramp_table_refuses_counts_that_name_a_schedule(self):
+        self.table.schedule = "ramp"
+        with self.assertRaisesRegex(ValueError, "schedule of the counts"):
+            self.first()
+        self.assertEqual(self.calls, 0)
+
+    def test_a_run_gives_every_process_the_schedule_and_its_count(self):
+        out, status, text = self.first()
+        self.assertEqual(status, 0)
+        counts = json.loads(self.counts.read_text())["iterations"]
+        self.assertEqual(len(self.runs), 12)
+        for options in self.runs:
+            name = "%s-%d" % (options["case"][0], options["size"][0])
+            self.assertEqual(options["batch_schedule"], "warmup")
+            self.assertEqual(options["batch_iterations"], counts[name])
+        self.assertEqual(text.count(" schedule=warmup"), 12)
+        self.assertIn("exclude_missing-100 N=6 ", text)
+        self.assertEqual(self.inventory(out)["iterations"]["schedule"],
+                         "warmup")
+        cells = self.cells()
+        self.assertEqual(len(cells), 24)
+        self.assertEqual({r["schedule"] for r in cells}, {"warmup"})
+
+    def test_a_ramp_run_names_no_schedule(self):
+        self.table.schedule = "ramp"
+        self.table.headroom = 2
+        self.declare_again()
+        out, status, text = self.first()
+        self.assertEqual(status, 0)
+        self.assertTrue(all(o["batch_schedule"] is None for o in self.runs))
+        self.assertNotIn("schedule", text)
+        self.assertNotIn("schedule", self.inventory(out)["iterations"])
+        self.assertTrue(all("schedule" not in r for r in self.cells()))
+
+    def test_replay_derives_the_schedule_again_and_says_it(self):
+        out, _, _ = self.first()
+        self.analyses.clear()
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 0)
+        self.assertIn("TOY schedule: warmup; counts rule: " + tg.WARMUP_RULE,
+                      text)
+        self.assertEqual({r["schedule"] for r in self.cells()}, {"warmup"})
+        header = self.inventory(out)
+        for label, counts in (
+                ("ramp", {k: v for k, v in header["iterations"].items()
+                          if k != "schedule"}),
+                ("named ramp", dict(header["iterations"], schedule="ramp"))):
+            with self.subTest(label):
+                self.counts.write_text(json.dumps(counts))
+                (out / "inventory.json").write_text(json.dumps(
+                    dict(header, iterations=counts)))
+                with self.assertRaises(ValueError):
+                    self.go(self.replay_argv(out))
+
+    def test_replay_of_a_ramp_grid_is_silent_about_a_schedule(self):
+        self.table.schedule = "ramp"
+        self.table.headroom = 2
+        self.declare_again()
+        out, _, _ = self.first()
+        status, text = self.go(self.replay_argv(out))
+        self.assertEqual(status, 0)
+        self.assertNotIn("schedule", text)
+
+    def revise(self, *cells):
+        return self.go(["predeclare", "--grid", str(self.pilot_dir),
+                        "--output", str(self.repo / "toy_iterations_2.json"),
+                        "--revises", str(self.counts), "--rescale", *cells])
+
+    def test_a_revision_rescales_a_count_that_is_not_a_power_of_two(self):
+        self.assertEqual(self.revise("exclude_missing-100")[0], 0)
+        old = json.loads(self.counts.read_text())
+        new = json.loads((self.repo / "toy_iterations_2.json").read_text())
+        self.assertEqual(new["iterations"]["exclude_missing-100"], 24)
+        self.assertEqual(new["schedule"], "warmup")
+        self.assertEqual(new["rule"], tg.WARMUP_RULE)
+        self.assertEqual(new["revises"], dict(
+            previous=a.seal(self.counts), cells=["exclude_missing-100"],
+            factor=4, reason="fixed batch too short"))
+        for name, count in old["iterations"].items():
+            if name != "exclude_missing-100":
+                self.assertEqual(new["iterations"][name], count)
+        self.table.revisions = (self.repo / "toy_iterations_2.json",)
+        self.assertEqual(self.go(["verify-counts", "--grid",
+                                  str(self.pilot_dir)])[0], 0)
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        self.assertEqual({o["batch_iterations"] for o in self.runs
+                          if (o["case"][0], o["size"][0]) ==
+                          ("exclude_missing", 100)}, {24})
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+
+    def test_a_revision_keeps_the_batch_count_bound(self):
+        value = json.loads(self.counts.read_text())
+        value["iterations"]["exclude_empty-0"] = 2 ** 29 + 1
+        self.counts.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "1..1073741824"):
+            self.grid.rescaled(self.counts, ["exclude_empty-0"])
+        value["iterations"]["exclude_empty-0"] = 2 ** 28
+        self.counts.write_text(json.dumps(value))
+        self.assertEqual(self.grid.rescaled(self.counts, [
+            "exclude_empty-0"])["iterations"]["exclude_empty-0"], 2 ** 30)
 
 
 class Sweeping(Rig):

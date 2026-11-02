@@ -194,6 +194,8 @@ def audit(manifest, receipt):
                 str(options["batch_iterations"])
                 if "batch_iterations" in options else None),
             "wrong fixed iteration environment")
+    require(env.get("PERF_SCHEDULE") == options.get("batch_schedule"),
+            "wrong batch schedule environment")
     require(env.get("PERF_LAYOUT") == (
                 str(layout_units(options["layout_seed"], receipt["pair"],
                                  selection))

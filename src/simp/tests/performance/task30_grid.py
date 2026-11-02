@@ -93,11 +93,36 @@ INSTALLED = (
     if p.suffix == ".sml" or p.name == "Holmakefile")
 SEALED = ("task30_cases.py", "task29_gate.py", "matrix_schema.py",
           "performance_schema.py", "evidence_bundle.py") + INSTALLED
+# The code the first-stage grid and the pilot of this table were measured by,
+# 63ac28189 (before the warmup schedule): the seals of the files that commit
+# changed, which an inventory recorded then still names. The table keeps the
+# ramp schedule, so its counts, grid and ledger replay as they did.
+DRIVERS = (dict(bytes=9634,
+                sha256="b958adae97df21cbcd5b1b72b5d47fa5"
+                       "455854aec6f45c133f042fb0e883586f"),)
+ENGINES = (dict(bytes=131311,
+                sha256="b32f98ecee9fd2dbbebf5c21ca2ca053"
+                       "7442b3ba1b070861fe00a68910cd7d49"),)
+ACCEPTANCE = (dict(bytes=38678,
+                   sha256="108a0d0827ec6848a0c1e2e6987f9f80"
+                          "02591ac24498c7119cf5f58f14725b83"),)
+SEALED_HISTORY = {
+    "MatrixPerformance.sml": (dict(
+        bytes=4954, sha256="b805611bc816a19bf7e17734b10a40cb"
+                           "65996086366be5e34078266dc010c13c"),),
+    "performance_schema.py": (dict(
+        bytes=10528, sha256="ca6d11ba99b59e43313c8b1da2ee0dc6"
+                            "c12b9289bd8c7761bbd8bf322eb11516"),),
+    "../compatibility/run_paired.py": (dict(
+        bytes=48705, sha256="81baeb647f95850f267e3f72b333cc2a"
+                            "4921e342070c92a951a1e34583738dac"),)}
 TABLE = tg.Table(
     "task30", "TASK30", cases.CASES, __file__, COUNTS, seconds=SECONDS,
     seconds_by_case={c: LONG_SECONDS for c in cases.DELETIONS},
     fixed_seconds=True, pairs=PAIRS, samples=SAMPLES, seed=LAYOUT_SEED,
-    baseline=a.BASE, engine=True, engines=(), tree="src", sealed=SEALED,
+    baseline=a.BASE, engine=True, engines=ENGINES, drivers=DRIVERS,
+    layout_acceptance=ACCEPTANCE, sealed_history=SEALED_HISTORY, tree="src",
+    sealed=SEALED,
     sources=cases.SOURCES, pinned=pins.PINNED, pin_file="task30_pins.py",
     pin_history=pins.PIN_HISTORY, require_seed=True,
     allocation="the separate gate of allocation_matrix.py --task task30, "

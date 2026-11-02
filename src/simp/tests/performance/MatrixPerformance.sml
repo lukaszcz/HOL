@@ -16,10 +16,17 @@ val seconds = valOf (Real.fromString (Paired.env "PERF_SECONDS"))
    selections, even if an earlier doubling already exceeds the time target. *)
 val iterations = Option.map (fn s => valOf (Int.fromString s))
                             (OS.Process.getEnv "PERF_ITERATIONS")
+(* The fixed-count schedule is [ramp] (no PERF_SCHEDULE: every count 1, 2, 4,
+   ..., N, a power of two) or [warmup] (one batch of exactly N, any N, then
+   the samples). *)
+val schedule = OS.Process.getEnv "PERF_SCHEDULE"
+val warmup = schedule = SOME "warmup"
 fun powerOfTwo n = n = 1 orelse
                   (n > 1 andalso n mod 2 = 0 andalso powerOfTwo (n div 2))
-val _ = required (case iterations of NONE => true | SOME n =>
-                  n <= 1073741824 andalso powerOfTwo n)
+val _ = required (schedule = NONE orelse warmup)
+val _ = required (case iterations of NONE => not warmup | SOME n =>
+                  n >= 1 andalso n <= 1073741824 andalso
+                  (warmup orelse powerOfTwo n))
 val _ = required (Lib.mem label cases andalso Lib.mem size sizes andalso
                   samples > 0 andalso Real.isFinite seconds andalso
                   seconds > 0.0)
@@ -74,12 +81,20 @@ fun calibrate count = let
                                  | SOME n => count = n
 in if finished then (required (wall >= seconds); count) else
      (required (count < 1073741824); calibrate (count * 2)) end
+(* The warm-up batch is not a sample: it has its own observation key, and the
+   runtime record of the fixture for it is a calibration record. It must last
+   at least half the target seconds, as every sample must (the validator
+   checks the samples), else the experiment fails; it never recalibrates. *)
+fun warm count = let
+  val (wall,fields) = measured "calibration" count
+  val _ = emit ("warmup." ^ label) (Int.toString count :: fields)
+in (required (wall >= seconds / 2.0); count) end
 (* Compile the entire driver BEFORE executing calibration. A top-level
    [val count = calibrate 1] followed by [fun sample ... count ...] lets the
    compiler embed the measured count and allocates compiler data between
    calibration and sampling. The count here is a runtime local instead. *)
 fun experiment () = let
-  val count = calibrate 1
+  val count = if warmup then warm (valOf iterations) else calibrate 1
   fun sample i = let
     val (_,fields) = measured "sample" count
     val _ = emit ("batch." ^ label)
