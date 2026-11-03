@@ -122,9 +122,8 @@ TABLE = tg.Table(
     seconds_by_case={c: LONG_SECONDS for c in cases.DELETIONS},
     fixed_seconds=True, schedule="ramp", pairs=PAIRS, samples=SAMPLES,
     seed=LAYOUT_SEED, baseline=a.BASE, engine=True, engines=ENGINES,
-    drivers=DRIVERS,
-    layout_acceptance=ACCEPTANCE, sealed_history=SEALED_HISTORY, tree="src",
-    sealed=SEALED,
+    drivers=DRIVERS, layout_acceptance=ACCEPTANCE,
+    sealed_history=SEALED_HISTORY, tree="src", sealed=SEALED,
     sources=cases.SOURCES, pinned=pins.PINNED, pin_file="task30_pins.py",
     pin_history=pins.PIN_HISTORY, require_seed=True,
     allocation="the separate gate of allocation_matrix.py --task task30, "

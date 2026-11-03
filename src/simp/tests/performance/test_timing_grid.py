@@ -14,9 +14,9 @@ The counts file of every rig comes from a (stand-in) pilot and `predeclare`,
 as a fixed table's must; a pilot is made once for each table and copied.
 """
 import argparse
-import ast
 import contextlib
 import gzip
+import inspect
 import io
 import json
 import os
@@ -6195,7 +6195,6 @@ class Logged(unittest.TestCase):
                 a.run_logged(["/bin/true"], log, [], 60)
 
     def test_the_default_is_the_inherited_standard_input(self):
-        import inspect
         self.assertIsNone(
             inspect.signature(a.run_logged).parameters["stdin"].default)
 
@@ -6787,18 +6786,6 @@ class Checkout(unittest.TestCase):
         self.git("cat-file", "-e", measured + "^{commit}")
 
 
-def declared_schedule(path):
-    """The `schedule` keyword of the `Table(...)` call in the source of a
-    task module, or None when the call does not name one (so that the
-    default of `Table` would apply)."""
-    tree = ast.parse(Path(path).read_text())
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and
-             getattr(n.func, "attr", None) == "Table"]
-    assert len(calls) == 1, calls
-    return next((k.value.value for k in calls[0].keywords
-                 if k.arg == "schedule"), None)
-
-
 class Tables(unittest.TestCase):
     def table(self, cases=CASES, **kw):
         kw.setdefault("schedule", "ramp")
@@ -6817,9 +6804,15 @@ class Tables(unittest.TestCase):
             "toy", "TOY", CASES, "d.py", "c.json", fixed_seconds=True,
             seed="s0", headroom=3).headroom, 3)
 
+    def test_the_default_schedule_is_warmup(self):
+        self.assertEqual(
+            inspect.signature(tg.Table).parameters["schedule"].default,
+            "warmup")
+
     def test_a_table_without_fixed_seconds_names_the_ramp(self):
         # The default schedule is never changed by another argument: the
-        # warmup counts come from a counts file, so the table says ramp.
+        # warmup counts follow each cell's predeclared seconds, which only
+        # a fixed-seconds table has, so any other table names ramp.
         with self.assertRaisesRegex(ValueError, 'schedule="ramp"'):
             tg.Table("toy", "TOY", CASES, "d.py", "c.json")
         with self.assertRaisesRegex(ValueError, 'schedule="ramp"'):

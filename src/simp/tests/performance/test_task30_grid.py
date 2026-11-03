@@ -123,15 +123,11 @@ class Table(unittest.TestCase):
         self.assertIn("task30_cases.py", table.sealed)
         self.assertEqual(table.pin_file, "task30_pins.py")
 
-    def test_the_table_declares_the_ramp_schedule_itself(self):
-        # A new table defaults to warmup; this one must not follow the
-        # default, so its source names the schedule.
-        self.assertEqual(ttg.declared_schedule(t30.__file__), "ramp")
-
     def test_the_table_keeps_the_ramp_schedule(self):
         # The warmup schedule is for new tables; this one, its counts, pilot
         # and grid are those of the historical schedule.
         table = t30.TABLE
+        # The default being warmup, ramp here means the table names it.
         self.assertEqual((table.schedule, table.headroom), ("ramp", 2))
         if not t30.COUNTS.exists():
             self.skipTest("the counts are not committed")

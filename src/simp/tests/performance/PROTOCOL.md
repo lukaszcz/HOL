@@ -165,12 +165,12 @@ selections of every experiment get the same N and schedule.
   predeclared statistic) and the warmup experiments took 0.383 of the time of
   the ramp ones (3056 s against 7972 s). Decision, by the predeclared rule:
   `R <= 1.10`, adopt `warmup` with unchanged pairs (20 in the first stage,
-  the 20 of the second-stage formula). The least warm-up or sample wall over
-  its target was 0.87-1.05 per cell under `warmup` (0.866 for
-  `exclude_batch-10000`) and 1.71-3.5 under `ramp`, so the half-target check
-  holds with room. The warmup schedule needs fixed seconds, so a table
-  without them names `schedule="ramp"` (it is refused otherwise: a default
-  never depends on another argument).
+  the 20 of the second-stage formula). The least warm-up (under `ramp`: final
+  calibration) or sample wall over its target was 0.87-1.05 per cell under
+  `warmup` (0.866 for `exclude_batch-10000`) and 1.71-3.5 under `ramp`, so
+  the half-target check holds with room. The warmup schedule needs fixed
+  seconds, so a table without them names `schedule="ramp"` (it is refused
+  otherwise: a default never depends on another argument).
 - **The TASK30 table keeps `ramp`**, its counts file, pilot, grid and ledger,
   as does the TASK29A grid; both tables say `schedule="ramp"` themselves, and
   their archives replay unchanged at this code (the seals of the files this

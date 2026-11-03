@@ -190,11 +190,11 @@ class Table:
     schedule: the fixed-count schedule of every process of the grid:
         `warmup` (the default: one recorded batch of N, any N, then the
         samples), whose counts follow `warmup_count`, or `ramp` (every count
-        1, 2, 4, ..., N, a power of two). The headroom is 1 unless the table
-        says otherwise (a ramp table's is 2). A warmup table needs fixed
-        seconds, so a table without them must say `schedule="ramp"` (it is
-        refused otherwise, whatever its other arguments), as the TASK30 and
-        TASK29A tables do: their counts, pilots and archives are ramp.
+        1, 2, 4, ..., N, a power of two). The headroom defaults to 1 for
+        warmup and 2 for ramp. The default schedule does not depend on the
+        other arguments, and a warmup table needs fixed seconds, so a table
+        without them must name `schedule="ramp"`, as the TASK30 and TASK29A
+        tables do: their counts, pilots and archives are ramp.
     pairs, samples and seed (the layout seed) are then fields of the table,
         as are headroom, target and max_pairs and the seconds: sealed with
         the driver, `predeclare` copies them into the counts file and `run`
@@ -273,9 +273,10 @@ class Table:
         a.require(fixed_seconds or not revisions, "counts revisions belong "
                   "to a table with fixed seconds")
         a.require(schedule in ("ramp", "warmup"), "unknown schedule")
-        a.require(schedule == "ramp" or fixed_seconds, "a table without "
-                  "fixed seconds names schedule=\"ramp\" (the default, "
-                  "warmup, derives its counts from the counts file)")
+        a.require(schedule == "ramp" or fixed_seconds, "the warmup "
+                  "schedule needs fixed seconds (its counts follow each "
+                  "cell's predeclared seconds): set fixed_seconds=True, "
+                  "or name schedule=\"ramp\"")
         headroom = (2 if schedule == "ramp" else 1) \
             if headroom is None else headroom
         names = [Path(p).name for p in (counts, *revisions)]

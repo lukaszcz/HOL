@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import acceptance as a
 import task29a_grid as grid
-import test_timing_grid as ttg
 
 
 def cell(control, candidate=(0.99, 1.01), decision="pass"):
@@ -273,9 +272,8 @@ class Table(unittest.TestCase):
                          (10, 3, 2, 0.3, 0.015, 120))
         self.assertEqual(table.seconds_by_case, {})
         self.assertFalse(table.fixed_seconds)
+        # The default being warmup, ramp here means the table names it.
         self.assertEqual(table.schedule, "ramp")
-        # A new table defaults to warmup, so this one says ramp itself.
-        self.assertEqual(ttg.declared_schedule(grid.__file__), "ramp")
         # The recorded runs predate the engine seal and need no seed.
         self.assertFalse(table.engine)
         self.assertFalse(table.require_seed)
