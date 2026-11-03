@@ -66,7 +66,7 @@ LAYOUT_ACCEPTANCE = [dict(bytes=37709,
 # The engine is not sealed here: the recorded runs predate it.
 TABLE = tg.Table(
     "task29a", "TASK29A", gate.CASES, __file__, COUNTS, pairs=PAIRS,
-    samples=SAMPLES, headroom=HEADROOM, drivers=DRIVERS,
+    samples=SAMPLES, headroom=HEADROOM, schedule="ramp", drivers=DRIVERS,
     acceptance=ACCEPTANCE, layout_acceptance=LAYOUT_ACCEPTANCE,
     engine=False, require_seed=False,
     allocation="TASK29B scope; not part of this timing gate")

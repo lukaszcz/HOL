@@ -41,16 +41,21 @@ the table. The ledger is a discipline and not a proof. A counts file is
 never edited: a revision is a new file named in the table, derived from the
 file before it, by rescaling cells or by a fresh pilot.
 
-A table declares its fixed-count schedule. `ramp` (the default; the counts
-file names no schedule) is the historical one: every process calibrates 1, 2,
-4, ..., N and then takes its samples of N, N a power of two, HEADROOM times
-the largest final calibration count of the pilot. `warmup` runs one recorded
-warm-up batch of N and then the samples of N, N any integer: the largest over
-the pilot's processes of ceil(HEADROOM * seconds * n / wall) of the final
-calibration batch (`warmup_count`), the headroom being 1 for a new table. The
-counts file records the schedule and the rule, and a replay derives both
-again; a counts revision of a warmup table rescales a cell whose warm-up or
-batch was too short by the same factor.
+A table declares its fixed-count schedule, `warmup` by default. `warmup`
+runs one recorded warm-up batch of N and then the samples of N, N any
+integer: the largest over the pilot's processes of ceil(HEADROOM * seconds *
+n / wall) of the final calibration batch (`warmup_count`), the headroom being
+1 for a new table. `ramp` (the counts file names no schedule) is the
+historical one: every process calibrates 1, 2, 4, ..., N and then takes its
+samples of N, N a power of two, HEADROOM times the largest final calibration
+count of the pilot; a table without fixed seconds, and the TASK30 and
+TASK29A tables, whose counts and archives are ramp, declare it. The counts
+file records the schedule and the rule, and a replay derives both again; a
+counts revision of a warmup table rescales a cell whose warm-up or batch was
+too short by the same factor. The default follows the TASK30A validation
+(2026-11-03, 12 cells, 20 pairs, 5 samples): the median ratio of the B/B
+interval widths, warmup over ramp, was 1.005 (CPU) and 1.004 (wall) at 0.38
+of the time, so "R <= 1.10: adopt warmup with unchanged pairs".
 """
 import argparse
 import contextlib
@@ -182,12 +187,14 @@ class Table:
         docstring): it names each cell's seconds, the layout seed, pairs and
         samples, and a run uses those and no others (a task whose runs
         predate this keeps --batch-seconds, --pairs and --samples free).
-    schedule: the fixed-count schedule of every process of the grid: `ramp`
-        (the default: every count 1, 2, 4, ..., N, a power of two) or
-        `warmup` (one recorded batch of N, any N, then the samples), whose
-        counts follow `warmup_count`; a warmup table needs fixed seconds,
-        and its headroom is 1 unless the table says otherwise (a ramp
-        table's is 2).
+    schedule: the fixed-count schedule of every process of the grid:
+        `warmup` (the default: one recorded batch of N, any N, then the
+        samples), whose counts follow `warmup_count`, or `ramp` (every count
+        1, 2, 4, ..., N, a power of two). The headroom is 1 unless the table
+        says otherwise (a ramp table's is 2). A warmup table needs fixed
+        seconds, so a table without them must say `schedule="ramp"` (it is
+        refused otherwise, whatever its other arguments), as the TASK30 and
+        TASK29A tables do: their counts, pilots and archives are ramp.
     pairs, samples and seed (the layout seed) are then fields of the table,
         as are headroom, target and max_pairs and the seconds: sealed with
         the driver, `predeclare` copies them into the counts file and `run`
@@ -227,7 +234,7 @@ class Table:
     def __init__(self, name, label, cases, driver, counts, *, seconds=0.3,
                  seconds_by_case=None, fixed_seconds=False, pairs=10,
                  samples=3, seed=None, revisions=(), pilot_pairs=10,
-                 pilot_samples=3, headroom=None, schedule="ramp",
+                 pilot_samples=3, headroom=None, schedule="warmup",
                  target=TARGET,
                  max_pairs=MAX_PAIRS, baseline=a.BASE, drivers=(),
                  acceptance=(), layout_acceptance=(), engine=True,
@@ -266,8 +273,9 @@ class Table:
         a.require(fixed_seconds or not revisions, "counts revisions belong "
                   "to a table with fixed seconds")
         a.require(schedule in ("ramp", "warmup"), "unknown schedule")
-        a.require(schedule == "ramp" or fixed_seconds, "a table with the "
-                  "warmup schedule has fixed seconds")
+        a.require(schedule == "ramp" or fixed_seconds, "a table without "
+                  "fixed seconds names schedule=\"ramp\" (the default, "
+                  "warmup, derives its counts from the counts file)")
         headroom = (2 if schedule == "ramp" else 1) \
             if headroom is None else headroom
         names = [Path(p).name for p in (counts, *revisions)]

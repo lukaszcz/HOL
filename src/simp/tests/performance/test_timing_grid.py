@@ -14,6 +14,7 @@ The counts file of every rig comes from a (stand-in) pilot and `predeclare`,
 as a fixed table's must; a pilot is made once for each table and copied.
 """
 import argparse
+import ast
 import contextlib
 import gzip
 import io
@@ -129,7 +130,7 @@ class Rig(unittest.TestCase):
 
     def make_table(self, cases=CASES, **kw):
         options = dict(seconds=0.3, seconds_by_case={CASES[0]: LONG},
-                       fixed_seconds=True, pairs=self.pairs,
+                       fixed_seconds=True, schedule="ramp", pairs=self.pairs,
                        samples=self.samples, seed="s0", tree="src",
                        sources=SOURCES, sealed=SEALED, home=self.sealed_dir,
                        ledger=self.attempts)
@@ -3030,7 +3031,7 @@ class PinFile(Rig):
     def test_a_pin_history_belongs_to_a_table_with_a_pin_file(self):
         with self.assertRaisesRegex(ValueError, "belongs to a table"):
             tg.Table("toy", "TOY", CASES, "d.py", "c.json", sources=SOURCES,
-                     pin_history={"0" * 64: {}})
+                     schedule="ramp", pin_history={"0" * 64: {}})
         with self.assertRaisesRegex(ValueError, "malformed pin"):
             self.make_table(pin_history={"0" * 64: {"src/two.sml": dict(
                 blob="f" * 39, reason="x")}})
@@ -3351,7 +3352,7 @@ class Revisions(Rig):
     def test_only_a_fixed_table_has_revisions(self):
         with self.assertRaisesRegex(ValueError, "revisions belong"):
             tg.Table("toy", "TOY", CASES, "d.py", "c.json",
-                     revisions=("c2.json",))
+                     schedule="ramp", revisions=("c2.json",))
         with self.assertRaisesRegex(ValueError, "repeated counts file"):
             self.make_table(revisions=(self.counts,))
 
@@ -5591,7 +5592,7 @@ class Chain(ChainRig):
 
     def test_a_table_without_fixed_seconds_takes_no_stamp(self):
         grid = tg.Grid(tg.Table("toy", "TOY", CASES, self.driver,
-                                self.counts))
+                                self.counts, schedule="ramp"))
         with self.assertRaisesRegex(ValueError, "takes no build stamp"):
             grid.execute(["prepare", "--repo", str(self.repo)])
 
@@ -6060,7 +6061,7 @@ class Terminated(unittest.TestCase):
         seen = []
         grid = tg.Grid(tg.Table(
             "toy", "TOY", CASES, Path(__file__), Path("c.json"),
-            ledger=None))
+            schedule="ramp", ledger=None))
         with patch.object(grid, "execute", lambda *a_, **k: seen.append(
                 signal.getsignal(signal.SIGTERM)) or 0):
             self.assertEqual(grid.main([]), 0)
@@ -6329,7 +6330,8 @@ class Git(unittest.TestCase):
         self.git("commit", "-q", "-m", "later")
         self.third = self.git("rev-parse", "HEAD")
         self.grid = tg.Grid(tg.Table("toy", "TOY", CASES, "d.py",
-                                     self.repo / "counts.json"))
+                                     self.repo / "counts.json",
+                                     schedule="ramp"))
 
     def test_a_blob_is_the_git_object_or_none(self):
         self.assertEqual(tg.git_blob(self.repo, self.third, "src/f.txt"),
@@ -6785,9 +6787,48 @@ class Checkout(unittest.TestCase):
         self.git("cat-file", "-e", measured + "^{commit}")
 
 
+def declared_schedule(path):
+    """The `schedule` keyword of the `Table(...)` call in the source of a
+    task module, or None when the call does not name one (so that the
+    default of `Table` would apply)."""
+    tree = ast.parse(Path(path).read_text())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and
+             getattr(n.func, "attr", None) == "Table"]
+    assert len(calls) == 1, calls
+    return next((k.value.value for k in calls[0].keywords
+                 if k.arg == "schedule"), None)
+
+
 class Tables(unittest.TestCase):
     def table(self, cases=CASES, **kw):
+        kw.setdefault("schedule", "ramp")
         return tg.Table("toy", "TOY", cases, "d.py", "c.json", **kw)
+
+    def test_a_new_table_is_of_the_warmup_schedule(self):
+        # The default of the TASK30A validation (PROTOCOL.md): warmup, with
+        # headroom 1; ramp, named, keeps headroom 2.
+        new = tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                       fixed_seconds=True, seed="s0")
+        self.assertEqual((new.schedule, new.headroom), ("warmup", 1))
+        old = tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                       fixed_seconds=True, seed="s0", schedule="ramp")
+        self.assertEqual((old.schedule, old.headroom), ("ramp", 2))
+        self.assertEqual(tg.Table(
+            "toy", "TOY", CASES, "d.py", "c.json", fixed_seconds=True,
+            seed="s0", headroom=3).headroom, 3)
+
+    def test_a_table_without_fixed_seconds_names_the_ramp(self):
+        # The default schedule is never changed by another argument: the
+        # warmup counts come from a counts file, so the table says ramp.
+        with self.assertRaisesRegex(ValueError, 'schedule="ramp"'):
+            tg.Table("toy", "TOY", CASES, "d.py", "c.json")
+        with self.assertRaisesRegex(ValueError, 'schedule="ramp"'):
+            tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                     schedule="warmup")
+        table = tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                         schedule="ramp")
+        self.assertEqual((table.schedule, table.headroom,
+                          table.fixed_seconds), ("ramp", 2, False))
 
     def test_cells_follow_the_matrix_size_sets(self):
         table = self.table()
@@ -6830,7 +6871,8 @@ class Hooks(unittest.TestCase):
             @staticmethod
             def summary(reports):
                 return "module"
-        engine = tg.Grid(tg.Table("toy", "TOY", CASES, "d.py", "c.json"))
+        engine = tg.Grid(tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                                  schedule="ramp"))
         engine.h = tg.Hooks(Module, engine)
         self.assertEqual(engine.h.summary({}), "module")
         self.assertEqual(engine.h.cell_seconds,

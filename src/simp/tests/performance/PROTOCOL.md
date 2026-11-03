@@ -65,7 +65,8 @@ Independent time-based calibration can choose different iteration counts in
 paired selections. Per-operation normalization does not remove nonlinear GC
 and heap-sizing effects. For a predeclared common operation count, add
 `--batch-iterations N` to `acceptance.py run` (or the matrix paired runner).
-Under the default `ramp` schedule (the `warmup` schedule below differs) `N`
+Under the `ramp` schedule (the default of the option and of a record; the
+`warmup` schedule below differs, and is the default of a new table) `N`
 must be a power of two in 1..1073741824. The front end passes the **same N**
 to B/B and B/C; every process performs **all** calibrations 1,2,...,N, even if
 an earlier calibration reaches the duration target, then every sample uses N.
@@ -108,11 +109,12 @@ selections of every experiment get the same N and schedule.
   a sample as "batch too short; recalibrate"), without recalibrating one
   side. The consumed-result count of the warm-up is checked like a
   sample's.
-- **`ramp` is the default and is not written down.** An option, environment
-  or event of one schedule in a record of the other is refused, and a
-  literal `ramp` in an option or environment is refused too: the historical
-  protocol is the absence of the field, so every record made before this
-  schedule existed validates, audits and replays byte for byte as before.
+- **`ramp` is the default of a record and is not written down.** An option,
+  environment or event of one schedule in a record of the other is refused,
+  and a literal `ramp` in an option or environment is refused too: the
+  historical protocol is the absence of the field, so every record made
+  before this schedule existed validates, audits and replays byte for byte as
+  before.
   `analyze(..., schedule=...)` must match the requested schedule, as
   `iterations` does, and `PERF_SCHEDULE` is bound by `audit_evidence.py` for
   every receipt. One rule for every function that takes a schedule
@@ -150,18 +152,36 @@ selections of every experiment get the same N and schedule.
   target is refused, never used) and the revision by 4 recovers, so the cost
   is a rerun. Load on the host during the pilot can only lengthen a pilot
   batch, so only raise N: the maximum over processes takes the fastest, least
-  loaded one. The validation of the schedule should record, per cell, the
-  least of (warm-up or sample wall) / `seconds`, so that the margin to 0.5 is
-  measured and not only argued.
+  loaded one. The validation recorded, per cell, the least of (warm-up or
+  sample wall) / `seconds`, so that the margin to 0.5 is measured and not
+  only argued (below).
+- **New tables use `warmup`.** `timing_grid.Table` defaults to `schedule=
+  "warmup"` with headroom 1, on the TASK30A validation (2026-11-03, a shared
+  host): develop/develop experiments of 12 TASK30 cells, 20 pairs and 5
+  samples each, `ramp` with its TASK30 count against `warmup` with the count
+  of this rule from the TASK30 pilot. The median over the cells of the ratio
+  of the B/B 95% interval widths, warmup over ramp, was 1.005 for CPU and
+  1.004 for wall (`R` 1.005; per cell 0.41-3.52, the median being the
+  predeclared statistic) and the warmup experiments took 0.383 of the time of
+  the ramp ones (3056 s against 7972 s). Decision, by the predeclared rule:
+  `R <= 1.10`, adopt `warmup` with unchanged pairs (20 in the first stage,
+  the 20 of the second-stage formula). The least warm-up or sample wall over
+  its target was 0.87-1.05 per cell under `warmup` (0.866 for
+  `exclude_batch-10000`) and 1.71-3.5 under `ramp`, so the half-target check
+  holds with room. The warmup schedule needs fixed seconds, so a table
+  without them names `schedule="ramp"` (it is refused otherwise: a default
+  never depends on another argument).
 - **The TASK30 table keeps `ramp`**, its counts file, pilot, grid and ledger,
-  as does the TASK29A grid; their archives replay unchanged at this code (the
-  seals of the files this schedule changed are in the table's history). The
-  history seals are compared per field, as for TASK29A (each field of the
-  code may be the current one or one of its history, so a record may pass
-  with a combination of fields that no one commit held), and the only code
-  added to what is accepted is the exact blobs of the six files at
-  63ac28189 (`task30_grid.py`, `timing_grid.py`, `acceptance.py`,
-  `MatrixPerformance.sml`, `performance_schema.py`, `run_paired.py`).
+  as does the TASK29A grid; both tables say `schedule="ramp"` themselves, and
+  their archives replay unchanged at this code (the seals of the files this
+  schedule changed are in the table's history). The history seals are
+  compared per field, as for TASK29A (each field of the code may be the
+  current one or one of its history, so a record may pass with a combination
+  of fields that no one commit held), and the only code added to what is
+  accepted is the exact blobs of the six files at 63ac28189 (`task30_grid.py`,
+  `timing_grid.py`, `acceptance.py`, `MatrixPerformance.sml`,
+  `performance_schema.py`, `run_paired.py`). No TASK29A run was recorded
+  by the `task29a_grid.py` of 63ac28189, so its history gains nothing.
 
 ### Precompiled experiment driver
 

@@ -95,8 +95,9 @@ SEALED = ("task30_cases.py", "task29_gate.py", "matrix_schema.py",
           "performance_schema.py", "evidence_bundle.py") + INSTALLED
 # The code the first-stage grid and the pilot of this table were measured by,
 # 63ac28189 (before the warmup schedule): the seals of the files that commit
-# changed, which an inventory recorded then still names. The table keeps the
-# ramp schedule, so its counts, grid and ledger replay as they did.
+# changed, which an inventory recorded then still names. The table declares
+# the ramp schedule (the default of a new table is warmup), so its counts,
+# grid and ledger replay as they did.
 DRIVERS = (dict(bytes=9634,
                 sha256="b958adae97df21cbcd5b1b72b5d47fa5"
                        "455854aec6f45c133f042fb0e883586f"),)
@@ -119,8 +120,9 @@ SEALED_HISTORY = {
 TABLE = tg.Table(
     "task30", "TASK30", cases.CASES, __file__, COUNTS, seconds=SECONDS,
     seconds_by_case={c: LONG_SECONDS for c in cases.DELETIONS},
-    fixed_seconds=True, pairs=PAIRS, samples=SAMPLES, seed=LAYOUT_SEED,
-    baseline=a.BASE, engine=True, engines=ENGINES, drivers=DRIVERS,
+    fixed_seconds=True, schedule="ramp", pairs=PAIRS, samples=SAMPLES,
+    seed=LAYOUT_SEED, baseline=a.BASE, engine=True, engines=ENGINES,
+    drivers=DRIVERS,
     layout_acceptance=ACCEPTANCE, sealed_history=SEALED_HISTORY, tree="src",
     sealed=SEALED,
     sources=cases.SOURCES, pinned=pins.PINNED, pin_file="task30_pins.py",
