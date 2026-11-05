@@ -12,11 +12,12 @@ Counts are words; the same distinct values are also published as bytes.
 
 Structural evidence (a grid whose header says structure v1) is a separate
 set of rows beside the words: the trace, kernel-inference and callback
-counts of two runs and the SHA-256 of the result, per process. A work row is
-`equal` when the candidate pairs differ from their baseline nowhere,
-`differs` when some pair does, `inconclusive` when the baseline/baseline
-control does not reproduce. Work rows never enter the slopes, the constants
-or the words-only status.
+counts of two runs and of a use of the retained result, and the SHA-256 of
+the result, per process. A work row is `equal` when the candidate pairs
+differ from their baseline nowhere, `differs` when some pair does,
+`inconclusive` when the baseline is not one value across the candidate
+pairs and the baseline/baseline control (the control included). Work rows
+never enter the slopes, the constants or the words-only status.
 """
 from collections import Counter
 
@@ -60,24 +61,30 @@ def decide(identical, differences):
     return "pass" if all(d <= 0 for d in differences) else "fail"
 
 
+RUNS = ("first", "second", "use")
+
+
 def work_rows(pairs, control):
     """Exact-equality rows of the structural records of a cell, or None
     when its processes have none (an archive made before structure v1).
-    A row is a count (an absent key is zero) or the result digest."""
+    A row is a count (an absent key is zero) or the result digest, named
+    as the events are: work.first.K, work.second.K, work.use.K (K is
+    trace.L.ACTION[:message], kernel.RULE, maker or collector) and
+    result.digest."""
     processes = [o for p in pairs + control for o in p.values()]
     have = [o.get("work") is not None for o in processes]
     s.require(all(have) or not any(have),
               "some processes have work records and some do not")
     if not any(have):
         return None
-    names = ["digest"] + [
-        run + "." + key for run in ("first", "second")
+    names = ["result.digest"] + [
+        "work." + run + "." + key for run in RUNS
         for key in sorted({k for o in processes for k in o["work"][run]})]
 
     def value(o, name):
-        if name == "digest":
+        if name == "result.digest":
             return o["work"]["digest"]
-        run, _, key = name.partition(".")
+        _, run, key = name.split(".", 2)
         return o["work"][run].get(key, 0)
 
     def difference(c, b):

@@ -32,8 +32,9 @@ SCALABLE = ("frag_create", "compile_batch", "exclude_matching",
 # Use a fresh theory too: sealing a theory is not undone by Context.restore.
 # Paired.check uses CheckSupport's testutils tprint/OK/die reporter.
 # The work phase of the allocation fixture (structure v1) runs here too,
-# twice: its records are printed, and the steady-state counts and the result
-# digest must reproduce within the process.
+# twice: its records are printed, and the steady-state counts, the counts of
+# the use of the result and the result digest must reproduce within the
+# process. The records of the two sides are then compared (compare_sides).
 SELFTEST = '''open HolKernel MatrixSupport
 val _ = new_theory "matrix_smoke"
 val sizes = [%s]
@@ -62,6 +63,8 @@ fun validate label n = let
                       #2 (field "work.first" again) andalso
                       #2 (field "work.second" work) =
                       #2 (field "work.second" again) andalso
+                      #2 (field "work.use" work) =
+                      #2 (field "work.use" again) andalso
                       #2 (field "result.digest" work) =
                       #2 (field "result.digest" again))
     val _ = List.app (fn (k,v) => print ("@@MATRIX_WORK\\t" ^ label ^ "\\t" ^
@@ -130,13 +133,56 @@ def work_records(text, sizes, labels):
             for c, n, k, v in records]
 
 
+def compare_sides(runs):
+    """Baseline against candidate, per case, size and work record: the
+    differing records (with the differing counts of a count record) and the
+    number of records compared. The records of the two sides must be the
+    same set. Equal work records on both sides are what an unchanged
+    operation shows."""
+    sides = {"baseline": {}, "candidate": {}}
+    for run in runs:
+        if run.get("accepted") and "work" in run:
+            seen = sides[run["selection"]]
+            for r in run["work"]:
+                key = (r["case"], r["size"], r["key"])
+                rp.require(key not in seen, "duplicate work record")
+                seen[key] = r["value"]
+    keys = sorted(set(sides["baseline"]) | set(sides["candidate"]))
+    differences = []
+    for case, size, key in keys:
+        b, c = sides["baseline"].get((case, size, key)), \
+            sides["candidate"].get((case, size, key))
+        if b == c:
+            continue
+        entry = dict(case=case, size=size, key=key, baseline=b, candidate=c)
+        if b is not None and c is not None and key != "result.digest":
+            bc, cc = sc.work_counts(b), sc.work_counts(c)
+            entry["counts"] = {
+                k: [bc.get(k, 0), cc.get(k, 0)]
+                for k in sorted(set(bc) | set(cc))
+                if bc.get(k, 0) != cc.get(k, 0)}
+        differences.append(entry)
+    return dict(compared=len(keys), differences=differences)
+
+
+def report_sides(cross, note):
+    note("cross-side work records: %d compared, %d differ"
+         % (cross["compared"], len(cross["differences"])))
+    for d in cross["differences"]:
+        note("  DIFFERS %s %s %s" % (d["case"], d["size"], d["key"]))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=HERE.parents[3])
     parser.add_argument("--baseline", default=rp.BASE)
     parser.add_argument("--candidate", default="HEAD")
-    parser.add_argument("--output", required=True, type=Path,
+    parser.add_argument("--output", type=Path,
                         help="new JSON path (sibling .log must be absent)")
+    parser.add_argument("--compare", type=Path, metavar="MANIFEST",
+                        help="only compare the work records of the two "
+                        "sides in an earlier manifest (exit 1 on any "
+                        "difference or none compared)")
     parser.add_argument("--scope", default="smoke",
                         choices=("small", "smoke", "grid", "expensive"))
     parser.add_argument("--case", action="append", dest="cases",
@@ -146,6 +192,12 @@ def main():
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.compare is not None:
+        cross = compare_sides(json.loads(args.compare.read_text())["runs"])
+        report_sides(cross, print)
+        return 1 if cross["differences"] or not cross["compared"] else 0
+    if args.output is None:
+        parser.error("--output is required")
     repo, output = args.repo.resolve(), args.output.resolve()
     logpath = output.with_suffix(".log")
     if output == logpath or output.exists() or logpath.exists():
@@ -314,6 +366,8 @@ def main():
             rp.require(
                 manifest["executed_checks"] == manifest["expected_checks"],
                 "incomplete checks")
+            manifest["cross_side"] = compare_sides(manifest["runs"])
+            report_sides(manifest["cross_side"], note)
             manifest["success"] = True
         except Exception as error:
             manifest["failure"] = str(error)
@@ -324,7 +378,8 @@ def main():
                  f"{manifest['expected_checks']} "
                  f"success={manifest['success']}")
             note(str(output))
-    return 0 if manifest["success"] else 1
+    cross = manifest.get("cross_side", {"differences": [1]})
+    return 0 if manifest["success"] and not cross["differences"] else 1
 
 
 if __name__ == "__main__":

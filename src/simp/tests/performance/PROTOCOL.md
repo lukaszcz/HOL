@@ -1108,61 +1108,126 @@ has no disposition.
 
 The allocation fixture has an untimed `work` phase after the `apply` bracket
 (`MatrixAllocation.sml`; the code is `MatrixSupport.workPhase`). Nothing of it
-is inside a bracket, so the words are unchanged by it, and the timing fixture
+is inside a bracket, so it adds no word to any bracket, and the timing fixture
 does not load it. It runs the operation twice, `beforeBatch`, `run`,
-`afterBatch 1` each, and records for each run:
+`afterBatch 1` each, and then a use of the retained result of the second run,
+and records for each of the three:
 
-- trace events by level and constructor (`trace.L.ACTION`): a listener put on
+- trace events by exact level and constructor (`trace.L.ACTION`; a TEXT also
+  by its message, `trace.L.TEXT:message`): a listener put on
   `Trace.trace_hook`. `Trace.trace` calls every listener on every call
   whatever the trace level (the level is filtered inside the default
-  listener), so the counts do not depend on `simplifier` tracing. The
-  listener counts and never forces an `LZ_TEXT`;
+  listener), so the counts do not depend on `simplifier` tracing. The level
+  is not clamped. A TEXT carries a plain string, so its message is in the key
+  (escaped: other than letters, digits, space and ``_.()'/+*-<>[]!?:``
+  every byte is `%XX`); an `LZ_TEXT` is a lazy text, which the listener
+  never forces, so it is counted by level only;
 - kernel inferences by rule (`kernel.RULE`, `kernel.total`):
   `Count.counting_thms` and `Count.thm_count`;
-- `maker` and `collector` calls (the counters of `MatrixSupport`).
+- `maker` and `collector` calls: the counters of `MatrixSupport`, and for
+  `history_makers`, whose makers count in the workload's own two counters,
+  those too (read through the hook `localCalls`, the maker bodies and so the
+  timed closures are untouched).
+
+**The three records.** `work.first` and `work.second` are the first and the
+second run of the work phase. They follow every bracketed run (the setup
+build, `operation_first`, the steady runs and `verify`), so `work.first` is
+not a cold run: an effect that only the very first run has, such as a lazily
+built cache, is in the `operation_first` words and not in a work count. The
+two rows are the first and second run after all bracketed work.
+`work.use` is a client's use of the retained result, under the same listener
+and kernel counter: for a simpset (a built simpset, a fragment as a simpset,
+the result of a deletion) the net conversion of the result is applied to the
+left side of each of the n rules, the same conversion and traversal as the
+fingerprint's REFL set, so every net entry a lookup reaches (stale,
+duplicate or deferred ones) is counted as the `REDUCE` and `TEXT` events and
+the inferences it causes; for a retained conversion (`compile_construct_conv`)
+the conversion is applied to the fingerprinted terms; for the tactic whose
+operation constructs it (`exclude_tactic_construct`) the tactic is applied;
+for a theorem or a tactic result that the operation already applied there is
+no further use, and the record is the empty set of counts (`trace=;kernel=;
+maker=0;collector=0`).
 
 Then the fingerprint of the retained result is read, from the hook
-`MatrixSupport.fingerprint`, which each workload sets when it is built (never
-inside a timed closure): for a simpset the names, the dproc names and the run
-length encoded set of installed rules whose left side the net leaves alone;
-for a theorem its hypotheses and conclusion with types shown; for a tactic the
-residual goals and the proof; for a fragment its name, length and the rules
-that differ from the expected ones; for the theory change the error. The
-fixture emits `work.first`, `work.second` and `result.digest` after
-`alloc.foreign`; the parser hashes the fingerprint with SHA-256.
+`MatrixSupport.fingerprint`, which each workload sets when it is built, with
+the use (never inside a timed closure; the text is made when the work phase
+reads it). For a simpset: the names, the dproc names, the run length encoded
+set of installed rules whose left side the net leaves alone and a hash of the
+theorems of the others; for a theorem its hypotheses and conclusion with types
+shown; for a conversion that of each of its terms; for a tactic the residual
+goals (types shown) and the proof; for a fragment its name, its length and a
+hash of the printed form of every rule it holds (an AC fragment: also what it
+does to the AC input); for the theory change the error with the function that
+raised it and its message. The fixture emits `work.first`, `work.second`,
+`work.use` and `result.digest` after `alloc.foreign`; the parser hashes the
+fingerprint with SHA-256.
+
+**What changes outside the work phase.** The timed closures and the `verify`
+closures are textually unchanged, so the operation and apply words of a case
+are those of the fixture before the work phase. The setup bracket is not:
+building a workload now also sets the hooks of `MatrixSupport` (the
+fingerprint, the use, the maker count, and `ruleList := rs`, which shares the
+list the workload builds anyway), so the setup words gain the closures of a
+few assignments, a small constant that does not grow with the number of rules
+and is equal on both sides of a grid. The setup words of a new grid (`alloc-z/`)
+therefore do not equal those of an older one (`alloc/`) at any size, and a
+comparison across grids (`alloc/` at Y against `alloc-z/` at Z) uses only the
+operation rows (`operation_first`, `operation_steady`, `apply`), never the
+setup row.
 
 **Gating by header.** A grid whose header says `structure: "v1"` (every new
-run) requires the three records in every process, and a header without the key
+run) requires the four records in every process, and a header without the key
 forbids them, so every earlier archive (TASK29B, the TASK30 `alloc/` made at
 63ac28189) parses and replays to the same decisions and results byte for byte.
 The key enters `grid_digest` and the cell binding only when present.
 
-**Rows.** `allocation_analysis.cell` adds `work` to a cell: one row for every
-count that appears in some process (absent on a side is zero) for each run,
-and one for the digest. A row is `equal` when candidate equals baseline in
-every pair, `differs` when some pair does not, `inconclusive` when the
-baseline/baseline control does not reproduce exactly; `deterministic` says
-whether each side reproduces across pairs. There is no allowance and no
-direction: fewer events differ too. Work rows are not slopes and not constants
-and are never an input of the words' `status`. `decisions.json` gets a
-separate `work` section (per cell status; rows that are not reproducible)
-and `work_status` (`equal`, `differs`, `inconclusive`), only when the
-archives have work records; `RESULTS.md` gets a Structural evidence paragraph
-and table. The words-only `status` and its `nondeterminism` list are the ones
-of before.
+**Rows.** `allocation_analysis.cell` adds `work` to a cell: one row, named as
+the events are, for every count that appears in some process (absent on a
+side is zero) of each run (`work.first.K`, `work.second.K`, `work.use.K` with
+K one of `trace.L.ACTION[:message]`, `kernel.RULE`, `maker`, `collector`), and
+`result.digest` for the digest. A row is `equal` when candidate equals
+baseline in every pair, `differs` when some pair does not, `inconclusive`
+when the baseline is not one value across all the candidate pairs and the
+baseline/baseline control (the control included); `deterministic` says whether
+each side reproduces across pairs. There is no allowance and no direction:
+fewer events differ too. Work rows are not slopes and not constants and are
+never an input of the words' `status`. `decisions.json` gets a separate `work`
+section (per cell status; rows that are not reproducible; the cells without
+work rows and the unresolved cells) and `work_status` (`equal`, `differs`,
+`inconclusive`), only when the archives have work records; `RESULTS.md` gets a
+Structural evidence paragraph and table. The words-only `status` and its
+`nondeterminism` list are the ones of before.
 
-**What the counts cover.** A deletion (`-*`, `remove_ssfrags`) filters the net
-and the dprocs and runs no simplification, so the trace and kernel counts of
-those cases are empty (the maker and collector counts and the digest are what
-they have); the marker and tactic cases run one `SIMP_CONV` and give the
-`REDUCE` event and a handful of inferences. Equality of these rows with
-develop says that the candidate did the same work and returned the same
-result, not that it took the same time.
+**Grid status.** `work_status` is `differs` when any resolved cell differs,
+`inconclusive` when no cell differs and some cell is not equal, lacks work
+rows or is unresolved, and `equal` only when every cell of the grid is equal.
+A disposition that cites the work rows still reads the per-cell rows of
+exactly its 13 cells (`work.cells`, and `cases[...].cells[...].work`), not the
+grid-level `work_status` alone.
+
+**What the counts cover.** A deletion (`-*`, `remove_ssfrags`,
+`exclude_ssfrags`) filters the net and the dprocs and runs no simplification,
+so the operation itself emits no trace event and no inference: the counts of
+`work.first` and `work.second` for those cases are empty (apart from callback
+counts that are zero by construction). The evidence that the candidate did the
+same work in those cells is therefore the counts of `work.use` (the lookups of
+all n left sides through the result, which reach every entry the result still
+holds), the digest, the exact allocation words and the identity of the code
+path (the source files are byte identical), not the counts of the operation.
+The marker and tactic cases run one `SIMP_CONV` and give the `REDUCE` event
+and a handful of inferences in the operation itself. Equal rows with develop
+say that the candidate did the same counted events for the operation and for
+the use of its result and returned the same result, not that it took the same
+time.
 
 **Operator smoke.** `smoke_matrix.py` runs `workPhase` twice for every case
 and size it covers, requires the second run of the first call, both runs of
-the second call and the digest to agree, and records the work records of each
-process in its manifest.
+the second call, the use and the digest to agree, and records the work
+records of each process in its manifest. It then compares the work records of
+the baseline and the candidate per case and size (`compare_sides`, in the
+manifest under `cross_side`: the number compared and every difference with the
+differing counts), and exits non-zero on any difference. `--compare MANIFEST`
+makes the same comparison of an earlier manifest without running anything.
 
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived

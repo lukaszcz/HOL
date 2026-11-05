@@ -1830,29 +1830,57 @@ def v1_parse(events, **kw):
 
 def replace_work(index, text):
     def change(events):
-        events[-4 + index][2] = text
+        events[-5 + index][2] = text
     return change
 
 
 WORK_GUARDS = [
-    ("first misnamed", lambda e: e[-4].__setitem__(1, "work.other"),
+    ("first misnamed", lambda e: e[-5].__setitem__(1, "work.other"),
      "work records"),
-    ("second missing", lambda e: e.pop(-3), "observation count"),
+    ("second missing", lambda e: e.pop(-4), "observation count"),
+    ("use missing", lambda e: e.pop(-3), "observation count"),
     ("digest missing", lambda e: e.pop(-2), "observation count"),
-    ("records swapped", lambda e: e.__setitem__(slice(-4, -2),
-                                                [e[-3], e[-4]]),
+    ("records swapped", lambda e: e.__setitem__(slice(-5, -3),
+                                                [e[-4], e[-5]]),
+     "work records"),
+    ("use and digest swapped", lambda e: e.__setitem__(slice(-3, -1),
+                                                       [e[-2], e[-3]]),
      "work records"),
     ("records before the foreign-thread record", lambda e: e.insert(
-        -5, e.pop(-4)), "foreign-thread"),
-    ("extra field", lambda e: e[-4].append("x"), "work records"),
+        -6, e.pop(-5)), "foreign-thread"),
+    ("extra field", lambda e: e[-5].append("x"), "work records"),
     ("unknown section", replace_work(0, "kernel=;trace=;maker=0;"
                                      "collector=0"), "malformed work"),
     ("section missing", replace_work(0, "trace=;kernel="),
      "malformed work"),
     ("unknown trace action", replace_work(0, counts_text("2.NOPE=1")),
      "bad trace key"),
-    ("trace level out of range", replace_work(0, counts_text("16.TEXT=1")),
+    ("a TEXT without its message", replace_work(
+        0, counts_text("2.TEXT=1")), "bad trace key"),
+    ("a message on another constructor", replace_work(
+        0, counts_text("2.REDUCE:x=1")), "bad trace key"),
+    ("a level with a leading zero", replace_work(
+        0, counts_text("02.REDUCE=1")), "bad trace key"),
+    ("minus zero", replace_work(0, counts_text("-0.REDUCE=1")),
      "bad trace key"),
+    ("a message with an unsafe byte as is", replace_work(
+        0, counts_text("2.TEXT:a$b=1")), "bad trace key"),
+    ("a message that is not ASCII", replace_work(
+        0, counts_text("2.TEXT:caf\u00e9=1")), "bad trace key"),
+    ("an escape in lower case", replace_work(
+        0, counts_text("2.TEXT:a%2cb=1")), "bad trace key"),
+    ("an escape of a safe byte", replace_work(
+        0, counts_text("2.TEXT:%41=1")), "bad trace key"),
+    ("a bare percent sign", replace_work(
+        0, counts_text("2.TEXT:50%=1")), "bad trace key"),
+    ("messages out of order", replace_work(
+        0, counts_text("2.TEXT:b=1,2.TEXT:a=1")), "out of order"),
+    ("a message repeated", replace_work(
+        0, counts_text("2.TEXT:a=1,2.TEXT:a=1")), "out of order"),
+    ("a TEXT before an earlier constructor", replace_work(
+        0, counts_text("2.TEXT:a=1,2.REDUCE=1")), "out of order"),
+    ("levels out of order", replace_work(
+        0, counts_text("3.REDUCE=1,2.REDUCE=1")), "out of order"),
     ("trace level not a number", replace_work(0, counts_text("x.TEXT=1")),
      "bad trace key"),
     ("trace without a level", replace_work(0, counts_text("TEXT=1")),
@@ -1863,11 +1891,11 @@ WORK_GUARDS = [
         0, counts_text("4.REDUCE=1,2.REWRITING=3")), "out of order"),
     ("kernel keys repeated", replace_work(
         0, counts_text(kernel="SPEC=1,SPEC=1")), "out of order"),
-    ("zero count listed", replace_work(0, counts_text("2.TEXT=0")),
+    ("zero count listed", replace_work(0, counts_text("2.REDUCE=0")),
      "malformed work count"),
     ("count with a leading zero", replace_work(
-        0, counts_text("2.TEXT=01")), "malformed work count"),
-    ("negative count", replace_work(0, counts_text("2.TEXT=-1")),
+        0, counts_text("2.REDUCE=01")), "malformed work count"),
+    ("negative count", replace_work(0, counts_text("2.REDUCE=-1")),
      "malformed work count"),
     ("maker count not a number", replace_work(
         0, counts_text().replace("maker=0", "maker=x")),
@@ -1879,9 +1907,9 @@ WORK_GUARDS = [
 
 
 class StructureProtocol(unittest.TestCase):
-    def test_a_v1_process_has_its_three_records_after_the_foreign_one(self):
+    def test_a_v1_process_has_its_four_records_after_the_foreign_one(self):
         events = v1_events()
-        self.assertEqual([e[1] for e in events[-5:-1]],
+        self.assertEqual([e[1] for e in events[-6:-1]],
                          ["alloc.foreign", *sc.WORK_EVENTS])
         brackets, found = v1_parse(events)
         self.assertEqual([b["name"] for b in brackets], sc.names(3))
@@ -1890,7 +1918,29 @@ class StructureProtocol(unittest.TestCase):
             "trace.2.REWRITING": 3, "trace.4.REDUCE": 1,
             "kernel.SPEC": 2, "kernel.total": 2})
         self.assertEqual(work["first"], work["second"])
+        self.assertEqual(work["use"], work["first"])
         self.assertEqual(work, tb.structural())
+
+    def test_levels_are_exact_and_a_text_is_keyed_by_its_message(self):
+        counts = sc.work_counts(counts_text(
+            "-1.REDUCE=1,0.REDUCE=2,100.PRODUCE=4,102.REDUCE=5,"
+            "102.TEXT:left term unchanged=3,"
+            "102.TEXT:odd %2C %3B %3D %25 %C3%A9. a:b=1,1000.IGNORE=7",
+            kernel=""))
+        self.assertEqual(counts, {
+            "trace.-1.REDUCE": 1, "trace.0.REDUCE": 2,
+            "trace.100.PRODUCE": 4, "trace.102.REDUCE": 5,
+            "trace.102.TEXT:left term unchanged": 3,
+            "trace.102.TEXT:odd %2C %3B %3D %25 %C3%A9. a:b": 1,
+            "trace.1000.IGNORE": 7})
+
+    def test_the_text_escape_is_canonical(self):
+        for message in ("", "a b", "x.y(z)", "[1]", "a:b", "%2C%3B%3D%25",
+                        "%00%7F%C3%A9"):
+            self.assertTrue(sc.message_ok(message), message)
+        for message in ("a,b", "a;b", "a=b", "%2c", "%41", "%", "%4",
+                        "%GG", "\u00e9", "\n", "a%2"):
+            self.assertFalse(sc.message_ok(message), message)
 
     def test_the_digest_is_the_sha256_of_the_fingerprint(self):
         import hashlib
@@ -1936,7 +1986,7 @@ class StructureProtocol(unittest.TestCase):
 
     def test_the_word_guards_still_hold_under_v1(self):
         events = v1_events()
-        events[-5][2] = "1,0"
+        events[-6][2] = "1,0"
         with self.assertRaisesRegex(sc.InvalidAllocation, "foreign-thread"):
             v1_parse(events)
 
@@ -1945,8 +1995,9 @@ class StructureProtocol(unittest.TestCase):
         actions = re.search(r"val traceActions =\s*\[(.*?)\]", text, re.S)
         self.assertEqual(tuple(re.findall(r'"(\w+)"', actions[1])),
                          sc.TRACE_ACTIONS)
-        levels = re.search(r"val traceLevels = (\d+)", text)
-        self.assertEqual(int(levels[1]), sc.TRACE_LEVELS)
+        safe = re.search(r'Char\.contains "([^"]*)" c', text)
+        self.assertEqual(safe[1], sc.MESSAGE_SAFE)
+        self.assertNotIn("traceLevels", text)
         kernel = re.search(r"fun kernelCounts \(\) =(.*?) end\n", text,
                            re.S)
         self.assertEqual(tuple(re.findall(r'\("(\w+)",#', kernel[1])),
@@ -1981,10 +2032,13 @@ class StructureDecisions(unittest.TestCase):
         cell = an.cell(*v1_cell(), STEADY)
         rows = cell["work"]
         self.assertEqual(set(rows), {
-            "digest", "first.trace.2.REWRITING", "first.trace.4.REDUCE",
-            "first.kernel.SPEC", "first.kernel.total",
-            "second.trace.2.REWRITING", "second.trace.4.REDUCE",
-            "second.kernel.SPEC", "second.kernel.total"})
+            "result.digest", "work.first.trace.2.REWRITING",
+            "work.first.trace.4.REDUCE",
+            "work.first.kernel.SPEC", "work.first.kernel.total",
+            "work.second.trace.2.REWRITING", "work.second.trace.4.REDUCE",
+            "work.second.kernel.SPEC", "work.second.kernel.total",
+            "work.use.trace.2.REWRITING", "work.use.trace.4.REDUCE",
+            "work.use.kernel.SPEC", "work.use.kernel.total"})
         for name, row in rows.items():
             with self.subTest(name):
                 self.assertEqual(row["decision"], "equal")
@@ -2004,13 +2058,13 @@ class StructureDecisions(unittest.TestCase):
         more = tb.structural(first=counts_text("2.REWRITING=4,4.REDUCE=1"))
         with_side(data, "candidate", more, pairs=[3])
         rows = an.cell(*data, STEADY)["work"]
-        self.assertEqual(rows["first.trace.2.REWRITING"]["decision"],
+        self.assertEqual(rows["work.first.trace.2.REWRITING"]["decision"],
                          "differs")
-        self.assertEqual(rows["first.trace.2.REWRITING"]["difference"],
+        self.assertEqual(rows["work.first.trace.2.REWRITING"]["difference"],
                          {"0": 9, "1": 1})
-        self.assertEqual(rows["second.trace.2.REWRITING"]["decision"],
+        self.assertEqual(rows["work.second.trace.2.REWRITING"]["decision"],
                          "equal")
-        self.assertFalse(rows["first.trace.2.REWRITING"]["deterministic"]
+        self.assertFalse(rows["work.first.trace.2.REWRITING"]["deterministic"]
                          ["candidate"])
 
     def test_fewer_events_differ_too(self):
@@ -2018,17 +2072,17 @@ class StructureDecisions(unittest.TestCase):
         with_side(data, "candidate", tb.structural(
             first=counts_text("4.REDUCE=1")))
         rows = an.cell(*data, STEADY)["work"]
-        self.assertEqual(rows["first.trace.2.REWRITING"]["decision"],
+        self.assertEqual(rows["work.first.trace.2.REWRITING"]["decision"],
                          "differs")
-        self.assertEqual(rows["first.trace.2.REWRITING"]["difference"],
+        self.assertEqual(rows["work.first.trace.2.REWRITING"]["difference"],
                          {"-3": 10})
 
     def test_a_key_only_one_side_has_is_a_zero_on_the_other(self):
         data = v1_cell()
         with_side(data, "candidate", tb.structural(
-            first=counts_text("2.REWRITING=3,4.REDUCE=1,5.TEXT=2")))
+            first=counts_text("2.REWRITING=3,4.REDUCE=1,5.TEXT:ineffectual=2")))
         rows = an.cell(*data, STEADY)["work"]
-        row = rows["first.trace.5.TEXT"]
+        row = rows["work.first.trace.5.TEXT:ineffectual"]
         self.assertEqual((row["decision"], row["baseline"],
                           row["candidate"]), ("differs", {"0": 10},
                                               {"2": 10}))
@@ -2038,14 +2092,14 @@ class StructureDecisions(unittest.TestCase):
         with_side(data, "candidate", tb.structural(
             first=counts_text(maker=5, collector=1)))
         rows = an.cell(*data, STEADY)["work"]
-        self.assertEqual(rows["first.maker"]["decision"], "differs")
-        self.assertEqual(rows["first.collector"]["decision"], "equal")
+        self.assertEqual(rows["work.first.maker"]["decision"], "differs")
+        self.assertEqual(rows["work.first.collector"]["decision"], "equal")
 
     def test_a_digest_difference_differs(self):
         data = v1_cell()
         with_side(data, "candidate", tb.structural(digest="other"),
                   pairs=[0])
-        row = an.cell(*data, STEADY)["work"]["digest"]
+        row = an.cell(*data, STEADY)["work"]["result.digest"]
         self.assertEqual(row["decision"], "differs")
         self.assertEqual(row["difference"], {"0": 9, "1": 1})
         self.assertEqual(len(row["candidate"]), 2)
@@ -2055,9 +2109,9 @@ class StructureDecisions(unittest.TestCase):
         with_side(data, "control", tb.structural(
             first=counts_text("2.REWRITING=9")), pairs=[1], control=True)
         rows = an.cell(*data, STEADY)["work"]
-        self.assertEqual(rows["first.trace.2.REWRITING"]["decision"],
+        self.assertEqual(rows["work.first.trace.2.REWRITING"]["decision"],
                          "inconclusive")
-        self.assertFalse(rows["first.trace.2.REWRITING"]
+        self.assertFalse(rows["work.first.trace.2.REWRITING"]
                          ["control_identical"])
         self.assertEqual(an.work_status(
             r["decision"] for r in rows.values()), "inconclusive")
@@ -2066,7 +2120,7 @@ class StructureDecisions(unittest.TestCase):
         data = v1_cell()
         with_side(data, "baseline", tb.structural(digest="drift"),
                   pairs=[2])
-        row = an.cell(*data, STEADY)["work"]["digest"]
+        row = an.cell(*data, STEADY)["work"]["result.digest"]
         self.assertEqual(row["decision"], "inconclusive")
         self.assertFalse(row["deterministic"]["baseline"])
 
@@ -2077,9 +2131,9 @@ class StructureDecisions(unittest.TestCase):
         record = dict(an.cell(*data, STEADY), steady=STEADY, pairs=10)
         out = m.assemble({(CASE, 0)}, {(CASE, 0): record},
                          {(CASE, 0): data})
-        self.assertIn([CASE, 0, "first.trace.2.REWRITING", "candidate"],
+        self.assertIn([CASE, 0, "work.first.trace.2.REWRITING", "candidate"],
                       out["work"]["nondeterminism"])
-        self.assertNotIn([CASE, 0, "first.trace.2.REWRITING", "baseline"],
+        self.assertNotIn([CASE, 0, "work.first.trace.2.REWRITING", "baseline"],
                          out["work"]["nondeterminism"])
         # the words' own list is untouched
         self.assertEqual(out["nondeterminism"], [])
@@ -2126,8 +2180,8 @@ class StructureDecisions(unittest.TestCase):
         cells, records, observed = template()
         plain = m.results_markdown(m.assemble(cells, records, observed))
         self.assertNotIn("Structural", plain)
-        data = v1_cell()
-        records[CASE, 0] = dict(an.cell(*data, STEADY), steady=STEADY,
+        for key in cells:
+            records[key] = dict(an.cell(*v1_cell(), STEADY), steady=STEADY,
                                 pairs=10)
         out = m.assemble(cells, records, observed)
         text = m.results_markdown(out)
@@ -2135,6 +2189,75 @@ class StructureDecisions(unittest.TestCase):
         self.assertIn("**equal**", text)
         self.assertIn("| %s | 0 | equal |" % CASE, text)
         self.assertIn("Status: **pass**", text)
+
+    def test_a_difference_only_in_the_use_of_the_result_differs(self):
+        data = v1_cell()
+        with_side(data, "candidate", tb.structural(
+            use=counts_text("2.REWRITING=3,4.REDUCE=1,102.TEXT:stale=5")))
+        rows = an.cell(*data, STEADY)["work"]
+        self.assertEqual({n for n, r in rows.items()
+                          if r["decision"] == "differs"},
+                         {"work.use.trace.102.TEXT:stale"})
+        self.assertEqual(rows["work.first.trace.2.REWRITING"]["decision"],
+                         "equal")
+        self.assertEqual(rows["result.digest"]["decision"], "equal")
+
+    def test_texts_and_levels_are_separate_rows(self):
+        data = v1_cell(first=counts_text(
+            "100.PRODUCE=1,102.REDUCE=3,102.TEXT:a=1,102.TEXT:b=2"))
+        with_side(data, "candidate", tb.structural(first=counts_text(
+            "100.PRODUCE=1,102.REDUCE=3,102.TEXT:a=2,102.TEXT:b=1")))
+        rows = an.cell(*data, STEADY)["work"]
+        self.assertEqual({n: r["decision"] for n, r in rows.items()
+                          if "first.trace" in n},
+                         {"work.first.trace.100.PRODUCE": "equal",
+                          "work.first.trace.102.TEXT:a": "differs",
+                          "work.first.trace.102.TEXT:b": "differs",
+                          "work.first.trace.102.REDUCE": "equal"})
+
+    def grid(self, keep=lambda key: True, differ=()):
+        cells, records, observed = template()
+        for key in cells:
+            if not keep(key):
+                continue
+            data = v1_cell()
+            if key in differ:
+                with_side(data, "candidate", tb.structural(digest="other"))
+            records[key] = dict(an.cell(*data, STEADY), steady=STEADY,
+                                pairs=10)
+        return m.assemble(cells, records, observed)
+
+    def test_the_grid_status_needs_every_cell(self):
+        out = self.grid()
+        self.assertEqual(out["work_status"], "equal")
+        self.assertEqual((out["work"]["missing"], out["work"]["unresolved"]),
+                         ([], []))
+        # a cell without work rows
+        out = self.grid(lambda key: key != (CASE, 0))
+        self.assertEqual(out["work_status"], "inconclusive")
+        self.assertEqual(out["work"]["missing"], [m.name_of(CASE, 0)])
+        self.assertIn("without work rows 1", m.results_markdown(out))
+
+    def test_an_unresolved_cell_makes_the_grid_status_inconclusive(self):
+        cells, records, observed = template()
+        for key in cells:
+            records[key] = dict(an.cell(*v1_cell(), STEADY), steady=STEADY,
+                                pairs=10)
+        del records[CASE, 0]
+        out = m.assemble(cells, records, observed)
+        self.assertEqual(out["unresolved"], [m.name_of(CASE, 0)])
+        self.assertEqual(out["work"]["unresolved"], [m.name_of(CASE, 0)])
+        self.assertEqual(out["work_status"], "inconclusive")
+        self.assertEqual(out["status"], "inconclusive")
+        # the per-cell rows of the resolved cells are still equal
+        self.assertEqual(set(out["work"]["cells"].values()), {"equal"})
+
+    def test_a_difference_is_reported_even_when_the_grid_is_incomplete(self):
+        out = self.grid(lambda key: key != (CASE, 0),
+                        differ={(CASE, 10)})
+        self.assertEqual(out["work_status"], "differs")
+        self.assertEqual(out["work"]["cells"][m.name_of(CASE, 10)],
+                         "differs")
 
 
 class StructureReplay(unittest.TestCase):
@@ -2209,7 +2332,7 @@ class StructureReplay(unittest.TestCase):
         build = build_for("candidate", "candidate", 3, structure=V1,
                           records=tb.structural_events(digest="other"))
         record = self.replay(build, structure=V1)["record"]
-        row = record["work"]["digest"]
+        row = record["work"]["result.digest"]
         self.assertEqual(row["decision"], "differs")
         self.assertEqual(m.cell_status(record), "pass")
 
@@ -2218,7 +2341,7 @@ class StructureReplay(unittest.TestCase):
                           records=tb.structural_events(
                               first=counts_text("2.REWRITING=4")))
         record = self.replay(build, structure=V1)["record"]
-        row = record["work"]["first.trace.2.REWRITING"]
+        row = record["work"]["work.first.trace.2.REWRITING"]
         self.assertFalse(row["deterministic"]["candidate"])
         self.assertEqual(row["decision"], "differs")
         self.assertEqual(m.cell_status(record), "pass")

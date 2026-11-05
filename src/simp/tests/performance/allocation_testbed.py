@@ -112,17 +112,18 @@ WORK_TEXT = ("trace=2.REWRITING=3,4.REDUCE=1;kernel=SPEC=2,total=2;"
 FINGERPRINT = "names=-,+matrix_data;dprocs=;refl=1-3"
 
 
-def structural_events(first=WORK_TEXT, second=WORK_TEXT,
+def structural_events(first=WORK_TEXT, second=WORK_TEXT, use=WORK_TEXT,
                       digest=FINGERPRINT):
-    """The three records of the work phase (structure v1)."""
+    """The four records of the work phase (structure v1)."""
     return [["observation", key, text] for key, text in zip(
-        sc.WORK_EVENTS, (first, second, digest))]
+        sc.WORK_EVENTS, (first, second, use, digest))]
 
 
-def structural(first=WORK_TEXT, second=WORK_TEXT, digest=FINGERPRINT):
+def structural(first=WORK_TEXT, second=WORK_TEXT, use=WORK_TEXT,
+               digest=FINGERPRINT):
     """What the schema makes of those records: the work part of one
     process's observation (counts as dicts, the digest hashed)."""
-    return sc.work(structural_events(first, second, digest) +
+    return sc.work(structural_events(first, second, use, digest) +
                    [["check", "allocation brackets", "pass"]], sc.STRUCTURE)
 
 
@@ -131,7 +132,7 @@ def process_events(case=CASE, size=SIZE, steady=STEADY, repeats=REPEATS,
                    records=None):
     """Allocation events of one valid process; work maps bracket to a dict.
     Under `structure` the work phase records follow the foreign-thread
-    record (`records`: the three events, default the valid ones)."""
+    record (`records`: the four events, default the valid ones)."""
     work = work or {}
     rows, now, steady_index = [], dict.fromkeys(CATEGORIES, start), 0
     for name in sc.names(repeats):

@@ -396,19 +396,41 @@ class StructureFixture(unittest.TestCase):
         self.assertLess(emit, check)
 
     def test_the_phase_names_its_records_as_the_schema_does(self):
-        self.assertIn(
-            '[("work.first",first),("work.second",second),'
-            '("result.digest",digest)]', self.support)
+        start = self.support.index("fun workPhase")
+        body = self.support[start:self.support.index("fun constant", start)]
+        self.assertEqual(tuple(re.findall(r'\("([\w.]+)",', body)),
+                         sc.WORK_EVENTS)
+        # the use runs under the same counters as the operations
+        self.assertIn("val use = counted (!useResult)", body)
+        self.assertIn("val first = measureOnce w", body)
+        self.assertLess(body.index("val second"), body.index("val use"))
+        self.assertLess(body.index("val use"), body.index("val digest"))
 
     def test_the_listener_counts_and_never_forces_a_lazy_text(self):
         start = self.support.index("fun listen (level,a)")
         body = self.support[start:self.support.index("val maker0", start)]
         self.assertIn("actionIndex a", body)
-        for token in ("LZ_TEXT", "TEXT", "print", "say", "term_to_string"):
+        for token in ("LZ_TEXT", "print", "say", "term_to_string", "()"):
             self.assertNotIn(token, body)
+        # the one payload it reads is the string of a TEXT
+        self.assertEqual(re.findall(r"Trace\.\w+ \w+", body),
+                         ["Trace.TEXT s"])
+        self.assertIn("Trace.TEXT s => escapeText s", body)
+        sig = (m.HERE.parents[1] / "src" / "Trace.sig").read_text()
+        self.assertRegex(sig, r"\bTEXT\s+of string\b")
+        self.assertRegex(sig, r"LZ_TEXT\s+of unit -> string")
         index = self.support.index("fun actionIndex a")
         self.assertIn("Trace.LZ_TEXT _ => 1",
-                      self.support[index:self.support.index("fun countsText")])
+                      self.support[index:self.support.index("val textIndex")])
+
+    def test_levels_are_exact_and_keys_ordered_by_the_schema(self):
+        start = self.support.index("fun counted")
+        counted = self.support[start:self.support.index("fun measureOnce")]
+        for token in ("Int.min", "Int.max", "Array"):
+            self.assertNotIn(token, counted)
+        self.assertIn("Int.compare (l1,l2)", self.support)
+        self.assertIn("val textIndex = 10", self.support)
+        self.assertEqual(sc.TRACE_ACTIONS.index("TEXT"), 10)
 
     def test_the_listener_is_removed_and_counting_stopped_on_any_exit(self):
         self.assertIn("Portable.finally cleanup body ()", self.support)
@@ -420,22 +442,83 @@ class StructureFixture(unittest.TestCase):
         self.assertIn('Listener.add_listener Trace.trace_hook '
                       '("matrix_work",listen)', self.support)
 
-    def test_the_hook_is_assigned_only_where_a_workload_is_built(self):
-        uses = re.findall(r"[^\n]*\bfingerprint\b[^\n]*", self.support)
-        assigns = [u for u in uses if ":=" in u]
-        self.assertTrue(all(u.lstrip().startswith("val _ = fingerprint :=")
-                            for u in assigns), assigns)
+    def test_the_hooks_are_assigned_only_where_a_workload_is_built(self):
+        text = self.support
+        calls = [u for u in re.findall(r"[^\n]*\bretaining\b[^\n]*", text)
+                 if "fun retaining" not in u]
         # sswork, thwork, convwork, fragwork, markerTactic, the theory
-        # change, the storage graph, and the reset of every workload
-        self.assertEqual(len(assigns), 8)
-        # none inside the body of a timed closure
-        for u in assigns:
-            self.assertNotIn("fn () => slot", u)
+        # change and the storage graph, each at construction time
+        self.assertEqual(len(calls), 7)
+        for u in calls:
+            self.assertTrue(u.lstrip().startswith("val _ = retaining"), u)
+            self.assertNotIn("fn () => slot :=", u)
+        # the hooks themselves are assigned nowhere else
+        for hook in ("fingerprint", "useResult", "localCalls", "ruleList"):
+            lines = [l for l in text.splitlines()
+                     if re.search(r"\b%s :=" % hook, l)]
+            for line in lines:
+                self.assertRegex(line, r"^\s*(val _ = (\()?|fun retaining|"
+                                 r".*(; )?)%s :=" % hook)
         self.assertIn("val fingerprint : (unit -> string) ref = "
-                      "ref missingFingerprint", self.support)
-        # a workload built after another never reads its fingerprint
-        self.assertIn("val _ = fingerprint := missingFingerprint",
+                      "ref missingFingerprint", text)
+        # a workload built after another never reads its hooks
+        self.assertIn("val _ = (ruleList := rs; fingerprint := "
+                      "missingFingerprint;\n             useResult := noUse; "
+                      "localCalls := noCalls)", text)
+
+    def test_the_makers_of_history_makers_count_in_the_work_record(self):
+        start = self.support.index('"history_makers" =>')
+        end = self.support.index('"history_theory_change" =>', start)
+        case = self.support[start:end]
+        self.assertIn("val _ = localCalls := (fn () => !calls1 + !calls2)",
+                      case)
+        # the maker bodies, which run in the timed closure, are untouched
+        self.assertIn("fun firstMaker rw = (calls1 := !calls1 + 1; [rw])",
+                      case)
+        self.assertIn("fun laterMaker rw = (calls2 := !calls2 + 1; [rw])",
+                      case)
+        self.assertNotIn("makerCalls", case)
+        count = self.support.index("val maker0 = ")
+        self.assertIn("(!localCalls) ()", self.support[count:count + 200])
+
+    def test_setup_allocates_no_copy_of_the_rules(self):
+        self.assertNotIn("Vector.fromList", self.support)
+        self.assertIn("ruleList := rs", self.support)
+        # the terms of the conversion are made when the work phase asks
+        self.assertIn("(fn () => miss :: map", self.support)
+
+    def test_the_use_of_a_simpset_is_the_traversal_of_all_the_rules(self):
+        start = self.support.index("fun lookups")
+        body = self.support[start:self.support.index("fun useSS")]
+        self.assertIn("netconv ss", body)
+        self.assertIn("(!ruleList)", body)
+        # the same traversal gives the REFL set of the fingerprint
+        self.assertIn("val _ = lookups ss note", self.support)
+        self.assertIn("fun useSS ss = lookups ss ignore", self.support)
+        # a built simpset, a fragment, the deletion and the history cases
+        # all use their retained simpset; a bare theorem has no use
+        self.assertIn("(fn () => useSS (!slot))", self.support)
+        self.assertIn("(fn () => useSS (empty_ss ++ !slot))", self.support)
+        self.assertIn("val _ = retaining (fn () => thmText (!slot)) noUse",
                       self.support)
+
+    def test_the_fingerprints_read_the_retained_result(self):
+        # a fragment: the printed form of every rule it holds, not its
+        # agreement with what verify already required
+        start = self.support.index("fun fragText")
+        body = self.support[start:self.support.index("fun fragworkWith")]
+        self.assertIn("map thmText actual", body)
+        self.assertIn("hashText", body)
+        self.assertNotIn("expected", body)
+        # types are shown in goals as in theorems
+        self.assertIn("Globals.show_types,true", self.support)
+        start = self.support.index("fun goalText")
+        self.assertIn("termText", self.support[start:start + 120])
+        # the theory change keeps the function that raised the error
+        self.assertIn("Feedback.top_function_of e", self.support)
+        # the theorems of the lookups that are not REFL are in the digest
+        start = self.support.index("fun ssText")
+        self.assertIn("thmText th :: !others", self.support[start:])
 
     def test_the_timing_fixture_knows_nothing_of_it(self):
         for token in ("workPhase", "fingerprint", "Listener", "Count."):
@@ -462,13 +545,15 @@ class Smoke(unittest.TestCase):
         self.assertIn("@@MATRIX_WORK", text)
         # steady-state counts and the digest reproduce within the process
         self.assertIn('field "work.second" work', text)
+        self.assertIn('field "work.use" again', text)
         self.assertIn('field "result.digest" again', text)
 
     def lines(self, sizes, labels, change=lambda rows: None):
         rows = [[c, str(n), k, v] for n in sizes for c in labels
                 for k, v in zip(sc.WORK_EVENTS, (
-                    "trace=2.TEXT=1;kernel=;maker=0;collector=0",
+                    "trace=2.TEXT:x=1;kernel=;maker=0;collector=0",
                     "trace=;kernel=SPEC=1,total=1;maker=2;collector=0",
+                    "trace=4.REDUCE=3;kernel=;maker=0;collector=0",
                     "digest text"))]
         change(rows)
         return "\n".join("@@MATRIX_WORK\t" + "\t".join(r) for r in rows)
@@ -476,10 +561,10 @@ class Smoke(unittest.TestCase):
     def test_valid_records_are_parsed(self):
         records = self.smoke.work_records(self.lines([0, 1], ["a", "b"]),
                                           [0, 1], ["a", "b"])
-        self.assertEqual(len(records), 12)
+        self.assertEqual(len(records), 16)
         self.assertEqual(records[0], dict(
             case="a", size=0, key="work.first",
-            value="trace=2.TEXT=1;kernel=;maker=0;collector=0"))
+            value="trace=2.TEXT:x=1;kernel=;maker=0;collector=0"))
         self.assertEqual(records[-1]["value"], "digest text")
 
     def test_missing_extra_misordered_and_malformed_records_are_refused(self):
@@ -491,12 +576,94 @@ class Smoke(unittest.TestCase):
                 ("extra", good + "\n" + good.splitlines()[0]),
                 ("misordered", "\n".join(reversed(good.splitlines()))),
                 ("empty", ""),
-                ("bad key", good.replace("work.second", "work.third")),
+                ("bad key", good.replace("work.use", "work.third")),
+                ("use missing", "\n".join(
+                    l for l in good.splitlines() if "work.use" not in l)),
                 ("bad counts", good.replace("SPEC=1", "NOPE=1")),
                 ("short", good.replace("\tdigest text", ""))):
             with self.subTest(label), self.assertRaises(
                     (ValueError, sc.InvalidAllocation)):
                 run(text)
+
+
+class CrossSide(unittest.TestCase):
+    """The comparison of the work records of the two sides."""
+
+    @classmethod
+    def setUpClass(cls):
+        import smoke_matrix
+        cls.smoke = smoke_matrix
+
+    COUNTS = "trace=4.REDUCE=3;kernel=;maker=0;collector=0"
+
+    def run_of(self, selection, change=lambda rows: None, accepted=True):
+        rows = [dict(case=c, size=n, key=k, value=v)
+                for n in (0, 1) for c in ("a", "b")
+                for k, v in zip(sc.WORK_EVENTS, (
+                    self.COUNTS, self.COUNTS, self.COUNTS, "digest"))]
+        change(rows)
+        return dict(selection=selection, work=rows, accepted=accepted)
+
+    def test_equal_sides_compare_equal(self):
+        cross = self.smoke.compare_sides([self.run_of("baseline"),
+                                          self.run_of("candidate")])
+        self.assertEqual(cross, dict(compared=16, differences=[]))
+
+    def test_a_count_difference_names_the_count(self):
+        def more(rows):
+            rows[2]["value"] = self.COUNTS.replace("REDUCE=3", "REDUCE=4")
+        cross = self.smoke.compare_sides([self.run_of("baseline"),
+                                          self.run_of("candidate", more)])
+        self.assertEqual(len(cross["differences"]), 1)
+        d = cross["differences"][0]
+        self.assertEqual((d["case"], d["size"], d["key"]),
+                         ("a", 0, "work.use"))
+        self.assertEqual(d["counts"], {"trace.4.REDUCE": [3, 4]})
+
+    def test_a_digest_difference_and_a_missing_record_differ(self):
+        def change(rows):
+            rows[3]["value"] = "other"
+            del rows[8]
+        cross = self.smoke.compare_sides([self.run_of("baseline"),
+                                          self.run_of("candidate", change)])
+        self.assertEqual([(d["case"], d["size"], d["key"])
+                          for d in cross["differences"]],
+                         [("a", 0, "result.digest"), ("a", 1, "work.first")])
+        self.assertNotIn("counts", cross["differences"][0])
+        self.assertIsNone(cross["differences"][1]["candidate"])
+
+    def test_a_duplicate_record_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.smoke.compare_sides([self.run_of("baseline"),
+                                      self.run_of("baseline")])
+
+    def test_nothing_is_compared_without_records(self):
+        self.assertEqual(self.smoke.compare_sides([]),
+                         dict(compared=0, differences=[]))
+
+    def test_the_command_line_compares_a_manifest(self):
+        import sys
+        runs = [self.run_of("baseline"), self.run_of("candidate")]
+        for change, code in ((lambda rows: None, 0),
+                             (lambda rows: rows[0].update(value="trace=;"
+                              "kernel=;maker=1;collector=0"), 1)):
+            runs[1] = self.run_of("candidate", change)
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "manifest.json"
+                path.write_text(json.dumps(dict(runs=runs)))
+                argv = ["smoke_matrix.py", "--compare", str(path)]
+                out = io.StringIO()
+                with mock.patch.object(sys, "argv", argv), \
+                        contextlib.redirect_stdout(out):
+                    self.assertEqual(self.smoke.main(), code)
+                self.assertIn("16 compared", out.getvalue())
+                self.assertEqual("DIFFERS" in out.getvalue(), bool(code))
+
+    def test_the_run_reports_and_exits_on_the_comparison(self):
+        text = Path(self.smoke.__file__).read_text()
+        self.assertIn('manifest["cross_side"] = compare_sides('
+                      'manifest["runs"])', text)
+        self.assertIn('not cross["differences"]', text)
 
 
 class TheoryChange(unittest.TestCase):

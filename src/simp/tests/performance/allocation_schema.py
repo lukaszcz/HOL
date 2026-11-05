@@ -25,16 +25,18 @@ CANARY_ARRAY = 1000
 CANARY = dict(native=1003, rts=0, interpreter=0, code=0)
 ABI = 15
 # Structural evidence: a grid header that says `structure: "v1"` has, after
-# the foreign-thread record of every process, the three records of the
+# the foreign-thread record of every process, the four records of the
 # untimed work phase of MatrixAllocation.sml. A header without the key has
 # none (every archive made before it replays unchanged).
 STRUCTURE = "v1"
-WORK_EVENTS = ("work.first", "work.second", "result.digest")
+WORK_EVENTS = ("work.first", "work.second", "work.use", "result.digest")
 TRACE_ACTIONS = (
     "IGNORE", "LZ_TEXT", "MORE_CONTEXT", "OPENING", "PRODUCE", "REDUCE",
     "REWRITING", "SIDECOND_ATTEMPT", "SIDECOND_NOT_SOLVED",
     "SIDECOND_SOLVED", "TEXT")
-TRACE_LEVELS = 16
+# A TEXT event is keyed by its message too, escaped by the fixture: the
+# characters below as they are, any other byte as %XX (uppercase hex).
+MESSAGE_SAFE = " _.()'/+*-<>[]!?:"
 KERNEL_RULES = (
     "ABS", "ALPHA", "AP_TERM", "AP_THM", "ASSUME", "BETA_CONV", "CCONTR",
     "CHOOSE", "COMPUTE", "CONJ", "CONJUNCT1", "CONJUNCT2", "DISCH", "DISJ1",
@@ -95,7 +97,7 @@ def ordered(low, high):
 def parse(events, *, case, size, steady, repeats, structure=None):
     """Return (bracket records, observation events) of one valid process.
     `structure` is the header's structure key: None (no work records) or
-    STRUCTURE (three, between the foreign-thread record and the check)."""
+    STRUCTURE (four, between the foreign-thread record and the check)."""
     require(repeats >= 3, "need at least three steady repeats")
     require(structure in (None, STRUCTURE), "unknown structure version")
     extra = len(WORK_EVENTS) if structure else 0
@@ -141,10 +143,26 @@ def parse(events, *, case, size, steady, repeats, structure=None):
     return brackets, es
 
 
+def message_ok(text):
+    """An escaped TEXT message in its canonical form: the safe characters
+    stand for themselves, so `%XX` only stands for an unsafe byte."""
+    for part in re.split(r"(%[0-9A-F]{2})", text):
+        if re.fullmatch(r"%[0-9A-F]{2}", part):
+            c = chr(int(part[1:], 16))
+            if c.isascii() and (c.isalnum() or c in MESSAGE_SAFE):
+                return False
+        elif not all(c.isascii() and (c.isalnum() or c in MESSAGE_SAFE)
+                     for c in part):
+            return False
+    return True
+
+
 def work_counts(text):
-    """The counts of one `work.first`/`work.second` record as a flat dict
-    (`trace.L.ACTION`, `kernel.RULE`, `maker`, `collector`), nonzero counts
-    only, in the canonical order of the fixture, each key once."""
+    """The counts of one `work.first`/`work.second`/`work.use` record as a
+    flat dict (`trace.L.ACTION`, `trace.L.TEXT:message`, `kernel.RULE`,
+    `maker`, `collector`), nonzero counts only, in the canonical order of the
+    fixture (level, constructor, message), each key once. The level is
+    exact; a TEXT carries its message, no other constructor a suffix."""
     parts = text.split(";")
     require(len(parts) == 4 and
             [p.split("=", 1)[0] for p in parts] ==
@@ -153,21 +171,23 @@ def work_counts(text):
     out = {}
     for part, order in ((parts[0], None), (parts[1], KERNEL_RULES)):
         body = part.split("=", 1)[1]
-        last = -1
+        last = None
         for item in (body.split(",") if body else []):
             key, _, number = item.rpartition("=")
             if order is None:
-                level, _, action = key.partition(".")
-                require(re.fullmatch(r"0|[1-9][0-9]*", level) and
-                        int(level) < TRACE_LEVELS and
-                        action in TRACE_ACTIONS, "bad trace key: " + key)
-                rank = int(level) * len(TRACE_ACTIONS) + \
-                    TRACE_ACTIONS.index(action)
+                level, _, rest = key.partition(".")
+                action, colon, message = rest.partition(":")
+                require(re.fullmatch(r"0|-?[1-9][0-9]*", level) and
+                        action in TRACE_ACTIONS and
+                        (colon == ":") == (action == "TEXT") and
+                        message_ok(message), "bad trace key: " + key)
+                rank = (int(level), TRACE_ACTIONS.index(action), message)
                 name = "trace." + key
             else:
                 require(key in order, "bad kernel key: " + key)
                 rank, name = order.index(key), "kernel." + key
-            require(rank > last, "work keys out of order or repeated")
+            require(last is None or rank > last,
+                    "work keys out of order or repeated")
             require(re.fullmatch(r"[1-9][0-9]*", number),
                     "malformed work count: " + item)
             last = rank
@@ -186,10 +206,11 @@ def work(es, structure):
     counts of both runs and the SHA-256 of the result fingerprint."""
     if structure is None:
         return None
-    first, second, digest = es[-4:-1]
-    require([first[1], second[1], digest[1]] == list(WORK_EVENTS),
+    first, second, use, digest = es[-1 - len(WORK_EVENTS):-1]
+    require([first[1], second[1], use[1], digest[1]] == list(WORK_EVENTS),
             "missing or misplaced work records")
     return dict(first=work_counts(first[2]), second=work_counts(second[2]),
+                use=work_counts(use[2]),
                 digest=hashlib.sha256(digest[2].encode()).hexdigest())
 
 

@@ -981,14 +981,19 @@ def cell_status(record):
                       for m in p.values()])
 
 
-def work_section(cases):
+def work_section(cases, unresolved=()):
     """The structural evidence of all cells (None for an archive without
-    it): each cell's status, and the rows that are not reproducible."""
-    section = dict(status=None, cells={}, nondeterminism=[])
+    it): each cell's status, and the rows that are not reproducible. A grid
+    with a cell that has no work rows or is unresolved is `inconclusive`
+    (unless a cell already differs), as the words do not pass then either;
+    `missing` and `unresolved` name those cells."""
+    section = dict(status=None, cells={}, nondeterminism=[], missing=[],
+                   unresolved=list(unresolved))
     for case, record in cases.items():
         for size, cell in record["cells"].items():
             rows = cell.get("work")
             if rows is None:
+                section["missing"].append(name_of(case, size))
                 continue
             section["cells"][name_of(case, size)] = an.work_status(
                 r["decision"] for r in rows.values())
@@ -1003,7 +1008,10 @@ def work_section(cases):
                             [case, size, name, what])
     if not section["cells"]:
         return None
-    section["status"] = an.work_status(section["cells"].values())
+    status = an.work_status(section["cells"].values())
+    if status == "equal" and (section["missing"] or section["unresolved"]):
+        status = "inconclusive"
+    section["status"] = status
     return section
 
 
@@ -1057,7 +1065,7 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
         all(r["slopes"] is not None for r in out["cases"].values())
     pairs = {c["pairs"] for r in out["cases"].values()
              for c in r["cells"].values()}
-    work = work_section(out["cases"])
+    work = work_section(out["cases"], out["unresolved"])
     if work is not None:
         # Beside the words, never inside them: neither the status below
         # nor the nondeterminism list reads a work row.
@@ -1126,9 +1134,11 @@ def results_markdown(decisions, label="TASK29B"):
         lines += ["", "Structural evidence (work phase; trace, kernel and "
                   "callback counts and the result digest, never part of the "
                   "status above): **%s**. Cells equal %d, differ %d, "
-                  "inconclusive %d; rows not reproducible: %d."
+                  "inconclusive %d, without work rows %d, unresolved %d; "
+                  "rows not reproducible: %d."
                   % (work["status"], found.count("equal"),
                      found.count("differs"), found.count("inconclusive"),
+                     len(work["missing"]), len(work["unresolved"]),
                      len(work["nondeterminism"])), "",
                   "| case | size | work |", "|---|---:|---|"]
         for case, record in decisions["cases"].items():
