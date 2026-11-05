@@ -146,11 +146,13 @@ struct
   val dprocCalls = ref 0
   fun maker rw = (makerCalls := !makerCalls + 1; [rw])
   exception CollectorContext
+  (* One shared closure for every fixture dproc: a per-reducer closure over
+     dprocCalls would add words to setup for each of the n dprocs. *)
+  fun dprocApply _ _ = (dprocCalls := !dprocCalls + 1; raise Conv.UNCHANGED)
   fun reducer name = Traverse.REDUCER
     {name=SOME name,initial=CollectorContext,
      addcontext=fn (ct,_) => (collectorCalls := !collectorCalls + 1; ct),
-     apply=fn _ => fn _ => (dprocCalls := !dprocCalls + 1;
-                            raise Conv.UNCHANGED)}
+     apply=dprocApply}
   fun setup filter dprocs = SSFRAG
     {name=SOME "matrix_setup",filter=filter,dprocs=dprocs,
      rewrs=[],convs=[],ac=[],congs=[]}

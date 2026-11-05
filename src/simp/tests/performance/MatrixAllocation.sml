@@ -21,9 +21,10 @@
    is inside a bracket. The timed closures and so the operation and apply
    words are those of an older fixture. The setup bracket is not: workload
    construction now also sets the hooks of MatrixSupport (a few closures, a
-   constant number of words that does not grow with the rules, equal on both
-   sides of a grid), so only the operation_first, operation_steady and
-   apply rows compare across fixtures or grids (alloc/ against alloc-z/).
+   constant number of words that does not grow with the rules, the fixture
+   dprocs sharing one closure, equal on both sides of a grid), so only the
+   operation_first, operation_steady and apply
+   rows compare across fixtures or grids (alloc/ against alloc-z/).
    Counts are predeclared by the driver, never calibrated here. No decoding,
    output or label work happens between a bracket's start and end; the
    endpoints are read from C storage afterwards and printed at the very end. *)

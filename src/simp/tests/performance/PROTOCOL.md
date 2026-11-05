@@ -1146,8 +1146,11 @@ the result of a deletion) it has two parts:
 - the net conversion of the result (`netconv`: the traversal with the
   rewriter of the simpset and **no dprocs**) is applied to the left side of
   each of the n rules, the same conversion as the fingerprint's REFL set. It
-  counts the events and inferences of the entries that fire (the `REDUCE`
-  and `TEXT` events, and the inferences). The rewriter tries the matches of
+  counts every traced event of the n traversals: one traversal `REDUCE` per
+  lookup (whether or not an entry is invoked) and, for each entry invoked,
+  the events of its `USER_CONV` (`REDUCE`, then `PRODUCE`, or `TEXT` when
+  it fails) and of the rewrite (`REWRITING`, `PRODUCE`), plus the
+  inferences; a miss gives a REFL. The rewriter tries the matches of
   a term in order and stops at the first that succeeds (`tryfind`,
   `simpLib.sml`), and a match filtered before its conversion runs emits
   nothing, so a duplicate or stale entry behind a working one, and a
@@ -1159,7 +1162,10 @@ the result of a deletion) it has two parts:
   deletion cases delete). The fixture's dprocs leave no event, so what is
   counted is `dproc`: the number of dprocs held times the sampled terms
   (n-1 dprocs after a deletion of one, three terms: `3(n-1)`; none when
-  every dproc is gone). This is the one count that sees a dproc deletion.
+  every dproc is gone). It equals 3 times the number of dprocs the result
+  holds, which is the length of `dpnames` in the digest: the same fact, shown
+  as counted applications of each retained dproc. It is the one count that
+  sees a dproc deletion, but it is not an independent witness of it.
 
 For a retained conversion (`compile_construct_conv`) the conversion is
 applied to the fingerprinted terms; for the tactic whose operation constructs
@@ -1204,9 +1210,15 @@ building a workload now also sets the hooks of `MatrixSupport` (the
 fingerprint, the use, the maker count, and `ruleList := rs`, which shares the
 list the workload builds anyway), so the setup words gain the closures of a
 few assignments, a small constant that does not grow with the number of rules
-and is equal on both sides of a grid. The setup words of a new grid (`alloc-z/`)
-therefore do not equal those of an older one (`alloc/`) at any size, and a
-comparison across grids (`alloc/` at Y against `alloc-z/` at Z) uses only the
+and is equal on both sides of a grid. The fixture dprocs share one closure
+(`dprocApply`), so the counter adds no words per dproc: a per-reducer closure
+over it added about 3 words per reducer to the setup of `exclude_dproc` and
+`exclude_mixed` (`PolyML.objSize` of the built workload: 20, 290 and 2990
+words more at 10, 100 and 1000 reducers for `exclude_dproc`), which the shared
+closure removes; the n reducers cost what they did before the counter. The setup words of a new grid
+(`alloc-z/`) therefore do not equal those of an older one (`alloc/`) at any
+size, and a comparison across grids (`alloc/` at Y against `alloc-z/` at Z)
+uses only the
 operation rows (`operation_first`, `operation_steady`, `apply`), never the
 setup row.
 
@@ -1242,15 +1254,25 @@ current case does that (the rules match their own constant keys, bounded
 rules are anonymous, and the 13 cells give a constant number of keys). A new
 case with per-rule failures must normalise or drop the message first.
 
-**Per-cell evidence.** `allocation_analysis.work_groups(cell["work"])` (and
-`cells_work_groups` for a dict of cells) returns, per cell, the names of the
-count rows that are non-empty (nonzero on either side) in each of `first`,
-`second` and `use` (`None` for a cell without work rows). A disposition
-classifies a cell as `deletion` when `use` has such a row, `operation` when
-`first` has one, and `construct-reuse` otherwise, and refuses a cell whose
-class is empty for its kind (n > 0), since equal empty rows are vacuous (a
-hook regression, for example `useResult` left at `noUse`, would give `equal`
-on both sides).
+**Per-cell evidence.** `allocation_analysis.work_groups(cell["work"])`
+returns, per cell, the names of the count rows that are non-empty (nonzero on
+either side) in each of `first`, `second` and `use` (`None` for a cell without
+work rows); it only describes, and infers no class. `cells_work_groups`
+takes a decisions structure (`decisions["cases"][case]["cells"][size]`, as
+loaded from `decisions.json`) and returns `{(case, size): groups}` with the
+size an int, the key by which a disposition looks a cell up.
+
+The evidence class of a cell is fixed by its case in the disposition
+(`task30_dispose.py`), never read from the rows, since a hook regression
+(`useResult` left at `noUse`) would give empty rows that are `equal` on both
+sides. The classes and what each must show (and the cell must also be `equal`
+and deterministic):
+
+- `deletion`: `work.first` and `work.second` are empty (the operation fires
+  nothing) and `work.use` has `work.use.trace.4.REDUCE`;
+- `dproc-deletion`: as `deletion`, and `work.use` has `work.use.dproc`;
+- `operation`: `work.first` and `work.second` are both non-empty and
+  `work.use` is empty.
 
 **Grid status.** `work_status` is `differs` when any resolved cell differs,
 `inconclusive` when no cell differs and some cell is not equal, lacks work
@@ -1272,21 +1294,28 @@ counts that are zero by construction). For such a cell the rows show:
   of the digest, that pins which installed left sides still rewrite and to
   what, and the fragment and dproc names. For `exclude_dproc` and the dproc
   half of `exclude_mixed` the net is empty or holds only the data, so the
-  lookups find nothing (n events, all REFL) for the dprocs: they show nothing
-  about the deleted dproc. The dproc deletion is shown there by the `dproc`
-  count of the use (the dprocs held, applied directly, `3(n-1)`), by `dpnames`
-  in the digest, by the exact allocation words and by source identity;
+  lookups find nothing for the dprocs: for `exclude_dproc` all n lookups are
+  REFL, for `exclude_mixed` 9999 rewrite and 1 is REFL (the deleted rule).
+  They show nothing about the deleted dproc. The dproc deletion is shown
+  there by the `dproc` count of the use (the dprocs held, applied directly,
+  `3(n-1)`, which restates the `dpnames` of the digest), by the exact
+  allocation words and by source identity;
 - the records are deterministic across processes, and the same on both sides.
 
-The marker and tactic cases run one `SIMP_CONV` and give the `REDUCE` event
-and a handful of inferences in the operation itself. In
-`exclude_marker` and `exclude_tactic_complete` the deletion (`-*` of the
-10000-entry source) runs inside the timed `SIMP_CONV`/`SIMP_TAC`, and the one
-counted `REDUCE` comes from simplifying the target after it: the deletion is
-visible only in the operation words. In `exclude_marker_reuse` and
-`exclude_tactic_reuse` the deletion is done when the conversion or tactic is
-built (setup); the timed run is one lookup and one REFL, and the rows cover
-essentially all of its counted work. `work.use` is empty there.
+The marker and tactic cases (`operation` class) run one `SIMP_CONV` or
+`SIMP_TAC` and give the `REDUCE` event of one traversal of the target and a
+handful of inferences in the operation itself. In all four cells
+(`exclude_marker`, `exclude_marker_reuse`, `exclude_tactic_reuse`,
+`exclude_tactic_complete`) the `-*` of the 10000-entry source runs inside the
+timed call: `SIMP_CONV` is curried and runs `process_tags` (with the `-*`) on
+every application to a term, and `SIMP_TAC` reaches the same conversion. The
+deletion is therefore visible only in the operation words (and the source
+identity), as the filtering of the net (`Ho_Net.vfilter` and the name match
+per entry) is untraced. The traced work is one `REDUCE` plus a REFL (or the
+fixture's ASSUME), and for `exclude_marker` and `exclude_tactic_complete` also
+the three inferences that build `Excl`; the reuse cells reuse only the `Excl`
+marker theorem and save only that construction, not the deletion.
+`work.use` is empty in all four.
 
 **What no row can show.** The following are outside every count:
 

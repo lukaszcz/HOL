@@ -2081,9 +2081,18 @@ class StructureDecisions(unittest.TestCase):
         cell = an.cell(*experiment({}, {}), STEADY)
         self.assertIsNone(an.work_groups(cell.get("work")))
         full = an.cell(*v1_cell(), STEADY)
-        both = an.cells_work_groups({"a": full, "b": cell})
-        self.assertEqual(both["a"], an.work_groups(full["work"]))
-        self.assertIsNone(both["b"])
+        # the shape of decisions.json: cases[case]["cells"][size], sizes
+        # as strings after the JSON round trip
+        decisions = {"cases": {"c1": {"cells": {"1": full, "10": cell},
+                                      "slopes": {}},
+                               "c2": {"cells": {"10000": full}}}}
+        for loaded in (decisions, json.loads(json.dumps(decisions))):
+            both = an.cells_work_groups(loaded)
+            self.assertEqual(sorted(both), [("c1", 1), ("c1", 10),
+                                            ("c2", 10000)])
+            self.assertEqual(both[("c1", 1)], an.work_groups(full["work"]))
+            self.assertIsNone(both[("c1", 10)])
+            self.assertEqual(both[("c2", 10000)], both[("c1", 1)])
 
     def test_a_cell_without_records_has_no_work_section(self):
         cell = an.cell(*experiment({}, {}), STEADY)

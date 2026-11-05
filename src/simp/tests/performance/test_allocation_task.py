@@ -474,10 +474,16 @@ class StructureFixture(unittest.TestCase):
         self.assertIn("dprocs=[]", net)
         # the fixture's dproc counts its own applications, and the counter
         # is read by the work records beside the maker and collector's
+        shared = text[text.index("fun dprocApply"):
+                      text.index("fun reducer name")]
+        self.assertIn("dprocCalls := !dprocCalls + 1", shared)
+        self.assertIn("raise Conv.UNCHANGED", shared)
+        # one shared closure: no per-reducer closure over the counter, which
+        # would grow the setup words with the number of dprocs
         reducer = text[text.index("fun reducer name"):
                        text.index("fun setup")]
-        self.assertIn("dprocCalls := !dprocCalls + 1", reducer)
-        self.assertIn("raise Conv.UNCHANGED", reducer)
+        self.assertIn("apply=dprocApply", reducer)
+        self.assertNotIn("dprocCalls", reducer)
         self.assertIn('";dproc=" ^ Int.toString (!dprocCalls - dproc0)', text)
 
     def test_the_digest_is_read_before_the_use(self):
@@ -732,11 +738,28 @@ class CrossSide(unittest.TestCase):
             path, out = Path(tmp) / "manifest.json", Path(tmp) / "s.json"
             path.write_text(json.dumps(manifest))
             argv = ["smoke_matrix.py", "--compare", str(path),
-                    "--summary", str(out)]
+                    "--write-summary", str(out)]
             with mock.patch.object(sys, "argv", argv), \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(self.smoke.main(), 0)
             self.assertEqual(json.loads(out.read_text()), summary)
+
+            def compare():
+                argv = ["smoke_matrix.py", "--compare", str(path),
+                        "--summary", str(out)]
+                text = io.StringIO()
+                with mock.patch.object(sys, "argv", argv), \
+                        contextlib.redirect_stdout(text):
+                    return self.smoke.main(), text.getvalue()
+            code, text = compare()
+            self.assertEqual(code, 0)
+            self.assertNotIn("DIFFERS", text)
+            stored = json.loads(out.read_text())
+            stored["head"] = "other"
+            out.write_text(json.dumps(stored))
+            code, text = compare()
+            self.assertEqual(code, 1)
+            self.assertIn("DIFFERS summary", text)
 
     def test_the_run_writes_the_manifest_and_the_summary(self):
         text = Path(self.smoke.__file__).read_text()

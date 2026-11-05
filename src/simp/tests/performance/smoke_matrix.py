@@ -7,8 +7,9 @@ acceptance or independent repository builds. --scope grid excludes four costly
 10000-rule single-add/AC cases; --scope expensive runs those explicitly.
 Outputs are exclusive-created JSON (the full manifest: runs, fixture head,
 every work record) + a compact sibling .log + NAME.summary.json, which is
-derived from the manifest alone (`--compare MANIFEST [--summary PATH]`
-re-derives and re-compares it); private trees are always removed. No
+derived from the manifest alone (`--compare MANIFEST --summary PATH`
+re-derives it and compares it with the stored one; `--write-summary PATH`
+writes a new one); private trees are always removed. No
 source is modified outside the private temporary directory.
 """
 import argparse
@@ -222,9 +223,13 @@ def main():
                         "sides in an earlier manifest (exit 1 on any "
                         "difference or none compared)")
     parser.add_argument("--summary", type=Path, metavar="PATH",
-                        help="with --compare: write the summary derived "
-                        "from the manifest to this new file (a run writes "
-                        "it next to its manifest as NAME.summary.json)")
+                        help="with --compare: compare the summary derived "
+                        "from the manifest with the stored one at PATH "
+                        "(exit 1 and a DIFFERS line if they differ)")
+    parser.add_argument("--write-summary", type=Path, metavar="PATH",
+                        help="with --compare: write the derived summary "
+                        "to this new file (a run writes it next to its "
+                        "manifest as NAME.summary.json)")
     parser.add_argument("--scope", default="smoke",
                         choices=("small", "smoke", "grid", "expensive"))
     parser.add_argument("--case", action="append", dest="cases",
@@ -238,10 +243,18 @@ def main():
         manifest = json.loads(args.compare.read_text())
         cross = compare_sides(manifest["runs"])
         report_sides(cross, print)
+        derived = summarise(manifest)
+        bad = bool(cross["differences"] or not cross["compared"])
+        if args.write_summary is not None:
+            with args.write_summary.open("x") as out:
+                out.write(json.dumps(derived, indent=2) + "\n")
         if args.summary is not None:
-            with args.summary.open("x") as out:
-                out.write(json.dumps(summarise(manifest), indent=2) + "\n")
-        return 1 if cross["differences"] or not cross["compared"] else 0
+            if json.loads(args.summary.read_text()) != derived:
+                print("DIFFERS summary %s" % args.summary)
+                bad = True
+            else:
+                print("summary %s matches" % args.summary)
+        return 1 if bad else 0
     if args.output is None:
         parser.error("--output is required")
     repo, output = args.repo.resolve(), args.output.resolve()

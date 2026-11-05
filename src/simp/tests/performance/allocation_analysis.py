@@ -129,9 +129,14 @@ def work_groups(rows):
     return groups
 
 
-def cells_work_groups(cells):
-    """work_groups of every cell of {cell name: cell record}."""
-    return {name: work_groups(c.get("work")) for name, c in cells.items()}
+def cells_work_groups(decisions):
+    """work_groups of every cell of a decisions structure (the value or the
+    loaded decisions.json: decisions["cases"][case]["cells"][size]), keyed
+    as the disposition looks a cell up: {(case, size): groups}, with the
+    size an int (JSON keeps it as a string)."""
+    return {(case, int(size)): work_groups(cell.get("work"))
+            for case, record in decisions["cases"].items()
+            for size, cell in record["cells"].items()}
 
 
 def work_status(decisions):
