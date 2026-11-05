@@ -2473,7 +2473,8 @@ class Attempts(Rig):
         status, text = self.go(self.replay_argv(two))
         self.assertEqual(status, 0)
         self.assertIn("ATTEMPTS of TOY: 3 in the ledger, 2 of this candidate "
-                      "%s (5 records, chain intact)" % CANDIDATE, text)
+                      "%s (5 records of TOY, 5 in the ledger, chain "
+                      "intact)" % CANDIDATE, text)
         mine = [x for x in text.splitlines() if x.startswith("ATTEMPT ")]
         self.assertEqual(len(mine), 3)
         self.assertRegex(mine[0], r" first opened \S+ resumed 0 status fail "

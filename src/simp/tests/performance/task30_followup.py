@@ -58,11 +58,18 @@ CASES = ("exclude_partial", "exclude_tactic_reuse")
 LAYOUT_SEED = "task30-followup-1"
 COUNTS = a.HERE / "task30_followup_iterations.json"
 # Seals of the code that earlier records of this table were made by, as
-# TASK30's (task30_grid.py): empty until a change to the driver, the engine
-# or the acceptance module is made after this table's first record (its
-# pilot). Such a change appends the seals of the code the records were made
-# by here, so that they still replay; the disposition code, which changes
-# the engine and task30_grid.py, belongs before the first record instead.
+# TASK30's (task30_grid.py): empty until a change is made after this table's
+# first record (its pilot). Then, in the same commit, append the seal the
+# records were made by: the old timing_grid.py to ENGINES, acceptance.py to
+# ACCEPTANCE, this file to DRIVERS, and (a reviewed change that alters
+# nothing measured, only after `run`) the old task30_grid.py to
+# SEALED_HISTORY["task30_grid.py"]; edit test_task30_grid.py, which pins them
+# empty, too. `run` compares the counts' sealed files exactly, so between the
+# pilot and `run` only a fresh pilot absorbs a change to a sealed file. The
+# disposition code is landed before the pilot, in a module of its own
+# (task30_dispose.py) in neither table's seals, so task30_grid.py stays as
+# it is from Z0 on. TASK30's own set of sealed names is frozen by its Y
+# records: do not add a file to task30_grid.INSTALLED or SEALED.
 DRIVERS, ENGINES, ACCEPTANCE = (), (), ()
 # task30_grid.py is sealed like the helpers of the cases: this table takes
 # its constants (SECONDS, PAIRS, SAMPLES, SEALED) and replays the TASK30

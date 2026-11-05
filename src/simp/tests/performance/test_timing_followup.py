@@ -298,6 +298,20 @@ class Rig(ttg.Rig):
                          str(self.repo), "--pilot", str(self.fpilot),
                          "--replaces-pilot", str(self.pilot_dir), *extra])
 
+    def sealed_commands(self, out):
+        """The commands that bind by the seals, as argument lists."""
+        return {
+            "verify-counts": ["verify-counts", "--grid", str(self.fpilot),
+                              "--repo", str(self.repo), *self.over()],
+            "run": ["run", "--output", str(self.root / "late"), "--repo",
+                    str(self.repo), "--pilot", str(self.fpilot),
+                    "--candidate", FOLLOW, "--authorize-measurements",
+                    *self.over()],
+            "extend": ["extend", "--grid", str(out), "--output",
+                       str(self.root / "late-ext"), "--repo",
+                       str(self.repo), "--pilot", str(self.fpilot),
+                       "--authorize-measurements"]}
+
     def load(self, path):
         return json.loads(Path(path).read_text())
 
@@ -332,7 +346,12 @@ class Counts(Rig):
                 name: a.seal(self.replaced / name)
                 for name in ("inventory.json", "decisions.json",
                              "../replaced-1/inventory.json",
-                             "../replaced-1/decisions.json")}))
+                             "../replaced-1/decisions.json")},
+            code=self.fgrid.replay_code()))
+        # The seals of the code the replay depended on.
+        self.assertTrue({"timing_grid.py", "acceptance.py", "summarize.py",
+                         "audit_evidence.py", "task30_pins.py",
+                         self.counts.name} <= set(counts["replaces"]["code"]))
         self.assertEqual(counts["layout_seed"], "f0")
         code, text = self.fgo(["verify-counts", "--grid", str(self.fpilot),
                                "--repo", str(self.repo), *self.over()])
@@ -362,6 +381,15 @@ class Counts(Rig):
                         "counts differ"):
                     self.fgrid.check_counts(self.fpilot, self.fcounts)
                 self.declare_followup_again()
+
+    def test_a_replaced_grid_that_is_not_a_sibling_is_named(self):
+        self.declare()
+        counts = self.load(self.fcounts)
+        counts["replaces"]["grid"] = "elsewhere/replaced"
+        self.fcounts.write_text(json.dumps(counts))
+        with self.assertRaisesRegex(
+                ValueError, "must stay siblings, as in the evidence layout"):
+            self.fgrid.check_counts(self.fpilot, self.fcounts)
 
     def declare_followup_again(self):
         self.fcounts.unlink()
@@ -882,20 +910,6 @@ class Binding(Rig):
         self.assertEqual(sorted(self.load(self.fcounts)["replaces"][
             "files"]), ["decisions.json", "inventory.json"])
 
-    def sealed_commands(self, out):
-        """The commands that bind by the seals, as argument lists."""
-        return {
-            "verify-counts": ["verify-counts", "--grid", str(self.fpilot),
-                              "--repo", str(self.repo), *self.over()],
-            "run": ["run", "--output", str(self.root / "late"), "--repo",
-                    str(self.repo), "--pilot", str(self.fpilot),
-                    "--candidate", FOLLOW, "--authorize-measurements",
-                    *self.over()],
-            "extend": ["extend", "--grid", str(out), "--output",
-                       str(self.root / "late-ext"), "--repo",
-                       str(self.repo), "--pilot", str(self.fpilot),
-                       "--authorize-measurements"]}
-
     def test_a_change_to_a_file_of_the_replaced_grid_is_named(self):
         self.declare()
         out, code, _ = self.run_followup()
@@ -915,6 +929,63 @@ class Binding(Rig):
                         self.fgo(argv)
             finally:
                 path.write_text(good)
+        self.assertFalse((self.root / "late").exists())
+
+    def test_a_change_to_the_code_of_the_replay_is_named(self):
+        self.declare()
+        out, code, _ = self.run_followup()
+        commands = self.sealed_commands(out)
+        real = tg.Grid.replay_code
+
+        def changed(grid):
+            return {**real(grid), "summarize.py": dict(
+                bytes=1, sha256="0" * 64)}
+        with patch.object(tg.Grid, "replay_code", changed):
+            for action, argv in commands.items():
+                with self.subTest(action), self.assertRaisesRegex(
+                        ValueError, r"code changed since predeclare: "
+                        r"summarize\.py; run predeclare again"):
+                    self.fgo(argv)
+        self.assertFalse((self.root / "late").exists())
+
+    def test_the_counts_file_of_the_replaced_table_is_code_of_the_replay(
+            self):
+        self.declare()
+        good = self.counts.read_text()
+        self.counts.write_text(good + " ")
+        try:
+            with self.assertRaisesRegex(
+                    ValueError, "code changed since predeclare: " +
+                    self.counts.name.replace(".", r"\.")):
+                self.fgo(self.sealed_commands(None)["verify-counts"])
+        finally:
+            self.counts.write_text(good)
+
+    def test_the_headers_of_the_replaced_grid_are_checked_by_the_seals(self):
+        self.declare()
+        out, code, _ = self.run_followup()
+        seen = []
+        for name in ("check_header", "check_sources", "check_commit",
+                     "check_checkout"):
+            real = getattr(self.grid, name)
+
+            def counted(inventory, *rest, real=real, name=name):
+                seen.append((name, inventory["schema"]))
+                return real(inventory, *rest)
+            setattr(self.grid, name, counted)
+        self.fgo(self.sealed_commands(out)["verify-counts"])
+        self.assertEqual(sorted(seen), sorted(
+            (n, s) for n in ("check_header", "check_sources", "check_commit",
+                             "check_checkout")
+            for s in ("toy-experiment-v1", "toy-extension-v1")))
+        self.grid.check_header = lambda inventory: (_ for _ in ()).throw(
+            ValueError("header refused"))
+        for action, argv in self.sealed_commands(out).items():
+            if action == "extend":
+                continue
+            with self.subTest(action), self.assertRaisesRegex(
+                    ValueError, "header refused"):
+                self.fgo(argv)
         self.assertFalse((self.root / "late").exists())
 
     def test_the_seals_are_those_of_the_counts_whatever_the_grid(self):
@@ -1024,6 +1095,65 @@ class Binding(Rig):
             0)
 
 
+class SameLedger(Rig):
+    """A follow-up appends to the ledger that holds the openings of the
+    replaced grid, and starts no chain of its own."""
+
+    def test_a_missing_ledger_is_refused_and_not_created(self):
+        self.declare()
+        out, code, _ = self.run_followup("good")
+        moved = self.attempts.with_name("moved.jsonl")
+        self.attempts.rename(moved)
+        for argv in (self.sealed_commands(None)["run"],
+                     self.sealed_commands(out)["extend"]):
+            with self.assertRaisesRegex(
+                    ValueError, "no attempts ledger at .*attempts.*: a "
+                    "follow-up appends to the ledger that holds the "
+                    "openings of the replaced grid"):
+                self.fgo(argv)
+        self.assertFalse(self.attempts.exists())
+        self.assertFalse((self.root / "late").exists())
+        self.assertFalse((self.root / "late-ext").exists())
+
+    def test_a_ledger_without_the_replaced_openings_is_refused(self):
+        self.declare()
+        out, code, _ = self.run_followup("good")
+        before = self.attempts.read_text()
+        self.attempts.unlink()
+        tg.ledger_append(
+            self.attempts, event="open", stage="first", attempt="f" * 32,
+            candidate=FOLLOW, table="toyf", counts_file="x.json",
+            counts=dict(bytes=1, sha256="0" * 64), seed="f0",
+            output="/o", checkout="/c", only=None)
+        for argv in (self.sealed_commands(None)["run"],
+                     self.sealed_commands(out)["extend"]):
+            with self.assertRaisesRegex(
+                    ValueError, "attempts ledger .* lacks the first-stage "
+                    "opening of attempt [0-9a-f]+ of the replaced grid"):
+                self.fgo(argv)
+        self.assertFalse((self.root / "late").exists())
+        self.attempts.write_text(before)
+
+    def test_the_ledger_with_the_openings_of_both_stages_is_accepted(self):
+        self.declare()
+        out, code, _ = self.run_followup("good")
+        self.assertIn(code, (0, 2))
+        state = tg.Ledger(self.attempts)
+        self.assertEqual(len([r for r in state.records
+                              if r.get("table") == "toy"
+                              and r["event"] == "open"]), 2)
+
+    def test_the_second_stage_of_the_replaced_grid_is_needed_too(self):
+        self.declare()
+        lines = self.attempts.read_text().splitlines()
+        keep = [x for x in lines if '"stage": "second"' not in x or
+                '"table": "toyf"' in x]
+        self.attempts.write_text("\n".join(keep) + "\n")
+        with self.assertRaisesRegex(
+                ValueError, "lacks the second-stage opening"):
+            self.fgo(self.sealed_commands(None)["run"])
+
+
 class TableOfLine(Rig):
     """The lines of the ledger name their table, and the lines written
     before they did belong to the table of the family."""
@@ -1085,6 +1215,8 @@ class TableOfLine(Rig):
                         "x", FOLLOW, None), "first")
             self.assertIn("ATTEMPTS of %s: %s" % (label, text),
                           out.getvalue())
+            self.assertIn("(1 records of %s, 2 in the ledger, chain intact)"
+                          % label, out.getvalue())
             self.assertEqual(out.getvalue().count("\nATTEMPT ") +
                              out.getvalue().startswith("ATTEMPT "), 1)
 
