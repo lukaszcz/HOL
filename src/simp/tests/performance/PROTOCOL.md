@@ -1662,8 +1662,10 @@ table of its own on the shared engine, with the following additions to it.
     seals are in `disposition.json` (`code`), and the check of
     `task30_dispose.py` names every changed file in one refusal with the
     entry to paste into each constant (the literal element of that
-    constant: `"timing_grid.py": (SEAL,),` for `HISTORY`, `SEAL,` for
-    `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and the tests that pin those
+    constant, each in backticks: `"timing_grid.py": (SEAL,),` for `HISTORY`,
+    `"task30_grid.py": (SEAL,),` for `SEALED_HISTORY` (the same form: a dict
+    keyed by file), `SEAL,` for `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and
+    the tests that pin those
     constants empty (`test_task30_dispose.py` for `HISTORY`,
     `test_task30_grid.py` for the follow-up's), which the same commit edits;
     nothing is looked up by hand.
@@ -1779,7 +1781,8 @@ history_excluded), `dproc-deletion` (dproc, mixed) and `operation` (marker,
 marker_reuse, tactic_reuse, tactic_complete). The note of each cell is
 qualitative: its class, what its rows show and do not show, and what no row
 can show (below). It carries no number (a test pins that, apart from the
-name TASK_31 and the policy's 3% margin): every number of a cell (the work
+name TASK_31; the residual sentence, added by the command, names
+the policy's 3% margin): every number of a cell (the work
 counts of the first and second run and of the use, the dproc count, the
 candidate's and the control's intervals, the GC interval, the digest's
 SHA-256, the number of allocation rows) comes from `disposition.json`, which
@@ -1820,8 +1823,10 @@ differs):
 
 A work row of a cell that does not reproduce (several values) blocks the
 cell with the row and side named, whatever status the row gets (the
-nondeterminism list is read first, then each row that is not equal, with its
-candidate, baseline and control values, and the cell's status last); it is
+nondeterminism list is read first, grouped by row ("work row K is not
+reproducible (candidate, baseline)"), then each row that is not equal ("differs
+from develop" or "is inconclusive"), with the distinct candidate, baseline and
+control values, and the cell's status last); it is
 never an exception, and the counts and the digest recorded for the cell keep
 every value. A record that lacks a phase
 or a metric the comparison needs is named too.

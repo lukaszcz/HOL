@@ -86,9 +86,10 @@ class Spec(unittest.TestCase):
 
     def test_no_note_carries_a_number(self):
         # Every number of a cell comes from disposition.json, derived from
-        # the rows; a note states none the rows do not check. The two
-        # exceptions are the name of the follow-up task and the policy's
-        # margin, which is checked against the acceptance policy.
+        # the rows; a note states none the rows do not check. The one
+        # exception is the name of the follow-up task. The residual
+        # sentence, added by the command, names the policy's margin, which
+        # is checked against the acceptance policy.
         self.assertEqual(a.EQUIVALENCE_POLICY["margin"], 0.03)
         for cell, entry in td.DISPOSITION["attributed"].items():
             with self.subTest(cell):
@@ -128,6 +129,8 @@ class Spec(unittest.TestCase):
 
     def test_on_the_stage_2_data_it_applies_to_exactly_the_two_cells(self):
         # Read-only; set TASK30_STAGE2_DECISIONS to stage2/decisions.json.
+        # It skips by default: the evidence is deliberately not in the repo
+        # (the in-suite stand-in is the test of the values below).
         path = Path(os.environ.get("TASK30_STAGE2_DECISIONS", "/nonexistent"))
         if not path.exists():
             self.skipTest("TASK30_STAGE2_DECISIONS names no stage-2 record")
@@ -147,7 +150,8 @@ class Spec(unittest.TestCase):
 
     def test_the_values_of_the_two_real_cells_and_the_others(self):
         # Stage 2's recorded upper bounds: the two cells are above the 3%
-        # margin, the other 11 at most 1.0185.
+        # margin, the other 11 at most 1.0185. 1.0277 is a near-margin
+        # probe (exclude_tactic_reuse-0, not one of the 13 cells).
         for upper, want in ((1.0406385994423937, True),
                             (1.0753660032366656, True),
                             (1.0185, False), (1.0277270613573477, False)):
@@ -358,9 +362,10 @@ class Evidence(unittest.TestCase):
         new = alloc_decisions(LIMITED)
         new["work"]["cells"]["exclude_missing-10"] = "differs"
         self.assertEqual(self.make(new=new).holds("exclude_missing-10"),
-                         "work: work status is differs, not equal")
+                         "work: the cell's work status is 'differs', "
+                         "not 'equal'")
         new["work"]["cells"]["exclude_missing-10"] = "inconclusive"
-        self.assertIn("inconclusive, not equal",
+        self.assertIn("'inconclusive', not 'equal'",
                       self.make(new=new).holds("exclude_missing-10"))
 
     def test_missing_unresolved_or_absent_work_is_refused(self):
@@ -384,6 +389,17 @@ class Evidence(unittest.TestCase):
             self.make(new=new).holds("exclude_missing-10"),
             "work: work row work.use.trace.4.REDUCE is not reproducible "
             "(candidate)")
+        # Several sides of one row are grouped under it.
+        new["work"]["nondeterminism"].append(
+            ["exclude_missing", 10, "work.use.trace.4.REDUCE", "baseline"])
+        new["work"]["nondeterminism"].append(
+            ["exclude_missing", 10, "work.first.maker", "control"])
+        self.assertEqual(
+            self.make(new=new).holds("exclude_missing-10"),
+            "work: work row work.use.trace.4.REDUCE is not reproducible "
+            "(candidate, baseline); work row work.first.maker is not "
+            "reproducible (control)")
+        new["work"]["nondeterminism"][1:] = []
         # Another cell's row is not this cell's.
         self.assertIsNone(self.make(new=new).holds("exclude_empty-10000"))
 
@@ -397,8 +413,8 @@ class Evidence(unittest.TestCase):
                                        OPERATION_WORK})
                 self.assertEqual(
                     self.make(new=new).holds("exclude_missing-10"),
-                    'work: work row %s is differs (candidate {"3": 20}, '
-                    'baseline {"3": 20}, control {"3": 20})' % key)
+                    'work: work row %s differs from develop (candidate '
+                    '["3"], baseline ["3"], control ["3"])' % key)
 
     def test_the_digest_must_be_there_and_equal(self):
         for label, change, text in (
@@ -680,7 +696,7 @@ class Command(Toy):
                     "changed since it was recorded; in the same "
                     "commit add each entry .* task30_dispose.py: add to "
                     "task30_dispose.HISTORY the entry "
-                    '"task30_dispose.py": \\(\\{.*,\\),$'):
+                    '`"task30_dispose.py": \\(\\{.*,\\),`$'):
                 self.dispose()
             # The history is what a commit appends with the change.
             with patch.dict(td.HISTORY, {"task30_dispose.py": (
@@ -735,13 +751,13 @@ class Command(Toy):
         self.save_decisions(self.allocz, z)
         code, text = self.dispose(record=True)
         self.assertEqual(code, 2, text)
-        self.assertIn("BLOCKING exclude_missing-10 (deletion): work: work "
-                      "status is differs, not equal", text)
+        self.assertIn("BLOCKING exclude_missing-10 (deletion): work: the "
+                      "cell's work status is 'differs', not 'equal'", text)
         self.assertIn("ATTRIBUTED exclude_empty-10000 (operation)", text)
         record = self.load(self.out / "disposition.json")
         self.assertEqual(record["blocking"], {
             "exclude_missing-10": "control-limited, evidence fails: work: "
-            "work status is differs, not equal"})
+            "the cell's work status is 'differs', not 'equal'"})
         self.assertEqual(record["status"], "blocked")
 
     def test_a_stale_list_is_refused_naming_the_cells(self):
@@ -923,13 +939,13 @@ class Seals(Toy):
         for name in names:
             seal = json.dumps(recorded[name], sort_keys=True)
             self.assertIn('%s: add to task30_dispose.HISTORY the entry '
-                          '"%s": (%s,),' % (name, name, seal), text)
+                          '`"%s": (%s,),`' % (name, name, seal), text)
         # ... and the history constants the records made by the old file
         # need too, and the tests that pin them.
         for constant in ("task30_followup.ENGINES",
                          "task30_followup.ACCEPTANCE",
                          "task30_followup.DRIVERS",
-                         'task30_followup.SEALED_HISTORY["task30_grid.py"]'):
+                         "task30_followup.SEALED_HISTORY"):
             self.assertIn(constant, text)
         self.assertIn("test_task30_dispose.py", text)
         self.assertIn("test_task30_grid.py", text)
@@ -951,15 +967,27 @@ class Seals(Toy):
         for name in td.CODE:
             found = dict(td.entries(name, seal))
             history = ast.literal_eval("{%s}" % found[
-                "task30_dispose.HISTORY"])
+                "task30_dispose.HISTORY"][1:-1])
             self.assertEqual(history, {name: (seal,)})
             self.assertEqual(len(found), 1 + (name in td.ALSO))
         for name, (constant, keyed) in td.ALSO.items():
             element = dict(td.entries(name, seal))[constant]
-            value = ast.literal_eval("(%s)" % element)
-            # A tuple of seals (a constant's element), or one entry's
-            # tuple under the file's name for SEALED_HISTORY.
-            self.assertEqual(value, ((seal,),) if keyed else (seal,))
+            self.assertTrue(element.startswith("`") and
+                            element.endswith("`"), element)
+            element = element[1:-1]
+            if keyed:
+                # Pasted into `{}`: a dict of str to tuple of str-keyed
+                # seals, as HISTORY's entry is.
+                value = ast.literal_eval("{%s}" % element)
+                self.assertEqual(value, {name: (seal,)})
+                self.assertIsInstance(value, dict)
+                self.assertTrue(all(
+                    isinstance(k, str) and isinstance(v, tuple)
+                    for k, v in value.items()))
+            else:
+                # A tuple of seals (a constant's element).
+                self.assertEqual(ast.literal_eval("(%s)" % element),
+                                 (seal,))
         # The refusal's text carries exactly those literals.
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
@@ -1400,15 +1428,16 @@ class RealShape(unittest.TestCase):
             self.assertIsNone(ev.holds(cell), cell)
         self.assertEqual(
             ev.holds("exclude_matching-10"),
-            'work: work row work.use.trace.4.REDUCE is differs (candidate '
-            '{"4": 10}, baseline {"3": 10}, control {"3": 10})')
+            'work: work row work.use.trace.4.REDUCE differs from develop '
+            '(candidate ["4"], baseline ["3"], control ["3"])')
         self.assertEqual(
             ev.holds("exclude_batch-10"),
             "work: class deletion: work.use has no work.use.trace.4.REDUCE "
             "(an empty use shows nothing)")
         self.assertRegex(
             ev.holds("exclude_qualified-10"),
-            r"^work: work row result.digest is differs \(candidate ")
+            r"^work: work row result.digest differs from develop "
+            r"\(candidate ")
         # The records are the real ones.
         found = decisions["cases"]["exclude_missing"]["cells"]["10"]
         self.assertEqual(sorted(found["phases"]), sorted(an.GATED))
@@ -1445,9 +1474,12 @@ class RealShape(unittest.TestCase):
                      side], decisions["work"]["nondeterminism"])
                 ev = td.Evidence(spec, dict(source_identity=CLEAN),
                                  decisions, decisions)
-                self.assertIn(
-                    "work row work.use.trace.4.REDUCE is not "
-                    "reproducible (%s)" % side, ev.holds("exclude_missing-10"))
+                # The sides of the row are grouped under it (a baseline
+                # spread is a control spread too).
+                self.assertRegex(
+                    ev.holds("exclude_missing-10"),
+                    r"work row work\.use\.trace\.4\.REDUCE is not "
+                    r"reproducible \((\w+, )*%s(, \w+)*\)" % side)
 
     def test_the_operation_words_of_the_two_grids_are_compared(self):
         e, u = self.EMPTY, self.USE

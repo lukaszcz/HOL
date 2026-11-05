@@ -34,7 +34,8 @@ It builds `final.json` and `disposition.json`
 and prints the replays' reports (every attempt of both tables, first), the
 class report, the follow-up's status, each allocation gate, the evidence and
 numbers of each attributed cell (all from `disposition.json`; the notes carry
-none) and one line, `TASK30 disposition: pass|fail|blocked {counts}`. Exit
+none) and one line, `TASK30 disposition: pass|fail|blocked {counts,
+"allocation": {"alloc": OUTCOME, "alloc-z": OUTCOME}}`. Exit
 status 0 pass, 1 fail, 2 blocked, 3 a refusal. `final.json` and
 `disposition.json` are in the follow-up's output directory (`--followup`).
 `--record` writes them (and refuses to replace files that exist); without it
@@ -46,8 +47,8 @@ and its code is not on the replay path, so `task30_grid.py` stays as it is.
 `disposition.json` records the seals of the code that derived it (`CODE`);
 a later change to one of those files appends the seal it had when the
 disposition was recorded to `HISTORY`, in the same commit, or the check
-refuses it, naming every such file with the seal to append (PROTOCOL.md,
-"Seal histories").
+refuses it, naming every such file with the entries to paste into the
+constants and the tests that pin them (PROTOCOL.md, "Seal histories").
 """
 import argparse
 import json
@@ -247,6 +248,14 @@ def row(decisions, cell):
     return decisions["cases"].get(case, {}).get("cells", {}).get(str(size))
 
 
+def phrase(decision):
+    """What a row or cell decision other than `equal` says, as a predicate:
+    the baseline is develop."""
+    return {"differs": "differs from develop",
+            "inconclusive": "is inconclusive"}.get(
+                decision, "has decision %s" % decision)
+
+
 class Evidence:
     """The evidence for the attributed cells, derived from replayed records:
     the final decision (source identity), the allocation grid of Y (`old`,
@@ -307,22 +316,25 @@ class Evidence:
             return "work rows are missing or unresolved"
         # What names a row comes first: a row that does not reproduce, then
         # a row that is not equal; the cell's status is the backstop.
-        varying = ["work row %s is not reproducible (%s)" % (e[2], e[3])
-                   for e in section["nondeterminism"]
-                   if e[:2] == [case, size]]
+        sides = {}
+        for e in section["nondeterminism"]:
+            if e[:2] == [case, size]:
+                sides.setdefault(e[2], []).append(e[3])
+        varying = ["work row %s is not reproducible (%s)" % (
+            key, ", ".join(found)) for key, found in sides.items()]
         if varying:
             return "; ".join(varying)
         rows = row(self.new, cell).get("work") or {}
         for key, found in rows.items():
             if found["decision"] != "equal":
-                return ("work row %s is %s (candidate %s, baseline %s, "
-                        "control %s)" % (key, found["decision"], *(
-                            json.dumps(found[side], sort_keys=True)
+                return ("work row %s %s (candidate %s, baseline %s, "
+                        "control %s)" % (key, phrase(found["decision"]), *(
+                            json.dumps(sorted(found[side]))
                             for side in ("candidate", "baseline",
                                          "control"))))
         if section["cells"].get(name) != "equal":
-            return "work status is %s, not equal" % section["cells"].get(
-                name)
+            return "the cell's work status is %r, not 'equal'" % (
+                section["cells"].get(name),)
         return class_failure(self.spec["attributed"][cell]["evidence_class"],
                              self.groups[case, size])
 
@@ -343,7 +355,7 @@ class Evidence:
         if found is None:
             return "no result.digest row"
         if found["decision"] != "equal":
-            return "result.digest row is %s" % found["decision"]
+            return "result.digest row %s" % phrase(found["decision"])
         if len(found["candidate"]) != 1 or len(found["baseline"]) != 1:
             return "result.digest row is not reproducible (%d candidate " \
                 "and %d baseline values)" % (len(found["candidate"]),
@@ -388,7 +400,9 @@ def record_of(spec, final, reports, new, evidence, result):
     """The disposition record: `result` is timing_grid.dispose's, the
     per-cell record is the evidence class, the note, the metrics of the
     final report, the work counts and the digest, the number of allocation
-    rows and what failed, if anything."""
+    rows and what failed, if anything. `residual` records whether the
+    candidate's CPU or wall upper bound exceeds the policy's margin; when it
+    does, the note is the spec's with `RESIDUAL` added."""
     cells = {}
     for cell, listed in spec["attributed"].items():
         case, size = split(cell)
@@ -403,7 +417,7 @@ def record_of(spec, final, reports, new, evidence, result):
             note=with_residual(listed["note"]) if residual
             else listed["note"],
             decision=("attributed" if cell in
-                              result["cells"]["attributed"] else "blocking"),
+                      result["cells"]["attributed"] else "blocking"),
             failed=evidence.holds(cell), metrics=found_metrics,
             work=None if work is None else counts(work), digest=digest,
             allocation_rows=sum(len(m) for m in
@@ -431,21 +445,21 @@ ALSO = {
     "timing_grid.py": ("task30_followup.ENGINES", False),
     "acceptance.py": ("task30_followup.ACCEPTANCE", False),
     "task30_followup.py": ("task30_followup.DRIVERS", False),
-    "task30_grid.py": (
-        'task30_followup.SEALED_HISTORY["task30_grid.py"]', True)}
+    "task30_grid.py": ("task30_followup.SEALED_HISTORY", True)}
 
 
 def entries(name, seal):
     """[(constant, literal text)] a changed file of CODE asks for, as the
     entry to paste into the constant: HISTORY maps the file to a tuple of
     seals; ENGINES, ACCEPTANCE and DRIVERS are tuples of seals; the one
-    SEALED_HISTORY entry is a tuple of seals under the file's name."""
+    SEALED_HISTORY entry is, like HISTORY's, a tuple of seals under the
+    file's name. Each literal is in backticks."""
     text = json.dumps(seal, sort_keys=True)
-    found = [("task30_dispose.HISTORY", '%s: (%s,),' % (
-        json.dumps(name), text))]
+    keyed = '`%s: (%s,),`' % (json.dumps(name), text)
+    found = [("task30_dispose.HISTORY", keyed)]
     if name in ALSO:
-        constant, keyed = ALSO[name]
-        found.append((constant, "(%s,)," % text if keyed else text + ","))
+        constant, is_keyed = ALSO[name]
+        found.append((constant, keyed if is_keyed else "`%s,`" % text))
     return found
 
 

@@ -711,6 +711,25 @@ class Run(Bed):
         self.assertEqual(sorted(p.name for p in self.out.glob("*-partial.*")),
                          [])
 
+    def test_only_then_resume_completes_the_grid_and_leaves_no_partial(self):
+        """`run --only` then `run --resume` over the whole grid, through
+        `run` itself; only the measurement (Grid) is the stub of the other
+        Run tests, since a real one needs HOL."""
+        self.patched()
+        self.run_cells(CELLS[:2])
+        self.assertTrue((self.out / "decisions-partial.json").exists())
+        self.patched()
+        self.quiet(m.run, arguments(self.out, [], resume=True, jobs=1))
+        self.assertTrue((self.out / "decisions.json").exists())
+        self.assertTrue((self.out / "RESULTS.md").exists())
+        self.assertEqual(sorted(p.name for p in self.out.glob("*-partial.*")),
+                         [])
+        decisions = a.load(self.out / "decisions.json")
+        self.assertTrue(decisions["complete"])
+        args = type("Args", (), {"output": self.out})
+        self.assertEqual(self.quiet(m.replay, args),
+                         m.status_code(decisions))
+
     def test_resume_completes_a_partial_run_and_keeps_history(self):
         self.patched()
         self.run_cells(CELLS[:2])
