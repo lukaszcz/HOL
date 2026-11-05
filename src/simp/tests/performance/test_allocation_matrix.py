@@ -1814,9 +1814,9 @@ V1 = sc.STRUCTURE
 
 
 def counts_text(trace="2.REWRITING=3", kernel="SPEC=2,total=2",
-                maker=0, collector=0):
-    return "trace=%s;kernel=%s;maker=%d;collector=%d" % (
-        trace, kernel, maker, collector)
+                maker=0, collector=0, dproc=0):
+    return "trace=%s;kernel=%s;maker=%d;collector=%d;dproc=%d" % (
+        trace, kernel, maker, collector, dproc)
 
 
 def v1_events(**kw):
@@ -1950,9 +1950,10 @@ class StructureProtocol(unittest.TestCase):
         self.assertNotEqual(work["digest"],
                             tb.structural(digest="a;c")["digest"])
 
-    def test_zero_counts_are_absent_and_maker_counts_are_kept(self):
-        work = tb.structural(first=counts_text("", "", 3, 1))
-        self.assertEqual(work["first"], {"maker": 3, "collector": 1})
+    def test_zero_counts_are_absent_and_callback_counts_are_kept(self):
+        work = tb.structural(first=counts_text("", "", 3, 1, 7))
+        self.assertEqual(work["first"],
+                         {"maker": 3, "collector": 1, "dproc": 7})
         self.assertEqual(tb.structural(first=counts_text("", ""))["first"],
                          {})
 
@@ -2048,6 +2049,41 @@ class StructureDecisions(unittest.TestCase):
                 self.assertEqual(row["difference"], {"0": 10})
         self.assertEqual(an.work_status(
             r["decision"] for r in rows.values()), "equal")
+
+    def test_the_non_empty_work_groups_of_a_cell(self):
+        empty = counts_text("", "")
+        every = an.work_groups(an.cell(*v1_cell(), STEADY)["work"])
+        self.assertEqual(sorted(every), ["first", "second", "use"])
+        self.assertIn("work.use.kernel.SPEC", every["use"])
+        self.assertNotIn("result.digest", sum(every.values(), []))
+        # a deletion: only the use has counts
+        work = tb.structural(first=empty, second=empty)
+        cell = an.cell(*experiment({}, {}, pairs=10, steady=STEADY,
+                                   work=work), STEADY)
+        groups = an.work_groups(cell["work"])
+        self.assertEqual((groups["first"], groups["second"]), ([], []))
+        self.assertTrue(groups["use"])
+        # a count that only the baseline side has is still non-empty;
+        # one that is zero on both sides everywhere is not
+        work = tb.structural(first=empty, second=empty, use=empty)
+        cell = an.cell(*experiment({}, {}, pairs=10, steady=STEADY,
+                                   work=work), STEADY)
+        self.assertEqual(an.work_groups(cell["work"]),
+                         dict(first=[], second=[], use=[]))
+        data = experiment({}, {}, pairs=10, steady=STEADY, work=work)
+        with_side(data, "baseline", tb.structural(
+            first=empty, second=empty, use=counts_text("", "", 0, 0, 5)))
+        groups = an.work_groups(an.cell(*data, STEADY)["work"])
+        self.assertEqual(groups, dict(first=[], second=[],
+                                      use=["work.use.dproc"]))
+
+    def test_the_work_groups_of_a_cell_without_records_and_of_a_grid(self):
+        cell = an.cell(*experiment({}, {}), STEADY)
+        self.assertIsNone(an.work_groups(cell.get("work")))
+        full = an.cell(*v1_cell(), STEADY)
+        both = an.cells_work_groups({"a": full, "b": cell})
+        self.assertEqual(both["a"], an.work_groups(full["work"]))
+        self.assertIsNone(both["b"])
 
     def test_a_cell_without_records_has_no_work_section(self):
         cell = an.cell(*experiment({}, {}), STEADY)

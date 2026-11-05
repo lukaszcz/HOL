@@ -5,10 +5,14 @@ Run from a configured HOL tree (use the historical root-wrapper on hosts whose
 heap embeds that path). This is mixed-source semantic validation, NOT benchmark
 acceptance or independent repository builds. --scope grid excludes four costly
 10000-rule single-add/AC cases; --scope expensive runs those explicitly.
-Outputs are exclusive-created JSON + a compact sibling .log; private trees are
-always removed. No source is modified outside the private temporary directory.
+Outputs are exclusive-created JSON (the full manifest: runs, fixture head,
+every work record) + a compact sibling .log + NAME.summary.json, which is
+derived from the manifest alone (`--compare MANIFEST [--summary PATH]`
+re-derives and re-compares it); private trees are always removed. No
+source is modified outside the private temporary directory.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -165,6 +169,40 @@ def compare_sides(runs):
     return dict(compared=len(keys), differences=differences)
 
 
+def totals(value):
+    """events (all trace counts), inferences, and the callback counts of a
+    work count record."""
+    counts = sc.work_counts(value)
+    return dict(
+        events=sum(n for k, n in counts.items() if k.startswith("trace.")),
+        inferences=counts.get("kernel.total", 0),
+        **{k: counts.get(k, 0) for k in ("maker", "collector", "dproc")})
+
+
+def summarise(manifest):
+    """The compact summary of a manifest, derived from nothing else: per
+    side, case and size the totals of each work record (the digest by its
+    SHA-256), and the cross-side comparison. The summary written next to a
+    manifest is this function's value, so it can be re-derived from the
+    manifest alone (`--compare`)."""
+    sides = {"baseline": {}, "candidate": {}}
+    for run in manifest["runs"]:
+        if run.get("accepted") and "work" in run:
+            for r in run["work"]:
+                row = sides[run["selection"]].setdefault(
+                    "%s:%d" % (r["case"], r["size"]), {})
+                if r["key"] == "result.digest":
+                    row[r["key"]] = hashlib.sha256(
+                        r["value"].encode()).hexdigest()
+                else:
+                    row[r["key"]] = totals(r["value"])
+    return dict(head=manifest.get("head"),
+                selections={k: v.get("revision") for k, v in
+                            manifest.get("selections", {}).items()},
+                inputs=manifest.get("inputs"), rows=sides,
+                cross_side=compare_sides(manifest["runs"]))
+
+
 def report_sides(cross, note):
     note("cross-side work records: %d compared, %d differ"
          % (cross["compared"], len(cross["differences"])))
@@ -183,6 +221,10 @@ def main():
                         help="only compare the work records of the two "
                         "sides in an earlier manifest (exit 1 on any "
                         "difference or none compared)")
+    parser.add_argument("--summary", type=Path, metavar="PATH",
+                        help="with --compare: write the summary derived "
+                        "from the manifest to this new file (a run writes "
+                        "it next to its manifest as NAME.summary.json)")
     parser.add_argument("--scope", default="smoke",
                         choices=("small", "smoke", "grid", "expensive"))
     parser.add_argument("--case", action="append", dest="cases",
@@ -193,15 +235,22 @@ def main():
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     if args.compare is not None:
-        cross = compare_sides(json.loads(args.compare.read_text())["runs"])
+        manifest = json.loads(args.compare.read_text())
+        cross = compare_sides(manifest["runs"])
         report_sides(cross, print)
+        if args.summary is not None:
+            with args.summary.open("x") as out:
+                out.write(json.dumps(summarise(manifest), indent=2) + "\n")
         return 1 if cross["differences"] or not cross["compared"] else 0
     if args.output is None:
         parser.error("--output is required")
     repo, output = args.repo.resolve(), args.output.resolve()
     logpath = output.with_suffix(".log")
-    if output == logpath or output.exists() or logpath.exists():
-        parser.error("JSON and sibling .log must be new, distinct files")
+    summarypath = output.with_suffix(".summary.json")
+    if (output in (logpath, summarypath) or output.exists() or
+            logpath.exists() or summarypath.exists()):
+        parser.error("JSON, sibling .log and .summary.json must be new, "
+                     "distinct files")
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest = {"schema": 1, "success": False,
                 "scope": "semantic smoke only; no performance acceptance",
@@ -374,6 +423,9 @@ def main():
             note("FAIL: " + str(error))
         finally:
             result.write(json.dumps(manifest, indent=2) + "\n")
+            if manifest["success"]:
+                summarypath.write_text(
+                    json.dumps(summarise(manifest), indent=2) + "\n")
             note(f"checks={manifest['executed_checks']}/"
                  f"{manifest['expected_checks']} "
                  f"success={manifest['success']}")

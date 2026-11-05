@@ -69,7 +69,7 @@ def work_rows(pairs, control):
     when its processes have none (an archive made before structure v1).
     A row is a count (an absent key is zero) or the result digest, named
     as the events are: work.first.K, work.second.K, work.use.K (K is
-    trace.L.ACTION[:message], kernel.RULE, maker or collector) and
+    trace.L.ACTION[:message], kernel.RULE, maker, collector or dproc) and
     result.digest."""
     processes = [o for p in pairs + control for o in p.values()]
     have = [o.get("work") is not None for o in processes]
@@ -106,6 +106,32 @@ def work_rows(pairs, control):
             deterministic=dict(baseline=len(set(base)) == 1,
                                candidate=len(set(cand)) == 1))
     return rows
+
+
+def work_groups(rows):
+    """The non-empty work row groups of one cell, for a disposition that
+    must not rest on a vacuous comparison: {"first": [...], "second": [...],
+    "use": [...]} with the names of the count rows (never result.digest)
+    that are nonzero on the baseline or the candidate side in some process,
+    each list in the row order; None for a cell without work rows. A row
+    whose counts are zero on both sides everywhere is empty, and equal
+    empty rows show nothing."""
+    if rows is None:
+        return None
+    groups = {run: [] for run in RUNS}
+    for name, row in rows.items():
+        if name == "result.digest":
+            continue
+        _, run, _ = name.split(".", 2)
+        if any(v != "0" for side in ("baseline", "candidate")
+               for v in row[side]):
+            groups[run].append(name)
+    return groups
+
+
+def cells_work_groups(cells):
+    """work_groups of every cell of {cell name: cell record}."""
+    return {name: work_groups(c.get("work")) for name, c in cells.items()}
 
 
 def work_status(decisions):

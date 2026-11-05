@@ -108,7 +108,7 @@ def default_cost(name):
 
 
 WORK_TEXT = ("trace=2.REWRITING=3,4.REDUCE=1;kernel=SPEC=2,total=2;"
-             "maker=0;collector=0")
+             "maker=0;collector=0;dproc=0")
 FINGERPRINT = "names=-,+matrix_data;dprocs=;refl=1-3"
 
 

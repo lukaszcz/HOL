@@ -87,7 +87,30 @@ struct
     val conv = netconv ss
     fun one (rw,i) = (f (i,conv (lhs (concl rw))); i + 1)
   in ignore (List.foldl one 0 (!ruleList)) end
-  fun useSS ss = lookups ss ignore
+  (* The dprocs of a simpset are not in the net, and the traversal tries
+     them only when the net leaves a term alone, and stops at the first
+     that does not fail (the fixture's raise UNCHANGED, which ends the
+     search), so a conversion would apply one of them. A use of a simpset
+     therefore also applies each of its dprocs directly, with the public
+     Traverse.dest_reducer and the context it holds, to a few of the left
+     sides: the first (the rule the deletion cases delete, which the net no
+     longer answers), the middle and the last. The fixture's dprocs raise
+     UNCHANGED and so leave no trace event and no inference; what is
+     counted is their own counter (dprocCalls, below): the number of dprocs
+     the result still holds times the number of sampled terms. *)
+  fun useDprocs ss = let
+    val {dprocs,relation,...} = traversedata_for_ss ss
+    val n = length (!ruleList)
+    val sample = if n = 0 then [] else Lib.mk_set [0,n div 2,n-1]
+    fun fail _ _ = raise Feedback.mk_HOL_ERR "MatrixSupport" "useDprocs" "no"
+    fun apply tm d = let
+      val {apply,initial,...} = Traverse.dest_reducer d
+    in ignore (apply {solver=fail,conv=fail,context=initial,stack=[],
+                      relation=(relation,REFL)} tm)
+         handle _ => () end
+  in List.app (fn i => let val tm = lhs (concl (List.nth (!ruleList,i)))
+                       in List.app (apply tm) dprocs end) sample end
+  fun useSS ss = (lookups ss ignore; useDprocs ss)
   (* Names, dprocs, the set of installed rules whose left side the net
      leaves alone (run-length encoded) and a hash of the other results. *)
   fun ssText ss = let
@@ -120,12 +143,14 @@ struct
   val theoryChange = ref (fn name => ignore (new_theory name))
   val makerCalls = ref 0
   val collectorCalls = ref 0
+  val dprocCalls = ref 0
   fun maker rw = (makerCalls := !makerCalls + 1; [rw])
   exception CollectorContext
   fun reducer name = Traverse.REDUCER
     {name=SOME name,initial=CollectorContext,
      addcontext=fn (ct,_) => (collectorCalls := !collectorCalls + 1; ct),
-     apply=fn _ => fn _ => raise Conv.UNCHANGED}
+     apply=fn _ => fn _ => (dprocCalls := !dprocCalls + 1;
+                            raise Conv.UNCHANGED)}
   fun setup filter dprocs = SSFRAG
     {name=SOME "matrix_setup",filter=filter,dprocs=dprocs,
      rewrs=[],convs=[],ac=[],congs=[]}
@@ -190,7 +215,8 @@ struct
      ("TRANS",#TRANS c),("axiom",#axiom c),("definition",#definition c),
      ("from_disk",#from_disk c),("oracle",#oracle c),("total",#total c)] end
   (* One action between a reset and a read of every counter, as
-     trace=L.ACTION[:message]=n,...;kernel=RULE=n,...;maker=n;collector=n *)
+     trace=L.ACTION[:message]=n,...;kernel=RULE=n,...;maker=n;collector=n;
+     dproc=n *)
   fun counted (action : unit -> unit) = let
     val table = ref (Binarymap.mkDict keyCompare)
     fun listen (level,a) = let
@@ -200,6 +226,7 @@ struct
     in table := Binarymap.insert (!table,key,n + 1) end
     val maker0 = !makerCalls + (!localCalls) ()
     val collector0 = !collectorCalls
+    val dproc0 = !dprocCalls
     fun body () =
       (Count.reset_thm_count ();
        Count.counting_thms true;
@@ -213,7 +240,8 @@ struct
                                                     (!table))
   in "trace=" ^ countsText traced ^ ";kernel=" ^ countsText (kernelCounts ()) ^
      ";maker=" ^ Int.toString (!makerCalls + (!localCalls) () - maker0) ^
-     ";collector=" ^ Int.toString (!collectorCalls - collector0) end
+     ";collector=" ^ Int.toString (!collectorCalls - collector0) ^
+     ";dproc=" ^ Int.toString (!dprocCalls - dproc0) end
   fun measureOnce ({run,beforeBatch,afterBatch,...}:workload) =
     counted (fn () => (beforeBatch (); run (); afterBatch 1))
   (* The records of the work phase: two counted runs, the counted use of the
@@ -224,8 +252,10 @@ struct
   fun workPhase (w:workload) = let
     val first = measureOnce w
     val second = measureOnce w
-    val use = counted (!useResult)
+    (* The digest first: a use can consume what it describes (the bounds
+       of a bounded rewrite), so it describes the result as retained. *)
     val digest = (!fingerprint) ()
+    val use = counted (!useResult)
   in [("work.first",first),("work.second",second),("work.use",use),
       ("result.digest",digest)]
   end

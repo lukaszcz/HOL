@@ -991,7 +991,7 @@ class Process(Bed):
         self.grid.header = self.sb.header(structure=sc.STRUCTURE)
         _, receipt = self.process(
             structure=sc.STRUCTURE, records=tb.structural_events(
-                first="trace=2.NOPE=1;kernel=;maker=0;collector=0"))
+                first="trace=2.NOPE=1;kernel=;maker=0;collector=0;dproc=0"))
         self.assertFalse(receipt["accepted"])
         self.assertIn("bad trace key", receipt["rejection"])
 

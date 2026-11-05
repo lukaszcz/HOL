@@ -160,13 +160,14 @@ def message_ok(text):
 def work_counts(text):
     """The counts of one `work.first`/`work.second`/`work.use` record as a
     flat dict (`trace.L.ACTION`, `trace.L.TEXT:message`, `kernel.RULE`,
-    `maker`, `collector`), nonzero counts only, in the canonical order of the
-    fixture (level, constructor, message), each key once. The level is
-    exact; a TEXT carries its message, no other constructor a suffix."""
+    `maker`, `collector`, `dproc`), nonzero counts only, in the canonical
+    order of the fixture (level, constructor, message), each key once. The
+    level is exact; a TEXT carries its message, no other constructor a
+    suffix."""
     parts = text.split(";")
-    require(len(parts) == 4 and
+    require(len(parts) == 5 and
             [p.split("=", 1)[0] for p in parts] ==
-            ["trace", "kernel", "maker", "collector"],
+            ["trace", "kernel", "maker", "collector", "dproc"],
             "malformed work record")
     out = {}
     for part, order in ((parts[0], None), (parts[1], KERNEL_RULES)):
