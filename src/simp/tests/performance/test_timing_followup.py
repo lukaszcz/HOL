@@ -197,6 +197,7 @@ class Rig(ttg.Rig):
         self.fpilot = self.root / "followup-pilot"
         self.between, self.follow_blob = [], {}
         self.committed_code, self.follow_committed = {}, True
+        self.pilot_code, self.follow_commit = {}, None
         # The stand-in analyses of the replaced grid (layout seed s0) and of
         # the follow-up (f0) are separate, as the replay of the first
         # must not follow what a test sets for the second.
@@ -274,6 +275,11 @@ class Rig(ttg.Rig):
                 (tg, ("git_seal", self.fake_seal)),
                 (tg, ("git_touched", self.fake_touched)))
 
+    def fake_commits(self, repo, rev, path):
+        if self.follow_commit and path == self.fcounts.name:
+            return [self.follow_commit]
+        return super().fake_commits(repo, rev, path)
+
     also_touched = ()
 
     def fake_touched(self, repo, commit):
@@ -284,8 +290,12 @@ class Rig(ttg.Rig):
 
     def fake_seal(self, repo, rev, path):
         """The code of the replay as the commit holds it: the files as they
-        are, unless a test names another state (`committed_code`)."""
+        are, unless a test names another state (`committed_code` for the
+        commit of the counts, `pilot_code` for the pilot's head)."""
         found = self.committed_code.get(Path(path).name)
+        if self.pilot_code and rev == self.load(
+                self.fpilot / "inventory.json")["checkout"]["head"]:
+            found = self.pilot_code.get(Path(path).name, found)
         if found is not None:
             return found
         return REAL_SEAL(path) if Path(path).is_file() else None
@@ -1353,9 +1363,28 @@ class CodeChange(Rig):
                     ValueError, "differs from the files as they are in the "
                     "working tree: summarize.py; predeclare again"):
             self.fgo([*verify, "--counts", str(copy)])
-        with self.assertRaisesRegex(ValueError, "copy.json is outside the "
-                                    "repository: it must be committed"):
+        with self.assertRaisesRegex(
+                ValueError, "copy.json is outside the repository .*repo "
+                "given by --repo: use the checkout that holds it"):
             self.h_counts_commit(copy)
+
+    def test_code_changed_since_the_pilot_head_is_refused(self):
+        # The record equals the commit of the counts, but the pilot was
+        # made with other replay code: every command refuses. The commit
+        # of the counts is not the pilot's head here.
+        self.follow_commit = "2" * 40
+        out, code, _ = self.run_followup()
+        verify = self.sealed_commands(None)["verify-counts"]
+        self.assertEqual(self.fgo(verify)[0], 0)
+        self.pilot_code = {"summarize.py": dict(bytes=1, sha256="a" * 64)}
+        refusal = ("the code changed between the follow-up pilot \\(.*\\) "
+                   "and the counts commit: summarize.py; pilot again$")
+        for action in ("verify-counts", "run", "extend"):
+            with self.subTest(action), self.assertRaisesRegex(
+                    ValueError, refusal):
+                self.fgo(self.sealed_commands(out)[action])
+        with self.assertRaisesRegex(ValueError, refusal):
+            self.replay_followup(out)
 
     def h_counts_commit(self, path):
         return self.fgrid.h.counts_commit(self.repo, FOLLOW, path)
@@ -1673,10 +1702,14 @@ class ReplacedOpenings(Rig):
         and of ../compatibility (which `loading` and `runtime_metrics` add),
         by module name; no stem is in two of them."""
         here = Path(__file__).resolve().parent
-        return {p.stem: p.read_text()
-                for d in (here, here / "allocator-counter",
-                          here.parent / "compatibility")
-                for p in d.glob("*.py")}
+        found, where = {}, {}
+        for d in (here, here / "allocator-counter",
+                  here.parent / "compatibility"):
+            for p in d.glob("*.py"):
+                self.assertNotIn(p.stem, found, "module %s is in both %s "
+                                 "and %s" % (p.stem, where.get(p.stem), p))
+                found[p.stem], where[p.stem] = p.read_text(), p
+        return found
 
     def closure(self, sources):
         """The modules of `sources` that the replay path imports, wherever

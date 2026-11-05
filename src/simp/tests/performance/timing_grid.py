@@ -1469,7 +1469,7 @@ class Grid:
         t = self.t
         path = Path(args.counts).resolve() if args.counts else t.latest()
         self.h.bind_from(args, counts=a.load(path) if t.replaces else None,
-                         counts_path=path)
+                         counts_path=path, pilot_dir=args.grid.resolve())
         self.h.check_counts(args.grid.resolve(), path)
         print("%s counts match their pilot" % t.label)
         return 0
@@ -1956,8 +1956,10 @@ class Grid:
         try:
             name = self.repo_path(repo, path)
         except ValueError:
-            raise ValueError("the counts file %s is outside the repository: "
-                             "it must be committed in it" % path) from None
+            raise ValueError("the counts file %s is outside the repository "
+                             "%s given by --repo: use the checkout that "
+                             "holds it" % (path, Path(repo).resolve())
+                             ) from None
         a.require(git_blob(repo, candidate, name) ==
                   a.git(repo, "hash-object", str(path)),
                   "the counts file is not committed in the candidate's "
@@ -2585,7 +2587,8 @@ class Grid:
             # in full where the code has changed), and its attempts must be
             # in the ledger this appends to, before anything is created.
             self.h.bind_from(args, counts=counts, counts_path=t.latest(),
-                             candidate=args.candidate)
+                             candidate=args.candidate,
+                             pilot_dir=args.pilot)
             self.h.require_replaced_openings(args)
         ledger = self.h.attempts_file(args, True)
         if t.replaces is not None:
@@ -2802,7 +2805,7 @@ class Grid:
         return self.replaced
 
     def bind_from(self, args, inventory=None, root=None, counts=None,
-                  counts_path=None, candidate=None):
+                  counts_path=None, candidate=None, pilot_dir=None):
         """Bind the grid for a command: the grid is the one `--replaces`
         names, or where a recorded inventory of the follow-up (in `root`)
         says it is, with the seals that record holds; a table that replaces
@@ -2811,7 +2814,8 @@ class Grid:
         file (or the counts an inventory holds) it is bound by the seals
         that file records (`bind_sealed`). The record of the code in those
         counts is first compared with the commit of the counts file
-        (`counts_path`, as of `candidate`: `check_code_record`)."""
+        (`counts_path`, as of `candidate`: `check_code_record`, which also
+        compares the head of the follow-up pilot `pilot_dir`)."""
         t = self.t
         given = getattr(args, "replaces", None)
         pilot = getattr(args, "replaces_pilot", None)
@@ -2835,7 +2839,7 @@ class Grid:
             a.require(counts_path is not None, "no counts file to compare "
                       "the record of the code with")
             self.h.check_code_record(counts.get("replaces"), repo,
-                                     counts_path, candidate)
+                                     counts_path, candidate, pilot_dir)
         changed = [] if counts is None else self.h.changed_code(
             counts.get("replaces"))
         if changed:
@@ -2928,7 +2932,8 @@ class Grid:
         """The seals of the code that replayed the replaced grid."""
         return {n: a.seal(p) for n, p in self.h.replay_paths().items()}
 
-    def check_code_record(self, recorded, repo, path, candidate=None):
+    def check_code_record(self, recorded, repo, path, candidate=None,
+                          pilot=None):
         """`replaces.code`, the record of the code `predeclare` replayed
         with, is not derived by a command, but it is not trusted either: it
         is the seals of the same files as the commit that holds the counts
@@ -2938,7 +2943,10 @@ class Grid:
         verification); a counts file not committed yet is compared with the
         files as they are. A file the record names that the commit lacks
         differs. Later changes of the code are not compared: they are what
-        `changed_code` finds."""
+        `changed_code` finds. With a committed counts file and the follow-up
+        `pilot` (its directory), the record must also equal the seals of
+        those files at the head the pilot's inventory records, so that no
+        replay code changed between the pilot and the counts commit."""
         if not (isinstance(recorded, dict) and
                 isinstance(recorded.get("files"), dict)):
             return
@@ -2993,6 +3001,16 @@ class Grid:
                       "commit of the counts: %s; predeclare again, or "
                       "commit the code change after the counts" %
                       ", ".join(sorted(differ)))
+        if commit is not None and pilot is not None:
+            head = a.load(Path(pilot) / "inventory.json")["checkout"]["head"]
+            moved = []
+            for file, seal in recorded["code"].items():
+                where = paths.get(file, here / file)
+                if git_seal(repo, head, where) != seal:
+                    moved.append(file)
+            a.require(not moved, "the code changed between the follow-up "
+                      "pilot (%s) and the counts commit: %s; pilot again"
+                      % (head[:12], ", ".join(sorted(moved))))
 
     def require_replaced_openings(self, args):
         """The ledger the attempt of a follow-up will be appended to (the
@@ -3298,7 +3316,7 @@ class Grid:
             self.h.bind_from(
                 args, first, grid, counts=first["iterations"],
                 counts_path=self.h.counts_for(first),
-                candidate=first["candidate"])
+                candidate=first["candidate"], pilot_dir=args.pilot)
             self.h.check_replaced(first, grid, args.repo)
             self.h.require_replaced_openings(args)
         else:
@@ -3365,7 +3383,8 @@ class Grid:
             self.h.check_code_record(
                 inventory["iterations"].get("replaces"),
                 a.HERE.parents[3] if repo is None else repo,
-                self.h.counts_for(inventory), inventory["candidate"])
+                self.h.counts_for(inventory), inventory["candidate"],
+                args.pilot)
             self.h.bind_from(args, inventory, root)
             self.h.check_replaced(inventory, root, repo)
         else:

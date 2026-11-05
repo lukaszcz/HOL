@@ -883,8 +883,10 @@ class SecondStage(Rig):
 
     def test_the_refusals_that_need_no_replay_come_first_in_their_order(
             self):
-        # As at 6b0088ffbb: the ledger, the output, the pilot, each before
-        # the first stage is read (the grid named does not exist).
+        # The ledger and the output as at 6b0088ffbb, then the pilot (which
+        # that commit refused only after the replay, in the provenance
+        # check): each before the first stage is read (the grid named does
+        # not exist).
         def replayed(*args, **kw):
             raise AssertionError("the first stage was replayed")
         argv = self.argv("extend", self.root / "ext", "--grid",
@@ -6569,8 +6571,8 @@ class RealRecord(unittest.TestCase):
         elsewhere = self.root / "elsewhere.json"
         elsewhere.write_text("{}\n")
         with self.assertRaisesRegex(
-                ValueError, "elsewhere.json is outside the repository: it "
-                "must be committed in it"):
+                ValueError, "elsewhere.json is outside the repository .*"
+                "repo given by --repo: use the checkout that holds it"):
             self.check(self.record(), self.later, elsewhere)
         # A verification compares the record with the working tree, and
         # says so.
@@ -6595,6 +6597,39 @@ class RealRecord(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "working tree: "
                                     "sub/deep/code.py"):
             self.check(self.record(), None, new)
+
+    def pilot_at(self, head):
+        pilot = self.root / "pilot"
+        pilot.mkdir(exist_ok=True)
+        (pilot / "inventory.json").write_text(
+            json.dumps({"checkout": {"head": head}}))
+        return pilot
+
+    def test_the_code_must_be_that_of_the_pilot_head_too(self):
+        # The record equals the commit of the counts (code_commit's code
+        # was committed before it), not the later change.
+        for head in (self.code_commit, self.counts_commit):
+            self.grid.check_code_record(
+                self.record(), self.repo, self.counts, self.later,
+                self.pilot_at(head))
+        self.code.write_text("two, later\n")
+        # A forged record: the seals of the later code, held by a counts
+        # commit that follows it; the pilot was at the earlier code.
+        forged = self.record(**{"sub/deep/code.py": a.seal(self.code)})
+        again = self.repo / "sub" / "again.json"
+        again.write_text("{}\n")
+        final = self.commit("counts again")
+        self.grid.check_code_record(
+            forged, self.repo, again, final, self.pilot_at(self.later))
+        with self.assertRaisesRegex(
+                ValueError, "the code changed between the follow-up pilot "
+                "\\(%s\\) and the counts commit: sub/deep/code.py; pilot "
+                "again$" % self.code_commit[:12]):
+            self.grid.check_code_record(
+                forged, self.repo, again, final,
+                self.pilot_at(self.code_commit))
+        # Without a pilot, or for uncommitted counts, it is not asked.
+        self.grid.check_code_record(forged, self.repo, again, final)
 
     def test_the_commit_of_the_counts_must_change_that_file_alone(self):
         (self.repo / "sub" / "more.json").write_text("{}\n")
