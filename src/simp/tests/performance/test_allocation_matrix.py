@@ -1808,5 +1808,458 @@ class Inputs(unittest.TestCase):
                     self.assertNotEqual(m.grid_digest(header), base)
 
 
+# ------------------------------------------------- structural evidence (v1)
+
+V1 = sc.STRUCTURE
+
+
+def counts_text(trace="2.REWRITING=3", kernel="SPEC=2,total=2",
+                maker=0, collector=0):
+    return "trace=%s;kernel=%s;maker=%d;collector=%d" % (
+        trace, kernel, maker, collector)
+
+
+def v1_events(**kw):
+    return process_events(structure=V1, **kw)
+
+
+def v1_parse(events, **kw):
+    return sc.parse(events, case=CASE, size=0, steady=STEADY, repeats=3,
+                    structure=kw.pop("structure", V1))
+
+
+def replace_work(index, text):
+    def change(events):
+        events[-4 + index][2] = text
+    return change
+
+
+WORK_GUARDS = [
+    ("first misnamed", lambda e: e[-4].__setitem__(1, "work.other"),
+     "work records"),
+    ("second missing", lambda e: e.pop(-3), "observation count"),
+    ("digest missing", lambda e: e.pop(-2), "observation count"),
+    ("records swapped", lambda e: e.__setitem__(slice(-4, -2),
+                                                [e[-3], e[-4]]),
+     "work records"),
+    ("records before the foreign-thread record", lambda e: e.insert(
+        -5, e.pop(-4)), "foreign-thread"),
+    ("extra field", lambda e: e[-4].append("x"), "work records"),
+    ("unknown section", replace_work(0, "kernel=;trace=;maker=0;"
+                                     "collector=0"), "malformed work"),
+    ("section missing", replace_work(0, "trace=;kernel="),
+     "malformed work"),
+    ("unknown trace action", replace_work(0, counts_text("2.NOPE=1")),
+     "bad trace key"),
+    ("trace level out of range", replace_work(0, counts_text("16.TEXT=1")),
+     "bad trace key"),
+    ("trace level not a number", replace_work(0, counts_text("x.TEXT=1")),
+     "bad trace key"),
+    ("trace without a level", replace_work(0, counts_text("TEXT=1")),
+     "bad trace key"),
+    ("unknown kernel rule", replace_work(0, counts_text(kernel="NOPE=1")),
+     "bad kernel key"),
+    ("trace keys out of order", replace_work(
+        0, counts_text("4.REDUCE=1,2.REWRITING=3")), "out of order"),
+    ("kernel keys repeated", replace_work(
+        0, counts_text(kernel="SPEC=1,SPEC=1")), "out of order"),
+    ("zero count listed", replace_work(0, counts_text("2.TEXT=0")),
+     "malformed work count"),
+    ("count with a leading zero", replace_work(
+        0, counts_text("2.TEXT=01")), "malformed work count"),
+    ("negative count", replace_work(0, counts_text("2.TEXT=-1")),
+     "malformed work count"),
+    ("maker count not a number", replace_work(
+        0, counts_text().replace("maker=0", "maker=x")),
+     "malformed work count"),
+    ("collector with a leading zero", replace_work(
+        0, counts_text().replace("collector=0", "collector=00")),
+     "malformed work count"),
+]
+
+
+class StructureProtocol(unittest.TestCase):
+    def test_a_v1_process_has_its_three_records_after_the_foreign_one(self):
+        events = v1_events()
+        self.assertEqual([e[1] for e in events[-5:-1]],
+                         ["alloc.foreign", *sc.WORK_EVENTS])
+        brackets, found = v1_parse(events)
+        self.assertEqual([b["name"] for b in brackets], sc.names(3))
+        work = sc.work(found, V1)
+        self.assertEqual(work["first"], {
+            "trace.2.REWRITING": 3, "trace.4.REDUCE": 1,
+            "kernel.SPEC": 2, "kernel.total": 2})
+        self.assertEqual(work["first"], work["second"])
+        self.assertEqual(work, tb.structural())
+
+    def test_the_digest_is_the_sha256_of_the_fingerprint(self):
+        import hashlib
+        work = tb.structural(digest="a;b")
+        self.assertEqual(work["digest"],
+                         hashlib.sha256(b"a;b").hexdigest())
+        self.assertNotEqual(work["digest"],
+                            tb.structural(digest="a;c")["digest"])
+
+    def test_zero_counts_are_absent_and_maker_counts_are_kept(self):
+        work = tb.structural(first=counts_text("", "", 3, 1))
+        self.assertEqual(work["first"], {"maker": 3, "collector": 1})
+        self.assertEqual(tb.structural(first=counts_text("", ""))["first"],
+                         {})
+
+    def test_no_header_key_means_no_work_records(self):
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "observation count"):
+            v1_parse(v1_events(), structure=None)
+        brackets, found = v1_parse(process_events(), structure=None)
+        self.assertEqual(len(brackets), len(sc.names(3)))
+        self.assertIsNone(sc.work(found, None))
+
+    def test_a_v1_header_demands_them(self):
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "observation count"):
+            v1_parse(process_events())
+
+    def test_unknown_versions_are_refused(self):
+        for version in ("v2", "", 1, True):
+            with self.subTest(version=version), \
+                    self.assertRaisesRegex(sc.InvalidAllocation,
+                                           "unknown structure"):
+                v1_parse(v1_events(), structure=version)
+
+    def test_every_work_guard_is_killed(self):
+        for label, change, message in WORK_GUARDS:
+            with self.subTest(label):
+                events = v1_events()
+                change(events)
+                with self.assertRaisesRegex(sc.InvalidAllocation, message):
+                    v1_parse(events)
+
+    def test_the_word_guards_still_hold_under_v1(self):
+        events = v1_events()
+        events[-5][2] = "1,0"
+        with self.assertRaisesRegex(sc.InvalidAllocation, "foreign-thread"):
+            v1_parse(events)
+
+    def test_the_fixture_lists_are_the_schemas(self):
+        text = (m.HERE / "MatrixSupport.sml").read_text()
+        actions = re.search(r"val traceActions =\s*\[(.*?)\]", text, re.S)
+        self.assertEqual(tuple(re.findall(r'"(\w+)"', actions[1])),
+                         sc.TRACE_ACTIONS)
+        levels = re.search(r"val traceLevels = (\d+)", text)
+        self.assertEqual(int(levels[1]), sc.TRACE_LEVELS)
+        kernel = re.search(r"fun kernelCounts \(\) =(.*?) end\n", text,
+                           re.S)
+        self.assertEqual(tuple(re.findall(r'\("(\w+)",#', kernel[1])),
+                         sc.KERNEL_RULES)
+        order = re.findall(r"Trace\.(\w+) _ => (\d+)", text)
+        self.assertEqual([n for n, _ in sorted(order, key=lambda x:
+                                               int(x[1]))],
+                         list(sc.TRACE_ACTIONS))
+        self.assertEqual(sc.WORK_EVENTS, tuple(re.findall(
+            r'\("(work\.\w+|result\.digest)",', text)))
+
+
+def v1_cell(first=None, second=None, digest=None, pairs=10, steady=STEADY,
+            **kw):
+    """experiment() with structural records; kw reach experiment()."""
+    work = tb.structural(**{k: v for k, v in dict(
+        first=first, second=second, digest=digest).items()
+        if v is not None})
+    return experiment({}, {}, pairs=pairs, steady=steady, work=work, **kw)
+
+
+def with_side(data, side, work, pairs=None, control=False):
+    """Replace the work record of one side in the given pairs."""
+    lists = data[1] if control else data[0]
+    for i in (range(len(lists)) if pairs is None else pairs):
+        lists[i][side] = dict(lists[i][side], work=work)
+    return data
+
+
+class StructureDecisions(unittest.TestCase):
+    def test_equal_everywhere_is_equal(self):
+        cell = an.cell(*v1_cell(), STEADY)
+        rows = cell["work"]
+        self.assertEqual(set(rows), {
+            "digest", "first.trace.2.REWRITING", "first.trace.4.REDUCE",
+            "first.kernel.SPEC", "first.kernel.total",
+            "second.trace.2.REWRITING", "second.trace.4.REDUCE",
+            "second.kernel.SPEC", "second.kernel.total"})
+        for name, row in rows.items():
+            with self.subTest(name):
+                self.assertEqual(row["decision"], "equal")
+                self.assertTrue(row["control_identical"])
+                self.assertEqual(row["deterministic"],
+                                 dict(baseline=True, candidate=True))
+                self.assertEqual(row["difference"], {"0": 10})
+        self.assertEqual(an.work_status(
+            r["decision"] for r in rows.values()), "equal")
+
+    def test_a_cell_without_records_has_no_work_section(self):
+        cell = an.cell(*experiment({}, {}), STEADY)
+        self.assertNotIn("work", cell)
+
+    def test_one_extra_event_in_one_pair_differs(self):
+        data = v1_cell()
+        more = tb.structural(first=counts_text("2.REWRITING=4,4.REDUCE=1"))
+        with_side(data, "candidate", more, pairs=[3])
+        rows = an.cell(*data, STEADY)["work"]
+        self.assertEqual(rows["first.trace.2.REWRITING"]["decision"],
+                         "differs")
+        self.assertEqual(rows["first.trace.2.REWRITING"]["difference"],
+                         {"0": 9, "1": 1})
+        self.assertEqual(rows["second.trace.2.REWRITING"]["decision"],
+                         "equal")
+        self.assertFalse(rows["first.trace.2.REWRITING"]["deterministic"]
+                         ["candidate"])
+
+    def test_fewer_events_differ_too(self):
+        data = v1_cell()
+        with_side(data, "candidate", tb.structural(
+            first=counts_text("4.REDUCE=1")))
+        rows = an.cell(*data, STEADY)["work"]
+        self.assertEqual(rows["first.trace.2.REWRITING"]["decision"],
+                         "differs")
+        self.assertEqual(rows["first.trace.2.REWRITING"]["difference"],
+                         {"-3": 10})
+
+    def test_a_key_only_one_side_has_is_a_zero_on_the_other(self):
+        data = v1_cell()
+        with_side(data, "candidate", tb.structural(
+            first=counts_text("2.REWRITING=3,4.REDUCE=1,5.TEXT=2")))
+        rows = an.cell(*data, STEADY)["work"]
+        row = rows["first.trace.5.TEXT"]
+        self.assertEqual((row["decision"], row["baseline"],
+                          row["candidate"]), ("differs", {"0": 10},
+                                              {"2": 10}))
+
+    def test_maker_and_collector_counts_are_rows(self):
+        data = v1_cell(first=counts_text(maker=4, collector=1))
+        with_side(data, "candidate", tb.structural(
+            first=counts_text(maker=5, collector=1)))
+        rows = an.cell(*data, STEADY)["work"]
+        self.assertEqual(rows["first.maker"]["decision"], "differs")
+        self.assertEqual(rows["first.collector"]["decision"], "equal")
+
+    def test_a_digest_difference_differs(self):
+        data = v1_cell()
+        with_side(data, "candidate", tb.structural(digest="other"),
+                  pairs=[0])
+        row = an.cell(*data, STEADY)["work"]["digest"]
+        self.assertEqual(row["decision"], "differs")
+        self.assertEqual(row["difference"], {"0": 9, "1": 1})
+        self.assertEqual(len(row["candidate"]), 2)
+
+    def test_control_divergence_is_inconclusive_not_differs(self):
+        data = v1_cell()
+        with_side(data, "control", tb.structural(
+            first=counts_text("2.REWRITING=9")), pairs=[1], control=True)
+        rows = an.cell(*data, STEADY)["work"]
+        self.assertEqual(rows["first.trace.2.REWRITING"]["decision"],
+                         "inconclusive")
+        self.assertFalse(rows["first.trace.2.REWRITING"]
+                         ["control_identical"])
+        self.assertEqual(an.work_status(
+            r["decision"] for r in rows.values()), "inconclusive")
+
+    def test_the_baseline_drifting_in_a_candidate_pair_is_inconclusive(self):
+        data = v1_cell()
+        with_side(data, "baseline", tb.structural(digest="drift"),
+                  pairs=[2])
+        row = an.cell(*data, STEADY)["work"]["digest"]
+        self.assertEqual(row["decision"], "inconclusive")
+        self.assertFalse(row["deterministic"]["baseline"])
+
+    def test_a_nondeterministic_row_is_reported_beside_the_words(self):
+        data = v1_cell()
+        with_side(data, "candidate", tb.structural(
+            first=counts_text("2.REWRITING=4,4.REDUCE=1")), pairs=[0])
+        record = dict(an.cell(*data, STEADY), steady=STEADY, pairs=10)
+        out = m.assemble({(CASE, 0)}, {(CASE, 0): record},
+                         {(CASE, 0): data})
+        self.assertIn([CASE, 0, "first.trace.2.REWRITING", "candidate"],
+                      out["work"]["nondeterminism"])
+        self.assertNotIn([CASE, 0, "first.trace.2.REWRITING", "baseline"],
+                         out["work"]["nondeterminism"])
+        # the words' own list is untouched
+        self.assertEqual(out["nondeterminism"], [])
+
+    def test_work_never_enters_slopes_constants_or_the_words_status(self):
+        cells, records, observed = template()
+        for size in a.SIZES:
+            data = experiment({"setup": 10}, {"setup": 10}, work=(
+                tb.structural(), tb.structural(digest="other")))
+            records[CASE, size] = dict(an.cell(*data, STEADY),
+                                       steady=STEADY, pairs=10)
+            observed[CASE, size] = data
+        plain = m.assemble(*template())
+        out = m.assemble(cells, records, observed)
+        self.assertEqual(out["status"], plain["status"])
+        self.assertEqual(out["work_status"], "differs")
+        self.assertEqual(out["work"]["status"], "differs")
+        self.assertEqual(out["nondeterminism"], plain["nondeterminism"])
+        record = out["cases"][CASE]
+        self.assertEqual(record["slopes"],
+                         plain["cases"][CASE]["slopes"])
+        self.assertEqual(record["constants"],
+                         plain["cases"][CASE]["constants"])
+        self.assertEqual(an.case_decisions(record),
+                         an.case_decisions(plain["cases"][CASE]))
+        self.assertEqual(set(record["slopes"]), set(an.GATED))
+
+    def test_a_failing_word_row_does_not_make_the_work_differ(self):
+        data = experiment({"setup": 10}, {"setup": 11}, work=tb.structural())
+        record = dict(an.cell(*data, STEADY), steady=STEADY, pairs=10)
+        out = m.assemble({(CASE, 0)}, {(CASE, 0): record},
+                         {(CASE, 0): data})
+        self.assertEqual(out["status"], "fail")
+        self.assertEqual(out["work_status"], "equal")
+
+    def test_a_mixed_cell_is_refused(self):
+        data = v1_cell()
+        data[0][0]["candidate"] = observation({})
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "some processes"):
+            an.cell(*data, STEADY)
+
+    def test_the_markdown_has_a_structural_section_only_with_work(self):
+        cells, records, observed = template()
+        plain = m.results_markdown(m.assemble(cells, records, observed))
+        self.assertNotIn("Structural", plain)
+        data = v1_cell()
+        records[CASE, 0] = dict(an.cell(*data, STEADY), steady=STEADY,
+                                pairs=10)
+        out = m.assemble(cells, records, observed)
+        text = m.results_markdown(out)
+        self.assertIn("Structural evidence", text)
+        self.assertIn("**equal**", text)
+        self.assertIn("| %s | 0 | equal |" % CASE, text)
+        self.assertIn("Status: **pass**", text)
+
+
+class StructureReplay(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.sb = tb.Sandbox(self.tmp.name)
+
+    def replay(self, build=None, header=None, **kw):
+        out = self.sb.archive(self.tmp.name, build, **kw)
+        bind = self.sb.bind(**(header if header is not None else kw))
+        return m.replay_cell(out, bind)
+
+    def test_a_v1_archive_replays_with_its_work_rows(self):
+        result = self.replay(structure=V1)
+        record = result["record"]
+        self.assertEqual(m.cell_status(record), "pass")
+        self.assertEqual({r["decision"] for r in record["work"].values()},
+                         {"equal"})
+        self.assertEqual(result["observed"][0][0]["candidate"]["work"],
+                         tb.structural())
+
+    def test_an_archive_without_the_key_replays_as_before(self):
+        record = self.replay()["record"]
+        self.assertNotIn("work", record)
+        cells, records, observed = {(CASE, 0)}, {(CASE, 0): record}, {}
+        out = m.assemble(cells, records, observed)
+        self.assertNotIn("work", out)
+        self.assertNotIn("work_status", out)
+        self.assertNotIn("Structural", m.results_markdown(out))
+
+    def test_the_digest_and_meta_of_an_old_header_are_unchanged(self):
+        import hashlib
+        header = self.sb.header()
+        self.assertNotIn("structure", header)
+        shared = {k: header[k] for k in m.GRID_KEYS}
+        legacy = hashlib.sha256(json.dumps(
+            shared, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        self.assertEqual(m.grid_digest(header), legacy)
+        self.assertNotIn("structure", self.sb.bind())
+        v1 = self.sb.header(structure=V1)
+        self.assertNotEqual(m.grid_digest(v1), legacy)
+        self.assertEqual(self.sb.bind(structure=V1)["structure"], V1)
+
+    def test_records_under_a_header_without_the_key_are_refused(self):
+        def build(experiment, side, pair):
+            return dict(structure=V1)
+        out = self.sb.archive(self.tmp.name, build)
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "observation count"):
+            m.replay_cell(out, self.sb.bind())
+
+    def test_a_missing_record_under_a_v1_header_is_refused(self):
+        def build(experiment, side, pair):
+            return dict(structure=None)
+        out = self.sb.archive(self.tmp.name, build, structure=V1)
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "observation count"):
+            m.replay_cell(out, self.sb.bind(structure=V1))
+
+    def test_a_cell_is_bound_to_the_structure_of_its_header(self):
+        out = self.sb.archive(self.tmp.name, structure=V1)
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "different inputs"):
+            m.replay_cell(out, self.sb.bind())
+        out = self.sb.archive(self.tmp.name, name="plain")
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "different inputs"):
+            m.replay_cell(out, self.sb.bind(structure=V1))
+
+    def test_a_digest_difference_in_one_process_is_detected(self):
+        build = build_for("candidate", "candidate", 3, structure=V1,
+                          records=tb.structural_events(digest="other"))
+        record = self.replay(build, structure=V1)["record"]
+        row = record["work"]["digest"]
+        self.assertEqual(row["decision"], "differs")
+        self.assertEqual(m.cell_status(record), "pass")
+
+    def test_a_nondeterministic_count_is_detected_and_the_words_pass(self):
+        build = build_for("candidate", "candidate", 3, structure=V1,
+                          records=tb.structural_events(
+                              first=counts_text("2.REWRITING=4")))
+        record = self.replay(build, structure=V1)["record"]
+        row = record["work"]["first.trace.2.REWRITING"]
+        self.assertFalse(row["deterministic"]["candidate"])
+        self.assertEqual(row["decision"], "differs")
+        self.assertEqual(m.cell_status(record), "pass")
+
+    def test_the_header_of_a_new_run_says_v1(self):
+        sb = self.sb
+        grid = sb.real_grid()
+        with grid.make():
+            header = dict(grid.make_header(
+                tb.CAND_PIN, sb.header()["toolchain_products"]),
+                iterations=tb.counts())
+        self.assertEqual(header["structure"], V1)
+        old = dict(header)
+        del old["structure"]
+        self.assertIn("structure", m.changed_settings(old, header))
+        self.assertEqual(m.changed_settings(header, header), [])
+        self.assertNotEqual(m.grid_digest(header), m.grid_digest(old))
+
+    def test_finish_and_replay_write_the_work_section(self):
+        root = Path(self.tmp.name) / "grid"
+        root.mkdir()
+        shutil.copyfile(self.sb.controls_path, root / "controls-receipt.json")
+        archive = self.sb.archive(self.tmp.name, name=m.name_of(CASE, 0),
+                                  where=root, structure=V1)
+        record = m.replay_cell(archive, self.sb.bind(structure=V1))["record"]
+        row = dict(case=CASE, size=0, steady=STEADY, rejected=None,
+                   archive=archive.name, seal=tb.seal(archive), files=0,
+                   places=m.places(self.sb.header(structure=V1)),
+                   status=m.cell_status(record))
+        inventory = dict(self.sb.header(structure=V1), jobs=[1], runs=[row])
+        a.save(root / "inventory.json", inventory)
+        decisions = m.finish(root, inventory)
+        self.assertEqual(decisions["work_status"], "equal")
+        self.assertEqual(decisions["work"]["cells"], {m.name_of(CASE, 0):
+                                                      "equal"})
+        m.write_results(root, decisions, not decisions["complete"])
+        args = type("Args", (), {"output": root})
+        self.assertEqual(m.replay(args), 2)  # a partial grid decides nothing
+        self.assertIn("Structural evidence",
+                      (root / "RESULTS-partial.md").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

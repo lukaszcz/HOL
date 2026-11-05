@@ -38,6 +38,42 @@ struct
   in Conv.QCONV (Conv.TRY_CONV (Traverse.TRAVERSE
        {rewriters=rewriters,travrules=travrules,relation=relation,
         limit=limit,dprocs=[]} [])) end
+  (* Fingerprint of the retained result, for the structural evidence of the
+     allocation fixture (MatrixAllocation.sml) and the operator smoke. The
+     constructors of a workload set it, when the workload is built and never
+     inside a timed closure; it is read once, untimed, after the work phase.
+     ruleLhs holds the left sides of the n installed rules. *)
+  val missingFingerprint = fn () => raise Fail "workload without fingerprint"
+  val fingerprint : (unit -> string) ref = ref missingFingerprint
+  val ruleLhs = ref (Vector.fromList ([] : term list))
+  fun printable s = String.translate (fn c =>
+    if Char.isPrint c andalso c <> #"\\" then str c else Char.toString c) s
+  fun termText tm = printable (Parse.term_to_string tm)
+  fun thmText th = Lib.with_flag (Globals.show_types,true)
+    (fn () => String.concatWith "," (map termText (hyp th)) ^ " |- " ^
+              termText (concl th)) ()
+  fun goalText (asl,w) =
+    String.concatWith "," (map termText asl) ^ " ?- " ^ termText w
+  fun rangesText is = let
+    fun add (i,[]) = [(i,i)]
+      | add (i,(lo,hi)::rest) =
+          if i = hi + 1 then (lo,i) :: rest else (i,i) :: (lo,hi) :: rest
+    fun one (lo,hi) = Int.toString lo ^
+                      (if lo = hi then "" else "-" ^ Int.toString hi)
+  in String.concatWith "," (map one (List.rev (List.foldl add [] is))) end
+  fun optText NONE = "-"
+    | optText (SOME s) = "+" ^ s
+  (* Names, dprocs and the set of installed rules whose left side the net
+     leaves alone (run-length encoded), of a simpset. *)
+  fun ssText ss = let
+    val lhss = !ruleLhs
+    val conv = netconv ss
+    fun untouched i = let val th = conv (Vector.sub (lhss,i))
+      in aconv (lhs (concl th)) (rhs (concl th)) end
+  in "names=" ^ String.concatWith "," (map optText (names ss)) ^
+     ";dprocs=" ^ String.concatWith "," (map optText (dpnames ss)) ^
+     ";refl=" ^ rangesText (List.filter untouched
+       (List.tabulate (Vector.length lhss,I))) end
   type workload = {run:unit -> unit, verify:unit -> unit,
                    beforeBatch:unit -> unit, afterBatch:int -> unit}
   fun basic run verify : workload =
@@ -73,6 +109,76 @@ struct
       afterBatch=fn count =>
         required (!makerCalls - !oldM = count * makers andalso
                   !collectorCalls - !oldC = count * collectors)} end
+  (* Structural evidence: an untimed phase after the operations. It runs
+     the operation twice with the simplifier's trace listener, which
+     Trace.trace calls whatever the trace level and which counts by level and
+     action constructor without ever forcing an LZ_TEXT, and the kernel's
+     inference counter, and reports the callback counts with them. The
+     fingerprint of the retained result closes the list. Nothing here runs
+     in a timed process. *)
+  val traceActions =
+    ["IGNORE", "LZ_TEXT", "MORE_CONTEXT", "OPENING", "PRODUCE", "REDUCE",
+     "REWRITING", "SIDECOND_ATTEMPT", "SIDECOND_NOT_SOLVED",
+     "SIDECOND_SOLVED", "TEXT"]
+  val traceLevels = 16
+  fun actionIndex a = case a of
+      Trace.IGNORE _ => 0 | Trace.LZ_TEXT _ => 1 | Trace.MORE_CONTEXT _ => 2
+    | Trace.OPENING _ => 3 | Trace.PRODUCE _ => 4 | Trace.REDUCE _ => 5
+    | Trace.REWRITING _ => 6 | Trace.SIDECOND_ATTEMPT _ => 7
+    | Trace.SIDECOND_NOT_SOLVED _ => 8 | Trace.SIDECOND_SOLVED _ => 9
+    | Trace.TEXT _ => 10
+  fun countsText named = String.concatWith "," (List.mapPartial
+    (fn (k,n) => if n = 0 then NONE else SOME (k ^ "=" ^ Int.toString n))
+    named)
+  fun kernelCounts () = let val c = Count.thm_count () in
+    [("ABS",#ABS c),("ALPHA",#ALPHA c),("AP_TERM",#AP_TERM c),
+     ("AP_THM",#AP_THM c),("ASSUME",#ASSUME c),("BETA_CONV",#BETA_CONV c),
+     ("CCONTR",#CCONTR c),("CHOOSE",#CHOOSE c),("COMPUTE",#COMPUTE c),
+     ("CONJ",#CONJ c),("CONJUNCT1",#CONJUNCT1 c),
+     ("CONJUNCT2",#CONJUNCT2 c),("DISCH",#DISCH c),("DISJ1",#DISJ1 c),
+     ("DISJ2",#DISJ2 c),("DISJ_CASES",#DISJ_CASES c),
+     ("EQ_IMP_RULE",#EQ_IMP_RULE c),("EQ_MP",#EQ_MP c),
+     ("EXISTS",#EXISTS c),("GEN",#GEN c),("GEN_ABS",#GEN_ABS c),
+     ("INST",#INST c),("INST_TYPE",#INST_TYPE c),("MK_COMB",#MK_COMB c),
+     ("MP",#MP c),("NOT_ELIM",#NOT_ELIM c),("NOT_INTRO",#NOT_INTRO c),
+     ("REFL",#REFL c),("SPEC",#SPEC c),("SUBST",#SUBST c),("SYM",#SYM c),
+     ("TRANS",#TRANS c),("axiom",#axiom c),("definition",#definition c),
+     ("from_disk",#from_disk c),("oracle",#oracle c),("total",#total c)] end
+  (* One run between a reset and a read of every counter, as
+     trace=L.ACTION=n,...;kernel=RULE=n,...;maker=n;collector=n *)
+  fun measureOnce ({run,beforeBatch,afterBatch,...}:workload) = let
+    val width = length traceActions
+    val table = Array.array (traceLevels * width,0)
+    fun listen (level,a) = let
+      val i = Int.min (Int.max (level,0),traceLevels - 1) * width +
+              actionIndex a
+    in Array.update (table,i,Array.sub (table,i) + 1) end
+    val maker0 = !makerCalls
+    val collector0 = !collectorCalls
+    fun body () =
+      (Count.reset_thm_count ();
+       Count.counting_thms true;
+       Listener.add_listener Trace.trace_hook ("matrix_work",listen);
+       beforeBatch (); run (); afterBatch 1)
+    fun cleanup () =
+      (ignore (Listener.remove_listener Trace.trace_hook "matrix_work");
+       Count.counting_thms false)
+    val _ = Portable.finally cleanup body ()
+    val traced = List.concat (List.tabulate (traceLevels,fn l =>
+      ListPair.map (fn (a,i) => (Int.toString l ^ "." ^ a,
+                                 Array.sub (table,l * width + i)))
+                   (traceActions,List.tabulate (width,I))))
+  in "trace=" ^ countsText traced ^ ";kernel=" ^ countsText (kernelCounts ()) ^
+     ";maker=" ^ Int.toString (!makerCalls - maker0) ^
+     ";collector=" ^ Int.toString (!collectorCalls - collector0) end
+  (* The records of the work phase: two counted runs, then the fingerprint
+     of the retained result. *)
+  fun workPhase (w:workload) = let
+    val first = measureOnce w
+    val second = measureOnce w
+    val digest = (!fingerprint) ()
+  in [("work.first",first),("work.second",second),("result.digest",digest)]
+  end
   fun constant name = (new_constant (name,bool); mk_const (name,bool))
   fun rule i = ASSUME (mk_eq
     (constant ("matrix_c" ^ Int.toString i),T))
@@ -84,6 +190,13 @@ struct
       {Thy="bool",Name=namer i}),rs))
   fun fragwork build expected name checkExtra = let
     val slot = ref (build ())
+    val _ = fingerprint := (fn () => let
+      val actual = frag_rewrites (!slot)
+      fun mark (a,e,(i,acc)) = (i + 1,if same (a,e) then acc else i :: acc)
+      val wrong = if length actual <> length expected then []
+        else List.rev (#2 (ListPair.foldl mark (0,[]) (actual,expected)))
+    in optText (frag_name (!slot)) ^ ";" ^ Int.toString (length actual) ^
+       ";" ^ rangesText wrong end)
     fun verify () =
       (required (frag_name (!slot) = name andalso
                  sameList (frag_rewrites (!slot),expected));
@@ -91,12 +204,16 @@ struct
   in basic (fn () => slot := build ()) verify end
   fun sswork build verifyResult = let
     val slot = ref (build ())
+    val _ = fingerprint := (fn () => ssText (!slot))
   in basic (fn () => slot := build ()) (fn () => verifyResult (!slot)) end
   fun thwork build expected = let
     val slot = ref (build ())
+    val _ = fingerprint := (fn () => thmText (!slot))
   in basic (fn () => slot := build ()) (fn () => proof expected (!slot)) end
-  fun convwork build check = let
+  fun convwork build check terms = let
     val slot = ref (build ())
+    val _ = fingerprint := (fn () => String.concatWith ";"
+              (map (fn tm => thmText ((!slot) tm)) terms))
   in basic (fn () => slot := build ())
        (fn () => (check (!slot); check (!slot))) end
 
@@ -105,6 +222,8 @@ struct
     (* Constants have distinct net keys, not n variants of one variable rule.
        All installed rules have an exact, intentionally nonempty hypothesis. *)
     val rs = List.tabulate (n,rule)
+    val _ = ruleLhs := Vector.fromList (map (lhs o concl) rs)
+    val _ = fingerprint := missingFingerprint
     val miss = constant "matrix_miss"
     val target = if null rs then miss else lhs (concl (hd rs))
     val expected = if null rs then REFL target else hd rs
@@ -211,7 +330,9 @@ struct
         in normal (fn () => empty_ss ++ f) end
       | "compile_construct_conv" => let
           val source = installed ()
-        in convwork (fn () => SIMP_CONV source []) (checks no) end
+        in convwork (fn () => SIMP_CONV source []) (checks no)
+             (miss :: map (fn i => lhs (concl (List.nth (rs,i)))) indices)
+        end
       | "compile_reuse" => let val cv = SIMP_CONV (installed ()) [] in
           thwork (fn () => cv target) expected end
       | "compile_complete" => thwork
@@ -247,6 +368,8 @@ struct
         fun verify () =
           (if stage = "construct" then apply () else (); check ())
         val _ = apply ()
+        val _ = fingerprint := (fn () => String.concatWith ";"
+                  (map goalText (!residual) @ [thmText (!result)]))
       in basic run verify end
       fun dproc mixed = let
         val ds = List.tabulate (n,fn i => reducer (dpname i))
@@ -398,6 +521,11 @@ struct
           in
             Portable.finally (fn () => Context.restore changed) restored ()
           end
+          val _ = fingerprint := (fn () => case !slot of
+              Exn.Exn (HOL_ERR e) =>
+                "error:" ^ printable (Feedback.message_of e)
+            | Exn.Exn _ => "exception"
+            | Exn.Res ss => ssText ss)
         in basic (fn () => slot := Exn.capture replay from) verify end
       | _ => raise Fail "unknown history case"
     end
@@ -426,6 +554,7 @@ struct
                 String.concatWith "," (map Int.toString fields) ^ "\n");
          TextIO.flushOut TextIO.stdOut end
       val _ = rawStorage := raw
+      val _ = fingerprint := (fn () => ssText (current ()))
     in basic (fn () => slot := SOME (empty_ss ++ frag))
              (fn () => checkSS no (current ())) end
   in

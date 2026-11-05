@@ -19,6 +19,8 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "compatibility"))
 import run_paired as rp
+sys.path.insert(0, str(HERE))
+import allocation_schema as sc
 
 SIZES = (0, 1, 10, 100, 1000, 10000)
 EXPENSIVE = ("compile_single", "frag_ac", "frag_ac_merge", "compile_ac")
@@ -29,6 +31,9 @@ SCALABLE = ("frag_create", "compile_batch", "exclude_matching",
 # Context restores isolate constants, TypeBase hooks, and theory mutations.
 # Use a fresh theory too: sealing a theory is not undone by Context.restore.
 # Paired.check uses CheckSupport's testutils tprint/OK/die reporter.
+# The work phase of the allocation fixture (structure v1) runs here too,
+# twice: its records are printed, and the steady-state counts and the result
+# digest must reproduce within the process.
 SELFTEST = '''open HolKernel MatrixSupport
 val _ = new_theory "matrix_smoke"
 val sizes = [%s]
@@ -40,7 +45,7 @@ fun validate label n = let
     val _ = new_theory ("matrix_smoke_" ^ label ^ "_" ^ Int.toString n)
     val _ = print ("matrix smoke " ^ label ^ " " ^ Int.toString n ^ "\\n")
     val _ = TextIO.flushOut TextIO.stdOut
-    val {run,verify,beforeBatch,afterBatch} = workload label n
+    val wl as {run,verify,beforeBatch,afterBatch} = workload label n
       handle e => (print "workload construction failed\\n"; raise e)
     val _ = verify ()
       handle e => (print "initial verification failed\\n"; raise e)
@@ -49,6 +54,19 @@ fun validate label n = let
     val _ = batch 1
     val _ = batch 2
     val _ = if label = "storage_graph" then (!rawStorage) () else ()
+    val work = workPhase wl
+      handle e => (print "work phase failed\\n"; raise e)
+    val again = workPhase wl
+    fun field key records = valOf (List.find (fn (k,_) => k = key) records)
+    val _ = required (#2 (field "work.second" work) =
+                      #2 (field "work.first" again) andalso
+                      #2 (field "work.second" work) =
+                      #2 (field "work.second" again) andalso
+                      #2 (field "result.digest" work) =
+                      #2 (field "result.digest" again))
+    val _ = List.app (fn (k,v) => print ("@@MATRIX_WORK\\t" ^ label ^ "\\t" ^
+              Int.toString n ^ "\\t" ^ k ^ "\\t" ^ v ^ "\\n")) work
+    val _ = TextIO.flushOut TextIO.stdOut
   in Paired.check (label ^ ":" ^ Int.toString n) true end
 in Portable.finally (fn () =>
      (rawStorage := (fn () => ()); Context.restore saved)) body () end
@@ -89,6 +107,27 @@ def storage_records(text, sizes, labels):
     rp.require([v[0] for v in records] == expected,
                "missing/duplicate/unexpected storage records")
     return records
+
+
+def work_records(text, sizes, labels):
+    """The work records of one process: three per case and size, in order,
+    the counts valid by the allocation schema (the digest is the
+    fingerprint itself here; the fixture's process publishes it the same)."""
+    records = []
+    for line in text.splitlines():
+        if not line.startswith("@@MATRIX_WORK\t"):
+            continue
+        fields = line.split("\t")
+        rp.require(len(fields) == 5, "invalid work record")
+        records.append(fields[1:])
+    rp.require([r[:3] for r in records] == [
+        [c, str(n), k] for n in sizes for c in labels
+        for k in sc.WORK_EVENTS], "missing/duplicate/unexpected work records")
+    for _, _, key, value in records:
+        if key != "result.digest":
+            sc.work_counts(value)
+    return [dict(case=c, size=int(n), key=k, value=v)
+            for c, n, k, v in records]
 
 
 def main():
@@ -236,6 +275,8 @@ def main():
                                 signature="pass", source_hashes=hashes,
                                 expected_observations=expected)
                             record["storage"] = storage_records(
+                                receipt["stdout"], sizes, labels)
+                            record["work"] = work_records(
                                 receipt["stdout"], sizes, labels)
                             record["checks"] = audit["observations"]
                             # Retain repeated path inventories only once;

@@ -178,6 +178,8 @@ def grid_digest(header):
     shared = {k: header[k] for k in GRID_KEYS}
     if header.get("task", DEFAULT_TASK) != DEFAULT_TASK:
         shared["task"] = header["task"]  # TASK29B digests are unchanged
+    if "structure" in header:  # so are those of grids without structure
+        shared["structure"] = header["structure"]
     data = json.dumps(shared, sort_keys=True, allow_nan=False).encode()
     return hashlib.sha256(data).hexdigest()
 
@@ -192,7 +194,10 @@ def binding(header, case, size, where=None):
     and the places of the run that measured it."""
     where = places(header) if where is None else where
     name = name_of(case, size)
+    named = {"structure": header["structure"]} if "structure" in header \
+        else {}
     return dict(
+        named,
         case=case, size=size, steady=header["iterations"]["steady"][name],
         repeats=header["iterations"]["repeats"], pairs=header["pairs"],
         library=where["library"], aliases=where["aliases"],
@@ -224,6 +229,7 @@ def changed_settings(old, new):
              if old.get(k) != new[k]] +
             [k for k in ("task",) if old.get(k, DEFAULT_TASK) !=
              new.get(k, DEFAULT_TASK)] +
+            [k for k in ("structure",) if old.get(k) != new.get(k)] +
             [k + "-length" for k in LENGTH_KEYS
              if place_lengths(old).get(k) != place_lengths(new)[k]])
 
@@ -582,6 +588,7 @@ class Grid:
                  if not Path(k).is_relative_to(self.lib.parent)}
         named = {} if self.task.name == DEFAULT_TASK else dict(
             task=self.task.name)
+        named["structure"] = sc.STRUCTURE
         return dict(
             named, schema=SCHEMA, baseline=args.baseline,
             candidate=args.candidate,
@@ -652,7 +659,8 @@ class Grid:
         try:
             events = rp.parse_events(receipt["stdout"])
             _, observed = sc.parse(events, case=case, size=size,
-                                   steady=steady, repeats=repeats)
+                                   steady=steady, repeats=repeats,
+                                   structure=self.header.get("structure"))
             sc.check_runtime(receipt["stdout"], str(self.lib), self.aliases)
             result = rp.validate(
                 receipt, selection=selection, fixture="performance",
@@ -873,8 +881,10 @@ def check_receipt(receipt, meta, experiment):
         TASK29_ALLOC_SHIM=meta["shim"]) and
         Path(private).name == SIDES[side], "wrong environment binding")
     events = rp.parse_events(receipt["stdout"])
-    brackets, _ = sc.parse(events, case=meta["case"], size=meta["size"],
-                           steady=meta["steady"], repeats=meta["repeats"])
+    structure = meta.get("structure")
+    brackets, found = sc.parse(events, case=meta["case"], size=meta["size"],
+                               steady=meta["steady"],
+                               repeats=meta["repeats"], structure=structure)
     sc.check_runtime(receipt["stdout"], meta["library"], meta["aliases"])
     check_protocol(receipt, meta, events)
     source, repo = meta["sources"][side], Path(meta["repo"])
@@ -900,7 +910,8 @@ def check_receipt(receipt, meta, experiment):
                 sc.require(prefix is None,
                            "shared input under the boundary prefix %s: %s"
                            % (prefix, logical))
-    return sc.observation(brackets, meta["steady"])
+    return sc.observation(brackets, meta["steady"],
+                          sc.work(found, structure))
 
 
 def shared_inputs(receipt):
@@ -970,6 +981,32 @@ def cell_status(record):
                       for m in p.values()])
 
 
+def work_section(cases):
+    """The structural evidence of all cells (None for an archive without
+    it): each cell's status, and the rows that are not reproducible."""
+    section = dict(status=None, cells={}, nondeterminism=[])
+    for case, record in cases.items():
+        for size, cell in record["cells"].items():
+            rows = cell.get("work")
+            if rows is None:
+                continue
+            section["cells"][name_of(case, size)] = an.work_status(
+                r["decision"] for r in rows.values())
+            for name, row in rows.items():
+                for what, ok in (("control", row["control_identical"]),
+                                 ("baseline",
+                                  row["deterministic"]["baseline"]),
+                                 ("candidate",
+                                  row["deterministic"]["candidate"])):
+                    if not ok:
+                        section["nondeterminism"].append(
+                            [case, size, name, what])
+    if not section["cells"]:
+        return None
+    section["status"] = an.work_status(section["cells"].values())
+    return section
+
+
 def assemble(cells, records, observed, baseline=a.BASE, task=None):
     """decisions.json content from analyzed cells (all or a subset)."""
     cases = (task or TASKS[DEFAULT_TASK]).cases
@@ -1020,6 +1057,12 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
         all(r["slopes"] is not None for r in out["cases"].values())
     pairs = {c["pairs"] for r in out["cases"].values()
              for c in r["cells"].values()}
+    work = work_section(out["cases"])
+    if work is not None:
+        # Beside the words, never inside them: neither the status below
+        # nor the nondeterminism list reads a work row.
+        out["work"] = work
+        out["work_status"] = work["status"]
     out["complete"] = complete
     out["acceptance_pairs"] = bool(pairs) and min(pairs) >= PAIRS
     # Only the pinned develop commit is the baseline of an acceptance.
@@ -1077,6 +1120,21 @@ def results_markdown(decisions, label="TASK29B"):
                     counts_text(m["candidate"]),
                     counts_text(m["difference"]),
                     counts_text(m["control_difference"])))
+    work = decisions.get("work")
+    if work is not None:
+        found = list(work["cells"].values())
+        lines += ["", "Structural evidence (work phase; trace, kernel and "
+                  "callback counts and the result digest, never part of the "
+                  "status above): **%s**. Cells equal %d, differ %d, "
+                  "inconclusive %d; rows not reproducible: %d."
+                  % (work["status"], found.count("equal"),
+                     found.count("differs"), found.count("inconclusive"),
+                     len(work["nondeterminism"])), "",
+                  "| case | size | work |", "|---|---:|---|"]
+        for case, record in decisions["cases"].items():
+            for size in record["cells"]:
+                lines.append("| %s | %s | %s |" % (
+                    case, size, work["cells"].get(name_of(case, size), "-")))
     lines += ["", "Nondeterministic gated rows: %d. Varying published "
               "rows: %d. Nonzero code-space rows: %d. Unresolved cells: %d."
               % (len(decisions["nondeterminism"]),

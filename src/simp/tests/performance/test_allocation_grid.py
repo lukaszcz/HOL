@@ -926,6 +926,7 @@ class Process(Bed):
         self.grid = REAL.__new__(REAL)
         self.grid.args = arguments(self.out, timeout=60)
         self.grid.fds = ()
+        self.grid.header = self.sb.header()
         self.grid.hol = self.sb.repo
         self.grid.lib = Path(tb.LIB)
         self.grid.aliases = [tb.ALIAS]
@@ -969,6 +970,30 @@ class Process(Bed):
                 self.assertEqual(obs["steady"], tb.STEADY)
                 self.assertEqual(sorted(receipt["environment"]),
                                  sorted(self.sb.environment(side)))
+
+    def test_a_v1_process_is_accepted_under_a_v1_header_only(self):
+        self.grid.header = self.sb.header(structure=sc.STRUCTURE)
+        experiment, receipt = self.process(structure=sc.STRUCTURE)
+        self.assertTrue(receipt["accepted"], receipt.get("rejection"))
+        receipt["position"], receipt["pair"] = 0, 1
+        meta = dict(self.sb.bind(structure=sc.STRUCTURE), schema=m.SCHEMA)
+        found = m.check_receipt(receipt, meta, experiment)
+        self.assertEqual(found["work"], tb.structural())
+        _, receipt = self.process()  # no work records
+        self.assertFalse(receipt["accepted"])
+        self.assertIn("observation count", receipt["rejection"])
+        self.grid.header = self.sb.header()
+        _, receipt = self.process(structure=sc.STRUCTURE)
+        self.assertFalse(receipt["accepted"])
+        self.assertIn("observation count", receipt["rejection"])
+
+    def test_a_malformed_work_record_is_a_rejection(self):
+        self.grid.header = self.sb.header(structure=sc.STRUCTURE)
+        _, receipt = self.process(
+            structure=sc.STRUCTURE, records=tb.structural_events(
+                first="trace=2.NOPE=1;kernel=;maker=0;collector=0"))
+        self.assertFalse(receipt["accepted"])
+        self.assertIn("bad trace key", receipt["rejection"])
 
     def test_protocol_violations_are_rejections_with_a_reason(self):
         good = self.sb.receipt("candidate", "candidate", 1, 0)["stdout"]

@@ -108,6 +108,9 @@ ACCEPTANCE = (dict(bytes=38678,
                    sha256="108a0d0827ec6848a0c1e2e6987f9f80"
                           "02591ac24498c7119cf5f58f14725b83"),)
 SEALED_HISTORY = {
+    "MatrixSupport.sml": (dict(
+        bytes=23596, sha256="92cf0445453cb60a4497ddb419740b47"
+                            "548c8d5cef0cd6e68aacfb129fcc1502"),),
     "MatrixPerformance.sml": (dict(
         bytes=4954, sha256="b805611bc816a19bf7e17734b10a40cb"
                            "65996086366be5e34078266dc010c13c"),),

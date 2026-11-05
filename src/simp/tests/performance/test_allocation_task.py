@@ -364,6 +364,141 @@ def code(text):
     return re.sub(r"\(\*.*?\*\)", "", text, flags=re.S)
 
 
+class StructureFixture(unittest.TestCase):
+    """The work phase is untimed, after the last bracket, and does not
+    touch what the brackets measure; the hook of the result fingerprint is
+    set when a workload is built."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.allocation = code((m.HERE / "MatrixAllocation.sml").read_text())
+        cls.support = code((m.HERE / "MatrixSupport.sml").read_text())
+        cls.timing = code((m.HERE / "MatrixPerformance.sml").read_text())
+
+    def test_the_work_phase_follows_the_last_bracket(self):
+        text = self.allocation
+        self.assertEqual(text.count("workPhase"), 1)
+        self.assertEqual(text.count("bracket "), len(re.findall(
+            r"\bbracket\b", text)))
+        start = text.index("val work = workPhase (valOf (!cell))")
+        self.assertLess(text.index('bracket "apply" verify'), start)
+        self.assertLess(text.index("val _ = experiment ()"), start)
+        self.assertLess(start, text.index("fun emitBracket"))
+        self.assertNotIn("workPhase", text[:text.index("fun experiment")])
+
+    def test_the_records_follow_the_foreign_thread_record(self):
+        text = self.allocation
+        foreign = text.index('Paired.observe "alloc.foreign"')
+        emit = text.index("List.app (fn (key, value) => "
+                          "Paired.observe key value) work")
+        check = text.index('Paired.check "allocation brackets" true')
+        self.assertLess(foreign, emit)
+        self.assertLess(emit, check)
+
+    def test_the_phase_names_its_records_as_the_schema_does(self):
+        self.assertIn(
+            '[("work.first",first),("work.second",second),'
+            '("result.digest",digest)]', self.support)
+
+    def test_the_listener_counts_and_never_forces_a_lazy_text(self):
+        start = self.support.index("fun listen (level,a)")
+        body = self.support[start:self.support.index("val maker0", start)]
+        self.assertIn("actionIndex a", body)
+        for token in ("LZ_TEXT", "TEXT", "print", "say", "term_to_string"):
+            self.assertNotIn(token, body)
+        index = self.support.index("fun actionIndex a")
+        self.assertIn("Trace.LZ_TEXT _ => 1",
+                      self.support[index:self.support.index("fun countsText")])
+
+    def test_the_listener_is_removed_and_counting_stopped_on_any_exit(self):
+        self.assertIn("Portable.finally cleanup body ()", self.support)
+        start = self.support.index("fun cleanup () =")
+        cleanup = self.support[start:self.support.index("val _ =", start)]
+        self.assertIn('Listener.remove_listener Trace.trace_hook '
+                      '"matrix_work"', cleanup)
+        self.assertIn("Count.counting_thms false", cleanup)
+        self.assertIn('Listener.add_listener Trace.trace_hook '
+                      '("matrix_work",listen)', self.support)
+
+    def test_the_hook_is_assigned_only_where_a_workload_is_built(self):
+        uses = re.findall(r"[^\n]*\bfingerprint\b[^\n]*", self.support)
+        assigns = [u for u in uses if ":=" in u]
+        self.assertTrue(all(u.lstrip().startswith("val _ = fingerprint :=")
+                            for u in assigns), assigns)
+        # sswork, thwork, convwork, fragwork, markerTactic, the theory
+        # change, the storage graph, and the reset of every workload
+        self.assertEqual(len(assigns), 8)
+        # none inside the body of a timed closure
+        for u in assigns:
+            self.assertNotIn("fn () => slot", u)
+        self.assertIn("val fingerprint : (unit -> string) ref = "
+                      "ref missingFingerprint", self.support)
+        # a workload built after another never reads its fingerprint
+        self.assertIn("val _ = fingerprint := missingFingerprint",
+                      self.support)
+
+    def test_the_timing_fixture_knows_nothing_of_it(self):
+        for token in ("workPhase", "fingerprint", "Listener", "Count."):
+            self.assertNotIn(token, self.timing)
+
+    def test_the_support_reads_no_clock_and_no_state_outside_its_refs(self):
+        for token in ("Time.", "Timer.", "Random", "OS.Process", "getEnv"):
+            self.assertNotIn(token, self.support)
+
+
+class Smoke(unittest.TestCase):
+    """The operator smoke runs the work phase of every case."""
+
+    @classmethod
+    def setUpClass(cls):
+        import smoke_matrix
+        cls.smoke = smoke_matrix
+
+    def test_the_selftest_runs_the_phase_twice_and_prints_its_records(self):
+        text = self.smoke.SELFTEST
+        self.assertEqual(text.count("workPhase wl"), 2)
+        self.assertIn("val wl as {run,verify,beforeBatch,afterBatch} = "
+                      "workload label n", text)
+        self.assertIn("@@MATRIX_WORK", text)
+        # steady-state counts and the digest reproduce within the process
+        self.assertIn('field "work.second" work', text)
+        self.assertIn('field "result.digest" again', text)
+
+    def lines(self, sizes, labels, change=lambda rows: None):
+        rows = [[c, str(n), k, v] for n in sizes for c in labels
+                for k, v in zip(sc.WORK_EVENTS, (
+                    "trace=2.TEXT=1;kernel=;maker=0;collector=0",
+                    "trace=;kernel=SPEC=1,total=1;maker=2;collector=0",
+                    "digest text"))]
+        change(rows)
+        return "\n".join("@@MATRIX_WORK\t" + "\t".join(r) for r in rows)
+
+    def test_valid_records_are_parsed(self):
+        records = self.smoke.work_records(self.lines([0, 1], ["a", "b"]),
+                                          [0, 1], ["a", "b"])
+        self.assertEqual(len(records), 12)
+        self.assertEqual(records[0], dict(
+            case="a", size=0, key="work.first",
+            value="trace=2.TEXT=1;kernel=;maker=0;collector=0"))
+        self.assertEqual(records[-1]["value"], "digest text")
+
+    def test_missing_extra_misordered_and_malformed_records_are_refused(self):
+        run = lambda text: self.smoke.work_records(text, [0], ["a"])
+        good = self.lines([0], ["a"])
+        run(good)
+        for label, text in (
+                ("missing", "\n".join(good.splitlines()[:-1])),
+                ("extra", good + "\n" + good.splitlines()[0]),
+                ("misordered", "\n".join(reversed(good.splitlines()))),
+                ("empty", ""),
+                ("bad key", good.replace("work.second", "work.third")),
+                ("bad counts", good.replace("SPEC=1", "NOPE=1")),
+                ("short", good.replace("\tdigest text", ""))):
+            with self.subTest(label), self.assertRaises(
+                    (ValueError, sc.InvalidAllocation)):
+                run(text)
+
+
 class TheoryChange(unittest.TestCase):
     """history_theory_change in the allocation gate: the fixture makes no
     theory transition there, and the timing gate keeps the real one."""

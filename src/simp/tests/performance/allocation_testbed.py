@@ -107,9 +107,31 @@ def default_cost(name):
     return {"native": 3}
 
 
+WORK_TEXT = ("trace=2.REWRITING=3,4.REDUCE=1;kernel=SPEC=2,total=2;"
+             "maker=0;collector=0")
+FINGERPRINT = "names=-,+matrix_data;dprocs=;refl=1-3"
+
+
+def structural_events(first=WORK_TEXT, second=WORK_TEXT,
+                      digest=FINGERPRINT):
+    """The three records of the work phase (structure v1)."""
+    return [["observation", key, text] for key, text in zip(
+        sc.WORK_EVENTS, (first, second, digest))]
+
+
+def structural(first=WORK_TEXT, second=WORK_TEXT, digest=FINGERPRINT):
+    """What the schema makes of those records: the work part of one
+    process's observation (counts as dicts, the digest hashed)."""
+    return sc.work(structural_events(first, second, digest) +
+                   [["check", "allocation brackets", "pass"]], sc.STRUCTURE)
+
+
 def process_events(case=CASE, size=SIZE, steady=STEADY, repeats=REPEATS,
-                   work=None, mutate=None, start=1000):
-    """Allocation events of one valid process; work maps bracket to a dict."""
+                   work=None, mutate=None, start=1000, structure=None,
+                   records=None):
+    """Allocation events of one valid process; work maps bracket to a dict.
+    Under `structure` the work phase records follow the foreign-thread
+    record (`records`: the three events, default the valid ones)."""
     work = work or {}
     rows, now, steady_index = [], dict.fromkeys(CATEGORIES, start), 0
     for name in sc.names(repeats):
@@ -131,6 +153,8 @@ def process_events(case=CASE, size=SIZE, steady=STEADY, repeats=REPEATS,
         events.append(["observation", "alloc." + name,
                        "%d;%s;%s" % (index, text(s), text(e))])
     events.append(["observation", "alloc.foreign", sc.FOREIGN])
+    if structure:
+        events += structural_events() if records is None else records
     events.append(["check", "allocation brackets", "pass"])
     return events
 
@@ -138,12 +162,14 @@ def process_events(case=CASE, size=SIZE, steady=STEADY, repeats=REPEATS,
 def parse_kw(**kw):
     return dict(case=kw.get("case", CASE), size=kw.get("size", SIZE),
                 steady=kw.get("steady", STEADY),
-                repeats=kw.get("repeats", REPEATS))
+                repeats=kw.get("repeats", REPEATS),
+                structure=kw.get("structure"))
 
 
 def parsed(**kw):
     events = process_events(**{k: v for k, v in kw.items() if k in (
-        "case", "size", "steady", "repeats", "work", "mutate", "start")})
+        "case", "size", "steady", "repeats", "work", "mutate", "start",
+        "structure", "records")})
     return sc.parse(events, **parse_kw(**kw))
 
 
@@ -155,22 +181,31 @@ def delta(words):
     return d
 
 
-def observation(totals, steady=STEADY):
+def observation(totals, steady=STEADY, work=None):
     """phase -> raw delta; a value is native words, a category dict or (for
-    operation_steady) one such value per repeat."""
+    operation_steady) one such value per repeat. `work`: the structural
+    part of the observation (see structural())."""
     phases = {}
     for phase in sc.PHASES + sc.PUBLISHED:
         words = totals.get(phase, 1)
         reps = 3 if phase == "operation_steady" else 1
         value = words if isinstance(words, list) else [words] * reps
         phases[phase] = [delta(w) for w in value]
-    return dict(steady=steady, phases=phases)
+    out = dict(steady=steady, phases=phases)
+    if work is not None:
+        out["work"] = work
+    return out
 
 
-def experiment(base, cand, ctrl=None, pairs=10, steady=STEADY):
-    """pairs/control lists; ctrl varies the control side by pair."""
-    b, c = observation(base, steady), observation(cand, steady)
-    ctrl = ctrl or (lambda i: observation(base, steady))
+def experiment(base, cand, ctrl=None, pairs=10, steady=STEADY,
+               work=None):
+    """pairs/control lists; ctrl varies the control side by pair. `work`
+    makes every side carry the same structural record; a pair of them,
+    (baseline, candidate), gives the sides their own."""
+    both = work if isinstance(work, tuple) else (work, work)
+    b = observation(base, steady, both[0])
+    c = observation(cand, steady, both[1])
+    ctrl = ctrl or (lambda i: observation(base, steady, both[0]))
     return ([dict(baseline=b, candidate=c) for _ in range(pairs)],
             [dict(baseline=b, control=ctrl(i)) for i in range(pairs)])
 
@@ -358,10 +393,12 @@ class Sandbox:
 
     def receipt(self, experiment, side, pair, position, case=CASE, size=SIZE,
                 steady=STEADY, repeats=REPEATS, work=None, rows=None,
-                mutate=None, library=LIB, start=1000):
+                mutate=None, library=LIB, start=1000, structure=None,
+                records=None):
         """rows mutates bracket rows, mutate the whole event list."""
         events, raws = self.loader(side, process_events(
-            case, size, steady, repeats, work, rows, start))
+            case, size, steady, repeats, work, rows, start, structure,
+            records))
         if mutate:
             mutate(events)
         lines = ["@@PAIR\t%d\t%s" % (i, "\t".join(e))
@@ -383,8 +420,9 @@ class Sandbox:
             for pair in range(self.pairs):
                 order = sides if pair % 2 == 0 else sides[::-1]
                 for position, side in enumerate(order):
-                    extra = (build(experiment, side, pair) if build
-                             else None) or {}
+                    extra = {"structure": override.get("structure"),
+                             **((build(experiment, side, pair) if build
+                                 else None) or {})}
                     m.write_receipt(
                         folder / experiment, "pair-%02d-%s" % (
                             pair, m.SIDES[side]), self.receipt(

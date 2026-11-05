@@ -14,6 +14,10 @@
      operation_steady  ALLOC_STEADY runs, repeated ALLOC_REPEATS times
      apply             verify (), which also consumes the retained result
    fullGC and the beforeBatch/afterBatch assertions are outside brackets.
+   After the last bracket an untimed `work` phase (structure "v1", see
+   allocation_schema.py) counts the operation's trace events and kernel
+   inferences twice and fingerprints the retained result; nothing of it is
+   inside a bracket.
    Counts are predeclared by the driver, never calibrated here. No decoding,
    output or label work happens between a bracket's start and end; the
    endpoints are read from C storage afterwards and printed at the very end. *)
@@ -87,6 +91,7 @@ fun experiment () = let
   val _ = List.app steadyBatch (List.tabulate (repeats, I))
 in bracket "apply" verify end
 val _ = experiment ()
+val work = workPhase (valOf (!cell))
 
 fun fields xs = String.concatWith "," (map LargeInt.toString xs)
 fun emitBracket index (name, s, e) =
@@ -118,4 +123,5 @@ end
 val _ = Paired.observe "alloc.foreign"
   (LargeInt.toString (getPath (32 + 3 + 27)) ^ "," ^
    LargeInt.toString (getPath (32 + 31)))
+val _ = List.app (fn (key, value) => Paired.observe key value) work
 val _ = Paired.check "allocation brackets" true
