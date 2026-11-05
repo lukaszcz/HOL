@@ -322,6 +322,7 @@ class Followup(unittest.TestCase):
         self.assertEqual(table.cases, ("exclude_partial",
                                        "exclude_tactic_reuse"))
         self.assertLessEqual(set(table.names()), set(t30.TABLE.names()))
+        self.assertIs(table.replaces.engine, t30.ENGINE)
         self.assertIs(table.replaces.table, t30.TABLE)
         self.assertEqual(table.replaces.rule, "inconclusive")
         self.assertEqual(table.family, t30.TABLE.name)
@@ -347,15 +348,57 @@ class Followup(unittest.TestCase):
         self.assertEqual(table.pairs, 2 * t30.TABLE.pairs)
         self.assertEqual((table.target, table.max_pairs, table.baseline),
                          (0.015, 120, a.BASE))
+        # The sealed files are TASK30's and TASK30's driver, which the
+        # follow-up imports.
         self.assertEqual((table.sealed, table.sources, table.pinned,
                           table.pin_file, table.tree),
-                         (t30.TABLE.sealed, t30.TABLE.sources,
-                          t30.TABLE.pinned, t30.TABLE.pin_file,
-                          t30.TABLE.tree))
+                         (t30.TABLE.sealed + ("task30_grid.py",),
+                          t30.TABLE.sources, t30.TABLE.pinned,
+                          t30.TABLE.pin_file, t30.TABLE.tree))
         self.assertEqual(table.code(), t30.TABLE.code())
+        mine, theirs = f.ENGINE.code_now(), t30.ENGINE.code_now()
+        self.assertEqual(mine["sealed"]["task30_grid.py"],
+                         theirs["driver"])
+        mine["sealed"].pop("task30_grid.py")
+        self.assertEqual(
+            {k: v for k, v in mine.items() if k != "driver"},
+            {k: v for k, v in theirs.items() if k != "driver"})
+        self.assertEqual(mine["driver"], a.seal(f.__file__))
+
+    def test_its_seal_histories_are_those_the_module_names(self):
+        # Empty until a change is made to the code after the table's first
+        # record (PROTOCOL.md): the mechanism is TASK30's.
+        import task30_followup as f
+        table = f.TABLE
+        self.assertEqual((f.DRIVERS, f.ENGINES, f.ACCEPTANCE,
+                          f.SEALED_HISTORY), ((), (), (), {}))
         self.assertEqual((table.drivers, table.engines,
-                          table.layout_acceptance, table.sealed_history),
-                         ((), (), (), {}))
+                          table.layout_acceptance, table.acceptance,
+                          table.sealed_history),
+                         (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, (), {}))
+        # An older seal of a listed file is accepted by check_code, the
+        # mechanism the history appends to.
+        code = dict(f.ENGINE.code_now(),
+                    engine=dict(bytes=1, sha256="0" * 64))
+        with self.assertRaisesRegex(ValueError, "changed engine"):
+            f.ENGINE.check_code(code, True)
+        older = tg.Table(
+            "task30f", "TASK30-FOLLOWUP", f.CASES, f.__file__, f.COUNTS,
+            cells=f.CELLS, family="task30", replaces=table.replaces,
+            seconds=t30.SECONDS, fixed_seconds=True, pairs=40,
+            seed=f.LAYOUT_SEED, baseline=a.BASE, engine=True,
+            engines=(dict(bytes=1, sha256="0" * 64),), sealed=f.SEALED,
+            sealed_history={"task30_grid.py": (dict(
+                bytes=2, sha256="1" * 64),)},
+            seconds_by_case={"exclude_partial": t30.LONG_SECONDS},
+            sources=table.sources, tree="src",
+            layout_acceptance=(dict(bytes=3, sha256="2" * 64),))
+        old = dict(f.ENGINE.code_now(),
+                   engine=dict(bytes=1, sha256="0" * 64),
+                   acceptance=dict(bytes=3, sha256="2" * 64))
+        old["sealed"] = dict(old["sealed"], **{"task30_grid.py": dict(
+            bytes=2, sha256="1" * 64)})
+        tg.Grid(older).check_code(old, True)
 
     def test_its_layout_seed_is_not_the_task30_grids_nor_its_second_stage(
             self):
@@ -376,11 +419,41 @@ class Followup(unittest.TestCase):
         for repo in (REPO, Path("/nowhere")):
             self.assertEqual(f.ENGINE.ledger_path(repo),
                              t30.ENGINE.ledger_path(repo))
-            self.assertEqual(f.ENGINE.stamp_path(repo),
-                             t30.ENGINE.stamp_path(repo))
+            # The stamp and the prepare log are the table's own, beside the
+            # one ledger; TASK30 keeps the names it always had.
+            self.assertEqual(f.ENGINE.stamp_path(repo).parent,
+                             t30.ENGINE.stamp_path(repo).parent)
+            self.assertNotEqual(f.ENGINE.stamp_path(repo),
+                                t30.ENGINE.stamp_path(repo))
+            self.assertEqual(t30.ENGINE.stamp_path(repo).name,
+                             "build-stamp.json")
+            self.assertEqual(t30.ENGINE.prepare_log_path(repo).name,
+                             "prepare.log")
+            self.assertEqual(f.ENGINE.stamp_path(repo).name,
+                             "build-stamp-task30f.json")
+            self.assertEqual(f.ENGINE.prepare_log_path(repo).name,
+                             "prepare-task30f.log")
         self.assertEqual(
             f.ENGINE.ledger_path(REPO).relative_to(REPO).as_posix(),
             ".agent-files/evidence/task30/attempts.jsonl")
+
+    def test_its_sealed_set_is_the_codes_not_the_checkouts(self):
+        # Repository names, from the root of the repository the code is in:
+        # a replay pointed at another checkout sees the same set.
+        import task30_followup as f
+        found = f.ENGINE.sealed_paths()
+        area = "src/simp/tests/performance/"
+        self.assertIn("src/simp/tests/compatibility/run_paired.py", found)
+        self.assertIn(area + "task30_followup.py", found)
+        self.assertIn(area + "task30_grid.py", found)
+        self.assertEqual(found, {
+            (area + n if not n.startswith("../") else
+             "src/simp/tests/" + n[3:]) for n in f.SEALED} |
+            {area + "task30_followup.py"})
+        self.assertEqual(t30.ENGINE.sealed_paths(), {
+            (area + n if not n.startswith("../") else
+             "src/simp/tests/" + n[3:]) for n in t30.SEALED} |
+            {area + "task30_grid.py"})
 
     def test_the_table_loads_before_its_counts_exist(self):
         import task30_followup as f
@@ -399,7 +472,9 @@ class Followup(unittest.TestCase):
         import task30_followup as f
         parser, sub = f.ENGINE.parser()
         for action, option in (("predeclare", "--replaces"),
+                               ("predeclare", "--ledger"),
                                ("verify-counts", "--replaces-pilot"),
+                               ("verify-counts", "--ledger"),
                                ("run", "--replaces"),
                                ("extend", "--replaces-pilot"),
                                ("replay", "--replaces-pilot")):

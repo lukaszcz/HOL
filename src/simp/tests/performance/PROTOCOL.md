@@ -417,11 +417,13 @@ has no disposition.
   take the file the grid names, which is how a grid made under an earlier file
   replays. A follow-up table (below) also takes the grid it replaces and that
   grid's pilot: `--replaces GRID --replaces-pilot DIR` for `predeclare`,
-  `verify-counts` and `run`, `--replaces-pilot DIR` alone for `extend` and
-  `replay`, which find the grid where their record says it is; a table that
-  replaces none refuses both options. The baseline of the counts, of the
-  table and of `--baseline`
-  (which defaults to the table's) must agree; a candidate equal to the
+  `--replaces GRID` for `verify-counts` and `run`, nothing for `extend`, and
+  `--replaces-pilot DIR` alone for `replay`; `extend` and `replay` find the
+  grid where their record says it is. Only `predeclare` and `replay` replay
+  the grid in full (and read the pilot); the others bind it by the seals of
+  the counts. A table that replaces none refuses both options. The baseline
+  of the counts, of the table and of `--baseline` (which defaults to the
+  table's) must agree; a candidate equal to the
   baseline is refused. The layout seed, pairs and samples are the table's at
   `predeclare`, which copies them into the counts file; `run` refuses a file
   that does not say what the table says and a different explicit
@@ -764,14 +766,16 @@ has no disposition.
   timeout, with none it goes on. Configure has just made the three
   executables, so the warning is not expected; `prepare` still refuses to
   stamp when the log holds it, whatever the exit status, as an assertion.
-  The log is `prepare.log` beside the ledger, replaced by the next `prepare`
+  The log is `prepare.log` beside the ledger (`prepare-NAME.log` for a table
+  of a family that is not named like it), replaced by the next `prepare`
   (one file, so the disk use does not grow, and it is not the record of a
   build: the durable record of the build a pilot or a grid ran with is the
   products digest in its inventory, `checkout.products`); the default timeout
   is four hours for each of the two commands. Only if configure and the build
   exit 0, configure prints its last line, and the checkout is clean at the
   same `HEAD` does it write
-  `.agent-files/evidence/<table>/build-stamp.json`. A failed, timed out or
+  `.agent-files/evidence/<table>/build-stamp.json` (`build-stamp-NAME.json` for
+  such a table). A failed, timed out or
   interrupted configure or build writes no stamp and removes the one of an
   earlier `prepare`. The stamp holds `HEAD`, the seal of the tracked tree
   outside the performance area, the build command, and the digest of the
@@ -1126,40 +1130,124 @@ table of its own on the shared engine, with the following additions to it.
   summary then work on that subset and nothing else, and its decision is
   complete for it. The cells of the follow-up are the two above, with the
   seconds of the TASK30 table for their cases (1.0 for `exclude_partial`, 0.3
-  for `exclude_tactic_reuse`), 5 samples, the baseline, sealed files, source
-  list, pins and tree of the TASK30 table, the layout seed
-  `task30-followup-1`, and the counts file `task30_followup_iterations.json`.
-  `--only` is a diagnostic subset of a follow-up as of any table (no
-  decision, no `final.json`).
+  for `exclude_tactic_reuse`), 5 samples, the baseline, source list, pins and
+  tree of the TASK30 table, its sealed files (and `task30_grid.py`, below),
+  the layout seed `task30-followup-1`, and the counts file
+  `task30_followup_iterations.json`. `--only` is a diagnostic subset of a
+  follow-up as of any table (no decision).
 - **Evidence family.** `Table(family=...)` names the directory under
-  `.agent-files/evidence/` that holds the ledger and the build stamp and the
-  name in the keep refs (`refs/performance/<family>/<sha>`); the follow-up is
-  of the family `task30`, so its attempts go into
+  `.agent-files/evidence/` that holds the ledger, the build stamp and the
+  prepare log, and the name in the keep refs (`refs/performance/<family>/
+  <sha>`); the follow-up is of the family `task30`, so its attempts go into
   `.agent-files/evidence/task30/attempts.jsonl`, the one hash chain, and
-  `replay` lists every attempt of both. Schemas keep the table's own name
-  (`task30f-iterations-v1`, ...).
-- **What it replaces.** `Table(replaces=Replaces(TABLE))` makes the table a
-  follow-up of the grid that `TABLE` measured: the cells it takes over are
+  `replay` lists the attempts of each table. Schemas keep the table's own
+  name (`task30f-iterations-v1`, ...).
+  - *Lines name their table.* A new line of the ledger carries `table` (the
+    table's name). A line without it, as every line written before the field
+    existed, is the table that names the family (TASK30). A line is hashed as
+    its text, so the lines already written verify byte for byte and nothing
+    is rewritten. The attempt report (`ATTEMPTS of TASK30: N ...`), the
+    counts of `close` ("attempts N in the ledger, M of the candidate") and the
+    search for the opening of a grid read only their own table's lines, so N
+    of TASK30 is not raised by a follow-up attempt, and the report of the
+    follow-up lists its own.
+  - *Stamp and log per table.* The family shares the directory, so the table
+    that names the family keeps `build-stamp.json` and `prepare.log` (the
+    TASK30 records replay as before), and any other table of it keeps
+    `build-stamp-NAME.json` and `prepare-NAME.log` (`build-stamp-task30f.json`,
+    `prepare-task30f.log`). `prepare` of the follow-up neither deletes nor
+    overwrites TASK30's stamp or log, and TASK30's does not touch the
+    follow-up's. Both stamps describe the one checkout, so a `prepare` of
+    either changes its products and each measuring command compares with its
+    own stamp: a TASK30 resumption after the follow-up's `prepare` is still
+    refused by the tree rule below, as before.
+- **What it replaces.** `Table(replaces=Replaces(ENGINE))` makes the table a
+  follow-up of the grid that the engine `ENGINE` (the table that measured it
+  with the hooks its module gave it) measured: the cells it takes over are
   those whose class (`classify_row`) is `inconclusive` in that grid's final
-  decision. `run --replaces GRID --replaces-pilot DIR` (GRID is the second
-  stage where there is one) replays the grid in full, with the engine of the
-  table that measured it, and the pilot of its counts, and refuses before an
-  attempt opens: a grid that does not replay; follow-up cells other than the
-  open cells (`follow-up cells differ from the open cells`); a baseline or
-  second-stage limits other than the grid's, or pairs that are not twice its
-  first stage's; a layout seed that the grid drew or its second stage drew
-  (a table refuses the same at its construction, for the seed of the table
-  it replaces); candidate sources that differ from the grid's source record
-  (`candidate sources differ from the replaced grid's`); a candidate that
-  differs from the grid's below the table's tree anywhere but the
-  performance area and the files the table seals (the code it measures with);
-  counts bound to other sealed files; counts of another schedule than the
-  table's; and counts whose pairs differ from the derivation below. The
+  decision. `GRID` is the grid's *last* stage: its second stage where it has
+  one, and a first stage only when it has no remeasurement plan; a first stage
+  whose second stage is still to come is refused (`the replaced grid is not
+  final`), for the follow-up replaces the final stage. A Replaces helper
+  called before the grid is bound is a refusal naming that, not an
+  `AttributeError`. There are two bindings.
+  - *Full* (`predeclare`, and the follow-up's own `replay`; both need
+    `--replaces-pilot DIR`): the grid is replayed in full, with the engine of
+    the table that measured it (stage 2 replays stage 1), and the pilot of
+    its counts, and these are refused: a grid that does not replay; follow-up
+    cells other than the open cells (`follow-up cells differ from the open
+    cells`); a baseline or second-stage limits other than the grid's, or
+    pairs that are not twice its first stage's. `predeclare` records in the
+    counts file a `replaces` block: the path of the grid relative to the
+    follow-up's pilot, the SHA-256 seals of every file of the replaced grid
+    that the binding reads (the inventory and decisions of both stages), and
+    the open cells; and the pairs of each cell (`pairs_by_cell`, below).
+  - *By seals* (`verify-counts`, `run`, `extend`): no full replay. Every file
+    of the replaced grid that the binding reads is checked against the seals
+    of the counts (`replaced grid changed since predeclare: FILE`), the open
+    cells are taken from the sealed decision rows by `classify_row` and must
+    be the table's and those the counts record, and the pairs are derived
+    again by replaying (archive seals and analyses) only the follow-up cells'
+    first-stage archives, their develop/develop control; a mismatch with the
+    counts is a refusal. This costs two cells instead of the 144 of each of
+    two stages, for the full replay of the replaced grid costs the better
+    part of an hour each time. It moves the detection of a changed archive or
+    of changed code to `replay` and to the disposition step, which replay the
+    grid in full; it never misses one, since the full replay is made at
+    `predeclare` and again by `replay`, and every file the later commands
+    read is pinned to the bytes `predeclare` replayed. `--replaces-pilot` is
+    not read by them.
+  Both refuse before an attempt opens, besides: a layout seed that the grid
+  drew or its second stage drew (a table refuses the same at its
+  construction, for the seed of the table it replaces); candidate sources
+  that differ from the grid's source record (`candidate sources differ from
+  the replaced grid's`); a candidate that differs from the replaced one
+  below the table's tree anywhere but the performance area and the sealed
+  files; counts bound to other sealed files; counts of another schedule than
+  the table's; and counts whose pairs differ from the derivation below. The
   replaced grid's table, schedule and counts may differ from the follow-up's:
   its own are replayed as they were made (the TASK30 grid is `ramp`; the
-  follow-up is `warmup`). The inventory records the grid by its path relative
-  to the output and the seals of its inventory and decisions (`replaces`), and
-  `replay` finds it there again.
+  follow-up is `warmup`). `predeclare` and `verify-counts` take `--ledger
+  FILE`, like `replay` and `close` (read-only, the ledger of the checkout the
+  replaced grid was made in; only the full binding reads it).
+  - *The inventory's record.* An inventory of the follow-up records the
+    grid under `replaces` with the replaced grid's fields named as its own
+    (`replaced_inventory`, `replaced_decisions`, `replaced_seed`,
+    `replaced_counts`: the seals of its inventory and decisions, the layout
+    seed and counts seal of its first stage) and the follow-up's beside them
+    (`followup_seed`, `followup_counts`), with the grid's path relative to the
+    output. `replay` finds the grid there again.
+  - *The tree rule.* The candidate may differ from the replaced candidate
+    below `src` in any file under `src/simp/tests/performance/` and in any
+    sealed file or driver wherever it lies (`run_paired.py` is one). That is
+    wider than "only the files the table seals and its driver", on purpose:
+    the harness changes between the two commits (tests, documents,
+    `MatrixAllocation`, the allocation modules, the engine), and the code that
+    measures is covered by the engine, driver, acceptance and sealed seals
+    and by the sources record, not by this rule. Any other change under `src`
+    refuses the follow-up: a handoff or test under `src/simp/tests/
+    compatibility/`, another task's commit merged between the replaced
+    candidate Y and Z. The names of the sealed files are the code's
+    repository's (`Table.root`), the same whatever checkout `--repo` names,
+    and a sealed file outside that repository is refused.
+- **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
+  `ACCEPTANCE` (empty tuples) and `SEALED_HISTORY` (empty), passed to its
+  table as TASK30's are to its own: `check_code` accepts a record whose
+  driver, engine or acceptance seal is the current one or one listed, and a
+  sealed file's seal is the current one or one of its history. A change to
+  `task30_followup.py`, `timing_grid.py` or `acceptance.py` made after the
+  follow-up's first record (its pilot) appends the seals of the code the
+  records were made by to these, in the same commit; a reviewed change to a
+  sealed file that does not alter what is measured goes to `SEALED_HISTORY`.
+  `task30_grid.py` is a *sealed file* of the follow-up, not a driver: the
+  follow-up imports its constants (`SECONDS`, `PAIRS`, `SAMPLES`, `SEALED`)
+  and replays the TASK30 grid through its table, which are inputs of the
+  counts, as `task30_cases.py` is, so a change to it binds the counts (a
+  fresh pilot, or a `SEALED_HISTORY` entry when the change alters nothing
+  measured). TASK30 treats the same file as its own driver, with `DRIVERS`.
+  The disposition code, which changes the engine and `task30_grid.py`, is
+  landed before the follow-up's pilot, so that Z is the pilot's commit plus
+  the counts file.
 - **Pairs.** A follow-up has no pairs of its own to declare: the pairs of a
   cell are what the second-stage rule gives for the develop/develop control of
   the replaced grid's *first* stage,
@@ -1168,40 +1256,43 @@ table of its own on the shared engine, with the following additions to it.
   intervals (`Grid.followup_pairs`, from the functions
   `control_half_width` and `second_stage_pairs` that the second stage uses
   too). The floor `2*P`, 40, is the table's `pairs`. `predeclare` records the
-  pairs in the counts file as `pairs_by_cell`, and the seals of the replaced
-  grid's inventory and decisions as `replaces`; `verify-counts`, `run`,
-  `extend` and `replay` derive both again from the replaced grid and refuse a
-  file that differs. A run measures each cell with its own pairs, a row
-  records them when they are not the table's, and a replay refuses a row whose
-  pairs differ from the counts'. The second stage of the follow-up (`extend`,
-  seed `SEED-ext`) takes each cell's own pairs as the base of its rule. For
-  the two cells of the TASK30 grid both controls were valid, so each has 40
+  pairs in the counts file as `pairs_by_cell`; `verify-counts`, `run`,
+  `extend` and `replay` derive them and the `replaces` block again (from the
+  replaced grid, by the seals or in full as above) and refuse a file that
+  differs. A run measures each cell with its own pairs, a row records them
+  when they are not the table's, and a replay refuses a row whose pairs
+  differ from the counts'. The second stage of the follow-up (`extend`, seed
+  `SEED-ext`) takes each cell's own pairs as the base of its rule. For the
+  two cells of the TASK30 grid both controls were valid, so each has 40
   pairs.
 - **Decisions.** The follow-up's `decisions.json` is that of its own cells
   (class report `TASK30-FOLLOWUP grid: ...`). A follow-up outcome other than
   pass blocks: a fail is final, and an inconclusive or control-limited cell
   after the follow-up's own second stage blocks too. No further timing retry
-  and no automatic attribution follows without a new policy decision.
-  `final.json`, written beside `decisions.json` by `run` when no second stage
-  is to follow and by `extend` otherwise, is the decision of the replaced grid
-  with the follow-up's cells in place of the ones it replaced, summarised and
-  source-checked by the table of the replaced grid, with a `replaced` block
-  (the cells, the replaced layout seed, the seal of the replaced counts file,
-  and both candidates). `replay` derives `final.json` again from the replayed
-  reports of the replaced grid and of the follow-up and refuses a difference,
-  a missing file, and one that appears before a second stage it waits for.
+  and no automatic attribution follows without a new policy decision. The
+  follow-up writes no `final.json`: the TASK30 decision with these two cells
+  in place of the replaced ones is the disposition step's
+  (`task30_grid.py dispose`), which owns `final.json` and builds it from the
+  replayed reports of both grids.
 - **Sequence.** At the commit Z0 (code and documents; no counts): `prepare`,
   then
   `task30_followup.py pilot --output OUT/followup-pilot`, `predeclare --grid
   OUT/followup-pilot --output FILE --replaces OUT/stage2 --replaces-pilot
-  OUT/pilot`, `verify-counts` with the same two options; the counts file is
-  committed as Z (the candidate). `run --candidate Z --pilot
-  OUT/followup-pilot --replaces OUT/stage2 --replaces-pilot OUT/pilot
-  --output OUT/followup --authorize-measurements`, `extend --grid
-  OUT/followup --pilot OUT/followup-pilot --replaces-pilot OUT/pilot` only if
-  its control left a cell open, `replay` of each stage. The checkout, its
+  OUT/pilot`, where `FILE` is the table's counts path,
+  `src/simp/tests/performance/task30_followup_iterations.json`
+  (`task30_followup.py` reads no other), `verify-counts` with `--replaces`;
+  the counts file is committed as Z (the candidate), so that Y..Z holds
+  only the performance area and sealed files: any other change under `src`
+  refuses the follow-up. `run --candidate Z --pilot OUT/followup-pilot
+  --replaces OUT/stage2 --output OUT/followup --authorize-measurements`,
+  `extend --grid OUT/followup --pilot OUT/followup-pilot` only if its control
+  left a cell open, `replay` of each stage (with `--replaces-pilot
+  OUT/pilot`, which replays the replaced grid in full). The checkout, its
   stamp and its ledger are those of the pilot, as for any table, and the
-  measurements run serially under the lock.
+  measurements run serially under the lock. The follow-up pairs with its own
+  allocation grid at Z (`OUT/alloc-z`, a full `allocation_matrix.py run --task
+  task30` at Z); neither `close` nor the follow-up checks that pairing, the
+  disposition step does (head and tree outside the performance area, exactly).
 
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived

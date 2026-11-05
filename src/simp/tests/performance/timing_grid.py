@@ -61,9 +61,9 @@ A table may be a follow-up (`replaces`, `cells`): it takes over the cells
 of an earlier grid that ended inconclusive and measures only those, as a
 complete table of its own, under the same ledger (`family`). Its pairs per
 cell come from the replaced grid's first-stage develop/develop control by the
-second-stage rule, and its final decision is the replaced grid's with those
-cells replaced (`final.json`); see the Follow-up section of `Grid` and
-PROTOCOL.md.
+second-stage rule. It decides its own cells only; combining its decision
+with the replaced grid's is the disposition step's (PROTOCOL.md). See the
+Follow-up section of `Grid`.
 """
 import argparse
 import contextlib
@@ -176,14 +176,20 @@ class CheckoutUnjudged(CheckoutRefused):
 
 
 class Replaces:
-    """The grid a follow-up table replaces: the `table` that measured it (its
-    engine replays it) and the rule that names the cells taken over, which
-    is `inconclusive` (the cells whose class is that, see `classify_row`),
-    the only one there is."""
+    """The grid a follow-up table replaces: the `engine` that measured it
+    (the table with the hooks its module gave it; it replays the grid) and
+    the rule that names the cells taken over, which is `inconclusive` (the
+    cells whose class is that, see `classify_row`), the only one there is."""
 
-    def __init__(self, table, rule="inconclusive"):
+    def __init__(self, engine, rule="inconclusive"):
         a.require(rule == "inconclusive", "unknown replacement rule")
-        self.table, self.rule = table, rule
+        a.require(isinstance(engine, Grid), "malformed replaces: it names "
+                  "the engine of the table replaced")
+        self.engine, self.rule = engine, rule
+
+    @property
+    def table(self):
+        return self.engine.t
 
 
 class Table:
@@ -266,7 +272,11 @@ class Table:
         `verify-counts` then take the replaced grid (`Grid.bind_replaced`).
         The pairs of each cell are not a field of the table but derive from
         that grid (`Grid.followup_pairs`), and the counts file records them
-        (`pairs_by_cell`), so `pairs` is their floor."""
+        (`pairs_by_cell`), so `pairs` is their floor.
+    root: the root of the repository the code is in (default: that of this
+        module). The names of the sealed files and of the driver in the
+        repository (`Grid.sealed_paths`) are relative to it, whatever
+        checkout a command is pointed at."""
 
     def __init__(self, name, label, cases, driver, counts, *, seconds=0.3,
                  seconds_by_case=None, fixed_seconds=False, pairs=10,
@@ -278,7 +288,7 @@ class Table:
                  engines=(), sealed=(), sealed_history=None, sources=(),
                  pinned=None, pin_file=None, pin_history=None, tree=None,
                  home=a.HERE, require_seed=True, ledger=None, cells=None,
-                 family=None, replaces=None,
+                 family=None, replaces=None, root=None,
                  allocation="exact allocation is the separate gate of "
                  "allocation_matrix.py; not part of this timing gate"):
         extra = seconds_by_case or {}
@@ -334,6 +344,7 @@ class Table:
         self.cells = None if cells is None else tuple(cells)
         self.family = name if family is None else family
         self.replaces = replaces
+        self.root = Path(a.HERE.parents[3] if root is None else root)
         self.driver, self.counts = Path(driver), Path(counts)
         self.seconds, self.seconds_by_case = seconds, dict(extra)
         self.fixed_seconds = fixed_seconds
@@ -545,7 +556,13 @@ class Ledger:
     their hashes. A line that is no record and is followed by a record that
     does not acknowledge it, or by a different run, is refused. The chain is
     a discipline and not a proof: it cannot show that lines after the last
-    one, or the whole file, were removed."""
+    one, or the whole file, were removed.
+
+    A line of an attempt names its table (`table`), since the tables of a
+    family share one ledger. A line without the field, as every line written
+    before the field existed, is of the table that names the family (the hash
+    of a line is that of its text, so the lines already written verify as
+    they were)."""
 
     def __init__(self, path):
         self.records, self.notes = [], []
@@ -582,18 +599,22 @@ class Ledger:
                               "unfinished write, ignored"
                               % (number, len(line.encode())))
 
-    def attempts(self):
-        """(attempt, stage) -> candidate, the checkouts of all its lines
-        (`checkout`: the first), opened, resumptions, and every status the
-        attempt closed with, in order (`statuses`; `status`: the last), in
-        the order the ledger first names them. A run that was resumed or is
-        still open without a close of its own has been `interrupted`. The
-        texts of the closes that carry a `found` (a difference found and not
-        marked) or a `judgement` (an end that could not be judged) are in
-        the lists of those names."""
+    def attempts(self, table=None, default=None):
+        """With `table`, only the lines that name it (`table` of a line;
+        a line without one, as every line written before lines named their
+        table, is of `default`). (attempt, stage) -> candidate, the
+        checkouts of all its lines (`checkout`: the first), opened,
+        resumptions, and every status the attempt closed with, in order
+        (`statuses`; `status`: the last), in the order the ledger first
+        names them. A run that was resumed or is still open without a close
+        of its own has been `interrupted`. The texts of the closes that
+        carry a `found` (a difference found and not marked) or a `judgement`
+        (an end that could not be judged) are in the lists of those names."""
         found = {}
         for record in self.records:
             if record["event"] not in ("open", "resume", "close"):
+                continue
+            if table is not None and record.get("table", default) != table:
                 continue
             row = found.setdefault(
                 (record["attempt"], record["stage"]),
@@ -1208,7 +1229,7 @@ class Grid:
         if schedule == "warmup":
             result["schedule"] = schedule
         if t.replaces is not None:
-            result.update(self.h.replaced_counts())
+            result.update(self.h.replaced_counts(grid))
         if t.fixed_seconds:
             result.update(
                 seconds=settings["seconds"], layout_seed=seed, pairs=pairs,
@@ -1344,7 +1365,7 @@ class Grid:
         record of the replaced grid are those derived from that grid."""
         if self.t.replaces is not None:
             a.require(all(a.load(path).get(k) == v for k, v in
-                          self.h.replaced_counts().items()),
+                          self.h.replaced_counts(grid).items()),
                       "the pairs or the replaced grid of the counts differ "
                       "from the derivation from the replaced grid")
         a.require(canonical(a.load(path)) == canonical(
@@ -1354,8 +1375,9 @@ class Grid:
     def verify_counts(self, args):
         """The counts file is what `predeclare` makes of its pilot."""
         t = self.t
-        self.h.bind_from(args)
-        self.h.check_counts(args.grid.resolve(), args.counts or t.latest())
+        path = args.counts or t.latest()
+        self.h.bind_from(args, counts=a.load(path) if t.replaces else None)
+        self.h.check_counts(args.grid.resolve(), path)
         print("%s counts match their pilot" % t.label)
         return 0
 
@@ -1662,13 +1684,16 @@ class Grid:
         schedule = schedule_of(inventory["iterations"])
         return () if schedule == "ramp" else (schedule,)
 
-    def replay_rows(self, root, inventory):
-        """Recompute every archived cell of one inventory."""
+    def replay_rows(self, root, inventory, only=None):
+        """Recompute every archived cell of one inventory, or only the cells
+        `only` (keys) names, each of which must be there."""
         t = self.t
         reports = {}
         for row in inventory["runs"]:
             key = row["case"], row["size"]
             name = "%s-%d" % key
+            if only is not None and key not in only:
+                continue
             a.require(key in t.keys() and key not in reports,
                       "wrong/duplicate case")
             a.require(row["iterations"] ==
@@ -1692,6 +1717,8 @@ class Grid:
                     *self.schedule_args(inventory))
                 reports[key] = report
             print("REPLAY %s %d" % key, flush=True)
+        a.require(only is None or set(reports) == set(only),
+                  "archives of cells missing from the grid")
         return reports
 
     def begin(self, root, inventory, resume):
@@ -1950,8 +1977,21 @@ class Grid:
                 t.family / "attempts.jsonl")
 
     def stamp_path(self, repo):
-        """The build stamp of `prepare`, beside the ledger."""
-        return self.h.ledger_path(repo).with_name("build-stamp.json")
+        """The build stamp of `prepare`, beside the ledger. The tables of a
+        family share the directory, so each keeps its own stamp and log: the
+        table that names the family (`name` is `family`) keeps the names it
+        always had, another adds its name (`build-stamp-NAME.json`)."""
+        t = self.t
+        return self.h.ledger_path(repo).with_name(
+            "build-stamp.json" if t.name == t.family
+            else "build-stamp-%s.json" % t.name)
+
+    def prepare_log_path(self, repo):
+        """The log of `prepare`, beside the stamp and by the same rule."""
+        t = self.t
+        return self.h.ledger_path(repo).with_name(
+            "prepare.log" if t.name == t.family
+            else "prepare-%s.log" % t.name)
 
     def attempts_file(self, args, appending):
         """The attempts ledger of a table with fixed seconds, or None. A
@@ -2010,7 +2050,8 @@ class Grid:
         with the checkout it was made in."""
         if path is not None:
             ledger_append(
-                path, event=event, stage=stage, attempt=inventory["attempt"],
+                path, event=event, stage=stage, table=self.t.name,
+                attempt=inventory["attempt"],
                 candidate=inventory["candidate"],
                 counts_file=inventory["counts_file"],
                 counts=inventory["iterations_seal"],
@@ -2046,7 +2087,8 @@ class Grid:
                     candidate=inventory["candidate"],
                     counts=inventory["iterations_seal"],
                     seed=inventory.get("layout_seed"))
-        a.require(any(all(line.get(k) == v for k, v in want.items())
+        a.require(any(all(line.get(k) == v for k, v in want.items()) and
+                      line.get("table", self.t.family) == self.t.name
                       for line in state.records),
                   "the attempts ledger has no opening of this grid")
         return state
@@ -2073,7 +2115,7 @@ class Grid:
     def attempt_counts(self, state, candidate):
         """(attempts of the table, attempts of the candidate) in a ledger;
         each stage of a grid is one."""
-        found = state.attempts()
+        found = state.attempts(self.t.name, self.t.family)
         return len(found), sum(1 for row in found.values()
                                if row["candidate"] == candidate)
 
@@ -2101,7 +2143,7 @@ class Grid:
         named."""
         if state is None:
             return
-        found = state.attempts()
+        found = state.attempts(self.t.name, self.t.family)
         total, mine = self.h.attempt_counts(state, inventory["candidate"])
         print("ATTEMPTS of %s: %d in the ledger, %d of this candidate %s "
               "(%d records, chain intact)" % (
@@ -2263,8 +2305,9 @@ class Grid:
         products and the build command. An earlier stamp is removed first,
         so that a failed or interrupted configure or build leaves none. The
         log of both is `prepare.log` beside the ledger, replaced by the next
-        `prepare`. The measuring commands compare the checkout with the
-        stamp and never read a file time."""
+        `prepare` (a table of a family that is not named like it keeps its own
+        stamp and log, see `stamp_path`). The measuring commands compare the
+        checkout with the stamp and never read a file time."""
         t = self.t
         a.require(t.fixed_seconds, "%s takes no build stamp" % t.label)
         repo = Path(args.repo).resolve()
@@ -2273,7 +2316,7 @@ class Grid:
         before = clean_head(repo)
         with self.h.locked(repo) as fds:
             stamp.unlink(missing_ok=True)
-            log = stamp.with_name("prepare.log")
+            log = self.h.prepare_log_path(repo)
             log.unlink(missing_ok=True)
             inside = ["/bin/sh", "-c", 'cd "$1" && shift && exec "$@"',
                       "prepare", str(repo)]
@@ -2430,10 +2473,11 @@ class Grid:
             inventory["source_tree"] = self.h.source_tree(
                 args.repo, args.baseline, args.candidate)
         if t.replaces is not None:
-            # The grid replaced is replayed in full, and what the follow-up
-            # takes over from it is judged, before an attempt opens.
-            self.h.bind_from(args)
-            inventory["replaces"] = self.h.replaces_record(root)
+            # The grid replaced is bound by the seals the counts record, and
+            # what the follow-up takes over from it is judged, before an
+            # attempt opens.
+            self.h.bind_from(args, counts=counts)
+            inventory["replaces"] = self.h.replaces_record(root, inventory)
             self.h.check_replaced(inventory, root, args.repo)
         self.h.check_provenance(args, inventory)
         with self.h.locked(args.repo):
@@ -2457,9 +2501,6 @@ class Grid:
                 decisions = self.h.with_sources(self.h.summary(reports),
                                                 inventory)
                 a.save(root / "decisions.json", decisions)
-                if t.replaces is not None and \
-                        not self.h.planned(reports, inventory):
-                    self.h.write_final(root, reports, {}, inventory)
                 status = decisions["status"]
                 return self.h.status_code(decisions)
             except CheckoutChanged:
@@ -2480,18 +2521,39 @@ class Grid:
         one per cell (a follow-up's), else `default`."""
         return counts.get("pairs_by_cell", {}).get("%s-%d" % key, default)
 
-    def bind_replaced(self, grid, pilot, repo, ledger=None):
-        """Replay the grid this table replaces in full, by the engine of the
-        table that measured it, and keep what follows from it: its first
-        stage's reports, its final reports and decisions, and the cells it
-        left inconclusive, which must be exactly this table's. The grid is
-        the second stage where there is one. Anything the replay finds wrong
-        is a refusal."""
+    def bound(self):
+        """What `bind_replaced` or `bind_sealed` kept; a refusal when
+        nothing was bound (a table that replaces none, or a helper called
+        before the grid is)."""
+        a.require(self.t.replaces is not None,
+                  "%s replaces no grid" % self.t.label)
+        a.require(self.replaced is not None,
+                  "%s has not bound the grid it replaces: bind it first "
+                  "(bind_from)" % self.t.label)
+        return self.replaced
+
+    def replaced_names(self, grid, inventory):
+        """The files of the replaced grid that the binding reads, by name
+        relative to the grid: the inventory and decisions of the grid, and
+        of its first stage where it is a second stage. `inventory` is the
+        grid's own. Returns (names, the first stage's directory)."""
+        old = self.t.replaces.engine
+        names = ["inventory.json", "decisions.json"]
+        first = Path(grid)
+        if inventory["schema"] == old.t.schema("extension"):
+            first = (Path(grid) / inventory["grid"]).resolve()
+            where = os.path.relpath(first, grid)
+            names += [os.path.join(where, n)
+                      for n in ("inventory.json", "decisions.json")]
+        return names, first
+
+    def check_replaced_cells(self, first, decisions):
+        """What the replaced grid's first stage and final decision must be
+        for this table to replace it: the baseline, limits and pairs of the
+        table, and exactly the table's cells inconclusive. Returns the open
+        cells."""
         t = self.t
-        old = Grid(t.replaces.table)
-        old.replay(argparse.Namespace(output=grid, partial=False, repo=repo,
-                                      pilot=pilot, ledger=ledger))
-        first, decisions = old.replayed["first"], old.replayed["decisions"]
+        old = t.replaces.engine
         a.require(first["baseline"] == t.baseline,
                   "baseline differs from the replaced grid's")
         a.require(old.limits_of(first) == (t.target, t.max_pairs),
@@ -2504,14 +2566,95 @@ class Grid:
         a.require(opened == sorted(t.names()), "follow-up cells differ "
                   "from the open cells of the replaced grid: %s, not %s"
                   % (", ".join(sorted(t.names())), ", ".join(opened)))
-        self.replaced = dict(grid=Path(grid), engine=old, **old.replayed)
+        return opened
+
+    def bind_replaced(self, grid, pilot, repo, ledger=None):
+        """Replay the grid this table replaces in full, by the engine of the
+        table that measured it, and keep what follows from it: its first
+        stage's reports and the cells it left inconclusive, which must be
+        exactly this table's. The grid is its second stage where it has one;
+        a first stage whose second stage is still to come is refused, for the
+        follow-up replaces the final stage. Anything the replay finds wrong
+        is a refusal. This is the binding of `predeclare` (which records the
+        seals of what it read) and of `replay`; the other commands bind by
+        those seals (`bind_sealed`)."""
+        t = self.t
+        old = t.replaces.engine
+        old.replay(argparse.Namespace(output=grid, partial=False, repo=repo,
+                                      pilot=pilot, ledger=ledger))
+        found = old.replayed
+        first, decisions = found["first"], found["decisions"]
+        if found["inventory"]["schema"] != old.t.schema("extension"):
+            a.require(not old.planned(found["stage1"], first),
+                      "the replaced grid is not final: its second stage "
+                      "is still to come, name that (--replaces)")
+        opened = self.h.check_replaced_cells(first, decisions)
+        names, first_root = self.h.replaced_names(grid, found["inventory"])
+        self.replaced = dict(
+            grid=Path(grid), first_root=first_root, first=first,
+            stage1=found["stage1"], decisions=decisions, open=opened,
+            files={n: a.seal(Path(grid) / n) for n in names})
         return self.replaced
 
-    def bind_from(self, args, inventory=None, root=None):
-        """`bind_replaced` for a command: the grid is the one `--replaces`
+    def bind_sealed(self, grid, recorded):
+        """Bind the grid this table replaces by the seals the counts file
+        records (`recorded`, its `replaces`): every file of the grid that the
+        binding reads is that of `predeclare`, the open cells are those of
+        the sealed decisions, and the first-stage reports of the table's
+        cells (alone) are replayed from their archives for the pairs. The
+        full replay was made at `predeclare` and is made again by `replay`;
+        a change to an archive or to the code that replays it is found there
+        and never missed, only later than here."""
+        t = self.t
+        old = t.replaces.engine
+        grid = Path(grid)
+        a.require(isinstance(recorded, dict) and isinstance(
+            recorded.get("files"), dict) and "inventory.json" in
+            recorded["files"], "the counts record no replaced grid")
+        files = recorded["files"]
+
+        def same(name):
+            path = grid / name
+            a.require(path.is_file() and a.seal(path) == files.get(name),
+                      "replaced grid changed since predeclare: %s" % name)
+        same("inventory.json")
+        inventory = a.load(grid / "inventory.json")
+        names, first_root = self.h.replaced_names(grid, inventory)
+        a.require(sorted(files) == sorted(names),
+                  "replaced grid changed since predeclare: the files "
+                  "read are %s, not %s" % (", ".join(sorted(names)),
+                                           ", ".join(sorted(files))))
+        for name in names:
+            same(name)
+        if first_root != grid:
+            where = os.path.relpath(first_root, grid)
+            a.require(
+                inventory["grid_inventory"] == files[
+                    os.path.join(where, "inventory.json")] and
+                inventory["grid_decisions"] == files[
+                    os.path.join(where, "decisions.json")],
+                "replaced grid changed since predeclare: its second stage "
+                "names another first stage")
+        first = a.load(first_root / "inventory.json")
+        old.check_experiment(first)
+        decisions = a.load(grid / "decisions.json")
+        opened = self.h.check_replaced_cells(first, decisions)
+        a.require(opened == recorded.get("open"),
+                  "the open cells differ from those the counts record")
+        self.replaced = dict(
+            grid=grid, first_root=first_root, first=first,
+            stage1=old.replay_rows(first_root, first, only=t.keys()),
+            decisions=decisions, open=opened, files=dict(files))
+        return self.replaced
+
+    def bind_from(self, args, inventory=None, root=None, counts=None):
+        """Bind the grid for a command: the grid is the one `--replaces`
         names, or where a recorded inventory of the follow-up (in `root`)
         says it is, with the seals that record holds; a table that replaces
-        none is given none."""
+        none is given none. Without `counts` the grid is replayed in full
+        (`bind_replaced`, which needs `--replaces-pilot`); with the counts
+        file (or the counts an inventory holds) it is bound by the seals
+        that file records (`bind_sealed`)."""
         t = self.t
         given = getattr(args, "replaces", None)
         pilot = getattr(args, "replaces_pilot", None)
@@ -2519,8 +2662,9 @@ class Grid:
             a.require(given is None and pilot is None,
                       "%s replaces no grid" % t.label)
             return None
-        a.require(pilot is not None, "%s needs --replaces-pilot DIR, the "
-                  "pilot of the grid it replaces" % t.label)
+        a.require(counts is not None or pilot is not None,
+                  "%s needs --replaces-pilot DIR, the pilot of the grid it "
+                  "replaces" % t.label)
         if inventory is None:
             a.require(given is not None, "%s needs --replaces GRID, the "
                       "grid it replaces" % t.label)
@@ -2530,20 +2674,35 @@ class Grid:
                       "record names")
             grid = Path(root) / inventory["replaces"]["grid"]
         repo = getattr(args, "repo", None) or a.HERE.parents[3]
-        bound = self.h.bind_replaced(
-            Path(grid).resolve(), Path(pilot).resolve(), repo,
-            getattr(args, "ledger", None))
+        if counts is not None:
+            bound = self.h.bind_sealed(Path(grid).resolve(),
+                                       counts.get("replaces"))
+        else:
+            bound = self.h.bind_replaced(
+                Path(grid).resolve(), Path(pilot).resolve(), repo,
+                getattr(args, "ledger", None))
         if inventory is not None:
-            a.require(inventory["replaces"] == self.h.replaces_record(root),
+            a.require(inventory["replaces"] ==
+                      self.h.replaces_record(root, inventory),
                       "changed replaced grid")
         return bound
 
-    def replaces_record(self, root):
-        """What an inventory in `root` records of the replaced grid."""
-        grid = self.replaced["grid"]
+    def replaces_record(self, root, inventory):
+        """What an inventory in `root` records of the replaced grid, the
+        fields of the replaced grid named as such and the follow-up's own
+        beside them: the grid by its path relative to `root` and the seals of
+        its inventory and decisions, the layout seed and the counts seal it
+        was measured with, and the layout seed and counts seal of this
+        grid (`inventory`'s)."""
+        rep = self.h.bound()
+        grid, first = rep["grid"], rep["first"]
         return dict(grid=os.path.relpath(grid, root),
-                    inventory=a.seal(grid / "inventory.json"),
-                    decisions=a.seal(grid / "decisions.json"))
+                    replaced_inventory=a.seal(grid / "inventory.json"),
+                    replaced_decisions=a.seal(grid / "decisions.json"),
+                    replaced_seed=first.get("layout_seed"),
+                    replaced_counts=first["iterations_seal"],
+                    followup_seed=inventory.get("layout_seed"),
+                    followup_counts=inventory["iterations_seal"])
 
     def followup_pairs(self):
         """The pairs of each cell of the follow-up: the second-stage rule
@@ -2551,9 +2710,9 @@ class Grid:
         stage, with the pairs of that stage as its base, so that twice them
         is the floor and the cap is the table's. Nothing of a candidate
         enters."""
-        rep = self.replaced
+        rep = self.h.bound()
         first = rep["first"]
-        limits = self.limits_of(first)
+        limits = self.t.replaces.engine.limits_of(first)
         found = {}
         for key in self.t.keys():
             report = rep["stage1"][key]
@@ -2564,26 +2723,33 @@ class Grid:
                 control_half_width(result), first["pairs"], *limits)
         return found
 
-    def replaced_counts(self):
+    def replaced_counts(self, pilot):
         """The fields of a counts file that come from the replaced grid: the
-        pairs of each cell and the seals of the grid's inventory and
-        decisions."""
-        grid = self.replaced["grid"]
+        pairs of each cell, and a `replaces` block with the grid's path
+        relative to the follow-up's pilot, the seals of every file of the
+        grid the binding reads (`bind_sealed` checks them) and the open
+        cells."""
+        rep = self.h.bound()
+        grid = rep["grid"]
         return dict(pairs_by_cell=self.h.followup_pairs(), replaces=dict(
-            inventory=a.seal(grid / "inventory.json"),
-            decisions=a.seal(grid / "decisions.json")))
+            grid=os.path.relpath(grid, Path(pilot).resolve()),
+            files={n: a.seal(grid / n) for n in sorted(rep["files"])},
+            open=list(rep["open"])))
 
-    def sealed_paths(self, repo):
-        """The repository names of the table's sealed files and its driver
-        that lie in the repository."""
+    def sealed_paths(self):
+        """The repository names of the table's sealed files and its driver,
+        relative to the root of the repository the code is in (`Table.root`),
+        whatever checkout a command is pointed at and whether the files
+        exist there. A file outside that repository is refused."""
         t = self.t
         found = set()
         for path in [t.driver, *(t.home / n for n in t.sealed)]:
             try:
                 found.add(Path(path).resolve().relative_to(
-                    Path(repo).resolve()).as_posix())
+                    t.root.resolve()).as_posix())
             except ValueError:
-                pass
+                raise ValueError("%s lies outside the repository %s" % (
+                    path, t.root)) from None
         return found
 
     def check_replaced(self, inventory, root, repo):
@@ -2594,9 +2760,10 @@ class Grid:
         files the table seals (the code it measures with), and in nothing
         the cases run."""
         t = self.t
-        first = self.replaced["first"]
+        first = self.h.bound()["first"]
         repo = a.HERE.parents[3] if repo is None else repo
-        a.require(inventory.get("replaces") == self.h.replaces_record(root),
+        a.require(inventory.get("replaces") ==
+                  self.h.replaces_record(root, inventory),
                   "changed record of the replaced grid")
         seed = inventory.get("layout_seed")
         drawn = first.get("layout_seed")
@@ -2607,49 +2774,14 @@ class Grid:
         a.require(inventory.get("sources") == first.get("sources"),
                   "candidate sources differ from the replaced grid's")
         if t.tree:
+            sealed = self.h.sealed_paths()
             moved = [path for _, path in git_difference(
                 repo, first["candidate"], inventory["candidate"], t.tree)
                 if not path.startswith(pr.PERFORMANCE_DIR) and
-                path not in self.h.sealed_paths(repo)]
+                path not in sealed]
             a.require(not moved, "the candidate differs from the replaced "
                       "grid's below %s outside the performance area and the "
                       "sealed files: %s" % (t.tree, ", ".join(moved)))
-
-    def final_decisions(self, stage1, stage2, inventory):
-        """The decision of the replaced grid with the cells of the follow-up
-        in place of its own, by the summary and the source identity of the
-        grid replaced; the follow-up is named in `replaced`."""
-        rep, t = self.replaced, self.t
-        first = rep["first"]
-        mine = {**stage1, **stage2}
-        a.require(set(mine) == set(t.keys()), "incomplete follow-up")
-        decisions = self.h.with_sources(rep["engine"].summary(
-            {**rep["stage1"], **rep["stage2"], **mine}), inventory)
-        decisions["replaced"] = dict(
-            cells=t.names(), seed=first["layout_seed"],
-            counts=first["iterations_seal"],
-            candidates=dict(replaced=first["candidate"],
-                            followup=inventory["candidate"]),
-            rule="the cells the replaced grid left inconclusive, "
-            "measured again")
-        return decisions
-
-    def write_final(self, root, stage1, stage2, inventory):
-        """`final.json` of a follow-up whose decision is final."""
-        a.save(root / "final.json",
-               self.h.final_decisions(stage1, stage2, inventory))
-
-    def check_final(self, root, stage1, stage2, inventory, final):
-        """`final.json` is what `write_final` makes of these reports, or
-        absent while a second stage is still to come (`final` false)."""
-        if not final:
-            a.require(not (root / "final.json").exists(),
-                      "final.json before the second stage it waits for")
-            return
-        a.require((root / "final.json").exists() and
-                  a.load(root / "final.json") == self.h.final_decisions(
-                      stage1, stage2, inventory),
-                  "changed %s final decisions" % self.t.label)
 
     # Second stage ----------------------------------------------------
 
@@ -2814,7 +2946,7 @@ class Grid:
                       **self.h.limits_dict(inventory), runs=[],
                       **self.h.code_now())
         if "replaces" in inventory:
-            result["replaces"] = self.h.replaces_record(root)
+            result["replaces"] = self.h.replaces_record(root, result)
         return result
 
     def combined(self, stage1, stage2, plan, inventory):
@@ -2847,7 +2979,7 @@ class Grid:
                 "in")
         first, stage1, _ = self.h.replay_grid(grid, args.repo)
         if t.replaces is not None:
-            self.h.bind_from(args, first, grid)
+            self.h.bind_from(args, first, grid, counts=first["iterations"])
             self.h.check_replaced(first, grid, args.repo)
         else:
             self.h.bind_from(args)
@@ -2880,8 +3012,6 @@ class Grid:
                                args, reports)
                 decisions = self.h.combined(stage1, reports, plan, inventory)
                 a.save(root / "decisions.json", decisions)
-                if t.replaces is not None:
-                    self.h.write_final(root, stage1, reports, inventory)
                 status = decisions["status"]
                 return self.h.status_code(decisions)
             except CheckoutChanged:
@@ -2954,8 +3084,6 @@ class Grid:
                                         inventory)
             a.require(decisions == a.load(root / "decisions.json"),
                       "changed %s decisions" % t.label)
-            if t.replaces is not None:
-                self.h.check_final(root, stage1, reports, inventory, True)
             self.replayed = dict(inventory=inventory, first=first,
                                  stage1=stage1, stage2=reports,
                                  decisions=decisions)
@@ -2975,9 +3103,6 @@ class Grid:
         decisions = self.h.with_sources(self.h.summary(reports), inventory)
         a.require(decisions == a.load(root / "decisions.json"),
                   "changed %s decisions" % t.label)
-        if t.replaces is not None:
-            self.h.check_final(root, reports, {}, inventory,
-                               not self.h.planned(reports, inventory))
         self.replayed = dict(inventory=inventory, first=inventory,
                              stage1=reports, stage2={}, decisions=decisions)
         print("%s archives and decisions replayed: %s" % (
@@ -3002,9 +3127,17 @@ class Grid:
             p.add_argument("--pilot", type=Path,
                            help="the pilot the counts derive from")
 
+        def ledger(p):
+            p.add_argument("--ledger", type=Path,
+                           help="read this attempts ledger, of the checkout "
+                           "the grid was made in (read-only)")
+
         def replaced(p, grid=True):
             # A follow-up's: the grid it replaces and that grid's pilot
             # (the grid is the one the record names, where there is one).
+            # The pilot is read by the commands that replay the grid in
+            # full (`predeclare`, `replay`); the others bind it by the seals
+            # of the counts and ignore it.
             if grid:
                 p.add_argument("--replaces", type=Path, metavar="GRID",
                                help="the grid this table replaces (a "
@@ -3038,6 +3171,7 @@ class Grid:
                             help="the table's last counts file, to revise "
                             "(a new file, never an edit)")
         counts.add_argument("--repo", type=Path, default=repo)
+        ledger(counts)
         replaced(counts)
         how = counts.add_mutually_exclusive_group()
         how.add_argument("--rescale", nargs="+", metavar="CELL",
@@ -3053,6 +3187,7 @@ class Grid:
         again.add_argument("--counts", type=Path,
                            help="default: the table's counts file")
         again.add_argument("--repo", type=Path, default=repo)
+        ledger(again)
         replaced(again)
         execute = sub.add_parser("run")
         execute.add_argument("--output", type=Path, required=True)
@@ -3088,9 +3223,7 @@ class Grid:
         check.add_argument("--repo", type=Path, default=repo)
         check.add_argument("--partial", action="store_true",
                            help="interrupted run: replay cells, no decision")
-        check.add_argument("--ledger", type=Path,
-                           help="read this attempts ledger, of the checkout "
-                           "the grid was made in (read-only)")
+        ledger(check)
         provenance(check)
         replaced(check, False)
         return parser, sub
@@ -3133,12 +3266,6 @@ class Grid:
             decided = args.output.resolve() / "decisions.json"
             if decided.exists():
                 for line in class_report(self.t.label, a.load(decided)):
-                    print(line)
-            final = decided.with_name("final.json")
-            if final.exists() and self.t.replaces is not None:
-                for line in class_report(
-                        self.t.replaces.table.label + " with the follow-up",
-                        a.load(final)):
                     print(line)
         return status
 

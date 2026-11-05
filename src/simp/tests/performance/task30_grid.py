@@ -43,7 +43,8 @@ the grid is not conclusive). Failed, inconclusive, control-limited and
 protocol-failed cells are listed separately and none is excused here; a
 disposition, if one is ever made, is a separate reviewed decision. The two
 cells this grid left inconclusive are measured again by task30_followup.py,
-which replays this grid (its own table, engine and seals) before it does. A
+which replays this grid (its own table, engine and seals) in full before it
+derives its counts, and again at its own replay. A
 command that is refused, or ends with an error that decided nothing, prints
 one REFUSED line on the standard error (after a traceback, if the error is not
 a refusal) and exits 3.

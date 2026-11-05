@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """A follow-up table of the shared timing grid: the cells it takes over from a
-grid that left them inconclusive, their pairs, the replaced grid's replay, the
-refusals, `final.json`, its own second stage and the evidence family.
+grid that left them inconclusive, their pairs, the replaced grid's replay and
+the binding by its seals, the refusals, its own second stage and the evidence
+family.
 
-The rig is that of test_timing_grid.py: a toy table whose first stage is the
+The rig is that of test_timing_grid.py: a toy table whose two stages are the
 replaced grid, a toy follow-up of two of its cells, and the same stand-ins.
 """
+import argparse
 import contextlib
 import io
 import json
@@ -21,10 +23,12 @@ import timing_grid as tg
 CASES, SIZES = ttg.CASES, ttg.SIZES
 FOLLOW = "d" * 40
 # The cells the replaced grid leaves open: the control of the first has the
-# interval GOOD (half log-width 0.01), that of the second 0.0253.
+# interval GOOD (half log-width 0.01), that of the second, in the first stage
+# of the replaced grid, NARROW (0.0257, outside the window, so the second
+# stage remeasures the cell) and MID in its second stage.
 CELL_A, CELL_B = (CASES[0], 100), (CASES[1], 1000)
 CELLS = tuple("%s-%d" % k for k in (CELL_A, CELL_B))
-MID = (0.975, 1.025)
+NARROW, MID = (0.969, 1.02), (0.975, 1.025)
 
 
 class Formula(unittest.TestCase):
@@ -78,7 +82,8 @@ class Tables(unittest.TestCase):
 
     def follow(self, **kw):
         options = dict(
-            cells=CELLS, family="toy", replaces=tg.Replaces(self.OLD),
+            cells=CELLS, family="toy",
+            replaces=tg.Replaces(tg.Grid(self.OLD)),
             fixed_seconds=True, seed="f0", pairs=20,
             seconds_by_case={CASES[0]: 1.0})
         options.update(kw)
@@ -133,7 +138,7 @@ class Tables(unittest.TestCase):
                          pairs=10, seconds_by_case={CASES[0]: 1.0})
         with self.assertRaisesRegex(ValueError, "cells of the table it "
                                     "replaces"):
-            self.follow(replaces=tg.Replaces(small))
+            self.follow(replaces=tg.Replaces(tg.Grid(small)))
 
     def test_a_replaces_is_a_replaces(self):
         with self.assertRaisesRegex(ValueError, "malformed replaces"):
@@ -141,13 +146,23 @@ class Tables(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown replacement"):
             tg.Replaces(self.OLD, "failed")
 
+    def test_a_replaces_holds_the_engine_of_the_table_not_the_table(self):
+        with self.assertRaisesRegex(ValueError, "malformed replaces"):
+            tg.Replaces(self.OLD)
+        engine = tg.Grid(self.OLD)
+        replaces = tg.Replaces(engine)
+        self.assertIs(replaces.engine, engine)
+        self.assertIs(replaces.table, self.OLD)
+
     def test_the_seed_of_the_follow_up_may_end_in_ext_of_its_own(self):
         self.assertEqual(self.follow(seed="f0-x").seed, "f0-x")
 
 
 class Rig(ttg.Rig):
-    """The replaced grid (toy, 10 pairs, 12 cells, two of them inconclusive)
-    and a follow-up table (toyf, 20 pairs at the least) of those two."""
+    """The replaced grid (toy, 10 pairs, 12 cells, two of them inconclusive
+    after its second stage, `replaced`, which remeasures the second of them
+    after the first stage `replaced-1`) and a follow-up table (toyf, 20 pairs
+    at the least) of those two."""
     pairs, samples = 10, 3
     OPEN = (CELL_A, CELL_B)
 
@@ -171,23 +186,43 @@ class Rig(ttg.Rig):
         self.candidate = lambda c, s, pairs, seed: (
             self.new_candidate if str(seed).startswith("f") else
             self.old_candidate)(c, s, pairs, seed)
-        self.replaced, status, _ = self.first(name="replaced")
+        self.replaced1, status, _ = self.first(name="replaced-1")
         self.assertEqual(status, 2)
+        self.replaced = self.second_stage(self.replaced1, "replaced")
         self.ftable = self.make_followup()
         self.fgrid = tg.Grid(self.ftable)
         self.runs.clear()
         self.launched.clear()
 
+    def second_stage(self, grid, name):
+        """The second stage of a first stage (the replaced grid, the TASK30
+        grid being a grid of two stages)."""
+        out = self.root / name
+        code, text = self.go(self.argv(
+            "extend", out, "--grid", str(grid), "--authorize-measurements"))
+        self.assertEqual(code, 2, text)
+        self.assertIn("PLAN", text)
+        self.assertTrue(self.load(out / "inventory.json")["plan"])
+        return out
+
+    def two_stages(self, name, extra=()):
+        """Another replaced grid, both stages, as the stand-ins now are."""
+        grid, status, _ = self.first(name=name + "-1", extra=extra)
+        self.assertEqual(status, 2)
+        return self.second_stage(grid, name)
+
     def mid_control(self, case, size, pairs, seed):
-        return MID if (case, size) == CELL_B else ttg.GOOD
+        if (case, size) != CELL_B:
+            return ttg.GOOD
+        return NARROW if pairs < 30 else MID
 
     def wide_when_open(self, case, size, pairs, seed):
         return ttg.WIDE if (case, size) in self.OPEN else ttg.GOOD
 
     def make_followup(self, **kw):
         options = dict(
-            cells=CELLS, family="toy", replaces=tg.Replaces(self.table),
-            seconds=0.3, seconds_by_case={CASES[0]: ttg.LONG},
+            cells=CELLS, family="toy", replaces=tg.Replaces(self.grid),
+            root=self.root, seconds=0.3, seconds_by_case={CASES[0]: ttg.LONG},
             fixed_seconds=True, schedule="warmup", pairs=2 * self.pairs,
             samples=self.samples, seed="f0", tree="src",
             sources=ttg.SOURCES, sealed=ttg.SEALED, home=self.sealed_dir,
@@ -255,7 +290,6 @@ class Rig(ttg.Rig):
         code, text = self.fgo([
             "extend", "--grid", str(grid), "--output", str(out), "--repo",
             str(self.repo), "--pilot", str(self.fpilot),
-            "--replaces-pilot", str(self.pilot_dir),
             "--authorize-measurements", *extra])
         return out, code, text
 
@@ -291,9 +325,14 @@ class Counts(Rig):
         self.assertEqual(counts["pairs"], 20)
         self.assertEqual(counts["schedule"], "warmup")
         self.assertEqual(counts["seconds"], {CELLS[0]: 1.0, CELLS[1]: 0.3})
+        # The path of the replaced grid from the pilot, the seals of every
+        # file the binding reads (both stages) and the open cells.
         self.assertEqual(counts["replaces"], dict(
-            inventory=a.seal(self.replaced / "inventory.json"),
-            decisions=a.seal(self.replaced / "decisions.json")))
+            grid="../replaced", open=sorted(CELLS), files={
+                name: a.seal(self.replaced / name)
+                for name in ("inventory.json", "decisions.json",
+                             "../replaced-1/inventory.json",
+                             "../replaced-1/decisions.json")}))
         self.assertEqual(counts["layout_seed"], "f0")
         code, text = self.fgo(["verify-counts", "--grid", str(self.fpilot),
                                "--repo", str(self.repo), *self.over()])
@@ -305,19 +344,10 @@ class Counts(Rig):
         # the pairs of that stage, however the grid replaced went on.
         self.old_control = lambda c, s, pairs, seed: (
             ttg.WIDE if (c, s) == CELL_A and pairs < 40 else ttg.GOOD)
-        self.replaced, status, _ = self.first(name="replaced-2")
-        self.assertEqual(status, 2)
-        code, text = self.stage(self.replaced)
-        self.assertIn("PLAN", text)
-        self.replaced = self.root / "stage2"
+        self.replaced = self.two_stages("replaced-2")
         self.declare()
         self.assertEqual(self.load(self.fcounts)["pairs_by_cell"],
                          {CELLS[0]: 120, CELLS[1]: 20})
-
-    def stage(self, grid):
-        return self.go(self.argv(
-            "extend", self.root / "stage2", "--grid", str(grid),
-            "--authorize-measurements"))
 
     def test_counts_with_other_pairs_are_refused(self):
         self.declare()
@@ -339,10 +369,9 @@ class Counts(Rig):
 
     def test_counts_of_another_replaced_grid_are_refused(self):
         self.declare()
-        other, status, _ = self.first(name="replaced-again")
-        self.assertEqual(status, 2)
-        self.replaced = other
-        with self.assertRaisesRegex(ValueError, "pairs or the replaced grid"):
+        self.replaced = self.two_stages("replaced-again")
+        with self.assertRaisesRegex(
+                ValueError, "replaced grid changed since predeclare"):
             self.fgo(["verify-counts", "--grid", str(self.fpilot),
                       "--repo", str(self.repo), *self.over()])
 
@@ -363,8 +392,7 @@ class Counts(Rig):
         # The cells are the open cells of the grid replaced, no others.
         self.old_candidate = lambda c, s, pairs, seed: (
             ttg.WIDE if (c, s) == CELL_A else ttg.GOOD)
-        self.replaced, status, _ = self.first(name="replaced-one")
-        self.assertEqual(status, 2)
+        self.replaced = self.two_stages("replaced-one")
         self.pilot()
         with self.assertRaisesRegex(
                 ValueError, "follow-up cells differ from the open cells"):
@@ -393,16 +421,26 @@ class Run(Rig):
                          (20, FOLLOW))
         self.assertEqual([r.get("pairs") for r in inventory["runs"]],
                          [None, 30])
+        # The replaced grid's fields are named as its own, the follow-up's
+        # seed and counts seal beside them.
+        first = self.load(self.replaced1 / "inventory.json")
         self.assertEqual(inventory["replaces"], dict(
-            grid="../replaced", inventory=a.seal(self.replaced /
-                                              "inventory.json"),
-            decisions=a.seal(self.replaced / "decisions.json")))
+            grid="../replaced",
+            replaced_inventory=a.seal(self.replaced / "inventory.json"),
+            replaced_decisions=a.seal(self.replaced / "decisions.json"),
+            replaced_seed="s0", replaced_counts=first["iterations_seal"],
+            followup_seed="f0",
+            followup_counts=inventory["iterations_seal"]))
+        self.assertNotEqual(inventory["iterations_seal"],
+                            first["iterations_seal"])
         self.assertIn(("toy", FOLLOW), self.kept)
         records = self.ledger()
         self.assertEqual({r["output"] for r in records[-2:]},
                          {str(out)})
         self.assertEqual(records[-2]["counts_file"], "toyf_iterations.json")
-        self.assertEqual(len({r["attempt"] for r in self.ledger()}), 2)
+        # The two stages of the replaced grid and this one.
+        self.assertEqual(len({r["attempt"] for r in self.ledger()}), 3)
+        self.assertEqual([r["table"] for r in records[-2:]], ["toyf"] * 2)
 
     def test_the_decision_is_that_of_the_follow_up_cells_alone(self):
         # The candidate is as wide as in the replaced grid, so the follow-up
@@ -420,70 +458,32 @@ class Run(Rig):
         self.new_candidate = lambda c, s, pairs, seed: {
             CELL_A: ci_a, CELL_B: ci_b}.get((c, s), ttg.GOOD)
 
-    def test_final_json_is_the_replaced_decision_with_the_cells_replaced(
-            self):
+    def test_a_follow_up_writes_no_final_decision(self):
+        # The disposition step owns final.json; the follow-up decides its
+        # own cells and replays.
         self.settled()
         out, code, text = self.run_followup()
         self.assertEqual(code, 0, text)
-        final = self.load(out / "final.json")
-        old = self.load(self.replaced / "decisions.json")
-        self.assertEqual((old["status"], final["status"]),
-                         ("inconclusive", "pass"))
-        self.assertEqual(final["schema"], "toy-grid-v1")
-        self.assertEqual(len(final["workloads"]), 12)
-        rows = lambda d: {(r["case"], r["size"]): r for r in d["workloads"]}
-        for key, row in rows(final).items():
-            same = key not in (CELL_A, CELL_B)
-            self.assertEqual(row == rows(old)[key], same, key)
-        first = self.load(self.replaced / "inventory.json")
-        self.assertEqual(final["replaced"], dict(
-            cells=list(CELLS), seed="s0", counts=first["iterations_seal"],
-            candidates=dict(replaced=ttg.CANDIDATE, followup=FOLLOW),
-            rule="the cells the replaced grid left inconclusive, "
-            "measured again"))
-        self.assertIn("TOY with the follow-up grid: pass (pass 12", text)
+        self.assertFalse((out / "final.json").exists())
+        self.assertNotIn("with the follow-up", text)
         code, text = self.replay_followup(out)
         self.assertEqual(code, 0, text)
+        self.assertFalse((out / "final.json").exists())
 
-    def test_a_follow_up_fail_is_a_fail_of_the_final_decision(self):
+    def test_a_follow_up_fail_is_a_fail(self):
         self.settled(ci_b=(1.04, 1.08))
         out, code, text = self.run_followup()
         self.assertEqual(code, 1, text)
-        self.assertEqual(self.load(out / "final.json")["status"], "fail")
+        self.assertEqual(self.load(out / "decisions.json")["status"], "fail")
         self.assertEqual(self.replay_followup(out)[0], 1)
-
-    def test_a_final_decision_that_was_changed_does_not_replay(self):
-        self.settled()
-        out, code, _ = self.run_followup()
-        good = (out / "final.json").read_text()
-        final = json.loads(good)
-        for label, change in (
-                ("status", lambda f: f.update(status="fail")),
-                ("a cell", lambda f: f["workloads"][0].update(exit=1)),
-                ("the replaced block", lambda f: f["replaced"].update(
-                    seed="s1")),
-                ("a candidate", lambda f: f["replaced"]["candidates"]
-                 .update(followup=ttg.CANDIDATE))):
-            with self.subTest(label):
-                changed = json.loads(good)
-                change(changed)
-                (out / "final.json").write_text(json.dumps(changed))
-                with self.assertRaisesRegex(ValueError, "final decisions"):
-                    self.replay_followup(out)
-        (out / "final.json").unlink()
-        with self.assertRaisesRegex(ValueError, "final decisions"):
-            self.replay_followup(out)
-        (out / "final.json").write_text(good)
-        self.assertEqual(self.replay_followup(out)[0], 0)
-        self.assertEqual(final["status"], "pass")
 
     def test_the_replay_replays_the_replaced_grid_too(self):
         self.settled()
         out, code, _ = self.run_followup()
         code, text = self.replay_followup(out)
         self.assertEqual(code, 0)
-        self.assertEqual(text.count("TOY archives and decisions replayed"),
-                         1)
+        self.assertEqual(
+            text.count("TOY two-stage archives and decisions replayed"), 1)
         self.assertIn("TOYF archives and decisions replayed: pass", text)
         # A cell of the replaced grid that was changed breaks the follow-up.
         with patch.object(tg.bundle, "unpack", self.broken_unpack(
@@ -519,7 +519,6 @@ class Run(Rig):
         out, code, text = self.run_followup("part", "--only", CELLS[1])
         self.assertEqual(code, 2)
         self.assertFalse((out / "decisions.json").exists())
-        self.assertFalse((out / "final.json").exists())
         self.assertEqual([(o["case"][0], o["size"][0], o["pairs"])
                           for o in self.runs], [(*CELL_B, 30)])
         self.assertEqual(self.ledger()[-1]["status"], "partial")
@@ -546,11 +545,6 @@ class Refusals(Rig):
                       str(self.repo), "--pilot", str(self.fpilot),
                       "--candidate", FOLLOW, "--authorize-measurements",
                       "--replaces-pilot", str(self.pilot_dir)])
-        with self.assertRaisesRegex(ValueError, "needs --replaces-pilot"):
-            self.fgo(["run", "--output", str(self.root / "x"), "--repo",
-                      str(self.repo), "--pilot", str(self.fpilot),
-                      "--candidate", FOLLOW, "--authorize-measurements",
-                      "--replaces", str(self.replaced)])
         self.assertEqual(self.runs, [])
 
     def test_a_table_that_replaces_nothing_takes_no_grid(self):
@@ -560,7 +554,7 @@ class Refusals(Rig):
                  "--candidate", CANDIDATE_OTHER,
                  "--authorize-measurements", "--replaces",
                  str(self.replaced)],
-                ["extend", "--grid", str(self.replaced), "--output",
+                ["extend", "--grid", str(self.replaced1), "--output",
                  str(self.root / "x"), "--repo", str(self.repo), "--pilot",
                  str(self.pilot_dir), "--authorize-measurements",
                  "--replaces-pilot", str(self.pilot_dir)],
@@ -575,21 +569,37 @@ class Refusals(Rig):
         """Another replaced grid, with these cells open."""
         self.old_candidate = lambda c, s, pairs, seed: (
             ttg.WIDE if (c, s) in open_cells else ttg.GOOD)
-        out, status, _ = self.first(name="replaced-other")
-        self.assertEqual(status, 2)
-        self.replaced = out
+        self.replaced = self.two_stages("replaced-other")
+
+    def refused_by_predeclare(self, pattern):
+        """The counts of another replaced grid cannot be made: the open cells
+        are those of the grid, which `predeclare` replays."""
+        self.fcounts.unlink()
+        with self.assertRaisesRegex(ValueError, pattern):
+            self.predeclare()
+        self.assertFalse(self.fcounts.exists())
 
     def test_other_cells_than_the_open_ones_are_refused(self):
         self.other_replaced({CELL_A, (CASES[1], 0)})
-        self.refused("follow-up cells differ from the open cells")
+        self.refused_by_predeclare("follow-up cells differ from the open "
+                                   "cells")
 
     def test_fewer_cells_than_the_open_ones_are_refused(self):
         self.other_replaced({CELL_A})
-        self.refused("follow-up cells differ from the open cells")
+        self.refused_by_predeclare("follow-up cells differ from the open "
+                                   "cells")
 
     def test_more_cells_than_the_open_ones_are_refused(self):
         self.other_replaced({CELL_A, CELL_B, (CASES[1], 0)})
-        self.refused("follow-up cells differ from the open cells")
+        self.refused_by_predeclare("follow-up cells differ from the open "
+                                   "cells")
+
+    def test_a_run_against_another_replaced_grid_than_the_counts_is_refused(
+            self):
+        # Same cells open, another grid: the seals of the counts differ.
+        self.other_replaced({CELL_A, CELL_B})
+        self.refused("replaced grid changed since predeclare: "
+                     "inventory.json")
 
     def test_sources_other_than_the_replaced_grids_are_refused(self):
         # The pin of the follow-up accepts a blob of a file that the replaced
@@ -600,9 +610,7 @@ class Refusals(Rig):
     def refused_with_pins(self, pins):
         self.differ = {"src/one.sml"}
         self.table.pinned = pins
-        old, status, _ = self.first(name="replaced-pinned")
-        self.assertEqual(status, 2)
-        self.replaced = old
+        self.replaced = self.two_stages("replaced-pinned")
         self.fgrid = tg.Grid(self.make_followup(pinned={
             "src/one.sml": dict(blob="e" * 40, reason="Another change.")}))
         self.follow_blob = {"src/one.sml": "e" * 40}
@@ -614,8 +622,7 @@ class Refusals(Rig):
         pins = {"src/one.sml": dict(blob="f" * 40, reason="A change.")}
         self.differ = {"src/one.sml"}
         self.table.pinned = pins
-        old, status, _ = self.first(name="replaced-pinned")
-        self.replaced = old
+        self.replaced = self.two_stages("replaced-pinned")
         self.fgrid = tg.Grid(self.make_followup(pinned=pins))
         self.fcounts.unlink()
         self.assertEqual(self.predeclare()[0], 0)
@@ -636,22 +643,37 @@ class Refusals(Rig):
     def test_the_sealed_files_may_differ_wherever_they_are(self):
         # Sealed files in the repository: a sealed file outside the
         # performance area (as run_paired.py is) is the table's own code.
-        table = self.make_followup(home=self.repo / "area")
+        # The names are those of the code's repository (here `root`), not
+        # of the checkout a command is pointed at, and do not depend on the
+        # files being there.
+        table = self.make_followup(home=self.root / "area")
         self.fgrid = tg.Grid(table)
-        self.assertEqual(self.fgrid.sealed_paths(self.repo), {
-            "area/one.txt", "area/two.txt"})
-        self.between = [["M", "area/one.txt"]]
+        names = {"area/one.txt", "area/two.txt", "toyf_grid.py"}
+        self.assertEqual(self.fgrid.sealed_paths(), names)
+        self.assertFalse((self.root / "area").exists())
         self.fgrid.replaced = dict(first=dict(
             candidate=ttg.CANDIDATE, layout_seed="s0", sources=None,
             baseline=a.BASE))
         inventory = dict(
             replaces=1, layout_seed="f0", candidate=FOLLOW,
             sources=None)
-        with patch.object(self.fgrid, "replaces_record", lambda root: 1):
-            self.fgrid.check_replaced(inventory, self.root, self.repo)
-            self.between = [["M", "area/three.txt"]]
-            with self.assertRaisesRegex(ValueError, "area/three.txt"):
-                self.fgrid.check_replaced(inventory, self.root, self.repo)
+        other = self.root / "another-checkout"
+        with patch.object(self.fgrid, "replaces_record",
+                          lambda root, found: 1):
+            for repo in (self.repo, other):
+                with self.subTest(repo):
+                    self.between = [["M", "area/one.txt"]]
+                    self.fgrid.check_replaced(inventory, self.root, repo)
+                    self.between = [["M", "area/three.txt"]]
+                    with self.assertRaisesRegex(ValueError,
+                                                "area/three.txt"):
+                        self.fgrid.check_replaced(inventory, self.root,
+                                                  repo)
+
+    def test_a_sealed_file_outside_the_repository_is_refused(self):
+        table = self.make_followup(home=self.root / "area", root=self.repo)
+        with self.assertRaisesRegex(ValueError, "outside the repository"):
+            tg.Grid(table).sealed_paths()
 
     def test_a_reused_seed_is_refused(self):
         # The table names a seed the replaced table no longer has, but the
@@ -725,7 +747,6 @@ class Second(Rig):
     def test_a_cell_the_control_leaves_open_is_remeasured(self):
         out, code, text = self.run_followup()
         self.assertEqual(code, 2, text)
-        self.assertFalse((out / "final.json").exists())
         self.runs.clear()
         ext, code, text = self.extend_followup(out)
         self.assertEqual(code, 0, text)
@@ -739,9 +760,8 @@ class Second(Rig):
         self.assertEqual(inventory["schema"], "toyf-extension-v1")
         self.assertEqual(inventory["replaces"]["grid"], "../replaced")
         self.assertEqual(inventory["plan"], [[CELL_B[0], CELL_B[1], 120]])
-        final = self.load(ext / "final.json")
-        self.assertEqual(final["status"], "pass")
-        self.assertEqual(final["replaced"]["cells"], list(CELLS))
+        self.assertEqual(self.load(ext / "decisions.json")["status"], "pass")
+        self.assertFalse((ext / "final.json").exists())
         self.assertEqual(self.replay_followup(ext)[0], 0)
         self.assertEqual(self.replay_followup(out)[0], 2)
         self.assertEqual(self.ledger()[-1]["stage"], "second")
@@ -758,30 +778,29 @@ class Second(Rig):
         self.assertIn('PLAN 2 cells: [["exclude_empty", 100, 120], '
                       '["exclude_missing", 1000, 60]]', text)
 
-    def test_a_first_stage_with_a_second_stage_to_come_has_no_final(self):
+    def test_the_second_stage_binds_by_the_seals_and_needs_no_pilot(self):
+        # extend_followup passes none: the replaced grid is bound by the
+        # seals of the counts, its cells replayed from their archives.
         out, code, _ = self.run_followup()
-        self.assertFalse((out / "final.json").exists())
-        (out / "final.json").write_text("{}")
-        with self.assertRaisesRegex(ValueError,
-                                    "final.json before the second stage"):
-            self.replay_followup(out)
+        self.analyses.clear()
+        ext, code, text = self.extend_followup(out)
+        self.assertEqual(code, 0, text)
+        replaced = {(r["case"], r["size"]) for r in self.analyses
+                    if r["seed"] == "s0"}
+        self.assertEqual(replaced, {CELL_A, CELL_B})
+        self.assertNotIn("TOY two-stage archives", text)
 
-    def test_the_second_stage_final_decision_is_checked_on_replay(self):
+    def test_a_replay_replays_the_replaced_second_stage_in_full(self):
         out, code, _ = self.run_followup()
         ext, code, _ = self.extend_followup(out)
-        final = self.load(ext / "final.json")
-        final["workloads"][0]["exit"] = 1
-        (ext / "final.json").write_text(json.dumps(final))
-        with self.assertRaisesRegex(ValueError, "final decisions"):
-            self.replay_followup(ext)
-
-    def test_the_second_stage_needs_the_replaced_grids_pilot(self):
-        out, code, _ = self.run_followup()
-        with self.assertRaisesRegex(ValueError, "needs --replaces-pilot"):
-            self.fgo(["extend", "--grid", str(out), "--output",
-                      str(self.root / "e"), "--repo", str(self.repo),
-                      "--pilot", str(self.fpilot),
-                      "--authorize-measurements"])
+        self.analyses.clear()
+        code, text = self.replay_followup(ext)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(text.count("TOY two-stage archives and decisions"),
+                         1)
+        self.assertEqual({(r["case"], r["size"]) for r in self.analyses
+                          if r["seed"] in ("s0", "s0-ext")},
+                         set(self.table.keys()))
 
 
 class Ledger(Rig):
@@ -796,14 +815,342 @@ class Ledger(Rig):
                          base / "toyf" / "attempts.jsonl")
         self.assertEqual(own.ledger_path(repo),
                          base / "toy" / "attempts.jsonl")
+        # The stamp and the log of the family's own table keep their names,
+        # those of another table of the family carry its name.
         self.assertEqual(own.stamp_path(repo),
-                         base / "toy" / "build-stamp.json")
+                         base / "toy" / "build-stamp-toyf.json")
+        self.assertEqual(own.prepare_log_path(repo),
+                         base / "toy" / "prepare-toyf.log")
+        self.assertEqual(plain.stamp_path(repo),
+                         base / "toyf" / "build-stamp.json")
+        self.assertEqual(
+            tg.Grid(self.make_table(ledger=None)).stamp_path(repo),
+            base / "toy" / "build-stamp.json")
+        self.assertEqual(
+            tg.Grid(self.make_table(ledger=None)).prepare_log_path(repo),
+            base / "toy" / "prepare.log")
         self.assertEqual(
             tg.Grid(self.make_table(ledger=None)).ledger_path(repo),
             own.ledger_path(repo))
         own.keep(self.repo, FOLLOW)
         plain.keep(self.repo, FOLLOW)
         self.assertEqual(self.kept[-2:], [("toy", FOLLOW), ("toyf", FOLLOW)])
+
+
+class Binding(Rig):
+    """The replaced grid is bound in full by `predeclare` and `replay` and by
+    the seals of the counts by `verify-counts`, `run` and `extend`."""
+
+    def archives(self, folder):
+        """Count the archives of a folder that are unpacked."""
+        real, seen = tg.bundle.unpack, []
+
+        def unpack(archive, output):
+            if folder in Path(archive).parts[-2:-1]:
+                seen.append(Path(archive).name)
+            return real(archive, output)
+        return patch.object(tg.bundle, "unpack", unpack), seen
+
+    def test_a_two_stage_grid_is_replaced_end_to_end(self):
+        self.assertEqual(self.load(self.replaced / "inventory.json")[
+            "schema"], "toy-extension-v1")
+        self.declare()
+        self.new_candidate = lambda c, s, pairs, seed: ttg.GOOD
+        out, code, text = self.run_followup()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.replay_followup(out)[0], 0)
+        self.assertEqual(self.load(out / "inventory.json")["replaces"][
+            "grid"], "../replaced")
+
+    def test_a_first_stage_with_a_second_stage_to_come_is_not_replaced(self):
+        self.pilot()
+        # The first stage remeasures the second cell: its second stage is
+        # the grid, not it.
+        self.replaced = self.replaced1
+        with self.assertRaisesRegex(
+                ValueError, "replaced grid is not final.*second stage"):
+            self.predeclare()
+        self.assertFalse(self.fcounts.exists())
+
+    def test_a_first_stage_with_no_second_stage_to_come_is_replaced(self):
+        self.old_control = lambda c, s, pairs, seed: ttg.GOOD
+        self.replaced, status, _ = self.first(name="replaced-final")
+        self.assertEqual(status, 2)
+        self.declare()
+        self.assertEqual(self.load(self.fcounts)["pairs_by_cell"],
+                         {CELLS[0]: 20, CELLS[1]: 20})
+        self.assertEqual(sorted(self.load(self.fcounts)["replaces"][
+            "files"]), ["decisions.json", "inventory.json"])
+
+    def sealed_commands(self, out):
+        """The commands that bind by the seals, as argument lists."""
+        return {
+            "verify-counts": ["verify-counts", "--grid", str(self.fpilot),
+                              "--repo", str(self.repo), *self.over()],
+            "run": ["run", "--output", str(self.root / "late"), "--repo",
+                    str(self.repo), "--pilot", str(self.fpilot),
+                    "--candidate", FOLLOW, "--authorize-measurements",
+                    *self.over()],
+            "extend": ["extend", "--grid", str(out), "--output",
+                       str(self.root / "late-ext"), "--repo",
+                       str(self.repo), "--pilot", str(self.fpilot),
+                       "--authorize-measurements"]}
+
+    def test_a_change_to_a_file_of_the_replaced_grid_is_named(self):
+        self.declare()
+        out, code, _ = self.run_followup()
+        commands = self.sealed_commands(out)
+        for name in ("inventory.json", "decisions.json",
+                     "../replaced-1/inventory.json",
+                     "../replaced-1/decisions.json"):
+            path = self.replaced / name
+            good = path.read_text()
+            path.write_text(good.replace("}", " }", 1))
+            try:
+                for action, argv in commands.items():
+                    with self.subTest(name, action=action), \
+                            self.assertRaisesRegex(
+                                ValueError, "replaced grid changed since "
+                                "predeclare: " + name.replace(".", r"\.")):
+                        self.fgo(argv)
+            finally:
+                path.write_text(good)
+        self.assertFalse((self.root / "late").exists())
+
+    def test_the_seals_are_those_of_the_counts_whatever_the_grid(self):
+        self.declare()
+        out, code, _ = self.run_followup()
+        counts = self.load(self.fcounts)
+        for label, change in (
+                ("a file less", lambda r: r["files"].pop(
+                    "../replaced-1/decisions.json")),
+                ("a file more", lambda r: r["files"].update(
+                    {"matrix.json": dict(bytes=1, sha256="0" * 64)})),
+                ("other open cells", lambda r: r.update(open=[CELLS[0]])),
+                ("no record", lambda r: r.clear())):
+            with self.subTest(label):
+                changed = json.loads(json.dumps(counts))
+                change(changed["replaces"])
+                self.fcounts.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, "changed since "
+                                            "predeclare|open cells differ|"
+                                            "record no replaced grid"):
+                    self.fgo(self.sealed_commands(out)["verify-counts"])
+        self.fcounts.write_text(json.dumps(counts))
+
+    def test_only_the_cells_of_the_follow_up_are_replayed_by_a_seal_binding(
+            self):
+        self.declare()
+        patcher, seen = self.archives("replaced-1")
+        self.analyses.clear()
+        with patcher:
+            code, text = self.fgo(self.sealed_commands(None)["verify-counts"])
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual({(r["case"], r["size"]) for r in self.analyses
+                          if r["seed"] == "s0"}, {CELL_A, CELL_B})
+        self.assertNotIn("TOY two-stage archives", text)
+        # The full replay (predeclare, replay) goes through every cell of
+        # both stages.
+        patcher, seen = self.archives("replaced-1")
+        with patcher:
+            self.fcounts.unlink()
+            self.assertEqual(self.predeclare()[0], 0)
+        self.assertEqual(len(seen), len(self.table.keys()))
+
+    def test_a_changed_archive_of_a_follow_up_cell_is_found_at_once(self):
+        self.declare()
+        real = tg.bundle.unpack
+
+        def unpack(archive, output):
+            if "replaced-1" in Path(archive).parts[-2:-1]:
+                raise ValueError("changed archive")
+            return real(archive, output)
+        with patch.object(tg.bundle, "unpack", unpack):
+            for action, argv in self.sealed_commands(None).items():
+                if action == "extend":
+                    continue
+                with self.subTest(action), self.assertRaisesRegex(
+                        ValueError, "changed archive"):
+                    self.fgo(argv)
+
+    def test_a_helper_before_the_grid_is_bound_is_a_refusal(self):
+        fresh = tg.Grid(self.make_followup())
+        inventory = dict(layout_seed="f0", iterations_seal={},
+                         replaces={}, candidate=FOLLOW, sources=None)
+        for label, call in (
+                ("bound", lambda: fresh.bound()),
+                ("replaces_record", lambda: fresh.replaces_record(
+                    self.root, inventory)),
+                ("followup_pairs", lambda: fresh.followup_pairs()),
+                ("replaced_counts", lambda: fresh.replaced_counts(
+                    self.fpilot)),
+                ("check_replaced", lambda: fresh.check_replaced(
+                    inventory, self.root, self.repo))):
+            with self.subTest(label), self.assertRaisesRegex(
+                    ValueError, "has not bound the grid it replaces"):
+                call()
+        with self.assertRaisesRegex(ValueError, "TOY replaces no grid"):
+            self.grid.bound()
+
+    def test_the_replaced_grid_is_replayed_by_its_engine_with_its_hooks(self):
+        # The engine the table names is the one that replays: a hook of it
+        # is used, not the defaults of a bare table.
+        class Marked(tg.Grid):
+            replays = 0
+
+            def replay(self, args):
+                Marked.replays += 1
+                return super().replay(args)
+        engine = Marked(self.table)
+        self.fgrid = tg.Grid(self.make_followup(
+            replaces=tg.Replaces(engine)))
+        self.pilot()
+        self.assertEqual(self.predeclare()[0], 0)
+        self.assertEqual(Marked.replays, 1)
+        self.assertIs(self.fgrid.t.replaces.engine, engine)
+
+    def test_the_ledger_option_reaches_the_replay_of_predeclare(self):
+        self.pilot()
+        elsewhere = self.root / "elsewhere.jsonl"
+        elsewhere.write_text(self.attempts.read_text())
+        self.attempts.rename(self.root / "moved.jsonl")
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
+            self.predeclare()
+        self.assertEqual(self.predeclare("--ledger", str(elsewhere))[0], 0)
+        self.assertEqual(self.fgo(
+            ["verify-counts", "--grid", str(self.fpilot), "--repo",
+             str(self.repo), "--ledger", str(elsewhere), *self.over()])[0],
+            0)
+
+
+class TableOfLine(Rig):
+    """The lines of the ledger name their table, and the lines written
+    before they did belong to the table of the family."""
+
+    def legacy(self, path, attempt, candidate):
+        """A line as the engine wrote it before the field existed."""
+        tg.ledger_append(
+            path, event="open", stage="first", attempt=attempt,
+            candidate=candidate, counts_file="toy_iterations.json",
+            counts=dict(bytes=1, sha256="0" * 64), seed="s0",
+            output="/out", checkout="/c", only=None)
+
+    def inventory_of(self, attempt, candidate, seed):
+        return dict(attempt=attempt, candidate=candidate,
+                    counts_file="x.json", iterations_seal=dict(
+                        bytes=1, sha256="1" * 64), layout_seed=seed)
+
+    def test_new_lines_name_their_table_and_old_ones_are_the_familys(self):
+        path = self.root / "mixed.jsonl"
+        self.legacy(path, "old1", ttg.CANDIDATE)
+        self.legacy(path, "old2", FOLLOW)
+        before = path.read_text()
+        self.grid.record_attempt(
+            path, "open", "first", self.inventory_of("t1", FOLLOW, "s0"),
+            "/o", self.repo)
+        self.fgrid.record_attempt(
+            path, "open", "first", self.inventory_of("f1", FOLLOW, "f0"),
+            "/o", self.repo)
+        self.fgrid.record_attempt(
+            path, "close", "first", self.inventory_of("f1", FOLLOW, "f0"),
+            "/o", self.repo, status="pass")
+        # The lines already there are as they were, and the chain holds.
+        self.assertTrue(path.read_text().startswith(before))
+        state = tg.Ledger(path)
+        self.assertEqual(len(state.records), 5)
+        self.assertEqual([r.get("table") for r in state.records],
+                         [None, None, "toy", "toyf", "toyf"])
+        # TASK30's counts are its own lines (old ones included), the
+        # follow-up's its own.
+        self.assertEqual(self.grid.attempt_counts(state, FOLLOW), (3, 2))
+        self.assertEqual(self.fgrid.attempt_counts(state, FOLLOW), (1, 1))
+        self.assertEqual(self.fgrid.attempt_counts(state, ttg.CANDIDATE),
+                         (1, 0))
+
+    def test_an_attempt_report_and_close_count_their_own_table(self):
+        path = self.root / "mixed.jsonl"
+        self.legacy(path, "old1", ttg.CANDIDATE)
+        self.fgrid.record_attempt(
+            path, "open", "first", self.inventory_of("f1", FOLLOW, "f0"),
+            "/o", self.repo)
+        state = tg.Ledger(path)
+        for engine, label, text in (
+                (self.grid, "TOY", "1 in the ledger, 0 of this candidate"),
+                (self.fgrid, "TOYF", "1 in the ledger, 1 of this candidate")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                engine.report_attempts(
+                    state, self.inventory_of(
+                        "x", FOLLOW, None), "first")
+            self.assertIn("ATTEMPTS of %s: %s" % (label, text),
+                          out.getvalue())
+            self.assertEqual(out.getvalue().count("\nATTEMPT ") +
+                             out.getvalue().startswith("ATTEMPT "), 1)
+
+    def test_a_follow_up_run_leaves_the_replaced_grids_counts_alone(self):
+        self.declare()
+        before = self.grid.attempt_counts(
+            tg.Ledger(self.attempts), ttg.CANDIDATE)
+        self.run_followup()
+        state = tg.Ledger(self.attempts)
+        self.assertEqual(self.grid.attempt_counts(state, ttg.CANDIDATE),
+                         before)
+        self.assertEqual(self.fgrid.attempt_counts(state, FOLLOW), (1, 1))
+        self.assertEqual({r["table"] for r in state.records},
+                         {"toy", "toyf"})
+
+    def test_an_opening_of_another_table_is_not_this_grids(self):
+        self.declare()
+        out, code, _ = self.run_followup()
+        inventory = self.load(out / "inventory.json")
+        self.assertIsNotNone(self.fgrid.check_attempt(
+            argparse.Namespace(repo=self.repo, ledger=None), inventory,
+            "first"))
+        # The toy table has no opening of the follow-up's attempt.
+        with self.assertRaisesRegex(ValueError, "no opening of this grid"):
+            self.grid.check_attempt(
+                argparse.Namespace(repo=self.repo, ledger=None), inventory,
+                "first")
+
+
+class Prepare(ttg.ChainRig):
+    """`prepare` of a table of a family keeps its own stamp and log, and
+    leaves those of the table that names the family."""
+
+    def test_a_follow_up_prepare_keeps_the_stamp_and_log_of_the_family(self):
+        self.commit_counts()
+        stamp = self.stamp()
+        log = stamp.with_name("prepare.log")
+        before = (stamp.read_text(), log.read_text())
+        fdriver = self.root / "toyf_grid.py"
+        fdriver.write_text("# the toy follow-up driver\n")
+        table = tg.Table(
+            "toyf", "TOYF", CASES, fdriver, self.root / "toyf.json",
+            cells=CELLS, family="toy", replaces=tg.Replaces(self.grid),
+            seconds=0.3, seconds_by_case={CASES[0]: ttg.LONG},
+            fixed_seconds=True, schedule="warmup", pairs=2 * self.pairs,
+            samples=self.samples, seed="f0", baseline=self.base,
+            tree="src", sources=ttg.SOURCES, sealed=ttg.SEALED,
+            home=self.sealed_dir, root=self.root)
+        grid = tg.Grid(table)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(
+                grid.execute(["prepare", "--repo", str(self.repo)]), 0)
+        # Its own stamp and log are there; the family's are as they were.
+        mine = grid.stamp_path(self.repo)
+        self.assertEqual(mine.name, "build-stamp-toyf.json")
+        self.assertTrue(mine.is_file())
+        self.assertTrue(grid.prepare_log_path(self.repo).is_file())
+        self.assertEqual((stamp.read_text(), log.read_text()), before)
+        # And the other way: the table of the family leaves the follow-up's.
+        own = mine.read_text()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(
+                self.grid.execute(["prepare", "--repo", str(self.repo)]), 0)
+        self.assertEqual(mine.read_text(), own)
+        self.assertNotEqual(stamp.read_text(), before[0])
 
 
 tearDownModule = ttg.tearDownModule
