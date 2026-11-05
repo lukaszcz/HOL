@@ -881,6 +881,29 @@ class SecondStage(Rig):
             argv.append("--resume")
         return self.go(argv)
 
+    def test_the_refusals_that_need_no_replay_come_first_in_their_order(
+            self):
+        # As at 6b0088ffbb: the ledger, the output, the pilot, each before
+        # the first stage is read (the grid named does not exist).
+        def replayed(*args, **kw):
+            raise AssertionError("the first stage was replayed")
+        argv = self.argv("extend", self.root / "ext", "--grid",
+                         str(self.root / "nowhere"),
+                         "--authorize-measurements")
+        without = [x for i, x in enumerate(argv) if x != "--pilot" and
+                   argv[i - 1] != "--pilot"]
+        with patch.object(tg.Grid, "replay_grid", replayed):
+            self.table.ledger = self.repo / "attempts.jsonl"
+            with self.assertRaisesRegex(ValueError, "would be tracked"):
+                self.go(without)
+            self.table.ledger = self.attempts
+            inside = [str(self.repo / "ext") if x == str(
+                self.root / "ext") else x for x in without]
+            with self.assertRaisesRegex(ValueError, "not ignored by git"):
+                self.go(inside)
+            with self.assertRaisesRegex(ValueError, "needs --pilot DIR"):
+                self.go(without)
+
     def test_open_cells_are_remeasured_from_the_control_alone(self):
         self.control = self.wide_unless_long
         grid, status, _ = self.first()
@@ -6426,6 +6449,168 @@ class Git(unittest.TestCase):
         outside = Path(self.tmp.name).parent / "elsewhere.json"
         with self.assertRaisesRegex(ValueError, "outside the repository"):
             self.grid.counts_commit(self.repo, self.third, outside)
+
+
+class RealRecord(unittest.TestCase):
+    """`git_seal`, `git_head` and `check_code_record` on a private
+    repository, with names below subdirectories, a file the commit lacks,
+    and paths outside the repository or relative to another directory."""
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=t", "-c",
+             "user.email=t@example.org", *args], check=True, text=True,
+            stdout=subprocess.PIPE).stdout.strip()
+
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="timing-grid-rec-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.git("init", "-q")
+        self.empty_head = tg.git_head(self.repo)
+        (self.repo / "sub" / "deep").mkdir(parents=True)
+        self.code = self.repo / "sub" / "deep" / "code.py"
+        self.code.write_text("one\n")
+        self.code_commit = self.commit("code")
+        self.was = a.seal(self.code)
+        self.counts = self.repo / "sub" / "counts.json"
+        self.counts.write_text("{}\n")
+        self.counts_commit = self.commit("counts")
+        self.code.write_text("two, later\n")
+        self.later = self.commit("later")
+        outside = self.root / "outside.py"
+        outside.write_text("outside\n")
+        self.outside = outside
+        self.where = {"sub/deep/code.py": self.code}
+        self.grid = tg.Grid(tg.Table("toy", "TOY", CASES, "d.py",
+                                     self.counts, schedule="ramp"))
+        self.grid.replay_paths = lambda: dict(self.where)
+
+    def record(self, **seals):
+        return {"files": {}, "code": seals or {
+            "sub/deep/code.py": self.was}}
+
+    def check(self, recorded, candidate=None, counts=None):
+        return self.grid.check_code_record(
+            recorded, self.repo, counts or self.counts, candidate)
+
+    def test_the_seal_of_a_file_below_a_directory_is_that_of_the_commit(self):
+        self.assertEqual(tg.git_seal(self.repo, self.code_commit, self.code),
+                         self.was)
+        self.assertEqual(tg.git_seal(self.repo, self.later, self.code),
+                         a.seal(self.code))
+        self.assertNotEqual(self.was, a.seal(self.code))
+
+    def test_a_file_the_commit_lacks_has_no_seal(self):
+        self.assertIsNone(tg.git_seal(self.repo, self.code_commit,
+                                      self.counts))
+        self.assertIsNone(tg.git_seal(self.repo, self.later,
+                                      self.repo / "sub" / "gone.py"))
+
+    def test_a_path_outside_the_repository_is_refused_in_words(self):
+        with self.assertRaisesRegex(ValueError, "outside.py is outside the "
+                                    "repository$"):
+            tg.git_seal(self.repo, self.later, self.outside)
+
+    def test_the_head_is_the_commit_or_none_in_an_empty_repository(self):
+        self.assertEqual(tg.git_head(self.repo), self.later)
+        self.assertIsNone(self.empty_head)
+
+    def test_a_record_equal_to_the_commit_of_the_counts_passes(self):
+        self.check(self.record(), self.later)
+        self.check(self.record(), self.counts_commit)
+        self.check(self.record())  # HEAD's history introduced the counts
+
+    def test_a_record_is_compared_by_name_with_the_commit_not_the_code(self):
+        now = a.seal(self.code)
+        for candidate in (None, self.later):
+            with self.subTest(candidate), self.assertRaisesRegex(
+                    ValueError, "differs from the commit of the counts: "
+                    "sub/deep/code.py; predeclare again, or commit the "
+                    "code change after the counts$"):
+                self.check(self.record(**{"sub/deep/code.py": now}),
+                           candidate)
+
+    def test_a_file_the_commit_lacks_is_named_as_absent(self):
+        self.where["sub/gone.py"] = self.repo / "sub" / "gone.py"
+        seal = dict(bytes=1, sha256="0" * 64)
+        for candidate in (None, self.later):
+            with self.subTest(candidate), self.assertRaisesRegex(
+                    ValueError, "counts: sub/gone.py \\(absent\\);"):
+                self.check(self.record(**{"sub/gone.py": seal}), candidate)
+
+    def test_a_replay_file_outside_the_repository_is_refused(self):
+        self.where["x.py"] = self.outside
+        with self.assertRaisesRegex(ValueError, "outside.py is outside the "
+                                    "repository"):
+            self.check(self.record(**{"x.py": a.seal(self.outside)}),
+                       self.later)
+
+    def test_a_relative_counts_path_is_resolved_from_the_directory(self):
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.repo / "sub")
+        self.check(self.record(), self.later, Path("counts.json"))
+        os.chdir(self.root)
+        self.check(self.record(), self.later,
+                   Path("repo") / "sub" / "counts.json")
+        self.assertEqual(self.grid.counts_commit(
+            self.repo, self.later, Path("repo/sub/counts.json")),
+            self.counts_commit)
+
+    def test_counts_outside_the_repository(self):
+        elsewhere = self.root / "elsewhere.json"
+        elsewhere.write_text("{}\n")
+        with self.assertRaisesRegex(
+                ValueError, "elsewhere.json is outside the repository: it "
+                "must be committed in it"):
+            self.check(self.record(), self.later, elsewhere)
+        # A verification compares the record with the working tree, and
+        # says so.
+        self.code.write_text("one\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.check(self.record(), None, elsewhere)
+        self.assertIn("outside the repository", out.getvalue())
+        self.code.write_text("two, later\n")
+        with contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaisesRegex(
+                    ValueError, "differs from the files as they are in the "
+                    "working tree: sub/deep/code.py; predeclare again$"):
+            self.check(self.record(), None, elsewhere)
+
+    def test_uncommitted_counts_are_compared_with_the_working_tree(self):
+        new = self.repo / "sub" / "new.json"
+        new.write_text("{}\n")
+        self.code.write_text("one\n")
+        self.check(self.record(), None, new)
+        self.code.write_text("two\n")
+        with self.assertRaisesRegex(ValueError, "working tree: "
+                                    "sub/deep/code.py"):
+            self.check(self.record(), None, new)
+
+    def test_the_commit_of_the_counts_must_change_that_file_alone(self):
+        (self.repo / "sub" / "more.json").write_text("{}\n")
+        self.git("rm", "-q", "--cached", "sub/counts.json")
+        self.counts.write_text('{"again": 1}\n')
+        # A fresh counts file committed together with a code change.
+        again = self.repo / "sub" / "again.json"
+        again.write_text("{}\n")
+        self.code.write_text("three\n")
+        together = self.commit("counts and code")
+        for candidate in (None, together):
+            with self.subTest(candidate), self.assertRaisesRegex(
+                    ValueError, "must change only that file, not also "
+                    "sub/counts.json, sub/deep/code.py, sub/more.json: "
+                    "commit the counts alone"):
+                self.check(self.record(), candidate, again)
 
 
 class Checkout(unittest.TestCase):

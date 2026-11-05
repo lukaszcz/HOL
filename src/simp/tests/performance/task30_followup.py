@@ -39,7 +39,8 @@ own (`build-stamp-task30f.json`, `prepare-task30f.log`).
   predeclare  counts file from the pilot (--replaces GRID --replaces-pilot
               DIR: the grid replaced and its pilot)   (replays that grid)
   verify-counts  the counts file against its pilot and the replaced grid
-              (--replaces; by the seals of the counts)
+              (--replaces; by the seals of the counts, or, after a change
+              of the replay code, in full: --replaces-pilot)
   run         first stage (--pilot, --replaces)
   extend      second stage if the control left a cell open (--pilot)
   replay      recompute every archived decision offline
@@ -68,9 +69,10 @@ COUNTS = a.HERE / "task30_followup_iterations.json"
 # empty, too. Per file a later change needs: timing_grid.py the ENGINES entry,
 # acceptance.py the ACCEPTANCE entry, task30_followup.py the DRIVERS entry
 # (every record of this table carries those seals), task30_pins.py a
-# PIN_HISTORY entry; summarize.py, audit_evidence.py and runtime_metrics.py
-# none (no record carries them; the counts' `replaces.code` is compared with
-# the commit of the counts, not with the current code). `run` compares the
+# PIN_HISTORY entry; summarize.py, audit_evidence.py, runtime_metrics.py and
+# allocator-counter/private_runtime.py none (no record carries them; the
+# counts' `replaces.code` is compared with the commit of the counts, not
+# with the current code). `run` compares the
 # counts' sealed files exactly, so between the pilot and `run` only a fresh
 # pilot absorbs a change to a sealed file. The
 # disposition code is landed before the pilot, in a module of its own

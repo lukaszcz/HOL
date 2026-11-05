@@ -524,11 +524,21 @@ def git_blob(repo, rev, path):
     return fields[2] if len(fields) >= 3 and fields[1] == "blob" else None
 
 
+def repo_relative(repo, path):
+    """`path`, resolved against the current directory, as the repository
+    `repo` names it; a refusal for a path outside the repository."""
+    try:
+        return Path(path).resolve().relative_to(
+            Path(repo).resolve()).as_posix()
+    except ValueError:
+        raise ValueError("%s is outside the repository" % path) from None
+
+
 def git_seal(repo, rev, path):
     """The seal (bytes and sha256, as `acceptance.seal`) of `path`, a file of
     the repository `repo`, as commit `rev` holds it; None when it holds no
     such file. A path outside the repository is refused."""
-    name = Path(path).resolve().relative_to(Path(repo).resolve()).as_posix()
+    name = repo_relative(repo, path)
     if git_blob(repo, rev, name) is None:
         return None
     data = subprocess.run(
@@ -564,6 +574,13 @@ def git_introduced(repo, rev, path):
     a.require(git_blob(repo, commits[0], path) == git_blob(repo, rev, path),
               "no commit introduces " + path)
     return commits[0]
+
+
+def git_touched(repo, commit):
+    """The files `commit` changed (each parent of a merge compared), by
+    name from the top of the repository."""
+    return a.git(repo, "diff-tree", "--root", "--no-commit-id",
+                 "--name-only", "-r", "-m", "-z", commit).split("\0")[:-1]
 
 
 def git_difference(repo, baseline, candidate, tree):
@@ -1450,7 +1467,7 @@ class Grid:
     def verify_counts(self, args):
         """The counts file is what `predeclare` makes of its pilot."""
         t = self.t
-        path = args.counts or t.latest()
+        path = Path(args.counts).resolve() if args.counts else t.latest()
         self.h.bind_from(args, counts=a.load(path) if t.replaces else None,
                          counts_path=path)
         self.h.check_counts(args.grid.resolve(), path)
@@ -1928,18 +1945,19 @@ class Grid:
 
     def repo_path(self, repo, path):
         """`path` as the repository names it."""
-        try:
-            return Path(path).resolve().relative_to(
-                Path(repo).resolve()).as_posix()
-        except ValueError:
-            raise ValueError("%s is outside the repository" % path) from None
+        return repo_relative(repo, path)
 
     def counts_commit(self, repo, candidate, path):
         """The commit that introduced the counts file: the file in use is,
         byte for byte, what the candidate's history holds, and exactly one
         commit of that history touched it. That commit is no later than the
         candidate; it does not date the file against any observation."""
-        name = self.repo_path(repo, path)
+        path = Path(path).resolve()
+        try:
+            name = self.repo_path(repo, path)
+        except ValueError:
+            raise ValueError("the counts file %s is outside the repository: "
+                             "it must be committed in it" % path) from None
         a.require(git_blob(repo, candidate, name) ==
                   a.git(repo, "hash-object", str(path)),
                   "the counts file is not committed in the candidate's "
@@ -2252,13 +2270,19 @@ class Grid:
         for note in state.notes:
             print(note)
 
+    def require_pilot(self, args):
+        """A table with fixed seconds is run with its pilot (an argument
+        only, asked for before anything is bound or replayed)."""
+        if self.t.fixed_seconds:
+            a.require(args.pilot is not None,
+                      "%s needs --pilot DIR" % self.t.label)
+
     def check_provenance(self, args, inventory):
         """The counts file the grid names is derived again from the pilot
         (a table with fixed seconds)."""
         if not self.t.fixed_seconds:
             return
-        a.require(args.pilot is not None,
-                  "%s needs --pilot DIR" % self.t.label)
+        self.h.require_pilot(args)
         self.h.check_counts(Path(args.pilot).resolve(),
                             self.h.counts_for(inventory))
 
@@ -2522,6 +2546,7 @@ class Grid:
             a.require(len(keys) == len(args.only), "unknown --only cell")
         # The cheap refusals come before the grid is bound, which may be
         # a full replay: nothing is created by them.
+        self.h.require_pilot(args)
         self.h.attempts_file(args, True, create=False)
         self.h.check_output(args)
         if t.fixed_seconds:
@@ -2918,15 +2943,35 @@ class Grid:
                 isinstance(recorded.get("files"), dict)):
             return
         self.h.check_recorded_code(recorded)
-        name = self.h.repo_path(repo, path)
+        path = Path(path).resolve()
         commit = None
         if candidate is not None:
             commit = self.h.counts_commit(repo, candidate, path)
         else:
+            try:
+                name = self.h.repo_path(repo, path)
+            except ValueError:
+                # No commit of the repository holds the file: it is
+                # compared as a counts file not committed yet.
+                print("the counts file %s is outside the repository: the "
+                      "record of the code is compared with the files as "
+                      "they are" % path, flush=True)
+                name = None
             head = git_head(repo)
-            if head is not None and git_blob(repo, head, name) == \
+            if name is not None and head is not None and \
+                    git_blob(repo, head, name) == \
                     a.git(repo, "hash-object", str(path)):
                 commit = git_introduced(repo, head, name)
+        if commit is not None:
+            # The record is bound to the commit discipline: the counts are
+            # committed alone, so that no code change rides with them.
+            only = self.h.repo_path(repo, path)
+            touched = set(git_touched(repo, commit))
+            a.require(touched == {only},
+                      "the commit %s that introduced the counts file must "
+                      "change only that file, not also %s: commit the "
+                      "counts alone" % (commit[:12], ", ".join(
+                          sorted(touched - {only})) or "(nothing else)"))
         here = Path(__file__).resolve().parent
         paths = self.h.replay_paths()
         differ = []
@@ -2937,9 +2982,17 @@ class Grid:
             else:
                 now = git_seal(repo, commit, where)
             if now != seal:
-                differ.append(file)
-        a.require(not differ, "the record of the code differs from the "
-                  "commit of the counts: %s" % ", ".join(sorted(differ)))
+                differ.append(file + ("" if now is not None
+                                      else " (absent)"))
+        if commit is None:
+            a.require(not differ, "the record of the code differs from the "
+                      "files as they are in the working tree: %s; "
+                      "predeclare again" % ", ".join(sorted(differ)))
+        else:
+            a.require(not differ, "the record of the code differs from the "
+                      "commit of the counts: %s; predeclare again, or "
+                      "commit the code change after the counts" %
+                      ", ".join(sorted(differ)))
 
     def require_replaced_openings(self, args):
         """The ledger the attempt of a follow-up will be appended to (the
@@ -3217,7 +3270,12 @@ class Grid:
     def extend(self, args):
         t = self.t
         grid, root = args.grid.resolve(), args.output.resolve()
+        # The refusals that need no replay come first, in the order of
+        # the table that replaces no grid; a follow-up creates nothing
+        # before the grid it replaces is bound.
+        self.h.attempts_file(args, True, create=t.replaces is None)
         self.h.check_output(args)
+        self.h.require_pilot(args)
         if t.fixed_seconds:
             # The cheap refusal first: the kind of grid, the recorded
             # checkout, then the present one, before the first stage is
@@ -3236,7 +3294,6 @@ class Grid:
         # does: a mismatch is a refusal, not a failed attempt.
         a.require(schedule_of(first["iterations"]) == t.schedule,
                   "the schedule of the counts differs from the table's")
-        self.h.attempts_file(args, True, create=False)
         if t.replaces is not None:
             self.h.bind_from(
                 args, first, grid, counts=first["iterations"],

@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -270,7 +271,16 @@ class Rig(ttg.Rig):
     def git_stand_ins(self):
         return (*super().git_stand_ins(),
                 (tg, ("git_head", lambda repo: FOLLOW)),
-                (tg, ("git_seal", self.fake_seal)))
+                (tg, ("git_seal", self.fake_seal)),
+                (tg, ("git_touched", self.fake_touched)))
+
+    also_touched = ()
+
+    def fake_touched(self, repo, commit):
+        """The commit of the counts changed the counts file, and, in a
+        test that says so, `also_touched`."""
+        return [tg.repo_relative(repo, self.fcounts),
+                *self.also_touched]
 
     def fake_seal(self, repo, rev, path):
         """The code of the replay as the commit holds it: the files as they
@@ -1301,6 +1311,65 @@ class CodeChange(Rig):
     def stale_checkout(self, repo, commit=None, stamp=None):
         raise tg.CheckoutRefused("no stamp")
 
+    def without_pilot(self, argv):
+        return [x for i, x in enumerate(argv)
+                if x != "--pilot" and argv[i - 1] != "--pilot"]
+
+    def test_a_missing_pilot_is_refused_before_any_replay(self):
+        out, code, _ = self.run_followup()
+        commands = self.sealed_commands(out)
+        for action in ("run", "extend"):
+            with self.subTest(action):
+                self.refused_before_any_replay(
+                    self.without_pilot(commands[action]),
+                    "needs --pilot DIR")
+
+    def test_the_ledger_of_an_extend_is_refused_before_any_replay(self):
+        out, code, _ = self.run_followup()
+        late = self.without_pilot(self.sealed_commands(out)["extend"])
+        self.fgrid.t.ledger = self.repo / "attempts.jsonl"
+        self.refused_before_any_replay(late, "would be tracked by git")
+        self.fgrid.t.ledger = self.attempts
+        self.refused_before_any_replay(late, "needs --pilot DIR")
+
+    def test_a_counts_path_is_taken_from_the_current_directory(self):
+        verify = self.sealed_commands(None)["verify-counts"]
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.root)
+        relative = os.path.relpath(self.fcounts, self.root)
+        self.assertFalse(os.path.isabs(relative))
+        code, text = self.fgo([*verify, "--counts", relative])
+        self.assertEqual(code, 0)
+        # Outside the repository: compared with the files as they are, and
+        # said so; run, extend and replay keep the committed table counts.
+        copy = self.root / "copy.json"
+        copy.write_text(self.fcounts.read_text())
+        code, text = self.fgo([*verify, "--counts", str(copy)])
+        self.assertEqual(code, 0)
+        self.assertIn("outside the repository", text)
+        with self.changed_code("summarize.py"), \
+                self.assertRaisesRegex(
+                    ValueError, "differs from the files as they are in the "
+                    "working tree: summarize.py; predeclare again"):
+            self.fgo([*verify, "--counts", str(copy)])
+        with self.assertRaisesRegex(ValueError, "copy.json is outside the "
+                                    "repository: it must be committed"):
+            self.h_counts_commit(copy)
+
+    def h_counts_commit(self, path):
+        return self.fgrid.h.counts_commit(self.repo, FOLLOW, path)
+
+    def test_the_commit_of_the_counts_changes_that_file_alone(self):
+        verify = self.sealed_commands(None)["verify-counts"]
+        self.assertEqual(self.fgo(verify)[0], 0)
+        self.also_touched = ["summarize.py", "notes.txt"]
+        for action in ("verify-counts", "run"):
+            with self.subTest(action), self.assertRaisesRegex(
+                    ValueError, "must change only that file, not also "
+                    "notes.txt, summarize.py: commit the counts alone"):
+                self.fgo(self.sealed_commands(None)[action])
+
     def test_the_cheap_refusals_of_an_extend_come_before_the_replay(self):
         out, code, _ = self.run_followup()
         late = self.sealed_commands(out)["extend"]
@@ -1347,7 +1416,8 @@ class CodeChange(Rig):
         self.fcounts.write_text(json.dumps(counts))
         with self.assertRaisesRegex(
                 ValueError, "the commit of the counts: acceptance.py, "
-                "runtime_metrics.py$"):
+                "runtime_metrics.py; predeclare again, or commit the code "
+                "change after the counts$"):
             self.fgo(self.sealed_commands(None)["verify-counts"])
 
     def test_counts_not_committed_yet_are_compared_with_the_files(self):
@@ -1358,13 +1428,14 @@ class CodeChange(Rig):
         # A change since predeclare, with the counts uncommitted, is no
         # record of the files as they are.
         with self.changed_code("summarize.py"):
-            with self.assertRaisesRegex(ValueError, "commit of the counts: "
-                                        "summarize.py"):
+            with self.assertRaisesRegex(
+                    ValueError, "files as they are in the working tree: "
+                    "summarize.py; predeclare again"):
                 self.fgo(verify)
         counts["replaces"]["code"]["timing_grid.py"] = dict(
             bytes=1, sha256="0" * 64)
         self.fcounts.write_text(json.dumps(counts))
-        with self.assertRaisesRegex(ValueError, "commit of the counts: "
+        with self.assertRaisesRegex(ValueError, "working tree: "
                                     "timing_grid.py"):
             self.fgo(verify)
 
@@ -1579,8 +1650,16 @@ class ReplacedOpenings(Rig):
     # runs. `task30_grid.verdict` imports the allocation matrix when the
     # allocation gate closes the task; `private_runtime` imports the
     # modules that build and check the runtime, and the replay uses its
-    # `harness_identity` and `tree_outside_performance` alone.
-    LEFT_OUT = {("task30_grid", "allocation_matrix", "verdict"),
+    # `harness_identity` and `tree_outside_performance` alone. The four of
+    # `run_paired.main` are the command line of the paired runner, which
+    # the replay never runs (`loading` and `runtime_metrics.smoke` import
+    # the module for its functions); the file itself is sealed, as
+    # `INSTALLED` names it.
+    LEFT_OUT = {("run_paired", "prior_contracts", "main"),
+                ("run_paired", "staging_contracts", "main"),
+                ("run_paired", "public_contracts", "main"),
+                ("run_paired", "client_dependencies", "main"),
+                ("task30_grid", "allocation_matrix", "verdict"),
                 ("private_runtime", "loading", None),
                 ("private_runtime", "path_schema", None),
                 ("private_runtime", "prepare_patch", None),
@@ -1589,12 +1668,14 @@ class ReplacedOpenings(Rig):
              "task30_grid")
 
     def replay_files(self):
-        """The source of every module of the directory and of
-        allocator-counter/ (the one directory `timing_grid` adds to its
-        path), by module name."""
+        """The source of every module of the directory, of
+        allocator-counter/ (the directory `timing_grid` adds to its path)
+        and of ../compatibility (which `loading` and `runtime_metrics` add),
+        by module name; no stem is in two of them."""
         here = Path(__file__).resolve().parent
         return {p.stem: p.read_text()
-                for d in (here, here / "allocator-counter")
+                for d in (here, here / "allocator-counter",
+                          here.parent / "compatibility")
                 for p in d.glob("*.py")}
 
     def closure(self, sources):
@@ -1674,7 +1755,11 @@ class ReplacedOpenings(Rig):
                 ("a module of allocator-counter", "private_runtime",
                  "import control_schema", "control_schema"),
                 ("task30_cases", "task30_cases", "import path_schema",
-                 "path_schema")):
+                 "path_schema"),
+                ("a module of ../compatibility", "timing_grid",
+                 "import verify_evidence", "verify_evidence"),
+                ("another of ../compatibility", "audit_evidence",
+                 "import staging_contracts", "staging_contracts")):
             with self.subTest(label):
                 changed = dict(sources)
                 changed[name] += "\n" + line + "\n"

@@ -1215,12 +1215,19 @@ table of its own on the shared engine, with the following additions to it.
     be well formed and to equal the seals of the same files as they are in
     the git commit that holds the counts file (the commit that introduced
     it, in the history of the candidate; of `HEAD` for `verify-counts`),
-    read with git; a counts file not committed yet (the first
-    `verify-counts` after `predeclare`) is compared with the files as they
-    are. Otherwise they refuse: `the record of the code differs from the
-    commit of the counts: FILE`. So the record cannot be edited into the
-    seals of other code, and it is no longer something only the review of
-    the counts file protects. The seal binding is valid only while the
+    read with git, and that commit must change the counts file alone; a
+    counts file not committed yet (the first `verify-counts` after
+    `predeclare`), or one outside the repository (`verify-counts` only), is
+    compared with the files as they are in the working tree. Otherwise
+    they refuse: `the record of the code differs from the commit of the
+    counts: FILES; predeclare again, or commit the code change after the
+    counts` (for uncommitted counts: `differs from the files as they are
+    in the working tree`). So the record is bound to the commit
+    discipline: the counts are committed with the code `predeclare` ran
+    with, and alone. A deliberate hand edit of the record to the seals of
+    committed code is not detectable by the engine; it is caught by the
+    review of the counts commit, whose diff must touch only the counts
+    file. The seal binding is valid only while the
     current seals of those files equal it. When they differ, `verify-counts`,
     `run` and `extend` do not refuse: they print one line (`code changed
     since predeclare (FILES): the replaced grid is replayed in full`) and
@@ -1229,8 +1236,9 @@ table of its own on the shared engine, with the following additions to it.
     they refuse, naming the changed files). So a later change to shared
     code costs the hour of the full replay, and never makes a finished
     follow-up unreplayable (a later change to `summarize.py`,
-    `audit_evidence.py` or `runtime_metrics.py` needs no history entry, as
-    no record carries their seals; one to `timing_grid.py` needs the old
+    `audit_evidence.py`, `runtime_metrics.py` or
+    `allocator-counter/private_runtime.py` needs no history entry, as no
+    record carries their seals; one to `timing_grid.py` needs the old
     seal appended to `ENGINES`, one to `acceptance.py` to `ACCEPTANCE`, and one
     to `task30_pins.py` to `PIN_HISTORY`, because every record of the follow-up
     carries those seals and `replay` refuses "changed engine", "changed
@@ -1379,6 +1387,10 @@ table of its own on the shared engine, with the following additions to it.
   refuses the follow-up. `verify-counts` again at Z (the counts file as
   committed, by the seals while the code is that of `predeclare`; after a
   code change it replays in full and needs `--replaces-pilot OUT/pilot`).
+  The counts file is committed alone: no code change in that commit, and
+  none between `predeclare` and it (a replay-code change after
+  `predeclare` is committed after Z, or `predeclare` is made again); the
+  engine refuses a commit of the counts that touches another file.
   Every command that
   appends is made in the checkout that holds the TASK30 ledger (see "One
   ledger, one checkout"). `run --candidate Z --pilot OUT/followup-pilot
