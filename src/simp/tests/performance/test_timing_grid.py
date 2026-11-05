@@ -232,6 +232,10 @@ class Rig(unittest.TestCase):
         return self.analysis(case, size, candidate == baseline, pairs,
                              layout_seed, pilot=iterations is None)
 
+    def launch_head(self):
+        """The head a pilot process runs at: the one the rig binds."""
+        return COMMIT
+
     def fake_launch(self, command, output, fds, timeout, stdin=None,
                     append=False):
         """A pilot process: both sides the baseline, two develop receipts
@@ -256,9 +260,11 @@ class Rig(unittest.TestCase):
                 json.dump(receipt, w)
         with gzip.open(folder / "pair-99.json.gz", "wt") as stream:
             json.dump(dict(fixture="loading"), stream)
-        (folder / "manifest.json").write_text(json.dumps(dict(selections={
-            side: dict(revision=self.pilot_revision)
-            for side in ("baseline", "candidate")})))
+        # As run_paired does, the manifest names the head the pilot ran at.
+        (folder / "manifest.json").write_text(json.dumps(dict(
+            head=self.launch_head(),
+            selections={side: dict(revision=self.pilot_revision)
+                        for side in ("baseline", "candidate")})))
         Path(output).write_text("log\n")
         return dict(exit=0, timed_out=False)
 
@@ -2844,12 +2850,13 @@ class Provenance(Rig):
         row = inventory["runs"][0]
         for label, head, refused in (
                 ("other", "b" * 40, True), ("same", "a" * 40, False),
-                ("none", None, False)):
+                ("none", None, True)):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
                 case = Path(tmp) / "c"
                 tg.bundle.unpack(self.pilot_dir / row["archive"], case)
                 manifest, = case.rglob("manifest.json")
                 value = json.loads(manifest.read_text())
+                value.pop("head", None)
                 if head is not None:
                     value["head"] = head
                 manifest.write_text(json.dumps(value))
@@ -2858,8 +2865,9 @@ class Provenance(Rig):
                     folder, row["case"], row["size"])
                 if refused:
                     with self.assertRaisesRegex(
-                            ValueError, "ran at bbbbbbbbbbbb, not at the "
-                            "pilot head aaaaaaaaaaaa"):
+                            ValueError, "ran at %s, not at the "
+                            "pilot head aaaaaaaaaaaa" % (
+                                "bbbbbbbbbbbb" if head else r"\(none\)")):
                         self.grid.check_pilot_cell(
                             folder, inventory, row, found)
                 else:
@@ -4269,6 +4277,9 @@ class ChainRig(Rig):
         where.mkdir(parents=True, exist_ok=True)
         (where / "Systeml.sml").write_text('val HOLDIR = "%s"\n' % (
             self.repo.resolve() if holdir is None else holdir))
+
+    def launch_head(self):
+        return self.git("rev-parse", "HEAD")
 
     def fake_launch(self, command, output, fds, timeout, stdin=None,
                     append=False):
@@ -6612,7 +6623,7 @@ class RealRecord(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), \
                 self.assertRaisesRegex(
                     ValueError, "differs from the files as they are in the "
-                    "working tree: sub/deep/code.py; predeclare again$"):
+                    "working tree: sub/deep/code.py; predeclare again"):
             self.check(self.record(), None, elsewhere)
 
     def test_uncommitted_counts_are_compared_with_the_working_tree(self):

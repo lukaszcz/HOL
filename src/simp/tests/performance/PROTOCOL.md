@@ -1222,7 +1222,8 @@ table of its own on the shared engine, with the following additions to it.
     they refuse: `the record of the code differs from the commit of the
     counts: FILES; predeclare again at the pilot's code, or commit the code
     change after the counts` (for uncommitted counts: `differs from the
-    files as they are in the working tree`). So the record is bound to the
+    files as they are in the working tree: FILES; predeclare again at the
+    pilot's code`). So the record is bound to the
     commit discipline: the counts are committed with the code `predeclare` ran
     with, and alone. The same commands also require every file of the
     record to be, in the follow-up pilot's recorded checkout head (the
@@ -1235,12 +1236,17 @@ table of its own on the shared engine, with the following additions to it.
     history`). Otherwise they refuse `the code changed between the
     follow-up pilot (HEAD) and the counts commit: FILES; pilot again, or
     predeclare at the pilot head's code and commit the code change after
-    the counts`. The recorded head is itself checked against the
-    pilot: `predeclare` (and so `verify-counts`) requires the manifest of
-    every control archived in the pilot, where the pilot records a
-    checkout, to carry the head the inventory records, so a head edited
-    in the inventory alone is refused. What this does not prevent is
-    a forgery that rewrites the pilot (inventory, archived control
+    the counts` (for uncommitted counts: `and the counts`; a file absent at
+    the pilot head is marked `(absent)` in FILES). The recorded head is
+    itself checked against the pilot, by `check_pilot_cell` (every
+    `fixed_seconds` pilot, TASK30's own included; TASK29A's is not): the
+    manifest of every control archived in the pilot must carry a `head`
+    equal to the inventory's `checkout.head`, and an inventory with no
+    checkout head is refused. `predeclare` runs it, and so do
+    `verify-counts`, `run`, `extend` and `replay` where they derive the
+    counts again (through `check_provenance`), so a head edited in the
+    inventory alone, or a manifest without one, is refused. What this does not
+    prevent is a forgery that rewrites the pilot (inventory, archived control
     manifests and archive seals) and derives the counts again: the
     guarantee is consistency of the pilot's evidence with the record,
     not authentication of it. The seal binding is valid only while the
@@ -1264,7 +1270,9 @@ table of its own on the shared engine, with the following additions to it.
     replay on both inventories of the replaced grid, through the hooks of
     the replaced engine. What they leave to the full replay (`replay`, and
     the disposition step) is: the provenance of the TASK30 pilot
-    (`task30_iterations.json` re-derived from `E/pilot`), the re-derivation
+    (`task30_iterations.json` re-derived from `E/pilot`; its replay also
+    requires each control manifest's `head` to equal the pilot
+    inventory's `checkout.head`), the re-derivation
     of the extension plan, and the deterministic re-analysis of the
     archives of the other cells of both stages; a refusal there after the
     attempt is recorded would spend it. (`run` and `extend` do make the

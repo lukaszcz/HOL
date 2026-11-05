@@ -1425,6 +1425,27 @@ class CodeChange(Rig):
                     ValueError, "no pilot inventory"):
                 self.fgo([str(x) for x in where])
 
+    def test_a_control_of_another_head_or_of_none_is_refused(self):
+        # The manifests of the pilot's controls carry the head the
+        # inventory records; one that differs, or lacks it, is refused.
+        out, code, _ = self.run_followup()
+        load = a.load
+        for label, change, message in (
+                ("other", lambda m: m.update(head="2" * 40),
+                 "ran at 222222222222, not at the pilot head"),
+                ("none", lambda m: m.pop("head"),
+                 "ran at \\(none\\), not at the pilot head")):
+            def altered(path, load=load, change=change):
+                found = load(path)
+                if Path(path).name == "manifest.json" and str(
+                        path).endswith("-control/manifest.json"):
+                    change(found)
+                return found
+            with self.subTest(label), patch.object(
+                    a, "load", altered), self.assertRaisesRegex(
+                    ValueError, message):
+                self.fgo(self.sealed_commands(out)["verify-counts"])
+
     def test_a_pilot_head_the_repository_lacks_is_said_so(self):
         self.follow_commit = "2" * 40
         self.pilot_unknown = True

@@ -1328,14 +1328,16 @@ class Grid:
                       inventory["baseline"]
                       for side in ("baseline", "candidate")),
                   "a pilot process is not the baseline")
-        # A pilot that records its checkout (the follow-up's does) ran its
-        # controls at that head: a manifest of another head is not of it.
+        # The controls ran at the head the inventory records: a manifest of
+        # another head, or with none, is not of this pilot.
         made = (inventory.get("checkout") or {}).get("head")
-        if made is not None and "head" in manifest:
-            a.require(manifest["head"] == made,
-                      "the control of %s-%d ran at %s, not at the pilot "
-                      "head %s" % (case, size, str(manifest["head"])[:12],
-                                   made[:12]))
+        a.require(isinstance(made, str) and made,
+                  "the pilot inventory records no checkout head")
+        a.require(manifest.get("head") == made,
+                  "the control of %s-%d ran at %s, not at the pilot "
+                  "head %s" % (case, size, str(manifest["head"])[:12]
+                               if "head" in manifest else "(none)",
+                               made[:12]))
         options = argparse.Namespace(
             baseline=inventory["baseline"], pairs=inventory["pairs"],
             samples=inventory["samples"], batch_seconds=seconds)
@@ -3007,7 +3009,8 @@ class Grid:
         if commit is None:
             a.require(not differ, "the record of the code differs from the "
                       "files as they are in the working tree: %s; "
-                      "predeclare again" % ", ".join(sorted(differ)))
+                      "predeclare again at the pilot's code" %
+                      ", ".join(sorted(differ)))
         else:
             a.require(not differ, "the record of the code differs from the "
                       "commit of the counts: %s; predeclare again at the "
@@ -3044,7 +3047,8 @@ class Grid:
                     "must be made at a commit in the candidate's history"
                     % head[:12]) from None
             if now != seal:
-                moved.append(file)
+                moved.append(file + ("" if now is not None
+                                     else " (absent)"))
         a.require(not moved, "the code changed between the follow-up "
                   "pilot (%s) and the %s: %s; pilot again, or predeclare at "
                   "the pilot head's code and commit the code change after "
