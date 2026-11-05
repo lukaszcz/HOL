@@ -1328,6 +1328,14 @@ class Grid:
                       inventory["baseline"]
                       for side in ("baseline", "candidate")),
                   "a pilot process is not the baseline")
+        # A pilot that records its checkout (the follow-up's does) ran its
+        # controls at that head: a manifest of another head is not of it.
+        made = (inventory.get("checkout") or {}).get("head")
+        if made is not None and "head" in manifest:
+            a.require(manifest["head"] == made,
+                      "the control of %s-%d ran at %s, not at the pilot "
+                      "head %s" % (case, size, str(manifest["head"])[:12],
+                                   made[:12]))
         options = argparse.Namespace(
             baseline=inventory["baseline"], pairs=inventory["pairs"],
             samples=inventory["samples"], batch_seconds=seconds)
@@ -2838,8 +2846,9 @@ class Grid:
         if counts is not None:
             a.require(counts_path is not None, "no counts file to compare "
                       "the record of the code with")
-            self.h.check_code_record(counts.get("replaces"), repo,
-                                     counts_path, candidate, pilot_dir)
+            self.h.check_code_record(
+                counts.get("replaces"), repo, counts_path, candidate,
+                pilot_dir, (counts.get("pilot") or {}).get("inventory"))
         changed = [] if counts is None else self.h.changed_code(
             counts.get("replaces"))
         if changed:
@@ -2933,7 +2942,7 @@ class Grid:
         return {n: a.seal(p) for n, p in self.h.replay_paths().items()}
 
     def check_code_record(self, recorded, repo, path, candidate=None,
-                          pilot=None):
+                          pilot=None, pilot_seal=None):
         """`replaces.code`, the record of the code `predeclare` replayed
         with, is not derived by a command, but it is not trusted either: it
         is the seals of the same files as the commit that holds the counts
@@ -2946,7 +2955,10 @@ class Grid:
         `changed_code` finds. With a committed counts file and the follow-up
         `pilot` (its directory), the record must also equal the seals of
         those files at the head the pilot's inventory records, so that no
-        replay code changed between the pilot and the counts commit."""
+        replay code changed between the pilot and the counts commit.
+        That comparison is made for counts not committed yet too (with the
+        files at the pilot head), and after the pilot's inventory is
+        found to be the one the counts seal (`pilot_seal`)."""
         if not (isinstance(recorded, dict) and
                 isinstance(recorded.get("files"), dict)):
             return
@@ -2998,19 +3010,46 @@ class Grid:
                       "predeclare again" % ", ".join(sorted(differ)))
         else:
             a.require(not differ, "the record of the code differs from the "
-                      "commit of the counts: %s; predeclare again, or "
-                      "commit the code change after the counts" %
+                      "commit of the counts: %s; predeclare again at the "
+                      "pilot's code, or commit the code change after the "
+                      "counts" %
                       ", ".join(sorted(differ)))
-        if commit is not None and pilot is not None:
-            head = a.load(Path(pilot) / "inventory.json")["checkout"]["head"]
-            moved = []
-            for file, seal in recorded["code"].items():
-                where = paths.get(file, here / file)
-                if git_seal(repo, head, where) != seal:
-                    moved.append(file)
-            a.require(not moved, "the code changed between the follow-up "
-                      "pilot (%s) and the counts commit: %s; pilot again"
-                      % (head[:12], ", ".join(sorted(moved))))
+        if pilot is not None:
+            self.pilot_head_code(recorded, repo, pilot, pilot_seal, paths,
+                                 here, commit is not None)
+
+    def pilot_head_code(self, recorded, repo, pilot, pilot_seal, paths,
+                        here, committed):
+        """The record of the code equals the seals of those files at the
+        head the follow-up pilot (directory `pilot`) made; the pilot is
+        first required to be the one the counts seal."""
+        found = Path(pilot) / "inventory.json"
+        a.require(found.is_file(), "no pilot inventory at %s" % found)
+        a.require(pilot_seal is not None and a.seal(found) == pilot_seal,
+                  "--pilot %s is not the pilot of the counts (its "
+                  "inventory is not the one they seal)" % pilot)
+        head = (a.load(found).get("checkout") or {}).get("head")
+        a.require(isinstance(head, str) and head,
+                  "the pilot inventory %s records no checkout head" % found)
+        moved = []
+        for file, seal in recorded["code"].items():
+            where = paths.get(file, here / file)
+            try:
+                now = git_seal(repo, head, where)
+            except ValueError as error:
+                if not str(error).startswith("unknown revision"):
+                    raise
+                raise ValueError(
+                    "the pilot head %s is not in this repository: the pilot "
+                    "must be made at a commit in the candidate's history"
+                    % head[:12]) from None
+            if now != seal:
+                moved.append(file)
+        a.require(not moved, "the code changed between the follow-up "
+                  "pilot (%s) and the %s: %s; pilot again, or predeclare at "
+                  "the pilot head's code and commit the code change after "
+                  "the counts" % (head[:12], "counts commit" if committed
+                                  else "counts", ", ".join(sorted(moved))))
 
     def require_replaced_openings(self, args):
         """The ledger the attempt of a follow-up will be appended to (the
@@ -3384,7 +3423,9 @@ class Grid:
                 inventory["iterations"].get("replaces"),
                 a.HERE.parents[3] if repo is None else repo,
                 self.h.counts_for(inventory), inventory["candidate"],
-                args.pilot)
+                args.pilot,
+                (inventory["iterations"].get("pilot") or {}).get(
+                    "inventory"))
             self.h.bind_from(args, inventory, root)
             self.h.check_replaced(inventory, root, repo)
         else:

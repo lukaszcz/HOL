@@ -1220,17 +1220,30 @@ table of its own on the shared engine, with the following additions to it.
     `predeclare`), or one outside the repository (`verify-counts` only), is
     compared with the files as they are in the working tree. Otherwise
     they refuse: `the record of the code differs from the commit of the
-    counts: FILES; predeclare again, or commit the code change after the
-    counts` (for uncommitted counts: `differs from the files as they are
-    in the working tree`). So the record is bound to the commit
-    discipline: the counts are committed with the code `predeclare` ran
+    counts: FILES; predeclare again at the pilot's code, or commit the code
+    change after the counts` (for uncommitted counts: `differs from the
+    files as they are in the working tree`). So the record is bound to the
+    commit discipline: the counts are committed with the code `predeclare` ran
     with, and alone. The same commands also require every file of the
     record to be, in the follow-up pilot's recorded checkout head (the
-    pilot inventory's `checkout.head`), what the record says: otherwise
-    they refuse `the code changed between the follow-up pilot (HEAD) and
-    the counts commit: FILES; pilot again`. A record edited by hand to
-    the seals of other code is therefore refused unless the pilot head
-    itself carried that code. The seal binding is valid only while the
+    pilot inventory's `checkout.head`), what the record says, for counts
+    not yet committed too (the files at that head are compared); the
+    pilot's inventory is first required to be the one the counts seal
+    (`--pilot` of another pilot is refused as such, and a pilot head
+    the repository lacks as `the pilot head H is not in this
+    repository: the pilot must be made at a commit in the candidate's
+    history`). Otherwise they refuse `the code changed between the
+    follow-up pilot (HEAD) and the counts commit: FILES; pilot again, or
+    predeclare at the pilot head's code and commit the code change after
+    the counts`. The recorded head is itself checked against the
+    pilot: `predeclare` (and so `verify-counts`) requires the manifest of
+    every control archived in the pilot, where the pilot records a
+    checkout, to carry the head the inventory records, so a head edited
+    in the inventory alone is refused. What this does not prevent is
+    a forgery that rewrites the pilot (inventory, archived control
+    manifests and archive seals) and derives the counts again: the
+    guarantee is consistency of the pilot's evidence with the record,
+    not authentication of it. The seal binding is valid only while the
     current seals of those files equal it. When they differ, `verify-counts`,
     `run` and `extend` do not refuse: they print one line (`code changed
     since predeclare (FILES): the replaced grid is replayed in full`) and
@@ -1392,9 +1405,13 @@ table of its own on the shared engine, with the following additions to it.
   code change it replays in full and needs `--replaces-pilot OUT/pilot`).
   The counts file is committed alone: no code change in that commit, and
   none between `predeclare` and it (a replay-code change after
-  `predeclare` is committed after Z, or `predeclare` is made again); the
-  engine refuses a commit of the counts that touches another file, and a
-  record of the code that differs from the pilot's head (pilot again).
+  `predeclare` is committed after Z, or `predeclare` is made again at the
+  pilot head's code, with no replay-code change between the pilot and
+  `predeclare`); the pilot is made at a commit of Z's history (a pilot
+  head the repository lacks is refused). The engine refuses a commit of
+  the counts that touches another file, and a record of the code that
+  differs from the pilot's head (pilot again, or predeclare at the pilot
+  head's code), at the first `verify-counts` already.
   Every command that
   appends is made in the checkout that holds the TASK30 ledger (see "One
   ledger, one checkout"). `run --candidate Z --pilot OUT/followup-pilot

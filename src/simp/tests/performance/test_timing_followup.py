@@ -14,6 +14,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import unittest
 from unittest.mock import patch
 
@@ -198,6 +199,7 @@ class Rig(ttg.Rig):
         self.between, self.follow_blob = [], {}
         self.committed_code, self.follow_committed = {}, True
         self.pilot_code, self.follow_commit = {}, None
+        self.pilot_unknown = False
         # The stand-in analyses of the replaced grid (layout seed s0) and of
         # the follow-up (f0) are separate, as the replay of the first
         # must not follow what a test sets for the second.
@@ -293,6 +295,9 @@ class Rig(ttg.Rig):
         are, unless a test names another state (`committed_code` for the
         commit of the counts, `pilot_code` for the pilot's head)."""
         found = self.committed_code.get(Path(path).name)
+        if self.pilot_unknown and rev == self.load(
+                self.fpilot / "inventory.json")["checkout"]["head"]:
+            raise ValueError("unknown revision: " + rev)
         if self.pilot_code and rev == self.load(
                 self.fpilot / "inventory.json")["checkout"]["head"]:
             found = self.pilot_code.get(Path(path).name, found)
@@ -1378,13 +1383,56 @@ class CodeChange(Rig):
         self.assertEqual(self.fgo(verify)[0], 0)
         self.pilot_code = {"summarize.py": dict(bytes=1, sha256="a" * 64)}
         refusal = ("the code changed between the follow-up pilot \\(.*\\) "
-                   "and the counts commit: summarize.py; pilot again$")
+                   "and the counts commit: summarize.py; pilot again, or "
+                   "predeclare at the pilot head's code and commit the "
+                   "code change after the counts$")
         for action in ("verify-counts", "run", "extend"):
             with self.subTest(action), self.assertRaisesRegex(
                     ValueError, refusal):
                 self.fgo(self.sealed_commands(out)[action])
         with self.assertRaisesRegex(ValueError, refusal):
             self.replay_followup(out)
+
+    def test_the_pilot_head_is_compared_for_uncommitted_counts_too(self):
+        # The mismatch shows at the first verify-counts, before the counts
+        # are committed.
+        self.follow_committed = False
+        self.pilot_code = {"summarize.py": dict(bytes=1, sha256="a" * 64)}
+        with self.assertRaisesRegex(
+                ValueError, "the code changed between the follow-up pilot "
+                "\\(.*\\) and the counts: summarize.py; pilot again, or "
+                "predeclare at the pilot head's code"):
+            self.fgo(self.sealed_commands(None)["verify-counts"])
+
+    def test_a_pilot_that_is_not_the_one_of_the_counts_is_refused(self):
+        out, code, _ = self.run_followup()
+        for action in ("verify-counts", "run", "extend"):
+            command = self.sealed_commands(out)[action]
+            other = self.root / ("other-" + action)
+            other.mkdir()
+            shutil.copy(self.fpilot / "inventory.json", other)
+            inv = self.load(other / "inventory.json")
+            inv["checkout"]["head"] = "1" * 40
+            (other / "inventory.json").write_text(json.dumps(inv))
+            where = [str(other) if x == str(self.fpilot) else x
+                     for x in command]
+            self.assertNotEqual(where, command)
+            with self.subTest(action), self.assertRaisesRegex(
+                    ValueError, "is not the pilot of the counts"):
+                self.fgo([str(x) for x in where])
+            (other / "inventory.json").unlink()
+            with self.subTest(action + " none"), self.assertRaisesRegex(
+                    ValueError, "no pilot inventory"):
+                self.fgo([str(x) for x in where])
+
+    def test_a_pilot_head_the_repository_lacks_is_said_so(self):
+        self.follow_commit = "2" * 40
+        self.pilot_unknown = True
+        with self.assertRaisesRegex(
+                ValueError, "the pilot head [0-9a-f]+ is not in this "
+                "repository: the pilot must be made at a commit in the "
+                "candidate's history$"):
+            self.fgo(self.sealed_commands(None)["verify-counts"])
 
     def h_counts_commit(self, path):
         return self.fgrid.h.counts_commit(self.repo, FOLLOW, path)
@@ -1445,8 +1493,8 @@ class CodeChange(Rig):
         self.fcounts.write_text(json.dumps(counts))
         with self.assertRaisesRegex(
                 ValueError, "the commit of the counts: acceptance.py, "
-                "runtime_metrics.py; predeclare again, or commit the code "
-                "change after the counts$"):
+                "runtime_metrics.py; predeclare again at the pilot's code, or "
+                "commit the code change after the counts$"):
             self.fgo(self.sealed_commands(None)["verify-counts"])
 
     def test_counts_not_committed_yet_are_compared_with_the_files(self):

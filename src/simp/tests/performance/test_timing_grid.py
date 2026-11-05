@@ -2838,6 +2838,33 @@ class Provenance(Rig):
                                 manifest.parent.parent, row["case"],
                                 row["size"]))
 
+    def test_a_control_made_at_another_head_than_the_pilot_is_refused(self):
+        inventory = dict(self.inventory(self.pilot_dir),
+                         checkout={"head": "a" * 40})
+        row = inventory["runs"][0]
+        for label, head, refused in (
+                ("other", "b" * 40, True), ("same", "a" * 40, False),
+                ("none", None, False)):
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                case = Path(tmp) / "c"
+                tg.bundle.unpack(self.pilot_dir / row["archive"], case)
+                manifest, = case.rglob("manifest.json")
+                value = json.loads(manifest.read_text())
+                if head is not None:
+                    value["head"] = head
+                manifest.write_text(json.dumps(value))
+                folder = manifest.parent.parent
+                found = self.grid.calibration_counts(
+                    folder, row["case"], row["size"])
+                if refused:
+                    with self.assertRaisesRegex(
+                            ValueError, "ran at bbbbbbbbbbbb, not at the "
+                            "pilot head aaaaaaaaaaaa"):
+                        self.grid.check_pilot_cell(
+                            folder, inventory, row, found)
+                else:
+                    self.grid.check_pilot_cell(folder, inventory, row, found)
+
     def test_counts_that_no_pilot_made_are_refused(self):
         value = json.loads(self.counts.read_text())
         for label, changed in (
@@ -6535,8 +6562,8 @@ class RealRecord(unittest.TestCase):
         for candidate in (None, self.later):
             with self.subTest(candidate), self.assertRaisesRegex(
                     ValueError, "differs from the commit of the counts: "
-                    "sub/deep/code.py; predeclare again, or commit the "
-                    "code change after the counts$"):
+                    "sub/deep/code.py; predeclare again at the pilot's "
+                    "code, or commit the code change after the counts$"):
                 self.check(self.record(**{"sub/deep/code.py": now}),
                            candidate)
 
@@ -6605,13 +6632,17 @@ class RealRecord(unittest.TestCase):
             json.dumps({"checkout": {"head": head}}))
         return pilot
 
+    def pilot_check(self, record, counts, candidate, head, **kw):
+        pilot = self.pilot_at(head)
+        kw.setdefault("pilot_seal", a.seal(pilot / "inventory.json"))
+        self.grid.check_code_record(
+            record, self.repo, counts, candidate, pilot, **kw)
+
     def test_the_code_must_be_that_of_the_pilot_head_too(self):
         # The record equals the commit of the counts (code_commit's code
         # was committed before it), not the later change.
         for head in (self.code_commit, self.counts_commit):
-            self.grid.check_code_record(
-                self.record(), self.repo, self.counts, self.later,
-                self.pilot_at(head))
+            self.pilot_check(self.record(), self.counts, self.later, head)
         self.code.write_text("two, later\n")
         # A forged record: the seals of the later code, held by a counts
         # commit that follows it; the pilot was at the earlier code.
@@ -6619,17 +6650,59 @@ class RealRecord(unittest.TestCase):
         again = self.repo / "sub" / "again.json"
         again.write_text("{}\n")
         final = self.commit("counts again")
-        self.grid.check_code_record(
-            forged, self.repo, again, final, self.pilot_at(self.later))
+        self.pilot_check(forged, again, final, self.later)
+        remedy = ("pilot again, or predeclare at the pilot head's code "
+                  "and commit the code change after the counts$")
         with self.assertRaisesRegex(
                 ValueError, "the code changed between the follow-up pilot "
-                "\\(%s\\) and the counts commit: sub/deep/code.py; pilot "
-                "again$" % self.code_commit[:12]):
-            self.grid.check_code_record(
-                forged, self.repo, again, final,
-                self.pilot_at(self.code_commit))
-        # Without a pilot, or for uncommitted counts, it is not asked.
+                "\\(%s\\) and the counts commit: sub/deep/code.py; %s"
+                % (self.code_commit[:12], remedy)):
+            self.pilot_check(forged, again, final, self.code_commit)
+        # Without a pilot it is not asked.
         self.grid.check_code_record(forged, self.repo, again, final)
+
+    def test_the_pilot_head_is_compared_for_uncommitted_counts_too(self):
+        new = self.repo / "sub" / "new.json"
+        new.write_text("{}\n")
+        self.code.write_text("two, later\n")
+        record = self.record(**{"sub/deep/code.py": a.seal(self.code)})
+        self.pilot_check(record, new, None, self.later)
+        with self.assertRaisesRegex(
+                ValueError, "the code changed between the follow-up pilot "
+                "\\(%s\\) and the counts: sub/deep/code.py; pilot again, "
+                "or predeclare" % self.code_commit[:12]):
+            self.pilot_check(record, new, None, self.code_commit)
+
+    def test_the_pilot_is_the_one_the_counts_seal_before_its_head(self):
+        seal = a.seal(self.pilot_at(self.code_commit) / "inventory.json")
+        # Another pilot (or none given to the counts) is refused as such.
+        for wrong in (dict(pilot_seal=dict(seal, bytes=0)),
+                      dict(pilot_seal=None)):
+            with self.subTest(wrong), self.assertRaisesRegex(
+                    ValueError, "is not the pilot of the counts"):
+                self.pilot_check(self.record(), self.counts, self.later,
+                                 self.code_commit, **wrong)
+        # An inventory without a checkout is refused in words, not a
+        # KeyError, once it is the sealed one.
+        pilot = self.root / "pilot"
+        (pilot / "inventory.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "records no checkout head"):
+            self.grid.check_code_record(
+                self.record(), self.repo, self.counts, self.later, pilot,
+                a.seal(pilot / "inventory.json"))
+        (pilot / "inventory.json").unlink()
+        with self.assertRaisesRegex(ValueError, "no pilot inventory"):
+            self.grid.check_code_record(
+                self.record(), self.repo, self.counts, self.later, pilot,
+                seal)
+
+    def test_a_pilot_head_the_repository_lacks_is_said_so(self):
+        with self.assertRaisesRegex(
+                ValueError, "the pilot head ffffffffffff is not in this "
+                "repository: the pilot must be made at a commit in the "
+                "candidate's history$"):
+            self.pilot_check(self.record(), self.counts, self.later,
+                             "f" * 40)
 
     def test_the_commit_of_the_counts_must_change_that_file_alone(self):
         (self.repo / "sub" / "more.json").write_text("{}\n")
