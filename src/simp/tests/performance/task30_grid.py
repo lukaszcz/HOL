@@ -41,10 +41,12 @@ outside the repository), for the tree must be clean when they end.
 The exit status is zero only when every cell passes (1: a cell failed; 2:
 the grid is not conclusive). Failed, inconclusive, control-limited and
 protocol-failed cells are listed separately and none is excused here; a
-disposition, if one is ever made, is a separate reviewed decision. A command
-that is refused, or ends with an error that decided nothing, prints one
-REFUSED line on the standard error (after a traceback, if the error is not a
-refusal) and exits 3.
+disposition, if one is ever made, is a separate reviewed decision. The two
+cells this grid left inconclusive are measured again by task30_followup.py,
+which replays this grid (its own table, engine and seals) before it does. A
+command that is refused, or ends with an error that decided nothing, prints
+one REFUSED line on the standard error (after a traceback, if the error is not
+a refusal) and exits 3.
 
   prepare     configure, build and stamp the checkout    (takes the lock)
   pilot       develop-only cells for the counts          (needs a window)
@@ -131,6 +133,22 @@ TABLE = tg.Table(
 ENGINE = tg.Grid(TABLE, doc=__doc__)
 
 
+def harness_match(timing, allocation):
+    """Require that a timing grid and an allocation grid (their inventories)
+    ran in one harness: the checkout's head and its tree outside the
+    performance area are those the allocation run recorded, and that
+    checkout was clean. Returns the harness the allocation grid records."""
+    harness = allocation.get("harness", {})
+    a.require(
+        timing["checkout"]["head"] == harness.get("head") and
+        timing["checkout"]["tree_outside_performance"] ==
+        harness.get("tree_outside_performance") and
+        harness.get("dirty") is False,
+        "the two grids ran in different harnesses (head %s and %s)"
+        % (timing["checkout"]["head"], harness.get("head")))
+    return harness
+
+
 def verdict(grid, allocation, repo, pilot, ledger=None):
     """Replay both gates, require that they measured one candidate with one
     harness, and return the closing line and the exit status. Nothing is
@@ -141,7 +159,6 @@ def verdict(grid, allocation, repo, pilot, ledger=None):
               "the allocation grid is partial: it has no decisions")
     timing = a.load(grid / "inventory.json")
     counted = a.load(allocation / "inventory.json")
-    harness = counted.get("harness", {})
     a.require(counted.get("task") == "task30",
               "the allocation grid is not a TASK30 grid")
     a.require(timing["candidate"] == counted["candidate"],
@@ -149,13 +166,7 @@ def verdict(grid, allocation, repo, pilot, ledger=None):
               % (timing["candidate"], counted["candidate"]))
     a.require(timing["baseline"] == counted["baseline"],
               "the two grids have different baselines")
-    a.require(
-        timing["checkout"]["head"] == harness.get("head") and
-        timing["checkout"]["tree_outside_performance"] ==
-        harness.get("tree_outside_performance") and
-        harness.get("dirty") is False,
-        "the two grids ran in different harnesses (head %s and %s)"
-        % (timing["checkout"]["head"], harness.get("head")))
+    harness = harness_match(timing, counted)
     timing_code = ENGINE.replay(argparse.Namespace(
         output=grid, partial=False, repo=repo, pilot=pilot, ledger=ledger))
     for line in tg.class_report(TABLE.label, a.load(grid / "decisions.json")):

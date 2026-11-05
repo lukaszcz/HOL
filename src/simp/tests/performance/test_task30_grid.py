@@ -310,6 +310,166 @@ class History(unittest.TestCase):
             t30.ENGINE.check_code(bad, True)
 
 
+class Followup(unittest.TestCase):
+    """The follow-up table (task30_followup.py): two cells of the TASK30
+    grid, measured again under the table's own conditions."""
+
+    def test_it_is_the_two_cells_the_task30_grid_left_inconclusive(self):
+        import task30_followup as f
+        table = f.TABLE
+        self.assertEqual(table.names(),
+                         ["exclude_partial-1", "exclude_tactic_reuse-0"])
+        self.assertEqual(table.cases, ("exclude_partial",
+                                       "exclude_tactic_reuse"))
+        self.assertLessEqual(set(table.names()), set(t30.TABLE.names()))
+        self.assertIs(table.replaces.table, t30.TABLE)
+        self.assertEqual(table.replaces.rule, "inconclusive")
+        self.assertEqual(table.family, t30.TABLE.name)
+        self.assertEqual((table.name, table.label),
+                         ("task30f", "TASK30-FOLLOWUP"))
+        self.assertEqual(table.schema("iterations"),
+                         "task30f-iterations-v1")
+
+    def test_it_measures_as_task30_does_with_the_warmup_schedule(self):
+        import task30_followup as f
+        table = f.TABLE
+        self.assertEqual((table.schedule, table.headroom), ("warmup", 1))
+        self.assertTrue(table.fixed_seconds and table.require_seed and
+                        table.engine)
+        # Seconds: the TASK30 table's, per case.
+        self.assertEqual(
+            table.seconds_map(), {
+                "exclude_partial-1": 1.0, "exclude_tactic_reuse-0": 0.3})
+        for case in table.cases:
+            self.assertEqual(table.seconds_for(case),
+                             t30.TABLE.seconds_for(case))
+        self.assertEqual((table.samples, table.pairs), (5, 40))
+        self.assertEqual(table.pairs, 2 * t30.TABLE.pairs)
+        self.assertEqual((table.target, table.max_pairs, table.baseline),
+                         (0.015, 120, a.BASE))
+        self.assertEqual((table.sealed, table.sources, table.pinned,
+                          table.pin_file, table.tree),
+                         (t30.TABLE.sealed, t30.TABLE.sources,
+                          t30.TABLE.pinned, t30.TABLE.pin_file,
+                          t30.TABLE.tree))
+        self.assertEqual(table.code(), t30.TABLE.code())
+        self.assertEqual((table.drivers, table.engines,
+                          table.layout_acceptance, table.sealed_history),
+                         ((), (), (), {}))
+
+    def test_its_layout_seed_is_not_the_task30_grids_nor_its_second_stage(
+            self):
+        import task30_followup as f
+        self.assertEqual(f.TABLE.seed, "task30-followup-1")
+        taken = {t30.LAYOUT_SEED, t30.LAYOUT_SEED + "-ext"}
+        self.assertFalse({f.TABLE.seed, f.TABLE.seed + "-ext"} & taken)
+        with self.assertRaisesRegex(ValueError, "seed of its own"):
+            tg.Table(
+                "task30f", "TASK30-FOLLOWUP", f.CASES, f.__file__, f.COUNTS,
+                cells=f.CELLS, family="task30", seconds=t30.SECONDS,
+                replaces=f.TABLE.replaces, fixed_seconds=True,
+                pairs=40, seed=t30.LAYOUT_SEED + "-ext", baseline=a.BASE,
+                seconds_by_case={"exclude_partial": t30.LONG_SECONDS})
+
+    def test_its_evidence_is_kept_with_the_task30_ledger(self):
+        import task30_followup as f
+        for repo in (REPO, Path("/nowhere")):
+            self.assertEqual(f.ENGINE.ledger_path(repo),
+                             t30.ENGINE.ledger_path(repo))
+            self.assertEqual(f.ENGINE.stamp_path(repo),
+                             t30.ENGINE.stamp_path(repo))
+        self.assertEqual(
+            f.ENGINE.ledger_path(REPO).relative_to(REPO).as_posix(),
+            ".agent-files/evidence/task30/attempts.jsonl")
+
+    def test_the_table_loads_before_its_counts_exist(self):
+        import task30_followup as f
+        self.assertEqual(f.COUNTS.name, "task30_followup_iterations.json")
+        self.assertEqual(f.TABLE.latest(), f.COUNTS)
+        if f.COUNTS.exists():
+            counts = a.load(f.COUNTS)
+            self.assertEqual(counts["schema"], "task30f-iterations-v1")
+            self.assertEqual(set(counts["iterations"]), set(f.CELLS))
+            self.assertEqual(counts["pairs"], 40)
+            self.assertEqual(set(counts["pairs_by_cell"]), set(f.CELLS))
+            self.assertEqual(counts["seconds"], f.TABLE.seconds_map())
+            self.assertEqual(tg.schedule_of(counts), "warmup")
+
+    def test_its_commands_are_the_engines_with_the_replaced_grid(self):
+        import task30_followup as f
+        parser, sub = f.ENGINE.parser()
+        for action, option in (("predeclare", "--replaces"),
+                               ("verify-counts", "--replaces-pilot"),
+                               ("run", "--replaces"),
+                               ("extend", "--replaces-pilot"),
+                               ("replay", "--replaces-pilot")):
+            self.assertIn(option, sub.choices[action].format_help(), action)
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(f.main(["run", "--output", tmp + "/x",
+                                         "--candidate", "c" * 40]),
+                                 tg.REFUSED)
+            self.assertEqual(err.getvalue(),
+                             "REFUSED: exclusive window required\n")
+
+
+class Harness(unittest.TestCase):
+    """The exact comparison of a timing grid's checkout with the harness of
+    an allocation grid, as `close` makes it."""
+    HEAD, TREE = "c" * 40, "t" * 64
+
+    def timing(self, **kw):
+        return dict(checkout=dict(
+            dict(head=self.HEAD, tree_outside_performance=self.TREE), **kw))
+
+    def counted(self, **kw):
+        return dict(harness=dict(
+            dict(head=self.HEAD, tree_outside_performance=self.TREE,
+                 dirty=False), **kw))
+
+    def test_one_head_one_tree_and_a_clean_checkout_match(self):
+        counted = self.counted()
+        self.assertIs(t30.harness_match(self.timing(), counted),
+                      counted["harness"])
+
+    def test_any_difference_is_a_refusal_naming_the_heads(self):
+        for label, timing, counted in (
+                ("head", self.timing(head="d" * 40), self.counted()),
+                ("allocation head", self.timing(),
+                 self.counted(head="d" * 40)),
+                ("tree", self.timing(), self.counted(
+                    tree_outside_performance="u" * 64)),
+                ("timing tree", self.timing(
+                    tree_outside_performance="u" * 64), self.counted()),
+                ("dirty", self.timing(), self.counted(dirty=True)),
+                ("not recorded dirty", self.timing(), dict(harness=dict(
+                    head=self.HEAD, tree_outside_performance=self.TREE))),
+                ("no harness", self.timing(), {})):
+            with self.subTest(label), self.assertRaisesRegex(
+                    ValueError, r"different harnesses \(head %s and "
+                    % (timing["checkout"]["head"],)):
+                t30.harness_match(timing, counted)
+
+    def test_close_uses_it(self):
+        with unittest.mock.patch.object(
+                t30, "harness_match", side_effect=ValueError("seen")) as seen:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for name in ("grid", "alloc"):
+                    (root / name).mkdir()
+                (root / "grid" / "inventory.json").write_text(json.dumps(
+                    dict(candidate="c" * 40, baseline=a.BASE)))
+                (root / "alloc" / "inventory.json").write_text(json.dumps(
+                    dict(task="task30", candidate="c" * 40,
+                         baseline=a.BASE)))
+                (root / "alloc" / "decisions.json").write_text("{}")
+                with self.assertRaisesRegex(ValueError, "seen"):
+                    t30.verdict(root / "grid", root / "alloc", REPO,
+                                root / "pilot")
+        self.assertEqual(seen.call_count, 1)
+
+
 class Whole(ttg.Rig):
     """The TASK30 table, run end to end on the stand-ins."""
     pairs, samples = 20, 5
