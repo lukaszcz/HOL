@@ -28,7 +28,7 @@ them again from the replaced grid and refuse a file that differs.
 The follow-up has its own second stage (`extend`, seed `SEED-ext`) for a cell
 whose control is outside the window, and a decision of its own over its two
 cells: any outcome but pass blocks (a fail is final). Combining it with the
-TASK30 decision is the disposition step's (`task30_grid.py dispose`), not
+TASK30 decision is the disposition step's (`task30_dispose.py`), not
 this table's. Attempts go into the TASK30 ledger
 (`.agent-files/evidence/task30/attempts.jsonl`), the same hash chain, each
 line naming its table; the build stamp and the prepare log are this table's

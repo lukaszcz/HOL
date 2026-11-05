@@ -1836,6 +1836,35 @@ class ReplacedOpenings(Rig):
         self.assertNotIn("task30_pins.py", tg.REPLAY_CODE)
         self.assertEqual(t30.base.TABLE.name, "task30")
 
+    # What the disposition (task30_dispose.py) imports beyond the replay
+    # path and its own sealed code: the allocation matrix's building and
+    # running of a toolchain, which its replay of an allocation grid does
+    # not do.
+    ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe"}
+
+    def test_the_disposition_is_downstream_of_the_replay(self):
+        # The disposition consumes the replays and is in neither table's
+        # seals: nothing on the replay path imports it, so it is outside
+        # the closure that REPLAY_CODE must cover, and `task30_grid.py`
+        # stays as it is. What it imports that the replay path does not is
+        # sealed by its own record (`task30_dispose.CODE`) or is the
+        # allocation matrix's toolchain building.
+        import task30_dispose as dispose
+        sources = self.replay_files()
+        replayed = self.closure(sources)
+        self.assertNotIn("task30_dispose", replayed)
+        self.assertNotIn("task30_dispose", self.covered())
+        self.ROOTS = ("task30_dispose",)
+        try:
+            own = self.closure(sources)
+        finally:
+            del self.ROOTS
+        sealed = {Path(n).stem for n in dispose.CODE}
+        self.assertEqual(
+            sorted(own - replayed - sealed - self.ALLOCATION_BUILD), [])
+        self.assertLessEqual(self.ALLOCATION_BUILD, own - replayed)
+        self.assertIn("allocation_analysis", own - replayed)
+
     def test_a_new_replay_import_of_a_left_out_module_is_found(self):
         sources = self.replay_files()
         self.assertEqual(sorted(self.closure(sources) - self.covered()), [])

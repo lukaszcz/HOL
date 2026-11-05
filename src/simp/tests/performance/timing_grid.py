@@ -1101,6 +1101,63 @@ def class_report(label, decisions):
     return lines
 
 
+def dispose(decisions, attributed, evidence):
+    """The policy owner's disposition of a final grid decision, generalised
+    from TASK29A's (`task29a_grid.dispose`): every cell, and the retained
+    slope where it was measured, ends in one of four classes.
+
+    - pass;
+    - fail, which stays a fail;
+    - attributed: a control-limited cell (every open metric inconclusive
+      only because its B/B control is outside the window) that is listed in
+      `attributed` and for which `evidence(cell)` holds;
+    - blocking: a protocol failure, an inconclusive cell, and a
+      control-limited cell that is listed but whose evidence fails, or that
+      is not listed.
+
+    `attributed` is a collection of cell names; `evidence(cell)` returns
+    None when the evidence for the cell holds, or the text naming what
+    fails. There is no non-blocking class for a cell the control left open
+    other than that. The control-limited cells found must be exactly the
+    listed ones (a stale list, a listed cell that is any other class and an
+    unlisted control-limited cell are refused, naming them). Returns
+    `dict(status, cells, blocking, counts)`: `blocking` maps each blocking
+    cell to its reason, and the status is fail when any cell fails, blocked
+    when any blocks, pass otherwise."""
+    found = classify(decisions)
+    listed = sorted(attributed)
+    limited = sorted(found["control_limited"])
+    if limited != listed:
+        where = {name: kind for kind, names in found.items()
+                 for name in names}
+        extra = [n for n in listed if n not in limited]
+        missing = [n for n in limited if n not in listed]
+        a.require(False, "stale attribution: listed but not "
+                  "control-limited: %s; control-limited but not listed: %s"
+                  % (", ".join("%s (%s)" % (n, where.get(n, "not a cell"))
+                               for n in extra) or "none",
+                     ", ".join(missing) or "none"))
+    cells = {"pass": list(found["pass"]), "fail": list(found["fail"]),
+             "attributed": [], "blocking": []}
+    blocking = {}
+    for name in found["protocol"]:
+        blocking[name] = "no admitted measurement"
+    for name in found["inconclusive"]:
+        blocking[name] = "inconclusive"
+    for name in limited:
+        failed = evidence(name)
+        if failed is None:
+            cells["attributed"].append(name)
+        else:
+            blocking[name] = "control-limited, evidence fails: " + failed
+    cells["blocking"] = sorted(blocking)
+    status = ("fail" if cells["fail"] else
+              "blocked" if cells["blocking"] else "pass")
+    return dict(status=status, cells=cells, blocking=dict(
+        sorted(blocking.items())), counts={k: len(v) for k, v in
+                                           cells.items()})
+
+
 def control_half_width(result):
     """The larger half log-width of the develop/develop control intervals of
     the gated metrics of one cell (infinite when one has none): all the

@@ -365,8 +365,8 @@ A task supplies a `Table` (cases, batch seconds, predeclared counts file,
 sealed code, historical seals); the policy, the layout randomization, the
 second stage, the archives, `--resume` and `replay` are the ones above and do
 not change. `task29a_grid.py` is its TASK29A table plus the TASK29A
-disposition; `task30_grid.py` is the TASK30 table (24 cases, 144 cells) and
-has no disposition.
+disposition; `task30_grid.py` is the TASK30 table (24 cases, 144 cells); its
+disposition, with that of its follow-up, is `task30_dispose.py` (below).
 
 - **Cells.** The sizes of a case come from the matrix ledger. A cell is
   `case-size`.
@@ -1067,7 +1067,11 @@ has no disposition.
      `TASK30 closing verdict: pass|not pass (timing S, allocation S;
      candidate C, harness H; attempts N in the ledger, M of the candidate)`.
      Any status but pass in either gate exits
-     non-zero; `close` applies no disposition. The comparison of the
+     non-zero; `close` applies no disposition and keeps reporting "not
+     pass" while a cell is not a pass: the final verdict is
+     `task30_dispose.py` (see "Structural evidence and the TASK30
+     disposition"), which replays this gate, the follow-up and both
+     allocation grids. The comparison of the
      two harnesses is `task30_grid.harness_match(timing, allocation)`, which
      a later pairing of another timing grid with its allocation grid uses as
      it is. It compares the cheap records
@@ -1076,6 +1080,9 @@ has no disposition.
      at `HEAD == Y`, the allocation run must be made in a clean checkout at Y
      too; the grid's record holds the checkout, the same tree as Y, and any
      clean checkout at Y serves: `close` compares the head and the tree seal.
+  7. After the follow-up (`task30_followup.py`) and its allocation grid at Z:
+     `task30_dispose.py --record`, then once more without `--record`, which
+     is the final verdict of TASK30 (below).
 - **A cell that is too short.** A cell rejected as "fixed calibration too
   short" is a non-pass and blocks the grid. The only route is a counts
   revision (above) that multiplies that cell's count by 4 for baseline and
@@ -1105,7 +1112,15 @@ has no disposition.
   `MatrixAllocation.sml` are among the files of the harness the allocation
   run records and compares (`harness_files`), so a TASK29B run resumed
   across them is refused. Nothing in the allocation run itself links its
-  candidate to that of the timing grid; `close` does.
+  candidate to that of the timing grid; `close` does. TASK30 has two
+  harness pairs, each timing grid with the allocation grid of its own
+  harness, each compared exactly (`harness_match`: head and tree outside the
+  performance area, a clean checkout): stages 1 and 2 at Y with `alloc/`
+  (`close`, and the disposition), and the follow-up at Z with `alloc-z/`, a
+  full `allocation_matrix.py run --task task30` at Z with its own toolchain
+  and controls receipt (the disposition only). The two are never relaxed
+  into one: a Y timing grid with `alloc-z/`, or the follow-up with `alloc/`,
+  is refused.
 - **Cost.** The grid is 144 cells at 20 pairs and two slots per pair, each
   slot a fresh process with its batch (0.3 s, or 1.0 s for the ten direct
   deletions at every size, including 10000): about two to three days for
@@ -1176,12 +1191,13 @@ the result of a deletion) it has two parts:
   `Traverse.dest_reducer`, with the context it holds) to the left sides of
   the first, the middle and the last rule (the first is the rule the
   deletion cases delete). The fixture's dprocs leave no event, so what is
-  counted is `dproc`: the number of dprocs held times the sampled terms
-  (n-1 dprocs after a deletion of one, three terms: `3(n-1)`; none when
-  every dproc is gone). It equals 3 times the number of dprocs the result
-  holds, which is the length of `dpnames` in the digest: the same fact, shown
-  as counted applications of each retained dproc. It is the one count that
-  sees a dproc deletion, but it is not an independent witness of it.
+  counted is `dproc`: one per retained dproc per sampled term (3 terms for
+  n >= 3, fewer below; n-1 dprocs after a deletion of one, so `3(n-1)` at
+  n >= 3; none when every dproc is gone). It equals the number of sampled
+  terms times the number of dprocs the result holds, which is the length of
+  `dpnames` in the digest: the same fact, shown as counted applications of
+  each retained dproc. It is the one count that sees a dproc deletion, but
+  it is not an independent witness of it.
 
 For a retained conversion (`compile_construct_conv`) the conversion is
 applied to the fingerprinted terms; for the tactic whose operation constructs
@@ -1231,12 +1247,11 @@ and is equal on both sides of a grid. The fixture dprocs share one closure
 over it added about 3 words per reducer to the setup of `exclude_dproc` and
 `exclude_mixed` (`PolyML.objSize` of the built workload: 20, 290 and 2990
 words more at 10, 100 and 1000 reducers for `exclude_dproc`), which the shared
-closure removes; the n reducers cost what they did before the counter. The setup words of a new grid
-(`alloc-z/`) therefore do not equal those of an older one (`alloc/`) at any
-size, and a comparison across grids (`alloc/` at Y against `alloc-z/` at Z)
-uses only the
-operation rows (`operation_first`, `operation_steady`, `apply`), never the
-setup row.
+closure removes; the n reducers cost what they did before the counter. The
+setup words of a new grid (`alloc-z/`) therefore do not equal those of an
+older one (`alloc/`) at any size, and a comparison across grids (`alloc/` at
+Y against `alloc-z/` at Z) uses only the operation rows (`operation_first`,
+`operation_steady`, `apply`), never the setup row.
 
 **Gating by header.** A grid whose header says `structure: "v1"` (every new
 run) requires the four records in every process, and a header without the key
@@ -1282,7 +1297,11 @@ The evidence class of a cell is fixed by its case in the disposition
 (`task30_dispose.py`), never read from the rows, since a hook regression
 (`useResult` left at `noUse`) would give empty rows that are `equal` on both
 sides. The classes and what each must show (and the cell must also be `equal`
-and deterministic):
+and deterministic). The conditions apply to the 13 attributed cells only (all
+at n = 10000, and `exclude_literal_namespace` at n = 1): they fail by
+construction elsewhere, so they are never applied to every cell of a grid. At
+n = 0 a deletion case has no rules, so no lookup and no `trace.4.REDUCE`; at
+n = 1 the two dproc cases have no dproc left and no `work.use.dproc`.
 
 - `deletion`: `work.first` and `work.second` are empty (the operation fires
   nothing) and `work.use` has `work.use.trace.4.REDUCE`;
@@ -1376,9 +1395,10 @@ the fixture was taken from, the sealed inputs); the run also writes
 `NAME.summary.json` (`smoke_matrix.summarise`, per side, case and size: the
 events, inferences and `maker`, `collector`, `dproc` counts of each record
 and the SHA-256 of the digest, and the cross-side comparison), which is
-derived from the manifest alone, and `--compare MANIFEST --summary PATH`
-derives it again. The retained smoke evidence is such a manifest and
-summary.
+derived from the manifest alone. `--compare MANIFEST --summary PATH`
+derives it again and compares it with the stored summary at PATH (exit 1 and
+a `DIFFERS summary` line on a difference); `--write-summary PATH` writes it.
+The retained smoke evidence is such a manifest and summary.
 
 #### TASK30 follow-up (policy decision 2026-11-05)
 
@@ -1657,7 +1677,7 @@ table of its own on the shared engine, with the following additions to it.
   and no automatic attribution follows without a new policy decision. The
   follow-up writes no `final.json`: the TASK30 decision with these two cells
   in place of the replaced ones is the disposition step's
-  (`task30_grid.py dispose`), which owns `final.json` and builds it from the
+  (`task30_dispose.py`), which owns `final.json` and builds it from the
   replayed reports of both grids.
 - **Sequence.** At the commit Z0 (code and documents; no counts): `prepare`,
   then
@@ -1692,6 +1712,136 @@ table of its own on the shared engine, with the following additions to it.
   allocation grid at Z (`OUT/alloc-z`, a full `allocation_matrix.py run --task
   task30` at Z); neither `close` nor the follow-up checks that pairing, the
   disposition step does (head and tree outside the performance area, exactly).
+  The last step is `task30_dispose.py --record`, reviewed, and then the same
+  command without `--record` (below).
+
+#### Structural evidence and the TASK30 disposition
+
+The policy owner's decision of 2026-11-05: the 13 cells the TASK30 grid left
+control-limited are settled by deterministic structural evidence against
+develop, each recorded as *attributed* with a note, and re-derived from the
+replayed records every time. Every other class is as the engine has it: a
+pass, a fail (final), and a blocking cell. The code is `timing_grid.dispose`
+(the generic engine function; `task29a_grid.dispose` is untouched) and
+`task30_dispose.py` (`DISPOSITION`, the evidence and the command); the
+timing-grid tables, `task30_grid.py` among them, are unchanged by it.
+
+**Classes** (`timing_grid.dispose(final, attributed, evidence)`, by
+`classify_row`):
+
+- pass; fail (stays a fail; the status is fail when any cell fails);
+- protocol and inconclusive: blocking;
+- control-limited: attributed only if listed **and** `evidence(cell)` holds,
+  else blocking, naming the evidence that failed. There is no non-blocking
+  class (TASK29A's "unresolvable") for TASK30;
+- the retained slope, where measured, is one more entry, as in `classify`.
+
+The control-limited cells found must be exactly the list: otherwise the
+command refuses ("stale attribution", naming the listed cells that are not
+control-limited, with the class they are in, and the control-limited cells
+that are not listed). The evidence is not asked for a stale list.
+
+**The list** is `task30_dispose.DISPOSITION["attributed"]`, with the
+evidence class and the note of each: `exclude_missing`, `_matching`,
+`_batch`, `_qualified`, `_literal_exact`, `_mixed`, `_dproc`, `_marker`,
+`_marker_reuse`, `_tactic_reuse`, `_tactic_complete` at 10000,
+`history_excluded-10000` and `exclude_literal_namespace-1`. The classes are
+fixed per case (see "Per-cell evidence" above): `deletion` (missing,
+matching, batch, qualified, literal_exact, literal_namespace,
+history_excluded), `dproc-deletion` (dproc, mixed) and `operation` (marker,
+marker_reuse, tactic_reuse, tactic_complete). The note of each cell claims
+only what its rows show and ends with what no row can show (below); the
+notes of `exclude_literal_exact-10000` (candidate interval to 1.041) and
+`exclude_dproc-10000` (to 1.075) name the residual: structural equality
+shows identical work, not identical timing, and the candidate's startup heap
+is about 1.01M words larger in every cell (GC, reported and not gated; the
+attribution belongs to TASK_31).
+
+**Evidence** (`task30_dispose.Evidence.holds(cell)`; the first failure is
+named with the row, the file or the cell that differs):
+
+1. *sources*: no file of `task30_cases.SOURCES` differs between the
+   candidate and develop except the pinned ones (`source_identity` of the
+   final decision: `differing` must be empty; the reviewed files are
+   recorded in the disposition under `pinned`);
+2. *allocation*: every allocation row of the cell passes in `alloc-z/`, and
+   its operation rows (`operation_first`, `operation_steady`, `apply`; the
+   baseline and candidate words of every metric) equal those of `alloc/`.
+   The setup rows are not compared across grids (the fixture's setup
+   changed between Y and Z);
+3. *work*: the cell's work status in `alloc-z/` is `equal` (candidate =
+   baseline = control in every row, deterministic across the pairs), not
+   missing, unresolved or non-reproducible, and the per-class non-vacuity
+   check holds, applied to the 13 attributed (case, size) cells only: for
+   `deletion`, `work.first` and `work.second` empty and `work.use.trace.4.
+   REDUCE` present; `dproc-deletion`, and `work.use.dproc` present; for
+   `operation`, `work.first` and `work.second` non-empty and `work.use`
+   empty; and `result.digest` present and equal (*result*).
+
+What no row can show is the list under "What no row can show" above (CPU
+that neither allocates nor traces, net node visits and hidden candidates,
+live heap and retention, work outside `Trace` and the kernel counter, the
+timed process's context, the layout effects of other files); every note
+says so, and equal rows show equal work and result, not equal time.
+
+**Command.**
+
+    python3 -B task30_dispose.py --grid E/stage2 --pilot E/pilot \
+        --allocation E/alloc --followup E/followup \
+        --followup-pilot E/followup-pilot \
+        --followup-allocation E/alloc-z [--ledger FILE] [--record]
+
+It first makes the cheap comparisons, before any replay: each timing grid
+with the allocation grid of its own harness (`task30_grid.harness_match`;
+TASK30 at Y with `alloc/`, the follow-up at Z with `alloc-z/`, each also of
+one candidate, one baseline and the task `task30`), `--grid` the grid the
+follow-up records as replaced, the two allocation grids different. It then
+replays the follow-up in full (which replays the TASK30 grid in full with
+`--pilot`, by its own table, and requires that the follow-up replaced exactly
+the cells that grid left inconclusive and that its candidate sources equal
+that grid's), and the two allocation grids (`allocation_matrix.replay`). It
+prints the replays' reports (every attempt of both tables), the class report
+of the final decision (`TASK30 final grid: ...`), one line per attributed
+cell (`ATTRIBUTED` or `BLOCKING`, its class and what failed) and
+`TASK30 disposition: pass|fail|blocked {counts}`. The status is 0 for pass, 1
+for fail, 2 for blocked and 3 for a refusal (one `REFUSED` line on the
+standard error); neither this command nor `close` appends to the ledger.
+
+**`final.json`** is the TASK30 decision with the follow-up's cells in place
+of the cells they replaced: the summary over the reports of stage 1, stage 2
+and the follow-up (a follow-up row replaces its cell, whichever stage of the
+follow-up it comes from), with the source identity of the TASK30 grid, the
+`remeasured` block of its second stage kept, and a `replaced` block: the
+replaced cells, both layout seeds, both counts seals, both candidates and the
+follow-up's status. Its `status` is the measured one (nothing is excused: it
+is `inconclusive` while the control-limited cells are open); the disposition
+is in `disposition.json`. `dispose` owns it: the follow-up writes none, and
+it is written in the follow-up's output directory (`--followup`), beside
+`disposition.json`, because that is where the follow-up's evidence is.
+
+**`disposition.json`**: the schema, the decision date, the evidence names,
+the status, the counts and the class lists, the blocking cells with their
+reasons, the reviewed (pinned) source files, the `replaced` block, and per
+listed cell: the evidence class, the note (the only free text), the decision
+and what failed, the candidate's decision, median and 95% interval for CPU,
+wall and GC, the control's decision and interval beside, the work counts
+(`first`, `second`, `use`, the nonzero count rows of the candidate), the
+result digest and the number of allocation rows of the cell; and `code`, the
+seals of the code that derived it (`task30_dispose.CODE`).
+
+**`--record`** writes `final.json` and `disposition.json` and refuses to
+replace either if it exists (remove it to record again). Without it the
+command derives both again and refuses any difference from the files
+(`changed TASK30 disposition: FILE`), and refuses to run without them. The
+recorded `code` is held to the append rule of the other records: each seal
+must be that of the file now or one `task30_dispose.HISTORY` lists for it, so
+a change to any of those files after the disposition was recorded appends
+the old seal to `HISTORY` in the same commit (the check names the file).
+`task30_dispose.py` is on neither table's seals and nothing on the replay
+path imports it, so a fix to it after the follow-up's records exist asks
+nothing of `task30_grid.py` or `task30_followup.py` (a test keeps it out of
+the import closure of the replay, and every module it imports beyond that
+sealed by `CODE` or named as the allocation matrix's toolchain building).
 
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived

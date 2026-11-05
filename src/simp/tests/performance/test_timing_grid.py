@@ -1264,6 +1264,127 @@ class Classes(unittest.TestCase):
         self.assertEqual(lines[1:], ["FAIL b-0"])
 
 
+class Disposition(unittest.TestCase):
+    """The generic disposition (`timing_grid.dispose`): a cell the control
+    left open is attributed only when it is listed and its evidence holds."""
+    row = staticmethod(Classes.row)
+    LIMITED = ("exclude_missing-10", "exclude_empty-10000")
+
+    def decisions(self, *rows, scaling=None):
+        return dict(workloads=list(rows), retained_scaling=scaling)
+
+    def grid(self, *extra):
+        row = self.row
+        return self.decisions(
+            row("exclude_empty-0", "pass", "pass"),
+            row("exclude_missing-10", "pass", "inconclusive",
+                reason=tg.CONTROL),
+            row("exclude_empty-10000", "inconclusive", "inconclusive",
+                reason=tg.CONTROL), *extra)
+
+    def test_a_listed_control_limited_cell_with_evidence_is_attributed(self):
+        seen = []
+        result = tg.dispose(self.grid(), self.LIMITED,
+                            lambda cell: seen.append(cell))
+        self.assertEqual(seen, sorted(self.LIMITED))
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["cells"], dict(
+            fail=[], blocking=[], attributed=sorted(self.LIMITED),
+            **{"pass": ["exclude_empty-0"]}))
+        self.assertEqual(result["counts"], dict(
+            fail=0, blocking=0, attributed=2, **{"pass": 1}))
+        self.assertEqual(result["blocking"], {})
+
+    def test_evidence_that_fails_blocks_and_names_what_failed(self):
+        result = tg.dispose(
+            self.grid(), self.LIMITED, lambda cell: "work row X differs"
+            if cell == "exclude_empty-10000" else None)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["cells"]["attributed"],
+                         ["exclude_missing-10"])
+        self.assertEqual(result["blocking"], {
+            "exclude_empty-10000":
+            "control-limited, evidence fails: work row X differs"})
+
+    def test_a_list_that_is_not_exactly_the_cells_found_is_stale(self):
+        for label, listed, regex in (
+                ("extra", (*self.LIMITED, "exclude_empty-0"),
+                 r"listed but not control-limited: exclude_empty-0 \(pass\)"
+                 "; control-limited but not listed: none"),
+                ("missing", self.LIMITED[:1], r"listed but not "
+                 r"control-limited: none; control-limited but not listed: "
+                 "exclude_empty-10000"),
+                ("not a cell", (*self.LIMITED, "no_case-1"),
+                 r"listed but not control-limited: no_case-1 \(not a cell\)"
+                 )):
+            with self.subTest(label), self.assertRaisesRegex(
+                    ValueError, "stale attribution: " + regex):
+                tg.dispose(self.grid(), listed, lambda cell: None)
+
+    def test_the_evidence_is_not_asked_for_a_list_that_is_stale(self):
+        asked = []
+        with self.assertRaisesRegex(ValueError, "stale attribution"):
+            tg.dispose(self.grid(), self.LIMITED[:1],
+                       lambda cell: asked.append(cell))
+        self.assertEqual(asked, [])
+
+    def test_a_fail_stays_a_fail_and_is_not_attributed(self):
+        row = self.row("exclude_empty-1", "pass", "fail")
+        result = tg.dispose(self.grid(row), self.LIMITED,
+                            lambda cell: None)
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["cells"]["fail"], ["exclude_empty-1"])
+        # A listed cell that turned into a fail is a stale list, which
+        # names the class it is in.
+        with self.assertRaisesRegex(
+                ValueError, r"exclude_empty-1 \(fail\)"):
+            tg.dispose(self.grid(row), (*self.LIMITED, "exclude_empty-1"),
+                       lambda cell: None)
+
+    def test_inconclusive_and_protocol_cells_block(self):
+        for label, row, reason in (
+                ("inconclusive", self.row("exclude_empty-1", "pass",
+                                          "inconclusive"), "inconclusive"),
+                ("protocol", self.row("exclude_empty-1", protocol=False),
+                 "no admitted measurement")):
+            with self.subTest(label):
+                result = tg.dispose(self.grid(row), self.LIMITED,
+                                    lambda cell: None)
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(result["blocking"],
+                                 {"exclude_empty-1": reason})
+                self.assertEqual(result["cells"]["attributed"],
+                                 sorted(self.LIMITED))
+
+    def test_a_fail_wins_over_a_block(self):
+        rows = (self.row("exclude_empty-1", "pass", "fail"),
+                self.row("exclude_empty-2", "pass", "inconclusive"))
+        result = tg.dispose(self.grid(*rows), self.LIMITED,
+                            lambda cell: None)
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["counts"]["blocking"], 1)
+
+    def test_the_retained_slope_is_a_cell_too(self):
+        def scaling(decision):
+            return dict(status="measured", adjacent_intervals=[dict(
+                selection="candidate",
+                words_per_rule=dict(decision=decision))])
+        for decision, status in (("pass", "pass"), ("fail", "fail"),
+                                 ("inconclusive", "blocked")):
+            with self.subTest(decision):
+                result = tg.dispose(
+                    dict(self.grid(), retained_scaling=scaling(decision)),
+                    self.LIMITED, lambda cell: None)
+                self.assertEqual(result["status"], status)
+
+    def test_nothing_is_attributed_without_a_listed_cell(self):
+        # A table with no control-limited cell lists none and passes.
+        result = tg.dispose(self.decisions(
+            self.row("exclude_empty-0", "pass", "pass")), (),
+            lambda cell: self.fail("asked"))
+        self.assertEqual(result["status"], "pass")
+
+
 class Pilot(Rig):
     def pilot(self, name="pilot", extra=()):
         argv = self.argv("pilot", self.root / name, "--authorize-measurements",
