@@ -499,10 +499,56 @@ struct
            conversion. Enter it FIRST, just as native addcontext extends
            that initial net. Specificity and equal-key source order thus
            remain native, including context overrides of bag equations. *)
-        fun fallback solver stack tm = #apply original
-          {solver=solver,conv=fn _ => Conv.NO_CONV,
-           context= #initial original,stack=stack,
-           relation=(boolSyntax.equality,Thm.REFL)} tm
+        (* srw's INT_REDUCE fragment contains conversions, not exported
+           rewrite sources. The checked dispatcher deliberately omits such
+           native conversions. Recover its ground comparison cases with
+           the same generic reduction equations, through prospective rule
+           admission instead. Literal operands are demanded before selecting
+           these equations: this is not symbolic integer normalization or
+           permission to expand a large arithmetic operand. The resulting
+           natural comparison uses checked binary-numeral equations too;
+           its native conversion is likewise absent from the rule net. *)
+        val integer_comparisons =
+          [(intSyntax.less_tm,integerTheory.INT_LT_REDUCE),
+           (intSyntax.leq_tm,integerTheory.INT_LE_REDUCE),
+           (intSyntax.greater_tm,integerTheory.INT_GT_REDUCE),
+           (intSyntax.geq_tm,integerTheory.INT_GE_REDUCE),
+           (intSyntax.int_eq_tm,integerTheory.INT_EQ_REDUCE)]
+        fun integer_comparison tm =
+          let val (head,args) = boolSyntax.strip_comb tm
+              val source = case List.find
+                  (fn (operator,_) => Term.same_const operator head)
+                  integer_comparisons of
+                  SOME (_,law) => law | NONE => raise Conv.UNCHANGED
+              val _ = admit tm
+              val _ = if length args=2 andalso
+                  List.all intSyntax.is_int_literal args then ()
+                else raise Conv.UNCHANGED
+              (* is_int_literal also admits nested negations and ~0.
+                 The comparison equations expect canonical signed literals.
+                 Normalize only these admitted literal operands, using
+                 prospective rewrite checks rather than INT_NEG_CONV. *)
+              val sources = [integerTheory.INT_NEGNEG,
+                integerTheory.INT_NEG_0,source,
+                arithmeticTheory.NUMERAL_DEF,arithmeticTheory.ALT_ZERO,
+                numeralTheory.numeral_lte,numeralTheory.numeral_lt,
+                numeralTheory.numeral_eq]
+              val _ = List.app (fn th => ignore (theorem th)) sources
+          in SmtDatatypeProve.with_checked_rewrites_preflight admit
+               (fn () => simpLib.++
+                 (numLib.std_ss,simpLib.rewrites sources)) preflight
+               (fn ss => Conv.CHANGED_CONV (simpLib.SIMP_CONV ss []) tm)
+          end
+        fun fallback solver stack tm =
+          (#apply original
+            {solver=solver,conv=fn _ => Conv.NO_CONV,
+             context= #initial original,stack=stack,
+             relation=(boolSyntax.equality,Thm.REFL)} tm
+           handle Feedback.HOL_ERR error =>
+             if SmtResource.is_resource_gate error then
+               raise Feedback.HOL_ERR error
+             else integer_comparison tm
+                | Conv.UNCHANGED => integer_comparison tm)
         val initial = Ho_Net.enter
           ([],Term.genvar Type.alpha,(NONE,fallback)) Ho_Net.empty
         fun reducer compact initial = Traverse.REDUCER

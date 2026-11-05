@@ -8,8 +8,11 @@ struct
   fun new_type_order () =
     let
       val count = 4093
-      val pairs = Array.array
-        (count, [] : (Type.hol_type * Type.hol_type * order) list)
+      val saved = ref (NONE :
+        (Type.hol_type * Type.hol_type * order) list Array.array option)
+      fun table () = case !saved of SOME pairs => pairs | NONE =>
+        let val pairs = Array.array (count, [])
+        in saved := SOME pairs; pairs end
       fun bucket ty = if Type.is_vartype ty then 0 else
         KernelSig.epoch_of (#Tyop (Type.dest_thy_typeid ty)) mod count
       fun arguments [] [] = EQUAL
@@ -21,7 +24,8 @@ struct
       and compare (left,right) =
         if Portable.pointer_eq (left,right) then EQUAL
         else
-          let val index = (bucket left + bucket right) mod count in
+          let val index = (bucket left + bucket right) mod count
+              val pairs = table () in
             case List.find (fn (l,r,_) =>
                 Portable.pointer_eq (left,l) andalso
                 Portable.pointer_eq (right,r)) (Array.sub (pairs,index)) of
@@ -272,45 +276,67 @@ struct
      Pointers route the cache only; every miss has a genuine kernel proof. *)
   fun nodewise_equality left right =
     let
-      val types = new_type_order ()
-      val count = 4093
-      val memo = Array.array
-        (count,[] : (Term.term * Term.term * Thm.thm) list)
-      fun visit left right =
-        if Portable.pointer_eq (left,right) then checked_refl left
-        else
-          let val bucket = (SmtResource.pointer_bucket count left +
-                SmtResource.pointer_bucket count right) mod count in
-            case List.find (fn (a,b,_) =>
-                Portable.pointer_eq (a,left) andalso
-                Portable.pointer_eq (b,right)) (Array.sub (memo,bucket)) of
-              SOME (_,_,theorem) => theorem
-            | NONE =>
-                let
-                  val theorem =
-                    if Term.is_comb left andalso Term.is_comb right then
-                      if Portable.pointer_eq (Term.rator left,
-                            Term.rator right) andalso
-                          Portable.pointer_eq (Term.rand left,Term.rand right)
-                      then Thm.TRANS (checked_refl left) (checked_refl right)
-                      else application_bridge left right
-                        (visit (Term.rator left) (Term.rator right))
-                        (visit (Term.rand left) (Term.rand right))
-                    else if Term.is_abs left andalso Term.is_abs right then
-                      (admit_native "canon-binder-bridge" left;
-                       admit_native "canon-binder-bridge" right;
-                       Thm.TRANS (Thm.REFL left) (Thm.REFL right))
-                    else if (Term.is_var left andalso Term.is_var right)
-                        orelse (Term.is_const left andalso
-                                Term.is_const right) then
-                      leaf_equality types left right
-                    else raise Feedback.mk_HOL_ERR "Thm" "ALPHA"
-                      "Terms not alpha-convertible"
-                  val _ = Array.update (memo,bucket,
-                    (left,right,theorem) :: Array.sub (memo,bucket))
-                in theorem end
-          end
-      val theorem = visit left right
+      fun slow () =
+        let
+          val types = new_type_order ()
+          val count = 4093
+          (* Most endpoint repairs contain only an equality spine. Delay the
+             hash table, and its sampled term hashes, until it is useful. *)
+          val small = ref ([] : (Term.term * Term.term * Thm.thm) list)
+          val large = ref (NONE :
+            (Term.term * Term.term * Thm.thm) list Array.array option)
+          fun bucket left right = (SmtResource.pointer_bucket count left +
+            SmtResource.pointer_bucket count right) mod count
+          fun put table (entry as (left,right,_)) =
+            let val index = bucket left right
+            in Array.update (table,index,entry :: Array.sub (table,index)) end
+          fun lookup left right = List.find (fn (a,b,_) =>
+              Portable.pointer_eq (a,left) andalso Portable.pointer_eq (b,right))
+            (case !large of NONE => !small
+             | SOME table => Array.sub (table,bucket left right))
+          fun save entry = case !large of SOME table => put table entry
+            | NONE => if length (!small) < 8 then small := entry :: !small
+              else let val table = Array.array (count,[])
+                       val _ = List.app (put table) (!small)
+                       val _ = put table entry
+                   in small := []; large := SOME table end
+          fun visit left right =
+            if Portable.pointer_eq (left,right) then checked_refl left
+            else
+              (case lookup left right of
+                  SOME (_,_,theorem) => theorem
+                | NONE =>
+                    let
+                      val theorem =
+                        if Term.is_comb left andalso Term.is_comb right then
+                          if Portable.pointer_eq (Term.rator left,
+                                Term.rator right) andalso
+                              Portable.pointer_eq (Term.rand left,Term.rand right)
+                          then Thm.TRANS (checked_refl left) (checked_refl right)
+                          else application_bridge left right
+                            (visit (Term.rator left) (Term.rator right))
+                            (visit (Term.rand left) (Term.rand right))
+                        else if Term.is_abs left andalso Term.is_abs right then
+                          (admit_native "canon-binder-bridge" left;
+                           admit_native "canon-binder-bridge" right;
+                           Thm.TRANS (Thm.REFL left) (Thm.REFL right))
+                        else if (Term.is_var left andalso Term.is_var right)
+                            orelse (Term.is_const left andalso
+                                    Term.is_const right) then
+                          leaf_equality types left right
+                        else raise Feedback.mk_HOL_ERR "Thm" "ALPHA"
+                          "Terms not alpha-convertible"
+                      val _ = save (left,right,theorem)
+                    in theorem end)
+        in visit left right end
+      val theorem =
+        if Portable.pointer_eq (left,right) then
+          checked_refl left
+        else if Term.is_comb left andalso Term.is_comb right andalso
+            Portable.pointer_eq (Term.rator left,Term.rator right) andalso
+            Portable.pointer_eq (Term.rand left,Term.rand right) then
+          Thm.TRANS (checked_refl left) (checked_refl right)
+        else slow ()
       val (actual_left,actual_right) = boolSyntax.dest_eq (Thm.concl theorem)
       val _ = if Portable.pointer_eq (left,actual_left) andalso
           Portable.pointer_eq (right,actual_right) then () else

@@ -103,9 +103,33 @@ struct
         (fn (clause, rest) => SmtReplayRuleObservation.CONJ clause rest)
         (SmtReplayRuleObservation.ASSUME denied) (clauses @ constants)
       val refutation = Thm.concl refutation_proof
-      val no_refutation = HolSatLib.GEN_SAT_PROVE_ONLY
+      fun original () = HolSatLib.GEN_SAT_PROVE_ONLY
         (satConfig.set_flag_is_cnf true
           (satConfig.set_term refutation satConfig.base_config))
+      fun native () =
+        let
+          val inventory = flatten [Thm.ASSUME refutation] []
+          val clauses = Array.fromList (List.map Thm.concl inventory)
+        in
+          case SmtCnfProve.prove clauses of
+            SmtCnfProve.Unknown => original ()
+          | SmtCnfProve.Model _ => raise HolSatLib.SAT_satisfiable ()
+          | SmtCnfProve.Refuted proof =>
+              let
+                val used = Thm.hypset proof
+                val needed = List.filter
+                  (fn law => HOLset.member (used, Thm.concl law)) inventory
+                (* Discharge the compact clauses before inserting their
+                   existing proofs under the single refutation context. *)
+                val closed = List.foldl
+                  (fn (law, result) => Thm.DISCH (Thm.concl law) result)
+                  proof needed
+                val expanded = List.foldl
+                  (fn (law, result) => Thm.MP result law)
+                  closed (List.rev needed)
+              in Thm.NOT_INTRO (Thm.DISCH refutation expanded) end
+        end
+      val no_refutation = native ()
       val _ = List.null (Thm.hyp no_refutation) andalso
         Term.aconv (Thm.concl no_refutation)
           (boolSyntax.mk_neg refutation) orelse

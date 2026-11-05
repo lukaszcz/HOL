@@ -36,13 +36,60 @@ local
           HOLset.addList (Term.empty_tmset,variables)
       | SmtReplayGraph.Unknown => raise ERR context
           "source dependency admission is incomplete"
-  fun replay_has_free_variables term =
+  fun replay_has_free_variables_legacy term =
     case SmtReplayDependencies.source_presence
         {dag_limit = Option.valOf Int.maxInt,
          admit_binder = dependency_binder_admission} term of
       SOME answer => answer
     | NONE => raise ERR "hypothesis"
         "free-variable presence is unknown after dependency admission"
+
+  (* Positive-only source metadata avoids constructing an import proof DAG.
+     Complete, current, binder-free small-Type inputs cannot acquire binder
+     obligations. Every other input retains the uncapped owned importer. *)
+  fun replay_has_free_variables source =
+    let
+      exception Decline
+      val found = ref false
+      val types = Array.array (16, NONE : Type.hol_type option)
+      val slot = ref 0
+      fun small_type ty =
+        if Array.exists (fn NONE => false | SOME old =>
+            Portable.pointer_eq (old,ty)) types then ()
+        else
+          let
+            val remaining = ref 64
+            fun check ty =
+              if !remaining = 0 then raise Decline
+              else
+                (remaining := !remaining - 1;
+                 if Type.is_vartype ty then ()
+                 else List.app check (#Args (Type.dest_thy_type ty)))
+            val _ = check ty
+            val _ = if Type.uptodate_type ty then () else raise Decline
+          in
+            Array.update (types,!slot,SOME ty);
+            slot := (!slot + 1) mod Array.length types
+          end
+      fun inspect term =
+        if Term.is_abs term then raise Decline
+        else if Term.is_comb term then ()
+        else if Term.is_var term orelse Term.is_const term then
+          (small_type (Term.type_of term);
+           if Term.uptodate_term term then () else raise Decline;
+           if Term.is_var term then found := true else ())
+        else raise Decline
+      fun children term =
+        if Term.is_comb term then [Term.rator term,Term.rand term] else []
+      fun fast () =
+        let
+          val {complete,...} = SmtResource.bounded_structure_with_children
+            children inspect SmtResource.max_skeleton_replay_dag_nodes source
+        in complete andalso !found end
+    in
+      if (fast () handle Decline => false) then true
+      else replay_has_free_variables_legacy source
+    end
 
   val asserted_membership_diagnostic =
     "HOLSMT_TRANSLATION_ASSERTED_MEMBERSHIP"
@@ -114,6 +161,582 @@ local
   (* functions that manipulate/access "global" state                         *)
   (***************************************************************************)
 
+  type fp_context = {
+    normalizer : (Conv.conv -> Conv.conv) option ref,
+    sat : SmtSkeletonProve.sat_context,
+    projections :
+      (Term.term * Term.term * Term.term list * Thm.thm) list ref,
+    atoms : (Term.term * Term.term list * Thm.thm) list ref,
+    booleans : (Term.term * int list * Term.term list * Thm.thm) list ref,
+    hole : int -> Type.hol_type -> Term.term,
+    bitblast : SmtBitBlastProve.context,
+    schema_builder : SmtReplaySchemaBuilder.context,
+    word_law : Term.term -> (unit -> Thm.thm) -> Thm.thm,
+    field_law : Term.term -> (unit -> Thm.thm) -> Thm.thm,
+    atomic_law : Term.term -> (unit -> Thm.thm) -> Thm.thm,
+    bit_law : Term.term -> (unit -> Thm.thm) -> Thm.thm,
+    node_id : Term.term -> int option,
+    representation : Term.term -> Thm.thm option,
+    known_generation : Term.term -> int,
+    remember : Thm.thm -> unit,
+    generation : int ref,
+    refresh : unit -> unit
+  }
+
+  fun new_fp_context () : fp_context =
+    let
+      val schema_builder=SmtReplaySchemaBuilder.new_recent_context ()
+      val normalizer=ref NONE
+      val sat=SmtSkeletonProve.new_sat_context ()
+      val projections=ref []
+      val atoms=ref []
+      val booleans=ref []
+      fun new_word_index () = SmtReplaySchemaBuilder.node_ids_for_recent_replay
+        (SmtSkeletonProve.new_cache_index
+          SmtResource.max_bv_replay_term_nodes)
+      val word_index=ref (new_word_index ())
+      datatype law_key = SmallLaw of term | IndexedLaw of int
+      fun law_compare (SmallLaw left,SmallLaw right)=Term.compare (left,right)
+        | law_compare (SmallLaw _,IndexedLaw _)=LESS
+        | law_compare (IndexedLaw _,SmallLaw _)=GREATER
+        | law_compare (IndexedLaw left,IndexedLaw right)=Int.compare (left,right)
+      fun law_key source =
+        let
+          exception Unavailable
+          fun admit term=if Term.is_var term orelse Term.is_const term then
+              (case (!word_index) term of SOME _=>() | NONE=>raise Unavailable)
+            else if Term.is_comb term then
+              (admit (Term.rator term);admit (Term.rand term))
+            else raise Unavailable
+        in if SmtReplayCompactWord.bounded_source source then
+            ((admit source;SOME (SmallLaw source))
+             handle Unavailable=>Option.map IndexedLaw ((!word_index) source))
+           else Option.map IndexedLaw ((!word_index) source)
+        end
+      val word_laws=ref (Redblackmap.mkDict law_compare)
+      val field_laws=ref (Redblackmap.mkDict
+        (Lib.pair_compare (Int.compare,law_compare)))
+      val representations=ref (Redblackmap.mkDict Int.compare)
+      val generation=ref 0
+      val witness=ref (SmtSkeletonProve.cache_signature ())
+      val admission=SmtSkeletonProve.new_type_admission_context ()
+      val holes=ref (Redblackmap.mkDict
+        (Lib.pair_compare (Int.compare,Int.compare)))
+      fun refresh () =
+        if SmtSkeletonProve.cache_signature_matches (!witness) then ()
+        else (normalizer:=NONE;
+          projections:=[]; atoms:=[]; booleans:=[];
+          word_index:=new_word_index ();
+          word_laws:=Redblackmap.mkDict law_compare;
+          field_laws:=Redblackmap.mkDict
+            (Lib.pair_compare (Int.compare,law_compare));
+          representations:=Redblackmap.mkDict Int.compare;
+          generation:=0;
+          holes:=Redblackmap.mkDict
+            (Lib.pair_compare (Int.compare,Int.compare));
+          #refresh_caches sat ();
+          witness:=SmtSkeletonProve.cache_signature ())
+      fun hole position ty =
+        let
+          val _ = refresh ()
+          val _ = #intern admission ty
+          val key=(position,#type_id admission ty)
+          fun fresh () =
+            let val variable=Term.genvar ty
+            in holes:=Redblackmap.insert (!holes,key,variable); variable end
+        in case Redblackmap.peek (!holes,key) of NONE => fresh ()
+          | SOME variable =>
+            if Portable.pointer_eq (Term.type_of variable,ty) then variable
+            else let
+              val SmtSkeletonProve.AdmissionTypeNode {comparison_nodes,...} =
+                #metadata admission ty
+            in if comparison_nodes>SmtReplayLeafProof.native_tree_switch
+              then fresh () else variable end
+        end
+      fun word_law schema make =
+        let
+          val _=refresh ()
+          val witness=SmtSkeletonProve.cache_signature ()
+          val key=law_key schema
+          val cached=case key of NONE=>NONE
+            | SOME id=>Redblackmap.peek (!word_laws,id)
+        in case cached of SOME law=>
+            SmtResource.profile_phase "z3-bv-template-cache-hit"
+              (SmtSkeletonProve.exact_conclusion schema) law
+          | NONE=>let
+              val law=make ()
+              val _=List.null (Thm.hyp law) orelse
+                raise ERR "bv_template" "template has hypotheses"
+              val _=Library.check_oracle_tags "Z3_ProofReplay"
+                "bv-template" law
+              val _=refresh ()
+              val _=if SmtSkeletonProve.cache_signature_matches witness andalso
+                  Redblackmap.numItems (!word_laws)<2048 then
+                (case key of NONE=>() | SOME id=>
+                  word_laws:=Redblackmap.insert (!word_laws,id,law)) else ()
+            in law end
+        end
+      (* Conversion schemas are distinct from closed Boolean word laws.
+         Both endpoints are bounded BEFORE any realized operands are inserted.
+         The typed source key retains literals and alias roles. *)
+      fun conversion_law kind source make =
+        let
+          val _ = refresh ()
+          val witness = SmtSkeletonProve.cache_signature ()
+          fun bounded term =
+            let
+              fun binder_free node = not (Term.is_abs node) andalso
+                List.all binder_free (SmtResource.term_children node)
+            in Option.isSome (SmtReplayImport.bounded_raw_size 8192 term)
+              andalso binder_free term end
+          val _ = bounded source orelse
+            raise ERR "fp_field_law" "unbounded conversion schema"
+          val key = Option.map (fn id=>(kind,id)) (law_key source)
+          val cached = case key of NONE => NONE
+            | SOME id => Redblackmap.peek (!field_laws,id)
+          fun validate law =
+            let
+              val _ = List.null (Thm.hyp law) andalso
+                bounded (Thm.concl law) orelse
+                raise ERR "fp_field_law" "not a bounded closed conversion"
+              val _ = Library.check_oracle_tags "Z3_ProofReplay"
+                "fp-field-law" law
+            in SmtSkeletonProve.nodewise_exact_left source law end
+        in case cached of SOME law =>
+            SmtResource.profile_phase "z3-fp-field-cache-hit" validate law
+          | NONE => let
+              val law = validate (make ())
+              val _ = refresh ()
+              val _ = if SmtSkeletonProve.cache_signature_matches witness
+                  andalso Redblackmap.numItems (!field_laws)<2048 then
+                (case key of NONE=>() | SOME id=>
+                  field_laws:=Redblackmap.insert (!field_laws,id,law)) else ()
+            in law end
+        end
+      val field_law=conversion_law 0
+      val bit_law=conversion_law 1
+      val atomic_law=conversion_law 2
+      fun representation value =
+        (refresh ();
+         case (!word_index) value of NONE=>NONE
+         | SOME id => Option.map (fn (_,theorem) =>
+             SmtSkeletonProve.exact_conclusion
+               (boolSyntax.mk_eq
+                 (value,boolSyntax.rhs (Thm.concl theorem))) theorem)
+             (Redblackmap.peek (!representations,id)))
+      fun known_generation value =
+        (refresh (); case (!word_index) value of NONE=>0
+         | SOME id=>case Redblackmap.peek (!representations,id) of
+             NONE=>0 | SOME (stamp,_)=>stamp)
+      fun remember theorem =
+        let
+          val _ = refresh ()
+          fun bits term =
+            let val (head,_)=boolSyntax.strip_comb term
+                val {Thy,Name,...}=Term.dest_thy_const head
+            in Thy="smtfloat" andalso Name="smtfp_bits" end
+            handle Feedback.HOL_ERR _ => false
+          fun fact theorem =
+            let val (left,right)=boolSyntax.dest_eq (Thm.concl theorem)
+            in if Term.type_of left=Type.bool then
+                if Term.aconv right boolSyntax.T then
+                  fact (Drule.EQT_ELIM theorem)
+                else if Term.aconv left boolSyntax.T then
+                  fact (Drule.EQT_ELIM (Thm.SYM theorem))
+                else NONE
+              else if bits right then SOME theorem
+              else if bits left then SOME (Thm.SYM theorem) else NONE
+            end
+            handle Feedback.HOL_ERR _ => NONE
+        in case fact theorem of NONE=>()
+          | SOME theorem => let
+              val (left,right)=boolSyntax.dest_eq (Thm.concl theorem)
+              fun small_type ty=
+                let val remaining=ref 64
+                    fun visit ty=if !remaining=0 then false else
+                      (remaining:= !remaining-1;
+                       Type.is_vartype ty orelse List.all visit
+                         (#Args (Type.dest_thy_type ty)))
+                in visit ty end
+              val (constructor,components)=boolSyntax.strip_comb right
+              fun width term=
+                let val ty=Term.type_of term
+                    fun find n=if n>32 then NONE else
+                      if Type.compare (ty,wordsSyntax.mk_int_word_type n)=EQUAL
+                      then SOME n else find (n+1)
+                in if small_type ty then find 1 else NONE end
+              val widths=List.map width components
+              val eligible=List.length components=3 andalso
+                small_type (Term.type_of constructor) andalso
+                small_type (Term.type_of left) andalso
+                List.all Option.isSome widths andalso
+                List.foldl (fn (w,n)=>valOf w+n) 0 widths<=32
+              val key=if eligible then (!word_index) left else NONE
+              val fresh=Redblackmap.numItems (!representations)<2048 andalso
+                (case key of NONE=>false | SOME id=>
+                  not (Option.isSome (Redblackmap.peek (!representations,id))))
+              val safe=ref (fresh andalso not (Term.is_var left) andalso
+                not (bits left) andalso List.null (Thm.hyp theorem))
+              val order=SmtSkeletonProve.new_semantic_order ()
+              fun inspect term = if Term.is_abs term orelse
+                  (Term.type_of term=Term.type_of left andalso
+                   order (term,left)=EQUAL) then safe:=false else ()
+              val {complete,...} = if !safe then
+                SmtResource.bounded_structure_with_children
+                  (fn term => if Term.is_comb term then
+                    [Term.rator term,Term.rand term] else []) inspect
+                  SmtResource.max_bv_replay_term_nodes right
+                else {dag_nodes=0,edges=0,max_binder_depth=0,
+                  max_identifier_bytes=0,complete=false}
+              val _ = if complete andalso !safe then
+                (Library.check_oracle_tags "Z3_ProofReplay"
+                   "fp-representation" theorem;
+                 generation:= !generation+1;
+                 representations:=Redblackmap.insert
+                   (!representations,valOf key,(!generation,theorem))) else ()
+            in () end
+        end
+      fun cached_bit worker source =
+        if not (SmtReplayCompactWord.bounded_source source) then worker source
+        else let
+          val actual=ref NONE
+          fun make ()=case !actual of SOME theorem=>theorem
+            | NONE=>let val theorem=worker source
+                    in actual:=SOME theorem;theorem end
+        in bit_law source make
+          handle Feedback.HOL_ERR detail=>
+            if SmtResource.is_resource_gate detail then
+              raise Feedback.HOL_ERR detail else make ()
+        end
+      val bitblast=SmtBitBlastProve.new_context_with_bit_conversion cached_bit
+    in {normalizer=normalizer,sat=sat,projections=projections,
+      atoms=atoms,booleans=booleans,hole=hole,word_law=word_law,
+      field_law=field_law,atomic_law=atomic_law,bit_law=bit_law,
+      bitblast=bitblast,schema_builder=schema_builder,
+      node_id=(fn term => (refresh (); (!word_index) term)),
+      representation=representation,known_generation=known_generation,
+      remember=remember,generation=generation,refresh=refresh} end
+
+  (* Counts in the original three-bit exponent circuit fit two bits after
+     retained alignment. Instantiate the checked wire laws on small fields
+     before inserting actual arithmetic operands and data. *)
+  fun rewrite_fp_general_alignment_in (context : fp_context) term =
+    let
+      fun decline () = raise Conv.UNCHANGED
+      fun small_type ty =
+        let val remaining=ref 64
+            fun visit ty = if !remaining=0 then false else
+              (remaining:= !remaining-1;
+               Type.is_vartype ty orelse
+                 List.all visit (#Args (Type.dest_thy_type ty)))
+        in visit ty end
+      fun typed n term = small_type (Term.type_of term) andalso
+        Type.compare (Term.type_of term,wordsSyntax.mk_int_word_type n)=EQUAL
+      fun named name term =
+        let val (head,args)=boolSyntax.strip_comb term
+            val {Thy,Name,...}=Term.dest_thy_const head
+        in if Thy="smtfloatReplayAddSubWord" andalso Name=name then
+            (head,args) else (decline (); (head,args)) end
+      fun same a b = Portable.pointer_eq (a,b) orelse
+        (case (#node_id context a,#node_id context b) of
+           (SOME x,SOME y)=>x=y | _=>false)
+      val (head,args)=boolSyntax.strip_comb term
+      val _=small_type (Term.type_of head) orelse decline ()
+      val {Thy,Name,...}=Term.dest_thy_const head
+      val _=Thy="smtfloatReplayAddSubWord" orelse decline ()
+      val (scale,aligned,data)=case (Name,args) of
+          ("smtfp_word_retained_scale",[_,_]) => (term,NONE,NONE)
+        | ("smtfp_word_bounded_align",[scale,exponent,value]) =>
+            if wordsSyntax.is_word_type (Term.type_of value) then
+              (scale,SOME exponent,SOME value)
+            else (decline (); (term,NONE,NONE))
+        | _=>(decline (); (term,NONE,NONE))
+      val _=typed 4 scale orelse decline ()
+      val (scale_head,scale_args)=named "smtfp_word_retained_scale" scale
+      val (left,right)=case scale_args of [a,b]=>(a,b)
+        | _=>(decline (); (term,term))
+      val (exp_head,left_args)=named "smtfp_word_addsub_exp" left
+      val (_,right_args)=named "smtfp_word_addsub_exp" right
+      val (left_raw,right_raw)=case (left_args,right_args) of
+          ([a],[b]) => if typed 3 a andalso typed 3 b then (a,b)
+            else (decline (); (term,term))
+        | _=>(decline (); (term,term))
+      val _=typed 4 left andalso typed 4 right orelse decline ()
+      val role=case aligned of NONE=>0 | SOME actual=>
+        if same actual left then 0 else if same actual right then 1
+        else (decline (); 0)
+      val e= #hole context 2010 (Term.type_of left_raw)
+      val f= #hole context 2011 (Term.type_of right_raw)
+      val x=Term.mk_comb (exp_head,e)
+      val y=Term.mk_comb (exp_head,f)
+      fun scale_of a b = Term.list_mk_comb (scale_head,[a,b])
+      val generic_scale=scale_of x y
+      fun cached source make =
+        case #node_id context source of NONE=>decline ()
+        | SOME _=> #field_law context source make
+      val stage=case data of NONE=>"fp/narrow-scale-law"
+        | SOME _=>"fp/narrow-alignment-law"
+      val scale_narrow =
+        smtfloatReplayAddSubWordTheory.smtfp_word_retained_scale_narrow
+      val align_narrow =
+        smtfloatReplayAddSubWordTheory.smtfp_word_bounded_align_narrow
+      val scale_comm =
+        smtfloatReplayAddSubWordTheory.smtfp_word_retained_scale_exp_comm
+      fun produce () =
+        let
+          val (law,substitutions)=case data of
+              NONE =>
+                let val law= cached generic_scale
+                      (fn () => Conv.REWR_CONV
+                      scale_narrow generic_scale)
+                in (law,[e |-> left_raw,f |-> right_raw]) end
+            | SOME value =>
+                let
+                  val v= #hole context 2012 (Term.type_of value)
+                  fun align a b = Term.list_mk_comb
+                    (head,[scale_of a b,a,v])
+                  val left_source=align x y
+                  fun left_law () = cached left_source
+                    (fn () => Conv.REWR_CONV
+                      align_narrow left_source)
+                  val schema=if role=0 then left_source else
+                    Term.list_mk_comb (head,[generic_scale,y,v])
+                  fun right_law () =
+                    let
+                      val base=left_law ()
+                      val symmetry=Conv.REWR_CONV
+                      scale_comm generic_scale
+                      val conversion=Thm.MK_COMB
+                        (Thm.MK_COMB (Thm.MK_COMB
+                          (Thm.REFL head,symmetry),Thm.REFL y),Thm.REFL v)
+                      val swapped=Thm.INST [e |-> f,f |-> e] base
+                    in SmtSkeletonProve.nodewise_exact_left schema
+                      (Thm.TRANS conversion swapped) end
+                  val law=if role=0 then left_law () else
+                    cached schema right_law
+                in (law,[e |-> left_raw,f |-> right_raw,v |-> value]) end
+          val theorem=Thm.INST substitutions law
+        in SmtSkeletonProve.nodewise_exact_left term theorem end
+    in SmtResource.profile_phase stage produce () end
+    handle Feedback.HOL_ERR detail =>
+      if SmtResource.is_resource_gate detail then
+        raise Feedback.HOL_ERR detail else raise Conv.UNCHANGED
+         | SmtSkeletonProve.REANCHOR_LIMIT => raise Conv.UNCHANGED
+         | HolSatLib.SAT_cex _ => raise Conv.UNCHANGED
+         | HolSatLib.SAT_satisfiable _ => raise Conv.UNCHANGED
+
+  (* Equal exponents need no retained alignment circuit. Prove the small
+     typed law before inserting its exponent and significand; IDs only select
+     a candidate, and nodewise kernel transport checks the actual source. *)
+  fun rewrite_fp_alignment_in (context : fp_context) term =
+    let
+      val (head,arguments)=boolSyntax.strip_comb term
+      val {Thy,Name,...}=Term.dest_thy_const head
+      val _=Thy="smtfloatReplayAddSubWord" andalso
+        (Name="smtfp_word_retained_scale" orelse
+         Name="smtfp_word_bounded_align") orelse
+        raise Conv.UNCHANGED
+      val (first,second)=case arguments of
+          [a,b] => (a,b)
+        | [a,b,_] => (a,b)
+        | _ => raise Conv.UNCHANGED
+      (* This optional law must decline before native classification of a
+         large annotation; the original producer retains its first gate. *)
+      fun small_type ty =
+        let val remaining=ref 64
+            fun visit ty = if !remaining=0 then false else
+              (remaining:= !remaining-1;
+               Type.is_vartype ty orelse
+                 List.all visit (#Args (Type.dest_thy_type ty)))
+        in visit ty end
+      val _=small_type (Term.type_of head) orelse raise Conv.UNCHANGED
+      fun same a b = Portable.pointer_eq (a,b) orelse
+        (case (#node_id context a,#node_id context b) of
+           (SOME x,SOME y) => x=y | _ => false)
+      val exponent= #hole context 2000 (Term.type_of second)
+      val first_schema = if same first second then exponent
+        else if Name="smtfp_word_bounded_align" then
+          let
+            val (scale,args)=boolSyntax.strip_comb first
+            val {Thy,Name,...}=Term.dest_thy_const scale
+            val _=Thy="smtfloatReplayAddSubWord" andalso
+              Name="smtfp_word_retained_scale" orelse
+              raise Conv.UNCHANGED
+          in case args of [a,b] =>
+              if same a second andalso same b second then
+                Term.list_mk_comb (scale,[exponent,exponent])
+              else raise Conv.UNCHANGED
+            | _ => raise Conv.UNCHANGED
+          end
+        else raise Conv.UNCHANGED
+      val parameters=case arguments of
+          [_,_] => [(exponent,second)]
+        | [_,_,value] =>
+            [(exponent,second),
+             (#hole context 2001 (Term.type_of value),value)]
+        | _ => raise Conv.UNCHANGED
+      val schema=Term.list_mk_comb (head,
+        [first_schema,exponent] @
+        (case parameters of [_,(v,_)] => [v] | _ => []))
+      fun make () = simpLib.SIMP_CONV (bossLib.srw_ss())
+        [smtfloatReplayAddSubWordTheory.smtfp_word_retained_scale_def,
+         smtfloatReplayAddSubWordTheory.smtfp_word_bounded_align_def,
+         smtfloatReplayWordTheory.smtfp_word_lsl_bv_def,
+         boolTheory.LET_THM,wordsTheory.WORD_SUB_REFL,
+         wordsTheory.WORD_LS]
+        schema
+      val law=SmtResource.profile_phase "fp/alignment-law"
+        (fn () => #field_law context schema make) ()
+      val theorem=Thm.INST
+        (List.map (fn (v,value)=>v |-> value) parameters) law
+    in SmtSkeletonProve.nodewise_exact_left term theorem end
+    handle Feedback.HOL_ERR detail =>
+      if SmtResource.is_resource_gate detail then
+        raise Feedback.HOL_ERR detail
+      else rewrite_fp_general_alignment_in context term
+         | SmtSkeletonProve.REANCHOR_LIMIT =>
+             rewrite_fp_general_alignment_in context term
+         | Conv.UNCHANGED => rewrite_fp_general_alignment_in context term
+
+  (* Prove the rounding wire law on bounded typed fields, then insert data.
+     Projection spines expose this producer before the generic helper unfolds
+     quotient, residue and divisor into independent dynamic-shift circuits. *)
+  fun rewrite_fp_grs_in (context : fp_context) term =
+    let
+      fun decline () = raise Conv.UNCHANGED
+      fun small_type ty =
+        let val remaining=ref 64
+            fun visit ty = if !remaining=0 then false else
+              (remaining:= !remaining-1;
+               Type.is_vartype ty orelse
+                 List.all visit (#Args (Type.dest_thy_type ty)))
+        in visit ty end
+      fun typed width term = Type.compare
+        (Term.type_of term,wordsSyntax.mk_int_word_type width)=EQUAL
+      fun source_law head name arguments source =
+        let
+          val _=List.all (small_type o Term.type_of)
+            (source::arguments) orelse decline ()
+          val (definition,offset,stage)=case (name,arguments) of
+              ("smtfp_word_encode_fields",[_,_,_,scale,data]) =>
+                if typed 4 scale andalso typed 9 data then
+                  (smtfloatReplayEncodeWordTheory.smtfp_word_encode_fields_grs,
+                   2020,"fp/grs-encode-law")
+                else (decline (); raise Conv.UNCHANGED)
+            | ("smtfp_word_round_qrd_up",[_,_,data,count]) =>
+                if typed 9 data andalso typed 4 count then
+                  (smtfloatReplayEncodeWordTheory.smtfp_word_round_qrd_up_def,
+                   2030,"fp/grs-round-law")
+                else (decline (); raise Conv.UNCHANGED)
+            | _ => (decline (); raise Conv.UNCHANGED)
+          val variables=ListPair.mapEq (fn (position,argument)=>
+            #hole context (offset+position) (Term.type_of argument))
+            (List.tabulate (List.length arguments,fn i=>i),arguments)
+          val schema=Term.list_mk_comb (head,variables)
+          val _=Option.isSome (#node_id context schema) orelse decline ()
+          fun make () = Conv.CONV_RULE
+            (Conv.RAND_CONV (simpLib.SIMP_CONV bossLib.pure_ss
+              [boolTheory.LET_THM])) (Conv.REWR_CONV definition schema)
+          val law=SmtResource.profile_phase stage
+            (fn () => #field_law context schema make) ()
+          val theorem=Thm.INST (ListPair.mapEq
+            (fn (variable,argument)=>variable |-> argument)
+            (variables,arguments)) law
+        in SmtSkeletonProve.nodewise_exact_left source theorem end
+      fun visit 0 source = (decline (); Thm.REFL source)
+        | visit fuel source =
+          let
+            val (head,arguments)=boolSyntax.strip_comb source
+            val {Thy,Name,...}=Term.dest_thy_const head
+          in
+            if Thy="pair" andalso (Name="FST" orelse Name="SND") then
+              let
+                val _=small_type (Term.type_of head) orelse decline ()
+                val operand=case arguments of [operand]=>operand
+                  | _=>(decline (); source)
+                val proof=visit (fuel-1) operand
+              in SmtSkeletonProve.nodewise_exact_left source
+                (Thm.AP_TERM head proof) end
+            else if Thy="smtfloatReplayEncodeWord" then
+              source_law head Name arguments source
+            else (decline (); Thm.REFL source)
+          end
+    in visit 8 term end
+    handle Feedback.HOL_ERR detail =>
+      if SmtResource.is_resource_gate detail then
+        raise Feedback.HOL_ERR detail else raise Conv.UNCHANGED
+         | SmtSkeletonProve.REANCHOR_LIMIT => raise Conv.UNCHANGED
+
+  (* A native self-add law avoids two complete alignment/rounding circuits.
+     Alias IDs select bounded holes; the kernel checks the inserted source. *)
+  fun rewrite_fp_self_add_in (context : fp_context) term =
+    let
+      fun decline () = raise Conv.UNCHANGED
+      fun small_type ty =
+        let val remaining=ref 64
+            fun visit ty = if !remaining=0 then false else
+              (remaining:= !remaining-1;
+               Type.is_vartype ty orelse
+                 List.all visit (#Args (Type.dest_thy_type ty)))
+        in visit ty end
+      fun same a b = Portable.pointer_eq (a,b) orelse
+        (case (#node_id context a,#node_id context b) of
+           (SOME x,SOME y)=>x=y | _=>false)
+      fun visit 0 source = (decline (); Thm.REFL source)
+        | visit fuel source =
+          let
+            val (head,args)=boolSyntax.strip_comb source
+            val {Thy,Name,...}=Term.dest_thy_const head
+            val _=small_type (Term.type_of head) orelse decline ()
+          in
+            if Thy="pair" andalso (Name="FST" orelse Name="SND") then
+              (case args of [operand]=>
+                 SmtSkeletonProve.nodewise_exact_left source
+                   (Thm.AP_TERM head (visit (fuel-1) operand))
+               | _=>(decline (); Thm.REFL source))
+            else if Thy="smtfloatReplayAddSubWord" andalso
+                Name="smtfp_word_addsub_fields" then
+              (case args of [subtract,mode,s,e,f,t,g,h,c,d]=>
+                let
+                  val _=Term.aconv subtract boolSyntax.F andalso
+                    same s t andalso same e g andalso same f h andalso
+                    Option.isSome (SmtReplayImport.bounded_raw_size 32 mode)
+                    orelse decline ()
+                  val variables=ListPair.mapEq (fn (position,argument)=>
+                    #hole context position (Term.type_of argument))
+                    ([2040,2041,2042],[s,e,f])
+                  val schema=Term.list_mk_comb (head,
+                    [subtract,mode] @ variables @ variables @ [c,d])
+                  val _=Option.isSome (#node_id context schema)
+                    orelse decline ()
+                  val definition =
+                    smtfloatReplayAddSubWordTheory.smtfp_word_add_self_rne_fields
+                  fun make () = simpLib.SIMP_CONV bossLib.pure_ss
+                    [smtfloatTheory.smtfp_unpack_pack_rounding,
+                     definition] schema
+                  val law=SmtResource.profile_phase "fp/self-add-law"
+                    (fn () => #field_law context schema make) ()
+                  val _=not (Term.aconv (boolSyntax.lhs (Thm.concl law))
+                    (boolSyntax.rhs (Thm.concl law))) orelse decline ()
+                  val theorem=Thm.INST (ListPair.mapEq
+                    (fn (variable,actual)=>variable |-> actual)
+                    (variables,[s,e,f])) law
+                in SmtSkeletonProve.nodewise_exact_left source theorem end
+              | _=>(decline (); Thm.REFL source))
+            else (decline (); Thm.REFL source)
+          end
+    in visit 8 term end
+    handle Feedback.HOL_ERR detail =>
+      if SmtResource.is_resource_gate detail then
+        raise Feedback.HOL_ERR detail else raise Conv.UNCHANGED
+         | SmtSkeletonProve.REANCHOR_LIMIT => raise Conv.UNCHANGED
+
+  fun rewrite_fp_compact_fields_in context term =
+    rewrite_fp_self_add_in context term
+    handle Conv.UNCHANGED =>
+      (rewrite_fp_grs_in context term
+       handle Conv.UNCHANGED => rewrite_fp_alignment_in context term)
+
   type state = {
     (* The exact assertions emitted for the original goal.  An [asserted]
        proof node is admissible only when its parsed term is a member of this
@@ -152,6 +775,7 @@ local
        reduction node in this state shares its owning-theory expansions. *)
     skeleton_context : SmtSkeletonProve.context,
     word_context : SmtWordGraph.context,
+    fp_context : fp_context,
     (* General regex-index consequences are derived from the asserted DAG.
        Share their checked specializations across all nodes in one proof. *)
     string_index_cache : SmtStringProve.contextual_index_cache,
@@ -163,6 +787,7 @@ local
       datatype_admit = #datatype_admit s,
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
+      fp_context = #fp_context s,
       definition_hyps = #definition_hyps s,
       definition_occurrences_rev = #definition_occurrences_rev s,
       flexible_vars = #flexible_vars s,
@@ -203,6 +828,7 @@ local
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
+      fp_context = #fp_context s,
       definition_occurrences_rev =
         case #definition_occurrences_rev s of NONE => NONE
         | SOME previous => SOME (List.rev terms @ previous),
@@ -233,6 +859,7 @@ local
       definition_occurrences_rev = #definition_occurrences_rev s,
       flexible_vars = #flexible_vars s,
       datatype_admit = #datatype_admit s,
+      fp_context = #fp_context s,
       thm_cache = if large then #thm_cache s
                   else Net.insert (conclusion, thm) (#thm_cache s),
       large_thm_cache =
@@ -257,14 +884,15 @@ local
         end
       fun lookup_net () =
         Lib.tryfind instantiate (Net.match t (#thm_cache s))
+      val order = SmtSkeletonProve.new_semantic_order ()
       fun exact_large (saved, thm) =
-        CPC_ProofReplay.sharing_aware_aconv saved t andalso
+        order (saved,t)=EQUAL andalso
         HOLset.isSubset (Thm.hypset thm, available)
     in
       if not (List.null (#large_thm_cache s)) andalso
          SmtResource.term_nodes_up_to 16384 t > 16384 then
         (case List.find exact_large (#large_thm_cache s) of
-           SOME (_, thm) => thm
+           SOME (_, thm) => SmtSkeletonProve.exact_conclusion t thm
          | NONE => lookup_net ())
       else lookup_net ()
     end
@@ -1441,14 +2069,15 @@ local
   fun z3_commutativity (state, t) =
   let
     val (x, y) = boolSyntax.dest_eq (boolSyntax.lhs t)
-    val xy = boolSyntax.mk_eq (x, y)
-    val yx = boolSyntax.mk_eq (y, x)
-    (* Specializing EQ_SYM_EQ traverses the unfolded arguments.  Derive its
-       instance from kernel symmetry while retaining their DAG sharing. *)
-    val forward = Thm.DISCH xy (Thm.SYM (Thm.ASSUME xy))
-    val backward = Thm.DISCH yx (Thm.SYM (Thm.ASSUME yx))
+    val admission = SmtSkeletonProve.new_type_admission_context ()
+    val _ = #intern admission (Term.type_of x)
+    val _ = #intern admission (Term.type_of y)
+    val schema = Drule.SPEC_ALL boolTheory.EQ_SYM_EQ
+    val instance = Drule.INST_TY_TERM
+      (Term.match_term (boolSyntax.lhs (Thm.concl schema))
+        (boolSyntax.mk_eq (x,y))) schema
   in
-    (state, Drule.IMP_ANTISYM_RULE forward backward)
+    (state, SmtSkeletonProve.exact_conclusion t instance)
   end
 
   (* Instances of Tseitin-style propositional tautologies:
@@ -3519,6 +4148,10 @@ local
 
   fun def_axiom_guarded_conditional target =
     let
+      val order = SmtSkeletonProve.new_semantic_order ()
+      val admission = SmtSkeletonProve.new_type_admission_context ()
+      fun same left right = Portable.pointer_eq (left,right) orelse
+        order (left,right)=EQUAL
       fun trace_guard stage =
         if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
            !replay_completed_steps >= 550 then
@@ -3538,14 +4171,11 @@ local
               val (guard, then_branch, else_branch) =
                 boolSyntax.dest_cond conditional
               val _ = trace_guard "shape"
-              val guard_matches =
-                Portable.pointer_eq (guard, condition) orelse
-                Term.aconv guard condition
+              val guard_matches = same guard condition
               val branch =
                 if negated then then_branch else else_branch
               val branch_matches = guard_matches andalso
-                (Portable.pointer_eq (branch, other) orelse
-                 Term.aconv branch other)
+                same branch other
               val _ = trace_guard
                 ("candidate guard=" ^ Bool.toString guard_matches ^
                  " branch=" ^ Bool.toString branch_matches)
@@ -3570,9 +4200,12 @@ local
           val (conditional_on_left, other, then_branch, else_branch) =
             first_matching candidates
           val _ = trace_guard "matched"
+          val ty = Term.type_of other
+          val _ = #intern admission
+            (Type.--> (Type.bool,Type.--> (ty,Type.--> (ty,ty))))
           val p = Term.genvar Type.bool
-          val x = Term.genvar (Term.type_of other)
-          val y = Term.genvar (Term.type_of other)
+          val x = Term.genvar ty
+          val y = Term.genvar ty
           val schematic_conditional =
             boolSyntax.mk_cond (p,
               if negated then x else y,
@@ -3598,17 +4231,20 @@ local
         in instantiated end
       val (left, right) = boolSyntax.dest_disj target
       val theorem = prove left right
-        handle Feedback.HOL_ERR _ =>
-          let val symmetric = prove right left
-          in
-            Thm.EQ_MP
-              (Drule.SPECL [right, left] boolTheory.DISJ_COMM)
-              symmetric
-          end
-      val _ = Term.aconv (Thm.concl theorem) target orelse
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else let
+            val symmetric = prove right left
+            val schema = Drule.SPEC_ALL boolTheory.DISJ_COMM
+            val instance = Drule.INST_TY_TERM
+              (Term.match_term (boolSyntax.lhs (Thm.concl schema))
+                (boolSyntax.mk_disj (right,left))) schema
+          in Thm.EQ_MP instance symmetric end
+      val _ = order (Thm.concl theorem,target)=EQUAL orelse
         raise ERR "def_axiom_guarded_conditional"
           "schema endpoint mismatch"
-    in theorem end
+    in SmtSkeletonProve.exact_conclusion target theorem end
 
   fun rewrite_boolean_constant_schema target =
     let
@@ -3728,8 +4364,13 @@ local
           "packed reconstruction does not match the target"
     in theorem end
 
-  fun rewrite_fp_packed_atom target =
+  val packed_atom_residue_observer = ref
+    (NONE : (Term.term -> unit) option)
+
+  fun rewrite_fp_packed_atom_internal field_schema
+      (context : fp_context) target =
     let
+      val _ = #refresh context ()
       val (left, right) = boolSyntax.dest_eq target
       val (original_atom, _, _) =
         if SmtFpGraph.lower_atom_domain left then
@@ -3738,34 +4379,39 @@ local
           (right, left, false)
         else raise ERR "rewrite_fp_packed_atom"
           "no supported floating-point atom"
-      val _ =
+      val value_equality =
         case Lib.total boolSyntax.dest_eq original_atom of
-          SOME (first, _) =>
-            if Term.type_of first = Type.bool then ()
-            else raise ERR "rewrite_fp_packed_atom"
-              "floating-point value equality needs circuit replay"
-        | NONE => ()
+          SOME (first, _) => Term.type_of first <> Type.bool
+        | NONE => false
       fun is_fp_type ty =
         let val {Thy, Tyop, ...} = Type.dest_thy_type ty
         in Thy = "smtfloat" andalso Tyop = "smtfp" end
         handle Feedback.HOL_ERR _ => false
+      val source_order = SmtSkeletonProve.new_semantic_order ()
       val sources = ref ([] : Term.term list)
-      val source_seen = ref (HOLset.empty Term.compare)
+      val source_seen = ref (HOLset.empty source_order)
       fun collect term =
         if HOLset.member (!source_seen, term) then ()
         else
           (source_seen := HOLset.add (!source_seen, term);
            if is_fp_type (Term.type_of term) andalso
               not (Term.is_var term) then
-             if List.exists (fn saved => Term.aconv saved term) (!sources)
+             if List.exists
+                 (fn saved => source_order (saved,term)=EQUAL) (!sources)
              then () else sources := term :: !sources
            else List.app collect (SmtResource.term_children term))
-      val _ = collect original_atom
+      val direct_atom = Option.isSome
+        (SmtReplayImport.bounded_raw_size
+          SmtResource.max_bitblast_term_nodes original_atom)
+      val _ = if direct_atom then ()
+        else if value_equality then raise ERR "rewrite_fp_packed_atom"
+          "floating-point value equality needs circuit replay"
+        else collect original_atom
       val source_variables =
         List.map (Term.genvar o Term.type_of) (!sources)
       val source_pairs = ListPair.zip (!sources, source_variables)
       val abstraction_memo = ref
-        (Redblackmap.mkDict Term.compare :
+        (Redblackmap.mkDict source_order :
           (Term.term, Term.term) Redblackmap.dict)
       fun abstract term =
         case Redblackmap.peek (!abstraction_memo, term) of
@@ -3774,7 +4420,7 @@ local
             let
               val result =
                 case List.find
-                    (fn (source, _) => Term.aconv source term)
+                    (fn (source, _) => source_order (source,term)=EQUAL)
                     source_pairs of
                   SOME (_, variable) => variable
                 | NONE =>
@@ -3786,7 +4432,8 @@ local
               val _ = abstraction_memo :=
                 Redblackmap.insert (!abstraction_memo, term, result)
             in result end
-      val schematic_target = abstract target
+      val schematic_target =
+        if List.null source_pairs then target else abstract target
       val shared_target =
         SmtResource.term_nodes_up_to
           SmtResource.max_bitblast_term_nodes schematic_target >
@@ -3802,7 +4449,10 @@ local
           val {Thy, Name, ...} = Term.dest_thy_const head
         in Thy = "smtfloat" andalso Name = "smtfp_pack_bv" end
         handle Feedback.HOL_ERR _ => false
-      val _ = Lib.can (HolKernel.find_term packed) encoded orelse
+      (* Only the internal, bounded field schema may omit packed sources.
+         The artifact-facing entry point retains its original admission. *)
+      val _ = field_schema orelse
+        Lib.can (HolKernel.find_term packed) encoded orelse
         raise ERR "rewrite_fp_packed_atom"
           "encoded side has no packed floating-point word"
       fun node_conversion term =
@@ -3824,21 +4474,266 @@ local
                  term
              else raise Conv.UNCHANGED)
       fun phase name f x =
-        if shared_target then
-          SmtResource.with_resource_step_time
-            "FloatingPoint" name f x
-        else f x
+        SmtResource.profile_phase name
+          (if shared_target then
+             SmtResource.with_resource_step_time "FloatingPoint" name f
+           else f) x
+      fun known_bridge () =
+        let
+          fun decline ()=raise ERR "fp_known_bridge" "no compact value schema"
+          val _=direct_atom andalso List.null source_pairs
+            orelse (decline (); false)
+          val (head,arguments)=boolSyntax.strip_comb original_atom
+          val representations=List.map (#representation context) arguments
+          val _=List.exists Option.isSome representations
+            orelse (decline (); false)
+          val parameters=ref []
+          fun id term=case #node_id context term of SOME id=>id
+            | NONE=>(decline (); 0)
+          fun parameter actual =
+            let val key=id actual in
+              case List.find (fn (saved,_,_)=>saved=key) (!parameters) of
+                SOME (_,variable,_)=>variable
+              | NONE=>let
+                  val variable= #hole context (List.length (!parameters))
+                    (Term.type_of actual)
+                  val _=parameters:=(key,variable,actual):: !parameters
+                in variable end
+            end
+          fun argument (actual,representation)=case representation of
+              NONE=>if Term.is_var actual then
+                  (parameter actual,Thm.REFL actual)
+                else (decline (); (actual,Thm.REFL actual))
+            | SOME theorem=>
+                let val fields=boolSyntax.rhs (Thm.concl theorem)
+                    val (constructor,components)=boolSyntax.strip_comb fields
+                    val _=List.length components=3 orelse (decline (); false)
+                in (Term.list_mk_comb (constructor,List.map parameter components),
+                  theorem) end
+          val converted=ListPair.map argument (arguments,representations)
+          val generic_atom=Term.list_mk_comb (head,List.map #1 converted)
+          val memo=ref (Redblackmap.mkDict Int.compare)
+          fun abstract term=
+            let val key=id term in
+              case Redblackmap.peek (!memo,key) of SOME result=>result
+              | NONE=>let
+                  val result=case List.find (fn (saved,_,_)=>saved=key)
+                      (!parameters) of SOME (_,variable,_)=>variable
+                    | NONE=>if Term.is_comb term then
+                        Term.mk_comb (abstract (Term.rator term),
+                          abstract (Term.rand term))
+                      else if Term.is_abs term then (decline (); term)
+                      else term
+                  val _=memo:=Redblackmap.insert (!memo,key,result)
+                in result end
+            end
+          val generic_encoded=abstract encoded
+          val generic_goal=boolSyntax.mk_eq (generic_atom,generic_encoded)
+          val _=Option.isSome
+              (SmtReplayImport.bounded_raw_size 2048 generic_goal)
+            orelse (decline (); false)
+          val allowed=List.map (fn (_,variable,_)=>variable) (!parameters)
+          val _=List.all (fn variable=>List.exists
+              (Term.aconv variable) allowed) (Term.free_vars generic_goal)
+            orelse (decline (); false)
+          val _=SmtResource.dag_nodes_up_to
+              (SmtResource.max_skeleton_replay_dag_nodes+1) target
+              <=SmtResource.max_skeleton_replay_dag_nodes
+            orelse (decline (); false)
+          val law= #word_law context generic_goal
+            (fn () => rewrite_fp_packed_atom_internal true context generic_goal)
+          val actual=Thm.INST (List.map
+            (fn (_,variable,actual)=>variable |-> actual) (!parameters)) law
+          val equality=List.foldl
+            (fn ((_,theorem),proof)=>Thm.MK_COMB (proof,theorem))
+            (Thm.REFL head) converted
+          val actual=SmtSkeletonProve.exact_conclusion
+            (boolSyntax.mk_eq
+              (boolSyntax.rhs (Thm.concl equality),encoded)) actual
+          val theorem=Thm.TRANS equality actual
+        in SmtSkeletonProve.exact_conclusion target
+          (if atom_on_left then theorem else Thm.SYM theorem) end
+      fun value_definition_schema atom_theorem =
+        let
+          fun decline () = raise ERR "fp_representation"
+            "no compact value-definition schema"
+          val _=value_equality andalso direct_atom andalso
+            Term.aconv (boolSyntax.rhs (Thm.concl atom_theorem))
+              boolSyntax.T orelse (decline (); false)
+          val (a,b)=boolSyntax.dest_eq original_atom
+          fun bits term =
+            let val (head,arguments)=boolSyntax.strip_comb term
+                val {Thy,Name,...}=Term.dest_thy_const head
+            in if Thy="smtfloat" andalso Name="smtfp_bits" andalso
+                List.length arguments=3 then SOME (head,arguments)
+               else NONE end handle Feedback.HOL_ERR _=>NONE
+          val (value,constructor,fields)=case bits b of
+              SOME (head,arguments)=>(a,head,arguments)
+            | NONE=>(case bits a of
+                SOME (head,arguments)=>(b,head,arguments)
+              | NONE=>(decline (); (a,a,[])))
+          fun canonical_width term =
+            let val ty=Term.type_of term
+                val remaining=ref 64
+                fun small ty=if !remaining=0 then false else
+                  (remaining:= !remaining-1;
+                   Type.is_vartype ty orelse
+                     List.all small (#Args (Type.dest_thy_type ty)))
+                val _=small ty orelse (decline (); false)
+                fun find n=if n>32 then (decline (); 0)
+                  else if Type.compare (ty,wordsSyntax.mk_int_word_type n)
+                      =EQUAL then n else find (n+1)
+            in find 1 end
+          val _=List.foldl (fn (field,n)=>canonical_width field+n)
+              0 fields<=32 orelse (decline (); false)
+          fun calculated conjunct field =
+            let fun find []=(decline (); field)
+                  | find (equality::rest)=
+                    (case Lib.total boolSyntax.dest_eq equality of
+                       SOME (l,r)=>
+                         if source_order (field,l)=EQUAL then r
+                         else if source_order (field,r)=EQUAL then l
+                         else find rest
+                     | NONE=>find rest)
+            in find (boolSyntax.strip_conj conjunct) end
+          fun branch []=(decline (); [])
+            | branch (conjunct::rest)=
+                List.map (calculated conjunct) fields
+                handle Feedback.HOL_ERR detail=>
+                  if SmtResource.is_resource_gate detail then
+                    raise Feedback.HOL_ERR detail else branch rest
+          val calculated_fields=branch (boolSyntax.strip_disj encoded)
+          fun id term=case #node_id context term of SOME id=>id
+            | NONE=>(decline (); 0)
+          val value_variable= #hole context 0 (Term.type_of value)
+          val parameters=ref [(id value,value_variable,value)]
+          fun parameter (position,field)=
+            case List.find (fn (saved,_,_)=>saved=id field)
+                (!parameters) of
+              SOME (_,variable,_)=>variable
+            | NONE=>let
+                val variable=if wordsSyntax.is_word_literal field then
+                    field else #hole context position (Term.type_of field)
+                val _=parameters:=(id field,variable,field):: !parameters
+              in variable end
+          val variables=ListPair.map parameter
+            ([1,2,3],calculated_fields)
+          val memo=ref (Redblackmap.mkDict Int.compare)
+          fun abstract term=
+            let val key=id term in
+              case Redblackmap.peek (!memo,key) of SOME result=>result
+              | NONE=>let
+                  val result=case List.find (fn (saved,_,_)=>saved=key)
+                      (!parameters) of
+                      SOME (_,variable,_)=>variable
+                    | NONE=>if Term.is_comb term then
+                        Term.mk_comb (abstract (Term.rator term),
+                          abstract (Term.rand term))
+                      else if Term.is_abs term then (decline (); term)
+                      else term
+                  val _=memo:=Redblackmap.insert (!memo,key,result)
+                in result end
+            end
+          val generic_encoded=abstract encoded
+          val _=Option.isSome
+            (SmtReplayImport.bounded_raw_size 2048 generic_encoded)
+            orelse (decline (); false)
+          val allowed=List.concat (List.map
+            (Term.free_vars o (fn (_,variable,_)=>variable)) (!parameters))
+          val _=List.all (fn variable=>List.exists
+              (Term.aconv variable) allowed)
+              (Term.free_vars generic_encoded) orelse (decline (); false)
+          val value_atom=boolSyntax.mk_eq
+            (value_variable,Term.list_mk_comb (constructor,variables))
+          val generic_goal=boolSyntax.mk_eq (value_atom,generic_encoded)
+          val law= #word_law context generic_goal
+            (fn () => rewrite_fp_packed_atom_internal false context generic_goal)
+          val substitution=List.mapPartial (fn (_,variable,actual)=>
+              if Term.is_var variable then SOME (variable |-> actual)
+              else NONE) (!parameters)
+          val actual_atom=boolSyntax.mk_eq
+            (value,Term.list_mk_comb (constructor,calculated_fields))
+          val instantiated=SmtSkeletonProve.exact_conclusion
+            (boolSyntax.mk_eq (actual_atom,encoded))
+            (Thm.INST substitution law)
+        in (value,actual_atom,instantiated) end
       fun convert () =
         let
+          fun known_atom term =
+            let
+              fun decline ()=raise ERR "fp_known_atom" "no compact observation"
+              fun small ty=
+                let val remaining=ref 64
+                    fun visit ty=if !remaining=0 then false else
+                      (remaining:= !remaining-1;
+                       Type.is_vartype ty orelse
+                         List.all visit (#Args (Type.dest_thy_type ty)))
+                in visit ty end
+              val (head,arguments)=boolSyntax.strip_comb term
+              val _=List.all (small o Term.type_of) arguments
+                orelse (decline (); false)
+              val representations=List.map (#representation context) arguments
+              val _=List.exists Option.isSome representations
+                orelse (decline (); false)
+              val substitutions=ref []
+              fun parameter position actual =
+                let val _=small (Term.type_of actual) orelse (decline (); false)
+                    val variable= #hole context position (Term.type_of actual)
+                    val _=substitutions:=(variable |-> actual):: !substitutions
+                in variable end
+              fun argument (position,(actual,representation))=
+                case representation of
+                  NONE=>(parameter position actual,Thm.REFL actual)
+                | SOME theorem=>
+                    let val fields=boolSyntax.rhs (Thm.concl theorem)
+                        val (constructor,components)=boolSyntax.strip_comb fields
+                        val _=List.length components=3 orelse (decline (); false)
+                        val variables=ListPair.map
+                          (fn (i,component)=>parameter (3*position+i) component)
+                          ([0,1,2],components)
+                    in (Term.list_mk_comb (constructor,variables),theorem) end
+              val converted=ListPair.map argument
+                (List.tabulate (List.length arguments,fn i=>i),
+                 ListPair.zip (arguments,representations))
+              val schema=Term.list_mk_comb (head,List.map #1 converted)
+              val law=SmtFpGraph.convert_atom schema
+              val _=Option.isSome
+                (SmtReplayImport.bounded_raw_size 8192 (Thm.concl law))
+                orelse (decline (); false)
+              fun binder_free term=not (Term.is_abs term) andalso
+                List.all binder_free (SmtResource.term_children term)
+              val _=binder_free (Thm.concl law) orelse (decline (); false)
+              val equality=List.foldl
+                (fn ((_,theorem),proof)=>Thm.MK_COMB (proof,theorem))
+                (Thm.REFL head) converted
+              val instantiated=SmtSkeletonProve.anchor_left
+                (boolSyntax.rhs (Thm.concl equality))
+                (Thm.INST (!substitutions) law)
+            in Thm.TRANS equality instantiated end
+            handle Feedback.HOL_ERR detail=>
+              if SmtResource.is_resource_gate detail then
+                raise Feedback.HOL_ERR detail else SmtFpGraph.convert_atom term
+                 | SmtFpGraph.Declined _=>SmtFpGraph.convert_atom term
+                 | Conv.UNCHANGED=>SmtFpGraph.convert_atom term
           val atom_theorem = phase "z3-fp-packed-atom-lower"
-            SmtFpGraph.lower_atom atom
+            (SmtResource.profile_phase "z3/fp-packed/atom"
+              (if direct_atom then
+                 if value_equality then
+                   (fn term => Drule.EQT_INTRO (rewrite_fp_pack_roundtrip term)
+                     handle Feedback.HOL_ERR detail =>
+                       if SmtResource.is_resource_gate detail then
+                         raise Feedback.HOL_ERR detail
+                       else known_atom term)
+                 else known_atom
+               else SmtFpGraph.lower_atom)) atom
           val word_theorem =
-            phase "z3-fp-packed-word-lower"
+            if direct_atom then Thm.REFL encoded
+            else phase "z3-fp-packed-word-lower"
               (SmtWordGraph.normalize_with_node_conversion
                 node_conversion) encoded
           val word_residue = boolSyntax.rhs (Thm.concl word_theorem)
           val simplified =
-            if shared_target then Thm.REFL word_residue
+            if shared_target orelse direct_atom then Thm.REFL word_residue
             else
               (simpLib.SIMP_CONV
                 (simpLib.++
@@ -3871,7 +4766,540 @@ local
           val implication = boolSyntax.list_mk_imp
             (antecedents, residue)
           val proof =
-            if shared_target then
+            if direct_atom then
+              let
+                val remaining=ref (Term.free_vars original_atom)
+                val ordered=ref []
+                fun order_variables term = if List.null (!remaining) then ()
+                  else if Term.is_var term then
+                    let val name= #1 (Term.dest_var term)
+                        val (found,rest)=List.partition
+                          (fn variable=> #1 (Term.dest_var variable)=name)
+                          (!remaining)
+                    in ordered:=List.revAppend (found,!ordered);
+                       remaining:=rest end
+                  else if Term.is_comb term then
+                    (order_variables (Term.rator term);
+                     order_variables (Term.rand term))
+                  else ()
+                val _=order_variables original_atom
+                val variables=List.rev (!ordered) @ !remaining
+                val (mode,_) = boolSyntax.dest_forall (Thm.concl
+                  smtfloatReplayRoundingTheory.smtfp_rounding_onehot)
+                val facts = List.map SmtFpProve.canonical_fields
+                    (List.filter (is_fp_type o Term.type_of) variables) @
+                  List.map (fn variable => Thm.SPEC variable
+                    smtfloatReplayRoundingTheory.smtfp_rounding_onehot)
+                    (List.filter (fn variable =>
+                      Term.type_of variable = Term.type_of mode) variables)
+                fun diagnostic text =
+                  if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "full"
+                  then (print ("Z3_FP_STAGE " ^ text ^ "\n");
+                    TextIO.flushOut TextIO.stdOut) else ()
+                val scalar_visits = ref 0
+                val leaf = CPC_ProofReplay.word_circuit_node_conversion ()
+                val projection_laws = #projections context
+                fun projection term =
+                  let
+                    val (word,index) = wordsSyntax.dest_index term
+                    val (head,arguments) = boolSyntax.strip_comb word
+                    fun data argument = wordsSyntax.is_word_literal argument
+                      orelse Term.type_of argument = numSyntax.num andalso
+                        Option.isSome (SmtReplayImport.bounded_raw_size
+                          32 argument) andalso
+                        List.null (Term.free_vars argument)
+                    fun matches (saved_head,saved_index,variables,_) =
+                      Term.aconv saved_head head andalso
+                      Term.aconv saved_index index andalso
+                      ListPair.allEq (fn (variable,argument) =>
+                        if Term.is_var variable then
+                          Type.compare (Term.type_of variable,
+                            Term.type_of argument) = EQUAL
+                        else Term.aconv variable argument)
+                        (variables,arguments)
+                    val (variables,law) = case List.find matches
+                        (!projection_laws) of
+                        SOME (_,_,variables,law) => (variables,law)
+                      | NONE =>
+                        let
+                          val variables = List.map (fn argument =>
+                            if data argument then argument
+                            else Term.genvar (Term.type_of argument)) arguments
+                          val schematic = wordsSyntax.mk_index
+                            (Term.list_mk_comb (head,variables),index)
+                          val law = SmtResource.profile_phase
+                            "fp/projection-law"
+                            (SmtWordGraph.normalize_with_node_conversion
+                              node_conversion) schematic
+                          val _ = if List.length (!projection_laws) <
+                              SmtResource.max_skeleton_replay_dag_nodes then
+                            projection_laws :=
+                              (head,index,variables,law) :: !projection_laws
+                            else ()
+                        in (variables,law) end
+                    val substitutions = List.mapPartial
+                      (fn (variable,argument) => if Term.is_var variable
+                        then SOME (variable |-> argument) else NONE)
+                      (ListPair.zip (variables,arguments))
+                  in SmtSkeletonProve.anchor_left term
+                    (Thm.INST substitutions law) end
+                fun pack_conversion term =
+                  case #representation context (Term.rand term) of
+                    SOME theorem => SmtResource.profile_phase
+                      "z3-fp-known-representation"
+                      (Thm.AP_TERM (Term.rator term)) theorem
+                  | NONE => let
+                    val (head,value) = Term.dest_comb term
+                  in
+                    if Term.is_var value then
+                      Conv.REWR_CONV smtfloatTheory.smtfp_pack_bv_def term
+                    else
+                      let
+                        val (constructor,arguments)=boolSyntax.strip_comb value
+                        fun small_type ty=
+                          let val remaining=ref 64
+                              fun visit ty=if !remaining=0 then false else
+                                (remaining:= !remaining-1;
+                                 Type.is_vartype ty orelse List.all visit
+                                   (#Args (Type.dest_thy_type ty)))
+                          in visit ty end
+                        fun canonical_width argument=
+                          let val ty=Term.type_of argument
+                              fun find n=if n>32 then NONE else
+                                if Type.compare
+                                  (ty,wordsSyntax.mk_int_word_type n)=EQUAL
+                                then SOME n else find (n+1)
+                          in if small_type ty then find 1 else NONE end
+                        val widths=List.map canonical_width arguments
+                        val already_bits=Term.is_const constructor andalso
+                          small_type (Term.type_of constructor) andalso
+                          List.all Option.isSome widths andalso
+                          List.foldl (fn (w,n)=>valOf w+n) 0 widths<=32 andalso
+                          let val {Thy,Name,...}=Term.dest_thy_const constructor
+                          in Thy="smtfloat" andalso Name="smtfp_bits" andalso
+                            List.length arguments=3 end
+                        val (represented,fields)=if already_bits then
+                            (Thm.REFL term,value)
+                          else let
+                            val _=diagnostic "represent begin"
+                            val descriptor=SmtFpGraph.represent value
+                            val _=diagnostic "represent end"
+                          in (Thm.AP_TERM head (#representation descriptor),
+                            boolSyntax.rhs
+                              (Thm.concl (#representation descriptor))) end
+                        val (constructor,arguments) = boolSyntax.strip_comb fields
+                        val variables = ListPair.map
+                          (fn (position,argument) => #hole context
+                            (1000+position) (Term.type_of argument))
+                          (List.tabulate (List.length arguments,fn i=>i),
+                           arguments)
+                        val schema = Term.mk_comb (head,
+                          Term.list_mk_comb (constructor,variables))
+                        fun make_law () =
+                          SmtResource.with_bitblast_step_time
+                            "z3-fp-pack-schema"
+                            (simpLib.SIMP_CONV (bossLib.srw_ss())
+                              [smtfloatTheory.smtfp_pack_bv_def,
+                               smtfloatTheory.smtfp_rep_bits,
+                               smtfloatTheory.canon_def,
+                               smtfloatTheory.float_canon_qnan_def,
+                               binary_ieeeTheory.float_is_nan_def,
+                               boolTheory.COND_RAND]) schema
+                        val law = #field_law context schema make_law
+                          handle Feedback.HOL_ERR detail =>
+                            if not (SmtResource.is_resource_gate detail)
+                                andalso Feedback.top_function_of detail =
+                                  "fp_field_law" then make_law ()
+                            else raise Feedback.HOL_ERR detail
+                        val _ = diagnostic "pack schema end"
+                        val inserted = Thm.INST (ListPair.mapEq
+                          (fn (variable,argument)=>variable |-> argument)
+                          (variables,arguments)) law
+                        val _ = diagnostic "pack inst end"
+                        val converted = Thm.TRANS represented
+                          (SmtSkeletonProve.anchor_left
+                            (boolSyntax.rhs (Thm.concl represented)) inserted)
+                        val _ = diagnostic "pack share begin"
+                        val shared = SmtReplayCanon.share_conv
+                          (boolSyntax.rhs (Thm.concl converted))
+                        val _ = diagnostic "pack share end"
+                      in Thm.TRANS converted shared end
+                  end
+                fun word_atom term =
+                  let
+                    val (head,arguments)=boolSyntax.strip_comb term
+                    val {Thy,Name,...}=Term.dest_thy_const head
+                  in Term.type_of term = Type.bool andalso
+                    (Thy="words" orelse Thy="min" andalso Name="="
+                      andalso List.exists
+                        (wordsSyntax.is_word_type o Term.type_of) arguments)
+                  end handle Feedback.HOL_ERR _ => false
+                val atom_laws = #atoms context
+                fun atom_projection term =
+                  let
+                    val (head,arguments)=boolSyntax.strip_comb term
+                    val (variables,law) = case List.find
+                        (fn (saved,_,_) => Term.aconv saved head)
+                        (!atom_laws) of
+                        SOME (_,variables,law) => (variables,law)
+                      | NONE =>
+                        let
+                          val variables=List.map
+                            (Term.genvar o Term.type_of) arguments
+                          val schema=Term.list_mk_comb (head,variables)
+                          val law=SmtResource.profile_phase "fp/atom-law"
+                            SmtWordGraph.normalize schema
+                          val _ = if List.length (!atom_laws) <
+                              SmtResource.max_skeleton_replay_dag_nodes then
+                            atom_laws := (head,variables,law) :: !atom_laws
+                            else ()
+                        in (variables,law) end
+                    val inserted=Thm.INST (ListPair.mapEq
+                      (fn (variable,argument)=>variable |-> argument)
+                      (variables,arguments)) law
+                  in SmtSkeletonProve.anchor_left term inserted end
+                val boolean_laws = #booleans context
+                fun boolean_projection term =
+                  let
+                    val (head,arguments)=boolSyntax.strip_comb term
+                    val _ = Term.type_of term=Type.bool andalso
+                      Term.is_const head andalso
+                      List.all (fn argument =>
+                        Term.type_of argument=Type.bool) arguments andalso
+                      (boolSyntax.is_conj term orelse boolSyntax.is_disj term
+                       orelse boolSyntax.is_imp term orelse
+                       boolSyntax.is_eq term orelse boolSyntax.is_neg term
+                       orelse boolSyntax.is_cond term) orelse
+                      raise Conv.UNCHANGED
+                    val data=ref ([] : Term.term list)
+                    fun locate _ [] _ = NONE
+                      | locate index (saved::rest) argument =
+                          if Portable.pointer_eq (saved,argument) then
+                            SOME index
+                          else locate (index+1) rest argument
+                    fun tag argument =
+                      if Term.aconv argument boolSyntax.T then ~2
+                      else if Term.aconv argument boolSyntax.F then ~1
+                      else case locate 0 (!data) argument of
+                          SOME index => index
+                        | NONE => let val index=List.length (!data)
+                            in data:= !data @ [argument]; index end
+                    val tags=List.map tag arguments
+                    val _ = List.length (!data)<List.length arguments orelse
+                      raise Conv.UNCHANGED
+                    val (variables,law)=case List.find
+                        (fn (saved,keys,_,_) =>
+                          Term.aconv saved head andalso keys=tags)
+                        (!boolean_laws) of
+                        SOME (_,_,variables,law) => (variables,law)
+                      | NONE => let
+                          val variables=List.map
+                            (fn _ => Term.genvar Type.bool) (!data)
+                          fun argument tag = if tag= ~2 then boolSyntax.T
+                            else if tag= ~1 then boolSyntax.F
+                            else List.nth (variables,tag)
+                          val schema=Term.list_mk_comb
+                            (head,List.map argument tags)
+                          val law=simpLib.SIMP_CONV boolSimps.bool_ss [] schema
+                          val _ = boolean_laws :=
+                            (head,tags,variables,law) :: !boolean_laws
+                        in (variables,law) end
+                    val _ = not (Term.aconv
+                      (boolSyntax.lhs (Thm.concl law))
+                      (boolSyntax.rhs (Thm.concl law))) orelse
+                      raise Conv.UNCHANGED
+                    val inserted=Thm.INST (ListPair.mapEq
+                      (fn (variable,argument) => variable |-> argument)
+                      (variables,!data)) law
+                  in SmtSkeletonProve.anchor_left term inserted end
+                fun index_source term =
+                  let
+                    val (operator,index)=Term.dest_comb term
+                    val (head,word)=Term.dest_comb operator
+                    val source = SmtResource.profile_phase "fp/index-source"
+                      (fn word =>
+                        if packed word then pack_conversion word
+                        else (rewrite_fp_compact_fields_in context word
+                          handle Conv.UNCHANGED =>
+                            (Conv.REWR_CONV
+                              (Conv.GSYM wordsTheory.WORD_NEG_MUL) word
+                             handle Feedback.HOL_ERR _ =>
+                               SmtFpGraph.convert_word_projection word))) word
+                    val source=SmtSkeletonProve.nodewise_exact_left word source
+                    val operator_proof=SmtSkeletonProve.anchor_left operator
+                      (Thm.MK_COMB (Thm.REFL head,source))
+                  in SmtSkeletonProve.anchor_left term
+                    (Thm.MK_COMB (operator_proof,Thm.REFL index)) end
+                fun scalar term =
+                  (scalar_visits := !scalar_visits + 1;
+                   if !scalar_visits mod 1000 = 0 then
+                     diagnostic ("scalar visits=" ^
+                       Int.toString (!scalar_visits)) else ();
+                  if boolSyntax.is_eq term andalso
+                      (let val (left,right)=boolSyntax.dest_eq term
+                       in Portable.pointer_eq (left,right) end) then
+                    Drule.EQT_INTRO
+                      (Thm.REFL (boolSyntax.lhs term))
+                  else if boolSyntax.is_cond term andalso
+                      (let val (_,yes,no)=boolSyntax.dest_cond term
+                       in Portable.pointer_eq (yes,no) end) then
+                    Conv.REWR_CONV boolTheory.COND_ID term
+                  else if Term.is_comb term andalso packed term then
+                    pack_conversion term
+                  else if Term.is_comb term andalso
+                      (let val (head,_)=boolSyntax.strip_comb term
+                           val {Thy,Name,...}=Term.dest_thy_const head
+                       in Thy="smtfloat" andalso
+                         Name="smt_rounding_CASE" end
+                       handle Feedback.HOL_ERR _ => false) then
+                    Conv.REWR_CONV
+                      smtfloatReplayRoundingTheory.smtfp_rounding_case_pack term
+                  else if wordsSyntax.is_index term andalso
+                      (let
+                         val (word,_)=wordsSyntax.dest_index term
+                         val (head,_)=boolSyntax.strip_comb word
+                         val {Thy,Name,...}=Term.dest_thy_const head
+                       in Thy="smtfloat" andalso
+                         Name="smtfp_pack_rounding" end
+                       handle Feedback.HOL_ERR _ => false) then
+                    Conv.REWR_CONV
+                      smtfloatReplayRoundingTheory.smtfp_pack_rounding_index term
+                  else if Term.is_comb term andalso
+                      (let val (head,_)=boolSyntax.strip_comb term
+                           val {Thy,Name,...}=Term.dest_thy_const head
+                       in Thy="smtfloat" andalso
+                         Name="smtfp_unpack_rounding" end
+                       handle Feedback.HOL_ERR _ => false) then
+                    Conv.REWR_CONV smtfloatTheory.smtfp_unpack_pack_rounding term
+                  else if Term.is_const (#1 (boolSyntax.strip_comb term))
+                      andalso Term.same_const
+                        (#1 (boolSyntax.strip_comb term))
+                        (Term.prim_mk_const
+                          {Thy="smtfloat",Name="smtfp_nan_pattern"}) then
+                    Conv.REWR_CONV smtfloatTheory.smtfp_nan_pattern_def term
+                  else if Term.is_comb term andalso
+                      (let val (head,_)=boolSyntax.strip_comb term
+                           val {Thy,...}=Term.dest_thy_const head
+                       in Thy="pair" orelse
+                         String.isPrefix "smtfloatReplay" Thy end
+                       handle Feedback.HOL_ERR _ => false) then
+                    ((rewrite_fp_compact_fields_in context term
+                      handle Conv.UNCHANGED =>
+                        SmtFpGraph.convert_word_projection term)
+                     handle SmtFpGraph.Declined _ => raise Conv.UNCHANGED
+                          | SmtSkeletonProve.REANCHOR_LIMIT =>
+                       (diagnostic "helper reanchor limit";
+                        raise SmtSkeletonProve.REANCHOR_LIMIT))
+                  else if word_atom term then
+                    (atom_projection term handle Conv.UNCHANGED => leaf term)
+                  else if wordsSyntax.is_word_mul term then
+                    (Conv.REWR_CONV (Conv.GSYM wordsTheory.WORD_NEG_MUL)
+                      term handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED)
+                  else if wordsSyntax.is_index term then
+                    (index_source term
+                     handle Conv.UNCHANGED =>
+                       (projection term handle Conv.UNCHANGED => leaf term)
+                          | SmtFpGraph.Declined _ =>
+                       (projection term handle Conv.UNCHANGED => leaf term))
+                  else if boolSyntax.is_let term then
+                    Conv.REWR_CONV boolTheory.LET_THM term
+                  else if Term.is_comb term andalso
+                      Term.is_abs (Term.rator term) then
+                    Thm.BETA_CONV term
+                  else if Term.type_of term = Type.bool orelse
+                      Term.type_of term = numSyntax.num then
+                    (SmtResource.profile_phase "fp/boolean-projection"
+                       boolean_projection term
+                     handle Conv.UNCHANGED => leaf term)
+                  else raise Conv.UNCHANGED)
+                fun new_normalizer () =
+                  let
+                    val admission =
+                      SmtSkeletonProve.new_type_admission_context ()
+                    val order = SmtSkeletonProve.new_semantic_order ()
+                    val index = SmtReplaySchemaBuilder.node_ids_for_replay
+                      (SmtSkeletonProve.new_cache_index
+                        SmtResource.max_bv_replay_term_nodes)
+                    val memo = ref (Redblackmap.mkDict Int.compare)
+                    fun same left right =
+                      Portable.pointer_eq (left,right) orelse
+                      (case (index left,index right) of
+                         (SOME key,SOME other) => key=other
+                       | _ => order (left,right)=EQUAL)
+                    val dependencies=ref (Redblackmap.mkDict Int.compare)
+                    val dependency_epoch=ref (!(#generation context))
+                    fun dependency term =
+                      (if !dependency_epoch= !(#generation context) then ()
+                       else (dependencies:=Redblackmap.mkDict Int.compare;
+                         dependency_epoch:= !(#generation context));
+                       case index term of NONE=> !(#generation context)
+                       | SOME key=>case Redblackmap.peek (!dependencies,key)
+                           of SOME result=>result | NONE=>let
+                             val own=if not (Term.is_var term) andalso
+                                 is_fp_type (Term.type_of term) then
+                               #known_generation context term else 0
+                             val result=if Term.is_abs term then
+                                 !(#generation context)
+                               else if Term.is_comb term then Int.max
+                                 (own,Int.max (dependency (Term.rator term),
+                                   dependency (Term.rand term))) else own
+                           in dependencies:=Redblackmap.insert
+                             (!dependencies,key,result); result end)
+                    fun lookup term =
+                      (ignore (#intern admission (Term.type_of term));
+                       case index term of NONE => NONE
+                       | SOME key => case Redblackmap.peek (!memo,key) of
+                           NONE=>NONE | SOME (stamp,theorem)=>
+                             if stamp= !(#generation context) orelse
+                                dependency term<=stamp then SOME theorem
+                             else NONE)
+                    fun cached term theorem =
+                      let val left=boolSyntax.lhs (Thm.concl theorem)
+                      in if Portable.pointer_eq (term,left) then theorem
+                        else if Term.is_var term orelse Term.is_const term then
+                          Thm.TRANS (SmtSkeletonProve.checked_leaf_transport
+                            (#intern admission) (#metadata admission)
+                            term left) theorem
+                        else SmtResource.profile_phase "fp/cache-anchor"
+                          (SmtSkeletonProve.reanchor_cached_theorem term)
+                          theorem
+                      end
+                    (* Recursive results retain the exact source children;
+                       this kernel comparison sees only the new outer node. *)
+                    val anchor = SmtSkeletonProve.anchor_left
+                  in fn scalar => let
+                    fun visit term =
+                      case (lookup term
+                          handle SmtSkeletonProve.REANCHOR_LIMIT =>
+                            (diagnostic "normalizer order limit";
+                             raise SmtSkeletonProve.REANCHOR_LIMIT)) of
+                        SOME theorem =>
+                          (cached term theorem
+                           handle SmtSkeletonProve.REANCHOR_LIMIT =>
+                             compute term)
+                      | NONE => compute term
+                    and compute term =
+                      let
+                        fun step term = Conv.QCONV scalar term
+                          handle Feedback.HOL_ERR holerr =>
+                            if SmtResource.is_resource_gate holerr then
+                              raise Feedback.HOL_ERR holerr
+                            else Thm.REFL term
+                        val initial=step term
+                        val after=boolSyntax.rhs (Thm.concl initial)
+                        fun descend () =
+                      let
+                        val children =
+                          if Term.is_comb term then
+                            let val (operator,operand)=Term.dest_comb term
+                            in anchor term (Thm.MK_COMB
+                              (visit operator,visit operand)) end
+                          else if Term.is_abs term then
+                            let
+                              val _ = #admit_abstraction admission
+                                "dag-normalization-abstraction" term
+                              val _ = SmtResource.term_children term
+                              val (variable,body)=Term.dest_abs term
+                            in anchor term (Thm.ABS variable (visit body)) end
+                          else Thm.REFL term
+                        val current=boolSyntax.rhs (Thm.concl children)
+                        val changed = step current
+                        val right=boolSyntax.rhs (Thm.concl changed)
+                        val tail = if same current right then changed
+                          else Thm.TRANS changed (visit right)
+                      in Thm.TRANS children tail end
+                        val theorem = if same term after then
+                            descend ()
+                          else Thm.TRANS initial (visit after)
+                        val _ = case index term of NONE => ()
+                          | SOME key =>
+                            memo:=Redblackmap.insert (!memo,key,
+                              (!(#generation context),theorem))
+                      in theorem end
+                  in visit end end
+                val normalize_scalar =
+                  (case !(#normalizer context) of SOME normalize => normalize
+                   | NONE => let val normalize=new_normalizer ()
+                       in #normalizer context:=SOME normalize; normalize end)
+                    scalar
+                val reduce = SmtResource.profile_phase "z3/fp-packed/scalar"
+                  normalize_scalar
+                fun normalize theorem = Thm.EQ_MP
+                  (reduce (Thm.concl theorem)) theorem
+                val facts = List.map normalize facts
+                val _ = diagnostic "facts end"
+                fun decide goal =
+                  let
+                    val complete=boolSyntax.list_mk_imp
+                      (List.map Thm.concl facts,goal)
+                    val conversion=reduce complete
+                    val final=boolSyntax.rhs (Thm.concl conversion)
+                    val _=Option.app (fn observe=>observe final)
+                      (!packed_atom_residue_observer)
+                    val proved=SmtResource.profile_phase "z3/fp-packed/sat"
+                      (fn () => SmtReplayWordProgram.prove_in (#sat context)
+                        (#hole context) complete (fn () =>
+                          let val native=SmtReplayWordProgram.prepare_source
+                                (#sat context) final
+                          in fn () =>Thm.EQ_MP (Thm.SYM conversion)
+                            (native ()) end)) ()
+                  in Drule.LIST_MP facts proved end
+                fun field_definition () =
+                  let
+                    val (value,actual_atom,encoding)=
+                      value_definition_schema atom_theorem
+                    val descriptor=SmtFpGraph.represent value
+                    val represented= #representation descriptor
+                    val computed=boolSyntax.rhs (Thm.concl represented)
+                    val calculated=boolSyntax.rhs actual_atom
+                    val (_,computed_fields)=boolSyntax.strip_comb computed
+                    val (constructor,calculated_fields)=
+                      boolSyntax.strip_comb calculated
+                    val fields=computed_fields @ calculated_fields
+                    val _=List.length computed_fields=3 andalso
+                      List.length calculated_fields=3 orelse
+                      raise Conv.UNCHANGED
+                    val variables=ListPair.mapEq (fn (i,field)=>
+                      #hole context (3000+i) (Term.type_of field))
+                      (List.tabulate (6,fn i=>i),fields)
+                    val schema=boolSyntax.mk_eq
+                      (Term.list_mk_comb
+                         (constructor,List.take (variables,3)),
+                       Term.list_mk_comb
+                         (constructor,List.drop (variables,3)))
+                    val law= #field_law context schema
+                      (fn () => SmtFpGraph.convert_atom schema)
+                    val inserted=Thm.INST (ListPair.mapEq
+                      (fn (variable,field)=>variable |-> field)
+                      (variables,fields)) law
+                    val field_lowering=SmtSkeletonProve.nodewise_exact_left
+                      (boolSyntax.mk_eq (computed,calculated)) inserted
+                    val head=Term.rator (Term.rator actual_atom)
+                    val congruence=SmtSkeletonProve.nodewise_exact_left
+                      actual_atom (Thm.MK_COMB
+                        (Thm.MK_COMB (Thm.REFL head,represented),
+                         Thm.REFL calculated))
+                    val lowered=Thm.TRANS congruence field_lowering
+                    val fact=decide (boolSyntax.rhs (Thm.concl lowered))
+                    val value_fact=Thm.EQ_MP (Thm.SYM lowered) fact
+                    val encoded_fact=Thm.EQ_MP encoding value_fact
+                    val _= #remember context value_fact
+                    val result=Drule.EQT_INTRO encoded_fact
+                  in SmtSkeletonProve.exact_conclusion residue
+                    (if atom_on_left then Thm.SYM result else result) end
+              in
+                (SmtResource.profile_phase "z3-fp-field-definition"
+                   field_definition ()
+                 handle Feedback.HOL_ERR detail=>
+                   if SmtResource.is_resource_gate detail then
+                     raise Feedback.HOL_ERR detail else decide residue
+                      | SmtFpGraph.Declined _=>decide residue
+                      | HolSatLib.SAT_cex _=>decide residue
+                      | HolSatLib.SAT_satisfiable _=>decide residue
+                      | SmtSkeletonProve.REANCHOR_LIMIT=>decide residue
+                      | Conv.UNCHANGED=>decide residue)
+              end
+            else if shared_target then
               CPC_ProofReplay.prove_boolean_circuit implication
             else tautLib.TAUT_PROVE residue
           val assumptions = List.map Thm.ASSUME antecedents
@@ -3889,11 +5317,37 @@ local
             (Thm.INST substitutions) schematic
           val result = Drule.LIST_MP
             (List.map Lib.snd source_facts) instantiated
-          val _ = CPC_ProofReplay.sharing_aware_aconv
-            (Thm.concl result) target orelse
+          val _ = source_order (Thm.concl result,target)=EQUAL orelse
             raise ERR "rewrite_fp_packed_atom"
               "abstracted proof endpoint mismatch"
-        in result end
+          val exact=SmtSkeletonProve.exact_conclusion target result
+          fun learn () =
+            let
+              val (_,_,instantiated)=value_definition_schema atom_theorem
+              val true_atom=Drule.EQT_ELIM atom_theorem
+              val encoded_fact=Thm.EQ_MP
+                (if atom_on_left then exact else Thm.SYM exact) true_atom
+              val representation=Thm.EQ_MP (Thm.SYM instantiated) encoded_fact
+            in #remember context representation end
+          val _=(SmtResource.profile_phase "z3-fp-learn-representation"
+              learn () handle Feedback.HOL_ERR detail=>
+                if SmtResource.is_resource_gate detail then
+                  raise Feedback.HOL_ERR detail else ()
+                   | SmtFpGraph.Declined _=>()
+                   | HolSatLib.SAT_cex _=>()
+                   | HolSatLib.SAT_satisfiable _=>()
+                   | Conv.UNCHANGED=>())
+          val _ = #remember context exact
+        in exact end
+      fun produce () =
+        (SmtResource.profile_phase "z3-fp-known-bridge" known_bridge ()
+         handle Feedback.HOL_ERR detail=>
+           if SmtResource.is_resource_gate detail then
+             raise Feedback.HOL_ERR detail else convert ()
+              | SmtFpGraph.Declined _=>convert ()
+              | HolSatLib.SAT_cex _=>convert ()
+              | HolSatLib.SAT_satisfiable _=>convert ()
+              | Conv.UNCHANGED=>convert ())
     in
       if shared_target then
         let
@@ -3902,14 +5356,22 @@ local
             schematic_target
           val _ = SmtResource.check_dag_size_for
             "FloatingPoint" "z3-rewrite-fp-packed-atom" nodes
-        in convert () end
+        in SmtResource.with_resource_step_time
+          "Skeleton" "z3-rewrite-fp-packed-atom"
+          (fn () => produce ()) () end
       else SmtResource.with_resource_step_time
         "FloatingPoint" "z3-rewrite-fp-packed-atom"
         (fn target =>
           (SmtResource.check_resource_goal
              "FloatingPoint" "z3-rewrite-fp-packed-atom" target;
-           convert ())) schematic_target
+           produce ())) schematic_target
     end
+
+  fun rewrite_fp_packed_atom_in context target =
+    rewrite_fp_packed_atom_internal false context target
+
+  fun rewrite_fp_packed_atom target =
+    rewrite_fp_packed_atom_in (new_fp_context ()) target
 
   (* A Z3 definition axiom may be a shared Boolean circuit over word
      operations.  Normalize those operations by checked word theorems, then
@@ -3965,10 +5427,14 @@ local
         "word normalization left the goal unchanged"
 
   fun z3_def_axiom (state, t) =
-    (* Recognize excluded-middle clauses from their Boolean spine before
-       generic proforma matching.  This avoids traversing deeply shared
-       character and bit-vector atoms merely to bind one proposition. *)
-    (state, Library.gen_excluded_middle t)
+    (* Prove the small gate clause before inspecting its potentially large
+       Boolean inputs.  Only the bounded template is specialized. *)
+    (state, profile "def-axiom(0)(clause-frontier)"
+      (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
+        (fn target =>
+          (ignore (admitted_def_axiom_measure (fn _ => ()) target);
+           SmtSkeletonProve.clause_frontier_prove
+             max_def_axiom_boolean_spine_nodes target))) t)
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
@@ -3980,6 +5446,13 @@ local
       (def_axiom_skeleton_prove state) t)
     handle DEF_AXIOM_STRUCTURAL_UNEXPECTED exn => raise exn
          | Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+    (state, profile "def-axiom(1e)(guarded-conditional)"
+      (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
+        def_axiom_guarded_conditional) t)
+    handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
@@ -6213,6 +7686,149 @@ local
     profile "th_lemma[general](success)"
       (fn () => #theorem result) ()
 
+  (* Equality propagation through small word slices does not need to replay
+     the program producing the word.  The only learned laws below are closed
+     wire identities; the caller's operands enter by checked INST afterwards. *)
+  fun bv_literal_projection_in (context : fp_context) premises goal =
+    let
+      fun decline () = raise ERR "bv_literal_projection" "not a literal slice"
+      val _ = List.length premises<=64 orelse (decline (); false)
+      val _ = #refresh context ()
+      val admission=SmtWordGraph.new_type_admission ()
+      fun small_type ty =
+        let val left=ref 64
+            fun visit ty = if !left=0 then false else
+              (left:= !left-1;
+               Type.is_vartype ty orelse
+                 List.all visit (#Args (Type.dest_thy_type ty)))
+        in visit ty end
+      fun width term =
+        let val ty=Term.type_of term
+            val _=small_type ty orelse (decline (); false)
+            val w=SmtWordGraph.word_width admission ty
+        in if Arbnum.< (Arbnum.zero,w) andalso
+              Arbnum.<= (w,Arbnum.fromInt 32) then Arbnum.toInt w
+           else (decline (); 0) end
+      fun number term =
+        let val n=numSyntax.dest_numeral term
+        in if Arbnum.<= (n,Arbnum.fromInt 32) then Arbnum.toInt n
+           else (decline (); 0) end
+      fun slice term =
+        let val w=width term
+        in if wordsSyntax.is_word_extract term then
+          let val (high,low,source,_)=wordsSyntax.dest_word_extract term
+              val hi=number high and lo=number low
+              val source_width=width source
+              val _=lo<=hi andalso hi<source_width andalso w=hi-lo+1
+                orelse (decline (); false)
+              val (base,offset,_)=slice source
+          in (base,offset+lo,w) end
+        else (term,0,w) end
+      fun same (left,right) = Portable.pointer_eq (left,right) orelse
+        (case (#node_id context left,#node_id context right) of
+           (SOME a,SOME b)=>a=b | _=>false)
+      val negative=boolSyntax.is_neg goal
+      val atom=if negative then boolSyntax.dest_neg goal else goal
+      val (left,right)=boolSyntax.dest_eq atom
+      val (observed,literal,on_left)=
+        if wordsSyntax.is_word_literal right then (left,right,true)
+        else if wordsSyntax.is_word_literal left then (right,left,false)
+        else (decline (); (left,right,true))
+      val _=width observed=1 andalso width literal=1
+        orelse (decline (); false)
+      val _=wordsSyntax.is_word_extract observed orelse (decline (); false)
+      val (_,_,_,one)=wordsSyntax.dest_word_extract observed
+      val (observed_base,position,_)=slice observed
+      fun abstract base variable term =
+        let val left=ref 128
+            fun visit term =
+              if Portable.pointer_eq (term,base) then variable
+              else if !left=0 then (decline (); term)
+              else (left:= !left-1;
+                if Term.is_comb term then
+                  let val (f,x)=Term.dest_comb term
+                  in Term.mk_comb (visit f,visit x) end
+                else if Term.is_abs term then (decline (); term)
+                else term)
+        in visit term end
+      fun candidate (selected,premise) =
+        let
+          val (l,r)=boolSyntax.dest_eq premise
+          val (field,value,reverse)=
+            if wordsSyntax.is_word_literal r then (l,r,false)
+            else if wordsSyntax.is_word_literal l then (r,l,true)
+            else (decline (); (l,r,false))
+          val _=width field=width value orelse (decline (); false)
+          val (base,offset,count)=slice field
+          val _=same (base,observed_base) andalso
+            offset<=position andalso position<offset+count
+            orelse (decline (); false)
+          val index=numSyntax.mk_numeral (Arbnum.fromInt (position-offset))
+          fun extract term=wordsSyntax.mk_word_extract (index,index,term,one)
+          val variable= #hole context 0 (Term.type_of base)
+          val generic_field=abstract base variable field
+          val generic_observed=abstract observed_base variable observed
+          val wire=boolSyntax.mk_eq (generic_observed,extract generic_field)
+          val _=Option.isSome (SmtReplayImport.bounded_raw_size 512 wire)
+            orelse (decline (); false)
+          val wire_law= #word_law context wire (fn () =>
+            if Term.aconv generic_observed (extract generic_field) then
+              SmtSkeletonProve.exact_conclusion wire
+                (Thm.REFL generic_observed)
+            else blastLib.BBLAST_PROVE wire)
+          val wire_actual=SmtSkeletonProve.exact_conclusion
+            (boolSyntax.mk_eq (observed,extract field))
+            (Thm.INST [variable |-> base] wire_law)
+          val assumed=Thm.ASSUME premise
+          val equality=if reverse then Thm.SYM assumed else assumed
+          val transported=Thm.AP_TERM (Term.rator (extract field)) equality
+          val observed_value=Thm.TRANS wire_actual transported
+          val head=Term.rator (Term.rator atom)
+          val atom_conversion=Thm.MK_COMB
+            (Thm.MK_COMB (Thm.REFL head,
+              if on_left then observed_value else Thm.REFL literal),
+             if on_left then Thm.REFL literal else observed_value)
+          val conversion=if negative then
+            Thm.AP_TERM (Term.rator goal) atom_conversion else atom_conversion
+          val residue=boolSyntax.rhs (Thm.concl conversion)
+          val _=Option.isSome (SmtReplayImport.bounded_raw_size 8192 residue)
+            orelse (decline (); false)
+          val evaluation=wordsLib.WORD_EVAL_CONV residue
+          val proved=SmtSkeletonProve.exact_conclusion goal
+            (Drule.EQT_ELIM (Thm.TRANS conversion evaluation))
+          val implication=Thm.DISCH premise proved
+          val _=List.null (Thm.hyp implication) orelse (decline (); false)
+        in
+          if List.length premises=1 then implication else
+            let
+              val variables=List.tabulate (List.length premises,
+                fn i=> #hole context i Type.bool)
+              val result= #hole context (List.length premises) Type.bool
+              val given=boolSyntax.mk_imp (List.nth (variables,selected),result)
+              val schema=boolSyntax.mk_imp
+                (given,boolSyntax.list_mk_imp (variables,result))
+              val law= #word_law context schema (fn () =>
+                Thm.DISCH given (List.foldr
+                  (fn (premise,proof)=>Thm.DISCH premise proof)
+                  (Thm.MP (Thm.ASSUME given)
+                    (Thm.ASSUME (List.nth (variables,selected)))) variables))
+              val actual=Thm.INST
+                ((result |-> goal)::ListPair.map
+                  (fn (variable,premise)=>variable |-> premise)
+                  (variables,premises)) law
+            in Thm.MP actual implication end
+        end
+      fun choose []=decline ()
+        | choose (item::rest)=candidate item
+            handle Feedback.HOL_ERR holerr=>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr else choose rest
+                 | Conv.UNCHANGED=>choose rest
+      val theorem=choose (ListPair.zip
+        (List.tabulate (List.length premises,fn i=>i),premises))
+    in SmtSkeletonProve.exact_conclusion
+      (boolSyntax.list_mk_imp (premises,goal)) theorem end
+
   fun th_lemma_wrapper cache_policy (name : string)
     (th_lemma_implementation : state * Term.term -> state * Thm.thm)
     (state, thms, t) : state * Thm.thm =
@@ -6230,11 +7846,354 @@ local
           (* E1(a): finite checked-state lookup and instantiation is complete. *)
           state_inst_cached_thm state target
     fun checked_general target =
-      case skeleton_general_attempt state target of
-        SmtSkeletonDispatch.Proved result =>
-          (state, skeleton_general_success result)
-      | SmtSkeletonDispatch.Declined =>
-          th_lemma_implementation (state, target)
+      let
+        fun word_data term =
+          wordsSyntax.is_word_type (Term.type_of term) andalso
+          (boolSyntax.is_cond term orelse
+           (let val (head,_) = boolSyntax.strip_comb term
+                val {Thy,Name,...} = Term.dest_thy_const head
+            in Thy="smtfloat" andalso Name="smtfp_pack_bv" end
+            handle Feedback.HOL_ERR _ => false))
+        fun retained target =
+          let
+            fun phase name action = profile
+              ("th_lemma[bv](retained-" ^ name ^ ")") action
+            val sources=ref []
+            fun children term = if word_data term then
+                (sources:=term :: !sources; [])
+              else if Term.is_comb term then
+                [Term.rator term,Term.rand term] else []
+            val {complete,...} = phase "scan" (fn () =>
+              SmtResource.bounded_structure_with_children children (fn _=>())
+                SmtResource.max_bv_replay_term_nodes target) ()
+            val _ = complete andalso not (List.null (!sources)) orelse
+              raise ERR "bv_retained_data" "no bounded retained frontier"
+            val graph=SmtReplayGraph.new ()
+            val scope=SmtReplayGraph.root_scope graph
+            val _ = phase "sources" (fn () =>
+              List.app (fn source => ignore
+                (SmtReplayGraph.retain_source graph scope source)) (!sources)) ()
+            val source= #node (phase "import"
+              (SmtReplayGraph.import graph scope
+                SmtResource.max_skeleton_replay_dag_nodes) target)
+            val (plan,_) = phase "discover"
+              (SmtWordGraph.graph_normalize_in (#word_context state)
+                graph scope) source
+            val theorem=phase "prove"
+              (SmtWordGraph.prove_discovered_in (#word_context state)
+                graph scope) plan
+          in phase "anchor" (SmtSkeletonProve.exact_conclusion target)
+            theorem end
+        fun schematic keep_boolean target =
+          let
+            fun phase name action = profile
+              ("th_lemma[bv](schema-" ^ name ^ ")") action
+            val context= #fp_context state
+            val id=SmtReplaySchemaBuilder.node_ids_for_call
+              (fn term=>case #node_id context term of SOME key=>key
+                | NONE=>raise ERR "bv_word_schema"
+                  "unindexed template input")
+            val memo = ref (Redblackmap.mkDict Int.compare)
+            val substitutions = ref []
+            val data=fn term=>word_data term orelse
+              (Term.is_var term andalso
+               wordsSyntax.is_word_type (Term.type_of term))
+            fun retain term = case Redblackmap.peek (!memo,id term) of
+                SOME variable => variable
+              | NONE => let
+                  val variable = #hole (#fp_context state)
+                    (List.length (!substitutions)) (Term.type_of term)
+                  in substitutions := (variable |-> term) :: !substitutions;
+                    memo:=Redblackmap.insert (!memo,id term,variable);
+                    variable end
+            val seen = ref (HOLset.empty Int.compare)
+            fun collect term =
+              if HOLset.member (!seen,id term) then ()
+              else (seen:=HOLset.add (!seen,id term);
+                if data term then ()
+                else if Term.is_comb term then
+                  let
+                    val (_,arguments)=boolSyntax.strip_comb term
+                    val ty=Term.type_of term
+                    val _ = if ty<>Type.bool andalso
+                        not (Lib.can Type.dom_rng ty) then
+                      List.app (fn argument =>
+                        if Term.type_of argument=Type.bool andalso
+                           not (Term.aconv argument boolSyntax.T orelse
+                                Term.aconv argument boolSyntax.F) then
+                          ignore (retain argument) else ()) arguments
+                      else ()
+                  in collect (Term.rator term); collect (Term.rand term) end
+                else ())
+            exception NeedsBoolean
+            val fast=ref keep_boolean
+            fun returns_boolean ty =
+              case Lib.total Type.dom_rng ty of NONE=>ty=Type.bool
+              | SOME (_,range)=>returns_boolean range
+            fun abstract term = case Redblackmap.peek (!memo,id term) of
+                SOME result => result
+              | NONE =>
+                let
+                  val result = if data term then retain term
+                    else if Term.is_comb term then
+                      let
+                        val operator=Term.rator term
+                        val operand=Term.rand term
+                        val _=if !fast andalso
+                            Term.type_of operand=Type.bool andalso
+                            not (Term.aconv operand boolSyntax.T orelse
+                                 Term.aconv operand boolSyntax.F) andalso
+                            not (returns_boolean (Term.type_of operator))
+                          then raise NeedsBoolean else ()
+                        val left=abstract operator
+                        val right=abstract operand
+                      in
+                        if Portable.pointer_eq (operator,left) andalso
+                            Portable.pointer_eq (operand,right) then term
+                        else SmtReplaySchemaBuilder.application
+                          (#schema_builder context) (left,right)
+                      end
+                    else term
+                  val _ = memo := Redblackmap.insert (!memo,id term,result)
+                in result end
+            val schema = phase "abstract" (fn () =>
+              abstract target handle NeedsBoolean=>
+                (fast:=false;memo:=Redblackmap.mkDict Int.compare;
+                 substitutions:=[];collect target;abstract target)) ()
+            val _ = not (List.null (!substitutions)) orelse
+              raise ERR "bv_word_schema" "no retained word data"
+            fun binder_free term=not (Term.is_abs term) andalso
+              List.all binder_free (SmtResource.term_children term)
+            fun owned () =
+              if Option.isSome (SmtReplayImport.bounded_raw_size
+                  SmtResource.max_bv_replay_term_nodes schema) andalso
+                  binder_free schema then
+                SmtWordGraph.prove_in (#word_context state) schema
+              else raise ERR "bv_word_schema" "needs retained graph replay"
+            fun fallback () = if keep_boolean then
+                raise ERR "bv_word_schema" "compact Boolean frontier declined"
+              else owned ()
+            exception CompactDecline of string
+            fun compact () =
+              let
+                val _ = Option.isSome (SmtReplayImport.bounded_raw_size
+                  SmtResource.max_skeleton_replay_dag_nodes schema) orelse
+                  raise CompactDecline "size"
+                val admission = SmtWordGraph.new_type_admission ()
+                fun inspect term =
+                  let
+                    val ty=Term.type_of term
+                    val _ = SmtWordGraph.admit_primitive_type admission ty
+                    val remaining=ref 64
+                    fun small ty=if !remaining=0 then false else
+                      (remaining:= !remaining-1;
+                       Type.is_vartype ty orelse
+                         List.all small (#Args (Type.dest_thy_type ty)))
+                    val _=small ty orelse raise CompactDecline "types"
+                    val _=not (Term.is_abs term)
+                      orelse raise CompactDecline "binder"
+                    val _ = if wordsSyntax.is_word_type ty andalso
+                        Arbnum.compare (SmtWordGraph.word_width admission ty,
+                          Arbnum.fromInt 32)=GREATER then
+                      raise CompactDecline "width" else ()
+                  in List.app inspect (SmtResource.term_children term) end
+                val _ = phase "admit" inspect schema
+              in phase "law" (fn () => #word_law (#fp_context state) schema
+                (fn () =>
+                  (profile "th_lemma[bv](compact-word-template)"
+                    (fn source=>let
+                      fun native ()=let
+                        val normalized=Library.replay_word_normalize_conv source
+                        val theorem=SmtBitBlastProve.prove
+                          (#bitblast (#fp_context state))
+                          (boolSyntax.rhs (Thm.concl normalized))
+                       in Thm.EQ_MP (Thm.SYM normalized) theorem end
+                    in if SmtReplayCompactWord.eligible source then
+                      (SmtReplayCompactWord.prove_schema
+                        (#bitblast context) (#atomic_law context)
+                        (#word_law context) source
+                       handle SmtReplayCompactWord.Declined=>native ())
+                     else native () end) schema
+                   handle Feedback.HOL_ERR holerr =>
+                     if SmtResource.is_resource_gate holerr then
+                       raise Feedback.HOL_ERR holerr
+                     else profile "th_lemma[bv](compact-owned-template)"
+                       owned ()
+                        | HolSatLib.SAT_cex _ =>
+                     profile "th_lemma[bv](compact-owned-template)" owned ()
+                        | HolSatLib.SAT_satisfiable _ =>
+                     profile "th_lemma[bv](compact-owned-template)" owned ()))) () end
+            val law = compact ()
+              handle CompactDecline reason =>
+                       profile ("th_lemma[bv](owned-" ^ reason ^ ")")
+                         fallback ()
+                   | Feedback.HOL_ERR holerr =>
+                       if SmtResource.is_resource_gate holerr then
+                         raise Feedback.HOL_ERR holerr else fallback ()
+                   | HolSatLib.SAT_cex _ => fallback ()
+                   | HolSatLib.SAT_satisfiable _ => fallback ()
+                   | Conv.UNCHANGED => fallback ()
+            val _ = phase "output-admit" (fn () =>
+              Option.isSome (SmtReplayImport.bounded_raw_size
+                SmtResource.max_bv_replay_term_nodes (Thm.concl law)) andalso
+                binder_free (Thm.concl law) orelse
+              raise ERR "bv_word_schema" "template needs graph realization") ()
+            val theorem = phase "inst" (Thm.INST (!substitutions)) law
+          in phase "anchor" (SmtSkeletonProve.exact_conclusion target)
+            theorem end
+        fun conditional_schematic target =
+          let val keep_boolean=true in
+          let
+            fun phase name action = profile
+              ("th_lemma[bv](schema-" ^ name ^ ")") action
+            val context= #fp_context state
+            val id=SmtReplaySchemaBuilder.node_ids_for_call
+              (fn term=>case #node_id context term of SOME key=>key
+                | NONE=>raise ERR "bv_word_schema"
+                  "unindexed template input")
+            val memo = ref (Redblackmap.mkDict Int.compare)
+            val substitutions = ref []
+            val exposed=ref false
+            fun conditional term=wordsSyntax.is_word_type (Term.type_of term)
+              andalso boolSyntax.is_cond term
+            fun opaque_bool term=Term.type_of term=Type.bool andalso
+              not (Term.is_var term) andalso
+              not (Option.isSome (SmtSkeletonProve.skeleton_children term))
+              andalso not (case Lib.total boolSyntax.dest_eq term of
+                SOME (left,_)=>wordsSyntax.is_word_type (Term.type_of left)
+              | NONE=>let val (head,_)=boolSyntax.strip_comb term
+                          val {Thy,...}=Term.dest_thy_const head
+                      in Thy="words" orelse Thy="fcp" end)
+            fun data term=(word_data term andalso not (conditional term))
+              orelse opaque_bool term
+            fun retain term = case Redblackmap.peek (!memo,id term) of
+                SOME variable => variable
+              | NONE => let
+                  val variable = #hole (#fp_context state)
+                    (List.length (!substitutions)) (Term.type_of term)
+                  in substitutions := (variable |-> term) :: !substitutions;
+                    memo:=Redblackmap.insert (!memo,id term,variable);
+                    variable end
+            val seen = ref (HOLset.empty Int.compare)
+            fun collect term =
+              if HOLset.member (!seen,id term) then ()
+              else (seen:=HOLset.add (!seen,id term);
+                if data term then ()
+                else if conditional term then
+                  let val (guard,yes,no)=boolSyntax.dest_cond term
+                  in exposed:=true;collect yes;collect no;collect guard end
+                else if Term.is_comb term then
+                  let
+                    val (_,arguments)=boolSyntax.strip_comb term
+                    val ty=Term.type_of term
+                    val _ = if ty<>Type.bool andalso
+                        not (Lib.can Type.dom_rng ty) then
+                      List.app (fn argument =>
+                        if Term.type_of argument=Type.bool andalso
+                           not (Term.aconv argument boolSyntax.T orelse
+                                Term.aconv argument boolSyntax.F) then
+                          ignore (retain argument) else ()) arguments
+                      else ()
+                  in collect (Term.rator term); collect (Term.rand term) end
+                else ())
+            val _=collect target
+            fun abstract term = case Redblackmap.peek (!memo,id term) of
+                SOME result => result
+              | NONE =>
+                let
+                  val result = if data term orelse
+                      (Term.is_var term andalso
+                       wordsSyntax.is_word_type (Term.type_of term))
+                    then retain term
+                    else if Term.is_comb term then
+                      let
+                        val operator=Term.rator term
+                        val operand=Term.rand term
+                        val left=abstract operator
+                        val right=abstract operand
+                      in
+                        if Portable.pointer_eq (operator,left) andalso
+                            Portable.pointer_eq (operand,right) then term
+                        else SmtReplaySchemaBuilder.application
+                          (#schema_builder context) (left,right)
+                      end
+                    else term
+                  val _ = memo := Redblackmap.insert (!memo,id term,result)
+                in result end
+            val schema = phase "program-abstract" abstract target
+          in SmtReplayCompactWord.prove_in (#sat context)
+            (SmtReplayCompactWord.prove_schema (#bitblast context)
+               (#atomic_law context) (#word_law context))
+            (#hole context) target (!substitutions) schema end end
+        fun old_word_schema target =
+          profile "th_lemma[bv](word-schema)" (schematic false) target
+        fun word_schema target =
+          (profile "th_lemma[bv](compact-program-law)"
+             conditional_schematic target
+           handle Feedback.HOL_ERR detail=>
+             if SmtResource.is_resource_gate detail then
+               raise Feedback.HOL_ERR detail
+             else profile "th_lemma[bv](retained-word-data)" retained target
+            | HolSatLib.SAT_cex _=>
+                profile "th_lemma[bv](retained-word-data)" retained target
+            | HolSatLib.SAT_satisfiable _=>
+                profile "th_lemma[bv](retained-word-data)" retained target
+            | SmtReplayCompactWord.Declined=>
+                profile "th_lemma[bv](retained-word-data)" retained target
+            | Conv.UNCHANGED=>
+                profile "th_lemma[bv](retained-word-data)" retained target)
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr else old_word_schema target
+               | HolSatLib.SAT_cex _ => old_word_schema target
+               | HolSatLib.SAT_satisfiable _ => old_word_schema target
+               | Conv.UNCHANGED => old_word_schema target
+        fun old_shared target =
+          (profile "th_lemma[bv](Boolean-word-schema)"
+             (schematic true) target
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr else word_schema target
+                | HolSatLib.SAT_cex _ => word_schema target
+                | HolSatLib.SAT_satisfiable _ => word_schema target)
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else SmtWordGraph.prove_in (#word_context state) target
+               | HolSatLib.SAT_cex _ =>
+                   SmtWordGraph.prove_in (#word_context state) target
+               | HolSatLib.SAT_satisfiable _ =>
+                   SmtWordGraph.prove_in (#word_context state) target
+        fun shared target =
+          (profile "th_lemma[bv](literal-projection)"
+             (fn () => bv_literal_projection_in (#fp_context state)
+               (List.map Thm.concl thms) t) ()
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr else old_shared target
+                | Conv.UNCHANGED => old_shared target)
+        fun general () =
+          case skeleton_general_attempt state target of
+            SmtSkeletonDispatch.Proved result =>
+              (state, skeleton_general_success result)
+          | SmtSkeletonDispatch.Declined =>
+              th_lemma_implementation (state, target)
+      in
+        if name <> "bv" then general ()
+        else
+          (SmtResource.check_dag_size_for "Skeleton" "general-reduction"
+             (SmtResource.dag_nodes_up_to
+               (SmtResource.max_skeleton_replay_dag_nodes + 1) target);
+           (state, profile "th_lemma[bv](shared-word)"
+             (SmtResource.with_resource_step_time
+               "BitVector" "z3-bv-shared-word" shared) target)
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else general ()
+                | HolSatLib.SAT_cex _ => general ()
+                | HolSatLib.SAT_satisfiable _ => general ())
+      end
     fun general () =
       ((state,
         profile ("th_lemma[" ^ name ^ "](" ^ cache_rung ^ ")(cache)")
@@ -7105,32 +9064,30 @@ local
       case Lib.total (state_inst_cached_thm state) t' of
         SOME cached => (true, cached)
       | NONE =>
-        (case skeleton_general_attempt state t' of
-          SmtSkeletonDispatch.Proved result =>
-            (true, skeleton_general_success result)
-        | SmtSkeletonDispatch.Declined =>
-          (* E1(b): checked lowering is the general selected FP th-lemma
-             procedure and fails loudly at its unsupported/D4 boundary. *)
-          (false,
-           (profile "th_lemma[fp](pack-roundtrip)"
-              rewrite_fp_pack_roundtrip t'
+        let
+          fun general () =
+            case skeleton_general_attempt state t' of
+              SmtSkeletonDispatch.Proved result =>
+                (true, skeleton_general_success result)
+            | SmtSkeletonDispatch.Declined =>
+                (false, profile "th_lemma[fp](1)" circuit_or_symbolic t')
+          fun packed () =
+            (false, profile "th_lemma[fp](packed-atom)"
+              (rewrite_fp_packed_atom_in (#fp_context state)) t')
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
-              else
-                (trace_fp
-                   ("pack-roundtrip declined: " ^
-                    Feedback.message_of holerr);
-                 profile "th_lemma[fp](packed-atom)"
-                   rewrite_fp_packed_atom t'
-                 handle Feedback.HOL_ERR holerr =>
-                   if SmtResource.is_resource_gate holerr then
-                     raise Feedback.HOL_ERR holerr
-                   else profile "th_lemma[fp](1)"
-                     circuit_or_symbolic t')
-                 | SmtFpGraph.Declined _ =>
-              profile "th_lemma[fp](1)"
-                circuit_or_symbolic t')))
+              else general ()
+                 | SmtFpGraph.Declined _ => general ()
+        in
+          (false, profile "th_lemma[fp](pack-roundtrip)"
+             rewrite_fp_pack_roundtrip t')
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else packed ()
+               | SmtFpGraph.Declined _ => packed ()
+        end
     val _ = trace_fp "proved"
     val state' =
       if general then state
@@ -8574,6 +10531,8 @@ in
   val hypothesis_theorem_for_test = z3_hypothesis_theorem
   val hypothesis_theorem_with_for_test = z3_hypothesis_theorem_with
   val hypothesis_has_free_variables_for_test = replay_has_free_variables
+  val hypothesis_has_free_variables_legacy_for_test =
+    replay_has_free_variables_legacy
   val hypothesis_char_next_route_for_test = hypothesis_char_next_route
   val asserted_membership_diagnostic = asserted_membership_diagnostic
   val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
@@ -8626,6 +10585,27 @@ in
     ground_subterm_eval_max_nodes
   val ground_subterm_eval_max_calls_for_test =
     ground_subterm_eval_max_calls
+  val packed_atom_residue_observer_for_test = packed_atom_residue_observer
+  val rewrite_fp_packed_atom_for_test = rewrite_fp_packed_atom
+  fun new_packed_atom_rewriter_for_test () =
+    rewrite_fp_packed_atom_in (new_fp_context ())
+  fun new_fp_field_cache_for_test () = #field_law (new_fp_context ())
+  fun new_fp_node_index_for_test () = #node_id (new_fp_context ())
+  fun new_fp_conversion_caches_for_test () =
+    let val context=new_fp_context ()
+    in (#field_law context,#bit_law context,#atomic_law context) end
+  fun new_compact_word_prover_for_test () =
+    let val context=new_fp_context ()
+    in SmtReplayCompactWord.prove_schema (#bitblast context)
+      (#atomic_law context) (#word_law context) end
+
+  fun new_fp_alignment_rewriter_for_test () =
+    rewrite_fp_alignment_in (new_fp_context ())
+  fun new_fp_self_add_rewriter_for_test () =
+    rewrite_fp_self_add_in (new_fp_context ())
+  fun new_fp_grs_rewriter_for_test () =
+    rewrite_fp_grs_in (new_fp_context ())
+  val rewrite_fp_pack_roundtrip_for_test = rewrite_fp_pack_roundtrip
   val word_decide_for_test = word_decide
   val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
   fun def_axiom_candidate_exception_for_test raised =
@@ -8868,6 +10848,7 @@ in
     translation_definitions = definitions,
     skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
     word_context = SmtWordGraph.new_context (),
+    fp_context = new_fp_context (),
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }
@@ -8875,6 +10856,14 @@ in
   fun initial_replay_state allowed definitions proof =
     initial_replay_state_admitted (SmtDatatypeProve.default_admission ())
       allowed definitions proof
+
+  fun new_compact_source_prover_for_test () =
+    let val proof=Z3_Proof.empty_proof "4.11.2"
+        val state=initial_replay_state Term.empty_tmset [] proof
+    in fn source=> #2 (th_lemma_wrapper D1PerformanceCache "bv"
+      (fn (state,term)=>(state,bv_th_lemma_prove term))
+      (state,[],source)) end
+
 
   (* Unit replay helpers do not have an original goal.  Derive their allowed
      set from the complete synthetic proof value so they continue to exercise
@@ -9682,6 +11671,7 @@ in
     var_set = #var_set s,bit_decompositions = #bit_decompositions s,
     translation_definitions = #translation_definitions s,
     skeleton_context = #skeleton_context s,word_context = #word_context s,
+    fp_context = #fp_context s,
     string_index_cache = #string_index_cache s,z3_version = #z3_version s}
 
   fun replay_root_with_definition_occurrences_admitted admit definitions proof =

@@ -121,6 +121,45 @@ local
         end
     in intern term end
 
+  (* Intern only this shell, never canonicalizing or rebuilding children.
+     The caller must admit leaf types before lookup: exact type comparison
+     below is not itself resource-bounded.  The existing bounded bucket hash
+     is shared with intern_cpc_term; abstractions remain entirely opaque. *)
+  fun intern_cpc_shell candidate =
+    if Term.is_abs candidate then candidate
+    else
+      let
+        fun same_candidate saved =
+          Portable.pointer_eq (saved, candidate) orelse
+          if Term.is_comb saved andalso Term.is_comb candidate then
+            let
+              val (saved_operator, saved_operand) = Term.dest_comb saved
+              val (operator, operand) = Term.dest_comb candidate
+            in
+              Portable.pointer_eq (saved_operator, operator) andalso
+              Portable.pointer_eq (saved_operand, operand)
+            end
+          else if Term.is_var saved andalso Term.is_var candidate then
+            let
+              val (saved_name, saved_type) = Term.dest_var saved
+              val (name, ty) = Term.dest_var candidate
+            in
+              saved_name = name andalso Type.compare (saved_type, ty) = EQUAL
+            end
+          else if Term.is_const saved andalso Term.is_const candidate then
+            Term.same_const saved candidate andalso
+            Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
+          else false
+        val bucket = term_intern_hash candidate
+        val entries = Array.sub (!cpc_term_intern, bucket)
+      in
+        case List.find same_candidate entries of
+          SOME saved => saved
+        | NONE =>
+            (Array.update (!cpc_term_intern, bucket, candidate :: entries);
+             candidate)
+      end
+
   fun intern_located ({term, provenance} : located_term) =
     {term = intern_cpc_term term, provenance = provenance}
 
@@ -3944,6 +3983,7 @@ in
   val normalize_cpc_testers = normalize_cpc_testers
   val validate_raw_term = validate_raw_term
   val intern_cpc_term = intern_cpc_term
+  val intern_cpc_shell = intern_cpc_shell
   val cpc_indexed_term_registry = cpc_indexed_term_registry
   val with_cpc_deindexed_entries = with_cpc_deindexed_entries
   val cpc_parameterized_skolem_names = cpc_parameterized_skolem_names

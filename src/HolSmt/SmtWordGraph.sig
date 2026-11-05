@@ -46,6 +46,19 @@ sig
   val normalize_with_node_conversion : Conv.conv -> Conv.conv
   val normalize_with_node_conversion_and_metrics :
     Conv.conv -> Term.term -> Thm.thm * metrics
+  (* Opt-in term adapter: exact source pointers are uninterpreted data.
+     The original input DAG is still admitted and measured before any stop.
+     Neither callbacks nor normalization/binder descent visit these leaves.
+     Existing adapters have no stops. *)
+  val normalize_with_node_conversion_stopping :
+    Term.term list -> Conv.conv -> Conv.conv
+  val normalize_with_node_conversion_stopping_and_metrics :
+    Term.term list -> Conv.conv -> Term.term -> Thm.thm * metrics
+  (* Same retained-source admission as graph_normalize_using_with_metrics;
+     complete discovery precedes checked local-law realization. Bounded
+     closed operator frontiers may be reused within this invocation. *)
+  val normalize_retaining_sources_with_node_conversion :
+    Term.term list -> Conv.conv -> Conv.conv
   val normalize_using_with_metrics :
     {word_conversion : Conv.conv, bit_conversion : Conv.conv,
      node_conversion : Conv.conv} -> Term.term -> Thm.thm * metrics

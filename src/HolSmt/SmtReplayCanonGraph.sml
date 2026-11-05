@@ -1199,11 +1199,14 @@ struct
         (graph_conversions converted)
       val memo = ref (Redblackmap.mkDict Int.compare)
       val definitions = ref (Redblackmap.mkDict Int.compare)
+      val premises = ref []
+      fun theorem edge =
+        (premises := edge :: !premises;P.theorem block edge)
       fun definition node =
         case Redblackmap.peek (!definitions,G.node_id node) of
           SOME theorem => theorem
         | NONE =>
-            let val theorem = P.theorem block (P.definition block node)
+            let val theorem = theorem (P.definition block node)
             in definitions := Redblackmap.insert
               (!definitions,G.node_id node,theorem); theorem end
       fun refl node = SmtReplayRuleObservation.REFL (P.name block node)
@@ -1237,12 +1240,12 @@ struct
                     (trans (comb (assemble operator,assemble operand))
                       (sym (definition current)))
             val oriented = case conversion of SOME plan =>
-                trans initial (P.theorem block (P.conversion block plan))
+                trans initial (theorem (P.conversion block plan))
               | NONE => (case closed of SOME fact =>
                   trans initial (SmtReplayRuleObservation.EQ_MP
-                    (P.theorem block
+                    (theorem
                       (P.constructor block (P.closed_node fact)))
-                    (P.theorem block (P.closed block fact)))
+                    (theorem (P.closed block fact)))
                 | NONE => (case schema of NONE => initial
                   | SOME schema => trans initial (schema_proof schema)))
             val result = case continuation of NONE => oriented
@@ -1258,8 +1261,12 @@ struct
         (SmtReplayRuleObservation.AP_THM (definition head) (P.name block left))
       val actual = trans (definition equality)
         (SmtReplayRuleObservation.AP_THM inner (P.name block right))
-    in P.checked block
-      (SmtReplayRuleObservation.EQ_MP (sym actual) proof) end
+      val proof = SmtReplayRuleObservation.EQ_MP (sym actual) proof
+      (* These are the actual same-block inputs used above, not external
+         leaf assumptions. Compose checks the final named Hyp directly and
+         records their edges; lifting each Hyp through its own projection
+         would repeat a proof already held by this block. *)
+    in P.compose block (fn _ => proof) (!premises) end
     | assemble_finite_named _ _ _ =
         raise ERR "graph_assemble_named" "not a finite named conversion"
 

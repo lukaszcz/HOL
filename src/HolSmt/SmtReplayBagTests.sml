@@ -228,6 +228,143 @@ struct
        exact bound_goal [] (#theorem bound_result);
        same_tags bound_native (#theorem bound_result) end)
 
+  (* Task57's original @p60 TRUST law: srw computes the ground integer
+     guard even though INT_REDUCE has no exported rewrite source. Retain
+     its Boolean element, conditional count lambda and exact endpoint.
+     Also vary the element Type and signed comparison; none of the count
+     operands or guards may become independent graph holes. *)
+  fun conditional_int_context () =
+    let
+      val original =
+        ``T ==> if T = (y:bool) /\ integer$int_ge 1 1 then
+          (&((\bag_literal_x:bool.
+             if bag_literal_x = y then
+               if integer$int_le 0 1 then integer$Num (1:int)
+               else 0 else 0) T):int) = 1
+        else
+          (&((\bag_literal_x:bool.
+             if bag_literal_x = y then
+               if integer$int_le 0 1 then integer$Num (1:int)
+               else 0 else 0) T):int) = 0``
+      (* Construct the signed operand independently of numeric-negation
+         parsing, and retain the literal invariant explicitly. *)
+      val negative_two = intSyntax.term_of_int (Arbint.fromInt ~2)
+      val _ = require "signed Int guard is not the literal negative two"
+        (intSyntax.is_int_literal negative_two andalso
+         Arbint.compare (intSyntax.int_of_term negative_two,
+                         Arbint.fromInt ~2) = EQUAL)
+      val generalized =
+        ``if (x:'a) = y /\ integer$int_ge 3 2 then
+          (&((\q:'a. if q = y then
+               if integer$int_le ^negative_two 3 then integer$Num (1:int)
+               else 0 else 0) x):int) = 1
+        else
+          (&((\q:'a. if q = y then
+               if integer$int_le ^negative_two 3 then integer$Num (1:int)
+               else 0 else 0) x):int) = 0``
+      fun only_variables target variables =
+        require "conditional Int law parsed a constant as a free variable"
+          (HOLset.equal (Term.FVL [target] Term.empty_tmset,
+                         HOLset.addList (Term.empty_tmset,variables)))
+      val _ = only_variables original [``y:bool``]
+      val _ = only_variables generalized [``x:'a``,``y:'a``]
+      fun worker admit target =
+        SmtBagProve.bag_contextual_prove_with_admission admit [] target
+      fun genuine () = A.new_term_check
+        {limit=limit,observe=fn () => ()}
+      (* Reduce beta-redexes and ground arithmetic before splitting. What
+         remains is an indicator law over arbitrary element equality, not
+         an OMEGA obligation: equality symmetry belongs to first-order logic.
+         Keep this reference independent of the checked bag worker. *)
+      fun native target = Tactical.TAC_PROOF (([],target),
+        Tactical.THEN (bossLib.SIMP_TAC intLib.int_ss [],
+          Tactical.THEN (Tactical.REPEAT Tactic.COND_CASES_TAC,
+            Tactical.THEN (bossLib.FULL_SIMP_TAC intLib.int_ss [],
+              bossLib.METIS_TAC []))))
+      fun phase label stage action = action () handle error =>
+        raise Fail ("conditional Int " ^ label ^ " [" ^ stage ^ "]: " ^
+          General.exnMessage error)
+      fun check (label,target) =
+        let val _ = testutils.tprint
+              ("bag conditional Int contextual law (" ^ label ^ ")")
+            val expected = phase label "native reference" (fn () =>
+              let val theorem = native target
+              in exact target [] theorem;theorem end)
+            val _ = phase label "source worker" (fn () =>
+              let val actual = worker (genuine ()) target
+              in exact target [] actual;same_tags expected actual end)
+            val _ = phase label "graph import/replay/export" (fn () =>
+              with_graph (fn graph => fn scope =>
+                let val result = A.prove_bounded_variables_admitted graph scope
+                      {inputs=[import graph scope target],template_limit=limit,
+                       observe=fn _ => (),procedure=fn admit => fn [term] =>
+                         phase label "graph worker" (fn () =>
+                           (shape target term;worker admit term))
+                         | _ => raise Fail "conditional Int bag arity"}
+                in exact target [] (#theorem result);
+                   same_tags expected (#theorem result) end))
+        in testutils.OK () end
+      (* Isolate signed comparison coverage from the polymorphic
+         conditional: a failure identifies either literal reduction or
+         the remaining element-equality/context obligation. *)
+      fun literal n = intSyntax.term_of_int (Arbint.fromInt n)
+      fun comparison label operator left right value =
+        (label,boolSyntax.mk_eq
+          (Term.list_mk_comb (operator,[left,right]),
+           if value then boolSyntax.T else boolSyntax.F))
+      val ground_comparisons =
+        [comparison "signed LE" intSyntax.leq_tm negative_two
+           (literal 3) true,
+         comparison "signed LT false" intSyntax.less_tm (literal 3)
+           negative_two false,
+         comparison "signed GE" intSyntax.geq_tm (literal 3)
+           negative_two true,
+         comparison "signed GT false" intSyntax.greater_tm negative_two
+           (literal 3) false,
+         comparison "negative LE" intSyntax.leq_tm (literal ~3)
+           negative_two true,
+         comparison "negative EQ false" intSyntax.int_eq_tm negative_two
+           (literal 2) false]
+      val _ = List.app check
+        (("original Boolean",original)::ground_comparisons @
+         [("polymorphic signed",generalized)])
+      val false_law =
+        ``T ==> if T = (y:bool) /\ integer$int_ge 1 1 then
+          (&((\q:bool. if q = y then integer$Num (1:int)
+                      else 0) T):int) = 0
+        else (&((\q:bool. if q = y then integer$Num (1:int)
+                           else 0) T):int) = 1``
+      val _ = only_variables false_law [``y:bool``]
+      val _ = require "conditional Int context accepted false count law"
+        (declines (fn () => SOME (worker (genuine ()) false_law)))
+      (* The natural comparison is a prospective rewrite RHS, not source
+         syntax or a post-hoc final-theorem check. An ordinary callback
+         exception must abort before conversion and not poison recovery. *)
+      (* INT_GE followed by INT_LE keeps NUMERAL wrappers; the generic
+         INT_GE_REDUCE equation instead exposes their BIT1/BIT2 bodies.
+         Both paths have the same ground natural comparison, not 3 <= 2. *)
+      val intermediate = ``(2:num) <= 3``
+      val raw_intermediate = numSyntax.mk_leq
+        (Term.rand ``2:num``,Term.rand ``3:num``)
+      exception Primary
+      fun refuses_intermediate (label,target) =
+        let val stopped = ref false val after = ref 0
+            val admit = genuine ()
+            val outcome = Exn.capture (fn () => worker
+              (fn tm => if !stopped then (after := !after+1;admit tm)
+                else if tm ~~ intermediate orelse tm ~~ raw_intermediate then
+                  (stopped := true;raise Primary) else admit tm) target) ()
+        in require (label ^ ": ground Int comparison escaped admission")
+             (!stopped andalso !after=0 andalso
+              (case outcome of Exn.Exn Primary => true | _ => false));
+           exact target [] (worker (genuine ()) target)
+        end
+    in List.app refuses_intermediate
+         [("conditional signed",generalized),
+          comparison "negative-negative signed" intSyntax.leq_tm
+            (literal ~3) negative_two true]
+    end
+
   fun cpc_worker name admit term =
     let val located = {term=term,provenance=
           CPC_Proof.UnavailableProvenance "bag identity"}
@@ -1397,7 +1534,9 @@ struct
       raise Fail (name ^ ": " ^ General.exnMessage error))
       [("bag schemas",schemas_and_sharing),("bag false",false_obligations),
        ("bag Int guards",int_bag_guards),("bag Int arrays",int_array_maps),
-       ("bag context",contextual),("bag CPC",cpc_cases),
+       ("bag context",contextual),
+       ("bag conditional Int context",conditional_int_context),
+       ("bag CPC",cpc_cases),
        ("bag compact TRUST",compact_trust_identity),
        ("bag graph identity",graph_handlers),("bag admission",admission_errors),
        ("bag prospective beta phases",prospective_betas),

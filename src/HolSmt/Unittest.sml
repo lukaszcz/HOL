@@ -16360,8 +16360,57 @@ let
         ("CPC large-choice FP atom bridge", theorem, target);
       check_oracle_tags "CPC large-choice FP atom bridge" theorem
     end
+  fun check_shared_alias () =
+    let
+      (* Keep choice binders small: sharing belongs to the circuit outside
+         them, not to a body that mk_select/mk_abs would unfold. *)
+      fun choice name =
+        let
+          val operand = Term.mk_var (name, ``:(4,3) smtfp``)
+          val body = List.foldl
+            (fn (index, result) => boolSyntax.mk_conj
+              (Term.mk_var
+                 ("fp_shared_choice_" ^ Int.toString index, Type.bool),
+               result))
+            ``smtfp_is_nan ^operand`` (List.tabulate (100, Lib.I))
+        in boolSyntax.mk_select (operand, body) end
+      val source = choice "fp_shared_operand"
+      val alias = choice "fp_shared_alias"
+      val atom = ``smtfp_is_nan (smtfp_add RNE ^source ^source)``
+      val alias_atom = ``smtfp_is_nan (smtfp_add RNE ^alias ^alias)``
+      fun shared 0 term = term
+        | shared depth term =
+            shared (depth - 1) (boolSyntax.mk_conj (term, term))
+      val encoding = SmtLib_Theories.mk_bbterm [shared 10 alias_atom]
+      val target = boolSyntax.mk_eq
+        (atom, boolSyntax.mk_eq (``1w : word1``, encoding))
+      val _ = assert
+        (not (Portable.pointer_eq (source, alias)) andalso
+         Term.aconv source alias,
+         "FP shared-choice fixture lost its alpha-renamed source alias")
+      val _ = assert
+        (Option.isSome (SmtReplayImport.bounded_raw_size 2000 source) andalso
+         Option.isSome (SmtReplayImport.bounded_raw_size 2000 alias),
+         "FP shared-choice fixture has an oversized choice binder")
+      (* This is the repaired routing boundary: a choice-containing word
+         residue must not use the legacy stopping adapter just because its
+         DAG fits. The unfolded circuit is deliberately over its raw gate. *)
+      val _ = assert
+        (SmtResource.dag_nodes_up_to 8193 target > 256 andalso
+         SmtResource.dag_nodes_up_to 8193 target <= 8192 andalso
+         not (Option.isSome
+           (SmtReplayImport.bounded_raw_size 200000 target)),
+         "FP shared-choice fixture missed the small-DAG/large-raw boundary")
+      val theorem = CPC_ProofReplay.replay_trust_for_test target
+    in
+      assert_no_hyps ("CPC shared-choice FP atom bridge", theorem);
+      assert_concl_alpha
+        ("CPC shared-choice FP atom bridge", theorem, target);
+      check_oracle_tags "CPC shared-choice FP atom bridge" theorem
+    end
 in
-  List.app check atoms
+  List.app check atoms;
+  check_shared_alias ()
 end
 
 fun cpc_fp_atom_bridge_sparse_context_success () =
@@ -21286,6 +21335,41 @@ let
       "frame/schema variable reserved after placeholder allocation"
       (fn () => reserve owned y)
   in () end
+  (* One node is both an opaque operand and an exposed constructor.
+     The native assembler must retain actual edge support in both modes. *)
+  val _ = print "TASK57_BOUNDARY named-block-composition\n"
+  val _ = let
+    val graph = SmtReplayGraph.new ()
+    val scope = SmtReplayGraph.root_scope graph
+    fun import term = #node (SmtReplayGraph.import graph scope 100 term)
+    val a = ``a:bool`` and b = ``b:bool`` and c = ``c:bool``
+    val p = import ``p:bool`` and q = import ``q:bool``
+    val both = import ``p /\ q``
+    val law = Library.prove (``(a /\ b) \/ c <=> c \/ (b /\ a)``,
+      tautLib.TAUT_TAC)
+    val schema = SmtReplayCanonGraph.checked_graph_schema graph scope
+      {theorem=law,holes=[a,b,c],operands=[p,q,both],template_limit=1000}
+    val plan = SmtReplayCanonGraph.graph_schema_leaf graph scope
+      {schema=schema,observe=fn () => ()}
+    fun check sparse =
+      let val prepare = if sparse then
+              SmtReplayProof.prepare_needed_sources_with_conversions
+            else SmtReplayProof.freeze_with_conversions
+          val block = prepare graph
+            {scope=scope,roots=SmtReplayCanonGraph.graph_roots plan,
+             sources=[],closed_facts=[],conversions=[],template_limit=1000}
+          val edge = SmtReplayCanonGraph.graph_assemble_named graph block plan
+          val _ = assert (not (null (SmtReplayProof.dependencies block edge)),
+            "named assembly lost its actual same-block input edges")
+          val proof = SmtReplayProof.realize block
+            (SmtReplayCanonGraph.graph_equality plan) edge
+          val expected = ``((p /\ q) \/ (p /\ q)) <=>
+            ((p /\ q) \/ (q /\ p))``
+      in assert (aconv (Thm.concl proof) expected,
+           "named assembly mixed operand and constructor frontiers");
+         assert_no_hyps ("named block composition",proof);
+         check_oracle_tags "named block composition" proof end
+  in check true;check false;check true;check false end
   (* The alternate closed-proof producer permits repeated declarations.
      Its checked first binding must also govern native INST realization. *)
   val _ = print "TASK28_BOUNDARY duplicate-closed-schema-holes\n"
@@ -21748,6 +21832,80 @@ in
   check [] boolSyntax.T;
   assert (rejected andalso false_rejected andalso false_gate_rejected,
     "satisfiable gate CNF was accepted as a checked proof")
+end
+
+fun skeleton_polarity_graph_success () =
+let
+  val p = ``polarity_p:bool``
+  val q = ``polarity_q:bool``
+  fun checked target expected =
+    let
+      val graph = SmtSkeletonProve.build_cnf_graph_mode true target
+      val SmtSkeletonProve.GraphNode {equality,representative,...} = #root graph
+    in
+      assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl equality),target)
+          andalso aconv representative expected,
+        "polarity reduction lost its source or truth value");
+      assert_no_hyps ("polarity reduction",equality);
+      check_oracle_tags "polarity reduction" equality
+    end
+  fun complements atom =
+    let val negated = boolSyntax.mk_neg atom
+    in List.app (fn (left,right) =>
+      (checked (boolSyntax.mk_conj (left,right)) boolSyntax.F;
+       checked (boolSyntax.mk_disj (left,right)) boolSyntax.T;
+       checked (boolSyntax.mk_eq (left,right)) boolSyntax.F))
+      [(atom,negated),(negated,atom)] end
+  val _ = complements p
+  val binder = Term.mk_var ("polarity_bound",numSyntax.num)
+  val predicate = Term.mk_var ("polarity_predicate",
+    Type.mk_type ("fun",[numSyntax.num,Type.bool]))
+  val _ = complements (boolSyntax.mk_forall
+    (binder,Term.mk_comb (predicate,binder)))
+  fun shared 0 = ``polarity_leaf:num``
+    | shared n = let val child = shared (n-1)
+                 in numSyntax.mk_plus (child,child) end
+  val large = boolSyntax.mk_eq (shared 70,numSyntax.zero_tm)
+  val _ = complements large
+  val target = boolSyntax.mk_disj (large,boolSyntax.mk_neg large)
+  val theorem = SmtSkeletonProve.propositional_prove target
+  val _ = assert (Portable.pointer_eq (Thm.concl theorem,target),
+    "polarity proof lost the exact large conclusion")
+  val _ = assert_no_hyps ("polarity proof",theorem)
+  val _ = check_oracle_tags "polarity proof" theorem
+  val distinct = boolSyntax.mk_conj (p,boolSyntax.mk_neg q)
+  val graph = SmtSkeletonProve.build_cnf_graph_mode true distinct
+  val SmtSkeletonProve.GraphNode {representative,...} = #root graph
+  val _ = assert (not (aconv representative boolSyntax.F),
+    "polarity reduction conflated distinct atoms")
+  fun rejected source =
+    ((ignore (SmtSkeletonProve.propositional_prove source);
+      raise Fail "polarity producer proved a non-tautology")
+     handle HolSatLib.SAT_cex _ => ()
+          | HolSatLib.SAT_satisfiable _ => ())
+  val _ = rejected distinct
+  val _ = rejected (boolSyntax.mk_conj (p,boolSyntax.mk_neg p))
+  fun product 0 = Type.mk_vartype "'polarity_type"
+    | product n = let val child = product (n-1)
+                  in Type.mk_type ("prod",[child,child]) end
+  val huge_type = product 21
+  val value = Term.mk_var ("polarity_typed",huge_type)
+  val abstraction = Term.mk_abs (value,value)
+  val atom = boolSyntax.mk_eq (abstraction,abstraction)
+  val guarded = boolSyntax.mk_disj (atom,boolSyntax.mk_neg atom)
+  fun refusal reduce =
+    ((ignore (SmtSkeletonProve.build_cnf_graph_mode reduce guarded);
+      raise Fail "polarity simplification bypassed source Type admission")
+     handle Feedback.HOL_ERR error =>
+       if SmtResource.is_resource_gate error then error
+       else raise Feedback.HOL_ERR error)
+  val original = refusal false
+  val simplified = refusal true
+in
+  assert (Feedback.message_of original = Feedback.message_of simplified
+      andalso Feedback.top_structure_of original =
+        Feedback.top_structure_of simplified,
+    "polarity simplification changed the first Type resource diagnostic")
 end
 
 fun skeleton_typed_cnf_graph_success () =
@@ -32641,6 +32799,50 @@ local
   structure C = SmtReplayCanonGraph
   structure P = SmtReplayProof
 in
+fun word_graph_boolean_circuit_success () =
+let
+  val target = ``((p /\ q) ==>
+      (if p \/ F then q /\ T else ~q)) /\ ((p = q) ==> (p ==> q))``
+  fun prove statement =
+    let val graph = G.new () val scope = G.root_scope graph
+        val source = #node (G.import graph scope
+          SmtResource.max_bv_replay_term_nodes statement)
+        (* Preserve the actual Boolean constructors for circuit closure. *)
+        val plan = C.graph_conversion graph scope false (fn _ => NONE) source
+    in SmtWordGraph.prove_discovered_in (SmtWordGraph.new_context ())
+      graph scope plan end
+  val theorem = prove target
+  val _ = assert_concl_alpha ("Boolean circuit closure",theorem,target)
+  val _ = assert_no_hyps ("Boolean circuit closure",theorem)
+  val _ = check_oracle_tags "Boolean circuit closure" theorem
+  val _ = ((ignore (prove ``p /\ ~p``);
+      die "Boolean circuit closure accepted a false statement")
+    handle HolSatLib.SAT_cex _ => () | HolSatLib.SAT_satisfiable _ => ())
+  fun terminal name raised matches =
+    let val calls = ref 0
+        fun observer _ = (calls := !calls+1;raise raised)
+        val outcome = Exn.capture (fn () =>
+          SmtSkeletonProve.with_sat_observers NONE (SOME observer)
+            (fn () => prove target) ()) ()
+    in case outcome of Exn.Exn error =>
+         assert (!calls=1 andalso matches error,
+           "Boolean circuit closure changed first " ^ name ^ " exception")
+       | Exn.Res _ => die ("Boolean circuit closure swallowed " ^ name) end
+  val resource = Feedback.mk_HOL_ERR "SmtResource" "circuit"
+    (SmtResource.resource_diagnostic_prefix "BitVector" ^
+      "limit=step-time; first-error-probe")
+  val _ = assert (case resource of Feedback.HOL_ERR detail =>
+      SmtResource.is_resource_gate detail | _ => false,
+    "circuit probe is not a resource error")
+  val _ = terminal "resource" resource (fn error =>
+    Feedback.exn_to_string error = Feedback.exn_to_string resource)
+  val _ = terminal "Interrupt" Interrupt (fn Interrupt => true | _ => false)
+  val retry = prove target
+  val _ = assert_concl_alpha ("Boolean circuit retry",retry,target)
+  val _ = assert_no_hyps ("Boolean circuit retry",retry)
+  val _ = check_oracle_tags "Boolean circuit retry" retry
+in () end
+
 fun word_graph_discovery_invariants_success () =
 let
   val cap = SmtResource.max_bv_replay_term_nodes
@@ -32719,6 +32921,36 @@ let
         val (plan,_) = SmtWordGraph.graph_normalize_in
           (SmtWordGraph.new_context ()) graph scope source
       in assemble graph scope plan end)
+  val _ = check "Built-in frontier reuse preserves typed operand aliases"
+    (fn () =>
+      let
+        val context = SmtWordGraph.new_context ()
+        fun verify term =
+          let val (graph,scope,source) = fixture term
+              val (plan,_) = SmtWordGraph.graph_normalize_in context
+                graph scope source
+              val actual = G.representative graph (C.graph_result plan)
+              val _ = assemble graph scope plan
+              val (cold,frame,input) = fixture term
+              val (reference,_) =
+                SmtWordGraph.graph_normalize_using_with_metrics
+                  {word_conversion=Library.replay_word_simp_conv,
+                   bit_conversion=blastLib.BIT_BLAST_CONV,
+                   node_conversion=unchanged} cold frame input
+              val expected = G.representative cold (C.graph_result reference)
+              val _ = assemble cold frame reference
+          in assert (aconv actual expected,
+            "built-in frontier reuse changed the independent normal form")
+          end
+      in List.app verify
+        [``(a:word8) + a = a``, ``(a:word8) + b = a``,
+         ``(a:word8) + a = b``, ``(a:word8) + 1w = b``,
+         ``(a:word8) + 2w = b``, ``(a:word4) + a = b``,
+         ``(a:word8) + b = a``];
+         Theory.new_constant ("word_frontier_cache_signature",Type.bool);
+         verify ``(a:word8) + b = a``;
+         Theory.delete_const "word_frontier_cache_signature";
+         verify ``(a:word8) + b = a`` end)
   (* Task05's original depth, circuit and 2000-node cap, promoted here so
      every actual primitive input is checked, not only bit-blast inputs. *)
   val _ = check "Proof-only reflexivity does not pollute word normalization"
@@ -32985,8 +33217,16 @@ let
           in boolSyntax.mk_eq (term,term) end
         val source = boolSyntax.list_mk_conj
           (List.tabulate (1100,atom))
+        val context = SmtWordGraph.new_context ()
+        fun discover term =
+          let val (graph,scope,root) = fixture term
+          in SmtWordGraph.graph_normalize_in context graph scope root end
+        (* Warm each Type separately; a reused program must still contribute
+           its requests to the combined call's original cumulative budget. *)
+        val _ = List.app (fn i => ignore (discover (atom i)))
+          (List.tabulate (1100,I))
       in
-        (ignore (SmtWordGraph.normalize source);
+        (ignore (discover source);
          raise Fail "per-template Type admission reset the word budget")
         handle Feedback.HOL_ERR error =>
           assert (SmtResource.is_resource_gate error andalso
@@ -33115,6 +33355,8 @@ end
 fun run_word_graph_unittests () =
   List.app run_test
     [("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_boolean_circuit_success",
+       word_graph_boolean_circuit_success),
      ("word_graph_discovery_invariants_success",
        word_graph_discovery_invariants_success)]
 
@@ -33133,6 +33375,15 @@ fun run_cnf_graph_unittests () =
        skeleton_nodewise_leaf_type_admission_success),
      ("skeleton_typed_cnf_graph_success",
        skeleton_typed_cnf_graph_success),
+     ("skeleton_polarity_graph_success", skeleton_polarity_graph_success),
+     ("skeleton_native_cnf_boundary_success", SmtCnfProveTests.run),
+     ("z3_bitblast_stage_cache_boundary", SmtBitBlastProveTests.run),
+     ("z3_word_program_cache_boundary", SmtReplayWordProgramTests.run),
+     ("replay_nodewise_bridge_cache_boundary", SmtReplayTermBridgeTests.run),
+     ("word_cancel_literal_boundary", WordCancelLiteralTests.run),
+     ("z3_schema_builder_sharing_boundary", SmtReplaySchemaBuilderTests.run),
+     ("z3_hypothesis_presence_fastpath_boundary",
+       Z3_HypothesisPresenceTests.run),
      ("skeleton_structural_atom_cache_exact_lhs_success",
        skeleton_structural_atom_cache_exact_lhs_success),
      ("skeleton_node_cache_metric_split_success",
@@ -33866,6 +34117,7 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("z3_compact_word_program_boundary", SmtReplayCompactWordTests.run),
     ("smtlib_graph_scalar_recipes_success", SmtLib_GraphScalarTests.run),
     ("smtlib_graph_structured_recipes", SmtLib_GraphStructuredTests.run),
     ("z3_graph_scoped_let_parser", Z3_GraphParserTests.run),
@@ -33877,6 +34129,8 @@ let
     ("bag_named_obligations", bag_named_obligations),
     ("public_wrapper_finalization", SmtPublicWrapperTests.run),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
+    ("cpc_producer_endpoints", CPC_ProducerEndpointTests.run),
+    ("cpc_aci_producer", CPC_AciProducerTests.run),
     ("cpc_deferred_graph_closure", CPC_DeferredGraphTests.run),
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
@@ -33932,9 +34186,20 @@ let
     ("circuit_graph_checked_success", circuit_graph_checked_success),
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),
     ("skeleton_typed_cnf_graph_success", skeleton_typed_cnf_graph_success),
+    ("skeleton_polarity_graph_success", skeleton_polarity_graph_success),
+    ("skeleton_native_cnf_boundary_success", SmtCnfProveTests.run),
+    ("z3_bitblast_stage_cache_boundary", SmtBitBlastProveTests.run),
+     ("z3_word_program_cache_boundary", SmtReplayWordProgramTests.run),
+     ("replay_nodewise_bridge_cache_boundary", SmtReplayTermBridgeTests.run),
+     ("word_cancel_literal_boundary", WordCancelLiteralTests.run),
+     ("z3_schema_builder_sharing_boundary", SmtReplaySchemaBuilderTests.run),
+    ("z3_hypothesis_presence_fastpath_boundary",
+      Z3_HypothesisPresenceTests.run),
     ("skeleton_nodewise_leaf_type_admission_success",
      skeleton_nodewise_leaf_type_admission_success),
     ("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_boolean_circuit_success",
+       word_graph_boolean_circuit_success),
     ("word_graph_discovery_invariants_success",
       word_graph_discovery_invariants_success),
     ("cpc_reglan_native_aggregate_focused_success",
@@ -34886,6 +35151,16 @@ let
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_th_lemma_advanced_semantic_cache_routing",
       z3_th_lemma_advanced_semantic_cache_routing),
+    ("z3_fp_field_schema_cache_boundary",
+      Z3_ReplaySchemaTests.run),
+    ("z3_fp_equal_alignment_boundary",
+      Z3_ReplaySchemaTests.run_alignment),
+    ("z3_fp_narrow_alignment_boundary",
+      Z3_ReplaySchemaTests.run_narrow_alignment),
+    ("z3_fp_grs_rounding_boundary", Z3_ReplaySchemaTests.run_grs),
+    ("z3_fp_self_add_boundary", Z3_ReplaySchemaTests.run_self_add),
+    ("skeleton_term_measure_boundary_success",
+      SmtSkeletonMeasureTests.run),
     ("z3_proof_replay_failure_diagnostic",
       z3_proof_replay_failure_diagnostic),
     ("z3_proof_replay_malformed_premise_diagnostics",

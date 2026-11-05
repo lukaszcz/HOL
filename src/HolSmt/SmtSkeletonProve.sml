@@ -909,16 +909,56 @@ struct
 
   fun term_measure root =
     let
-      val saved = ref (Redblackmap.mkDict (new_semantic_order ()))
-      fun visit term = case Redblackmap.peek (!saved, term) of
-          SOME size => size
-        | NONE =>
-            let val size = List.foldl
-                  (fn (child, n) => saturated_add n (visit child))
-                  1 (term_children term)
-            in saved := Redblackmap.insert (!saved, term, size); size end
-      val size = visit root
-    in {tree_nodes = size, dag_nodes = Redblackmap.numItems (!saved)} end
+      fun general () =
+        let
+          val saved = ref (Redblackmap.mkDict (new_semantic_order ()))
+          fun visit term = case Redblackmap.peek (!saved, term) of
+              SOME size => size
+            | NONE =>
+                let val size = List.foldl
+                      (fn (child, n) => saturated_add n (visit child))
+                      1 (term_children term)
+                in saved:=Redblackmap.insert (!saved,term,size); size end
+          val size = visit root
+        in {tree_nodes=size,dag_nodes=Redblackmap.numItems (!saved)} end
+      exception GeneralMeasure
+      (* Positive hints only: bound probes even when every leaf has a fresh
+         annotation. Eviction just repeats the bounded small-Type check. *)
+      val types = Array.array (16, NONE : Type.hol_type option)
+      val next_type = ref 0
+      fun inspect term =
+        if Term.is_abs term then raise GeneralMeasure
+        else if Term.is_var term orelse Term.is_const term then
+          let val ty=Term.type_of term
+          in if Array.exists (fn SOME saved =>
+                Portable.pointer_eq (saved,ty) | NONE => false) types then ()
+            else let
+              val remaining=ref 64
+              fun small ty =
+                (remaining:= !remaining-1;
+                 if !remaining<0 then raise GeneralMeasure
+                 else if Type.is_vartype ty then ()
+                 else List.app small (#Args (Type.dest_thy_type ty)))
+              val _ = small ty
+            in
+              Array.update (types, !next_type, SOME ty);
+              next_type := (!next_type + 1) mod Array.length types
+            end
+          end
+        else ()
+      fun fast () =
+        let
+          (* For binder-free terms structural IDs give exactly the same
+             equivalence classes and saturated sizes as the general order.
+             Check leaf types before its native type comparison.  This scan
+             only admits the optimization; it changes no resource metric. *)
+          val {complete,...} = SmtResource.bounded_structure_with_children
+            (fn term => if Term.is_comb term then
+              [Term.rator term,Term.rand term] else []) inspect
+            SmtResource.max_bv_replay_term_nodes root
+          val _ = complete orelse raise GeneralMeasure
+        in SmtResource.term_measure root end
+    in fast () handle GeneralMeasure => general () end
 
   fun tree_nodes term = #tree_nodes (term_measure term)
   fun dag_nodes term = #dag_nodes (term_measure term)
@@ -1193,13 +1233,29 @@ struct
       (boolSyntax.mk_conj (idempotent_variable, idempotent_variable),
        idempotent_variable))
 
+  val polarity_variable = idempotent_variable
+  val polarity_negative = boolSyntax.mk_neg polarity_variable
+  val polarity_rules = List.map tautLib.TAUT_PROVE
+    [boolSyntax.mk_eq
+       (boolSyntax.mk_conj (polarity_variable,polarity_negative),boolSyntax.F),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_conj (polarity_negative,polarity_variable),boolSyntax.F),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_disj (polarity_variable,polarity_negative),boolSyntax.T),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_disj (polarity_negative,polarity_variable),boolSyntax.T),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_eq (polarity_variable,polarity_negative),boolSyntax.F),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_eq (polarity_negative,polarity_variable),boolSyntax.F)];
+
   val gate_reduction_conv = Conv.FIRST_CONV
     (List.map Conv.REWR_CONV
-      (boolTheory.REFL_CLAUSE :: boolTheory.COND_ID ::
+      (polarity_rules @ (boolTheory.REFL_CLAUSE :: boolTheory.COND_ID ::
        List.concat (List.map (Drule.CONJUNCTS o Drule.SPEC_ALL)
          [boolTheory.AND_CLAUSES, boolTheory.OR_CLAUSES,
           boolTheory.NOT_CLAUSES, boolTheory.IMP_CLAUSES,
-          boolTheory.EQ_CLAUSES, boolTheory.COND_CLAUSES])))
+          boolTheory.EQ_CLAUSES, boolTheory.COND_CLAUSES]))))
 
   datatype raw_key =
       RawVariable of string * int
@@ -1536,21 +1592,23 @@ struct
         let
           val variables = ref (Redblackmap.mkDict Int.compare)
           val substitution = ref []
-          fun abstract (node as GraphNode {id, kind, ...}) =
+          fun plain id representative =
+            case Redblackmap.peek (!variables,id) of
+                SOME variable => variable
+              | NONE => let val variable=Term.genvar Type.bool
+                in variables:=Redblackmap.insert (!variables,id,variable);
+                   substitution:=(variable |-> representative):: !substitution;
+                   variable end
+          (* Preserve a child's literal polarity in this small schema.
+             Underlying graph IDs retain aliases; actual operands enter only
+             through the existing checked native substitution below. *)
+          fun abstract (node as GraphNode {id,kind,representative,...}) =
             case kind of
-              GraphTrue => boolSyntax.T
-            | GraphFalse => boolSyntax.F
-            | _ =>
-                (case Redblackmap.peek (!variables, id) of
-                   SOME variable => variable
-                 | NONE =>
-                     let val variable = Term.genvar Type.bool in
-                       variables := Redblackmap.insert
-                         (!variables, id, variable);
-                       substitution := (variable |->
-                         graph_representative node) :: !substitution;
-                       variable
-                     end)
+                GraphTrue => boolSyntax.T
+              | GraphFalse => boolSyntax.F
+              | GraphNegation child => boolSyntax.mk_neg
+                  (plain child (boolSyntax.dest_neg representative))
+              | _ => plain id representative
           val head = #1 (boolSyntax.strip_comb rebuilt)
           val schematic = Term.list_mk_comb
             (head, List.map abstract children)
