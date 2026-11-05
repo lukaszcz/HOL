@@ -10,7 +10,8 @@ batch seconds, the samples, the baseline, the sources and the pins are the
 TASK30 table's (task30_grid.py), and the TASK30 grid is replayed in full by
 that table's own engine before the counts are derived from it, and again by
 `replay`; `verify-counts`, `run` and `extend` bind it by the seals the counts
-file records (PROTOCOL.md).
+file records while the replay code is that of `predeclare`, and replay it in
+full when that code has changed (PROTOCOL.md).
 
 What is new is the draw and the schedule, both declared here. The layout seed
 is another than the TASK30 grid's and its second stage's. The schedule is

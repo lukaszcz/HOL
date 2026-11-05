@@ -1150,9 +1150,9 @@ table of its own on the shared engine, with the following additions to it.
     counts of `close` ("attempts N in the ledger, M of the candidate") and the
     search for the opening of a grid read only their own table's lines, so N
     of TASK30 is not raised by a follow-up attempt, and the report of the
-    follow-up lists its own. The line ends "(R records of TABLE, F in the
-    ledger, chain intact)": R the records of that table, F those of the
-    whole chain.
+    follow-up lists its own. The line ends "(R records of TABLE, F records
+    in the family ledger, chain intact)": R the records of that table, F
+    those of the whole chain.
   - *Stamp and log per table.* The family shares the directory, so the table
     that names the family keeps `build-stamp.json` and `prepare.log` (the
     TASK30 records replay as before), and any other table of it keeps
@@ -1198,16 +1198,33 @@ table of its own on the shared engine, with the following additions to it.
     part of an hour each time. `predeclare` also records, in `replaces.code`,
     the SHA-256 seals of the code it replayed with beyond what the table
     seals itself (`timing_grid.REPLAY_CODE`: `timing_grid.py`,
-    `acceptance.py`, `summarize.py`, `audit_evidence.py`, `task30_pins.py`,
-    and the pin file and counts file of the replaced table,
-    `task30_iterations.json`), and the sealed commands refuse a difference
-    (`code changed since predeclare: FILE; run predeclare again`). They run
-    the cheap header, sources, commit and checkout checks of the full replay
-    on both inventories of the replaced grid. What is left to `replay` and
-    the disposition step is the deterministic re-analysis of the other
-    cells' archives; a refusal there after the attempt is recorded would
-    spend it, which the code seals make a matter of an archive alone.
-    `--replaces-pilot` is not read by them.
+    `acceptance.py`, `summarize.py`, `audit_evidence.py`,
+    `runtime_metrics.py`, and the pin file and counts file of the replaced
+    table, `task30_pins.py` and `task30_iterations.json`). That block is a
+    record of what `predeclare` replayed with: it is never derived again,
+    and `verify-counts`, `replay` and `dispose` check only that it is
+    present and well formed. The seal binding is valid only while the
+    current seals of those files equal it. When they differ, `verify-counts`,
+    `run` and `extend` do not refuse: they print one line (`code changed
+    since predeclare (FILES): the replaced grid is replayed in full`) and
+    bind the grid by the full replay, as `predeclare` and `replay` do,
+    which reads the replaced grid's pilot (`--replaces-pilot`; without it
+    they refuse, naming the changed files). So a later change to shared
+    code costs the hour of the full replay, and never makes a finished
+    follow-up unreplayable (append the old seal of `timing_grid.py` to
+    `ENGINES` and of `acceptance.py` to `ACCEPTANCE` where those histories
+    apply, below). While the code is unchanged the sealed commands run
+    the cheap header, sources, commit and checkout checks of the full
+    replay on both inventories of the replaced grid, through the hooks of
+    the replaced engine. What they leave to the full replay (`replay`, and
+    the disposition step) is: the provenance of the TASK30 pilot
+    (`task30_iterations.json` re-derived from `E/pilot`), the re-derivation
+    of the extension plan, and the deterministic re-analysis of the
+    archives of the other cells of both stages; a refusal there after the
+    attempt is recorded would spend it. (`run` and `extend` do make the
+    ledger checks of the replaced attempts, `refuse_found` included, below.)
+    The code list is a hand list, kept complete by a test that computes the
+    static import closure of the replay path.
   Both refuse before an attempt opens, besides: a layout seed that the grid
   drew or its second stage drew (a table refuses the same at its
   construction, for the seed of the table it replaces); candidate sources
@@ -1228,7 +1245,11 @@ table of its own on the shared engine, with the following additions to it.
     (`run`, `extend`, and so `--resume`), the ledger it will be appended to
     (`<--repo>/.agent-files/evidence/task30/attempts.jsonl`) must exist and
     hold the openings of every attempt of the replaced grid (both stages
-    through the replaced engine's `check_attempt`); otherwise the command
+    through the replaced engine's `check_attempt`, as the full replay does,
+    and `refuse_found` on those attempts), recorded from this checkout (a
+    copy of the ledger in another checkout is refused); the follow-up table
+    must name the family and the ledger of the table it replaces, so that
+    this is the file `run` and `extend` append to; otherwise the command
     refuses, naming the ledger path and the missing attempt, before anything
     is measured. So `pilot`, `run` and `extend` of the follow-up are made in
     the checkout that holds the TASK30 ledger (the one the TASK30 grid was

@@ -110,7 +110,8 @@ class Tables(unittest.TestCase):
 
     def test_the_family_is_the_name_unless_it_is_given(self):
         self.assertEqual(self.OLD.family, "toy")
-        self.assertEqual(self.follow(family=None).family, "toyf")
+        self.assertEqual(
+            self.follow(family=None, replaces=None).family, "toyf")
         self.assertEqual(self.follow().family, "toy")
         with self.assertRaisesRegex(ValueError, "invalid family"):
             self.follow(family="../x")
@@ -131,6 +132,24 @@ class Tables(unittest.TestCase):
                 ("no seed", dict(seed=None, require_seed=False))):
             with self.subTest(label), self.assertRaises(ValueError):
                 self.follow(**kw)
+
+    def test_a_follow_up_has_the_family_and_the_ledger_it_replaces(self):
+        self.follow()
+        for label, kw in (
+                ("another family", dict(family="other")),
+                ("the family of its own name", dict(family=None)),
+                ("a ledger of its own", dict(ledger="/x/attempts.jsonl"))):
+            with self.subTest(label), self.assertRaisesRegex(
+                    ValueError, "extends the one chain of the family"):
+                self.follow(**kw)
+        old = tg.Table("toy", "TOY", CASES, "d.py", "c.json",
+                       fixed_seconds=True, seed="s0", schedule="ramp",
+                       pairs=10, seconds_by_case={CASES[0]: 1.0},
+                       ledger="/x/attempts.jsonl")
+        engine = tg.Replaces(tg.Grid(old))
+        self.follow(replaces=engine, ledger="/x/attempts.jsonl")
+        with self.assertRaisesRegex(ValueError, "has the ledger of the"):
+            self.follow(replaces=engine)
 
     def test_a_follow_up_is_of_cells_of_the_table_it_replaces(self):
         small = tg.Table("toy", "TOY", CASES[:1], "d.py", "c.json",
@@ -312,6 +331,14 @@ class Rig(ttg.Rig):
                        str(self.repo), "--pilot", str(self.fpilot),
                        "--authorize-measurements"]}
 
+    def changed_code(self, name="summarize.py"):
+        """A later change to a file of the code of the replay."""
+        real = tg.Grid.replay_code
+
+        def changed(grid):
+            return {**real(grid), name: dict(bytes=1, sha256="0" * 64)}
+        return patch.object(tg.Grid, "replay_code", changed)
+
     def load(self, path):
         return json.loads(Path(path).read_text())
 
@@ -350,7 +377,7 @@ class Counts(Rig):
             code=self.fgrid.replay_code()))
         # The seals of the code the replay depended on.
         self.assertTrue({"timing_grid.py", "acceptance.py", "summarize.py",
-                         "audit_evidence.py", "task30_pins.py",
+                         "audit_evidence.py", "runtime_metrics.py",
                          self.counts.name} <= set(counts["replaces"]["code"]))
         self.assertEqual(counts["layout_seed"], "f0")
         code, text = self.fgo(["verify-counts", "--grid", str(self.fpilot),
@@ -835,8 +862,9 @@ class Ledger(Rig):
     """Evidence of a follow-up is kept under the family it names."""
 
     def test_the_ledger_stamp_and_refs_are_those_of_the_family(self):
-        plain = tg.Grid(self.make_followup(ledger=None, family=None))
-        own = tg.Grid(self.make_followup(ledger=None))
+        plain = tg.Grid(self.make_followup(ledger=None, family=None,
+                                           replaces=None))
+        own = tg.Grid(self.make_followup(ledger=None, replaces=None))
         repo = self.repo.resolve()
         base = repo / ".agent-files" / "evidence"
         self.assertEqual(plain.ledger_path(repo),
@@ -931,32 +959,41 @@ class Binding(Rig):
                 path.write_text(good)
         self.assertFalse((self.root / "late").exists())
 
-    def test_a_change_to_the_code_of_the_replay_is_named(self):
+    def test_a_change_to_the_code_of_the_replay_is_a_full_replay(self):
         self.declare()
         out, code, _ = self.run_followup()
         commands = self.sealed_commands(out)
-        real = tg.Grid.replay_code
-
-        def changed(grid):
-            return {**real(grid), "summarize.py": dict(
-                bytes=1, sha256="0" * 64)}
-        with patch.object(tg.Grid, "replay_code", changed):
+        with self.changed_code():
+            # Without the pilot of the replaced grid the full replay cannot
+            # be made: a refusal that names the file.
             for action, argv in commands.items():
+                argv = [x for x in argv if x != "--replaces-pilot" and
+                        x != str(self.pilot_dir)]
                 with self.subTest(action), self.assertRaisesRegex(
                         ValueError, r"code changed since predeclare: "
-                        r"summarize\.py; run predeclare again"):
+                        r"summarize\.py; .*--replaces-pilot"):
                     self.fgo(argv)
         self.assertFalse((self.root / "late").exists())
 
+    def test_a_change_to_the_code_of_the_replay_is_replayed_in_full(self):
+        self.declare()
+        patcher, seen = self.archives("replaced-1")
+        with self.changed_code(), patcher:
+            code, text = self.fgo(self.sealed_commands(None)["verify-counts"])
+        self.assertEqual(code, 0, text)
+        self.assertIn("TOYF: code changed since predeclare (summarize.py): "
+                      "the replaced grid is replayed in full", text)
+        self.assertEqual(len(seen), len(self.table.keys()))
+
     def test_the_counts_file_of_the_replaced_table_is_code_of_the_replay(
             self):
+        # A changed counts file changes the seal of the code: the grid is
+        # then replayed in full, whose header check refuses the file.
         self.declare()
         good = self.counts.read_text()
         self.counts.write_text(good + " ")
         try:
-            with self.assertRaisesRegex(
-                    ValueError, "code changed since predeclare: " +
-                    self.counts.name.replace(".", r"\.")):
+            with self.assertRaisesRegex(ValueError, "changed counts seal"):
                 self.fgo(self.sealed_commands(None)["verify-counts"])
         finally:
             self.counts.write_text(good)
@@ -1095,6 +1132,87 @@ class Binding(Rig):
             0)
 
 
+class CodeChange(Rig):
+    """The seal binding holds for the code of `predeclare` alone; a later
+    change of the replay code costs the full replay and refuses nothing, and
+    a finished follow-up stays replayable."""
+
+    def setUp(self):
+        super().setUp()
+        self.declare()
+        self.new_control = lambda c, s, pairs, seed: (
+            ttg.WIDE if (c, s) == CELL_B and pairs < 60 else ttg.GOOD)
+        self.new_candidate = lambda c, s, pairs, seed: ttg.GOOD
+
+    def test_run_and_extend_replay_in_full_after_a_change(self):
+        out, code, text = self.run_followup()
+        self.assertEqual(code, 2, text)
+        with self.changed_code("audit_evidence.py"):
+            late, code, text = self.run_followup("late-run")
+            self.assertEqual(code, 2, text)
+            self.assertIn("code changed since predeclare (audit_evidence.py)"
+                          ": the replaced grid is replayed in full", text)
+            ext, code, text = self.extend_followup(
+                late, "late-ext", "--replaces-pilot", str(self.pilot_dir))
+            self.assertEqual(code, 0, text)
+            self.assertIn("the replaced grid is replayed in full", text)
+            self.assertEqual(self.replay_followup(ext)[0], 0)
+
+    def test_a_finished_follow_up_replays_after_a_later_change(self):
+        out, code, _ = self.run_followup()
+        ext, code, _ = self.extend_followup(out)
+        self.assertEqual(self.replay_followup(ext)[0], 0)
+        for name in ("timing_grid.py", "acceptance.py", "summarize.py",
+                     "audit_evidence.py", "runtime_metrics.py"):
+            with self.subTest(name), self.changed_code(name):
+                self.assertEqual(self.replay_followup(ext)[0], 0)
+                self.assertEqual(self.replay_followup(out)[0], 2)
+                self.assertEqual(self.fgo(
+                    ["verify-counts", "--grid", str(self.fpilot), "--repo",
+                     str(self.repo), *self.over()])[0], 0)
+
+    def test_a_tampered_record_of_the_code_is_refused(self):
+        counts = self.load(self.fcounts)
+        for label, change in (
+                ("no code", lambda r: r.pop("code")),
+                ("not a mapping", lambda r: r.update(code=["a"])),
+                ("empty", lambda r: r.update(code={})),
+                ("a seal that is no seal", lambda r: r["code"].update(
+                    {"timing_grid.py": "x"})),
+                ("a short digest", lambda r: r["code"].update(
+                    {"timing_grid.py": dict(bytes=1, sha256="0")})),
+                ("an extra field", lambda r: r["code"].update(
+                    {"timing_grid.py": dict(bytes=1, sha256="0" * 64,
+                                            x=1)}))):
+            changed = json.loads(json.dumps(counts))
+            change(changed["replaces"])
+            self.fcounts.write_text(json.dumps(changed))
+            for action, argv in self.sealed_commands(None).items():
+                if action == "extend":
+                    continue
+                with self.subTest(label, action=action), \
+                        self.assertRaisesRegex(ValueError, "well-formed "
+                                               "seals of the code"):
+                    self.fgo(argv)
+        self.fcounts.write_text(json.dumps(counts))
+        self.assertFalse((self.root / "late").exists())
+
+    def test_the_record_of_the_code_is_not_derived_again(self):
+        counts = self.load(self.fcounts)
+        counts["replaces"]["code"]["timing_grid.py"] = dict(
+            bytes=1, sha256="0" * 64)
+        self.fcounts.write_text(json.dumps(counts))
+        code, text = self.fgo(["verify-counts", "--grid", str(self.fpilot),
+                               "--repo", str(self.repo), *self.over()])
+        self.assertEqual(code, 0, text)
+        # Another part of the block is still derived.
+        counts["replaces"]["open"] = [CELLS[0]]
+        self.fcounts.write_text(json.dumps(counts))
+        with self.assertRaises(ValueError):
+            self.fgo(["verify-counts", "--grid", str(self.fpilot), "--repo",
+                      str(self.repo), *self.over()])
+
+
 class SameLedger(Rig):
     """A follow-up appends to the ledger that holds the openings of the
     replaced grid, and starts no chain of its own."""
@@ -1152,6 +1270,148 @@ class SameLedger(Rig):
         with self.assertRaisesRegex(
                 ValueError, "lacks the second-stage opening"):
             self.fgo(self.sealed_commands(None)["run"])
+
+
+class ReplacedOpenings(Rig):
+    """What `run` and `extend` require of the ledger they append to, and
+    that they create nothing before they refuse."""
+
+    def bind(self, *, ledgers=True):
+        if not ledgers:
+            self.grid.t.ledger = self.fgrid.t.ledger = None
+        args = argparse.Namespace(
+            replaces=self.replaced, replaces_pilot=self.pilot_dir,
+            repo=self.repo, ledger=None)
+        self.fgrid.bind_from(args, counts=self.load(self.fcounts))
+        return argparse.Namespace(repo=self.repo, ledger=None)
+
+    def test_the_ledger_is_that_of_the_repository_when_none_is_named(self):
+        self.declare()
+        kept = self.attempts.read_text()
+        args = self.bind(ledgers=False)
+        derived = (self.repo.resolve() / ".agent-files" / "evidence" /
+                   "toy" / "attempts.jsonl")
+        self.assertEqual(self.fgrid.ledger_path(self.repo), derived)
+        self.assertEqual(self.grid.ledger_path(self.repo), derived)
+        self.assertFalse(derived.parent.exists())
+        with self.assertRaisesRegex(ValueError, "no attempts ledger at " +
+                                    str(derived).replace(".", r"\.")):
+            self.fgrid.require_replaced_openings(args)
+        self.assertFalse(derived.parent.exists())
+        derived.parent.mkdir(parents=True)
+        derived.write_text(kept)
+        self.fgrid.require_replaced_openings(args)
+
+    def test_a_refusal_creates_no_directory_or_file(self):
+        self.declare()
+        self.bind(ledgers=False)
+        agent = self.repo.resolve() / ".agent-files" / "evidence" / "toy"
+        self.assertFalse(agent.exists())
+        out = self.fgo(["verify-counts", "--grid", str(self.fpilot),
+                        "--repo", str(self.repo), *self.over()])
+        self.assertEqual(out[0], 0)
+        for argv in (self.sealed_commands(None)["run"],):
+            with self.assertRaisesRegex(ValueError, "no attempts ledger at"):
+                self.fgo(argv)
+        self.assertFalse(agent.exists())
+        self.assertFalse((self.root / "late").exists())
+
+    def test_a_ledger_of_another_checkout_is_refused(self):
+        self.declare()
+        args = self.bind()
+        self.fgrid.require_replaced_openings(args)
+        elsewhere = self.root / "elsewhere"
+        with self.assertRaisesRegex(
+                ValueError, "first-stage opening of attempt [0-9a-f]+ of "
+                "the replaced grid from the checkout .* not this one"):
+            self.fgrid.require_replaced_openings(
+                argparse.Namespace(repo=elsewhere, ledger=None))
+        self.assertFalse(elsewhere.exists())
+
+    def test_a_found_difference_of_a_replaced_attempt_is_refused(self):
+        self.declare()
+        args = self.bind()
+        first = self.load(self.replaced1 / "inventory.json")
+        tg.ledger_append(
+            self.attempts, event="close", stage="first", table="toy",
+            attempt=first["attempt"], candidate=first["candidate"],
+            status="checkout-changed", checkout=str(self.repo.resolve()),
+            found="tracked file x; not marked: OSError: disk full")
+        with self.assertRaisesRegex(
+                ValueError, "checkout changed while attempt " +
+                first["attempt"] + ".*the grid is dead"):
+            self.fgrid.require_replaced_openings(args)
+        self.assertEqual(self.fgrid.t.family, "toy")
+
+    def test_the_hooks_of_the_replaced_engine_make_the_header_checks(self):
+        class Module:
+            STEPS = ("check_header", "check_sources", "check_commit",
+                     "check_checkout")
+            seen = []
+
+            @staticmethod
+            def check_header(inventory):
+                Module.seen.append("check_header")
+                raise ValueError("hooked header")
+
+            @staticmethod
+            def check_sources(inventory, repo):
+                Module.seen.append("check_sources")
+
+            @staticmethod
+            def check_commit(inventory, repo):
+                Module.seen.append("check_commit")
+
+            @staticmethod
+            def check_checkout(inventory, repo):
+                Module.seen.append("check_checkout")
+        self.declare()
+        self.grid.h = tg.Hooks(Module, self.grid)
+        for action, argv in self.sealed_commands(None).items():
+            if action == "extend":
+                continue
+            with self.subTest(action), self.assertRaisesRegex(
+                    ValueError, "hooked header"):
+                self.fgo(argv)
+        self.assertEqual(set(Module.seen), {"check_header"})
+
+    def test_the_import_closure_of_the_replay_is_sealed(self):
+        # REPLAY_CODE is a hand list (see its comment); this keeps it
+        # complete. The roots are the replaced engine's driver and the
+        # modules the replay and audit path read; the modules that only
+        # `close` and the allocation gate import are named and left out.
+        import ast
+        import task30_followup as t30
+        close_only = {"allocation_matrix", "allocation_analysis",
+                      "allocation_boundary", "allocation_schema",
+                      "loading", "path_schema"}
+        here = Path(__file__).resolve().parent
+        modules = {p.stem for p in here.glob("*.py")} - close_only
+
+        def imports(name):
+            tree = ast.parse((here / (name + ".py")).read_text())
+            found = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    found |= {x.name.split(".")[0] for x in node.names}
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    found.add(node.module.split(".")[0])
+                    found |= {x.name for x in node.names}
+            return found & modules
+        closure, todo = set(), ["timing_grid", "audit_evidence",
+                                "summarize", "acceptance", "task30_grid"]
+        while todo:
+            name = todo.pop()
+            if name not in closure:
+                closure.add(name)
+                todo += imports(name)
+        old = t30.base.TABLE
+        covered = {Path(n).stem for n in (
+            *tg.REPLAY_CODE, old.pin_file, old.latest().name,
+            *t30.TABLE.sealed) if n.endswith(".py")}
+        self.assertEqual(sorted(closure - covered), [])
+        self.assertIn("runtime_metrics", closure)
+        self.assertNotIn("task30_pins.py", tg.REPLAY_CODE)
 
 
 class TableOfLine(Rig):
@@ -1215,8 +1475,8 @@ class TableOfLine(Rig):
                         "x", FOLLOW, None), "first")
             self.assertIn("ATTEMPTS of %s: %s" % (label, text),
                           out.getvalue())
-            self.assertIn("(1 records of %s, 2 in the ledger, chain intact)"
-                          % label, out.getvalue())
+            self.assertIn("(1 records of %s, 2 records in the family "
+                          "ledger, chain intact)" % label, out.getvalue())
             self.assertEqual(out.getvalue().count("\nATTEMPT ") +
                              out.getvalue().startswith("ATTEMPT "), 1)
 

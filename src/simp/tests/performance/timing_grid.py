@@ -176,12 +176,20 @@ class CheckoutUnjudged(CheckoutRefused):
 
 
 # The modules whose behaviour the replay of a replaced grid depends on, beside
-# the replaced table's pin file and counts file (`Grid.replay_code`). The
+# the replaced table's pin file and counts file (`Grid.replay_code`; the
+# table's own sealed files and driver are sealed by its inventories). The
 # counts of a follow-up record their seals when `predeclare` replays the grid
-# in full, and `bind_sealed` refuses a change: what it leaves to the full
-# replay is then only the deterministic re-analysis of the other rows.
+# in full as a record of what it replayed with, never re-derived. While the
+# code is the same, the sealed commands bind the grid by its seals
+# (`bind_sealed`); when it has changed, they replay the grid in full
+# (`bind_replaced`). A hand list, not derived at run time: a `sys.modules`
+# filter depends on which lazy imports have run, so the recorded set would
+# differ between `predeclare` and `run`, and a static closure pulls in the
+# modules only `close` imports. The list cannot drift unnoticed: a test
+# computes the static import closure of the replay path and asserts that
+# this list, the table's sealed files and its pin file cover it.
 REPLAY_CODE = ("timing_grid.py", "acceptance.py", "summarize.py",
-               "audit_evidence.py", "task30_pins.py")
+               "audit_evidence.py", "runtime_metrics.py")
 
 
 class Replaces:
@@ -348,7 +356,9 @@ class Table:
         if replaces is not None:
             self.check_replaces(
                 replaces, cells, cases, fixed_seconds, baseline, seed,
-                pairs, target, max_pairs, seconds, extra)
+                pairs, target, max_pairs, seconds, extra,
+                name if family is None else family,
+                None if ledger is None else Path(ledger))
         self.name, self.label, self.cases = name, label, tuple(cases)
         self.cells = None if cells is None else tuple(cells)
         self.family = name if family is None else family
@@ -379,7 +389,8 @@ class Table:
         self.allocation = allocation
 
     def check_replaces(self, replaces, cells, cases, fixed_seconds, baseline,
-                       seed, pairs, target, max_pairs, seconds, extra):
+                       seed, pairs, target, max_pairs, seconds, extra,
+                       family=None, ledger=None):
         """A follow-up measures what the table it replaces measured, under
         the same conditions, with a layout it has not drawn before."""
         a.require(isinstance(replaces, Replaces), "malformed replaces")
@@ -398,6 +409,13 @@ class Table:
         a.require(all(extra.get(c, seconds) == old.seconds_for(c)
                       for c in cases), "a follow-up has the batch seconds "
                   "of the table it replaces")
+        a.require(family == old.family, "a follow-up keeps its evidence in "
+                  "the family of the table it replaces (%s), not %s: it "
+                  "extends the one chain of the family"
+                  % (old.family, family))
+        a.require(ledger == old.ledger, "a follow-up has the ledger of the "
+                  "table it replaces (%s), not %s: it extends the one chain "
+                  "of the family" % (old.ledger, ledger))
         taken = {old.seed, None if old.seed is None else old.seed + "-ext"}
         a.require(seed is not None and not {seed, seed + "-ext"} & taken,
                   "a follow-up draws its layout with a seed of its own: "
@@ -1378,18 +1396,26 @@ class Grid:
         if self.t.replaces is not None:
             want, got = self.h.replaced_counts(grid), a.load(path)
             seen = got.get("replaces")
-            seen = seen.get("grid") if isinstance(seen, dict) else None
-            a.require(seen is None or seen == want["replaces"]["grid"],
+            self.h.check_recorded_code(seen)
+            same = {k: v for k, v in want["replaces"].items() if k != "code"}
+            a.require(seen.get("grid") == want["replaces"]["grid"] or
+                      "grid" not in seen,
                       "the counts record the replaced grid at %s from the "
                       "follow-up pilot, not %s: the pilot and the replaced "
                       "grid must stay siblings, as in the evidence layout"
-                      % (seen, want["replaces"]["grid"]))
-            a.require(all(got.get(k) == v for k, v in want.items()),
+                      % (seen.get("grid"), want["replaces"]["grid"]))
+            a.require(got.get("pairs_by_cell") == want["pairs_by_cell"] and
+                      {k: v for k, v in seen.items() if k != "code"} == same,
                       "the pairs or the replaced grid of the counts differ "
                       "from the derivation from the replaced grid")
-        a.require(canonical(a.load(path)) == canonical(
-            self.h.derive_counts(Path(grid), path)),
-            "counts differ from their pilot")
+        derived = self.h.derive_counts(Path(grid), path)
+        if self.t.replaces is not None and "replaces" in derived:
+            # `code` records what `predeclare` replayed with: it is not
+            # derived again (the code may have changed since).
+            derived["replaces"] = dict(
+                derived["replaces"], code=seen["code"])
+        a.require(canonical(a.load(path)) == canonical(derived),
+                  "counts differ from their pilot")
 
     def verify_counts(self, args):
         """The counts file is what `predeclare` makes of its pilot."""
@@ -2167,7 +2193,8 @@ class Grid:
         own = sum(1 for line in state.records
                   if line.get("table", self.t.family) == self.t.name)
         print("ATTEMPTS of %s: %d in the ledger, %d of this candidate %s "
-              "(%d records of %s, %d in the ledger, chain intact)" % (
+              "(%d records of %s, %d records in the family ledger, "
+              "chain intact)" % (
                   self.t.label, total, mine, inventory["candidate"], own,
                   self.t.label, len(state.records)))
         for (attempt, kind), row in found.items():
@@ -2449,6 +2476,12 @@ class Grid:
                   "%s needs layout randomization (--layout-seed)" % t.label)
         if t.replaces is None:
             self.h.bind_from(args)  # refuses a grid to replace
+        else:
+            # The grid replaced is bound (by the seals the counts record, or
+            # in full where the code has changed), and its attempts must be
+            # in the ledger this appends to, before anything is created.
+            self.h.bind_from(args, counts=counts)
+            self.h.require_replaced_openings(args)
         inventory = dict(
             schema=t.schema("experiment"), baseline=args.baseline,
             candidate=args.candidate, seconds=args.batch_seconds,
@@ -2494,13 +2527,10 @@ class Grid:
             inventory["source_tree"] = self.h.source_tree(
                 args.repo, args.baseline, args.candidate)
         if t.replaces is not None:
-            # The grid replaced is bound by the seals the counts record, and
-            # what the follow-up takes over from it is judged, before an
-            # attempt opens.
-            self.h.bind_from(args, counts=counts)
+            # What the follow-up takes over from the replaced grid is
+            # judged before an attempt opens.
             inventory["replaces"] = self.h.replaces_record(root, inventory)
             self.h.check_replaced(inventory, root, args.repo)
-            self.h.require_replaced_openings(args)
         self.h.check_provenance(args, inventory)
         with self.h.locked(args.repo):
             self.h.recheck(args.repo, args.candidate, inventory)
@@ -2618,6 +2648,33 @@ class Grid:
             files={n: a.seal(Path(grid) / n) for n in names})
         return self.replaced
 
+    def check_recorded_code(self, recorded):
+        """The `replaces` block of a counts file holds `code`: the seals of
+        the code `predeclare` replayed with, a record that is not derived
+        again, so only its shape is checked."""
+        code = recorded.get("code") if isinstance(recorded, dict) else None
+        a.require(isinstance(code, dict) and code and all(
+            isinstance(n, str) and isinstance(v, dict) and
+            sorted(v) == ["bytes", "sha256"] and type(v["bytes"]) is int and
+            isinstance(v["sha256"], str) and
+            re.fullmatch(r"[0-9a-f]{64}", v["sha256"]) is not None
+            for n, v in code.items()),
+            "the counts record no well-formed seals of the code that "
+            "replayed the replaced grid (replaces.code)")
+
+    def changed_code(self, recorded):
+        """The names of the files of the code of the replay whose seals
+        are not those `predeclare` recorded (`replaces.code`), sorted; none
+        when the seal binding is valid. A record that is no block of seals
+        is left to `bind_sealed` to refuse, a malformed `code` is refused
+        here."""
+        if not (isinstance(recorded, dict) and
+                isinstance(recorded.get("files"), dict)):
+            return []
+        self.h.check_recorded_code(recorded)
+        was, now = recorded["code"], self.h.replay_code()
+        return sorted(n for n in {*was, *now} if was.get(n) != now.get(n))
+
     def bind_sealed(self, grid, recorded, repo=None):
         """Bind the grid this table replaces by the seals the counts file
         records (`recorded`, its `replaces`): every file of the grid that the
@@ -2625,10 +2682,12 @@ class Grid:
         the sealed decisions, and the first-stage reports of the table's
         cells (alone) are replayed from their archives for the pairs. The
         full replay was made at `predeclare` and is made again by `replay`.
-        The code that replayed it must be unchanged (`replay_code`), and the
-        cheap checks of the full replay are made on both inventories of the
-        grid (header, sources, commit, checkout); only the analysis of the
-        other rows is left to the replay."""
+        The binding is valid only while the code that replayed the grid is
+        unchanged (`changed_code`; `bind_from` replays in full otherwise),
+        and the cheap checks of the full replay are made on both
+        inventories of the grid (header, sources, commit, checkout), through
+        the hooks of the replaced engine as the full replay does; what the
+        full replay leaves is named in PROTOCOL.md."""
         t = self.t
         old = t.replaces.engine
         grid = Path(grid)
@@ -2650,11 +2709,9 @@ class Grid:
                                            ", ".join(sorted(files))))
         for name in names:
             same(name)
-        now = self.h.replay_code()
-        for name in sorted({*now, *recorded.get("code", {})}):
-            a.require(recorded.get("code", {}).get(name) == now.get(name),
-                      "code changed since predeclare: %s; run predeclare "
-                      "again" % name)
+        changed = self.h.changed_code(recorded)
+        a.require(not changed, "the seal binding is valid only for the code "
+                  "of predeclare, which changed: %s" % ", ".join(changed))
         if first_root != grid:
             where = os.path.relpath(first_root, grid)
             a.require(
@@ -2665,20 +2722,20 @@ class Grid:
                 "replaced grid changed since predeclare: its second stage "
                 "names another first stage")
         first = a.load(first_root / "inventory.json")
-        old.check_experiment(first)
+        old.h.check_experiment(first)
         repo = a.HERE.parents[3] if repo is None else repo
         for found in ([first] if first_root == grid else [first, inventory]):
-            old.check_header(found)
-            old.check_sources(found, repo)
-            old.check_commit(found, repo)
-            old.check_checkout(found, repo)
+            old.h.check_header(found)
+            old.h.check_sources(found, repo)
+            old.h.check_commit(found, repo)
+            old.h.check_checkout(found, repo)
         decisions = a.load(grid / "decisions.json")
         opened = self.h.check_replaced_cells(first, decisions)
         a.require(opened == recorded.get("open"),
                   "the open cells differ from those the counts record")
         self.replaced = dict(
             grid=grid, first_root=first_root, first=first,
-            stage1=old.replay_rows(first_root, first, only=t.keys()),
+            stage1=old.h.replay_rows(first_root, first, only=t.keys()),
             decisions=decisions, open=opened, files=dict(files))
         return self.replaced
 
@@ -2709,7 +2766,19 @@ class Grid:
                       "record names")
             grid = Path(root) / inventory["replaces"]["grid"]
         repo = getattr(args, "repo", None) or a.HERE.parents[3]
-        if counts is not None:
+        changed = [] if counts is None else self.h.changed_code(
+            counts.get("replaces"))
+        if changed:
+            # The seals bind only the code of `predeclare`: with other
+            # code the grid is replayed in full, as `predeclare` did.
+            a.require(pilot is not None,
+                      "code changed since predeclare: %s; the replaced "
+                      "grid is then replayed in full, which needs "
+                      "--replaces-pilot DIR" % ", ".join(changed))
+            print("%s: code changed since predeclare (%s): the replaced "
+                  "grid is replayed in full" % (t.label, ", ".join(changed)),
+                  flush=True)
+        if counts is not None and not changed:
             bound = self.h.bind_sealed(Path(grid).resolve(),
                                        counts.get("replaces"), repo)
         else:
@@ -2777,23 +2846,28 @@ class Grid:
         REPLAY_CODE, the pin file and the counts file of the table
         replaced (the counts are what its header check compares)."""
         old = self.t.replaces.engine.t
-        names = [*REPLAY_CODE, *([old.pin_file] if old.pin_file else []),
-                 old.latest().name]
         here = Path(__file__).resolve().parent
-        return {n: a.seal(old.latest() if n == old.latest().name
-                          else here / n) for n in sorted(set(names))}
+        found = {n: a.seal(here / n) for n in REPLAY_CODE}
+        if old.pin_file:
+            found[old.pin_file] = a.seal(old.home / old.pin_file)
+        found[old.latest().name] = a.seal(old.latest())
+        return dict(sorted(found.items()))
 
     def require_replaced_openings(self, args):
-        """The ledger the attempt of a follow-up will be appended to holds
-        the openings of every attempt of the replaced grid: the follow-up
-        extends the one chain of the family, in the checkout that holds it.
-        A missing ledger, or one without those openings, is refused before
-        anything is measured, and a fresh chain is never started."""
+        """The ledger the attempt of a follow-up will be appended to (the
+        very file `run` and `extend` append to, in the checkout `--repo`
+        names) holds the openings of every attempt of the replaced grid,
+        made in this checkout: the follow-up extends the one chain of the
+        family, in the checkout that holds it. A missing ledger, one
+        without those openings or with openings of another checkout, or one
+        whose attempts of the replaced grid the full replay refuses
+        (`refuse_found`) is refused before anything is measured or
+        created, and a fresh chain is never started."""
         old = self.t.replaces.engine
         rep = self.h.bound()
-        where = argparse.Namespace(ledger=None, repo=args.repo)
-        path = old.attempts_file(where, False)
-        a.require(path is not None and path.is_file(),
+        path = self.h.ledger_path(args.repo)
+        where = argparse.Namespace(ledger=path, repo=args.repo)
+        a.require(path.is_file(),
                   "no attempts ledger at %s: a follow-up appends to the "
                   "ledger that holds the openings of the replaced grid, "
                   "in the checkout of that ledger" % path)
@@ -2801,9 +2875,10 @@ class Grid:
         stages = [(inventory, "first")]
         if inventory["schema"] == old.t.schema("extension"):
             stages = [(rep["first"], "first"), (inventory, "second")]
+        here = str(Path(args.repo).resolve())
         for found, stage in stages:
             try:
-                old.check_attempt(where, found, stage)
+                state = old.h.check_attempt(where, found, stage)
             except ValueError as e:
                 raise ValueError(
                     "the attempts ledger %s lacks the %s-stage opening of "
@@ -2811,6 +2886,21 @@ class Grid:
                     "appends to the ledger that holds it, in the checkout "
                     "of that ledger" % (path, stage, found.get("attempt"),
                                         e)) from None
+            a.require(state is not None, "the replaced grid has no "
+                      "attempts ledger")
+            opened = [line for line in state.records
+                      if line.get("event") == "open" and
+                      line.get("stage") == stage and
+                      line.get("attempt") == found["attempt"] and
+                      line.get("table", old.t.family) == old.t.name]
+            a.require(any(line.get("checkout") == here for line in opened),
+                      "the attempts ledger %s holds the %s-stage opening of "
+                      "attempt %s of the replaced grid from the checkout "
+                      "%s, not this one (%s): a follow-up appends to the "
+                      "ledger in the checkout that holds it, not to a copy"
+                      % (path, stage, found["attempt"], ", ".join(sorted(
+                          {str(x.get("checkout")) for x in opened})), here))
+            old.h.refuse_found(state, {found["attempt"]})
 
     def sealed_paths(self):
         """The repository names of the table's sealed files and its driver,
@@ -3039,7 +3129,6 @@ class Grid:
     def extend(self, args):
         t = self.t
         grid, root = args.grid.resolve(), args.output.resolve()
-        ledger = self.h.attempts_file(args, True)
         self.h.check_output(args)
         if t.fixed_seconds:
             # The cheap refusal first: the kind of grid, the recorded
@@ -3060,6 +3149,9 @@ class Grid:
             self.h.require_replaced_openings(args)
         else:
             self.h.bind_from(args)
+        # After the refusals about the ledger of the replaced grid, which
+        # create nothing, as in `run`.
+        ledger = self.h.attempts_file(args, True)
         self.h.check_provenance(args, first)
         # As `run` does, before the second stage is an attempt of the
         # ledger: a mismatch is a refusal, not a failed attempt.
