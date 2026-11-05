@@ -1101,7 +1101,7 @@ def class_report(label, decisions):
     return lines
 
 
-def dispose(decisions, attributed, evidence):
+def dispose(decisions, attributed, evidence, judged=()):
     """The policy owner's disposition of a final grid decision, generalised
     from TASK29A's (`task29a_grid.dispose`): every cell, and the retained
     slope where it was measured, ends in one of four classes.
@@ -1120,13 +1120,22 @@ def dispose(decisions, attributed, evidence):
     fails. There is no non-blocking class for a cell the control left open
     other than that. The control-limited cells found must be exactly the
     listed ones (a stale list, a listed cell that is any other class and an
-    unlisted control-limited cell are refused, naming them). Returns
+    unlisted control-limited cell are refused, naming them).
+
+    `judged` names the cells of a follow-up, which are final by that
+    follow-up's own outcome: one that is neither a pass nor a fail blocks,
+    whatever its class (a control-limited one after the follow-up's own
+    second stage included, with the reason "follow-up: <class>"), and is not
+    part of the list comparison above, so it is not a stale attribution.
+    Returns
     `dict(status, cells, blocking, counts)`: `blocking` maps each blocking
     cell to its reason, and the status is fail when any cell fails, blocked
     when any blocks, pass otherwise."""
     found = classify(decisions)
     listed = sorted(attributed)
-    limited = sorted(found["control_limited"])
+    judged = set(judged)
+    limited = sorted(n for n in found["control_limited"]
+                     if n not in judged)
     if limited != listed:
         where = {name: kind for kind, names in found.items()
                  for name in names}
@@ -1140,10 +1149,13 @@ def dispose(decisions, attributed, evidence):
     cells = {"pass": list(found["pass"]), "fail": list(found["fail"]),
              "attributed": [], "blocking": []}
     blocking = {}
-    for name in found["protocol"]:
-        blocking[name] = "no admitted measurement"
-    for name in found["inconclusive"]:
-        blocking[name] = "inconclusive"
+    for kind, reason in (("protocol", "no admitted measurement"),
+                         ("inconclusive", "inconclusive"),
+                         ("control_limited", "control-limited")):
+        for name in found[kind]:
+            if kind != "control_limited" or name in judged:
+                blocking[name] = ("follow-up: " + reason if name in judged
+                                  else reason)
     for name in limited:
         failed = evidence(name)
         if failed is None:

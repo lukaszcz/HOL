@@ -17,25 +17,34 @@ record.
       --followup-pilot E/followup-pilot --followup-allocation E/alloc-z \\
       [--ledger FILE] [--record]
 
-It replays the follow-up in full (which replays the TASK30 grid in full, by
-its own table, with its pilot), and the two allocation grids; requires that
+It makes every comparison that needs no replay first (the arguments, the
+pairing, and in check mode the recorded files and the code seals), then
+replays the follow-up in full (which replays the TASK30 grid in full, by its
+own table, with its pilot), and the two allocation grids. It requires that
 each timing grid ran in the harness of its own allocation grid (TASK30 at Y
 with `alloc/`, the follow-up at Z with `alloc-z/`; `task30_grid.
-harness_match`); builds `final.json` and `disposition.json` and prints the
-class report, every attempt (the replays' report), the evidence of each
-attributed cell and one line, `TASK30 disposition: pass|fail|blocked
-{counts}`. Exit status 0 pass, 1 fail, 2 blocked, 3 a refusal. `final.json`
-and `disposition.json` are in the follow-up's output directory
-(`--followup`). `--record` writes them (and refuses to replace files that
-exist); without it both are derived again and any difference from the files
-is refused: "changed TASK30 disposition".
+harness_match`), that `--followup` is the follow-up's final stage, and that
+neither allocation grid has a partial decision. Each allocation grid is gated
+by its own status (`allocation_matrix.replay`'s): a fail makes the
+disposition fail, and any other status but pass (incomplete, too few pairs,
+inconclusive) makes it blocked. It builds `final.json` and `disposition.json`
+and prints the replays' reports (every attempt of both tables, first), the
+class report, the follow-up's status, each allocation gate, the evidence and
+numbers of each attributed cell (all from `disposition.json`; the notes carry
+none) and one line, `TASK30 disposition: pass|fail|blocked {counts}`. Exit
+status 0 pass, 1 fail, 2 blocked, 3 a refusal. `final.json` and
+`disposition.json` are in the follow-up's output directory (`--followup`).
+`--record` writes them (and refuses to replace files that exist); without it
+both are derived again and any difference from the files is refused:
+"changed TASK30 disposition".
 
 This module is in neither table's seals: it is downstream of the replays
 and its code is not on the replay path, so `task30_grid.py` stays as it is.
 `disposition.json` records the seals of the code that derived it (`CODE`);
 a later change to one of those files appends the seal it had when the
 disposition was recorded to `HISTORY`, in the same commit, or the check
-refuses it.
+refuses it, naming every such file with the seal to append (PROTOCOL.md,
+"Seal histories").
 """
 import argparse
 import json
@@ -70,8 +79,9 @@ OPERATION_PHASES = ("operation_first", "operation_steady", "apply")
 # recorded: this module, the two tables and the engine, the acceptance
 # rules, and the allocation modules that replay the allocation grids and
 # read their rows. The rest of what this module imports is the replay path
-# of the timing grids (sealed by their own records) or the allocation
-# matrix's building of a toolchain (test_timing_followup.py names it).
+# of the timing grids (re-derived by the replay, or TASK30's sealed files,
+# which have their own seals) or the allocation matrix's building of a
+# toolchain (test_timing_followup.py names it).
 CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
         "timing_grid.py", "acceptance.py", "allocation_matrix.py",
         "allocation_analysis.py", "allocation_schema.py",
@@ -83,10 +93,12 @@ HISTORY = {}
 TAIL = (
     "Not shown by any row: CPU that neither allocates nor traces, net node "
     "visits and the candidates a match hides, live heap and retention (the "
-    "candidate's startup heap is about 1.01M words larger in every cell: "
-    "GC, reported and not gated; its attribution belongs to TASK_31), work "
-    "outside Trace and the kernel counter. Equal rows show equal work and "
-    "result, not equal time.")
+    "candidate's startup heap is larger in every cell: GC, reported and not "
+    "gated; its attribution belongs to TASK_31), work outside Trace and the "
+    "kernel counter. Equal rows show equal work and result, not equal "
+    "time. Every number of the cell (the counts, the intervals, the digest "
+    "and the allocation rows) is in disposition.json, derived from the "
+    "rows, never from this note.")
 
 
 def note(text, residual=""):
@@ -101,97 +113,80 @@ def build(rows):
                        note=text) for cell, text in rows}
 
 
-# The residual of exclude_literal_exact-10000 and exclude_dproc-10000: the
-# candidate's interval reaches above the margin.
-LITERAL_RESIDUAL = (
-    "Residual: the candidate's CPU and wall intervals extend to 1.041, "
-    "beyond the 3% margin; the rows show the same work and result, not the "
-    "same time, and do not explain it.")
-DPROC_RESIDUAL = (
-    "Residual: the candidate's CPU and wall intervals extend to 1.075, "
-    "beyond the 3% margin; the rows show the same work and result, not the "
-    "same time, and do not explain it.")
+# The named residual of exclude_literal_exact-10000 and exclude_dproc-10000.
+# The notes carry no number the rows do not check (a test pins that): the
+# margin is the policy's, the intervals are in disposition.json.
+RESIDUAL = (
+    "Residual: the candidate CI upper bound exceeds the 3% margin; "
+    "structural equality shows identical work, not identical timing; the "
+    "candidate startup heap is larger, GC reported not gated, attribution "
+    "in TASK_31.")
+# What a deletion's rows show, in a note.
+FIRES_NOTHING = (
+    "The rows show the operation firing no traced event, inference, maker "
+    "or collector, and the use of the result traced, with the same counts "
+    "and the same result digest as develop.")
 
 DISPOSITION = dict(
     schema="task30-disposition-v1", decided="2026-11-05", evidence=EVIDENCE,
     attributed=build([
         ("exclude_missing-10000", note(
-            "-* of an absent name. The operation fires no traced event, "
-            "inference, maker or collector. The use of the result is 10000 "
-            "net lookups that all rewrite (no inference). Digest: names "
-            "[matrix_data], the set of lookups the net leaves alone empty. "
-            "The same result and the same traced use as develop.")),
+            "-* of an absent name. " + FIRES_NOTHING)),
         ("exclude_matching-10000", note(
-            "-* of one rule name. The operation fires nothing. The use is "
-            "10000 lookups: 9999 rewrite and one (index 0) leaves the term "
-            "alone. Digest: names [matrix_data], that set {0}.")),
+            "-* of one rule name. " + FIRES_NOTHING)),
         ("exclude_batch-10000", note(
-            "-* of 3 rule names and one absent name. The operation fires "
-            "nothing. The use is 10000 lookups: 9997 rewrite and 3 leave "
-            "the term alone. Digest: that set {0, 5000, 9999}.")),
+            "-* of several rule names and one absent name. " +
+            FIRES_NOTHING)),
         ("exclude_qualified-10000", note(
-            "-* of a qualified name (bool.matrix_r0). The operation fires "
-            "nothing. The use is 10000 lookups: 9999 rewrite and one leaves "
-            "the term alone. Digest: that set {0}.")),
+            "-* of a qualified name. " + FIRES_NOTHING)),
         ("exclude_literal_exact-10000", note(
-            "-* of an exact namespaced name. The operation fires nothing. "
-            "The use is 10000 lookups: 9999 rewrite and one leaves the "
-            "term alone. Digest: names [anonymous], that set {0}.",
-            LITERAL_RESIDUAL)),
+            "-* of an exact namespaced name. " + FIRES_NOTHING, RESIDUAL)),
         ("history_excluded-10000", note(
-            "exclude_ssfrags [matrix_data]. The operation fires nothing and "
-            "calls no maker or collector, so no replay of the history. The "
-            "use is 10000 lookups that all leave the term alone (the data "
-            "entries are gone). Digest: names [matrix_drop], that set "
-            "0-9999.")),
+            "exclude_ssfrags of a data theory. The rows show no maker or "
+            "collector call, so no replay of the history, and a use whose "
+            "counts equal develop's (the data entries are gone), with the "
+            "same result digest.")),
         ("exclude_literal_namespace-1", note(
-            "-* of the literal matrix_ns::, which removes nothing. The "
-            "operation fires nothing. The use is one lookup that rewrites. "
-            "Digest: names [anonymous], that set empty.")),
+            "-* of a literal namespace, which removes nothing. " +
+            FIRES_NOTHING)),
         ("exclude_dproc-10000", note(
-            "-* of one dproc name. The operation fires no event and calls "
-            "no maker, collector or dproc. The net is empty by "
-            "construction, so the 10000 lookups (one traversal and one "
-            "term left alone each) show nothing about the dprocs. The "
-            "deletion is shown by the dproc count of the use (3 sampled "
-            "terms times the 9999 retained dprocs, each applied through "
-            "the traversal data of the simpset; this restates the length "
-            "of the digest's dproc names dp1..dp9999, it is not an "
-            "independent witness), by the exact allocation words and by "
-            "source identity.", DPROC_RESIDUAL)),
+            "-* of one dproc name. The rows show the operation firing no "
+            "event and calling no maker, collector or dproc. The net is "
+            "empty by construction, so the traced lookups show nothing "
+            "about the dprocs. The deletion is shown by the dproc count of "
+            "the use (equal to develop's; it restates the length of the "
+            "digest's dproc names, it is not an independent witness), by "
+            "the exact allocation words and by source identity.",
+            RESIDUAL)),
         ("exclude_mixed-10000", note(
-            "-* of one dproc and one rule. The operation fires nothing. The "
-            "use is 10000 lookups: 9999 rewrite and one (rule 0, gone from "
-            "the net) leaves the term alone. The dproc count of the use is "
-            "that of 9999 retained dprocs on 3 sampled terms (it restates "
-            "the digest's dproc names). Digest: names [matrix_data, "
-            "matrix_setup], dprocs dp1..dp9999, that set {0}.")),
+            "-* of one dproc and one rule. The rows show the operation "
+            "firing nothing and a use with the same counts as develop's, "
+            "its dproc count included (it restates the digest's dproc "
+            "names), and the same result digest.")),
         ("exclude_marker-10000", note(
-            "A timed SIMP_CONV with Excl: it builds the marker (EQ_MP, "
-            "SPEC, SYM), runs the -* of the 10000-entry source inside "
-            "process_tags (untraced), then makes one traversal of the "
-            "target: one REDUCE and 4 inferences per run, on both sides. "
-            "There is no use. Digest: |- c0 = c0. The deletion, the "
-            "dominant cost, is shown only by the operation words and the "
-            "source identity.")),
+            "A timed SIMP_CONV with Excl: the rows show the traced events "
+            "and inferences of the operation, equal to develop's in both "
+            "runs, and no use. The -* of the source runs inside "
+            "process_tags, untraced; the deletion, the dominant cost, is "
+            "shown only by the operation words and the source identity.")),
         ("exclude_marker_reuse-10000", note(
-            "The reused conversion still runs the -* of the 10000-entry "
-            "source in every call (SIMP_CONV processes its tags on each "
-            "application); only the Excl construction is saved. Traced: "
-            "one REDUCE and one term left alone per run. There is no use. "
-            "Digest: |- c0 = c0. The deletion is shown only by the "
+            "The reused conversion still runs the -* of the source in "
+            "every call (SIMP_CONV processes its tags on each "
+            "application); only the Excl construction is saved. The rows "
+            "show the traced events of the operation, equal to develop's "
+            "in both runs, and no use. The deletion is shown only by the "
             "operation words and the source identity.")),
         ("exclude_tactic_reuse-10000", note(
             "The reused tactic runs the -* in every application (only the "
-            "Excl construction is saved). Traced: one REDUCE and the "
-            "fixture's ASSUME. There is no use. Digest: the residual goal "
-            "?- c0 and the proof c0 |- c0. The deletion is shown only by "
-            "the operation words and the source identity.")),
+            "Excl construction is saved). The rows show its traced events "
+            "and inferences, equal to develop's in both runs, and no use. "
+            "The deletion is shown only by the operation words and the "
+            "source identity.")),
         ("exclude_tactic_complete-10000", note(
-            "The tactic is built (Excl: EQ_MP, SPEC, SYM), applied and "
-            "checked: one REDUCE and 4 inferences. There is no use. "
-            "Digest: as exclude_tactic_reuse. The deletion is shown only "
-            "by the operation words and the source identity."))]))
+            "The tactic is built, applied and checked. The rows show its "
+            "traced events and inferences, equal to develop's in both "
+            "runs, and no use. The deletion is shown only by the "
+            "operation words and the source identity."))]))
 SECTIONS = ("first", "second", "use")
 
 
@@ -267,6 +262,15 @@ class Evidence:
                     return ("allocation row %s.%s of alloc-z is %s"
                             % (phase, metric, m["decision"]))
         for phase in OPERATION_PHASES:
+            if phase not in here["phases"] or phase not in there["phases"]:
+                return "operation phase %s is missing from %s" % (
+                    phase, "alloc-z" if phase not in here["phases"] else
+                    "alloc")
+            if set(here["phases"][phase]) != set(there["phases"][phase]):
+                return ("operation phase %s has other metrics in alloc (%s)"
+                        " than in alloc-z (%s)" % (
+                            phase, ", ".join(sorted(there["phases"][phase])),
+                            ", ".join(sorted(here["phases"][phase]))))
             for metric, m in here["phases"][phase].items():
                 o = there["phases"][phase][metric]
                 for side in ("baseline", "candidate"):
@@ -314,22 +318,28 @@ class Evidence:
         found = rows.get("result.digest")
         if found is None:
             return "no result.digest row"
-        if found["decision"] != "equal" or len(found["candidate"]) != 1:
+        if found["decision"] != "equal":
             return "result.digest row is %s" % found["decision"]
+        if len(found["candidate"]) != 1 or len(found["baseline"]) != 1:
+            return "result.digest row is not reproducible (%d candidate " \
+                "and %d baseline values)" % (len(found["candidate"]),
+                                             len(found["baseline"]))
         return None
 
 
 def counts(rows):
-    """{run: {key: count}} of the nonzero count rows of a cell, as the
-    candidate has them."""
+    """{run: {key: [count, ...]}} of the count rows of a cell that are not
+    zero throughout, as the candidate has them: every distinct value, sorted
+    (one for a row that reproduces; several are not an error here, the
+    evidence of the cell names that)."""
     found = {k: {} for k in SECTIONS}
     for name, value in sorted((rows or {}).items()):
         if name == "result.digest":
             continue
         _, run, key = name.split(".", 2)
-        count, = value["candidate"]
-        if count != "0":
-            found[run][key] = int(count)
+        values = sorted(int(v) for v in value["candidate"])
+        if values != [0]:
+            found[run][key] = values
     return found
 
 
@@ -361,7 +371,7 @@ def record_of(spec, final, reports, new, evidence, result):
         found = row(new, cell) or {}
         work = found.get("work")
         digest = None if not work or "result.digest" not in work else \
-            next(iter(work["result.digest"]["candidate"]))
+            sorted(work["result.digest"]["candidate"])
         cells[cell] = dict(
             listed, decision=("attributed" if cell in
                               result["cells"]["attributed"] else "blocking"),
@@ -373,7 +383,8 @@ def record_of(spec, final, reports, new, evidence, result):
         schema=spec["schema"], decided=spec["decided"],
         evidence=list(spec["evidence"]), status=result["status"],
         counts=result["counts"], cells=result["cells"],
-        blocking=result["blocking"], attributed=cells,
+        blocking=result["blocking"], allocation=result["allocation"],
+        attributed=cells,
         pinned=final.get("source_identity", {}).get("reviewed", {}),
         replaced=final["replaced"])
 
@@ -383,18 +394,43 @@ def seals(here=None):
     return {name: a.seal(here / name) for name in CODE}
 
 
+# Beside HISTORY, what else a change to a file of CODE asks of the commit
+# that makes it, for the records that were made by the old file (PROTOCOL.md,
+# "Seal histories").
+ALSO = {
+    "timing_grid.py": "task30_followup.ENGINES",
+    "acceptance.py": "task30_followup.ACCEPTANCE",
+    "task30_followup.py": "task30_followup.DRIVERS",
+    "task30_grid.py": 'task30_followup.SEALED_HISTORY["task30_grid.py"] '
+    "(a reviewed change that alters nothing measured, after the run)"}
+
+
 def check_code(recorded, here=None):
     """The seals a disposition records are those of the code now or of
-    the earlier code HISTORY names."""
+    the earlier code HISTORY names. Every file that is not is named in one
+    refusal, with the seal it had when the disposition was recorded, which
+    is what the commit appends."""
     now = seals(here)
     a.require(isinstance(recorded, dict) and set(recorded) == set(CODE),
               "changed TASK30 disposition: the recorded code is not %s"
               % ", ".join(CODE))
-    for name, seal in recorded.items():
-        a.require(seal == now[name] or seal in HISTORY.get(name, ()),
-                  "changed TASK30 disposition: %s changed since it was "
-                  "recorded; append the old seal to HISTORY in the same "
-                  "commit" % name)
+    changed = [name for name in CODE
+               if recorded[name] != now[name] and
+               recorded[name] not in HISTORY.get(name, ())]
+    if changed:
+        lines = []
+        for name in changed:
+            seal = json.dumps(recorded[name], sort_keys=True)
+            lines.append('%s: append %s to task30_dispose.HISTORY[%r]%s' % (
+                name, seal, name,
+                "" if name not in ALSO else " and, where records were made "
+                "by the old file, to " + ALSO[name]))
+        raise ValueError(
+            "changed TASK30 disposition: %d file(s) changed since it was "
+            "recorded; append, in the same commit, the old seal (a change "
+            "to a history constant changes its file, which then needs its "
+            "own entry: PROTOCOL.md, \"Seal histories\"): %s"
+            % (len(changed), "; ".join(lines)))
 
 
 def pair(timing, counted, label):
@@ -411,21 +447,49 @@ def pair(timing, counted, label):
     return base.harness_match(timing, counted)
 
 
-def loaded(path, what):
+def loaded(path, what, partial=False):
     a.require((path / "inventory.json").exists() and
               (path / "decisions.json").exists(),
               "%s is not a complete grid: %s" % (what, path))
+    a.require(not (partial and (path / "decisions-partial.json").exists()),
+              "%s has a partial decision (decisions-partial.json): the "
+              "final verdict is of complete grids only, and a replay of "
+              "one that left a partial file may have verified that, not "
+              "decisions.json: %s" % (what, path))
     return a.load(path / "inventory.json")
 
 
-def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):
-    """Replay everything and derive (final, disposition, lines). `old` and
-    `new` are the engines of the TASK30 table and of its follow-up."""
-    grid, pilot = args.grid.resolve(), args.pilot.resolve()
-    followup = args.followup.resolve()
+def allocation_gate(label, code, decisions):
+    """(outcome, reasons) of one allocation grid, from the status code
+    `allocation_matrix.replay` returned (0 pass, 1 fail, 2 any other) and
+    the decisions it verified: an allocation `fail` is `fail`, anything but
+    a pass is `blocked`, and the reasons name the grid and what is not."""
+    reasons = []
+    if decisions.get("status") != "pass":
+        reasons.append("status %s" % decisions.get("status"))
+    if not decisions.get("complete"):
+        reasons.append("complete false")
+    for key in ("acceptance_pairs", "acceptance_baseline"):
+        if decisions.get(key) is False:
+            reasons.append("%s false" % key)
+    for key in ("nondeterminism", "unresolved"):
+        if decisions.get(key):
+            reasons.append("%s: %d" % (key, len(decisions[key])))
+    if code == 1 or decisions.get("status") == "fail":
+        return "fail", ["%s: fail (%s)" % (label, ", ".join(reasons))]
+    if code != 0 or reasons:
+        return "blocked", ["%s: not pass (%s; replay status %d)" % (
+            label, ", ".join(reasons) or "no reason found", code)]
+    return "pass", []
+
+
+def cheap(args, old, new):
+    """Every comparison that needs no replay, first: the arguments and the
+    pairing of each timing grid with the allocation grid of its harness.
+    The paths, resolved."""
+    grid, followup = args.grid.resolve(), args.followup.resolve()
     allocation = args.allocation.resolve()
     allocz = args.followup_allocation.resolve()
-    # The cheap comparisons come first.
     a.require(allocation != allocz, "one allocation grid cannot serve both "
               "harnesses: --allocation (Y) and --followup-allocation (Z)")
     timing_y, timing_z = loaded(grid, "--grid"), loaded(followup,
@@ -434,12 +498,23 @@ def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):
     a.require((followup / timing_z["replaces"]["grid"]).resolve() == grid,
               "--grid is not the grid the follow-up replaced (%s)"
               % (followup / timing_z["replaces"]["grid"]).resolve())
-    counted_y = loaded(allocation, "--allocation")
-    counted_z = loaded(allocz, "--followup-allocation")
+    counted_y = loaded(allocation, "--allocation", partial=True)
+    counted_z = loaded(allocz, "--followup-allocation", partial=True)
     pair(timing_y, counted_y, "TASK30 (Y)")
     pair(timing_z, counted_z, "follow-up (Z)")
     a.require(new.t.replaces is not None and new.t.replaces.engine is old,
               "the follow-up does not replace the TASK30 table's grid")
+    return dict(grid=grid, followup=followup, allocation=allocation,
+                allocz=allocz)
+
+
+def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):
+    """Replay everything and derive (final, disposition, lines). `old` and
+    `new` are the engines of the TASK30 table and of its follow-up."""
+    paths = cheap(args, old, new)
+    grid, pilot = paths["grid"], args.pilot.resolve()
+    followup, allocation, allocz = (paths[k] for k in (
+        "followup", "allocation", "allocz"))
     # The follow-up's replay replays the TASK30 grid in full first.
     new.replay(argparse.Namespace(
         output=followup, partial=False, repo=args.repo, ledger=args.ledger,
@@ -448,12 +523,20 @@ def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):
     a.require(y is not None and z is not None, "nothing was replayed")
     a.require(new.bound()["grid"] == grid, "--grid is not the grid the "
               "follow-up replaced")
-    for path in (allocation, allocz):
-        am.replay(argparse.Namespace(output=path))
-    decisions_y = a.load(allocation / "decisions.json")
-    decisions_z = a.load(allocz / "decisions.json")
-    a.require(decisions_y.get("complete") and decisions_z.get("complete"),
-              "an allocation grid is not complete")
+    # The follow-up is the follow-up's final stage, as the grid it replaced
+    # is (`bind_replaced`).
+    a.require(z["inventory"]["schema"] == new.t.schema("extension") or
+              not new.planned(z["stage1"], z["first"]),
+              "--followup is not the follow-up's final stage: its second "
+              "stage is still to come, name that")
+    # A complete grid's decisions.json is what the replay compared with
+    # (`loaded` refused a partial file beside them).
+    gates, found = {}, {}
+    for label, path in (("alloc", allocation), ("alloc-z", allocz)):
+        code = am.replay(argparse.Namespace(output=path))
+        found[label] = a.load(path / "decisions.json")
+        gates[label] = allocation_gate(label, code, found[label])
+    decisions_y, decisions_z = found["alloc"], found["alloc-z"]
     reports = {**y["stage1"], **y["stage2"], **z["stage1"], **z["stage2"]}
     final = old.h.with_sources(old.h.summary(reports), y["inventory"])
     if "remeasured" in y["decisions"]:
@@ -463,21 +546,62 @@ def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):
         cells=sorted(new.t.names()),
         replaced_seed=first_y.get("layout_seed"),
         followup_seed=first_z.get("layout_seed"),
+        followup_second_seed=(
+            z["inventory"].get("layout_seed")
+            if z["inventory"]["schema"] == new.t.schema("extension")
+            else None),
         replaced_counts=first_y["iterations_seal"],
         followup_counts=first_z["iterations_seal"],
         replaced_candidate=first_y["candidate"],
         followup_candidate=first_z["candidate"],
         followup_status=z["decisions"]["status"])
     evidence = Evidence(spec, final, decisions_y, decisions_z)
-    result = tg.dispose(final, spec["attributed"], evidence.holds)
+    result = tg.dispose(final, spec["attributed"], evidence.holds,
+                        judged=new.t.names())
+    outcomes = {o for o, _ in gates.values()}
+    result["allocation"] = {
+        label: dict(outcome=o, status=found[label].get("status"),
+                    reasons=r) for label, (o, r) in gates.items()}
+    result["status"] = ("fail" if "fail" in outcomes or
+                        result["status"] == "fail" else
+                        "blocked" if "blocked" in outcomes or
+                        result["status"] == "blocked" else "pass")
     record = record_of(spec, final, reports, decisions_z, evidence, result)
     record["code"] = seals()
     lines = tg.class_report("%s final" % old.t.label, final)
-    for cell, found in record["attributed"].items():
-        lines.append("%s %s (%s)%s" % (
-            found["decision"].upper(), cell, found["evidence_class"],
-            "" if found["failed"] is None else ": " + found["failed"]))
+    lines.append("FOLLOW-UP status %s (cells %s)" % (
+        final["replaced"]["followup_status"],
+        ", ".join(final["replaced"]["cells"])))
+    for label, (outcome, reasons) in gates.items():
+        lines.append("ALLOCATION %s: %s" % (label, outcome))
+        lines += ["ALLOCATION-%s %s" % (outcome.upper(), r)
+                  for r in reasons]
+    for cell, entry in record["attributed"].items():
+        lines += cell_lines(cell, entry)
+    for cell, reason in record["blocking"].items():
+        if cell not in record["attributed"]:
+            lines.append("BLOCKING %s: %s" % (cell, reason))
     return final, record, lines
+
+
+def cell_lines(cell, found):
+    """What the record says of an attributed cell, printed: all the numbers
+    are from it (never from the note)."""
+    lines = ["%s %s (%s)%s" % (
+        found["decision"].upper(), cell, found["evidence_class"],
+        "" if found["failed"] is None else ": " + found["failed"])]
+    for run in SECTIONS:
+        if found["work"] is not None:
+            lines.append("  work %s %s" % (
+                run, json.dumps(found["work"][run], sort_keys=True)))
+    for key in ("cpu", "wall", "gc"):
+        m = found["metrics"][key]
+        lines.append("  %s %s: median %s, interval %s, control %s %s" % (
+            key, m["decision"], m["median"], m["interval"],
+            m["control_decision"], m["control_interval"]))
+    lines.append("  digest %s; allocation rows %d" % (
+        json.dumps(found["digest"]), found["allocation_rows"]))
+    return lines
 
 
 def canon(value):
@@ -486,23 +610,29 @@ def canon(value):
 
 
 def disposition(args, **engines):
-    final, record, lines = derive(args, **engines)
     followup = args.followup.resolve()
-    for line in lines:
-        print(line)
-    files = {"final.json": final, "disposition.json": record}
+    # Every refusal that needs no replay comes before any.
+    cheap(args, engines.get("old", base.ENGINE),
+          engines.get("new", follow.ENGINE))
+    names = ("final.json", "disposition.json")
     if args.record:
-        for name in files:
+        for name in names:
             a.require(not (followup / name).exists(), "refusing to replace "
                       "the recorded %s; remove it to record again" % name)
-        for name, value in files.items():
-            a.save(followup / name, value)
     else:
-        for name in files:
+        for name in names:
             a.require((followup / name).exists(), "no recorded %s: record "
                       "it with --record" % name)
         recorded = a.load(followup / "disposition.json")
         check_code(recorded.get("code"))
+    final, record, lines = derive(args, **engines)
+    for line in lines:
+        print(line)
+    files = {"final.json": final, "disposition.json": record}
+    if args.record:
+        for name, value in files.items():
+            a.save(followup / name, value)
+    else:
         for name, value in files.items():
             held = a.load(followup / name)
             if name == "disposition.json":

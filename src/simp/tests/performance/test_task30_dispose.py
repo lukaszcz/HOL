@@ -21,6 +21,7 @@ import acceptance as a
 import allocation_analysis as an
 import allocation_matrix as am
 import allocation_schema as schema
+import allocation_testbed as tb
 import task30_dispose as td
 import test_timing_followup as ttf
 import test_timing_grid as ttg
@@ -78,17 +79,34 @@ class Spec(unittest.TestCase):
                 text = entry["note"]
                 self.assertIn("Not shown by any row", text)
                 self.assertIn("not equal time", text.replace("\n", " "))
-                self.assertIn("1.01M words", text)
+                self.assertIn("startup heap is larger", text)
                 self.assertIn("TASK_31", text)
                 self.assertNotIn("\t", text)
+
+    def test_no_note_carries_a_number(self):
+        # Every number of a cell comes from disposition.json, derived from
+        # the rows; a note states none the rows do not check. The two
+        # exceptions are the name of the follow-up task and the policy's
+        # margin, which is checked against the acceptance policy.
+        self.assertEqual(a.EQUIVALENCE_POLICY["margin"], 0.03)
+        for cell, entry in td.DISPOSITION["attributed"].items():
+            with self.subTest(cell):
+                text = entry["note"].replace("TASK_31", "").replace(
+                    "3% margin", "")
+                self.assertEqual(
+                    [c for c in text if c.isdigit()], [], text)
 
     def test_the_two_residuals_are_named(self):
         notes = {c: e["note"] for c, e in
                  td.DISPOSITION["attributed"].items()}
-        self.assertIn("Residual", notes["exclude_literal_exact-10000"])
-        self.assertIn("1.041", notes["exclude_literal_exact-10000"])
-        self.assertIn("Residual", notes["exclude_dproc-10000"])
-        self.assertIn("1.075", notes["exclude_dproc-10000"])
+        for cell in ("exclude_literal_exact-10000", "exclude_dproc-10000"):
+            for text in (
+                    "candidate CI upper bound exceeds the 3% margin",
+                    "structural equality shows identical work, not "
+                    "identical timing",
+                    "candidate startup heap is larger, GC reported not "
+                    "gated, attribution in TASK_31"):
+                self.assertIn(text, notes[cell])
         self.assertEqual(
             [c for c, n in notes.items() if "Residual" in n],
             ["exclude_literal_exact-10000", "exclude_dproc-10000"])
@@ -99,6 +117,7 @@ class Spec(unittest.TestCase):
             note = td.DISPOSITION["attributed"][case + "-10000"]["note"]
             self.assertIn("in every", note)
             self.assertIn("only the Excl construction is saved", note)
+            self.assertNotIn("Residual", note)
         for case in td.CASE_CLASS:
             if td.CASE_CLASS[case] == td.OPERATION:
                 note = td.DISPOSITION["attributed"][case + "-10000"]["note"]
@@ -227,14 +246,18 @@ CLEAN = dict(files=["src/one.sml"], differing=[], reviewed={
     "src/two.sml": dict(blob="b" * 40, reason="a reviewed move")})
 
 
+def make_evidence(new=None, old=None, final=None):
+    final = dict(source_identity=CLEAN) if final is None else final
+    return td.Evidence(SPEC, final,
+                       old or alloc_decisions(LIMITED, setup=7),
+                       new or alloc_decisions(LIMITED, setup=9))
+
+
 class Evidence(unittest.TestCase):
     """`Evidence.holds`: what fails is named."""
 
     def make(self, new=None, old=None, final=None):
-        final = dict(source_identity=CLEAN) if final is None else final
-        return td.Evidence(SPEC, final,
-                           old or alloc_decisions(LIMITED, setup=7),
-                           new or alloc_decisions(LIMITED, setup=9))
+        return make_evidence(new, old, final)
 
     def test_the_evidence_holds_for_both_classes(self):
         ev = self.make()
@@ -438,7 +461,9 @@ class Toy(ttf.Rig):
 
     def fake_replay(self, args):
         self.replayed.append(Path(args.output).name)
-        return 0
+        # What allocation_matrix.replay returns of the decisions it checked.
+        decisions = self.load(Path(args.output) / "decisions.json")
+        return {"pass": 0, "fail": 1}.get(decisions["status"], 2)
 
     def allocation(self, name, grid, decisions):
         """An allocation grid of the harness the timing grid `grid` ran in."""
@@ -516,6 +541,7 @@ class Command(Toy):
         second = self.load(self.out / "inventory.json")
         self.assertEqual(final["replaced"], dict(
             cells=sorted(CELLS), replaced_seed="s0", followup_seed="f0",
+            followup_second_seed=None,
             replaced_counts=first["iterations_seal"],
             followup_counts=second["iterations_seal"],
             replaced_candidate=first["candidate"],
@@ -533,9 +559,12 @@ class Command(Toy):
         self.assertEqual(
             (found["evidence_class"], found["note"], found["decision"],
              found["failed"], found["digest"], found["allocation_rows"]),
-            ("deletion", "n1", "attributed", None, "abc", 24))
+            ("deletion", "n1", "attributed", None, ["abc"], 24))
         self.assertEqual(found["work"], dict(
-            first={}, second={}, use={"trace.4.REDUCE": 10}))
+            first={}, second={}, use={"trace.4.REDUCE": [10]}))
+        self.assertEqual(record["allocation"], {
+            label: dict(outcome="pass", status="pass", reasons=[])
+            for label in ("alloc", "alloc-z")})
         self.assertEqual(set(found["metrics"]), {"cpu", "wall", "gc"})
         cpu = found["metrics"]["cpu"]
         self.assertEqual((cpu["decision"], cpu["reason"]),
@@ -546,8 +575,8 @@ class Command(Toy):
         self.assertEqual(found["metrics"]["gc"]["decision"], "reported")
         other = record["attributed"]["exclude_empty-10000"]
         self.assertEqual(other["work"], dict(
-            first={"trace.4.REDUCE": 1, "kernel.total": 4},
-            second={"trace.4.REDUCE": 1, "kernel.total": 4}, use={}))
+            first={"trace.4.REDUCE": [1], "kernel.total": [4]},
+            second={"trace.4.REDUCE": [1], "kernel.total": [4]}, use={}))
 
     def test_a_check_without_a_record_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no recorded final.json"):
@@ -601,9 +630,10 @@ class Command(Toy):
             return found
         with patch.object(a, "seal", changed):
             with self.assertRaisesRegex(
-                    ValueError, "changed TASK30 disposition: "
-                    "task30_dispose.py changed since it was recorded; "
-                    "append the old seal to HISTORY"):
+                    ValueError, "changed TASK30 disposition: 1 file.s. "
+                    "changed since it was recorded; append, in the same "
+                    "commit, the old seal .* task30_dispose.py: append "
+                    "{.* to task30_dispose.HISTORY.'task30_dispose.py'.$"):
                 self.dispose()
             # The history is what a commit appends with the change.
             with patch.dict(td.HISTORY, {"task30_dispose.py": (
@@ -672,14 +702,14 @@ class Command(Toy):
         with contextlib.redirect_stdout(out), self.assertRaisesRegex(
                 ValueError, r"stale attribution: listed but not "
                 r"control-limited: exclude_empty-0 \(pass\)"):
-            td.disposition(td.parser().parse_args(self.dargv()),
+            td.disposition(td.parser().parse_args(self.dargv(record=True)),
                            old=self.grid, new=self.fgrid, spec=spec)
         spec["attributed"].pop("exclude_missing-10")
         spec["attributed"].pop("exclude_empty-0")
         with contextlib.redirect_stdout(out), self.assertRaisesRegex(
                 ValueError, "control-limited but not listed: "
                 "exclude_missing-10"):
-            td.disposition(td.parser().parse_args(self.dargv()),
+            td.disposition(td.parser().parse_args(self.dargv(record=True)),
                            old=self.grid, new=self.fgrid, spec=spec)
 
     def test_a_refusal_is_one_line_and_the_status_3(self):
@@ -802,7 +832,7 @@ class Pairing(Toy):
         self.ftable.cells = (CELLS[0],)
         with self.assertRaisesRegex(ValueError, "follow-up cells differ "
                                     "from the open cells"):
-            self.dispose()
+            self.dispose(record=True)
 
     def test_a_follow_up_with_another_source_record_is_refused(self):
         # (The follow-up's own check; its comparison with the replaced
@@ -812,7 +842,507 @@ class Pairing(Toy):
         value["sources"]["src/one.sml"]["candidate"] = "e" * 40
         path.write_text(json.dumps(value))
         with self.assertRaisesRegex(ValueError, "changed source identity"):
+            self.dispose(record=True)
+
+
+class Seals(Toy):
+    """What a commit that changes the code of a recorded disposition must
+    append, named in one refusal."""
+
+    def changed(self, *names):
+        real = a.seal
+
+        def seal(path):
+            found = real(path)
+            if Path(path).name in names:
+                return dict(bytes=found["bytes"] + 1, sha256="e" * 64)
+            return found
+        return real, patch.object(a, "seal", seal)
+
+    def test_every_changed_file_is_listed_with_its_recorded_seal(self):
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        names = ("timing_grid.py", "task30_followup.py",
+                 "task30_dispose.py", "task30_grid.py", "acceptance.py")
+        real, patcher = self.changed(*names)
+        with patcher:
+            with self.assertRaises(ValueError) as caught:
+                td.check_code(recorded)
+        text = str(caught.exception)
+        self.assertIn("%d file(s) changed" % len(names), text)
+        for name in names:
+            seal = json.dumps(recorded[name], sort_keys=True)
+            self.assertIn("%s: append %s to task30_dispose.HISTORY[%r]"
+                          % (name, seal, name), text)
+        # ... and the history constants the records made by the old file
+        # need too.
+        for constant in ("task30_followup.ENGINES",
+                         "task30_followup.ACCEPTANCE",
+                         "task30_followup.DRIVERS",
+                         'task30_followup.SEALED_HISTORY["task30_grid.py"]'):
+            self.assertIn(constant, text)
+        # Files that did not change are not named.
+        self.assertNotIn("allocation_matrix.py: append", text)
+        # The refusal's seals are what makes it pass.
+        with patcher, patch.dict(td.HISTORY, {
+                n: (recorded[n],) for n in names}):
+            td.check_code(recorded)
+        # One entry short leaves that file named alone.
+        with patcher, patch.dict(td.HISTORY, {
+                n: (recorded[n],) for n in names[1:]}):
+            with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
+                td.check_code(recorded)
+
+    def test_the_command_refuses_with_that_text(self):
+        self.dispose(record=True)
+        real, patcher = self.changed("timing_grid.py", "acceptance.py")
+        with patcher, self.assertRaisesRegex(
+                ValueError, "2 file.s. changed since it was recorded.*"
+                "timing_grid.py: append .*acceptance.py: append "):
             self.dispose()
+
+
+class Gates(Toy):
+    """The allocation grids are gated by their own status: a fail is a fail,
+    anything else but a pass blocks, with the reason named."""
+
+    def stale(self, label, **change):
+        decisions = copy.deepcopy(self.work["z" if label == "alloc-z"
+                                            else "y"])
+        decisions.update(change)
+        self.save_decisions(self.allocz if label == "alloc-z" else
+                            self.alloc, decisions)
+
+    def run_once(self):
+        code, text = self.dispose(record=True)
+        return code, text, self.load(self.out / "disposition.json")
+
+    def test_an_allocation_that_fails_is_a_fail(self):
+        for label in ("alloc", "alloc-z"):
+            with self.subTest(label):
+                self.stale(label, status="fail", acceptance_pairs=False)
+                for name in ("final.json", "disposition.json"):
+                    if (self.out / name).exists():
+                        (self.out / name).unlink()
+                code, text, record = self.run_once()
+                self.assertEqual(code, 1, text)
+                self.assertEqual(record["status"], "fail")
+                found = record["allocation"][label]
+                self.assertEqual(found["outcome"], "fail")
+                self.assertIn(label + ": fail (status fail, "
+                              "acceptance_pairs false)", found["reasons"])
+                self.assertIn("ALLOCATION-FAIL " + label, text)
+                self.assertTrue(text.rstrip().endswith(
+                    'TASK30 disposition: fail {"pass": 10, "fail": 0, '
+                    '"attributed": 2, "blocking": 0}'), text)
+                self.stale(label)
+
+    def test_a_pass_needs_a_complete_grid_with_enough_pairs(self):
+        for label, change, reason in (
+                ("alloc-z", dict(status="inconclusive",
+                                 acceptance_pairs=False),
+                 "status inconclusive, acceptance_pairs false"),
+                ("alloc-z", dict(status="inconclusive", complete=False),
+                 "status inconclusive, complete false"),
+                ("alloc", dict(status="inconclusive"),
+                 "status inconclusive"),
+                # A status that says pass beside the other facts is not
+                # taken at its word.
+                ("alloc-z", dict(acceptance_pairs=False),
+                 "acceptance_pairs false"),
+                ("alloc", dict(acceptance_baseline=False),
+                 "acceptance_baseline false"),
+                ("alloc-z", dict(nondeterminism=[["c", 1, "p", "m", "x"]]),
+                 "nondeterminism: 1")):
+            with self.subTest(label, change=change):
+                for name in ("final.json", "disposition.json"):
+                    if (self.out / name).exists():
+                        (self.out / name).unlink()
+                self.stale(label, **change)
+                code, text, record = self.run_once()
+                self.assertEqual(code, 2, text)
+                self.assertEqual(record["status"], "blocked")
+                found = record["allocation"][label]
+                self.assertEqual(found["outcome"], "blocked")
+                self.assertEqual(len(found["reasons"]), 1)
+                self.assertIn(reason, found["reasons"][0])
+                self.assertIn("ALLOCATION-BLOCKED " + label, text)
+                self.assertIn("ALLOCATION %s: blocked" % label, text)
+                # The cells are still attributed: this is about the grid.
+                self.assertEqual(record["counts"]["attributed"], 2)
+                self.stale(label)
+
+    def test_a_fail_beats_a_block(self):
+        self.stale("alloc", status="inconclusive")
+        self.stale("alloc-z", status="fail")
+        code, text, record = self.run_once()
+        self.assertEqual((code, record["status"]), (1, "fail"), text)
+
+    def test_the_two_grids_that_pass_are_recorded_and_printed(self):
+        code, text, record = self.run_once()
+        self.assertEqual(code, 0, text)
+        self.assertIn("ALLOCATION alloc: pass", text)
+        self.assertIn("ALLOCATION alloc-z: pass", text)
+        self.assertNotIn("ALLOCATION-", text)
+
+    def test_a_partial_decision_is_refused_before_any_replay(self):
+        for label, folder in (("--allocation", self.alloc),
+                              ("--followup-allocation", self.allocz)):
+            with self.subTest(label):
+                before = list(self.replayed)
+                partial = folder / "decisions-partial.json"
+                partial.write_text("{}")
+                with self.assertRaisesRegex(
+                        ValueError, "%s has a partial decision" % label):
+                    self.dispose(record=True)
+                self.assertEqual(self.replayed, before)
+                partial.unlink()
+
+
+class Reproducibility(Toy):
+    """A cell whose work rows do not reproduce is blocked, with the row
+    named, and a fail stays a fail."""
+
+    def spread(self, row="work.use.trace.4.REDUCE", digest=False):
+        z = copy.deepcopy(self.work["z"])
+        cell = z["cases"]["exclude_missing"]["cells"]["10"]
+        if digest:
+            found = digest_row()
+            found["candidate"] = {"abc": 10, "abd": 10}
+            found["decision"] = "inconclusive"
+            found["deterministic"]["candidate"] = False
+            cell["work"]["result.digest"] = found
+        else:
+            cell["work"][row]["candidate"] = {"10": 10, "11": 10}
+            cell["work"][row]["decision"] = "inconclusive"
+            cell["work"][row]["deterministic"]["candidate"] = False
+        z["work"]["cells"]["exclude_missing-10"] = "inconclusive"
+        z["work"]["nondeterminism"].append(
+            ["exclude_missing", 10, "result.digest" if digest else row,
+             "candidate"])
+        self.save_decisions(self.allocz, z)
+
+    def test_several_values_block_the_cell_naming_the_row(self):
+        self.spread()
+        code, text = self.dispose(record=True)
+        self.assertEqual(code, 2, text)
+        self.assertIn("BLOCKING exclude_missing-10 (deletion): work: work "
+                      "status is inconclusive, not equal", text)
+        self.assertIn("ATTRIBUTED exclude_empty-10000 (operation)", text)
+        record = self.load(self.out / "disposition.json")
+        self.assertEqual(record["status"], "blocked")
+        found = record["attributed"]["exclude_missing-10"]
+        # All the values are recorded.
+        self.assertEqual(found["work"]["use"], {"trace.4.REDUCE": [10, 11]})
+        self.assertEqual(found["decision"], "blocking")
+
+    def test_a_row_that_does_not_reproduce_is_named_when_the_status_is_equal(
+            self):
+        self.spread()
+        z = self.load(self.allocz / "decisions.json")
+        z["work"]["cells"]["exclude_missing-10"] = "equal"
+        cell = z["cases"]["exclude_missing"]["cells"]["10"]["work"]
+        cell["work.use.trace.4.REDUCE"]["decision"] = "equal"
+        self.save_decisions(self.allocz, z)
+        code, text = self.dispose(record=True)
+        self.assertEqual(code, 2, text)
+        self.assertIn("work row work.use.trace.4.REDUCE is not "
+                      "reproducible (candidate)", text)
+
+    def test_a_digest_of_several_values_blocks(self):
+        self.spread(digest=True)
+        code, text = self.dispose(record=True)
+        self.assertEqual(code, 2, text)
+        record = self.load(self.out / "disposition.json")
+        found = record["attributed"]["exclude_missing-10"]
+        self.assertEqual(found["digest"], ["abc", "abd"])
+        self.assertEqual(found["decision"], "blocking")
+
+    def test_a_digest_row_that_is_equal_but_not_one_value_is_named(self):
+        ev = make_evidence()
+        work = copy.deepcopy(DELETION_WORK)
+        work["result.digest"] = dict(
+            digest_row(), candidate={"a": 10, "b": 10})
+        new = alloc_decisions({("exclude_missing", 10): work,
+                               ("exclude_empty", 10000): OPERATION_WORK})
+        self.assertEqual(
+            make_evidence(new=new).result("exclude_missing-10"),
+            "result.digest row is not reproducible (2 candidate and 1 "
+            "baseline values)")
+        self.assertIsNone(ev.result("exclude_missing-10"))
+
+    def test_counts_keep_every_value(self):
+        rows = {"result.digest": digest_row(),
+                "work.use.trace.4.REDUCE": dict(
+                    work_row(0), candidate={"3": 5, "10": 15}),
+                "work.first.maker": work_row(0),
+                "work.second.kernel.total": work_row(4)}
+        self.assertEqual(td.counts(rows), dict(
+            first={}, second={"kernel.total": [4]},
+            use={"trace.4.REDUCE": [3, 10]}))
+        self.assertEqual(td.counts(None), dict(first={}, second={}, use={}))
+
+    def test_a_fail_stays_a_fail_beside_a_row_that_does_not_reproduce(self):
+        self.spread()
+        self.settled(ci_b=(1.04, 1.08))
+        out, code, text = self.run_followup("failing")
+        self.assertEqual(code, 1, text)
+        code, text = self.dispose(
+            record=True, followup=out, followup_allocation=(
+                self.allocation("alloc-z-2", out, self.load(
+                    self.allocz / "decisions.json"))))
+        self.assertEqual(code, 1, text)
+        self.assertIn("FAIL exclude_missing-1000", text)
+        self.assertIn("BLOCKING exclude_missing-10 (deletion)", text)
+
+
+class Printed(Toy):
+    """The numbers of an attributed cell are printed from the record."""
+
+    def test_the_numbers_come_from_the_record_and_are_printed(self):
+        code, text = self.dispose(record=True)
+        record = self.load(self.out / "disposition.json")
+        for cell, found in record["attributed"].items():
+            for run in td.SECTIONS:
+                self.assertIn("  work %s %s" % (
+                    run, json.dumps(found["work"][run], sort_keys=True)),
+                    text)
+            for key in ("cpu", "wall", "gc"):
+                m = found["metrics"][key]
+                self.assertIn("  %s %s: median %s, interval %s, control "
+                              "%s %s" % (
+                                  key, m["decision"], m["median"],
+                                  m["interval"], m["control_decision"],
+                                  m["control_interval"]), text)
+            self.assertIn("  digest %s; allocation rows %d" % (
+                json.dumps(found["digest"]), found["allocation_rows"]),
+                text)
+        self.assertIn("FOLLOW-UP status pass (cells %s)" %
+                      ", ".join(sorted(CELLS)), text)
+
+
+class FollowUpOutcomes(Toy):
+    """A follow-up cell is judged by the follow-up's own outcome: one that
+    stays open after its own second stage blocks (it is not a stale
+    attribution), and a follow-up that is not final is refused."""
+
+    def open_follow_up(self, name, control, candidate=ttg.GOOD):
+        self.new_control = lambda c, s, pairs, seed: (
+            control if (c, s) == ttf.CELL_B else ttg.GOOD)
+        self.new_candidate = lambda c, s, pairs, seed: candidate
+        out, code, text = self.run_followup(name)
+        return out, code, text
+
+    def test_a_cell_that_stays_control_limited_blocks(self):
+        out, code, text = self.open_follow_up("first-open", ttg.WIDE)
+        self.assertEqual(code, 2, text)
+        ext, code, text = self.extend_followup(out)
+        self.assertEqual(code, 2, text)
+        code, text = self.dispose(
+            record=True, followup=ext, followup_allocation=(
+                self.allocation("alloc-z-2", ext, self.work["z"])))
+        self.assertEqual(code, 2, text)
+        self.assertIn("CONTROL-LIMITED exclude_missing-1000", text)
+        self.assertIn("BLOCKING exclude_missing-1000: follow-up: "
+                      "control-limited", text)
+        self.assertIn("FOLLOW-UP status inconclusive", text)
+        record = self.load(ext / "disposition.json")
+        self.assertEqual(record["blocking"], {
+            "exclude_missing-1000": "follow-up: control-limited"})
+        self.assertEqual(record["status"], "blocked")
+        self.assertEqual(record["counts"]["attributed"], 2)
+        self.assertEqual(record["replaced"]["followup_status"],
+                         "inconclusive")
+        # ... and its own second stage's seed is recorded.
+        self.assertEqual(record["replaced"]["followup_second_seed"],
+                         "f0-ext")
+
+    def test_a_cell_that_stays_inconclusive_blocks(self):
+        out, code, text = self.open_follow_up(
+            "first-open", ttg.GOOD, candidate=ttg.WIDE)
+        ext, code, text = self.extend_followup(out)
+        code, text = self.dispose(
+            record=True, followup=ext, followup_allocation=(
+                self.allocation("alloc-z-2", ext, self.work["z"])))
+        self.assertEqual(code, 2, text)
+        self.assertRegex(text, r"BLOCKING exclude_\w+-\d+: follow-up: "
+                         "inconclusive")
+
+    def test_a_first_stage_with_a_second_stage_to_come_is_refused(self):
+        out, code, text = self.open_follow_up("first-open", ttg.WIDE)
+        self.assertEqual(code, 2, text)
+        with self.assertRaisesRegex(
+                ValueError, "--followup is not the follow-up's final "
+                "stage: its second stage is still to come"):
+            self.dispose(
+                record=True, followup=out, followup_allocation=(
+                    self.allocation("alloc-z-2", out, self.work["z"])))
+        self.assertFalse((out / "final.json").exists())
+
+
+class Ordering(Toy):
+    """Every cheap refusal comes before any replay."""
+
+    def refuses(self, regex, **kw):
+        """The refusal, with every replay made to fail the test."""
+        boom = AssertionError("a replay ran before the refusal")
+        with patch.object(self.fgrid, "replay", side_effect=boom), \
+                patch.object(self.grid, "replay", side_effect=boom), \
+                patch.object(am, "replay", side_effect=boom), \
+                self.assertRaisesRegex(ValueError, regex):
+            self.dispose(**kw)
+
+    def test_the_cheap_refusals_of_check_mode_come_first(self):
+        self.refuses("no recorded final.json")
+        self.dispose(record=True)
+        self.refuses("refusing to replace the recorded final.json",
+                     record=True)
+        (self.out / "disposition.json").unlink()
+        self.refuses("no recorded disposition.json")
+
+    def test_the_code_seal_is_checked_before_any_replay(self):
+        self.dispose(record=True)
+        real = a.seal
+
+        def seal(path):
+            found = real(path)
+            if Path(path).name == "timing_grid.py":
+                return dict(bytes=found["bytes"] + 1, sha256="e" * 64)
+            return found
+        with patch.object(a, "seal", seal):
+            self.refuses("changed TASK30 disposition: 1 file.s. changed "
+                         "since it was recorded.*timing_grid.py: append")
+
+    def test_the_pairing_is_checked_before_any_replay(self):
+        self.refuses("one allocation grid cannot serve both",
+                     allocation=self.allocz)
+        self.refuses("--grid is not the grid the follow-up replaced",
+                     grid=self.replaced1)
+
+
+class Allocation(unittest.TestCase):
+    """`Evidence.allocation` on a record that lacks what it compares."""
+
+    def make(self, new, old):
+        return make_evidence(new=new, old=old)
+
+    def test_a_missing_phase_or_metric_is_named(self):
+        for side, what in (("old", "alloc"), ("new", "alloc-z")):
+            with self.subTest(side, what="phase"):
+                new = alloc_decisions(LIMITED, setup=9)
+                old = alloc_decisions(LIMITED, setup=7)
+                target = old if side == "old" else new
+                del target["cases"]["exclude_missing"]["cells"]["10"][
+                    "phases"]["apply"]
+                self.assertEqual(
+                    self.make(new, old).holds("exclude_missing-10"),
+                    "allocation: operation phase apply is missing from %s"
+                    % what)
+            with self.subTest(side, what="metric"):
+                new = alloc_decisions(LIMITED, setup=9)
+                old = alloc_decisions(LIMITED, setup=7)
+                target = old if side == "old" else new
+                del target["cases"]["exclude_missing"]["cells"]["10"][
+                    "phases"]["operation_first"]["heap"]
+                failed = self.make(new, old).holds("exclude_missing-10")
+                self.assertRegex(
+                    failed, r"^allocation: operation phase operation_first "
+                    r"has other metrics in alloc \(.*\) than in alloc-z "
+                    r"\(.*\)$")
+                self.assertEqual("heap" in failed.split("alloc-z")[0],
+                                 side == "new")
+
+
+class RealShape(unittest.TestCase):
+    """Evidence over allocation grids built by the real functions
+    (`allocation_analysis.cell`, `allocation_matrix.assemble`, with work
+    rows), written to JSON and read back: no stand-in for the data path."""
+
+    EMPTY = "trace=;kernel=;maker=0;collector=0;dproc=0"
+    USE = "trace=4.REDUCE=3;kernel=;maker=0;collector=0;dproc=0"
+    RUN = ("trace=4.REDUCE=1;kernel=SPEC=2,total=2;maker=0;collector=0;"
+           "dproc=0")
+
+    def cell(self, first, second, use, digest="d", other=None):
+        work = tb.structural(first, second, use, digest)
+        if other is not None:
+            work = (work, tb.structural(*other))
+        pairs, control = tb.experiment({}, {}, work=work)
+        record = an.cell(pairs, control, tb.STEADY)
+        return dict(record, steady=tb.STEADY, pairs=len(pairs))
+
+    def grid(self, cells):
+        records = {(c, n): record for (c, n), record in cells.items()}
+        decisions = am.assemble(set(records), records, {}, a.BASE,
+                                am.TASKS["task30"])
+        return json.loads(json.dumps(decisions))
+
+    def test_a_pass_of_each_class_and_a_fail(self):
+        e, u, r = self.EMPTY, self.USE, self.RUN
+        cells = {
+            ("exclude_missing", 10): self.cell(e, e, u),
+            ("exclude_dproc", 10): self.cell(e, e, u.replace(
+                "dproc=0", "dproc=9")),
+            ("exclude_marker", 10000): self.cell(r, r, e),
+            # The candidate's use differs from develop's.
+            ("exclude_matching", 10): self.cell(
+                e, e, u, other=(e, e, u.replace("=3", "=4"), "d")),
+            # A deletion whose use is empty on both sides.
+            ("exclude_batch", 10): self.cell(e, e, e),
+            # The digest of the result differs.
+            ("exclude_qualified", 10): self.cell(
+                e, e, u, other=(e, e, u, "other"))}
+        spec = dict(
+            td.DISPOSITION,
+            attributed={
+                "%s-%d" % key: dict(
+                    evidence_class=td.CASE_CLASS[key[0]], note="n")
+                for key in cells})
+        decisions = self.grid(cells)
+        self.assertEqual(decisions["work"]["cells"], {
+            "exclude_missing-10": "equal", "exclude_dproc-10": "equal",
+            "exclude_marker-10000": "equal",
+            "exclude_matching-10": "differs", "exclude_batch-10": "equal",
+            "exclude_qualified-10": "differs"})
+        ev = td.Evidence(spec, dict(source_identity=CLEAN), decisions,
+                         decisions)
+        for cell in ("exclude_missing-10", "exclude_dproc-10",
+                     "exclude_marker-10000"):
+            self.assertIsNone(ev.holds(cell), cell)
+        self.assertEqual(ev.holds("exclude_matching-10"),
+                         "work: work status is differs, not equal")
+        self.assertEqual(
+            ev.holds("exclude_batch-10"),
+            "work: class deletion: work.use has no work.use.trace.4.REDUCE "
+            "(an empty use shows nothing)")
+        self.assertEqual(ev.holds("exclude_qualified-10"),
+                         "work: work status is differs, not equal")
+        # The records are the real ones.
+        found = decisions["cases"]["exclude_missing"]["cells"]["10"]
+        self.assertEqual(sorted(found["phases"]), sorted(an.GATED))
+        self.assertEqual(td.counts(found["work"]), dict(
+            first={}, second={}, use={"trace.4.REDUCE": [3]}))
+        self.assertEqual(
+            sum(len(m) for m in found["phases"].values()), 24)
+        # The digest is a SHA-256 of the fingerprint.
+        digest, = found["work"]["result.digest"]["candidate"]
+        self.assertRegex(digest, "^[0-9a-f]{64}$")
+
+    def test_the_operation_words_of_the_two_grids_are_compared(self):
+        e, u = self.EMPTY, self.USE
+        cells = {("exclude_missing", 10): self.cell(e, e, u)}
+        spec = dict(td.DISPOSITION, attributed={
+            "exclude_missing-10": dict(evidence_class=td.DELETION,
+                                       note="n")})
+        new = self.grid(cells)
+        old = copy.deepcopy(new)
+        ev = td.Evidence(spec, dict(source_identity=CLEAN), old, new)
+        self.assertIsNone(ev.holds("exclude_missing-10"))
+        old["cases"]["exclude_missing"]["cells"]["10"]["phases"][
+            "operation_first"]["total"]["candidate"] = {"99": 10}
+        self.assertRegex(ev.holds("exclude_missing-10"),
+                         r"^allocation: operation row operation_first.total "
+                         r"differs between alloc and alloc-z \(candidate")
 
 
 CELLS = ttf.CELLS
