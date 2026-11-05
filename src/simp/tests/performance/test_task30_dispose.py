@@ -13,6 +13,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -96,20 +97,63 @@ class Spec(unittest.TestCase):
                 self.assertEqual(
                     [c for c in text if c.isdigit()], [], text)
 
-    def test_the_two_residuals_are_named(self):
-        notes = {c: e["note"] for c, e in
-                 td.DISPOSITION["attributed"].items()}
-        for cell in ("exclude_literal_exact-10000", "exclude_dproc-10000"):
-            for text in (
-                    "candidate CI upper bound exceeds the 3% margin",
-                    "structural equality shows identical work, not "
-                    "identical timing",
-                    "candidate startup heap is larger, GC reported not "
-                    "gated, attribution in TASK_31"):
-                self.assertIn(text, notes[cell])
+    def test_the_notes_of_the_spec_carry_no_residual(self):
+        for cell, entry in td.DISPOSITION["attributed"].items():
+            with self.subTest(cell):
+                self.assertNotIn("Residual", entry["note"])
+
+    def test_the_residual_is_derived_from_the_recorded_interval(self):
+        def found(cpu, wall):
+            return dict(cpu=dict(interval=[0.99, cpu]),
+                        wall=dict(interval=[0.99, wall]))
+        margin = 1 + a.EQUIVALENCE_POLICY["margin"]
+        self.assertTrue(td.residual_applies(found(margin + 0.001, 1.0)))
+        self.assertTrue(td.residual_applies(found(1.0, margin + 0.001)))
+        self.assertFalse(td.residual_applies(found(margin, 1.0299)))
+        base = td.DISPOSITION["attributed"]["exclude_missing-10000"]["note"]
+        text = td.with_residual(base)
+        self.assertTrue(text.endswith(td.TAIL))
+        self.assertIn(td.RESIDUAL, text)
+        self.assertEqual(text.replace(" " + td.RESIDUAL, ""), base)
+        for part in (
+                "candidate CI upper bound exceeds the 3% margin",
+                "structural equality shows identical work, not "
+                "identical timing",
+                "candidate startup heap is larger, GC reported not "
+                "gated, attribution in TASK_31"):
+            self.assertIn(part, td.RESIDUAL)
         self.assertEqual(
-            [c for c, n in notes.items() if "Residual" in n],
-            ["exclude_literal_exact-10000", "exclude_dproc-10000"])
+            [c for c in td.RESIDUAL.replace("TASK_31", "").replace(
+                "3% margin", "") if c.isdigit()], [])
+
+    def test_on_the_stage_2_data_it_applies_to_exactly_the_two_cells(self):
+        # Read-only; set TASK30_STAGE2_DECISIONS to stage2/decisions.json.
+        path = Path(os.environ.get("TASK30_STAGE2_DECISIONS", "/nonexistent"))
+        if not path.exists():
+            self.skipTest("TASK30_STAGE2_DECISIONS names no stage-2 record")
+        decisions = json.loads(path.read_text())
+        found = {}
+        for row in decisions["workloads"]:
+            cell = "%s-%d" % (row["case"], row["size"])
+            if cell in td.DISPOSITION["attributed"]:
+                found[cell] = td.residual_applies({
+                    key: dict(interval=row["metrics"][key][
+                        "paired_ratio_bootstrap_95_percent"])
+                    for key in ("cpu", "wall")})
+        self.assertEqual(sorted(found), sorted(THIRTEEN))
+        self.assertEqual(sorted(c for c, v in found.items() if v),
+                         ["exclude_dproc-10000",
+                          "exclude_literal_exact-10000"])
+
+    def test_the_values_of_the_two_real_cells_and_the_others(self):
+        # Stage 2's recorded upper bounds: the two cells are above the 3%
+        # margin, the other 11 at most 1.0185.
+        for upper, want in ((1.0406385994423937, True),
+                            (1.0753660032366656, True),
+                            (1.0185, False), (1.0277270613573477, False)):
+            self.assertEqual(td.residual_applies(dict(
+                cpu=dict(interval=[1.0, upper]),
+                wall=dict(interval=[1.0, 1.0]))), want)
 
     def test_the_notes_of_the_marker_and_tactic_cells_say_where_the_work_is(
             self):
@@ -353,7 +397,8 @@ class Evidence(unittest.TestCase):
                                        OPERATION_WORK})
                 self.assertEqual(
                     self.make(new=new).holds("exclude_missing-10"),
-                    "work: work row %s is differs" % key)
+                    'work: work row %s is differs (candidate {"3": 20}, '
+                    'baseline {"3": 20}, control {"3": 20})' % key)
 
     def test_the_digest_must_be_there_and_equal(self):
         for label, change, text in (
@@ -517,7 +562,8 @@ class Command(Toy):
         self.assertIn("TOYF archives and decisions replayed: pass", text)
         self.assertTrue(text.rstrip().endswith(
             'TASK30 disposition: pass {"pass": 10, "fail": 0, '
-            '"attributed": 2, "blocking": 0}'), text)
+            '"attributed": 2, "blocking": 0, "allocation": {"alloc": '
+            '"pass", "alloc-z": "pass"}}'), text)
         self.assertEqual(self.replayed, ["alloc", "alloc-z"])
 
     def test_the_final_decision_has_the_follow_up_in_place_of_the_cells(
@@ -631,9 +677,10 @@ class Command(Toy):
         with patch.object(a, "seal", changed):
             with self.assertRaisesRegex(
                     ValueError, "changed TASK30 disposition: 1 file.s. "
-                    "changed since it was recorded; append, in the same "
-                    "commit, the old seal .* task30_dispose.py: append "
-                    "{.* to task30_dispose.HISTORY.'task30_dispose.py'.$"):
+                    "changed since it was recorded; in the same "
+                    "commit add each entry .* task30_dispose.py: add to "
+                    "task30_dispose.HISTORY the entry "
+                    '"task30_dispose.py": \\(\\{.*,\\),$'):
                 self.dispose()
             # The history is what a commit appends with the change.
             with patch.dict(td.HISTORY, {"task30_dispose.py": (
@@ -665,7 +712,8 @@ class Command(Toy):
         self.assertIn("FAIL exclude_missing-1000", text)
         self.assertTrue(text.rstrip().endswith(
             'TASK30 disposition: fail {"pass": 9, "fail": 1, '
-            '"attributed": 2, "blocking": 0}'), text)
+            '"attributed": 2, "blocking": 0, "allocation": {"alloc": '
+            '"pass", "alloc-z": "pass"}}'), text)
 
     def test_an_inconclusive_follow_up_blocks(self):
         self.new_candidate = self.old_candidate
@@ -677,7 +725,9 @@ class Command(Toy):
         self.assertEqual(code, 2, text)
         self.assertIn("INCONCLUSIVE exclude_empty-100", text)
         self.assertRegex(text, r'TASK30 disposition: blocked \{"pass": 8, '
-                         r'"fail": 0, "attributed": 2, "blocking": 2\}')
+                         r'"fail": 0, "attributed": 2, "blocking": 2, '
+                         r'"allocation": \{"alloc": "pass", "alloc-z": '
+                         r'"pass"\}\}')
 
     def test_evidence_that_fails_blocks_the_cell_and_is_printed(self):
         z = copy.deepcopy(self.work["z"])
@@ -872,17 +922,19 @@ class Seals(Toy):
         self.assertIn("%d file(s) changed" % len(names), text)
         for name in names:
             seal = json.dumps(recorded[name], sort_keys=True)
-            self.assertIn("%s: append %s to task30_dispose.HISTORY[%r]"
-                          % (name, seal, name), text)
+            self.assertIn('%s: add to task30_dispose.HISTORY the entry '
+                          '"%s": (%s,),' % (name, name, seal), text)
         # ... and the history constants the records made by the old file
-        # need too.
+        # need too, and the tests that pin them.
         for constant in ("task30_followup.ENGINES",
                          "task30_followup.ACCEPTANCE",
                          "task30_followup.DRIVERS",
                          'task30_followup.SEALED_HISTORY["task30_grid.py"]'):
             self.assertIn(constant, text)
+        self.assertIn("test_task30_dispose.py", text)
+        self.assertIn("test_task30_grid.py", text)
         # Files that did not change are not named.
-        self.assertNotIn("allocation_matrix.py: append", text)
+        self.assertNotIn("allocation_matrix.py: add", text)
         # The refusal's seals are what makes it pass.
         with patcher, patch.dict(td.HISTORY, {
                 n: (recorded[n],) for n in names}):
@@ -893,12 +945,38 @@ class Seals(Toy):
             with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
                 td.check_code(recorded)
 
+    def test_the_printed_entries_are_literals_of_their_constant(self):
+        import ast
+        seal = dict(bytes=7, sha256="f" * 64)
+        for name in td.CODE:
+            found = dict(td.entries(name, seal))
+            history = ast.literal_eval("{%s}" % found[
+                "task30_dispose.HISTORY"])
+            self.assertEqual(history, {name: (seal,)})
+            self.assertEqual(len(found), 1 + (name in td.ALSO))
+        for name, (constant, keyed) in td.ALSO.items():
+            element = dict(td.entries(name, seal))[constant]
+            value = ast.literal_eval("(%s)" % element)
+            # A tuple of seals (a constant's element), or one entry's
+            # tuple under the file's name for SEALED_HISTORY.
+            self.assertEqual(value, ((seal,),) if keyed else (seal,))
+        # The refusal's text carries exactly those literals.
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        real, patcher = self.changed("timing_grid.py")
+        with patcher, self.assertRaises(ValueError) as caught:
+            td.check_code(recorded)
+        for constant, text in td.entries("timing_grid.py",
+                                         recorded["timing_grid.py"]):
+            self.assertIn("to %s the entry %s" % (constant, text),
+                          str(caught.exception))
+
     def test_the_command_refuses_with_that_text(self):
         self.dispose(record=True)
         real, patcher = self.changed("timing_grid.py", "acceptance.py")
         with patcher, self.assertRaisesRegex(
                 ValueError, "2 file.s. changed since it was recorded.*"
-                "timing_grid.py: append .*acceptance.py: append "):
+                "timing_grid.py: add to .*acceptance.py: add to "):
             self.dispose()
 
 
@@ -934,7 +1012,9 @@ class Gates(Toy):
                 self.assertIn("ALLOCATION-FAIL " + label, text)
                 self.assertTrue(text.rstrip().endswith(
                     'TASK30 disposition: fail {"pass": 10, "fail": 0, '
-                    '"attributed": 2, "blocking": 0}'), text)
+                    '"attributed": 2, "blocking": 0, "allocation": '
+                    + json.dumps({"alloc": "pass", "alloc-z": "pass",
+                                  label: "fail"}) + "}"), text)
                 self.stale(label)
 
     def test_a_pass_needs_a_complete_grid_with_enough_pairs(self):
@@ -985,6 +1065,14 @@ class Gates(Toy):
         self.assertIn("ALLOCATION alloc-z: pass", text)
         self.assertNotIn("ALLOCATION-", text)
 
+    def test_the_refusal_says_the_partial_file_is_stale(self):
+        (self.allocz / "decisions-partial.json").write_text("{}")
+        with self.assertRaisesRegex(
+                ValueError, "beside a complete decisions.json: the partial "
+                "file is stale .* and may be removed"):
+            self.dispose(record=True)
+        self.assertTrue((self.allocz / "decisions-partial.json").exists())
+
     def test_a_partial_decision_is_refused_before_any_replay(self):
         for label, folder in (("--allocation", self.alloc),
                               ("--followup-allocation", self.allocz)):
@@ -1027,7 +1115,8 @@ class Reproducibility(Toy):
         code, text = self.dispose(record=True)
         self.assertEqual(code, 2, text)
         self.assertIn("BLOCKING exclude_missing-10 (deletion): work: work "
-                      "status is inconclusive, not equal", text)
+                      "row work.use.trace.4.REDUCE is not reproducible "
+                      "(candidate)", text)
         self.assertIn("ATTRIBUTED exclude_empty-10000 (operation)", text)
         record = self.load(self.out / "disposition.json")
         self.assertEqual(record["status"], "blocked")
@@ -1211,7 +1300,7 @@ class Ordering(Toy):
             return found
         with patch.object(a, "seal", seal):
             self.refuses("changed TASK30 disposition: 1 file.s. changed "
-                         "since it was recorded.*timing_grid.py: append")
+                         "since it was recorded.*timing_grid.py: add to")
 
     def test_the_pairing_is_checked_before_any_replay(self):
         self.refuses("one allocation grid cannot serve both",
@@ -1309,14 +1398,17 @@ class RealShape(unittest.TestCase):
         for cell in ("exclude_missing-10", "exclude_dproc-10",
                      "exclude_marker-10000"):
             self.assertIsNone(ev.holds(cell), cell)
-        self.assertEqual(ev.holds("exclude_matching-10"),
-                         "work: work status is differs, not equal")
+        self.assertEqual(
+            ev.holds("exclude_matching-10"),
+            'work: work row work.use.trace.4.REDUCE is differs (candidate '
+            '{"4": 10}, baseline {"3": 10}, control {"3": 10})')
         self.assertEqual(
             ev.holds("exclude_batch-10"),
             "work: class deletion: work.use has no work.use.trace.4.REDUCE "
             "(an empty use shows nothing)")
-        self.assertEqual(ev.holds("exclude_qualified-10"),
-                         "work: work status is differs, not equal")
+        self.assertRegex(
+            ev.holds("exclude_qualified-10"),
+            r"^work: work row result.digest is differs \(candidate ")
         # The records are the real ones.
         found = decisions["cases"]["exclude_missing"]["cells"]["10"]
         self.assertEqual(sorted(found["phases"]), sorted(an.GATED))
@@ -1327,6 +1419,35 @@ class RealShape(unittest.TestCase):
         # The digest is a SHA-256 of the fingerprint.
         digest, = found["work"]["result.digest"]["candidate"]
         self.assertRegex(digest, "^[0-9a-f]{64}$")
+
+    def varying_cell(self, side):
+        """A deletion cell whose `side` has the use count 4 in odd pairs."""
+        e, u = self.EMPTY, self.USE
+        work = tb.structural(e, e, u, "d")
+        pairs, control = tb.experiment({}, {}, work=work)
+        other = tb.observation({}, tb.STEADY, tb.structural(
+            e, e, u.replace("=3", "=4"), "d"))
+        for i in range(1, len(pairs), 2):
+            pairs[i][side] = other
+        record = an.cell(pairs, control, tb.STEADY)
+        return dict(record, steady=tb.STEADY, pairs=len(pairs))
+
+    def test_a_row_that_varies_is_named_and_called_not_reproducible(self):
+        spec = dict(td.DISPOSITION, attributed={
+            "exclude_missing-10": dict(evidence_class=td.DELETION,
+                                       note="n")})
+        for side in ("candidate", "baseline"):
+            with self.subTest(side):
+                decisions = self.grid({
+                    ("exclude_missing", 10): self.varying_cell(side)})
+                self.assertIn(
+                    ["exclude_missing", 10, "work.use.trace.4.REDUCE",
+                     side], decisions["work"]["nondeterminism"])
+                ev = td.Evidence(spec, dict(source_identity=CLEAN),
+                                 decisions, decisions)
+                self.assertIn(
+                    "work row work.use.trace.4.REDUCE is not "
+                    "reproducible (%s)" % side, ev.holds("exclude_missing-10"))
 
     def test_the_operation_words_of_the_two_grids_are_compared(self):
         e, u = self.EMPTY, self.USE

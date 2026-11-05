@@ -22,12 +22,15 @@ pairing, and in check mode the recorded files and the code seals), then
 replays the follow-up in full (which replays the TASK30 grid in full, by its
 own table, with its pilot), and the two allocation grids. It requires that
 each timing grid ran in the harness of its own allocation grid (TASK30 at Y
-with `alloc/`, the follow-up at Z with `alloc-z/`; `task30_grid.
-harness_match`), that `--followup` is the follow-up's final stage, and that
-neither allocation grid has a partial decision. Each allocation grid is gated
-by its own status (`allocation_matrix.replay`'s): a fail makes the
-disposition fail, and any other status but pass (incomplete, too few pairs,
-inconclusive) makes it blocked. It builds `final.json` and `disposition.json`
+with `alloc/`, the follow-up at Z with `alloc-z/`;
+`task30_grid.harness_match`), that `--followup` is the follow-up's final
+stage, and that each allocation grid is complete: an incomplete one has only
+`decisions-partial.json` and is refused before any replay, as is one with a
+partial decision beside `decisions.json` (stale, and may be removed). Each
+allocation grid that is complete is gated by its own status
+(`allocation_matrix.replay`'s): a fail makes the disposition fail, and any
+other status but pass (too few pairs, inconclusive) makes it blocked.
+It builds `final.json` and `disposition.json`
 and prints the replays' reports (every attempt of both tables, first), the
 class report, the follow-up's status, each allocation gate, the evidence and
 numbers of each attributed cell (all from `disposition.json`; the notes carry
@@ -101,9 +104,8 @@ TAIL = (
     "rows, never from this note.")
 
 
-def note(text, residual=""):
-    return " ".join(text.split() + ([residual] if residual else []) +
-                    [TAIL])
+def note(text):
+    return " ".join(text.split() + [TAIL])
 
 
 def build(rows):
@@ -113,9 +115,12 @@ def build(rows):
                        note=text) for cell, text in rows}
 
 
-# The named residual of exclude_literal_exact-10000 and exclude_dproc-10000.
-# The notes carry no number the rows do not check (a test pins that): the
-# margin is the policy's, the intervals are in disposition.json.
+# The residual a cell's note gets when its recorded candidate CPU or wall CI
+# upper bound exceeds 1 + the policy's margin (`residual_applies`; the
+# stage-2 cells it applies to are exclude_literal_exact-10000 and
+# exclude_dproc-10000). The notes of DISPOSITION carry none of it. They
+# carry no number the rows do not check (a test pins that): the margin is the
+# policy's, the intervals are in disposition.json.
 RESIDUAL = (
     "Residual: the candidate CI upper bound exceeds the 3% margin; "
     "structural equality shows identical work, not identical timing; the "
@@ -140,7 +145,7 @@ DISPOSITION = dict(
         ("exclude_qualified-10000", note(
             "-* of a qualified name. " + FIRES_NOTHING)),
         ("exclude_literal_exact-10000", note(
-            "-* of an exact namespaced name. " + FIRES_NOTHING, RESIDUAL)),
+            "-* of an exact namespaced name. " + FIRES_NOTHING)),
         ("history_excluded-10000", note(
             "exclude_ssfrags of a data theory. The rows show no maker or "
             "collector call, so no replay of the history, and a use whose "
@@ -156,8 +161,7 @@ DISPOSITION = dict(
             "about the dprocs. The deletion is shown by the dproc count of "
             "the use (equal to develop's; it restates the length of the "
             "digest's dproc names, it is not an independent witness), by "
-            "the exact allocation words and by source identity.",
-            RESIDUAL)),
+            "the exact allocation words and by source identity.")),
         ("exclude_mixed-10000", note(
             "-* of one dproc and one rule. The rows show the operation "
             "firing nothing and a use with the same counts as develop's, "
@@ -217,6 +221,19 @@ def class_failure(kind, groups):
                     % (kind, ", ".join(use)))
         return None
     return "unknown evidence class %r" % kind
+
+
+def residual_applies(found):
+    """Whether the candidate's CPU or wall CI upper bound, as `metrics`
+    records it, exceeds 1 + the policy's margin."""
+    limit = 1 + a.EQUIVALENCE_POLICY["margin"]
+    return any(found[key]["interval"][1] > limit for key in ("cpu", "wall"))
+
+
+def with_residual(text):
+    """The note with the residual sentence before its closing TAIL."""
+    a.require(text.endswith(TAIL), "a note must end with TAIL")
+    return " ".join([text[:-len(TAIL)].strip(), RESIDUAL, TAIL])
 
 
 def split(cell):
@@ -288,17 +305,24 @@ class Evidence:
         name = am.name_of(case, size)
         if name in section["missing"] or name in section["unresolved"]:
             return "work rows are missing or unresolved"
-        if section["cells"].get(name) != "equal":
-            return "work status is %s, not equal" % section["cells"].get(
-                name)
-        for entry in section["nondeterminism"]:
-            if entry[:2] == [case, size]:
-                return ("work row %s is not reproducible (%s)"
-                        % (entry[2], entry[3]))
+        # What names a row comes first: a row that does not reproduce, then
+        # a row that is not equal; the cell's status is the backstop.
+        varying = ["work row %s is not reproducible (%s)" % (e[2], e[3])
+                   for e in section["nondeterminism"]
+                   if e[:2] == [case, size]]
+        if varying:
+            return "; ".join(varying)
         rows = row(self.new, cell).get("work") or {}
         for key, found in rows.items():
             if found["decision"] != "equal":
-                return "work row %s is %s" % (key, found["decision"])
+                return ("work row %s is %s (candidate %s, baseline %s, "
+                        "control %s)" % (key, found["decision"], *(
+                            json.dumps(found[side], sort_keys=True)
+                            for side in ("candidate", "baseline",
+                                         "control"))))
+        if section["cells"].get(name) != "equal":
+            return "work status is %s, not equal" % section["cells"].get(
+                name)
         return class_failure(self.spec["attributed"][cell]["evidence_class"],
                              self.groups[case, size])
 
@@ -372,10 +396,15 @@ def record_of(spec, final, reports, new, evidence, result):
         work = found.get("work")
         digest = None if not work or "result.digest" not in work else \
             sorted(work["result.digest"]["candidate"])
+        found_metrics = metrics(reports[case, size])
+        residual = residual_applies(found_metrics)
         cells[cell] = dict(
-            listed, decision=("attributed" if cell in
+            listed, residual=residual,
+            note=with_residual(listed["note"]) if residual
+            else listed["note"],
+            decision=("attributed" if cell in
                               result["cells"]["attributed"] else "blocking"),
-            failed=evidence.holds(cell), metrics=metrics(reports[case, size]),
+            failed=evidence.holds(cell), metrics=found_metrics,
             work=None if work is None else counts(work), digest=digest,
             allocation_rows=sum(len(m) for m in
                                 found.get("phases", {}).values()))
@@ -396,20 +425,35 @@ def seals(here=None):
 
 # Beside HISTORY, what else a change to a file of CODE asks of the commit
 # that makes it, for the records that were made by the old file (PROTOCOL.md,
-# "Seal histories").
+# "Seal histories"): the constant, and whether its entries are keyed by file
+# (`"name": (SEAL,),`) or are seals in a tuple (`SEAL,`).
 ALSO = {
-    "timing_grid.py": "task30_followup.ENGINES",
-    "acceptance.py": "task30_followup.ACCEPTANCE",
-    "task30_followup.py": "task30_followup.DRIVERS",
-    "task30_grid.py": 'task30_followup.SEALED_HISTORY["task30_grid.py"] '
-    "(a reviewed change that alters nothing measured, after the run)"}
+    "timing_grid.py": ("task30_followup.ENGINES", False),
+    "acceptance.py": ("task30_followup.ACCEPTANCE", False),
+    "task30_followup.py": ("task30_followup.DRIVERS", False),
+    "task30_grid.py": (
+        'task30_followup.SEALED_HISTORY["task30_grid.py"]', True)}
+
+
+def entries(name, seal):
+    """[(constant, literal text)] a changed file of CODE asks for, as the
+    entry to paste into the constant: HISTORY maps the file to a tuple of
+    seals; ENGINES, ACCEPTANCE and DRIVERS are tuples of seals; the one
+    SEALED_HISTORY entry is a tuple of seals under the file's name."""
+    text = json.dumps(seal, sort_keys=True)
+    found = [("task30_dispose.HISTORY", '%s: (%s,),' % (
+        json.dumps(name), text))]
+    if name in ALSO:
+        constant, keyed = ALSO[name]
+        found.append((constant, "(%s,)," % text if keyed else text + ","))
+    return found
 
 
 def check_code(recorded, here=None):
     """The seals a disposition records are those of the code now or of
     the earlier code HISTORY names. Every file that is not is named in one
-    refusal, with the seal it had when the disposition was recorded, which
-    is what the commit appends."""
+    refusal, with the entries the commit pastes into the constants (each
+    the literal element of its constant) and the tests that pin them."""
     now = seals(here)
     a.require(isinstance(recorded, dict) and set(recorded) == set(CODE),
               "changed TASK30 disposition: the recorded code is not %s"
@@ -420,16 +464,19 @@ def check_code(recorded, here=None):
     if changed:
         lines = []
         for name in changed:
-            seal = json.dumps(recorded[name], sort_keys=True)
-            lines.append('%s: append %s to task30_dispose.HISTORY[%r]%s' % (
-                name, seal, name,
-                "" if name not in ALSO else " and, where records were made "
-                "by the old file, to " + ALSO[name]))
+            lines.append("%s: add %s" % (name, " and, where records were "
+                                         "made by the old file, ".join(
+                "to %s the entry %s" % found
+                for found in entries(name, recorded[name]))))
         raise ValueError(
             "changed TASK30 disposition: %d file(s) changed since it was "
-            "recorded; append, in the same commit, the old seal (a change "
-            "to a history constant changes its file, which then needs its "
-            "own entry: PROTOCOL.md, \"Seal histories\"): %s"
+            "recorded; in the same commit add each entry below to its "
+            "constant and update the tests that pin those constants "
+            "(task30_dispose.HISTORY: test_task30_dispose.py; "
+            "task30_followup.ENGINES, ACCEPTANCE, DRIVERS and "
+            "SEALED_HISTORY: test_task30_grid.py); a change to a history "
+            "constant changes its file, which then needs its own entry "
+            "(PROTOCOL.md, \"Seal histories\"): %s"
             % (len(changed), "; ".join(lines)))
 
 
@@ -452,10 +499,10 @@ def loaded(path, what, partial=False):
               (path / "decisions.json").exists(),
               "%s is not a complete grid: %s" % (what, path))
     a.require(not (partial and (path / "decisions-partial.json").exists()),
-              "%s has a partial decision (decisions-partial.json): the "
-              "final verdict is of complete grids only, and a replay of "
-              "one that left a partial file may have verified that, not "
-              "decisions.json: %s" % (what, path))
+              "%s has a partial decision (decisions-partial.json) beside "
+              "a complete decisions.json: the partial file is stale (an "
+              "earlier --only run left it) and may be removed: %s"
+              % (what, path))
     return a.load(path / "inventory.json")
 
 
@@ -640,7 +687,9 @@ def disposition(args, **engines):
             a.require(canon(value) == held,
                       "changed TASK30 disposition: %s" % name)
     print("TASK30 disposition: %s %s" % (
-        record["status"], json.dumps(record["counts"])))
+        record["status"], json.dumps(dict(record["counts"], allocation={
+            label: found["outcome"]
+            for label, found in record["allocation"].items()}))))
     return {"pass": 0, "fail": 1}.get(record["status"], 2)
 
 

@@ -1660,9 +1660,13 @@ table of its own on the shared engine, with the following additions to it.
     recorded seal, so appending it does not chase the file it edits). An
     edit of `acceptance.py` is the same with `ACCEPTANCE`. The recorded
     seals are in `disposition.json` (`code`), and the check of
-    `task30_dispose.py` names every changed file with its recorded seal and
-    the constants to append it to, all in one refusal, so nothing is looked
-    up by hand.
+    `task30_dispose.py` names every changed file in one refusal with the
+    entry to paste into each constant (the literal element of that
+    constant: `"timing_grid.py": (SEAL,),` for `HISTORY`, `SEAL,` for
+    `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and the tests that pin those
+    constants empty (`test_task30_dispose.py` for `HISTORY`,
+    `test_task30_grid.py` for the follow-up's), which the same commit edits;
+    nothing is looked up by hand.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
@@ -1779,11 +1783,17 @@ name TASK_31 and the policy's 3% margin): every number of a cell (the work
 counts of the first and second run and of the use, the dproc count, the
 candidate's and the control's intervals, the GC interval, the digest's
 SHA-256, the number of allocation rows) comes from `disposition.json`, which
-the command derives from the rows and prints per attributed cell. The notes
-of `exclude_literal_exact-10000` and `exclude_dproc-10000` name the residual:
-the candidate CI upper bound exceeds the 3% margin; structural equality
-shows identical work, not identical timing; the candidate's startup heap is
-larger, GC reported and not gated, the attribution in TASK_31.
+the command derives from the rows and prints per attributed cell. The
+notes of `DISPOSITION` carry no residual text. The command adds the residual
+sentence to a cell's note exactly when the cell's recorded candidate CPU or
+wall CI upper bound exceeds 1 + the policy's margin
+(`acceptance.EQUIVALENCE_POLICY`), and `disposition.json` records whether it
+applies (`residual`). The sentence says that the candidate CI upper bound
+exceeds the 3% margin; structural equality shows identical work, not
+identical timing; the candidate's startup heap is larger, GC reported and not
+gated, the attribution in TASK_31. On the stage-2 records that is
+`exclude_literal_exact-10000` and `exclude_dproc-10000`, and no other of the
+13 cells.
 
 **Evidence** (`task30_dispose.Evidence.holds(cell)`: four items, `EVIDENCE`;
 the first failure is named with the row, the file or the cell that
@@ -1809,20 +1819,27 @@ differs):
 4. *result*: `result.digest` present and equal, one value on each side.
 
 A work row of a cell that does not reproduce (several values) blocks the
-cell with the row named; it is never an exception, and the counts and the
-digest recorded for the cell keep every value. A record that lacks a phase
+cell with the row and side named, whatever status the row gets (the
+nondeterminism list is read first, then each row that is not equal, with its
+candidate, baseline and control values, and the cell's status last); it is
+never an exception, and the counts and the digest recorded for the cell keep
+every value. A record that lacks a phase
 or a metric the comparison needs is named too.
 
 **The allocation grids are gated too.** The disposition is a pass only if
 both `alloc/` and `alloc-z/` pass: each is replayed and its status (the
 status code of `allocation_matrix.replay`) is read. An allocation `fail`
 makes the disposition `fail` (exit 1); any other status but pass
-(inconclusive, incomplete, too few pairs, a baseline other than the pinned
-one, non-reproducible rows) makes it `blocked` (exit 2). The grid and the
-reason are printed (`ALLOCATION-FAIL`, `ALLOCATION-BLOCKED`) and recorded
-under `allocation` in `disposition.json`. A grid with a partial decision
-(`decisions-partial.json`) is refused: the replay may have verified that
-file and not `decisions.json`, which is what the disposition reads.
+(inconclusive, too few pairs, a baseline other than the pinned one,
+non-reproducible rows) makes it `blocked` (exit 2). The grid and the
+reason are printed (`ALLOCATION-FAIL`, `ALLOCATION-BLOCKED`), recorded
+under `allocation` in `disposition.json`, and the outcomes are in the final
+line. An incomplete allocation grid has only `decisions-partial.json` and is
+refused before any replay ("is not a complete grid"). A grid with a
+`decisions-partial.json` beside a complete `decisions.json` is refused too:
+the partial file is stale (an earlier `--only` run left it; a complete write
+by `allocation_matrix.py` now removes it) and may be removed by hand; the
+disposition never deletes it.
 
 What no row can show is the list under "What no row can show" above (CPU
 that neither allocates nor traces, net node visits and hidden candidates,
@@ -1851,7 +1868,8 @@ prints the replays' reports (every attempt of both tables), the class report
 of the final decision (`TASK30 final grid: ...`), the follow-up's status,
 each allocation gate, per attributed cell (`ATTRIBUTED` or `BLOCKING`, its
 class and what failed) its numbers from `disposition.json`, and
-`TASK30 disposition: pass|fail|blocked {counts}`. The status is 0 for pass, 1
+`TASK30 disposition: pass|fail|blocked {counts, "allocation": {"alloc":
+OUTCOME, "alloc-z": OUTCOME}}`. The status is 0 for pass, 1
 for fail, 2 for blocked and 3 for a refusal (one `REFUSED` line on the
 standard error); neither this command nor `close` appends to the ledger.
 
@@ -1890,7 +1908,8 @@ command derives both again and refuses any difference from the files
 recorded `code` is held to the append rule of the other records: each seal
 must be that of the file now or one `task30_dispose.HISTORY` lists for it, so
 a change to any of those files after the disposition was recorded appends
-the old seal to `HISTORY` in the same commit (the check names the file).
+the old seal to `HISTORY` in the same commit (the check names the file and
+prints the entry).
 `task30_dispose.py` is on neither table's seals and nothing on the replay
 path imports it, so a fix to it after the follow-up's records exist asks
 nothing of `task30_grid.py` or `task30_followup.py` (a test keeps it out of

@@ -1194,6 +1194,11 @@ def write_results(root, decisions, partial, label="TASK29B"):
     suffix = "-partial" if partial else ""
     for stale in root.glob("*-partial.*") if partial else ():
         stale.unlink()  # derived from the archives; a resume recomputes it
+    if not partial:
+        # A complete grid owns no partial decision: an earlier --only run
+        # left these, derived from the archives, and they would be stale.
+        for name in ("decisions-partial.json", "RESULTS-partial.md"):
+            (root / name).unlink(missing_ok=True)
     a.save(root / ("decisions%s.json" % suffix), decisions)
     (root / ("RESULTS%s.md" % suffix)).write_text(
         results_markdown(decisions, label))

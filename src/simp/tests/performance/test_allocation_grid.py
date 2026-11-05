@@ -696,6 +696,21 @@ class Run(Bed):
         build = a.load(self.out / "build-1.json.gz")
         self.assertEqual(build["commands"][0]["command"], ["Holmake"])
 
+    def test_a_complete_write_removes_the_partial_files_of_an_only_run(self):
+        self.patched()
+        self.run_cells(CELLS[:2])
+        for name in ("decisions-partial.json", "RESULTS-partial.md"):
+            self.assertTrue((self.out / name).exists(), name)
+        keep = self.out / "inventory.json"
+        with mock.patch.object(
+                m, "results_markdown", lambda decisions, label: "table\n"):
+            m.write_results(self.out, dict(complete=True), False)
+        self.assertTrue((self.out / "decisions.json").exists())
+        self.assertTrue((self.out / "RESULTS.md").exists())
+        self.assertTrue(keep.exists())
+        self.assertEqual(sorted(p.name for p in self.out.glob("*-partial.*")),
+                         [])
+
     def test_resume_completes_a_partial_run_and_keeps_history(self):
         self.patched()
         self.run_cells(CELLS[:2])
