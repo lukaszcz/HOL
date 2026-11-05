@@ -14,6 +14,17 @@
      operation_steady  ALLOC_STEADY runs, repeated ALLOC_REPEATS times
      apply             verify (), which also consumes the retained result
    fullGC and the beforeBatch/afterBatch assertions are outside brackets.
+   After the last bracket an untimed `work` phase (structure "v1", see
+   allocation_schema.py) counts the trace events and kernel inferences of the
+   operation twice (after every bracketed run, so not a cold run) and of a
+   use of its retained result, and fingerprints that result; nothing of it
+   is inside a bracket. The timed closures and so the operation and apply
+   words are those of an older fixture. The setup bracket is not: workload
+   construction now also sets the hooks of MatrixSupport (a few closures, a
+   constant number of words that does not grow with the rules, the fixture
+   dprocs sharing one closure, equal on both sides of a grid), so only the
+   operation_first, operation_steady and apply
+   rows compare across fixtures or grids (alloc/ against alloc-z/).
    Counts are predeclared by the driver, never calibrated here. No decoding,
    output or label work happens between a bracket's start and end; the
    endpoints are read from C storage afterwards and printed at the very end. *)
@@ -87,6 +98,7 @@ fun experiment () = let
   val _ = List.app steadyBatch (List.tabulate (repeats, I))
 in bracket "apply" verify end
 val _ = experiment ()
+val work = workPhase (valOf (!cell))
 
 fun fields xs = String.concatWith "," (map LargeInt.toString xs)
 fun emitBracket index (name, s, e) =
@@ -118,4 +130,5 @@ end
 val _ = Paired.observe "alloc.foreign"
   (LargeInt.toString (getPath (32 + 3 + 27)) ^ "," ^
    LargeInt.toString (getPath (32 + 31)))
+val _ = List.app (fn (key, value) => Paired.observe key value) work
 val _ = Paired.check "allocation brackets" true

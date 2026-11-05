@@ -5,10 +5,15 @@ Run from a configured HOL tree (use the historical root-wrapper on hosts whose
 heap embeds that path). This is mixed-source semantic validation, NOT benchmark
 acceptance or independent repository builds. --scope grid excludes four costly
 10000-rule single-add/AC cases; --scope expensive runs those explicitly.
-Outputs are exclusive-created JSON + a compact sibling .log; private trees are
-always removed. No source is modified outside the private temporary directory.
+Outputs are exclusive-created JSON (the full manifest: runs, fixture head,
+every work record) + a compact sibling .log + NAME.summary.json, which is
+derived from the manifest alone (`--compare MANIFEST --summary PATH`
+re-derives it and compares it with the stored one; `--write-summary PATH`
+writes a new one); private trees are always removed. No
+source is modified outside the private temporary directory.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +24,8 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "compatibility"))
 import run_paired as rp
+sys.path.insert(0, str(HERE))
+import allocation_schema as sc
 
 SIZES = (0, 1, 10, 100, 1000, 10000)
 EXPENSIVE = ("compile_single", "frag_ac", "frag_ac_merge", "compile_ac")
@@ -29,6 +36,10 @@ SCALABLE = ("frag_create", "compile_batch", "exclude_matching",
 # Context restores isolate constants, TypeBase hooks, and theory mutations.
 # Use a fresh theory too: sealing a theory is not undone by Context.restore.
 # Paired.check uses CheckSupport's testutils tprint/OK/die reporter.
+# The work phase of the allocation fixture (structure v1) runs here too,
+# twice: its records are printed, and the steady-state counts, the counts of
+# the use of the result and the result digest must reproduce within the
+# process. The records of the two sides are then compared (compare_sides).
 SELFTEST = '''open HolKernel MatrixSupport
 val _ = new_theory "matrix_smoke"
 val sizes = [%s]
@@ -40,7 +51,7 @@ fun validate label n = let
     val _ = new_theory ("matrix_smoke_" ^ label ^ "_" ^ Int.toString n)
     val _ = print ("matrix smoke " ^ label ^ " " ^ Int.toString n ^ "\\n")
     val _ = TextIO.flushOut TextIO.stdOut
-    val {run,verify,beforeBatch,afterBatch} = workload label n
+    val wl as {run,verify,beforeBatch,afterBatch} = workload label n
       handle e => (print "workload construction failed\\n"; raise e)
     val _ = verify ()
       handle e => (print "initial verification failed\\n"; raise e)
@@ -49,6 +60,21 @@ fun validate label n = let
     val _ = batch 1
     val _ = batch 2
     val _ = if label = "storage_graph" then (!rawStorage) () else ()
+    val work = workPhase wl
+      handle e => (print "work phase failed\\n"; raise e)
+    val again = workPhase wl
+    fun field key records = valOf (List.find (fn (k,_) => k = key) records)
+    val _ = required (#2 (field "work.second" work) =
+                      #2 (field "work.first" again) andalso
+                      #2 (field "work.second" work) =
+                      #2 (field "work.second" again) andalso
+                      #2 (field "work.use" work) =
+                      #2 (field "work.use" again) andalso
+                      #2 (field "result.digest" work) =
+                      #2 (field "result.digest" again))
+    val _ = List.app (fn (k,v) => print ("@@MATRIX_WORK\\t" ^ label ^ "\\t" ^
+              Int.toString n ^ "\\t" ^ k ^ "\\t" ^ v ^ "\\n")) work
+    val _ = TextIO.flushOut TextIO.stdOut
   in Paired.check (label ^ ":" ^ Int.toString n) true end
 in Portable.finally (fn () =>
      (rawStorage := (fn () => ()); Context.restore saved)) body () end
@@ -91,13 +117,119 @@ def storage_records(text, sizes, labels):
     return records
 
 
+def work_records(text, sizes, labels):
+    """The work records of one process: three per case and size, in order,
+    the counts valid by the allocation schema (the digest is the
+    fingerprint itself here; the fixture's process publishes it the same)."""
+    records = []
+    for line in text.splitlines():
+        if not line.startswith("@@MATRIX_WORK\t"):
+            continue
+        fields = line.split("\t")
+        rp.require(len(fields) == 5, "invalid work record")
+        records.append(fields[1:])
+    rp.require([r[:3] for r in records] == [
+        [c, str(n), k] for n in sizes for c in labels
+        for k in sc.WORK_EVENTS], "missing/duplicate/unexpected work records")
+    for _, _, key, value in records:
+        if key != "result.digest":
+            sc.work_counts(value)
+    return [dict(case=c, size=int(n), key=k, value=v)
+            for c, n, k, v in records]
+
+
+def compare_sides(runs):
+    """Baseline against candidate, per case, size and work record: the
+    differing records (with the differing counts of a count record) and the
+    number of records compared. The records of the two sides must be the
+    same set. Equal work records on both sides are what an unchanged
+    operation shows."""
+    sides = {"baseline": {}, "candidate": {}}
+    for run in runs:
+        if run.get("accepted") and "work" in run:
+            seen = sides[run["selection"]]
+            for r in run["work"]:
+                key = (r["case"], r["size"], r["key"])
+                rp.require(key not in seen, "duplicate work record")
+                seen[key] = r["value"]
+    keys = sorted(set(sides["baseline"]) | set(sides["candidate"]))
+    differences = []
+    for case, size, key in keys:
+        b, c = sides["baseline"].get((case, size, key)), \
+            sides["candidate"].get((case, size, key))
+        if b == c:
+            continue
+        entry = dict(case=case, size=size, key=key, baseline=b, candidate=c)
+        if b is not None and c is not None and key != "result.digest":
+            bc, cc = sc.work_counts(b), sc.work_counts(c)
+            entry["counts"] = {
+                k: [bc.get(k, 0), cc.get(k, 0)]
+                for k in sorted(set(bc) | set(cc))
+                if bc.get(k, 0) != cc.get(k, 0)}
+        differences.append(entry)
+    return dict(compared=len(keys), differences=differences)
+
+
+def totals(value):
+    """events (all trace counts), inferences, and the callback counts of a
+    work count record."""
+    counts = sc.work_counts(value)
+    return dict(
+        events=sum(n for k, n in counts.items() if k.startswith("trace.")),
+        inferences=counts.get("kernel.total", 0),
+        **{k: counts.get(k, 0) for k in ("maker", "collector", "dproc")})
+
+
+def summarise(manifest):
+    """The compact summary of a manifest, derived from nothing else: per
+    side, case and size the totals of each work record (the digest by its
+    SHA-256), and the cross-side comparison. The summary written next to a
+    manifest is this function's value, so it can be re-derived from the
+    manifest alone (`--compare`)."""
+    sides = {"baseline": {}, "candidate": {}}
+    for run in manifest["runs"]:
+        if run.get("accepted") and "work" in run:
+            for r in run["work"]:
+                row = sides[run["selection"]].setdefault(
+                    "%s:%d" % (r["case"], r["size"]), {})
+                if r["key"] == "result.digest":
+                    row[r["key"]] = hashlib.sha256(
+                        r["value"].encode()).hexdigest()
+                else:
+                    row[r["key"]] = totals(r["value"])
+    return dict(head=manifest.get("head"),
+                selections={k: v.get("revision") for k, v in
+                            manifest.get("selections", {}).items()},
+                inputs=manifest.get("inputs"), rows=sides,
+                cross_side=compare_sides(manifest["runs"]))
+
+
+def report_sides(cross, note):
+    note("cross-side work records: %d compared, %d differ"
+         % (cross["compared"], len(cross["differences"])))
+    for d in cross["differences"]:
+        note("  DIFFERS %s %s %s" % (d["case"], d["size"], d["key"]))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=HERE.parents[3])
     parser.add_argument("--baseline", default=rp.BASE)
     parser.add_argument("--candidate", default="HEAD")
-    parser.add_argument("--output", required=True, type=Path,
+    parser.add_argument("--output", type=Path,
                         help="new JSON path (sibling .log must be absent)")
+    parser.add_argument("--compare", type=Path, metavar="MANIFEST",
+                        help="only compare the work records of the two "
+                        "sides in an earlier manifest (exit 1 on any "
+                        "difference or none compared)")
+    parser.add_argument("--summary", type=Path, metavar="PATH",
+                        help="with --compare: compare the summary derived "
+                        "from the manifest with the stored one at PATH "
+                        "(exit 1 and a DIFFERS line if they differ)")
+    parser.add_argument("--write-summary", type=Path, metavar="PATH",
+                        help="with --compare: write the derived summary "
+                        "to this new file (a run writes it next to its "
+                        "manifest as NAME.summary.json)")
     parser.add_argument("--scope", default="smoke",
                         choices=("small", "smoke", "grid", "expensive"))
     parser.add_argument("--case", action="append", dest="cases",
@@ -107,10 +239,31 @@ def main():
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.compare is not None:
+        manifest = json.loads(args.compare.read_text())
+        cross = compare_sides(manifest["runs"])
+        report_sides(cross, print)
+        derived = summarise(manifest)
+        bad = bool(cross["differences"] or not cross["compared"])
+        if args.write_summary is not None:
+            with args.write_summary.open("x") as out:
+                out.write(json.dumps(derived, indent=2) + "\n")
+        if args.summary is not None:
+            if json.loads(args.summary.read_text()) != derived:
+                print("DIFFERS summary %s" % args.summary)
+                bad = True
+            else:
+                print("summary %s matches" % args.summary)
+        return 1 if bad else 0
+    if args.output is None:
+        parser.error("--output is required")
     repo, output = args.repo.resolve(), args.output.resolve()
     logpath = output.with_suffix(".log")
-    if output == logpath or output.exists() or logpath.exists():
-        parser.error("JSON and sibling .log must be new, distinct files")
+    summarypath = output.with_suffix(".summary.json")
+    if (output in (logpath, summarypath) or output.exists() or
+            logpath.exists() or summarypath.exists()):
+        parser.error("JSON, sibling .log and .summary.json must be new, "
+                     "distinct files")
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest = {"schema": 1, "success": False,
                 "scope": "semantic smoke only; no performance acceptance",
@@ -237,6 +390,8 @@ def main():
                                 expected_observations=expected)
                             record["storage"] = storage_records(
                                 receipt["stdout"], sizes, labels)
+                            record["work"] = work_records(
+                                receipt["stdout"], sizes, labels)
                             record["checks"] = audit["observations"]
                             # Retain repeated path inventories only once;
                             # generated selftests are bound per run above.
@@ -273,17 +428,23 @@ def main():
             rp.require(
                 manifest["executed_checks"] == manifest["expected_checks"],
                 "incomplete checks")
+            manifest["cross_side"] = compare_sides(manifest["runs"])
+            report_sides(manifest["cross_side"], note)
             manifest["success"] = True
         except Exception as error:
             manifest["failure"] = str(error)
             note("FAIL: " + str(error))
         finally:
             result.write(json.dumps(manifest, indent=2) + "\n")
+            if manifest["success"]:
+                summarypath.write_text(
+                    json.dumps(summarise(manifest), indent=2) + "\n")
             note(f"checks={manifest['executed_checks']}/"
                  f"{manifest['expected_checks']} "
                  f"success={manifest['success']}")
             note(str(output))
-    return 0 if manifest["success"] else 1
+    cross = manifest.get("cross_side", {"differences": [1]})
+    return 0 if manifest["success"] and not cross["differences"] else 1
 
 
 if __name__ == "__main__":

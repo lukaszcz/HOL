@@ -38,6 +38,93 @@ struct
   in Conv.QCONV (Conv.TRY_CONV (Traverse.TRAVERSE
        {rewriters=rewriters,travrules=travrules,relation=relation,
         limit=limit,dprocs=[]} [])) end
+  (* Hooks of the structural evidence of the allocation fixture
+     (MatrixAllocation.sml) and the operator smoke. The constructors of a
+     workload set them, when the workload is built and never inside a timed
+     closure; the work phase reads them once, untimed, after the operations.
+       fingerprint  text of the retained result, for a digest
+       useResult    a client's use of the retained result, which the work
+                    phase counts (no use: nothing to count)
+       localCalls   maker calls a workload counts itself, not in makerCalls
+       ruleList     the n installed rules (a reference to the list the
+                    workload builds anyway, so setup allocates no copy) *)
+  val missingFingerprint = fn () => raise Fail "workload without fingerprint"
+  val fingerprint : (unit -> string) ref = ref missingFingerprint
+  val noUse = fn () => ()
+  val useResult : (unit -> unit) ref = ref noUse
+  val noCalls = fn () => 0
+  val localCalls : (unit -> int) ref = ref noCalls
+  val ruleList = ref ([] : thm list)
+  fun retaining text use = (fingerprint := text; useResult := use)
+  fun printable s = String.translate (fn c =>
+    if Char.isPrint c andalso c <> #"\\" then str c else Char.toString c) s
+  fun termText tm = Lib.with_flag (Globals.show_types,true)
+    (fn () => printable (Parse.term_to_string tm)) ()
+  fun thmText th = String.concatWith "," (map termText (hyp th)) ^ " |- " ^
+                   termText (concl th)
+  fun goalText (asl,w) =
+    String.concatWith "," (map termText asl) ^ " ?- " ^ termText w
+  (* FNV-1a, 64 bits, in hex: a compact stand-in for a long text. *)
+  fun hashText s = let
+    val prime = Word64.fromInt 1099511628211
+    fun step (c,h) = Word64.* (Word64.xorb (h,Word64.fromInt (Char.ord c)),
+                               prime)
+  in Word64.fmt StringCvt.HEX
+       (CharVector.foldl step (Word64.fromLargeInt 14695981039346656037) s)
+  end
+  fun rangesText is = let
+    fun add (i,[]) = [(i,i)]
+      | add (i,(lo,hi)::rest) =
+          if i = hi + 1 then (lo,i) :: rest else (i,i) :: (lo,hi) :: rest
+    fun one (lo,hi) = Int.toString lo ^
+                      (if lo = hi then "" else "-" ^ Int.toString hi)
+  in String.concatWith "," (map one (List.rev (List.foldl add [] is))) end
+  fun optText NONE = "-"
+    | optText (SOME s) = "+" ^ s
+  (* The net conversion of ss on the left side of each installed rule, in
+     order: what a client does with a simpset. f sees the index and result. *)
+  fun lookups ss f = let
+    val conv = netconv ss
+    fun one (rw,i) = (f (i,conv (lhs (concl rw))); i + 1)
+  in ignore (List.foldl one 0 (!ruleList)) end
+  (* The dprocs of a simpset are not in the net, and the traversal tries
+     them only when the net leaves a term alone, and stops at the first
+     that does not fail (the fixture's raise UNCHANGED, which ends the
+     search), so a conversion would apply one of them. A use of a simpset
+     therefore also applies each of its dprocs directly, with the public
+     Traverse.dest_reducer and the context it holds, to a few of the left
+     sides: the first (the rule the deletion cases delete, which the net no
+     longer answers), the middle and the last. The fixture's dprocs raise
+     UNCHANGED and so leave no trace event and no inference; what is
+     counted is their own counter (dprocCalls, below): the number of dprocs
+     the result still holds times the number of sampled terms. *)
+  fun useDprocs ss = let
+    val {dprocs,relation,...} = traversedata_for_ss ss
+    val n = length (!ruleList)
+    val sample = if n = 0 then [] else Lib.mk_set [0,n div 2,n-1]
+    fun fail _ _ = raise Feedback.mk_HOL_ERR "MatrixSupport" "useDprocs" "no"
+    fun apply tm d = let
+      val {apply,initial,...} = Traverse.dest_reducer d
+    in ignore (apply {solver=fail,conv=fail,context=initial,stack=[],
+                      relation=(relation,REFL)} tm)
+         handle _ => () end
+  in List.app (fn i => let val tm = lhs (concl (List.nth (!ruleList,i)))
+                       in List.app (apply tm) dprocs end) sample end
+  fun useSS ss = (lookups ss ignore; useDprocs ss)
+  (* Names, dprocs, the set of installed rules whose left side the net
+     leaves alone (run-length encoded) and a hash of the other results. *)
+  fun ssText ss = let
+    val untouched = ref ([] : int list)
+    val others = ref ([] : string list)
+    fun note (i,th) =
+      if aconv (lhs (concl th)) (rhs (concl th))
+      then untouched := i :: !untouched
+      else others := thmText th :: !others
+    val _ = lookups ss note
+  in "names=" ^ String.concatWith "," (map optText (names ss)) ^
+     ";dprocs=" ^ String.concatWith "," (map optText (dpnames ss)) ^
+     ";refl=" ^ rangesText (List.rev (!untouched)) ^
+     ";other=" ^ hashText (String.concatWith ";" (List.rev (!others))) end
   type workload = {run:unit -> unit, verify:unit -> unit,
                    beforeBatch:unit -> unit, afterBatch:int -> unit}
   fun basic run verify : workload =
@@ -56,12 +143,16 @@ struct
   val theoryChange = ref (fn name => ignore (new_theory name))
   val makerCalls = ref 0
   val collectorCalls = ref 0
+  val dprocCalls = ref 0
   fun maker rw = (makerCalls := !makerCalls + 1; [rw])
   exception CollectorContext
+  (* One shared closure for every fixture dproc: a per-reducer closure over
+     dprocCalls would add words to setup for each of the n dprocs. *)
+  fun dprocApply _ _ = (dprocCalls := !dprocCalls + 1; raise Conv.UNCHANGED)
   fun reducer name = Traverse.REDUCER
     {name=SOME name,initial=CollectorContext,
      addcontext=fn (ct,_) => (collectorCalls := !collectorCalls + 1; ct),
-     apply=fn _ => fn _ => raise Conv.UNCHANGED}
+     apply=dprocApply}
   fun setup filter dprocs = SSFRAG
     {name=SOME "matrix_setup",filter=filter,dprocs=dprocs,
      rewrs=[],convs=[],ac=[],congs=[]}
@@ -73,6 +164,103 @@ struct
       afterBatch=fn count =>
         required (!makerCalls - !oldM = count * makers andalso
                   !collectorCalls - !oldC = count * collectors)} end
+  (* Structural evidence: an untimed phase after the operations. It runs
+     the operation twice, then the use of its retained result, each with the
+     simplifier's trace listener, which Trace.trace calls whatever the trace
+     level, and the kernel's inference counter, and reports the callback
+     counts with them. The listener counts by exact level and action
+     constructor, and a TEXT also by its message (a plain string; an LZ_TEXT
+     is never forced and has no message in the key). The fingerprint of the
+     retained result closes the list. Nothing here runs in a timed
+     process. *)
+  val traceActions =
+    ["IGNORE", "LZ_TEXT", "MORE_CONTEXT", "OPENING", "PRODUCE", "REDUCE",
+     "REWRITING", "SIDECOND_ATTEMPT", "SIDECOND_NOT_SOLVED",
+     "SIDECOND_SOLVED", "TEXT"]
+  fun actionIndex a = case a of
+      Trace.IGNORE _ => 0 | Trace.LZ_TEXT _ => 1 | Trace.MORE_CONTEXT _ => 2
+    | Trace.OPENING _ => 3 | Trace.PRODUCE _ => 4 | Trace.REDUCE _ => 5
+    | Trace.REWRITING _ => 6 | Trace.SIDECOND_ATTEMPT _ => 7
+    | Trace.SIDECOND_NOT_SOLVED _ => 8 | Trace.SIDECOND_SOLVED _ => 9
+    | Trace.TEXT _ => 10
+  val textIndex = 10
+  (* A message in a key: printable ASCII outside the separators as is, any
+     other byte as %XX. *)
+  fun escapeText s = String.translate (fn c =>
+    if Char.isAlphaNum c orelse Char.contains " _.()'/+*-<>[]!?:" c
+    then str c
+    else "%" ^ StringCvt.padLeft #"0" 2 (Int.fmt StringCvt.HEX (Char.ord c)))
+    s
+  fun levelText l = if l < 0 then "-" ^ Int.toString (~l) else Int.toString l
+  fun keyCompare ((l1,a1,m1),(l2,a2,m2)) =
+    case Int.compare (l1,l2) of
+      EQUAL => (case Int.compare (a1,a2) of
+                  EQUAL => String.compare (m1,m2) | r => r)
+    | r => r
+  fun keyText (l,a,m) = levelText l ^ "." ^ List.nth (traceActions,a) ^
+                        (if a = textIndex then ":" ^ m else "")
+  fun countsText named = String.concatWith "," (List.mapPartial
+    (fn (k,n) => if n = 0 then NONE else SOME (k ^ "=" ^ Int.toString n))
+    named)
+  fun kernelCounts () = let val c = Count.thm_count () in
+    [("ABS",#ABS c),("ALPHA",#ALPHA c),("AP_TERM",#AP_TERM c),
+     ("AP_THM",#AP_THM c),("ASSUME",#ASSUME c),("BETA_CONV",#BETA_CONV c),
+     ("CCONTR",#CCONTR c),("CHOOSE",#CHOOSE c),("COMPUTE",#COMPUTE c),
+     ("CONJ",#CONJ c),("CONJUNCT1",#CONJUNCT1 c),
+     ("CONJUNCT2",#CONJUNCT2 c),("DISCH",#DISCH c),("DISJ1",#DISJ1 c),
+     ("DISJ2",#DISJ2 c),("DISJ_CASES",#DISJ_CASES c),
+     ("EQ_IMP_RULE",#EQ_IMP_RULE c),("EQ_MP",#EQ_MP c),
+     ("EXISTS",#EXISTS c),("GEN",#GEN c),("GEN_ABS",#GEN_ABS c),
+     ("INST",#INST c),("INST_TYPE",#INST_TYPE c),("MK_COMB",#MK_COMB c),
+     ("MP",#MP c),("NOT_ELIM",#NOT_ELIM c),("NOT_INTRO",#NOT_INTRO c),
+     ("REFL",#REFL c),("SPEC",#SPEC c),("SUBST",#SUBST c),("SYM",#SYM c),
+     ("TRANS",#TRANS c),("axiom",#axiom c),("definition",#definition c),
+     ("from_disk",#from_disk c),("oracle",#oracle c),("total",#total c)] end
+  (* One action between a reset and a read of every counter, as
+     trace=L.ACTION[:message]=n,...;kernel=RULE=n,...;maker=n;collector=n;
+     dproc=n *)
+  fun counted (action : unit -> unit) = let
+    val table = ref (Binarymap.mkDict keyCompare)
+    fun listen (level,a) = let
+      val key = (level,actionIndex a,
+                 case a of Trace.TEXT s => escapeText s | _ => "")
+      val n = case Binarymap.peek (!table,key) of NONE => 0 | SOME n => n
+    in table := Binarymap.insert (!table,key,n + 1) end
+    val maker0 = !makerCalls + (!localCalls) ()
+    val collector0 = !collectorCalls
+    val dproc0 = !dprocCalls
+    fun body () =
+      (Count.reset_thm_count ();
+       Count.counting_thms true;
+       Listener.add_listener Trace.trace_hook ("matrix_work",listen);
+       action ())
+    fun cleanup () =
+      (ignore (Listener.remove_listener Trace.trace_hook "matrix_work");
+       Count.counting_thms false)
+    val _ = Portable.finally cleanup body ()
+    val traced = map (fn (k,n) => (keyText k,n)) (Binarymap.listItems
+                                                    (!table))
+  in "trace=" ^ countsText traced ^ ";kernel=" ^ countsText (kernelCounts ()) ^
+     ";maker=" ^ Int.toString (!makerCalls + (!localCalls) () - maker0) ^
+     ";collector=" ^ Int.toString (!collectorCalls - collector0) ^
+     ";dproc=" ^ Int.toString (!dprocCalls - dproc0) end
+  fun measureOnce ({run,beforeBatch,afterBatch,...}:workload) =
+    counted (fn () => (beforeBatch (); run (); afterBatch 1))
+  (* The records of the work phase: two counted runs, the counted use of the
+     retained result of the second (convert the left side of each rule with
+     the net of a simpset; apply a retained conversion; apply a retained
+     tactic; no use of a bare theorem, whose record is then the empty set of
+     counts), then the fingerprint of the retained result. *)
+  fun workPhase (w:workload) = let
+    val first = measureOnce w
+    val second = measureOnce w
+    (* The digest first: a use can consume what it describes (the bounds
+       of a bounded rewrite), so it describes the result as retained. *)
+    val digest = (!fingerprint) ()
+    val use = counted (!useResult)
+  in [("work.first",first),("work.second",second),("work.use",use),
+      ("result.digest",digest)]
+  end
   fun constant name = (new_constant (name,bool); mk_const (name,bool))
   fun rule i = ASSUME (mk_eq
     (constant ("matrix_c" ^ Int.toString i),T))
@@ -82,21 +270,37 @@ struct
   fun namedRules namer rs = rewrites_with_names
     (ListPair.zip (List.tabulate (length rs,fn i =>
       {Thy="bool",Name=namer i}),rs))
-  fun fragwork build expected name checkExtra = let
+  (* The fingerprint of a fragment: name, rules (a hash of their printed
+     form) and what `extra` makes of it; its use is a simpset with it. *)
+  fun fragText extra f = let
+    val actual = frag_rewrites f
+  in optText (frag_name f) ^ ";" ^ Int.toString (length actual) ^ ";" ^
+     hashText (String.concatWith ";" (map thmText actual)) ^ ";" ^ extra f
+  end
+  fun fragworkWith extra build expected name checkExtra = let
     val slot = ref (build ())
+    val _ = retaining (fn () => fragText extra (!slot))
+                      (fn () => useSS (empty_ss ++ !slot))
     fun verify () =
       (required (frag_name (!slot) = name andalso
                  sameList (frag_rewrites (!slot),expected));
        checkExtra (!slot))
   in basic (fn () => slot := build ()) verify end
+  val fragwork = fragworkWith (fn _ => "")
   fun sswork build verifyResult = let
     val slot = ref (build ())
+    val _ = retaining (fn () => ssText (!slot)) (fn () => useSS (!slot))
   in basic (fn () => slot := build ()) (fn () => verifyResult (!slot)) end
   fun thwork build expected = let
     val slot = ref (build ())
+    val _ = retaining (fn () => thmText (!slot)) noUse
   in basic (fn () => slot := build ()) (fn () => proof expected (!slot)) end
-  fun convwork build check = let
+  fun convwork build check terms = let
     val slot = ref (build ())
+    val _ = retaining (fn () => String.concatWith ";"
+                         (map (fn tm => thmText ((!slot) tm)) (terms ())))
+                      (fn () => List.app (fn tm => ignore ((!slot) tm))
+                                         (terms ()))
   in basic (fn () => slot := build ())
        (fn () => (check (!slot); check (!slot))) end
 
@@ -105,6 +309,8 @@ struct
     (* Constants have distinct net keys, not n variants of one variable rule.
        All installed rules have an exact, intentionally nonempty hypothesis. *)
     val rs = List.tabulate (n,rule)
+    val _ = (ruleList := rs; fingerprint := missingFingerprint;
+             useResult := noUse; localCalls := noCalls)
     val miss = constant "matrix_miss"
     val target = if null rs then miss else lhs (concl (hd rs))
     val expected = if null rs then REFL target else hd rs
@@ -139,7 +345,8 @@ struct
     fun checkAC ss = proof
       (if n = 0 then REFL acInput else acExpected)
       (SIMP_CONV ss [] acInput)
-    fun acfrag build = fragwork build [] NONE
+    fun acfrag build = fragworkWith (fn f => thmText
+      (SIMP_CONV (empty_ss ++ f) [] acInput)) build [] NONE
       (fn f => (checkAC (empty_ss ++ f); checkAC (empty_ss ++ f)))
     fun typefrag lookup = let
       val info = valOf (TypeBase.fetch bool)
@@ -211,7 +418,10 @@ struct
         in normal (fn () => empty_ss ++ f) end
       | "compile_construct_conv" => let
           val source = installed ()
-        in convwork (fn () => SIMP_CONV source []) (checks no) end
+        in convwork (fn () => SIMP_CONV source []) (checks no)
+             (fn () => miss :: map (fn i => lhs (concl (List.nth (rs,i))))
+                                   indices)
+        end
       | "compile_reuse" => let val cv = SIMP_CONV (installed ()) [] in
           thwork (fn () => cv target) expected end
       | "compile_complete" => thwork
@@ -247,6 +457,9 @@ struct
         fun verify () =
           (if stage = "construct" then apply () else (); check ())
         val _ = apply ()
+        val _ = retaining (fn () => String.concatWith ";"
+                  (map goalText (!residual) @ [thmText (!result)]))
+                  (fn () => if stage = "construct" then apply () else ())
       in basic run verify end
       fun dproc mixed = let
         val ds = List.tabulate (n,fn i => reducer (dpname i))
@@ -370,6 +583,7 @@ struct
                        checkHistory (SOME "matrix_drop" :: want) no from))
           val old1 = ref 0
           val old2 = ref 0
+          val _ = localCalls := (fn () => !calls1 + !calls2)
         in {run=run,verify=verify,
             beforeBatch=fn () => (old1 := !calls1; old2 := !calls2),
             afterBatch=fn count =>
@@ -398,6 +612,13 @@ struct
           in
             Portable.finally (fn () => Context.restore changed) restored ()
           end
+          val _ = retaining (fn () => case !slot of
+              Exn.Exn (HOL_ERR e) =>
+                "error:" ^ printable (Feedback.top_function_of e) ^ ":" ^
+                printable (Feedback.message_of e)
+            | Exn.Exn _ => "exception"
+            | Exn.Res ss => ssText ss)
+            (fn () => case !slot of Exn.Res ss => useSS ss | _ => ())
         in basic (fn () => slot := Exn.capture replay from) verify end
       | _ => raise Fail "unknown history case"
     end
@@ -426,6 +647,8 @@ struct
                 String.concatWith "," (map Int.toString fields) ^ "\n");
          TextIO.flushOut TextIO.stdOut end
       val _ = rawStorage := raw
+      val _ = retaining (fn () => ssText (current ()))
+                        (fn () => useSS (current ()))
     in basic (fn () => slot := SOME (empty_ss ++ frag))
              (fn () => checkSS no (current ())) end
   in
