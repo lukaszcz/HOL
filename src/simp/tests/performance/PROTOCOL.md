@@ -419,14 +419,18 @@ has no disposition.
   grid's pilot: `--replaces GRID --replaces-pilot DIR` for `predeclare`,
   `--replaces GRID` for `verify-counts` and `run`, nothing for `extend`, and
   `--replaces-pilot DIR` alone for `replay`; `extend` and `replay` find the
-  grid where their record says it is. Only `predeclare` and `replay` replay
-  the grid in full (and read the pilot); the others bind it by the seals of
-  the counts. A table that replaces none refuses both options. The baseline
-  of the counts, of the table and of `--baseline` (which defaults to the
-  table's) must agree; a candidate equal to the
-  baseline is refused. The layout seed, pairs and samples are the table's at
-  `predeclare`, which copies them into the counts file; `run` refuses a file
-  that does not say what the table says and a different explicit
+  grid where their record says it is. `predeclare` and `replay` always
+  replay the grid in full and read the pilot (`--replaces-pilot`).
+  `verify-counts`, `run` and `extend` bind it by the seals of the counts and
+  ignore the pilot while the code of the replay is that of `predeclare`;
+  when it changed they replay in full, read the pilot, and refuse without
+  `--replaces-pilot DIR` (see "By seals" below). A table that replaces none
+  refuses both options. The baseline of the counts, of the table and of
+  `--baseline` (which defaults to the table's) must agree; a candidate equal
+  to the baseline is refused. The layout seed, pairs and samples are the
+  table's at `predeclare`, which copies them into the counts file; `run`
+  refuses a file that does not say what the table says and a different
+  explicit
   `--layout-seed`, `--pairs` or `--samples` (the second-stage seed `SEED-ext`
   must be valid too, so the seed is at most 60 characters). `replay`,
   `verify-counts` and `extend` read all of these from the counts file the
@@ -1175,18 +1179,21 @@ table of its own on the shared engine, with the following additions to it.
   final`), for the follow-up replaces the final stage. A Replaces helper
   called before the grid is bound is a refusal naming that, not an
   `AttributeError`. There are two bindings.
-  - *Full* (`predeclare`, and the follow-up's own `replay`; both need
-    `--replaces-pilot DIR`): the grid is replayed in full, with the engine of
-    the table that measured it (stage 2 replays stage 1), and the pilot of
-    its counts, and these are refused: a grid that does not replay; follow-up
-    cells other than the open cells (`follow-up cells differ from the open
-    cells`); a baseline or second-stage limits other than the grid's, or
-    pairs that are not twice its first stage's. `predeclare` records in the
-    counts file a `replaces` block: the path of the grid relative to the
-    follow-up's pilot, the SHA-256 seals of every file of the replaced grid
-    that the binding reads (the inventory and decisions of both stages), and
-    the open cells; and the pairs of each cell (`pairs_by_cell`, below).
-  - *By seals* (`verify-counts`, `run`, `extend`): no full replay. Every file
+  - *Full* (`predeclare`, and the follow-up's own `replay`, always; both need
+    `--replaces-pilot DIR`; `verify-counts`, `run` and `extend` too, when the
+    code changed since `predeclare`, see below): the grid is replayed in
+    full, with the engine of the table that measured it (stage 2 replays
+    stage 1), and the pilot of its counts, and these are refused: a grid that
+    does not replay; follow-up cells other than the open cells (`follow-up
+    cells differ from the open cells`); a baseline or second-stage limits other
+    than the grid's, or pairs that are not twice its first stage's.
+    `predeclare` records in the counts file a `replaces` block: the path of the
+    grid relative to the follow-up's pilot, the SHA-256 seals of every file of
+    the replaced grid that the binding reads (the inventory and decisions of
+    both stages), and the open cells; and the pairs of each cell
+    (`pairs_by_cell`, below).
+  - *By seals* (`verify-counts`, `run`, `extend`, while the code of the
+    replay is that of `predeclare`): no full replay. Every file
     of the replaced grid that the binding reads is checked against the seals
     of the counts (`replaced grid changed since predeclare: FILE`), the open
     cells are taken from the sealed decision rows by `classify_row` and must
@@ -1199,11 +1206,21 @@ table of its own on the shared engine, with the following additions to it.
     the SHA-256 seals of the code it replayed with beyond what the table
     seals itself (`timing_grid.REPLAY_CODE`: `timing_grid.py`,
     `acceptance.py`, `summarize.py`, `audit_evidence.py`,
-    `runtime_metrics.py`, and the pin file and counts file of the replaced
+    `runtime_metrics.py`, `allocator-counter/private_runtime.py` (its
+    checkout identity), and the pin file and counts file of the replaced
     table, `task30_pins.py` and `task30_iterations.json`). That block is a
-    record of what `predeclare` replayed with: it is never derived again,
-    and `verify-counts`, `replay` and `dispose` check only that it is
-    present and well formed. The seal binding is valid only while the
+    record of what `predeclare` replayed with: it is never derived again
+    from the current code, but it is not trusted either. `verify-counts`,
+    `run`, `extend` and `replay` (and `dispose`, through them) require it to
+    be well formed and to equal the seals of the same files as they are in
+    the git commit that holds the counts file (the commit that introduced
+    it, in the history of the candidate; of `HEAD` for `verify-counts`),
+    read with git; a counts file not committed yet (the first
+    `verify-counts` after `predeclare`) is compared with the files as they
+    are. Otherwise they refuse: `the record of the code differs from the
+    commit of the counts: FILE`. So the record cannot be edited into the
+    seals of other code, and it is no longer something only the review of
+    the counts file protects. The seal binding is valid only while the
     current seals of those files equal it. When they differ, `verify-counts`,
     `run` and `extend` do not refuse: they print one line (`code changed
     since predeclare (FILES): the replaced grid is replayed in full`) and
@@ -1211,9 +1228,14 @@ table of its own on the shared engine, with the following additions to it.
     which reads the replaced grid's pilot (`--replaces-pilot`; without it
     they refuse, naming the changed files). So a later change to shared
     code costs the hour of the full replay, and never makes a finished
-    follow-up unreplayable (append the old seal of `timing_grid.py` to
-    `ENGINES` and of `acceptance.py` to `ACCEPTANCE` where those histories
-    apply, below). While the code is unchanged the sealed commands run
+    follow-up unreplayable (a later change to `summarize.py`,
+    `audit_evidence.py` or `runtime_metrics.py` needs no history entry, as
+    no record carries their seals; one to `timing_grid.py` needs the old
+    seal appended to `ENGINES`, one to `acceptance.py` to `ACCEPTANCE`, and one
+    to `task30_pins.py` to `PIN_HISTORY`, because every record of the follow-up
+    carries those seals and `replay` refuses "changed engine", "changed
+    acceptance" or the pins without them; `task30_iterations.json` is never
+    changed). While the code is unchanged the sealed commands run
     the cheap header, sources, commit and checkout checks of the full
     replay on both inventories of the replaced grid, through the hooks of
     the replaced engine. What they leave to the full replay (`replay`, and
@@ -1224,7 +1246,11 @@ table of its own on the shared engine, with the following additions to it.
     attempt is recorded would spend it. (`run` and `extend` do make the
     ledger checks of the replaced attempts, `refuse_found` included, below.)
     The code list is a hand list, kept complete by a test that computes the
-    static import closure of the replay path.
+    static import closure of the replay path, over this directory and
+    `allocator-counter/`; the few import edges that are made by code the
+    replay does not run are named in the test, each by importer, module and
+    function, so that any other new import of a module the list lacks fails
+    it.
   Both refuse before an attempt opens, besides: a layout seed that the grid
   drew or its second stage drew (a table refuses the same at its
   construction, for the seed of the table it replaces); candidate sources
@@ -1351,8 +1377,9 @@ table of its own on the shared engine, with the following additions to it.
   the counts file is committed as Z (the candidate), so that Y..Z holds
   only the performance area and sealed files: any other change under `src`
   refuses the follow-up. `verify-counts` again at Z (the counts file as
-  committed, by the seals, which must still hold: `code changed since
-  predeclare` otherwise means a new `predeclare`). Every command that
+  committed, by the seals while the code is that of `predeclare`; after a
+  code change it replays in full and needs `--replaces-pilot OUT/pilot`).
+  Every command that
   appends is made in the checkout that holds the TASK30 ledger (see "One
   ledger, one checkout"). `run --candidate Z --pilot OUT/followup-pilot
   --replaces OUT/stage2 --output OUT/followup --authorize-measurements`,

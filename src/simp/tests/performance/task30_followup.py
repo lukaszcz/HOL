@@ -65,8 +65,14 @@ COUNTS = a.HERE / "task30_followup_iterations.json"
 # ACCEPTANCE, this file to DRIVERS, and (a reviewed change that alters
 # nothing measured, only after `run`) the old task30_grid.py to
 # SEALED_HISTORY["task30_grid.py"]; edit test_task30_grid.py, which pins them
-# empty, too. `run` compares the counts' sealed files exactly, so between the
-# pilot and `run` only a fresh pilot absorbs a change to a sealed file. The
+# empty, too. Per file a later change needs: timing_grid.py the ENGINES entry,
+# acceptance.py the ACCEPTANCE entry, task30_followup.py the DRIVERS entry
+# (every record of this table carries those seals), task30_pins.py a
+# PIN_HISTORY entry; summarize.py, audit_evidence.py and runtime_metrics.py
+# none (no record carries them; the counts' `replaces.code` is compared with
+# the commit of the counts, not with the current code). `run` compares the
+# counts' sealed files exactly, so between the pilot and `run` only a fresh
+# pilot absorbs a change to a sealed file. The
 # disposition code is landed before the pilot, in a module of its own
 # (task30_dispose.py) in neither table's seals, so task30_grid.py stays as
 # it is from Z0 on. TASK30's own set of sealed names is frozen by its Y
