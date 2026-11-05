@@ -1104,6 +1104,66 @@ has no disposition.
   Its counts take no ledger, pilot or revision: those belong to tables with
   fixed seconds.
 
+##### Structural evidence (allocation work phase)
+
+The allocation fixture has an untimed `work` phase after the `apply` bracket
+(`MatrixAllocation.sml`; the code is `MatrixSupport.workPhase`). Nothing of it
+is inside a bracket, so the words are unchanged by it, and the timing fixture
+does not load it. It runs the operation twice, `beforeBatch`, `run`,
+`afterBatch 1` each, and records for each run:
+
+- trace events by level and constructor (`trace.L.ACTION`): a listener put on
+  `Trace.trace_hook`. `Trace.trace` calls every listener on every call
+  whatever the trace level (the level is filtered inside the default
+  listener), so the counts do not depend on `simplifier` tracing. The
+  listener counts and never forces an `LZ_TEXT`;
+- kernel inferences by rule (`kernel.RULE`, `kernel.total`):
+  `Count.counting_thms` and `Count.thm_count`;
+- `maker` and `collector` calls (the counters of `MatrixSupport`).
+
+Then the fingerprint of the retained result is read, from the hook
+`MatrixSupport.fingerprint`, which each workload sets when it is built (never
+inside a timed closure): for a simpset the names, the dproc names and the run
+length encoded set of installed rules whose left side the net leaves alone;
+for a theorem its hypotheses and conclusion with types shown; for a tactic the
+residual goals and the proof; for a fragment its name, length and the rules
+that differ from the expected ones; for the theory change the error. The
+fixture emits `work.first`, `work.second` and `result.digest` after
+`alloc.foreign`; the parser hashes the fingerprint with SHA-256.
+
+**Gating by header.** A grid whose header says `structure: "v1"` (every new
+run) requires the three records in every process, and a header without the key
+forbids them, so every earlier archive (TASK29B, the TASK30 `alloc/` made at
+63ac28189) parses and replays to the same decisions and results byte for byte.
+The key enters `grid_digest` and the cell binding only when present.
+
+**Rows.** `allocation_analysis.cell` adds `work` to a cell: one row for every
+count that appears in some process (absent on a side is zero) for each run,
+and one for the digest. A row is `equal` when candidate equals baseline in
+every pair, `differs` when some pair does not, `inconclusive` when the
+baseline/baseline control does not reproduce exactly; `deterministic` says
+whether each side reproduces across pairs. There is no allowance and no
+direction: fewer events differ too. Work rows are not slopes and not constants
+and are never an input of the words' `status`. `decisions.json` gets a
+separate `work` section (per cell status; rows that are not reproducible)
+and `work_status` (`equal`, `differs`, `inconclusive`), only when the
+archives have work records; `RESULTS.md` gets a Structural evidence paragraph
+and table. The words-only `status` and its `nondeterminism` list are the ones
+of before.
+
+**What the counts cover.** A deletion (`-*`, `remove_ssfrags`) filters the net
+and the dprocs and runs no simplification, so the trace and kernel counts of
+those cases are empty (the maker and collector counts and the digest are what
+they have); the marker and tactic cases run one `SIMP_CONV` and give the
+`REDUCE` event and a handful of inferences. Equality of these rows with
+develop says that the candidate did the same work and returned the same
+result, not that it took the same time.
+
+**Operator smoke.** `smoke_matrix.py` runs `workPhase` twice for every case
+and size it covers, requires the second run of the first call, both runs of
+the second call and the digest to agree, and records the work records of each
+process in its manifest.
+
 `acceptance.json` records the policy, source-tied raw experiment input hashes,
 runner commands/log hashes/exits, controls and per-metric decisions. Archived
 results are revalidated through the existing schema and source-binding auditor,
