@@ -198,7 +198,7 @@ local
         List.exists contains_binder_block operands
     | _ => false
 
-  fun contains_binder_block_dag root =
+  fun provenance_exists_dag predicate root =
     let
       val bucket_count = 4093
       val seen = Array.array
@@ -239,16 +239,26 @@ local
         end
       fun visit item =
         if known item then false
+        else if predicate item then true
         else
           case item of
-            BinderBlockProvenance _ => true
-          | ApplicationProvenance (_, operands) => List.exists visit operands
+            ApplicationProvenance (_, operands) => List.exists visit operands
           | BinderProvenance (_, body) => visit body
+          | BinderBlockProvenance (_, _, body) => visit body
           | EqualityProvenance (left, right) =>
               visit left orelse visit right
           | ConjunctionProvenance (_, operands) => List.exists visit operands
           | _ => false
     in visit root end
+
+  fun contains_binder_block_dag root = provenance_exists_dag
+    (fn BinderBlockProvenance _ => true | _ => false) root
+
+  fun definitely_no_conjunction_dag root = not (provenance_exists_dag
+    (fn ConjunctionProvenance _ => true
+      | UnavailableProvenance _ => true
+      | AmbiguousProvenance _ => true
+      | _ => false) root)
 
   fun has_binder_shell provenance =
     case provenance of
@@ -8015,7 +8025,9 @@ local
       fun source_occurrence term = List.exists
         (fn source => Portable.pointer_eq (source,term)) sources
       fun source_equality left right =
-        if not (source_occurrence left andalso source_occurrence right) then
+        if not ((source_occurrence left andalso source_occurrence right)
+            orelse (List.null sources andalso
+              Term.is_abs left andalso Term.is_abs right)) then
           NONE
         else
           let
@@ -20296,21 +20308,50 @@ local
                ((case (conclusion, located_args) of
                    (NONE, [source]) =>
                     let
-                      val dag_nodes = SmtResource.dag_nodes_up_to
-                        (max_exact_provenance_dag_nodes + 1) (#term source)
-                      val exact_small =
-                        dag_nodes <= max_exact_provenance_dag_nodes andalso
+                      fun exact_small_term term =
+                        SmtResource.dag_nodes_up_to
+                          (max_exact_provenance_dag_nodes + 1) term <=
+                            max_exact_provenance_dag_nodes andalso
                         Option.isSome (SmtReplayImport.bounded_raw_size
                           (16 * max_exact_provenance_dag_nodes)
-                          (#term source))
+                          term)
+                      val exact_small = exact_small_term (#term source)
                       val owned_application =
                         if #name rule <> "cong" orelse
                            has_binder_shell (#provenance source) then NONE
                         else
-                          (SOME (raw_unavailable_result
-                            "congruence checked at exact operand cuts"
-                            (replay_owned_application_cong
-                              (#term source) prems))
+                          (SOME (let
+                            (* Keep the checked operand-cut theorem and its
+                               canonical endpoints. Exact conjunction cuts
+                               are metadata, not a reason to rebuild that
+                               theorem through a native beta context. *)
+                            val theorem = replay_owned_application_cong
+                              (#term source) prems
+                            val raw = raw_unavailable_result
+                              "congruence checked at exact operand cuts"
+                              theorem
+                            val keep = exact_small andalso
+                              List.all (exact_small_term o Thm.concl) prems
+                              andalso not (definitely_no_conjunction_dag
+                                (#provenance source) andalso List.all
+                                  (definitely_no_conjunction_dag o
+                                    step_provenance) premise_steps)
+                            fun retained () =
+                              let
+                                val exact = replay_exact_cong_result NONE
+                                  source premise_steps
+                              in
+                                if shared_aconv (Thm.concl theorem)
+                                    (Thm.concl (#thm exact)) then
+                                  exact_result
+                                    (#provenance (#located exact)) theorem
+                                else raw
+                              end
+                              handle Feedback.HOL_ERR error =>
+                                if SmtResource.is_resource_gate error then
+                                  raise Feedback.HOL_ERR error
+                                else raw
+                          in if keep then retained () else raw end)
                            handle OwnedApplicationDeclined => NONE
                                 | Feedback.HOL_ERR error =>
                              if SmtResource.is_resource_gate error then

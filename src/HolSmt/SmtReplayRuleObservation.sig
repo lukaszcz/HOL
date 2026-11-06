@@ -9,6 +9,8 @@ sig
      two_premise_returns:IntInf.int,
      three_premise_returns:IntInf.int}
   val with_statistics : (unit -> 'a) -> 'a * statistics
+  (* Selected SPEC wrapper returns, excluding other provers' raw SPEC. *)
+  val with_spec_statistics : (unit -> 'a) -> 'a * IntInf.int
   val ASSUME : Term.term -> Thm.thm
   val REFL : Term.term -> Thm.thm
   val ALPHA : Term.term -> Term.term -> Thm.thm

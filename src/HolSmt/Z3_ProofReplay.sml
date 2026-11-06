@@ -11002,6 +11002,14 @@ in
     Lib.snd (z3_def_axiom (state, target))
   end
 
+  fun def_axiom_bounded_for_test target : Thm.thm =
+    let
+      val proof = empty_proof "4.11.2"
+      val state = initial_replay_state Term.empty_tmset [] proof
+    in
+      def_axiom_skeleton_prove state target
+    end
+
   fun def_axiom_cache_sequence_for_test limit targets =
   let
     fun replay () = List.map def_axiom_for_test targets

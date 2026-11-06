@@ -211,19 +211,73 @@ in {key=key,context=context,result=result,aliases=List.rev (!aliases),
 
 
 exception GeneralMeasure
-fun measure_normalized_for_test input =
+fun measure_normalized input =
+ let
+  (* Keep the original admitted measurement for binders and large
+     leaf annotations. The fast path computes the same semantic DAG and
+     saturated unfolded-tree counts, including every actual atom interior. *)
+  fun legacy root =
    let val small_type=new_type_guard ()
-    fun inspect term=if Term.is_var term orelse Term.is_const term orelse
-        Term.is_abs term then
-      if small_type (Term.type_of term) andalso bounded_name term then ()
-      else raise GeneralMeasure
-     else ()
-    val {complete,...}=SmtResource.bounded_structure_with_children
-      SmtSkeletonProve.term_children inspect
-      SmtResource.max_bv_replay_term_nodes input
-   in if complete then SmtResource.term_measure input
-      else SmtSkeletonProve.term_measure input end
-   handle GeneralMeasure=>SmtSkeletonProve.term_measure input
+       fun inspect term=if Term.is_var term orelse Term.is_const term orelse
+           Term.is_abs term then
+         if small_type (Term.type_of term) andalso bounded_name term then ()
+         else raise GeneralMeasure
+        else ()
+       val {complete,...}=SmtResource.bounded_structure_with_children
+         SmtSkeletonProve.term_children inspect
+         SmtResource.max_bv_replay_term_nodes root
+   in if complete then SmtResource.term_measure root
+      else SmtSkeletonProve.term_measure root end
+   handle GeneralMeasure=>SmtSkeletonProve.term_measure root
+  fun fast () =
+   let
+    (* Intern semantic child IDs before comparing applications. Physical
+       hints have fixed capacity: repeated fresh closure wrappers must not
+       turn an optional memo bucket into a growing linear search. *)
+    datatype key=Leaf of term | Application of int*int
+    fun compare (Leaf a,Leaf b)=Term.compare (a,b)
+      | compare (Leaf _,_) = LESS
+      | compare (_,Leaf _) = GREATER
+      | compare (Application a,Application b)=
+          Lib.pair_compare (Int.compare,Int.compare) (a,b)
+    val nodes=ref (Redblackmap.mkDict compare)
+    val physical=Array.array (4093,[]:(term*(int*int)) list)
+    val small_type=new_type_guard ()
+    fun intern key size=case Redblackmap.peek (!nodes,key) of
+        SOME value=>value
+      | NONE=>let val value=(Redblackmap.numItems (!nodes),size)
+          in nodes:=Redblackmap.insert (!nodes,key,value);value end
+    fun visit term =
+     let val bucket=SmtReplayImport.pointer_bucket 4 4093 term
+     in case List.find (fn (old,_)=>Portable.pointer_eq (old,term))
+          (Array.sub (physical,bucket)) of
+         SOME (_,value)=>value
+       | NONE=>let
+           val value=if Term.is_var term orelse Term.is_const term then
+               if small_type (Term.type_of term) andalso bounded_name term
+               then intern (Leaf term) 1 else raise GeneralMeasure
+             else if Term.is_comb term then
+               let val (left,right)=Term.dest_comb term
+                   val (li,ls)=visit left
+                   val (ri,rs)=visit right
+               in intern (Application (li,ri))
+                    (SmtResource.saturated_add 1
+                      (SmtResource.saturated_add ls rs)) end
+             else raise GeneralMeasure
+           val previous=Array.sub (physical,bucket)
+           val _=Array.update (physical,bucket,(term,value)::
+             (case previous of []=>[] | first::_=>[first]))
+         in value end
+     end
+    val size= #2 (visit input)
+   in ({tree_nodes=size,dag_nodes=Redblackmap.numItems (!nodes)},
+       SOME (fn term=> #1 (visit term))) end
+
+ in Profile.profile_with_exn_name "program/measure-structural" fast ()
+    handle GeneralMeasure=>(Profile.profile_with_exn_name
+      "program/measure-legacy" legacy input,NONE) end
+
+fun measure_normalized_for_test input= #1 (measure_normalized input)
 
 fun prove_schema bit field_law word_law source =
  let
@@ -271,12 +325,18 @@ fun prove_schema bit field_law word_law source =
   val converted=Profile.profile_with_exn_name "program/boolean-lowering"
     convert source
   val residue=boolSyntax.rhs (Thm.concl converted)
-  val measure=Profile.profile_with_exn_name "program/sat-measure"
-    measure_normalized_for_test residue
+  val (measure,semantic_index)=
+    Profile.profile_with_exn_name "program/sat-measure"
+      measure_normalized residue
   val _= #dag_nodes measure<=SmtResource.max_bv_replay_term_nodes
     orelse raise Declined
   val reverse=ref ([]:{redex:term,residue:term} list)
-  val atom_order=SmtSkeletonProve.new_semantic_order ()
+  (* Reuse the complete structural classes computed on the actual
+     normalized source. This avoids repeatedly comparing large, equal atom
+     interiors; every constructor, annotation and atom was already visited. *)
+  val atom_order=case semantic_index of
+      SOME index=>(fn (left,right)=>Int.compare (index left,index right))
+    | NONE=>SmtSkeletonProve.new_semantic_order ()
   val atoms=ref (Redblackmap.mkDict atom_order)
   val constructors=ref (Redblackmap.mkDict
     (Lib.pair_compare (KernelSig.id_compare,Lib.list_compare Int.compare)))
@@ -317,8 +377,9 @@ fun prove_schema bit field_law word_law source =
        val _=physical_nodes:= !physical_nodes+1
        val _= !physical_nodes<=SmtResource.max_bv_replay_term_nodes
          orelse raise Declined
-       val _=Array.update (physical,bucket,
-         (input,value)::Array.sub (physical,bucket))
+       val previous=Array.sub (physical,bucket)
+       val _=Array.update (physical,bucket,(input,value)::
+         (case previous of []=>[] | first::_=>[first]))
       in value end
    end
   val target=Profile.profile_with_exn_name "program/sat-naming"

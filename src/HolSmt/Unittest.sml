@@ -20064,7 +20064,7 @@ let
   val shared_target = shared_tautology 70
     ``(task31_unrelated_predicate : num -> bool) n``
   val shared_measure = SmtResource.term_measure shared_target
-  val shared_theorem = Z3_ProofReplay.def_axiom_for_test shared_target
+  val shared_theorem = Z3_ProofReplay.def_axiom_bounded_for_test shared_target
   val () = assert
     (#tree_nodes shared_measure = SmtResource.max_metric andalso
      #dag_nodes shared_measure < 200 andalso
@@ -20097,7 +20097,7 @@ let
   val independent_target = boolSyntax.mk_imp
     (independently_built_left, independently_built_right)
   val independent_theorem =
-    Z3_ProofReplay.def_axiom_for_test independent_target
+    Z3_ProofReplay.def_axiom_bounded_for_test independent_target
   val () = assert
     (not (Portable.pointer_eq
        (independently_built_left, independently_built_right)) andalso
@@ -20140,7 +20140,16 @@ let
   val member_target = boolSyntax.mk_disj
     (boolSyntax.mk_neg
       (boolSyntax.mk_conj (word_atom, word_other)), word_other)
-  val member_theorem = Z3_ProofReplay.def_axiom_for_test member_target
+  val frontier_theorem = Z3_ProofReplay.def_axiom_for_test member_target
+  val () = assert
+    (Thm.concl frontier_theorem ~~ member_target andalso
+     List.null (Thm.hyp frontier_theorem) andalso
+     profile_call_count "def-axiom(0)(clause-frontier)_OK" = 1 andalso
+     profile_call_count conjunction_member_route = 0,
+     "negated conjunction member lost the checked frontier route")
+  val () = check_oracle_tags "frontier conjunction member" frontier_theorem
+  val () = Profile.reset_all ()
+  val member_theorem = Z3_ProofReplay.def_axiom_bounded_for_test member_target
   val () = assert
     (Thm.concl member_theorem ~~ member_target andalso
      List.null (Thm.hyp member_theorem) andalso
@@ -20161,7 +20170,7 @@ let
   val huge_target = boolSyntax.mk_disj
     (boolSyntax.mk_neg (boolSyntax.mk_conj (huge_atom, word_atom)),
      huge_atom)
-  val huge_theorem = Z3_ProofReplay.def_axiom_for_test huge_target
+  val huge_theorem = Z3_ProofReplay.def_axiom_bounded_for_test huge_target
   val () = assert
     (SmtResource.term_nodes_up_to 100000 huge_atom > 100000 andalso
      Portable.pointer_eq
@@ -20185,7 +20194,7 @@ let
   val alpha_target = boolSyntax.mk_disj
     (boolSyntax.mk_neg
       (boolSyntax.mk_conj (alpha_left, structural_q)), alpha_right)
-  val alpha_theorem = Z3_ProofReplay.def_axiom_for_test alpha_target
+  val alpha_theorem = Z3_ProofReplay.def_axiom_bounded_for_test alpha_target
   val () = assert
     (not (Portable.pointer_eq (alpha_left, alpha_right)) andalso
      alpha_left ~~ alpha_right andalso
@@ -20203,7 +20212,8 @@ let
       if index = 519 then structural_p else structural_q))
   val spine_capped_target = boolSyntax.mk_disj
     (boolSyntax.mk_neg many_shared, structural_p)
-  val spine_capped = Z3_ProofReplay.def_axiom_for_test spine_capped_target
+  val spine_capped =
+    Z3_ProofReplay.def_axiom_bounded_for_test spine_capped_target
   val () = assert
     (Portable.pointer_eq (Thm.concl spine_capped, spine_capped_target) andalso
      profile_call_count conjunction_member_route = 1 andalso
@@ -20219,7 +20229,7 @@ let
     (boolSyntax.list_mk_conj comparison_atoms,
      boolSyntax.list_mk_disj (List.map boolSyntax.mk_neg comparison_atoms))
   val comparison_capped =
-    Z3_ProofReplay.def_axiom_for_test comparison_target
+    Z3_ProofReplay.def_axiom_bounded_for_test comparison_target
   val () = assert
     (Portable.pointer_eq
        (Thm.concl comparison_capped, comparison_target) andalso
@@ -20241,7 +20251,7 @@ let
      boolSyntax.mk_disj
        (p, boolSyntax.mk_disj
          (boolSyntax.mk_neg q, boolSyntax.mk_neg r)))
-  val clause_theorem = Z3_ProofReplay.def_axiom_for_test clause_target
+  val clause_theorem = Z3_ProofReplay.def_axiom_bounded_for_test clause_target
 in
   assert (Thm.concl clause_theorem ~~ clause_target andalso
       List.null (Thm.hyp clause_theorem) andalso
@@ -20304,8 +20314,9 @@ in
       String.isSubstring "resource-gate:Skeleton:z3-def-axiom"
         (Feedback.message_of gate),
     "oversized def-axiom did not preserve the skeleton DAG gate");
-  assert (profile_call_count "def-axiom(1)(bounded)" = 1 andalso
-      profile_call_count "def-axiom(1)(bounded)_OK" = 0,
+  assert (profile_call_count "def-axiom(0)(clause-frontier)" = 1 andalso
+      profile_call_count "def-axiom(0)(clause-frontier)_OK" = 0 andalso
+      profile_call_count "def-axiom(1)(bounded)" = 0,
     "oversized def-axiom did not stop at bounded admission");
   ()
 end
@@ -23488,9 +23499,11 @@ let
         (metadata "seq" "task19-unseen-regex", [], regex_target))
       regex_target)
   val () = assert
-    (profile_call_count "th_lemma[general](candidate/attempt)_OK" = 6 andalso
-     profile_call_count "th_lemma[general](success)_OK" = 6,
-     "full replay did not attempt and prove six general reductions")
+    (profile_call_count "th_lemma[bv](shared-word)_OK" = 4 andalso
+     profile_call_count "th_lemma[bv](Boolean-word-schema)_OK" = 4 andalso
+     profile_call_count "th_lemma[general](candidate/attempt)_OK" = 2 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 2,
+     "full replay lost four checked word schemas or two general reductions")
   val () = Profile.reset_all ()
   fun with_residual residual = boolSyntax.mk_imp (residual, word8)
   val bag_target = with_residual
@@ -23532,9 +23545,10 @@ let
       replay ("general reduction cross-metadata " ^ name)
         proofterm target) cross_metadata
   val () = assert
-    (profile_call_count "th_lemma[general](candidate/attempt)_OK" = 10 andalso
-     profile_call_count "th_lemma[general](success)_OK" = 10,
-     "not every th-lemma metadata family attempted and used the common rung")
+    (profile_call_count "th_lemma[general](candidate/attempt)_OK" = 9 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 9 andalso
+     profile_call_count "th_lemma[bv](shared-word)_OK" = 1,
+     "cross-metadata replay lost nine general proofs or its word schema")
   val () = Profile.reset_all ()
   val () = timed "legacy-arithmetic" (fn () =>
     replay "legacy arithmetic transitivity full replay"
@@ -23762,16 +23776,18 @@ let
     "deep shared non-string family admission"
     "no Unicode-string term"
     (fn () => ignore (SmtStringProve.string_rewrite_prove deep_shared))
+  (* BASIC keeps this fixture on the common reduction rung; BV now proves
+     the same word frontier earlier through the checked word-schema route. *)
   fun sibling_proof target =
     let
       val initial = Z3_Proof.empty_proof "4.11.2"
-      val tag = metadata "bv" "task19-shared-siblings"
+      val tag = metadata "basic" "task19-shared-siblings"
       val steps0 = Z3_Proof.proof_steps initial
       val steps1 = Redblackmap.insert
-        (steps0, 1, Z3_Proof.TH_LEMMA_BV (tag, [], target))
+        (steps0, 1, Z3_Proof.TH_LEMMA_BASIC (tag, [], target))
       val steps2 = Redblackmap.insert
-        (steps1, 2, Z3_Proof.TH_LEMMA_BV (tag, [], target))
-      val root = Z3_Proof.TH_LEMMA_BV
+        (steps1, 2, Z3_Proof.TH_LEMMA_BASIC (tag, [], target))
+      val root = Z3_Proof.TH_LEMMA_BASIC
         (tag, [Z3_Proof.ID 1, Z3_Proof.ID 2], target)
     in
       Z3_Proof.update_proof_steps initial
@@ -23790,7 +23806,7 @@ let
   val () = assert
     (profile_call_count "th_lemma[general](atom:word)_OK" = 1 andalso
      profile_call_count "th_lemma[general](success)_OK" = 3 andalso
-     profile_call_count "th_lemma[bv](1)(cache)_OK" = 0,
+     profile_call_count "th_lemma[basic](1)(cache)_OK" = 0,
      "production sibling DAG did not reuse atoms outside the legacy Net")
   fun variables 0 result = result
     | variables remaining result =
@@ -29093,9 +29109,15 @@ let
     (SmtResource.recent_pointer_lookup pointer_cache identity = SOME 3 andalso
      Portable.pointer_eq (!pointer_cache, promoted_cache),
      "front pointer hit unnecessarily rebuilt its cache")
+  (* Repeated immutable variable construction may be shared by the ML
+     runtime. Distinct binder names give a checked alpha-equivalent miss. *)
+  val miss_key = Term.mk_abs (y,y)
   val _ = assert
-    (SmtResource.recent_pointer_lookup pointer_cache
-       (Term.mk_var ("binder_resource_x", Type.bool)) = NONE andalso
+    (not (Portable.pointer_eq (miss_key,identity)) andalso
+     Term.compare (miss_key,identity) = EQUAL,
+     "pointer miss fixture lost its distinct alpha-equivalent key")
+  val _ = assert
+    (SmtResource.recent_pointer_lookup pointer_cache miss_key = NONE andalso
      Portable.pointer_eq (!pointer_cache, promoted_cache),
      "recent pointer lookup admitted structural equality or changed a miss")
   fun check_graph term =
@@ -34117,6 +34139,11 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    (* Native sharing forces full GC. Keep its short anti-unfolding guards
+       on a cold heap, before the allocation-heavy replay groups, as in the
+       focused word-graph runner. Every input and watchdog stays unchanged. *)
+    ("skeleton_nodewise_leaf_type_admission_success",
+     skeleton_nodewise_leaf_type_admission_success),
     ("z3_compact_word_program_boundary", SmtReplayCompactWordTests.run),
     ("smtlib_graph_scalar_recipes_success", SmtLib_GraphScalarTests.run),
     ("smtlib_graph_structured_recipes", SmtLib_GraphStructuredTests.run),
@@ -34195,8 +34222,6 @@ let
      ("z3_schema_builder_sharing_boundary", SmtReplaySchemaBuilderTests.run),
     ("z3_hypothesis_presence_fastpath_boundary",
       Z3_HypothesisPresenceTests.run),
-    ("skeleton_nodewise_leaf_type_admission_success",
-     skeleton_nodewise_leaf_type_admission_success),
     ("word_graph_conversion_success", word_graph_conversion_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),

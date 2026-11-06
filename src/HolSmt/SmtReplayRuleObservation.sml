@@ -10,18 +10,20 @@ struct
   type meter =
     {selected_returns:IntInf.int ref,
      theorem_operand_edges:IntInf.int ref,
+     spec_returns:IntInf.int ref,
      zero_premise_returns:IntInf.int ref,
      one_premise_returns:IntInf.int ref,
      two_premise_returns:IntInf.int ref,
      three_premise_returns:IntInf.int ref}
   val meter : meter option ref = ref NONE
-  fun with_statistics action =
+  fun observe action =
     let val _ = case !meter of NONE => () | SOME _ =>
           raise Feedback.mk_HOL_ERR "SmtReplayRuleObservation"
             "with_statistics" "observation reentry"
         val fields : meter =
           {selected_returns=ref 0,
            theorem_operand_edges=ref 0,
+           spec_returns=ref 0,
            zero_premise_returns=ref 0,
            one_premise_returns=ref 0,
            two_premise_returns=ref 0,
@@ -36,7 +38,11 @@ struct
            one_premise_returns= !(#one_premise_returns fields),
            two_premise_returns= !(#two_premise_returns fields),
            three_premise_returns= !(#three_premise_returns fields)}
-    in (Exn.release outcome,counts) end
+    in (Exn.release outcome,counts, !(#spec_returns fields)) end
+  fun with_statistics action =
+    let val (result,counts,_) = observe action in (result,counts) end
+  fun with_spec_statistics action =
+    let val (result,_,spec) = observe action in (result,spec) end
   (* This helper is private. Public typed wrappers select their OWN actual
      theorem-argument arity, after the unchanged rule returns successfully.
      Repeated theorem arguments are repeated edges, not distinct identities. *)
@@ -60,7 +66,13 @@ struct
   fun EQ_MP a b = returned 2 (Thm.EQ_MP a b)
   fun MP a b = returned 2 (Thm.MP a b)
   fun DISCH a b = returned 1 (Thm.DISCH a b)
-  fun SPEC a b = returned 1 (Thm.SPEC a b)
+  fun SPEC a b =
+    let val proof = Thm.SPEC a b in
+      case !meter of NONE => proof
+      | SOME fields =>
+          (#spec_returns fields := !(#spec_returns fields) + 1;
+           returned 1 proof)
+    end
   fun AP_TERM a b = returned 1 (Thm.AP_TERM a b)
   fun AP_THM a b = returned 1 (Thm.AP_THM a b)
   fun MK_COMB pair = returned 2 (Thm.MK_COMB pair)

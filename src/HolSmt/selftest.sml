@@ -54177,9 +54177,11 @@ in
           (not(List.exists(fn node=>node= #u e)
             (S.assumption_nodes(#s e))))
         val owner=begin_owner e val before_count=Count.thm_count()
-        val count=all e owner
+        val(count,native)=SmtReplayRuleObservation.with_spec_statistics
+          (fn()=>all e owner)
         val _=require "actual parsed indexed native SPEC was bypassed"
-          (#SPEC(Count.thm_count())> #SPEC before_count andalso count=3)
+          (#SPEC(Count.thm_count())> #SPEC before_count andalso count=3
+           andalso native=1)
         val old=Count.thm_count()
         val _=final_phase:=NONE
         val proof=E.finish_with_policy(#w e)owner
@@ -54197,11 +54199,15 @@ in
         val owner=begin_owner e val _=until e owner(Parser.Named 1)
         val first=E.step_with_policy_for(#w e)owner(Parser.Named 1)
         val _=until e owner(Parser.Named 2)
-        val before_count=Count.thm_count()
-        val again=E.step_with_policy_for(#w e)owner(Parser.Named 1)
+        (* CNF reconstruction may use raw SPEC for excluded middle. Observe
+           the native-law wrapper separately, and require a proof-free hit. *)
+        val(again,native)=SmtReplayRuleObservation.with_spec_statistics
+          (fn()=>E.step_with_policy_for(#w e)owner(Parser.Named 1))
+        val before_repeat=Count.thm_count()
         val repeated=E.step_with_policy_for(#w e)owner(Parser.Named 1)
         val _=require "actual recipe replay reran NativeSPEC or stale edge"
-          (#SPEC(Count.thm_count())= #SPEC before_count andalso
+          (native=0 andalso
+           Count.thm_count()=before_repeat andalso
            not(Portable.pointer_eq(#block first,#block again))andalso
            Portable.pointer_eq(#edge again,#edge repeated)andalso
            Portable.pointer_eq(#block again,#block repeated))
@@ -56369,13 +56375,16 @@ in
         val _=quant_until e owner(Parser.Named 1)
         val first=E.step_with_policy_for(#w e)owner(Parser.Named 1)
         val prior=Count.thm_count()
-        val _=quant_until e owner(Parser.Named 2)
+        val(_,published)=SmtReplayRuleObservation.with_spec_statistics
+          (fn()=>quant_until e owner(Parser.Named 2))
         val after_spec=Count.thm_count()
-        val again=E.step_with_policy_for(#w e)owner(Parser.Named 1)
+        val(again,replayed)=SmtReplayRuleObservation.with_spec_statistics
+          (fn()=>E.step_with_policy_for(#w e)owner(Parser.Named 1))
+        val before_hit=Count.thm_count()
         val shared=E.step_with_policy_for(#w e)owner(Parser.Named 1)
         val _=require "raw recipe reran SPEC or reused superseded Block"
-          (#SPEC after_spec= #SPEC prior+1 andalso
-           #SPEC(Count.thm_count())= #SPEC after_spec andalso
+          (published=1 andalso #SPEC after_spec> #SPEC prior andalso
+           replayed=0 andalso Count.thm_count()=before_hit andalso
            not(Portable.pointer_eq(#block first,#block again))andalso
            Portable.pointer_eq(#block again,#block shared)andalso
            Portable.pointer_eq(#edge again,#edge shared))
@@ -83477,7 +83486,8 @@ in
     test "General child retained App SPEC and raw clause share original Goal"
       (fn()=>fixture bindings assumptions goal(fn e=>
         let val prior=Count.thm_count()
-        in using e general_combined(fn _=>())
+            val(_,native)=SmtReplayRuleObservation.with_spec_statistics
+              (fn()=>using e general_combined(fn _=>())
           (fn _=>fn _=>fn preparation=>
             let val owner=ready preparation
                 val result=proved(Final.finish_with_policy(#work e)owner)
@@ -83485,9 +83495,10 @@ in
                 val _=exact_goal e result
             in require "combined actual child/SPEC/raw programme bypassed"
               (#ABS current= #ABS prior+1 andalso
-               #SPEC current= #SPEC prior+1 andalso
                #TRANS current> #TRANS prior andalso
-               not(#retired(W.audit_policy(#work e))))end)end)))
+               not(#retired(W.audit_policy(#work e))))end))
+        in require "combined programme did not select one native SPEC"
+          (native=1)end)))
 end
 
 

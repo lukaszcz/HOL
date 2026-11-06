@@ -112,6 +112,19 @@ fun run () = let
  | _=>raise Fail "oversized actual source was admitted";
  val _=OK ();
  val _=tprint "compact normalized measurements preserve binder metrics";
+ fun closure_shared 0 seed=seed
+   | closure_shared n seed=let val child=closure_shared (n-1) seed
+       in boolSyntax.mk_conj (child,child) end;
+ val closure_input=Term.mk_var ("closure_input",Type.bool);
+ val closure_output=Term.mk_var ("closure_output",Type.bool);
+ val _=List.app (fn depth=>let
+     val source=closure_shared depth closure_input
+     val theorem=Thm.INST [closure_input |-> closure_output] (Thm.REFL source)
+     val actual=boolSyntax.rhs (Thm.concl theorem)
+     val measure=SmtReplayCompactWord.measure_normalized_for_test actual
+     val expected=4 * Lib.funpow depth (fn n=>2*n) 1 - 3
+   in require (measure={tree_nodes=expected,dag_nodes=2*depth+2})
+      "native closure measurement changed tree/DAG metrics" end) [12,14,16];
  val binders=[``(\x:bool. x)``,``(\y:bool. y)``,``(\x:bool. y)``,
    ``(\x:word8. x+x)``,``(\x:bool. (\y:bool. x /\ y))``];
  val terms=binders @ List.map (fn term=>boolSyntax.mk_eq (term,term)) binders;

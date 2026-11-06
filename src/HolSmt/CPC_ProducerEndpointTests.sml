@@ -445,6 +445,94 @@ struct
         NONE => ()
       | SOME _ => raise Fail "invalid FP binding published a theorem"
     end
+  fun small_source_large_cong_endpoint () =
+    let
+      val operand = Q.intern_cpc_term (Term.genvar Type.bool)
+      val head = Q.intern_cpc_term (Term.genvar
+        (Type.mk_type ("fun",[Type.bool,Type.bool])))
+      val source = Q.intern_cpc_term (Term.mk_comb (head,operand))
+      val shared = shared_operand ()
+      val hypothesis = boolSyntax.mk_eq (operand,shared)
+      val atom = CPC_Proof.AtomicProvenance
+      val proof = {cvc_version="1.3.4",commands=
+        [CPC_Proof.ASSUME ("large",{term=hypothesis,
+           provenance=CPC_Proof.EqualityProvenance
+             (atom,CPC_Proof.UnavailableProvenance "opaque endpoint")}),
+         CPC_Proof.STEP {id="result",conclusion=NONE,
+           rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+           premises=["large"],args=[{term=source,
+             provenance=CPC_Proof.ApplicationProvenance
+               ("opaque_function",[atom])}]}]}
+      val theorem = Timeout.apply SmtResource.max_hypothesis_entailment_time
+        R.replay_root_for_test proof
+      val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+      val _ = same "small CONG source changed" left source
+      val _ = same "large CONG endpoint was traversed or replaced"
+        (Term.rand right) shared
+      val _ = same "large CONG endpoint changed its operator"
+        (Term.rator right) head
+    in actual_hyp [hypothesis] theorem end
+
+  fun conjunction_cong_endpoints () =
+    let
+      fun variable () = Q.intern_cpc_term (Term.genvar Type.bool)
+      val a = variable () val b = variable ()
+      val c = variable () val d = variable ()
+      val source = Q.intern_cpc_term (boolSyntax.mk_conj (a,b))
+      val destination = Q.intern_cpc_term (boolSyntax.mk_conj (c,d))
+      val atom = CPC_Proof.AtomicProvenance
+      val operands = CPC_Proof.ConjunctionProvenance
+        (CPC_Proof.CongruenceConjunction,[atom,atom])
+      val hypotheses = [boolSyntax.mk_eq (a,c),boolSyntax.mk_eq (b,d)]
+      fun assumption (id,term) = CPC_Proof.ASSUME
+        (id,{term=term,provenance=CPC_Proof.EqualityProvenance (atom,atom)})
+      val proof = {cvc_version="1.3.4",commands=
+        List.map assumption (ListPair.zip (["a","b"],hypotheses)) @
+        [CPC_Proof.STEP {id="result",conclusion=NONE,
+          rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+          premises=["a","b"],args=[{term=source,provenance=operands}]}]}
+      val theorem = R.replay_root_for_test proof
+      val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+      val _ = same "conjunction CONG replaced canonical source" left source
+      val _ = same "conjunction CONG rebuilt canonical destination"
+        right destination
+      val _ = actual_hyp hypotheses theorem
+    in
+      case R.replay_step_provenance_for_test proof "result" of
+        CPC_Proof.EqualityProvenance
+          (CPC_Proof.ConjunctionProvenance (_,[_,_]),
+           CPC_Proof.ConjunctionProvenance (_,[_,_])) => ()
+      | _ => raise Fail "conjunction CONG lost exact operand cuts"
+    end
+
+  fun shared_metadata_cong () =
+    let
+      val operand = Q.intern_cpc_term (Term.genvar Type.bool)
+      val head = Q.intern_cpc_term (Term.genvar
+        (Type.mk_type ("fun",[Type.bool,Type.bool])))
+      val source = Q.intern_cpc_term (Term.mk_comb (head,operand))
+      val truth = Q.intern_cpc_term boolSyntax.T
+      val destination = Q.intern_cpc_term (Term.mk_comb (head,truth))
+      val hypothesis = boolSyntax.mk_eq (operand,truth)
+      val atom = CPC_Proof.AtomicProvenance
+      fun grow 0 child = child
+        | grow n child = grow (n-1)
+            (CPC_Proof.ApplicationProvenance ("alias",[child,child]))
+      val proof = {cvc_version="1.3.4",commands=
+        [CPC_Proof.ASSUME ("a",{term=hypothesis,
+           provenance=CPC_Proof.EqualityProvenance (atom,atom)}),
+         CPC_Proof.STEP {id="result",conclusion=NONE,
+           rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+           premises=["a"],args=[{term=source,
+             provenance=CPC_Proof.ApplicationProvenance
+               ("opaque_function",[grow 70 atom])}]}]}
+      val theorem = Timeout.apply SmtResource.max_hypothesis_entailment_time
+        R.replay_root_for_test proof
+      val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+      val _ = same "metadata selection changed source" left source
+      val _ = same "metadata selection changed destination" right destination
+    in actual_hyp [hypothesis] theorem end
+
   fun run () =
     let
       val operand = large_operand ()
@@ -710,6 +798,12 @@ struct
               right destination;
             exact (boolSyntax.mk_eq (source,destination)) hypotheses theorem
           end);
+      test "CPC small source keeps a large CONG endpoint opaque"
+        small_source_large_cong_endpoint;
+      test "CPC conjunction CONG retains canonical endpoints and cuts"
+        conjunction_cong_endpoints;
+      test "CPC shared metadata selection stays on its DAG"
+        shared_metadata_cong;
       test "CPC nary operand cuts do not rewrite an enclosing context"
         (fn () =>
           let
