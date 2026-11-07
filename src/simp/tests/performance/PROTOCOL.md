@@ -2328,17 +2328,17 @@ inconclusive); `candidate_only` the files only the candidate elaborates;
 `git_differing` the files of SOURCES whose git blobs differ.
 
 Records. `DIR/inventory.json` (baseline, candidate, the cell list, the seals
-of the identity code, the git blobs of SOURCES, the checkout record, one
-run per cell with the archive and its seal) and `decisions.json`; each
-cell's folder is packed to `NAME.json.xz`. `identity-replay --output DIR`
-verifies the seals, unpacks every archive, derives every row and every
-decision again from the bytes, and requires them equal to the records. The grid is made in the
-checkout of the candidate (`prepare` as for the timing tables; the stamp and
-`recheck` bind the head, the tree and the products, and the grid is dead if
-the checkout changes); `--only CELL ...` is a diagnostic, in any checkout,
-never a grid decision. The exit status is 0 when every cell is identical,
-1 when one is different, 2 when the grid is not conclusive, 3 when refused.
-Each feasible cell costs about 50 s.
+of the identity code, the git blobs of SOURCES, the checkout record, one run
+per cell with the archive and its seal) and `decisions.json`; each cell's
+folder is packed to `NAME.json.xz`. `identity-replay --output DIR` verifies
+the seals, unpacks every archive, derives every row and every decision again
+from the bytes, and requires them equal to the records. The grid is made in
+the checkout of the candidate (`prepare` as for the timing tables; the stamp
+and `recheck` bind the head, the tree and the products, and the grid is dead
+if the checkout changes); `--only CELL ...` is a diagnostic, in any
+checkout, never a grid decision. The exit status is 0 when every cell is
+identical, 1 when one is different, 2 when the grid is not conclusive, 3
+when refused. Each feasible cell costs about 50 s.
 
 ### Gate 3: the stratified timing table
 
