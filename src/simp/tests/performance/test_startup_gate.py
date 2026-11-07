@@ -21,7 +21,7 @@ FILES = ["bossLib.sml", "boolLib.sml"]
 STRUCTS = ["bossLib", "boolLib", "simpLib"]
 
 
-def snap(total=100, native=90, rts=8, interp=0, code=2, abi=15, over=0):
+def snap(total=100, native=90, rts=8, interp=0, code=2, abi=1, over=0):
     return [abi, 8, over, total, native, rts, interp, code]
 
 
@@ -74,7 +74,7 @@ class ParseTest(unittest.TestCase):
         self.rejects("wrong HOLDIR", holdir="/other/hol-source")
         self.rejects("foreign-thread", foreign="1,0")
         self.rejects("ABI", brackets=[
-            ("startup", snap(abi=14), snap()), ("empty", snap(), snap())])
+            ("startup", snap(abi=2), snap()), ("empty", snap(), snap())])
         self.rejects("overflow", brackets=[
             ("startup", snap(), snap()), ("empty", snap(), snap(over=1))])
         self.rejects("first brackets", brackets=[

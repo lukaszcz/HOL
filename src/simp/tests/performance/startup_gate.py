@@ -45,6 +45,7 @@ SCHEMA = "task31-startup-gate-v1"
 LINEAGE_SCHEMA = "task31-startup-toolchain-v1"
 MKTOOL_PATCH = HERE / "startup_gate_mktool.patch"
 CLIENT = HERE / "StartupGate.sml"
+SNAPSHOT_ABI = 1  # first field of the counter snapshot
 PAIRS = 10  # acceptance minimum; fewer pairs is a smoke only
 CONFIGURE = ("--without-x", "--disable-compact32bit", "--enable-shared")
 # Ordinary clients: process kind -> (heap, what the script brackets).
@@ -286,7 +287,7 @@ def parse_process(stdout, kind, holdir, library, aliases):
             "first brackets are not startup and empty")
     for b in record["brackets"]:
         for snap in (b["start"], b["end"]):
-            require(snap[:3] == [sc.ABI, sc.WORD_BYTES, 0],
+            require(snap[:3] == [SNAPSHOT_ABI, sc.WORD_BYTES, 0],
                     "counter ABI, word size or overflow: %r" % snap[:3])
     sc.check_runtime(stdout, str(library), aliases)
     record["files_sha"] = sha(record["files"])
