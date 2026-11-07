@@ -139,6 +139,28 @@ def make_deterministic(hol, run):
     return a.git(hol, "diff")
 
 
+def deterministic_polyc(prefix):
+    """A directory with poly (a link) and a polyc whose compile step runs
+    one GC thread and two full collections before each export; returns the
+    poly path to use. The native install itself is not changed."""
+    det = prefix / "detbin"
+    det.mkdir(exist_ok=True)
+    poly = det / "poly"
+    if not poly.exists():
+        poly.symlink_to(prefix / "bin/poly")
+    text = (prefix / "bin/polyc").read_text()
+    require(text.count("PolyML.export(") == 1 and
+            text.count('"${COMPILER}" -q --error-exit') == 1,
+            "unexpected polyc")
+    text = text.replace("PolyML.export(", "PolyML.fullGC (); "
+                        "PolyML.fullGC (); PolyML.export(")
+    text = text.replace('"${COMPILER}" -q --error-exit',
+                        '"${COMPILER}" -q --gcthreads=1 --error-exit')
+    (det / "polyc").write_text(text)
+    (det / "polyc").chmod(0o755)
+    return poly
+
+
 def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
     """A fresh HOL tree: shared clone at rev (plus a recorded patch file),
     the configuration override, smart-configure and a no-cache build
@@ -160,11 +182,14 @@ def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
                   hol_patch=None if patch is None else a.seal(patch),
                   hol_tree=a.git(hol, "rev-parse", "HEAD^{tree}"))
     overrides = hol / "tools-poly/poly-includes.ML"
+    tool_poly = deterministic_polyc(prefix) if deterministic else \
+        prefix / "bin/poly"
     overrides.write_text(
-        'val poly = ' + json.dumps(str(prefix / "bin/poly")) + ';\n' +
+        'val poly = ' + json.dumps(str(tool_poly)) + ';\n' +
         'val polymllibdir = ' + json.dumps(str(prefix / "lib")) + ';\n')
     report["hol_configuration_override"] = overrides.read_text()
-    run([str(prefix / "bin/poly"), "--error-exit", "--use",
+    run((["setarch", "-R"] if deterministic else []) +
+        [str(tool_poly), "--error-exit", "--use",
          "tools/smart-configure.sml"], hol, env)
     jobs = os.environ.get("GATE_BUILD_JOBS", "2")
     report["hol_build_jobs"] = jobs
