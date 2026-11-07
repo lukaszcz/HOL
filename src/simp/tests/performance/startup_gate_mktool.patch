@@ -1,0 +1,11 @@
+diff --git a/src/portableML/rawtheory/mktool.ML b/src/portableML/rawtheory/mktool.ML
+index fda2123ece..40eb8fb07b 100644
+--- a/src/portableML/rawtheory/mktool.ML
++++ b/src/portableML/rawtheory/mktool.ML
+@@ -66,5 +66,6 @@ useB "RawTheoryReader";
+ useB "../poly/SHA1_ML";
+ useB "../SHA1";
+ 
++useB "theoryfiles";
+ useB "theorystats";
+ use  "theorytool.ML";
