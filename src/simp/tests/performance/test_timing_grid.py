@@ -6379,9 +6379,11 @@ class Logged(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 a.run_logged(["/bin/true"], log, [], 60)
 
-    def test_the_default_is_the_inherited_standard_input(self):
-        self.assertIsNone(
-            inspect.signature(a.run_logged).parameters["stdin"].default)
+    def test_the_default_is_no_standard_input(self):
+        # Never the caller's: a Poly/ML top level would wait on an open one.
+        self.assertIs(
+            inspect.signature(a.run_logged).parameters["stdin"].default,
+            subprocess.DEVNULL)
 
 
 class Options(Rig):
