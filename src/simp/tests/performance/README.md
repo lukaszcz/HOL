@@ -58,9 +58,10 @@ pool slots, retaining raw B/B and B/C captures in
 `evidence/task29/runtime-pools/` without modifying old evidence. Both are
 explicitly **not timing acceptance** or TASK29A closure: measurement-boundary,
 executed-target/causal attribution, passing full-grid gates and explicit
-policy prerequisites remain open (exclusive host access is not
-required). The read-only environment diagnostic observes concurrent
-work on this host.
+policy/exclusive-environment prerequisites remain open. The read-only
+environment diagnostic cannot certify exclusivity and observes concurrent
+work on this host. (Amendment 2026-11-05: the exclusive-environment
+requirement was waived by the policy owner; the host is shared.)
 
 ## Maintained TASK28 integration
 

@@ -1,6 +1,6 @@
 # TASK17 focused exclusion-performance handoff
 
-Authorized measurement run completed on 2026-10-22; **released**.
+Authorized exclusive window completed on 2026-10-22; **released**.
 No edits outside this new subtree and no commit.
 
 Final current then baseline-control: **10 fresh pairs each**, three samples

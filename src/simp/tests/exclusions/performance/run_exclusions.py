@@ -26,7 +26,7 @@ def options(argv=None):
     p.add_argument("--pairs", type=int, default=10)
     p.add_argument("--timeout", type=int, default=1800)
     p.add_argument("--authorize-measurements", action="store_true",
-                   help="main authorized builds and measurements")
+                   help="main granted an exclusive build/measurement window")
     args = p.parse_args(argv)
     if args.samples < 3 or args.pairs < 10 or args.timeout <= 0:
         p.error("require >=3 samples, >=10 pairs, positive timeout")
@@ -90,7 +90,7 @@ def execute(args, repo, output, fixed_path, fixed, fixed_seal):
         manifest["tools"][str(Path(poly).resolve())] = paired.fingerprint(
             Path(poly).resolve())
         manifest["poly_version"] = paired.execute(
-            [poly, "-v"], repo, env, args.timeout)
+            [poly, "--version"], repo, env, args.timeout)
         require(manifest["poly_version"]["exit"] == 0, "poly version failed")
         manifest["machine"] = dict(uname=list(os.uname()),
             cpu_affinity=sorted(os.sched_getaffinity(0)),

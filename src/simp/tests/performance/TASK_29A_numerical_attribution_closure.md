@@ -4,6 +4,11 @@
 "Attribution and policy-owner disposition" near the end. The earlier
 sections are kept as recorded.
 
+**Amendment (2026-11-05):** the exclusive-environment requirement named in
+the earlier sections' lists of what remains required was waived by the
+policy owner; the host is shared. The waiver changes no recorded text,
+number or measurement below.
+
 ## Context and dependency
 
 Bounded follow-up to TASK29, after TASK28. TASK29 is **blocked**, not landed
@@ -128,7 +133,7 @@ Capacity does not bind instruction identity, live objects, pools or targets.
 All original failures/uncertainty remain; no production repair is selected.
 
 Full ordinary-process heap/pool/indirect-target attribution, the complete
-fresh repaired-driver grid and
+fresh repaired-driver grid, an exclusive stable measurement environment and
 explicit zero-GC/B/B policy-owner disposition remain unsatisfied. TASK29A is
 NOT done.
 
@@ -156,7 +161,7 @@ Both final archives replay and their real 13-test mutation suites pass.
 Current-tree discovery passes 392 performance tests (five opt-in skips) and
 196 compatibility tests. These checks do not close a numerical cell. All
 historical/repaired-driver failures and uncertainty remain; a fresh passing
-full grid, complete attribution
+full grid, complete attribution, verified exclusive measurement environment
 and explicit zero-GC/B/B policy-owner disposition are still required.
 TASK29A is NOT complete; TASK29B remains separate.
 
@@ -186,8 +191,8 @@ The required zero-GC/B/B policy-owner disposition also remains absent; no
 contract change is authorized by these diagnostics.
 
 The complete fresh passing repaired-driver grid, ordinary boundary and
-executed-target/causal attribution, compatible repair if needed and
-explicit policy disposition remain required.
+executed-target/causal attribution, compatible repair if needed, verified
+exclusive measurements and explicit policy disposition remain required.
 `frag_record/0` still fails CPU/wall/GC; `compile_collector/10000` remains
 inconclusive. TASK29A is NOT complete; TASK29B remains separate.
 
@@ -563,7 +568,8 @@ policy-owner disposition" above. The original text follows unchanged.
   TASK29 remains blocked with exact cases. This follow-up does not complete
   TASK29B's cumulative-allocation prerequisite.
 
-Required input before claiming closure: source/layout attribution/repair that
+Required input before claiming closure: a reproducible, sufficiently stable
+exclusive measurement environment and source/layout attribution/repair that
 resolves these observations. No hypothesis about host noise is accepted as a
 fix. Linux/aarch64 Poly/ML 5.9.2 is the measured platform; no universal or
 independent-build claim follows.

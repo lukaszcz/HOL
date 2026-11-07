@@ -116,8 +116,13 @@ reserve or see the whole host. The retained sample observes concurrent work.
 ## Still required for TASK29A
 
 Complete ordinary-process measurement-boundary and executed-target/causal
-attribution, a justified compatible repair if needed, the entire fresh
-passing 162-cell repaired-driver grid with admissible controls, and explicit zero-GC/B/B policy-owner
+attribution, a justified compatible repair if needed, an exclusive stable
+measurement environment, the entire fresh passing 162-cell repaired-driver
+grid with admissible controls, and explicit zero-GC/B/B policy-owner
 disposition. None is replaced by supplying static pool slots. Historical and
 repaired-driver timing failures/uncertainty remain unchanged; TASK29B remains
 separate. No host-noise hypothesis, waiver or completion is claimed.
+
+Amendment (2026-11-05): the exclusivity requirement was waived by the
+policy owner; the host is shared. "An exclusive stable measurement
+environment" above is no longer required.
