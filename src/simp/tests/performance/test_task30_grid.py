@@ -366,16 +366,36 @@ class Followup(unittest.TestCase):
         self.assertEqual(mine["driver"], a.seal(f.__file__))
 
     def test_its_seal_histories_are_those_the_module_names(self):
-        # Empty until a change is made to the code after the table's first
-        # record (PROTOCOL.md): the mechanism is TASK30's.
+        # Appended when the code changes after the table's first record
+        # (PROTOCOL.md): the mechanism is TASK30's. 40e176538f is the code
+        # before the harness gave its children /dev/null for stdin.
         import task30_followup as f
         table = f.TABLE
-        self.assertEqual((f.DRIVERS, f.ENGINES, f.ACCEPTANCE,
-                          f.SEALED_HISTORY), ((), (), (), {}))
+        self.assertEqual(
+            (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, f.SEALED_HISTORY),
+            ((dict(bytes=6360,
+                   sha256="287a3140d4bd12567ca4fcf8510d2c6a"
+                          "111b96116db8ebff9461905920fe8ebd"),),
+             (dict(bytes=190317,
+                   sha256="6fbc62fac47439a5a7ad13dd1f2edf61"
+                          "62729a15f7cb7d6c28434f1a4ee06ac3"),),
+             (dict(bytes=39557,
+                   sha256="1076ad0d8f984a9081eaa2408554a483"
+                          "2a0f3c092f6c5be25820537fa3c1a8e6"),),
+             {"task30_grid.py": (dict(
+    bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
+                   "ca43853d5b5cccf4e0dc34cd38dc9978"),),
+              "../compatibility/run_paired.py": (dict(
+                  bytes=49616, sha256="52622f55fa6399bd2df1557faeb0d881"
+                                 "8358e6c46695487fd70e036f3c1fa4c7"),),
+              "task29_gate.py": (dict(
+                  bytes=9766, sha256="2e7a4f8db0bb4bc98a37b4500b88b209"
+                                 "6c979c495bcd3cab4a63d184f332d16e"),)}))
         self.assertEqual((table.drivers, table.engines,
                           table.layout_acceptance, table.acceptance,
                           table.sealed_history),
-                         (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, (), {}))
+                         (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, (),
+                          f.SEALED_HISTORY))
         # An older seal of a listed file is accepted by check_code, the
         # mechanism the history appends to.
         code = dict(f.ENGINE.code_now(),
