@@ -19,9 +19,12 @@ the record of the private trees) and returns the cell's identity row:
   iteration and the number of samples. Counts that depend on the host (the
   calibration batches and their times) are not part of it.
 
-The row is `identical` only when both lists of differences are empty.
-Everything is re-derived from the archived folder, so `cell` is also the
-replay (task31_grid.py `identity-replay`).
+The row is `identical` when both lists of differences are empty,
+`attributed` when every difference of the closure is of a file of the
+reviewed table (task31_attribution.py: the same blobs on the two sides as the
+table names, the elaboration order and the heap equal, the work equal), and
+`different` otherwise. Everything is re-derived from the archived folder, so
+`cell` is also the replay (task31_grid.py `identity-replay`).
 """
 import gzip
 import hashlib
@@ -32,6 +35,7 @@ from pathlib import Path
 import acceptance as a
 import audit_evidence as ae
 from performance_schema import require
+import task31_snapshot as snap
 
 SIDES = ("baseline", "candidate")
 SNAPSHOT = "private-snapshot.json"
@@ -106,12 +110,33 @@ def closure(manifest, receipt, snapshot, side):
     require(side in snapshot and snapshot[side]["root"] == str(private),
             "the snapshot is not of the %s private tree" % side)
     files = snapshot[side]["files"]
+    texts = snapshot[side].get("texts", {})
+    names = snapshot[side].get("spellings")
+    require(isinstance(names, list) and str(private) in names,
+            "the snapshot does not record the spellings of the root")
 
     def product(raw):
+        """The record of a product, its digests derived again from its
+        text: the raw one must be the runner's, the normalized one is
+        computed here (a file above the snapshot's limit has none to
+        compute, and its normalized digest is its raw one)."""
         name = relative(raw, private, "private product")
         found = files.get(name)
         require(found is not None and len(found) == 3, "the snapshot lacks "
                 "the product " + name)
+        if found[0] > snap.LIMIT:
+            require(found[1] == found[2], "the snapshot normalizes a file "
+                    "above its limit: " + name)
+            return name, found
+        require(name in texts, "the snapshot lacks the text of the "
+                "product " + name)
+        data = texts[name].encode("latin-1")
+        require(len(data) == found[0] and
+                hashlib.sha256(data).hexdigest() == found[1],
+                "the text of the product %s is not its recorded file" % name)
+        require(hashlib.sha256(snap.normalize(data, names)).hexdigest() ==
+                found[2], "the normalized digest of %s is not that of its "
+                "text" % name)
         return name, found
 
     events = receipt["result"]["events"]
@@ -182,7 +207,13 @@ def compare(base, cand):
                     baseline=one["products"].get(product),
                     candidate=two["products"].get(product)))
     if base["order"] != cand["order"]:
-        found.append(dict(kind="order", name="elaboration order"))
+        one, two = base["order"], cand["order"]
+        index = next((i for i, pair in enumerate(zip(one, two))
+                      if pair[0] != pair[1]), min(len(one), len(two)))
+        found.append(dict(
+            kind="order", name="elaboration order", index=index,
+            baseline=one[index] if index < len(one) else None,
+            candidate=two[index] if index < len(two) else None))
     if base["heap"] != cand["heap"]:
         found.append(dict(kind="heap", name="initial heap sources",
                           baseline=len(base["heap"]),
@@ -225,8 +256,59 @@ def work_differences(base, cand):
             if base.get(key) != cand.get(key)]
 
 
-def cell(folder, case, size, baseline, candidate, samples=3):
-    """The identity row of one archived cell, re-derived from its folder."""
+def attribute(different, closures, manifest, entries):
+    """Split the differences of a cell into the attributed ones and the
+    rest. A difference is attributable only if
+
+    - its kind is `source`, or `product` of the same entry;
+    - its entry is a private file (`private/NAME`), which both selections
+      take from one git path P;
+    - P is an entry of the reviewed table, of kind `source`, whose
+      baseline blob is the blob the baseline selection took the file from
+      and whose candidate blob is the candidate selection's.
+
+    A shared-file difference cannot occur in this harness (both sides read
+    the one checkout), and an `only-*`, `physical`, `order` or `heap`
+    difference is never attributable. Returns ({P: record}, the rest)."""
+    by_path = {e["path"]: e for e in entries}
+
+    def selected(side, name):
+        for found in manifest["selections"][side]["sources"]:
+            if Path(found["git_path"]).name == name:
+                return found
+        return None
+
+    attributed, rest = {}, []
+    for found in different:
+        entry = found["name"].split(" ")[0]
+        kind, _, name = entry.partition("/")
+        one = two = None
+        if found["kind"] in ("source", "product") and kind == "private":
+            one, two = selected("baseline", Path(name).name), \
+                selected("candidate", Path(name).name)
+        reviewed = None
+        if one is not None and two is not None and \
+                one["git_path"] == two["git_path"]:
+            reviewed = by_path.get(one["git_path"])
+        if reviewed is None or reviewed["kind"] != "source" or (
+                one["git_blob"], two["git_blob"]) != (
+                reviewed["baseline_blob"], reviewed["candidate_blob"]):
+            rest.append(found)
+            continue
+        record = attributed.setdefault(reviewed["path"], dict(
+            path=reviewed["path"], entry=entry, kinds=[],
+            baseline_blob=one["git_blob"], candidate_blob=two["git_blob"],
+            baseline_sha256=closures["baseline"]["entries"][entry]
+            ["source"], candidate_sha256=closures["candidate"]["entries"]
+            [entry]["source"], reason=reviewed["reason"]))
+        if found["kind"] not in record["kinds"]:
+            record["kinds"] = sorted(record["kinds"] + [found["kind"]])
+    return attributed, rest
+
+
+def cell(folder, case, size, baseline, candidate, samples=3, entries=()):
+    """The identity row of one archived cell, re-derived from its folder.
+    `entries` is the reviewed table of attributions (task31_attribution)."""
     folder = Path(folder)
     manifest = json.loads((folder / "manifest.json").read_text())
     receipts = checked(folder, manifest, case, size, baseline, candidate,
@@ -237,11 +319,15 @@ def cell(folder, case, size, baseline, candidate, samples=3):
     works = {side: work(receipts[side]) for side in SIDES}
     different = compare(closures["baseline"], closures["candidate"])
     unequal = work_differences(works["baseline"], works["candidate"])
+    attributed, rest = attribute(different, closures, manifest, entries)
     row = dict(
         case=case, size=size, name="%s-%d" % (case, size),
-        status="identical" if not different and not unequal
-        else "different",
-        closure_differences=different, work_differences=unequal,
+        status="different" if rest or unequal else
+        "attributed" if attributed else "identical",
+        closure_differences=different, unattributed_differences=rest,
+        work_differences=unequal,
+        attributed=sorted(attributed.values(), key=lambda r: r["path"]),
+        attribution_table=digest(list(entries)),
         closure={side: dict(
             digest=digest([closures[side]["entries"],
                            closures[side]["order"],
@@ -252,8 +338,11 @@ def cell(folder, case, size, baseline, candidate, samples=3):
                        for k in closures[side]["entries"]),
             heap=len(closures[side]["heap"])) for side in SIDES},
         work={side: works[side] for side in SIDES},
-        repo_files=repo_files(closures["baseline"], closures["candidate"],
-                              manifest, folder))
+        head=manifest.get("head"), dirty=[
+            d for d in manifest.get("dirty") or [] if ".agent-files" not in
+            str(d)], inputs=digest(manifest["inputs"]),
+        tools=digest(manifest["tools"]))
+    row.update(files_of(closures, manifest))
     return row
 
 
@@ -266,35 +355,70 @@ def tracked(path):
         "%s%sScript.sml" % (found.group(1) or "", found.group(2))
 
 
-def repo_files(base, cand, manifest, folder):
+def private_file(name, physical, selected, repo):
+    """The tracked file a private file of one side is built from, or None
+    for an installed fixture. It is a selected simplifier source (by its
+    name, the sources are flattened), else the shared source the manifest
+    says a relocated dependency was copied from. Any other private file is
+    refused: it must be a fixture the runner installed (the manifest's
+    `fixture_products`), so that no private file goes unmapped."""
+    git_paths = {Path(s["git_path"]).name: s["git_path"]
+                 for s in selected["sources"]}
+    products = (selected.get("shared_dependencies") or {}).get(
+        "products") or {}
+    origin = {key: Path(info["source"]).relative_to(repo).as_posix()
+              for key, info in products.items() if "source" in info and
+              Path(info["source"]).is_absolute() and
+              Path(info["source"]).is_relative_to(repo)}
+    if Path(name).name in git_paths:
+        return git_paths[Path(name).name]
+    if physical in origin:
+        return tracked(origin[physical])
+    if name in origin:
+        return tracked(origin[name])
+    require(name in (selected.get("fixture_products") or {}),
+            "a private file is neither a selected source, a relocated "
+            "dependency nor an installed fixture: " + name)
+    return None
+
+
+def files_of(closures, manifest):
+    """Per side, the tracked files of the process: `repo_files` (the
+    ones it elaborated), `loaded_files` (all it loaded or found loaded,
+    elaborated or not) and `heap_files` (the initial heap's)."""
+    repo = Path(manifest["repo"])
+    used, loaded, heap = {}, {}, {}
+    for side in SIDES:
+        selected = manifest["selections"][side]
+        one, two = set(), set()
+        for name, entry in closures[side]["entries"].items():
+            kind, _, rest = name.partition("/")
+            if kind == "shared":
+                found = tracked(rest)
+            else:
+                found = private_file(rest, entry["physical"], selected,
+                                     repo)
+            if found is not None:
+                two.add(found)
+                if entry["used"]:
+                    one.add(found)
+        three = set()
+        for spelled in closures[side]["heap"]:
+            kind, _, rest = spelled.partition("/")
+            found = tracked(rest) if kind == REPO else \
+                private_file(rest, rest, selected, repo)
+            if found is not None:
+                three.add(found)
+        used[side], loaded[side], heap[side] = (
+            sorted(one), sorted(two), sorted(three))
+    return dict(repo_files=used, loaded_files=loaded, heap_files=heap)
+
+
+def repo_files(base, cand, manifest, folder=None):
     """The tracked repository files the two processes elaborated (`use`;
     the heap's are not): shared sources as they are (a generated theory as
     its script), private ones through the physical source they were copied
     from where the manifest names it (a shared dependency), else by their
     name below src/simp/src (the selected simplifier sources)."""
-    repo = Path(manifest["repo"])
-    out = {}
-    for side, found in (("baseline", base), ("candidate", cand)):
-        selected = manifest["selections"][side]
-        git_paths = {Path(s["git_path"]).name: s["git_path"]
-                     for s in selected["sources"]}
-        origin = {name: Path(info["source"]).relative_to(repo).as_posix()
-                  for name, info in selected["shared_dependencies"][
-                      "products"].items() if "source" in info and
-                  Path(info["source"]).is_absolute() and
-                  Path(info["source"]).is_relative_to(repo)}
-        files = set()
-        for name, entry in found["entries"].items():
-            if not entry["used"]:
-                continue
-            kind, _, rest = name.partition("/")
-            if kind == "shared":
-                files.add(tracked(rest))
-            elif Path(rest).name in git_paths:
-                files.add(git_paths[Path(rest).name])
-            elif entry["physical"] in origin:
-                files.add(tracked(origin[entry["physical"]]))
-            elif rest in origin:
-                files.add(tracked(origin[rest]))
-        out[side] = sorted(files)
-    return out
+    return files_of(dict(baseline=base, candidate=cand), manifest)[
+        "repo_files"]

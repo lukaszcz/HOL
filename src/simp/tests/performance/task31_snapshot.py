@@ -14,10 +14,17 @@ with the directory of the side replaced by `<PRIVATE>`.
 The record is `private-snapshot.json` in the runner's output directory:
 
     {"<side>": {"root": ABSOLUTE,
-                "files": {RELATIVE: [bytes, raw, normalized]}}}
+                "spellings": [the spellings of the root, longest first],
+                "files": {RELATIVE: [bytes, raw, normalized]},
+                "texts": {RELATIVE: the file's text}}}
 
-(`<side>` is the name of the directory, `baseline` or `candidate`). It reads
-the trees and changes nothing in them. Usage: task31_snapshot.py RUNNER-ARGS.
+(`<side>` is the name of the directory, `baseline` or `candidate`). A file
+above LIMIT is recorded by its raw hash alone (the normalized one is the
+raw one). The text (latin-1, so that any bytes are kept) is recorded of
+every file but a source (`.sml`, `.sig`) up to LIMIT: the loader
+descriptors are a few hundred bytes, and with their text the offline
+replay recomputes the normalized digest instead of reading it. It reads the
+trees and changes nothing in them. Usage: task31_snapshot.py RUNNER-ARGS.
 """
 import hashlib
 import json
@@ -33,9 +40,25 @@ RUNNER = HERE.parent / "compatibility" / "run_paired.py"
 SNAPSHOT = "private-snapshot.json"
 PLACEHOLDER = b"<PRIVATE>"
 PREFIX = "simp-paired-"
-# A file above this size is not text that names its directory (a theory's
-# data), and is recorded by its raw hash alone.
-LIMIT = 32 * 1024 * 1024
+# A file above this size is not text that names its directory (a loader
+# descriptor is a few hundred bytes; a theory's data is large), and is
+# recorded by its raw hash alone.
+LIMIT = 256 * 1024
+SOURCE_SUFFIXES = (".sml", ".sig")
+
+
+def spellings(root):
+    """The spellings of a root a file may name, longest first."""
+    return sorted({str(root), os.path.realpath(root)},
+                  key=lambda s: (-len(s), s))
+
+
+def normalize(data, names):
+    """`data` (bytes) with every spelling of the root replaced by the
+    placeholder."""
+    for spelling in names:
+        data = data.replace(spelling.encode(), PLACEHOLDER)
+    return data
 
 
 def digests(root, path):
@@ -45,16 +68,15 @@ def digests(root, path):
     data = path.read_bytes()
     raw = hashlib.sha256(data).hexdigest()
     if len(data) > LIMIT:
-        return [path.stat().st_size, raw, raw]
-    for spelling in {str(root), os.path.realpath(root)}:
-        data = data.replace(spelling.encode(), PLACEHOLDER)
-    return [path.stat().st_size, raw, hashlib.sha256(data).hexdigest()]
+        return [len(data), raw, raw]
+    return [len(data), raw, hashlib.sha256(
+        normalize(data, spellings(root))).hexdigest()]
 
 
 def snapshot(root):
     """The record of one private tree."""
     root = Path(root)
-    files = {}
+    files, texts = {}, {}
     for folder, _, names in os.walk(root):
         for name in names:
             path = Path(folder) / name
@@ -63,7 +85,12 @@ def snapshot(root):
                 files[relative] = ["link", os.readlink(path)]
             elif path.is_file():
                 files[relative] = digests(root, path)
-    return {"root": str(root), "files": dict(sorted(files.items()))}
+                if files[relative][0] <= LIMIT and \
+                        not relative.endswith(SOURCE_SUFFIXES):
+                    texts[relative] = path.read_bytes().decode("latin-1")
+    return {"root": str(root), "spellings": spellings(root),
+            "files": dict(sorted(files.items())),
+            "texts": dict(sorted(texts.items()))}
 
 
 def install(output):
