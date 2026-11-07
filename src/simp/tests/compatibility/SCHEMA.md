@@ -83,8 +83,8 @@ success and failure, after processes terminate.
   PATH, TERM, LC_ALL, TZ. Inherited HOL*, POLY*, ML*, PAIR_* are stripped.
 - `tools`: path → `{sha256, bytes}` for runtime, heaps, Holmake, poly executable
   and project config; `poly_version`: captured process receipt of `poly -v`
-  (the banner and `RTS version: ...`; records made before 2026-11-05 hold
-  the output of `poly --version`, the banner alone).
+  (the banner and `RTS version: ...`; records made by code up to
+  `40e176538f` hold the output of `poly --version`, the banner alone).
 - `inputs`: maintained fixture/driver/schema path → `{sha256, bytes}`.
 - `selections`: baseline/candidate → requested ref, resolved revision, private
   path, exact Git source inventory (`git_path`, `git_blob`, `private_path`,

@@ -111,15 +111,24 @@ class Table(unittest.TestCase):
         # later entry is task29_gate.py (the Y records), the file before the
         # "exclusive window" wording was dropped; the follow-up's own table
         # (task30_followup.py) holds the seals its records carry.
-        self.assertEqual([d["bytes"] for d in t30.DRIVERS], [9634])
-        self.assertEqual([d["bytes"] for d in t30.ENGINES], [131311])
-        self.assertEqual([d["bytes"] for d in t30.ACCEPTANCE], [38678])
+        def seals(entries):
+            return [(d["bytes"], d["sha256"]) for d in entries]
+        self.assertEqual(seals(t30.DRIVERS), [(
+            9634, "b958adae97df21cbcd5b1b72b5d47fa5455854aec6f45c133f"
+            "042fb0e883586f")])
+        self.assertEqual(seals(t30.ENGINES), [(
+            131311, "b32f98ecee9fd2dbbebf5c21ca2ca0537442b3ba1b070861fe"
+            "00a68910cd7d49")])
+        self.assertEqual(seals(t30.ACCEPTANCE), [(
+            38678, "108a0d0827ec6848a0c1e2e6987f9f8002591ac24498c7119c"
+            "f5f58f14725b83")])
         history = t30.SEALED_HISTORY
-        self.assertEqual(
-            [d["bytes"] for d in history["../compatibility/run_paired.py"]],
-            [48705])
-        self.assertEqual([d["bytes"] for d in history["task29_gate.py"]],
-                         [9766])
+        self.assertEqual(seals(history["../compatibility/run_paired.py"]), [(
+            48705, "81baeb647f95850f267e3f72b333cc2a4921e342070c92a951"
+            "a1e34583738dac")])
+        self.assertEqual(seals(history["task29_gate.py"]), [(
+            9766, "2e7a4f8db0bb4bc98a37b4500b88b2096c979c495bcd3cab4a"
+            "63d184f332d16e")])
 
     def test_the_baseline_sources_and_sealed_files_are_named(self):
         table = t30.TABLE

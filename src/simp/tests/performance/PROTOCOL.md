@@ -1644,8 +1644,8 @@ table of its own on the shared engine, with the following additions to it.
     repository's (`Table.root`), the same whatever checkout `--repo` names,
     and a sealed file outside that repository is refused.
 - **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
-  `ACCEPTANCE` and `SEALED_HISTORY`, each with the entries of the
-  `40e176538f` round (see "Standard input and the version query"), passed to
+  `ACCEPTANCE` and `SEALED_HISTORY`, each with the seals of
+  `40e176538f` (see "Standard input and the version query"), passed to
   its table as TASK30's are to its own: `check_code` accepts a record whose
   driver, engine or acceptance seal is the current one or one listed, and a
   sealed file's seal is the current one or one of its history. They are read
@@ -2205,13 +2205,13 @@ final release gate. See [`README.md`](README.md) for maintained check targets.
 
 ## Standard input and the version query
 
-Two rounds touched every child of the harness. The first (`40e176538f`)
-gave `run_paired.execute`, `loading.execute`, `acceptance.run_logged` and
+The change after `40e176538f` touched every child of the harness. It gave
+`run_paired.execute`, `loading.execute`, `acceptance.run_logged` and
 `verify_builds` `/dev/null` as standard input, queried the compiler with
 `poly -v`, and dropped "exclusive window" from live code. `poly --version` is
 no option: Poly/ML enters the top level and reads stdin, which hangs on an
-inherited open pipe. The second round (this one) answered a review of the
-first:
+inherited open pipe. The seal histories below hold the seals of the files at
+`40e176538f`. In detail:
 
 - **Runners sealed by a checksum manifest keep `poly --version`** and their
   text as it was: `fragments/assembly/run_assembly.py`
@@ -2223,7 +2223,13 @@ first:
   `poly --version` reads end of file and prints exactly
   `Poly/ML 5.9.2 Release` (exit 0): safe, and the old checks of that text
   (`run_assembly.py` requires the exact line) still hold. Every manifest
-  passes `sha256sum -c` again, from the directories their handoffs name.
+  checks exactly as at `40e176538f`, from the directories their handoffs
+  name: `compatibility/SHA256SUMS`, `fragments/assembly/SHA256SUMS`,
+  `tactics/performance/evidence/{SHA256SUMS,FOLLOWUP_SHA256SUMS}` pass fully;
+  `exclusions/performance/evidence/SHA256SUMS` (140 of 146) and `GC_SHA256SUMS`
+  (35 of 37) fail only on logs that were never committed
+  (`evidence/{cleanup-checks,final-tests,gc-checks-wrong-cwd,gc-checks,
+  offline-tests,recheck}.log`).
   Unsealed runners use `-v`; no check compares raw `-v` output with a fixed
   `--version` string.
 - **Version comparison.** `acceptance.poly_version_matches`: a recorded
@@ -2234,7 +2240,8 @@ first:
 - **`api-audit/run.py`** queries `poly -v` and runs `selftest.exe` with
   `/dev/null` as stdin and timeouts (30 s, 1800 s). No retained receipt or
   manifest seals it other than the receipts' own `sources` entry, which
-  `loading.py` compares in the tree the receipt was made in; the fresh
+  `loading.semantic_gate` compares with the api-audit files of the checkout
+  being measured, so receipts made before this change are refused; the fresh
   eight-process receipt TASK31 needs is made by the new `run.py`.
 - **Older audits** `check_task27_docs.py`, `run_task22_negative.py`,
   `audit_task27.py`, `compatibility/interfaces/check_design.py` and
@@ -2253,11 +2260,15 @@ first:
   `SEALED_HISTORY` `task30_grid.py` 11833, `run_paired.py` 49616,
   `task29_gate.py` 9766), and `task30_dispose.HISTORY` those of
   `followup-r2/disposition.json`; all are the blobs of `40e176538f`. Later
-  edits of the same files in this round (usage text, style) need no entry:
+  edits of the same files after that commit (usage text, style) need no entry:
   no record carries their new seals.
-- **Nothing measured changes.** TASK30's runs were launched with
-  `</dev/null`, so their measured children already read `/dev/null`; the
-  queried version differs in output only.
+- **Nothing measured changes.** TASK30's follow-up pilot, its
+  resume and the void attempt `49242d4e` ran with the caller's stdin (only
+  `followup-r2` was launched with `</dev/null`). The change alters nothing
+  measured: a child that completed never read stdin, and only the
+  `poly --version` query blocked, which made a cell a protocol failure,
+  never a measurement. Giving it `/dev/null` turns that hang into end of
+  file.
 - Wording: a past measurement keeps saying it ran in an exclusive window;
   the requirement lists of TASK29A, `RUNTIME_POOLS.md`, `README.md` and
   `TASK_28_HANDOFF.md` carry a dated amendment (2026-11-05: waived by the

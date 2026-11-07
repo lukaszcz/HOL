@@ -225,7 +225,7 @@ class OpenStdinTests(unittest.TestCase):
         poly = shutil.which("poly")
         if poly is None:
             self.skipTest("poly is unavailable")
-        result, elapsed = self.run_with_open_stdin([poly, "-v"])
+        result, _ = self.run_with_open_stdin([poly, "-v"])
         self.assertEqual(result["exit"], 0)
         self.assertRegex(result["stdout"], r"^Poly/ML .*RTS version: ")
 
