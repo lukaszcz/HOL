@@ -2170,7 +2170,7 @@ gate does not claim a fresh run or independent loading acceptance.
 tests `test_startup_gate.py`) measures, in exact words of the TASK29B private
 runtime counter (all fields: total, native, rts, interpreter, code, and
 heap = total - code), what an ordinary process pays before and when it first
-uses the simplifier:
+uses the simplifier. One fresh process measures one kind:
 
   - `hol-startup`: `hol` on `hol.state`, the absolute counter at the first
     user code (a minimal prologue: FFI setup and one snapshot);
@@ -2179,109 +2179,115 @@ uses the simplifier:
   - `load-simpLib`, `load-congLib`: from `hol.state0`, a fresh
     `load "simpLib"` (then `load "pureSimps"`, then the same calls) and a
     fresh `load "congLib"`;
-  - `files-simpLib`: `load "simpLib"` with a bracket around every `use`.
-    Attribution only, never part of the decision.
+  - `files-simpLib`, `files-congLib`: the same loads with a bracket around
+    every `use` the loader makes (`Meta.loadPlan`), for attribution to
+    files. They take part in the decision (R2, R3).
 
 Every bracket is the TASK29B one (counter read from C storage after the
 bracket; nothing is decoded or printed inside it). An `empty` bracket is
-recorded in every process: it is the direct per-bracket instrumentation
-cost (0 words in every field in all recorded runs).
+recorded in every process. The words of a load that no file bracket covers
+are the loader gap: the load brackets minus the sum of the file brackets of
+the same image and sources.
 
-Trees are built by `startup_gate.py build`, which repeats the
-`bootstrap_probe.build_native_hol` procedure: one native Poly/ML, the
-private runtime and shim, and then one fresh `git clone --shared` per tree
-(`label=rev[+patch]`): `poly-includes.ML`, `smart-configure`, then
-`bin/build --no-cache -j2 --seq=tools/sequences/upto-parallel` with
-`env -i`-style environment (PATH, HOME=/nonexistent, TERM=dumb, LC_ALL=C,
-TZ=UTC, CONFIG_SITE=/dev/null, CC, CXX, HOLDIR). Everything is recorded in
-`lineage.json`. The develop `mktool` fix is applied as the recorded patch
+### Trees and images
+
+`startup_gate.py build` repeats the `bootstrap_probe.build_native_hol`
+procedure: one native Poly/ML, the private runtime and shim, and then one
+fresh `git clone --shared` per tree (`label=rev[+patch]`):
+`poly-includes.ML`, `smart-configure`, then `bin/build --no-cache -jN
+--seq=tools/sequences/upto-parallel` with an `env -i`-style environment
+(PATH, HOME=/nonexistent, TERM=dumb, LC_ALL=C, TZ=UTC, CONFIG_SITE=/dev/null,
+CC, CXX, HOLDIR). Everything is recorded in `lineage.json`. The develop
+`mktool` fix is applied to a baseline that lacks it as the recorded patch
 `startup_gate_mktool.patch` (`useB "theoryfiles"` in
-`src/portableML/rawtheory/mktool.ML`). The file is build tooling only: it
-is run by the build, is not in `Meta.loaded` or in the file records of any
-measured process and is not loaded by any client, so it cannot change a
-counted word (the gate asserts the loaded-module, file and structure lists
-per side and publishes their differences).
+`src/portableML/rawtheory/mktool.ML`), build tooling that no client loads.
 
-A decision uses four trees: baseline, candidate, a second clean build of the
-baseline (the control) and a second clean build of the candidate (repeat).
-Each experiment is 10 pairs in AB/BA order (smoke mode, fewer pairs, can
-never pass). The gate passes only if every field of every candidate-minus-
-baseline pair is exactly 0, the control is exactly 0 in every field of
-every pair, every side is deterministic across its runs, the foreign-thread
-counters read 0,0, the simplifier results are correct, and no extension
-module or structure (`*Ext`, `simpExtLib`, `congExtLib`, `SimpTracking`
-unless the baseline also has it) is loaded in an ordinary process. There is
-no tolerance, subtraction or outlier removal. `replay` recomputes the
-decision from the archive.
+Independent clean builds are separate images: the exported `hol.state0` and
+`hol.state` of two builds of one revision are not byte-identical, so an
+image is a unit of the experiment. The optional edits of a private tree that
+aim at identical exports (`GATE_BUILD_DETERMINISTIC=1`: one GC thread for
+`buildheap`, full collections before the export, `setarch -R`) are off
+unless set; they touch the private tree only and are recorded in the lineage
+(`hol_build_deterministic`, `hol_determinism_diff`, `hol_polyc_seal`).
 
-Image determinism (measured). The fresh-load brackets depend on the layout
-of the exported `hol.state0` image, and independent clean builds of one
-tree at one path do not give byte-identical images: the 3.3M-word
-`Trace.sml` step of `load "simpLib"` was 3,306,279 / 3,306,271 (`-j2`),
-3,306,249 / 3,306,303 (`-j1`), and for a fixed image the count is
-deterministic whichever tree is named. `hol-startup` and `hol-first-use`
-are not affected. Attempts to make the export deterministic
-(`GATE_BUILD_DETERMINISTIC=1`, the default of `build`, recorded as
-`hol_determinism_diff`): the whole build under `setarch -R` (ASLR off),
-`--gcthreads=1` for every `buildheap`, two `PolyML.fullGC` calls around
-`shareCommonData` before the heap export, and a `polyc` copy that does the
-same before `PolyML.export`. In isolation these make a saved child heap
-identical to within about 10 bytes (stock `poly`: 0 bytes), but in the
-real build `bin/hol`, `bin/Holmake`, `bin/build` and the three images still
-differ between two builds, so determinism was not reached and the exact rule
-cannot be kept for the load kinds. The residual load-kind noise between
-builds is a few tens of words in 1M (measured -12 and +4 on load; 8 to 54
-on the `Trace.sml` step).
+### Source exchange over a fixed image
 
-Decisions for the load kinds (`load-simpLib`, `load-congLib`):
+`Overlay` writes, before each process, the files of `src/simp/src` (sources
+and `.ui`/`.uo` load plans) in which the first baseline image and the first
+candidate image differ into the tree that the process uses, so that baseline
+and candidate simplifier sources are compiled over the same image and the
+same `HOLDIR`. Every image must hold the sources of its own side first; the
+trees are restored at the end. The blobs of every exchanged file and of
+every file the declaration names are recorded in `header.json`.
 
-  - `pass`: every field of every pair is exactly 0 (and the control is 0);
-  - `attributed`: the delta is reproducible (identical in all pairs), it
-    is carried entirely by files listed in the reviewed data file
-    `startup_gate_declared.json` (kind, `$(HOLDIR)/` file, reason; never
-    the command line; copied into `header.json`), the per-`use` brackets of
-    `files-simpLib` / `files-congLib` (candidate minus baseline, a file on
-    one side only counting in full) sum exactly to the load delta, and no
-    other bracket differs. Any word outside the declared files is `fail`.
-    The control and the repeat must still be exactly 0;
-  - `fail` otherwise, with the delta published.
+### Decision
 
-`hol-startup` and `hol-first-use` are always exact zero; no declaration
-applies to them.
+`startup_gate.py gate --base L1 L2 ... --candidate M1 M2 ...` runs, per
+kind, `--pairs` (10) rounds in AB/BA order over every image and both source
+variants. With at least two images per side and ten pairs:
 
-Because builds are not reproducible, `startup_gate.py images` gives the
-envelope variant: at least 5 independent clean images per side by the
-identical procedure, one process per image and kind plus a determinism
-repeat of each side's first image. `hol-startup` / `hol-first-use` must be
-identical across all images of both sides. For a load kind and every
-(bracket, field): `within` if all candidate images lie inside the
-[min, max] envelope of the baseline images, `shift` if all lie strictly
-above or all strictly below it, `mixed` otherwise. All within is `pass`;
-any `mixed` entry (and no failure) is `inconclusive`; a `shift` must sit on
-declared files (the per-file envelope), else `fail`; a declared shift is
-`attributed`. Fewer than 5 images is `smoke`. The envelope and per-image
-counts are published in `decisions.json`. No tolerance is assumed.
+  - R1 (image content). `hol-startup`, `hol-first-use` and the `startup` /
+    `empty` brackets of every `hol.state0` process are identical on every
+    image of both sides, in every field.
+  - R2 (sources, image fixed). On every image, candidate sources minus
+    baseline sources: the bracket of every file that is not declared is
+    exactly 0; each declared file's delta is exact and the same on every
+    image; the per-file deltas plus the loader gap equal the load delta,
+    with the loader gap exactly 0; every other bracket (the post-load
+    `SIMP_*` calls) is exactly 0. A declared entry that measures 0 fails.
+    This holds for `load-simpLib` and `load-congLib` alike.
+  - R3 (image content, sources fixed). With the baseline sources, every
+    bracket is identical across all images of both sides except the files of
+    the declared noise set. Such a file must be byte-identical between the
+    sides, must have an R2 delta of exactly 0 and must name a mechanism;
+    a noise file without a mechanism makes the decision `blocked`.
+  - Every process of a cell gives the same record; the foreign-thread
+    counters read 0,0; the simplifier results are correct.
+  - A module or structure that the candidate images or sources load and the
+    baseline never does fails, unless `candidate_only` declares it. Names
+    ending in `Ext` and the extension modules are only a label.
 
-Findings recorded with the gate:
+Decisions: `pass` (all rules hold, nothing declared carries words),
+`attributed` (all rules hold and the declared files carry exact words; it
+needs the sha256 of the not-client-visible record, `--record`), `blocked`
+(a noise file has no mechanism), `smoke` (fewer than two images per side or
+fewer than ten pairs; never a pass) and `fail` (with every reason). There is
+no tolerance, subtraction, envelope or outlier removal. `--null` runs the
+same rules for two sets of baseline images (the sides must have the same
+revision and patch); declared entries are ignored there.
 
-  - The +9 words at `hol` startup (830,137 against 830,128) are not
-    reproduced by the gate: `hol-startup` is 830,162 on every clean build
-    of develop, 40e176538f and the t31-src tip, with SimpTracking in the
-    candidate heap (0 delta). The Meta.loaded-records hypothesis is
-    refuted. The +9 came from the earlier probe mixing build procedures (a
-    toolchain heap against in-place local rebuilds), which this gate
-    forbids; those heaps no longer exist.
-  - The TASK30 `alloc` (1,014,533) and `alloc-z` (1,014,452) deltas differ
-    by 81 words with the same `src/simp/src`: they used different
-    toolchain builds (`toolchain` and `toolchain-z`, different harness
-    heads, directory names differing by 2 characters), hence different
-    `hol.state0` images. Image-to-image variation of tens of words per
-    load was measured here, so an 81-word difference over about 800
-    compiled files is the same order of magnitude (inferred; the retained
-    data cannot separate image layout from the 2-character path-length
-    difference). 1,016,803 (TASK29B `decisions.json`) and 1,014,092 (probe)
-    are likewise inferred to come from other images and path lengths, and
-    1,017,367 is not reproducible from retained evidence.
+`gate` refuses a setup with repeated image labels, HOLDIR lengths that
+differ, more than one revision or patch on a side, or different build flags
+between images.
+
+### Declaration
+
+`startup_gate_declared.json` (reviewed data, never the command line, copied
+into `header.json` with its sha256) holds:
+
+  - `entries`: a repository path, the exact baseline and candidate blob, the
+    load kinds the file may affect, a reason and a mechanism. A different
+    blob makes the file undeclared. An entry whose source is byte-identical
+    on both sides is allowed only because R2 measures a non-zero exact delta
+    on it, and its mechanism says why (signature matching, `open`);
+  - `noise`: a path, its blob, a reason and a mechanism or `null`;
+  - `candidate_only`: `module X` / `structure X` / `file X` names that the
+    candidate alone may load.
+
+### Archive and replay
+
+`gate` writes `records.json.gz` (one record per process), `header.json`
+(images and their seals, revisions, patch seals, determinism flags, HOLDIR
+and TMPDIR lengths, the lineage sha256, the runtime and shim seals, the
+controls receipt, the harness blobs, the declaration text and sha256, the
+exchanged blobs, the not-client-visible record sha256), `decisions.json`,
+`RESULTS.md` and `receipt.json` (the sha256 of each). `replay --output DIR`
+checks the receipt and the declaration seal and recomputes `decisions.json`
+and `RESULTS.md` from the records alone.
+
+`cell` repeats the TASK29B startup bracket of two revisions under chosen
+path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
+TASK29B startup delta depends on the image and on path lengths.
 
 ## Matrix boundaries and final evidence
 
