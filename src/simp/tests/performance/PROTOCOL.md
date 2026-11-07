@@ -1732,13 +1732,18 @@ table of its own on the shared engine, with the following additions to it.
   in the folder of its `--output` (one runner manifest per runner command),
   and no runner `manifest.json` in an archive records an admitted run
   (`runs` empty and `success` false); and the ledger closes the attempt
-  `inconclusive`, which is the status of a grid whose every cell is a
-  protocol failure (no cell passes or fails). Anything else is refused
-  (exit 3), naming the attempt, its status, its output and the failed
-  condition: an interrupted attempt, one with missing cells or with no
-  close line, and a runner killed while measuring (no manifest) are refused
-  too, as they may have
-  measured. The follow-up writes no `final.json`: the TASK30 decision with
+  `inconclusive` with exactly one close line and no resume line (a
+  resumed attempt may have drawn samples in a cell it cleared), which is
+  the status of a grid whose every cell is a protocol failure (no cell
+  passes or fails). A second stage closes with the combined status of both
+  stages, so a void second stage is accepted only when its first stage has
+  no fail; a fail in the first stage is final and the follow-up blocks
+  anyway. Anything else is refused (exit 3), naming the attempt, its
+  status, its output and the failed condition: an interrupted or resumed
+  attempt, one closed more than once, one with missing cells or with no
+  close line, and a runner killed while measuring (no manifest) are
+  refused too, as they may have measured. The follow-up writes no
+  `final.json`: the TASK30 decision with
   these two cells in place of the replaced ones is the disposition step's
   (`task30_dispose.py`), which owns `final.json` and builds it from the
   replayed reports of both grids.

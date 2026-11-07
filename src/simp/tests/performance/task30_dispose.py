@@ -660,18 +660,23 @@ def runner_failure(folder, name):
     return None
 
 
-def void_failure(new, key, output, status=None):
-    """None when the attempt `key` (id, stage), whose ledger output is
-    `output` and whose last ledger status is `status`, is void, else the
+def void_failure(new, key, output, row=None):
+    """None when the attempt `key` (id, stage), whose ledger output is `output`
+    and whose ledger row (`Ledger.attempts`) is `row`, is void, else the
     text of the condition it fails. Void: the output directory exists and
     holds the inventory of that attempt, which has a row for every cell it
     measures (those of the follow-up for a first stage, those of its own
     plan for a second); every row is a protocol failure (`protocol` present
     and false) whose archive exists and is the sealed one and shows no
-    measurement (`runner_failure`); and the ledger closes the attempt
-    `inconclusive`, the status of a grid in which every cell is a protocol
-    failure (`timing_grid` summary: no cell passes or fails). An attempt
-    left open, or closed otherwise, may have measured."""
+    measurement (`runner_failure`); and the ledger has no resume line for
+    the attempt (a resumed attempt may have drawn samples in a cell it
+    cleared) and exactly one close line, whose status is `inconclusive`,
+    the status of a grid in which every cell is a protocol failure
+    (`timing_grid` summary: no cell passes or fails). A second stage closes
+    with the combined status of both stages, so a void second stage is
+    accepted only when its first stage has no fail; a fail there is final
+    and the follow-up blocks anyway. An attempt left open, resumed, closed
+    more than once or closed otherwise may have measured."""
     if output is None or not Path(output).is_dir():
         return "its output directory is missing"
     output = Path(output)
@@ -714,9 +719,22 @@ def void_failure(new, key, output, status=None):
             failed = runner_failure(folder, name)
             if failed is not None:
                 return failed
+    status = row["status"] if row else None
     if status is None or status == "interrupted":
         return "its ledger has no close (it was left open)"
-    if status != "inconclusive":
+    if row["resumed"]:
+        return ("it was resumed: a resumed attempt may have drawn samples "
+                "in the cell it cleared")
+    if row["statuses"] != ["inconclusive"]:
+        if len(row["statuses"]) > 1:
+            return ("it closed more than once, as %s: a repeated "
+                    "attempt may have measured" % ", ".join(
+                        row["statuses"]))
+        if status == "fail" and key[1] == "second":
+            return ("its ledger closes it fail: a second stage closes "
+                    "with the combined status of both stages, so a fail "
+                    "in its first stage is final and blocks the "
+                    "follow-up, whatever this stage measured")
         return ("its ledger closes it %s, not inconclusive, the status of "
                 "a grid whose every cell is a protocol failure" % status)
     return None
@@ -730,8 +748,12 @@ def attempts_of(args, new, judged):
     measurement, so they are no outcome and the settings may be run again as
     a new attempt. An attempt id is of one output (every output its open,
     resume and close lines name), and a judged one is of the output named
-    for it. Any other attempt, an interrupted one included, may have
-    measured, and is refused: it needs a new policy decision, or `--followup`
+    for it. A void attempt has no resume line and one close line,
+    `inconclusive`; a second stage closes with the combined status of both
+    stages, so a void one is accepted only when its first stage has no
+    fail (a fail there blocks the follow-up anyway). Any other attempt, an
+    interrupted or resumed one included, may have measured, and is
+    refused: it needs a new policy decision, or `--followup`
     names the wrong stage (name the final one). [{attempt, status, output,
     judged, void}], in the order the ledger names them."""
     path = new.attempts_file(args, False)
@@ -766,7 +788,7 @@ def attempts_of(args, new, judged):
                       "ledger has it in %s" % (
                           key[0], judged[key[0]], output))
         else:
-            failed = void_failure(new, key, output, row["status"])
+            failed = void_failure(new, key, output, row)
             a.require(
                 failed is None,
                 "follow-up attempt %s (status %s, output %s) is not void: "

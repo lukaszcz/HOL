@@ -1816,6 +1816,49 @@ class Attempts(Toy):
             attempt, "interrupted", out,
             r"its ledger has no close \(it was left open\)"), **given)
 
+    def append_lines(self, out, attempt, *events):
+        for event, status in events:
+            fields = dict(status=status) if status else {}
+            tg.ledger_append(
+                self.attempts, event=event, stage="first",
+                table=self.fgrid.t.name, attempt=attempt, candidate="c",
+                counts_file="x", counts="y", seed="f0", output=str(out),
+                checkout=str(self.repo), **fields)
+
+    @after_void
+    def test_a_resumed_void_attempt_is_refused(self):
+        given = self.rerun()
+        attempt, out = self.open_void_copy()
+        self.append_lines(out, attempt, ("resume", None),
+                          ("close", "inconclusive"))
+        self.refuses(self.reasons(
+            attempt, "inconclusive", out,
+            "it was resumed: a resumed attempt may have drawn samples in "
+            "the cell it cleared"), **given)
+
+    @after_void
+    def test_a_void_attempt_closed_twice_is_refused(self):
+        given = self.rerun()
+        attempt, out = self.open_void_copy()
+        self.append_lines(out, attempt, ("close", "inconclusive"),
+                          ("close", "inconclusive"))
+        self.refuses(self.reasons(
+            attempt, "inconclusive", out,
+            "it closed more than once, as inconclusive, inconclusive: "
+            "a repeated attempt may have measured"), **given)
+
+    @after_void
+    def test_a_plain_open_and_inconclusive_close_is_void(self):
+        given = self.rerun()
+        attempt, out = self.open_void_copy()
+        self.append_lines(out, attempt, ("close", "inconclusive"))
+        found = td.attempts_of(
+            argparse.Namespace(ledger=self.attempts), self.fgrid, {
+                self.load(given["followup"] / "inventory.json")[
+                    "attempt"]: given["followup"].resolve()})
+        self.assertIn((attempt, True), [(x["attempt"], x["void"])
+                                        for x in found])
+
     @after_void
     def test_a_close_with_another_status_is_refused(self):
         given = self.rerun()
@@ -1911,6 +1954,34 @@ class Attempts(Toy):
                 "stage: its second stage is still to come"):
             self.dispose(record=True, followup=out,
                          followup_allocation=self.allocz)
+
+    @after_void
+    def test_a_void_second_stage_closed_fail_says_why(self):
+        self.new_control = lambda c, s, pairs, seed: (
+            ttg.WIDE if (c, s) == ttf.CELL_B else ttg.GOOD)
+        out, code, text = self.run_followup("first-open")
+        self.assertEqual(code, 2, text)
+        self.protocol_failure = lambda case, size: True
+        ext, code, text = self.extend_followup(out)
+        self.assertEqual(code, 2, text)
+        later = self.load(ext / "inventory.json")["attempt"]
+        lines = self.attempts.read_text().splitlines()
+        edited = []
+        for line in lines:
+            record = json.loads(line)
+            if record.get("event") == "close" and \
+                    record.get("attempt") == later:
+                record["status"] = "fail"
+            edited.append(json.dumps(record))
+        self.attempts.write_text("\n".join(edited) + "\n")
+        with self.assertRaisesRegex(
+                ValueError, "its ledger closes it fail: a second stage "
+                "closes with the combined status of both stages, so a "
+                "fail in its first stage is final"):
+            td.attempts_of(
+                argparse.Namespace(ledger=self.attempts), self.fgrid, {
+                    self.load(out / "inventory.json")["attempt"]:
+                        out.resolve()})
 
 
 class Ordering(Toy):
