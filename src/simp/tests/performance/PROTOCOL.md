@@ -2024,6 +2024,67 @@ CLI exit codes: 0 = all reported candidate metrics/slopes pass; 1 = any fails;
 means the experiment completed and validated, **not that its metrics passed**.
 No overall performance acceptance decision substitutes for per-metric decisions.
 
+#### TASK31 allocation gate (gate 2)
+
+`allocation_matrix.py run --task task31` counts the allocation of the
+ClientPerformance cells of TASK31 with the TASK29B counter, under the
+TASK29B/TASK30 decision rule unchanged: exact equality of every field of the
+steady, first-operation and structural records, GC reported and not gated, the
+baseline/baseline control identical, the candidate equal to the baseline
+(`pass`), different (`fail`) or not decidable (`inconclusive`).
+
+**One mechanism, the fixture chosen by the case.** The `fixture` a case has in
+`matrix.json` selects a family (`allocation_matrix.FAMILIES`): the
+`MatrixPerformance.sml` cases keep `MatrixAllocation.sml`; the
+`ClientPerformance.sml` cases use `ClientAllocation.sml`. A task whose cases
+span two families is refused. Both are installed in the private directory as
+`Performance.sml` with `MatrixSupport.sml`, so the protocol checks, the
+brackets and the work phase are the same.
+
+**ClientAllocation.sml** has the workloads of `ClientPerformance.sml` verbatim
+(`conversion`, `traversal`, `tacticWork`, `dependencyWork`, `choose`, without
+the downstream cases) inside the driver of `MatrixAllocation.sml` word for
+word; `test_allocation_client.py` pins both. The only additions are the lines
+that end in a comment saying `alloc`: each workload keeps its result and
+fingerprints it (`MatrixSupport.thmText`, with the residual goals for tactics),
+and the use phase re-applies the conversion or tactic. The structural work row
+(`work.first`, `work.second`, `work.use`, `result.digest`) is therefore the
+same kind of evidence as for the matrix cells, and is `equal`, `differs` or
+`inconclusive` beside the words, never in place of them.
+
+**The shared closure.** The client fixture loads theories and libraries that
+the matrix fixtures do not (numeric, arithmetic, reduce, boss). They are not
+the selected implementation, so `client_dependencies.install` recompiles that
+closure privately in each side's directory (the same source, the same
+compiler), and the header records the installed products per side
+(`dependencies`, in the grid digest, the binding and `changed_settings`; the
+inputs it read are among `tools`). A receipt may load such a file only if it
+is in the side's `dependencies` with the sealed content. The baseline and the
+control closure must be identical, and a job re-checks its own against the
+probe's.
+
+**Cells.** The `traversal_*` and `tactic_*` cells of the table: every size up
+to 1000 (the depth cases 0, 1, 10 and 100, the singletons 0), and 10000 only
+for the supplied, installed and asm families. The 33 heavy tactic cells at
+10000 are `task31_cases.INFEASIBLE`: not run, listed as such, never a pass. The
+case lists are plain tuples in `task31_cases.py`.
+
+**Iterations** are predeclared in `allocation_iterations_task31.json`, written
+by `task31_iterations.py` (`--estimate` prints the projection): the TASK30
+rule (32 steady iterations to size 100, 16 at 1000 and 8 at 10000), cut to 8
+and to 4 for the cells whose measured per-operation cost would exceed the
+budget of a process (100 s over the steady repeats). The file is bound by
+digest like the others.
+
+**decisions.json** has, for the TASK31 disposition, `rows` keyed `case-size`
+(`case`, `size`, `pairs`, `status` = pass, fail, inconclusive or unresolved,
+`work` = equal, differs, inconclusive or null) and `infeasible`, the sorted
+names of the cells not run. TASK29B and TASK30 results have neither key.
+
+**Sealed code.** `allocation_matrix.py` is in the TASK30 seal
+(`task30_dispose.CODE`): changing it adds the previous seal to
+`task30_dispose.HISTORY`, pinned by `test_task30_dispose.py`.
+
 ## Negative controls
 
 ```sh
