@@ -9,6 +9,7 @@ allocation grids written by hand and their replay stood in for: the
 allocation matrix has its own tests (test_allocation_*.py), and the real
 TASK30 records are probed by hand (PROTOCOL.md).
 """
+import argparse
 import contextlib
 import copy
 import io
@@ -119,7 +120,10 @@ class Spec(unittest.TestCase):
         self.assertNotIn("no replay", text)
         text = " ".join(notes["exclude_literal_namespace-1"]["note"].split())
         self.assertIn("single lookup", text)
-        self.assertIn("lies outside the equivalence window", text)
+        self.assertIn("its control interval reaches above the margin, "
+                      "while the other controls fall only below the "
+                      "window", text)
+        self.assertNotIn("lies outside", text)
         self.assertIn("exact allocation words", text)
         self.assertNotIn("operation words", text.replace(
             "exact allocation words", ""))
@@ -162,6 +166,10 @@ class Spec(unittest.TestCase):
         self.assertIs(found["wall"]["control_valid"], True)
         self.assertIsNone(found["gc"]["control_valid"])
         self.assertIsNone(found["wall"]["control_interval"])
+        # A gated metric without it is an error, not a null.
+        with self.assertRaisesRegex(
+                ValueError, "the wall of a cell has no control_valid"):
+            td.metrics(report(cpu=True))
         lines = td.cell_lines("c", dict(
             decision="attributed", evidence_class="deletion", failed=None,
             work=None, metrics=found, digest=None, allocation_rows=0))
@@ -1435,7 +1443,8 @@ class Attempts(Toy):
         return ("follow-up attempt %s \\(status %s, output %s\\) is not "
                 "void: %s; only a void attempt .no admitted measurement in "
                 "any cell. may stand beside the judged one; anything else "
-                "needs a new policy decision" % (
+                "needs a new policy decision, or --followup does not name "
+                "the follow-up's final stage .name the final stage" % (
                     attempt, status, re.escape(str(output)), why))
 
     def edit(self, out, change):
@@ -1480,13 +1489,24 @@ class Attempts(Toy):
 
     @after_void
     def test_a_void_attempt_is_void_in_every_archive(self):
-        # What the rig's protocol failure leaves is what a real one does:
-        # every row false, every archive sealed, no admitted manifest.
+        # The rig's void attempt has a row for every cell, every row a
+        # protocol failure, every archive the sealed one with an
+        # acceptance that failed (the rig's has no command: the realistic
+        # shapes are the tests below), and the ledger's close and the
+        # decisions say inconclusive.
         found = self.load(self.out / "inventory.json")
         self.assertEqual(sorted((r["case"], r["size"])
                                 for r in found["runs"]),
                          sorted(self.fgrid.t.keys()))
         self.assertEqual({r["protocol"] for r in found["runs"]}, {False})
+        for row in found["runs"]:
+            archive = self.out / row["archive"]
+            self.assertEqual(a.seal(archive), row["seal"])
+            folder = self.root / "inspected"
+            tg.bundle.unpack(archive, folder)
+            self.assertIs(self.load(folder / "acceptance.json")["success"],
+                          False)
+            shutil.rmtree(folder)
         self.assertEqual(self.load(self.out / "decisions.json")["status"],
                          "inconclusive")
 
@@ -1648,6 +1668,174 @@ class Attempts(Toy):
                                   "its output directory is missing"),
                      **given)
 
+    # A void attempt as a real one leaves it (`exclude_partial-1` of the
+    # real first attempt): acceptance recorded the runner command, which
+    # failed (the harness's `poly --version` hung), and the runner wrote its
+    # manifest with no run before it failed.
+
+    def realistic(self, manifest=True, runs=(), timed_out=False,
+                  success=False):
+        """The archives of the void attempt (setUp's) rewritten to that
+        shape; `change` of `refused_void`'s kind, on the inventory."""
+        def one(folder, name):
+            where = "/scratch/%s/%s-control" % (name, name)
+            report = self.load(folder / "acceptance.json")
+            report.update(
+                success=success, failure="runner failed; see the log",
+                commands=[dict(
+                    argv=["python3", "run_paired.py", "--output", where,
+                          "--layout-seed", "seed"],
+                    exit=-9 if timed_out else 1, timed_out=timed_out,
+                    log=where + ".log", log_hash=dict(sha256="0", bytes=1))])
+            (folder / "acceptance.json").write_text(json.dumps(report))
+            if manifest:
+                (folder / (name + "-control")).mkdir()
+                (folder / (name + "-control") /
+                 "manifest.json").write_text(json.dumps(dict(
+                     runs=list(runs), success=False,
+                     failure="poly --version failed")))
+
+        def change(found):
+            for row in found["runs"]:
+                archive = self.out / row["archive"]
+                folder = self.root / "rebuilt"
+                tg.bundle.unpack(archive, folder)
+                one(folder, "%s-%d" % (row["case"], row["size"]))
+                archive.unlink()
+                row["files"] = tg.bundle.pack(folder, archive)
+                row["seal"] = a.seal(archive)
+                shutil.rmtree(folder)
+        return change
+
+    @after_void
+    def test_a_void_attempt_with_a_runner_command_and_manifest_is_void(self):
+        self.edit(self.out, self.realistic())
+        given = self.rerun()
+        code, text = self.dispose(record=True, **given)
+        self.assertEqual(code, 0, text)
+        found = self.load(given["followup"] / "disposition.json")[
+            "followup_attempts"]
+        self.assertEqual([(x["judged"], x["void"]) for x in found],
+                         [(False, True), (True, False)])
+        code, text = self.dispose(**given)
+        self.assertEqual(code, 0, text)
+
+    @after_void
+    def test_a_runner_killed_without_its_manifest_is_refused(self):
+        self.refused_void(
+            r"the archive of exclude_\w+-\d+ has no runner manifest in "
+            r"exclude_\w+-\d+-control \(a runner killed while measuring "
+            r"leaves none\)", self.realistic(manifest=False))
+
+    @after_void
+    def test_a_runner_manifest_with_runs_is_refused(self):
+        self.refused_void(
+            r"the archive of exclude_\w+-\d+ holds a runner manifest that "
+            r"records an admitted run "
+            r"\(exclude_\w+-\d+-control/manifest.json\)",
+            self.realistic(runs=[dict(exit=0)]))
+
+    @after_void
+    def test_a_command_that_timed_out_is_refused(self):
+        self.refused_void(
+            r"a command of exclude_\w+-\d+ timed out, or its receipt does "
+            r"not say it did not: its runner may have measured",
+            self.realistic(timed_out=True))
+
+    @after_void
+    def test_an_acceptance_that_did_not_fail_is_refused(self):
+        self.refused_void(
+            r"the acceptance of exclude_\w+-\d+ did not fail "
+            r"\(success True\)", self.realistic(success=True))
+
+    def fork(self, attempt, output, status):
+        """The ledger resumes and closes `attempt` in another output."""
+        inventory = self.load(self.out / "inventory.json")
+        for event, more in (("resume", {}), ("close", dict(status=status))):
+            tg.ledger_append(
+                self.attempts, event=event, stage="first",
+                table=self.fgrid.t.name, attempt=attempt,
+                candidate=inventory["candidate"], counts_file="x",
+                counts=inventory["iterations_seal"], seed="f0",
+                output=str(output), checkout=str(self.repo), **more)
+
+    @after_void
+    def test_a_void_attempt_with_a_second_output_is_refused(self):
+        given = self.rerun()
+        first = self.load(self.out / "inventory.json")["attempt"]
+        self.fork(first, self.root / "fork", "inconclusive")
+        self.refuses("follow-up attempt %s ran in more than one output: "
+                     "%s, %s" % (first, re.escape(str(self.out)),
+                                 re.escape(str(self.root / "fork"))),
+                     **given)
+
+    @after_void
+    def test_a_judged_attempt_with_a_second_output_is_refused(self):
+        given = self.rerun()
+        second = self.load(given["followup"] / "inventory.json")["attempt"]
+        self.fork(second, self.root / "fork", "pass")
+        self.refuses("follow-up attempt %s ran in more than one output"
+                     % second, **given)
+
+    @after_void
+    def test_a_judged_attempt_at_another_output_is_refused(self):
+        # The ledger has the judged attempt in `rerun`, and --followup is a
+        # copy of that output.
+        given = self.rerun()
+        second = self.load(given["followup"] / "inventory.json")["attempt"]
+        copy = self.root / "copy"
+        shutil.copytree(given["followup"], copy)
+        self.refuses(
+            "follow-up attempt %s is judged, from %s, but the ledger has "
+            "it in %s" % (second, re.escape(str(copy)),
+                          re.escape(str(given["followup"]))),
+            followup=copy, followup_allocation=self.allocation(
+                "alloc-z-copy", copy, self.work["z"]))
+
+    def open_void_copy(self, name="unclosed"):
+        """A complete void inventory under another attempt id, opened in
+        the ledger and not closed; returns (id, output)."""
+        out = self.root / name
+        shutil.copytree(self.out, out)
+        inventory = self.load(self.out / "inventory.json")
+        (out / "inventory.json").write_text(json.dumps(
+            dict(inventory, attempt=name + "-attempt")))
+        tg.ledger_append(
+            self.attempts, event="open", stage="first",
+            table=self.fgrid.t.name, attempt=name + "-attempt",
+            candidate=inventory["candidate"], counts_file="x",
+            counts=inventory["iterations_seal"], seed="f0",
+            output=str(out), checkout=str(self.repo))
+        return name + "-attempt", out
+
+    @after_void
+    def test_a_void_inventory_with_no_close_in_the_ledger_is_refused(self):
+        given = self.rerun()
+        attempt, out = self.open_void_copy()
+        self.refuses(self.reasons(
+            attempt, "interrupted", out,
+            r"its ledger has no close \(it was left open\)"), **given)
+
+    @after_void
+    def test_a_close_with_another_status_is_refused(self):
+        given = self.rerun()
+        held = self.attempts.read_bytes()
+        for status in ("pass", "fail", "checkout-changed"):
+            with self.subTest(status):
+                attempt, out = self.open_void_copy("closed-" + status)
+                tg.ledger_append(
+                    self.attempts, event="close", stage="first",
+                    table=self.fgrid.t.name, attempt=attempt,
+                    candidate="c", counts_file="x", counts="y", seed="f0",
+                    output=str(out), checkout=str(self.repo), status=status)
+                self.refuses(self.reasons(
+                    attempt, status, out,
+                    "its ledger closes it %s, not inconclusive, the status "
+                    "of a grid whose every cell is a protocol failure"
+                    % status), **given)
+                shutil.rmtree(out)
+                self.attempts.write_bytes(held)
+
     @after_void
     def test_a_ledger_line_without_a_table_is_not_of_the_follow_up(self):
         # A line without `table` is of the family's first table, the
@@ -1694,9 +1882,35 @@ class Attempts(Toy):
         later = self.load(ext / "inventory.json")["attempt"]
         self.refuses(self.reasons(
             later, "inconclusive", ext,
-            r"its inventory has rows for 1 cell\(s\), not each of the 2 "
-            r"the follow-up measures"),
+            r"the row of exclude_\w+-\d+ is not a protocol failure "
+            r"\(protocol True\)"),
             followup=out, followup_allocation=self.allocz)
+
+    @after_void
+    def test_a_void_second_stage_is_checked_against_its_own_plan(self):
+        self.new_control = lambda c, s, pairs, seed: (
+            ttg.WIDE if (c, s) == ttf.CELL_B else ttg.GOOD)
+        out, code, text = self.run_followup("first-open")
+        self.assertEqual(code, 2, text)
+        self.protocol_failure = lambda case, size: True
+        ext, code, text = self.extend_followup(out)
+        self.assertEqual(code, 2, text)
+        found = self.load(ext / "inventory.json")
+        self.assertEqual(len(found["plan"]), 1)
+        self.assertEqual({r["protocol"] for r in found["runs"]}, {False})
+        # The second stage is void against its own plan (one cell, not each
+        # of the cells of the follow-up): the attempts pass, and naming the
+        # first stage is refused later, as its second stage is to come.
+        out_attempts = td.attempts_of(
+            argparse.Namespace(ledger=self.attempts), self.fgrid, {
+                self.load(out / "inventory.json")["attempt"]: out.resolve()})
+        self.assertEqual([(x["judged"], x["void"]) for x in out_attempts],
+                         [(False, True), (True, False), (False, True)])
+        with self.assertRaisesRegex(
+                ValueError, "--followup is not the follow-up's final "
+                "stage: its second stage is still to come"):
+            self.dispose(record=True, followup=out,
+                         followup_allocation=self.allocz)
 
 
 class Ordering(Toy):

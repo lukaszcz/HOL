@@ -43,9 +43,16 @@ none) and one line, `TASK30 disposition: pass|fail|blocked {counts,
 attempt of the follow-up's table that is not judged (its id is not the
 `attempt` of the inventory of `--followup`, nor of that stage's first stage)
 must be void, shown from its output: the inventory there is of that attempt
-and has a row for every cell the follow-up measures, every row is a protocol
-failure whose archive exists and is the sealed one, and no runner manifest in
-an archive records an admitted run. Anything else is refused, as it needs a
+and has a row for every cell it measures (the follow-up's, or for a second
+stage its plan's), every row is a protocol failure whose archive exists and
+is the sealed one, acceptance's own `success` in each archive is false, each
+command it recorded did not time out and left a runner manifest in the
+folder of its `--output`, and no runner manifest records an admitted run
+(`runs` empty, `success` false); and the ledger closes the attempt
+`inconclusive`, the status of a grid whose every cell is a protocol failure
+(an attempt with no close is refused). An attempt id is of one output (every
+output its ledger lines name), and a judged one is of the output of
+`--followup`, or of its first stage. Anything else is refused, as it needs a
 new policy decision (name the follow-up's final stage; an attempt that
 measured, or may have, is no void attempt); the attempts are recorded as
 `followup_attempts` and printed. Exit
@@ -181,8 +188,9 @@ DISPOSITION = dict(
         ("exclude_literal_namespace-1", note(
             "-* of a literal namespace, which removes nothing. " +
             FIRES_NOTHING + " At this size the use is a single lookup, so "
-            "the work evidence is thin, and the control interval of the "
-            "cell lies outside the equivalence window: the case rests on "
+            "the work evidence is thin. What is specific to this cell is "
+            "that its control interval reaches above the margin, while the "
+            "other controls fall only below the window: the case rests on "
             "source identity and the exact allocation words.")),
         ("exclude_dproc-10000", note(
             "-* of one dproc name. The rows show the operation firing no "
@@ -429,6 +437,11 @@ def metrics(report):
             control_decision=control["decision"],
             control_interval=control["paired_ratio_bootstrap_95_percent"],
             control_valid=m.get("control_valid"))
+        a.require(isinstance(found[key]["control_valid"], bool) or
+                  key not in a.EQUIVALENCE_POLICY["gated_timing"],
+                  "the %s of a cell has no control_valid, which acceptance "
+                  "computes for a gated metric (%s)" % (key, ", ".join(
+                      a.EQUIVALENCE_POLICY["gated_timing"])))
     return found
 
 
@@ -601,22 +614,64 @@ def cheap(args, old, new):
     pair(timing_z, counted_z, "follow-up (Z)")
     a.require(new.t.replaces is not None and new.t.replaces.engine is old,
               "the follow-up does not replace the TASK30 table's grid")
-    judged = {timing_z["attempt"]}
+    judged = {timing_z["attempt"]: followup}
     if timing_z["schema"] == new.t.schema("extension"):
-        judged.add(loaded(followup / timing_z["grid"],
-                          "the first stage of --followup")["attempt"])
+        first = (followup / timing_z["grid"]).resolve()
+        judged[loaded(first, "the first stage of --followup")[
+            "attempt"]] = first
     return dict(grid=grid, followup=followup, allocation=allocation,
                 allocz=allocz, attempts=attempts_of(args, new, judged))
 
 
-def void_failure(new, key, output):
+def runner_failure(folder, name):
+    """None when the unpacked archive `folder` of the cell `name` shows no
+    measurement, else the text of the condition it fails: acceptance's own
+    `success` is false; no command it recorded timed out, and each left a
+    runner manifest in the folder of its `--output` (one killed while
+    measuring leaves none, but receipts); and no runner manifest, of a
+    command or not, records an admitted run (`runs` empty, `success`
+    false)."""
+    report = a.load(folder / "acceptance.json")
+    if report.get("success") is not False:
+        return "the acceptance of %s did not fail (success %r)" % (
+            name, report.get("success"))
+    commands = report.get("commands")
+    if not isinstance(commands, list):
+        return "the acceptance of %s records no list of commands" % name
+    for command in commands:
+        if not isinstance(command, dict) or \
+                command.get("timed_out") is not False:
+            return ("a command of %s timed out, or its receipt does not "
+                    "say it did not: its runner may have measured" % name)
+        argv = command.get("argv")
+        if not isinstance(argv, list) or "--output" not in argv[:-1]:
+            return "a command of %s names no --output" % name
+        where = Path(argv[argv.index("--output") + 1]).name
+        if not (folder / where / "manifest.json").is_file():
+            return ("the archive of %s has no runner manifest in %s (a "
+                    "runner killed while measuring leaves none)" % (
+                        name, where))
+    for manifest in sorted(folder.rglob("manifest.json")):
+        found = a.load(manifest)
+        if found.get("runs") != [] or found.get("success") is not False:
+            return ("the archive of %s holds a runner manifest that "
+                    "records an admitted run (%s)" % (
+                        name, manifest.relative_to(folder)))
+    return None
+
+
+def void_failure(new, key, output, status=None):
     """None when the attempt `key` (id, stage), whose ledger output is
-    `output`, is void, else the text of the condition it fails. Void: the
-    output directory exists and holds the inventory of that attempt, which
-    has a row for every cell the follow-up measures; every row is a
-    protocol failure (`protocol` present and false) whose archive exists
-    and is the sealed one; and no runner manifest in an archive records an
-    admitted run (`runs` empty and `success` false)."""
+    `output` and whose last ledger status is `status`, is void, else the
+    text of the condition it fails. Void: the output directory exists and
+    holds the inventory of that attempt, which has a row for every cell it
+    measures (those of the follow-up for a first stage, those of its own
+    plan for a second); every row is a protocol failure (`protocol` present
+    and false) whose archive exists and is the sealed one and shows no
+    measurement (`runner_failure`); and the ledger closes the attempt
+    `inconclusive`, the status of a grid in which every cell is a protocol
+    failure (`timing_grid` summary: no cell passes or fails). An attempt
+    left open, or closed otherwise, may have measured."""
     if output is None or not Path(output).is_dir():
         return "its output directory is missing"
     output = Path(output)
@@ -630,10 +685,17 @@ def void_failure(new, key, output):
             isinstance(r, dict) for r in runs):
         return "its inventory has no list of runs"
     cells = [(r.get("case"), r.get("size")) for r in runs]
-    want = set(new.t.keys())
+    if key[1] == "second":
+        plan = inventory.get("plan")
+        if not isinstance(plan, list) or not all(
+                isinstance(p, list) and len(p) > 1 for p in plan):
+            return "its inventory has no plan"
+        want, what = {(p[0], p[1]) for p in plan}, "its plan names"
+    else:
+        want, what = set(new.t.keys()), "the follow-up measures"
     if set(cells) != want or len(cells) != len(want):
         return ("its inventory has rows for %d cell(s), not each of the "
-                "%d the follow-up measures" % (len(set(cells)), len(want)))
+                "%d %s" % (len(set(cells)), len(want), what))
     for r in runs:
         if r.get("protocol") is not False:
             return ("the row of %s-%d is not a protocol failure (protocol "
@@ -649,25 +711,29 @@ def void_failure(new, key, output):
         with tempfile.TemporaryDirectory(prefix="t30-void-") as scratch:
             folder = Path(scratch) / "unpacked"
             tg.bundle.unpack(archive, folder)
-            for manifest in sorted(folder.rglob("manifest.json")):
-                found = a.load(manifest)
-                if found.get("runs") or found.get("success") is not False:
-                    return ("the archive of %s holds a runner manifest "
-                            "that records an admitted run (%s)" % (
-                                name, manifest.relative_to(folder)))
+            failed = runner_failure(folder, name)
+            if failed is not None:
+                return failed
+    if status is None or status == "interrupted":
+        return "its ledger has no close (it was left open)"
+    if status != "inconclusive":
+        return ("its ledger closes it %s, not inconclusive, the status of "
+                "a grid whose every cell is a protocol failure" % status)
     return None
 
 
 def attempts_of(args, new, judged):
     """Every attempt of the follow-up's table in the ledger: the judged ones
-    (`judged`: the attempt ids of the inventory of the follow-up's final
+    (`judged`: {attempt id: output directory} of the follow-up's final
     stage and, where it is a second stage, of its first) and the others,
     which must be void (`void_failure`): no cell of them admitted a
     measurement, so they are no outcome and the settings may be run again as
-    a new attempt. Any other attempt, an interrupted one included, may have
+    a new attempt. An attempt id is of one output (every output its open,
+    resume and close lines name), and a judged one is of the output named
+    for it. Any other attempt, an interrupted one included, may have
     measured, and is refused: it needs a new policy decision, or `--followup`
-    names the wrong stage. [{attempt, status, output, judged, void}], in the
-    order the ledger names them."""
+    names the wrong stage (name the final one). [{attempt, status, output,
+    judged, void}], in the order the ledger names them."""
     path = new.attempts_file(args, False)
     a.require(path is not None and Path(path).is_file(),
               "no attempts ledger: %s" % path)
@@ -678,20 +744,38 @@ def attempts_of(args, new, judged):
         key = (record.get("attempt"), record.get("stage"))
         if record["event"] in ("open", "resume", "close") and \
                 record.get("table", family) == table:
-            where.setdefault(key, record.get("output"))
+            outputs = where.setdefault(key, [])
+            if record.get("output") not in outputs:
+                outputs.append(record.get("output"))
     found = []
     for key, row in state.attempts(table, family).items():
-        output = where.get(key)
+        outputs = where.get(key, [])
+        a.require(len(outputs) == 1,
+                  "follow-up attempt %s ran in %s output: %s; one attempt "
+                  "is of one output, and a copy of a grid resumed is a "
+                  "second draw beside it" % (
+                      key[0], "more than one" if outputs else "no",
+                      ", ".join(map(str, outputs))))
+        output = outputs[0]
         entry = dict(attempt=key[0], status=row["status"], output=output,
                      judged=key[0] in judged, void=False)
-        if not entry["judged"]:
-            failed = void_failure(new, key, output)
+        if entry["judged"]:
+            a.require(output is not None and
+                      Path(output).resolve() == judged[key[0]],
+                      "follow-up attempt %s is judged, from %s, but the "
+                      "ledger has it in %s" % (
+                          key[0], judged[key[0]], output))
+        else:
+            failed = void_failure(new, key, output, row["status"])
             a.require(
                 failed is None,
                 "follow-up attempt %s (status %s, output %s) is not void: "
                 "%s; only a void attempt (no admitted measurement in any "
                 "cell) may stand beside the judged one; anything else "
-                "needs a new policy decision" % (
+                "needs a new policy decision, or --followup does not name "
+                "the follow-up's final stage (name the final stage; a "
+                "first stage named while its second stage exists leaves "
+                "the second unjudged)" % (
                     key[0], row["status"], output, failed))
             entry["void"] = True
         found.append(entry)

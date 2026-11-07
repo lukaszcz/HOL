@@ -1720,15 +1720,24 @@ table of its own on the shared engine, with the following additions to it.
   in the ledger, and `task30_dispose.py` checks and records them
   (`followup_attempts`). The judged attempts are the `attempt` ids in the
   inventory of `--followup` and, where that is a second stage, of its first
-  stage (not output paths). Every other attempt of the follow-up's table must
+  stage, each from the output of that stage (an attempt id is of one output:
+  every output its open, resume and close lines name is collected, and more
+  than one is refused). Every other attempt of the follow-up's table must
   be shown void from its own output: the directory exists, its
-  `inventory.json` is of that attempt id, it has a row for every cell the
-  follow-up measures, every row has `protocol` present and false, every
-  row's archive exists and is the sealed one (`seal`), and no runner
-  `manifest.json` in an archive records an admitted run (`runs` empty and
-  `success` false). Anything else is refused (exit 3), naming the attempt,
-  its status, its output and the failed condition: an interrupted attempt
-  with missing cells or no close line is refused too, as it may have
+  `inventory.json` is of that attempt id, it has a row for every cell it
+  measures (the follow-up's, or for a second stage its own plan's), every
+  row has `protocol` present and false, every row's archive exists and is
+  the sealed one (`seal`), acceptance's own `success` in it is false, each
+  command acceptance recorded did not time out and left a runner manifest
+  in the folder of its `--output` (one runner manifest per runner command),
+  and no runner `manifest.json` in an archive records an admitted run
+  (`runs` empty and `success` false); and the ledger closes the attempt
+  `inconclusive`, which is the status of a grid whose every cell is a
+  protocol failure (no cell passes or fails). Anything else is refused
+  (exit 3), naming the attempt, its status, its output and the failed
+  condition: an interrupted attempt, one with missing cells or with no
+  close line, and a runner killed while measuring (no manifest) are refused
+  too, as they may have
   measured. The follow-up writes no `final.json`: the TASK30 decision with
   these two cells in place of the replaced ones is the disposition step's
   (`task30_dispose.py`), which owns `final.json` and builds it from the
@@ -1901,9 +1910,11 @@ with `alloc-z/`, each also of one candidate, one baseline and the task
 allocation grids different, every attempt of the follow-up's table in the
 ledger (judged, by the attempt ids of `--followup` and its first stage, or
 void as defined in the follow-up's Decisions above; a second stage named by
-nothing, or a first stage named while a second exists, is refused here), and
-in check mode the recorded files and the code seals (below). It then
-replays the follow-up in full (which replays the TASK30 grid in full with
+nothing, or a first stage named while a second exists, is refused here
+(the second, measured, is not void) or, when the second is void, by the
+replay as a second stage still to come; each refusal says to name the final
+stage), and in check mode the recorded files and the code seals (below). It
+then replays the follow-up in full (which replays the TASK30 grid in full with
 `--pilot`, by its own table, and requires that the follow-up replaced exactly
 the cells that grid left inconclusive and that its candidate sources equal
 that grid's), and the two allocation grids (`allocation_matrix.replay`). It
@@ -1942,8 +1953,9 @@ and what failed, the candidate's decision, median and 95% interval for CPU,
 wall and GC, the control's interval beside, its `control_decision` (the
 candidate rule applied to the control, not its validity) and `control_valid`
 (for CPU and wall, the gated metrics: whether the control's interval lies
-within the window `[1/(1+margin), 1+margin]`, as acceptance computed it;
-null for GC, which has no window), the work counts
+within the window `[1/(1+margin), 1+margin]`, as acceptance computed it,
+and a refusal when an archive lacks it; null for GC, which has no window),
+the work counts
 (`first`, `second`, `use`, the count rows of the candidate that are not zero
 throughout, each with all its distinct values), the result digest (likewise
 a list of the distinct values) and the number of allocation rows of the
