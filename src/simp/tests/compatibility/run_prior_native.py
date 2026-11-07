@@ -21,8 +21,7 @@ def source_inputs(repo):
     for folder in (repo / "src/simp/src", HERE.parent):
         for p in folder.rglob("*"):
             if (p.is_file() and (p.suffix in (".sml", ".sig", ".ML", ".py")
-                    or p.name == "Holmakefile") and ".hol" not in p.parts
-                    and "evidence" not in p.parts):
+                    or p.name == "Holmakefile") and ".hol" not in p.parts):
                 paths.append(p)
     return sorted(set(paths + [Path(__file__), HERE / "prior_contracts.py",
                                HERE / "coverage_ledger.py",

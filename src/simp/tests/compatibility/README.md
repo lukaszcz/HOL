@@ -1,153 +1,100 @@
-# Pinned simplifier review inputs
+# Simplifier compatibility inputs and gates
 
-TASK27's [final migration/ownership ledger](migration/TASK27.md) and
-[handoff](TASK_27_HANDOFF.md) close all consumer and temporary-cutover rows.
-Ordinary develop clients need no migration; tracked construction is explicit
-for branch-only extensions. The live gate `audit_task27.py` checks defining
-source dependencies/identity ownership, `check_task27_docs.py` checks final
-signature references and executable Docfile examples, and `../api-audit`
-checks fresh ordinary paths/callbacks and deliberate extension controls.
-These are readiness gates, not release/performance approval.
+Tools, pinned inputs and gates that compare the simplifier sources against
+pinned Git revisions.  Ordinary develop clients need no migration; tracked
+construction is explicit for branch-only extensions.  Receipts and results of
+runs are not stored in the repository: every runner takes an explicit
+`--output` directory outside the tree, and the Holmakefile has no default for
+`PAIRED_OUTPUT`: it refuses an unset, relative or in-repository path.
 
-TASK26's current [test ownership map](migration/TASK26.md) and
-[handoff](TASK_26_HANDOFF.md) cover physical separation and normal-level entry
-points. The 73-check ordinary selftest is byte-identical to pinned develop;
-the whole 642-check mixed regression executes separately with its complete
-observations. Both historical ledgers remain immutable. Public clients, quota
-checks, focused extension suites and fresh-load/persistence suites all have
-normal executable entries. The historical descriptions below retain provenance.
+## Layout
 
-TASK_07's searchable API/consumer inventory, tracked-construction decisions,
-shared-identity ledger and exact read-only external consumer provenance are in
-[`migration/MIGRATION.md`](migration/MIGRATION.md). Its signature-delta and
-source-reference verifier is inventory validation, not a compiled migration or
-performance pass. TASK_08 owns final interfaces; TASK_25 owns isolated downstream
-migration and execution.
+- `run_paired.py`, `paired/`, `SCHEMA.md`: the fail-closed paired runner and
+  its result schemas (below).
+- `public_contracts.py`, `staging_contracts.py`, `prior_contracts.py`,
+  `normal_integration.py`, with `PUBLIC_CONTRACTS.md`, `STAGING_CONTRACTS.md`
+  and `PRIOR_CONTRACTS.md`: the public-client, staging and prior contract
+  suites run through the paired runner (`public/`, `staging/`, `inputs/`).
+- `coverage_ledger.py`, `coverage-ledger.json.gz`: the
+  source-tied case ledger; relocations are explicit overlays
+  (`task10_relocation.py`, `task26_relocation.py`, `migration/`).
+- `audit_task14.py`, `audit_task16.py`, `audit_task27.py`,
+  `check_task27_docs.py`: offline source-correspondence and documentation
+  gates (`task16-source-manifest.json` is the manifest `audit_task16.py`
+  validates and `audit_task27.py` reuses).
+- `run_prior_native.py`, `run_task22_negative.py`, `run_task23_lifecycle.py`,
+  `run_task24_recipes.py`, `run_task25_consumer.py`: executing drivers; each
+  requires `--output`.
+- `consumer/consumer.patch`: the patch `run_task25_consumer.py` applies to
+  its isolated external consumer checkout (`--consumer-patch`).
+- `tools/root-wrapper.sh`: runs a command in a checkout whose configured root
+  (`HOLDIR` in `tools/Holmake/Systeml.sml`) differs from its real location,
+  using `bwrap` to map the checkout at the configured root.  It needs no
+  editing: `HOL_CHECKOUT` and `HOL_CONFIGURED_ROOT` override the detected
+  checkout (default: the enclosing git work tree) and configured root.  The
+  command runs directly when the two are equal; the wrapper exits 2 if it
+  cannot map the root (no `bwrap`, no configured root).
+- `tools/require_output.py`: the Holmakefile's output-directory check.
+- `interfaces/`, `migration/`: design prototypes and the API mapping tables
+  (`apis.tsv`, `final-apis.tsv`) and relocation overlays; see
+  `interfaces/README.md`.
 
-TASK_06's fresh prior-contract freeze, 2,153-case source-tied relocation ledger,
-six supplementary legacy limit/rollback checks, native extension coverage and
-executed fresh-load/listener-identity/persistence matrix are in
-[`PRIOR_CONTRACTS.md`](PRIOR_CONTRACTS.md). Its `prior-contracts`,
-`prior-baseline-control` and `prior-native` commands preserve the original
-73/47/929/630 case streams; initial signature/staging reds remain explicit.
-
-TASK_05's independent 43-scenario construction/use/proof matrix, sealed
-expectations, initial callback/exception reds and standalone reproduction
-commands are in [`STAGING_CONTRACTS.md`](STAGING_CONTRACTS.md). Every returned
-validation runs with genuine residual proofs; this is contract capture, not
-TASK_18's production repair.
-
-TASK_04's complete public-interface inventory, sealed baseline clients,
-expected initial reds and reproduction commands are in
-[`PUBLIC_CONTRACTS.md`](PUBLIC_CONTRACTS.md). Its coverage includes all six
-changed baseline signatures and unchanged `congLib` interoperability; these
-are diagnostic contracts, not claims that source compatibility is restored.
-
-TASK_01 preserves inputs and observations, **not a compatibility or performance
-pass**. Starting HEAD is the reviewed candidate; see
-[`initial-state.json`](initial-state.json) for the actual checkout, dirty-state,
-runtime, build, environment, source identities and drift snapshot.
-
-- Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
-- Reviewed candidate: `cf1f863b4e5a9712ce1b179f18274eb3451f3954`.
-- Review date and original directory: 2026-10-21,
-  `/tmp/simplifier-review-20261021/`.
-- Evidence identifier: `TASK_01-pins-v1` (the commit adding this directory).
-- No predecessor in this task set. Prior cleanup is inventoried in
-  [`COVERAGE.md`](COVERAGE.md), not imported as acceptance evidence.
-
-## Immutable inputs and provenance
-
-[`evidence-manifest.json`](evidence-manifest.json) maps every preserved file
-back to its original path or Git revision/blob and gives its SHA-256 and size.
-[`SHA256SUMS`](SHA256SUMS) uses repository-relative paths.
+`inputs/develop/prior-streams.json.gz` is the oracle of the prior contracts:
+for each prior fixture, the ordered semantic stream (`semantic_stream` in
+`prior_contracts.py`) that a complete run keeps.  See `historical` there for
+how it is produced.
 
 `inputs/develop/selftest.sml` is the **unchanged original** develop selftest,
-recovered directly with `git show <develop>:src/simp/src/selftest.sml`.
-It is not today's expanded native selftest or a replacement fixture.
+recovered with `git show <develop>:src/simp/src/selftest.sml`, and
 `inputs/develop/Traverse.sig` is likewise the exact original public signature.
 Keep both immutable; add new contracts alongside them, not inside them.
 
-The compact original review bundle lives at
-[`../performance/review-20261021/`](../performance/review-20261021/).
-Its five SML probes and `reproduce.py` are byte-for-byte copies. They remain
-colocated because the original script resolves all five via its own directory.
-In particular, `abicheck.sml` is real SML: the complete baseline signature
-renamed to `LegacyTraverse`, preceded by `open Traverse` and followed by a
-structure ascription and success/exit markers. Its exact relationship to the
-baseline signature is checked by `verify_evidence.py`.
+Pins: develop is `cccaa27d7099cbadc886983020cbe745db7793f3`.
 
-All 35 supplied review files were small (about 110 KiB combined); preserving
-these compact inputs, JSON, raw samples and compressed unique contract/native
-observations avoids regenerating historical evidence. No build trees, heaps,
-binaries or old `src/simp/compatibility` archive were copied. Nothing in the
-caller-owned `/tmp` bundle was changed or deleted.
-
-## Integrity check (from repository root)
+## Tests
 
 ```sh
-sha256sum -c src/simp/tests/compatibility/SHA256SUMS
-python3 src/simp/tests/compatibility/verify_evidence.py
+cd src/simp/tests/compatibility
+python3 -B -m unittest discover
+python3 -B -m unittest discover -s interfaces
 ```
 
-The verifier checks preservation, baseline Git objects, signature derivation,
-JSON/log agreement and original Python syntax. It does **not** execute any
-HOL probe, claim elaboration success or assess benchmark acceptance. It reads
-only tracked inputs; it creates no caches or build products.
+Some tests need a built checkout (`bin/holdeptool.exe`).
 
-## Reproduction checklist
+## Reproduction rules
 
 Tooling prerequisites: local Git objects for both pins, Python 3.9 or newer,
-`sha256sum`, and the configured Poly/ML/HOL tools and dependencies below.
+and the configured Poly/ML/HOL tools.
 
-1. Verify the hashes above and availability of both pinned Git commits.
-   Record any intentional change as a new fixture, never an overwritten
-   historical input.
-2. Use Poly/ML 5.9.2 and the configured repository's `bin/Holmake`, `bin/hol`
-   and `bin/hol.state0`; record fresh binary/heap hashes. The snapshot hashes
-   identify current products only, not missing historical binary hashes.
-   Fresh setup, if necessary: `poly < tools/smart-configure.sml` and build
-   prerequisites using `CLAUDE.md`'s heap bands. Do not copy build trees.
-3. Do not rely on inherited `HOLDIR` (it points elsewhere in this environment).
-   Use absolute tool, heap and include paths. The original experiment used
-   `HOLHEAP = <repo>/bin/hol.state0`,
-   `INCLUDES = <repo>/src/simp/src/poly`, `--no-project`, and `-j1`.
-   The current Holmake launcher emits `bin/hol --gcthreads=1 run`.
-   Pin all compiler/runtime/heap options identically for both versions.
-4. Extract each revision's exact simplifier sources into separate task-owned
-   temporary directories. Supply the same original develop selftest and
-   maintained `tests/contracts` modules to both. Do not let candidate `.uo`,
-   theory products or stale launchers leak into the baseline. Record effective
-   loaded module paths, not merely intended search paths.
-5. Build executable Holmake fixtures and **execute their launchers**. A `.uo`
+1. Use the configured repository's `bin/Holmake`, `bin/hol` and
+   `bin/hol.state0`, with absolute tool, heap and include paths; do not
+   rely on an inherited `HOLDIR`.  Pin all compiler/runtime/heap options
+   identically for both versions.  Fresh setup, if necessary:
+   `poly < tools/smart-configure.sml` and build prerequisites using
+   `CLAUDE.md`'s heap bands.  Do not copy build trees.
+2. Extract each revision's exact simplifier sources into separate temporary
+   directories.  Do not let candidate `.uo`, theory products or stale
+   launchers leak into the baseline.  Record effective loaded module paths,
+   not merely intended search paths.
+3. Build executable Holmake fixtures and **execute their launchers**.  A `.uo`
    or successful Holmake invocation alone does not establish SML elaboration.
-   Observe process exits and complete ordered output. Use selftest/testutils
+   Observe process exits and complete ordered output.  Use selftest/testutils
    conventions; never pipe SML into `bin/hol` as a regression test.
-6. Original expected outcomes: baseline ABI success marker versus candidate
-   static-error rejection; staging construction printer count 1 versus 0,
-   repeated count 1 versus 2, and saved valid tactic `goals=1` versus
-   `PrinterFailure`. These are historical expectations, not fresh TASK_01
-   results. The original script expects exit 1 only for candidate ABI and 0
-   for its other behavioral/storage probes. Historical actual process exit
-   codes were not supplied. Do not manufacture them from those expectations.
-7. TASK_02 owns the fail-closed paired runner, path verification, result
-   schemas and failed/missing/deferred-elaboration negative controls. The
-   historical `reproduce.py` is an input to inspect, **not an acceptance
-   runner**: it checks exits but not completeness or loaded paths. Its default
-   output is next to the originals; always select a task-owned output path.
-8. TASK_03 owns fresh initial failures, result-consuming benchmark revisions,
-   calibrated counts and baseline/baseline variability. Preserve historical
-   probes unchanged: `bench.sml` ignores projection/construction return values,
-   so those measurements cannot establish acceptance. Serialize measurements
-   against builds/other benchmarks; use fresh ABBA processes and verify outputs.
-9. Keep isolated-source comparisons distinct from independent clean builds.
-   Record raw CPU, wall and GC observations separately; first verify timer
-   accounting. Graph-size results are reachable words, not RSS or byte counts.
-10. Remove only task-created temporary sources/products after their last use.
-    Leave these immutable inputs and caller-owned artifacts alone. Put fresh
-    observations in a new source-tied results directory.
+4. Keep isolated-source comparisons distinct from independent clean builds.
+   Graph-size results are reachable words, not RSS or byte counts.
+5. Remove temporary sources/products after their last use, and always select
+   a fresh output path outside the repository.
 
-## Maintained executable paired gate (TASK_02)
+The downstream-consumer driver is documented in its module docstring and
+`--help`; it is run as
+
+```sh
+python3 -B src/simp/tests/compatibility/run_task25_consumer.py \
+  --consumer-patch src/simp/tests/compatibility/consumer/consumer.patch \
+  --output /path/outside/repo
+```
+
+## Executable paired gate
 
 Use a **new** output directory on every invocation. From the repository root:
 
@@ -155,11 +102,13 @@ Use a **new** output directory on every invocation. From the repository root:
 bin/Holmake --no-project --no-cache --no_prereqs \
   --holstate="$PWD/bin/hol.state0" \
   -C src/simp/tests/compatibility -j1 \
-  PAIRED_OUTPUT=/tmp/my-paired-evidence check
+  PAIRED_OUTPUT=/tmp/my-paired-output check
 ```
 
-This runs 13 Python validator tests, then private Holmake-built SML launchers
-for both exact pinned source revisions, including all six negative controls.
+`PAIRED_OUTPUT` is required and must be an absolute path outside the
+repository.  This runs all Python validator tests (`python-tests`), then
+private Holmake-built SML launchers for both exact pinned source revisions,
+including all six negative controls.
 No SML is piped to `bin/hol`. Expected reviewed-candidate staging/signature
 regressions are explicitly **expected-red**, not compatibility passes.
 
@@ -183,10 +132,8 @@ Git blobs/source bytes, generated products, inputs, runtime/heap/config
 fingerprints, commands, exits and complete ordered source/observation streams
 are retained in compact JSON/gzip receipts. The output folder is never reused.
 
-See [`SCHEMA.md`](SCHEMA.md) for ordered event/result contracts and controls,
-[`TASK_02_HANDOFF.md`](TASK_02_HANDOFF.md) for acceptance/commands, and
-[`evidence/task02/`](evidence/task02/) for fresh paired and baseline-control
-receipts. `paired/Holmakefile` is an installation template, not a standalone
+See [`SCHEMA.md`](SCHEMA.md) for ordered event/result contracts and controls.
+`paired/Holmakefile` is an installation template, not a standalone
 source tree: the driver adds the exact Git modules and signature fixture to
 private directories before invoking it. `paired/selftest.sml` follows the
 normal testutils convention; the deliberately ill-typed `Deferred.sml` is a
@@ -208,9 +155,5 @@ loading test, or a performance measurement. Do not mutate dependencies or run
 builds concurrently; fingerprints detect changes but do not provide filesystem
 locking against malicious transient edits. Launcher/compiler/runtime are
 trusted. Tested scope is the configured Linux/Poly/ML runtime only. Timing
-calibration, output-consuming performance probes and samples belong to TASK_03;
-independent clean builds remain separate later gates.
-
-See [`../performance/README.md`](../performance/README.md) for the historical
-findings and limitations, and [`TASK_01_HANDOFF.md`](TASK_01_HANDOFF.md) for
-this task's validation and acceptance receipt. No production API changes.
+calibration and performance probes live under `../performance`;
+independent clean builds are separate gates.

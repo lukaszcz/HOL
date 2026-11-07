@@ -1888,7 +1888,7 @@ class ReplacedOpenings(Rig):
                 ("task30_cases", "task30_cases", "import path_schema",
                  "path_schema"),
                 ("a module of ../compatibility", "timing_grid",
-                 "import verify_evidence", "verify_evidence"),
+                 "import coverage_ledger", "coverage_ledger"),
                 ("another of ../compatibility", "audit_evidence",
                  "import staging_contracts", "staging_contracts")):
             with self.subTest(label):

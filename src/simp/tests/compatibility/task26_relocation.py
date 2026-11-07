@@ -1,6 +1,5 @@
 """Physical relocation composed after the immutable TASK10 typed mapping."""
 import copy
-import gzip
 import json
 import re
 
@@ -45,16 +44,22 @@ def apply(typed):
     return result
 
 
+# Aggregate observation lines the native selftest must print, with the
+# number of boolean results on each.
+VECTORS = {
+    "POLICY_RESULTS": 8, "OBSERVER_RESULTS": 13, "VIEW_CONTROL_RESULTS": 24,
+    "SUSPENSION_RESULTS": 21, "CONTROL_REPLAY_RESULTS": 8,
+    "BOUND_GLOBAL_RESULTS": 14, "BOUND_ARGUMENT_RESULTS": 6,
+    "PREPARED_REPLAY_RESULTS": 13, "BOUND_FILTER_RESULTS": 8,
+    "COMBINED_BUNDLE_RESULTS": 8, "SOLVER_CONTEXT_RESULTS": 5,
+}
+
+
 def validate_vectors(text):
-    original = gzip.decompress((HERE.parent /
-        "performance/review-20261021/native-selftest.log.gz").read_bytes())
-
-    def vectors(source):
-        return [line for line in source.splitlines()
-                if re.match(r"[A-Z_]+_RESULTS ", line)]
-
-    expected = vectors(original.decode())
-    require(len(expected) == 11 and vectors(text) == expected,
+    found = [line for line in text.splitlines()
+             if re.match(r"[A-Z_]+_RESULTS ", line)]
+    require(found == [name + " " + " ".join(["true"] * count)
+                      for name, count in VECTORS.items()],
             "missing/changed native aggregate observations")
     require(text.endswith("\n") and "FAILED!" not in text and
             "Static Errors" not in text, "incomplete/failed native output")

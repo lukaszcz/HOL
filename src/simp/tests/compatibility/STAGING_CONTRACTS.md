@@ -1,19 +1,17 @@
-# Legacy tactic staging and proof contracts (TASK_05)
+# Legacy tactic staging and proof contracts
 
-This suite froze the initial broken behavior; **TASK18 now gates the repaired
-ordinary path against the original sealed develop expectations**. The historical
-red observations below remain evidence, not an accepted current outcome. See
-[TASK_18_HANDOFF.md](TASK_18_HANDOFF.md) for fresh strict acceptance.
+This suite gates the ordinary path against the original sealed develop
+expectations; expected-red observations below are not an accepted outcome.
 `staging/Staging.sml` is independent of the historical compact reproducer.
 It runs 43 saved-tactic scenarios plus a negative-bound argument probe and
 three validator controls. The exact ordered expectations are sealed in
 `staging/references.json`; do not regenerate them to accommodate a candidate.
 
 Reference: develop `cccaa27d7099cbadc886983020cbe745db7793f3`.
-Initial red: reviewed `cf1f863b4e5a9712ce1b179f18274eb3451f3954` and
-current `54c4882ba04dd788bc6fee104e68b2f5c0335ce2` (same production sources).
-Executed receipts and commands: [TASK_05_HANDOFF.md](TASK_05_HANDOFF.md),
-`evidence/task05/`. These are mixed-source isolation experiments on the same
+Expected-red pins (diagnostic mode only): reviewed
+`cf1f863b4e5a9712ce1b179f18274eb3451f3954` and
+`54c4882ba04dd788bc6fee104e68b2f5c0335ce2` (same production sources).
+These are mixed-source isolation experiments on the same
 shared Poly/ML runtime/dependencies, not independent clean repository builds.
 
 ## Stages and proof contract
@@ -176,7 +174,7 @@ bin/Holmake --no-project --no-cache --no_prereqs \
 
 The first command runs the new and original probes plus six executable negative
 controls per selection. The second runs just the new suite baseline/baseline.
-To reproduce the new red **without executing either old reproducer**:
+To run the strict gate **without executing either old reproducer**:
 
 ```sh
 python3 -B src/simp/tests/compatibility/run_paired.py \
@@ -184,10 +182,11 @@ python3 -B src/simp/tests/compatibility/run_paired.py \
   --candidate-behavior baseline --output /tmp/staging-strict-red
 ```
 
-That command exited **1** at TASK05 and now must exit **0** on restored
-sources. The `staging-contracts` target now explicitly selects baseline behavior
-and a passing signature too. Diagnostic `--candidate-behavior reviewed` was the
-historical expected-red mode, not a compatibility pass. Select
+That command must exit **0** on restored sources and exits **1** on a candidate
+that regresses the staging contracts. The `staging-contracts` target explicitly
+selects baseline behavior and a passing signature too. Diagnostic
+`--candidate-behavior reviewed` is the expected-red mode, not a compatibility
+pass. Select
 `--candidate cf1f863b4e5a9712ce1b179f18274eb3451f3954` to recheck the reviewed
 pin. `--staging-only` intentionally excludes old signature/behavior probes and
 cannot combine with performance, public clients or old negative controls.

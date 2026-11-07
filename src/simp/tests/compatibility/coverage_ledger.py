@@ -192,16 +192,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native", type=Path)
     parser.add_argument("--paired", type=Path)
-    parser.add_argument("--ledger", type=Path, default=HERE / "coverage-ledger.json.gz")
+    parser.add_argument("--ledger", type=Path,
+                        help="ledger to verify (default: the committed "
+                        "ledger) or, when building, the new ledger file")
     args = parser.parse_args()
     if args.native or args.paired:
         require(args.native and args.paired, "both evidence paths required")
+        require(args.ledger, "--ledger is required when building a ledger")
         require(not args.ledger.exists(), "refusing to overwrite coverage ledger")
         ledger = build(args.native, args.paired)
         args.ledger.write_bytes(gzip.compress(
             (json.dumps(ledger, indent=2) + "\n").encode(), mtime=0))
     else:
-        ledger = receipt(args.ledger)
+        ledger = receipt(args.ledger or HERE / "coverage-ledger.json.gz")
     verify(ledger)
     print("Source-tied cases:", sum(s["checks"] for s in ledger["suites"].values()))
 

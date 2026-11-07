@@ -1,57 +1,28 @@
-# Prior traversal, exclusion and load contracts (TASK_06)
+# Prior traversal, exclusion and load contracts
 
 This is a coverage freeze, **not a simplifier repair or performance pass**.
 Pinned develop is `cccaa27d7099cbadc886983020cbe745db7793f3`.
-Fresh current-source observations use `cab2d3b7e8b57f90de4b7943e0c3ded001f2cc2f`;
-production simplifier sources are unchanged from reviewed `cf1f863b4`.
 
-## Current ownership (TASK26)
+## Test ownership
 
-[The complete current map](migration/TASK26.md) composes a byte-exact physical
-move after TASK10's immutable typed mapping. The reviewed 630 native cases and
-12 registry repeats now execute in `tests/native-extension/selftest.sml`;
-`src/selftest.sml` is the complete unchanged 73-check develop input. Every old
-ID/anchor/assertion survives. Public clients and the six quota checks have an
+The reviewed 630 native cases and 12 registry repeats execute in
+`tests/native-extension/selftest.sml`; `src/selftest.sml` is the complete
+unchanged 73-check develop input. Every old ID/anchor/assertion survives
+(`task26-relocation.json`). Public clients and the six quota checks have an
 ordinary-only native normal entry. The post-list level-1 `check-full` requires
-all 642 native checks and 11 aggregate vectors; a 637-check bootstrap is not
-complete coverage. Historical locations/counts below describe their freeze.
+all 642 native checks and 11 aggregate vectors.
 
-## Durable relocation ledger
+### Typed relocation
 
-[`coverage-ledger.json.gz`](coverage-ledger.json.gz) is JSON compressed for
-size, not a copied source/archive tree. It records **2,153 ordered case IDs**,
-each displayed label, source/table-expression anchors and preceding OBS
-parameters, all ordered semantic streams and SHA-256/size seals for 23 source
-files. Duplicated labels remain distinct cases. Terminal-truncated labels are
-navigation aids: the sealed maintained sources contain the complete assertions.
-Anchors are textual, sometimes shared by a parameterized family, not an SML
-parser or a claim that displayed labels alone establish coverage.
-
-```sh
-python3 -B src/simp/tests/compatibility/coverage_ledger.py
-```
-
-For relocation: retain IDs, matrix rows, proof/hypothesis/error predicates,
-callback/observation streams and source bodies. Update explicit destination
-anchors and source hashes only after reviewing the move. Do not regenerate a
-smaller ledger to silence a failure. `coverage_ledger.py` rejects stale hashes,
-missing anchors, changed IDs and label order. Its explicit creation mode refuses
-to overwrite an existing ledger. Test execution never updates its oracle.
-TASK_26 owns module/test separation and normal selftest-level integration;
-this task moves no tests and changes no production API.
-
-### TASK_10 additive relocation (the freeze above remains historical)
-
-[migration/TASK10.md](migration/TASK10.md) documents the separately sealed
-[migration/task10-relocation.json](migration/task10-relocation.json).
+[migration/task10-relocation.json](migration/task10-relocation.json) is the
+separately sealed typed mapping.
 The original ledger and IDs are unchanged: its 630 native checks map in order
 to 642 current checks, with exactly 12 extension-registry R4 repeats. The
 verifier checks old Git blobs and current hashes/anchors for the four explicitly
 relocated sources; all other sources and non-native streams remain exact.
 Ordinary destructor/R6/R7/reflexivity pins remain ordinary. Type-driven tracked
 projection/optional-eligibility predicate changes are explicit, not hidden by
-renaming labels. Neither the historical tables below nor original evidence are
-rewritten. Final physical test separation still belongs to TASK_26.
+renaming labels. The tables below are not rewritten.
 
 ## Actual case map (paths relative to `src/simp/`)
 
@@ -120,11 +91,10 @@ extension tests; it does not claim their new APIs exist on develop.
 | `fresh-syntax-first` / 17 | Launcher + `syntax.ML`: foreign `Split`/`ExcludeX` overloads survive; both qualified simplifier marker constants remain accessible; no split registry claim. |
 | `persistence` / 170 | `tests/split-persistence/`: **four fresh script assertions**, then eight fresh launcher scenarios: parent/child/descendant/owned/foreign-attribute/foreign-set/heap-save/heap-reload. `verify.ML` checks named DB theorem pointer identity, serialized REMOVE provenance, idempotence, actual splitting/alias exclusion and marker dependencies. `heapSave.ML`/`heapVerify.ML` exercise saved contexts/owners/handlers, rewind, live removal, cached opt-in, explicit retry and dispatcher replay in a different process. The temporary heap is removed on exit. |
 
-Count correction to the starting inventory: the preserved `native.log.gz`
-contains **1,440 focused-suite** OKs; its separate `native-selftest.log.gz` has
-630. The 1,440 do **not** include those 630 (929 + 47 + 54 + 15 + 116 + 113 +
-166 = 1,440). Fresh theory exports add four script checks, so this task has
-1,444 focused + 630 native + 73 original + 6 new = **2,153 distinct ledger
+The ledger counts **1,440 focused-suite** checks (929 + 47 + 54 + 15 + 116 +
+113 + 166 = 1,440), which do **not** include the 630 native selftest checks.
+Fresh theory exports add four script checks, so the ledger holds
+1,444 focused + 630 native + 73 original + 6 new = **2,153 distinct
 occurrences**. Differential repetitions are not additional case identities.
 
 ## Reproduce (new output directories required)
@@ -150,8 +120,7 @@ process-ending driver calls become completion checks; assertion bodies and
 immutable original input stay unchanged. The native driver forces actual
 launcher execution, not cached selftest logs; exported theories are built from
 fresh fixture sources in a private temporary directory. All six fresh-load and
-eight persistence scenarios execute. Exact commands/exits and fresh receipts:
-[`evidence/task06/validation.json`](evidence/task06/validation.json).
+eight persistence scenarios execute.
 
 Build timing, testutils CPU/GC displays, ANSI and terminal padding are not
 semantic differences. Full raw diagnostic streams remain in receipts; every
@@ -161,18 +130,19 @@ semantic observations match exactly; only theory build times differ in raw
 successful output. Native monitor primitive serials are not a cross-version
 contract; callback/count pins inside assertions still execute unchanged.
 
-## Initial reds stay red
+## Expected-red probes are diagnostic
 
-`current-head/candidate-signature-none.json.gz` still records process **exit 1**
-with both added-constructor errors. The original requirement probe still sees
-`0/1/2` printer calls and saved `PrinterFailure` rather than develop's `1/1/1`
-and a remaining goal. They are explicitly diagnostic expected-candidate-red
-receipts, **not legacy-equal successes**. No old expectation was changed.
-TASK_04/TASK_05's sealed public/staging fixtures remain intact. A fresh standalone
-strict staging run in `strict-red/` rejects current with driver **exit 1**:
-57 checks versus the 60 baseline contract. TASK_11/TASK_18 own these repairs;
-TASK_03's construction/exclusion/storage regressions remain open in their
-implementation/performance tasks. This task waives none of them.
+The separate original signature and requirement probes, run against a candidate
+that still has the added constructors or the changed printer behavior, are
+diagnostic expected-candidate-red results, **not legacy-equal successes**: the
+driver exits **1** with both added-constructor errors, and the requirement
+probe sees `0/1/2` printer calls and a saved `PrinterFailure` rather than
+develop's `1/1/1` and a remaining goal. Expectations of the public and staging
+fixtures are never changed to accommodate a candidate. The strict staging gate
+(`--staging-only --candidate-behavior baseline`) must exit **0** on restored
+sources; a candidate with 57 checks against the 60-check baseline contract
+exits **1**. Construction, exclusion, storage and performance behavior are
+gated separately and are not waived here.
 
 Scope: configured Linux/aarch64 Poly/ML 5.9.2, state0, one GC thread. Paired
 results isolate selected sources on shared dependencies; native results use

@@ -1,8 +1,0 @@
-{
-  "command": [
-    "/home/lukasz/dev/HOL/worktrees/simplifier/bin/build",
-    "-t",
-    "--seq=tools/sequences/upto-parallel"
-  ],
-  "exit": 0
-}

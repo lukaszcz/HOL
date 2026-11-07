@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fresh testutils launchers with unique source-tied TASK27 receipts."""
+"""Fresh testutils launchers with unique source-tied receipts."""
+import argparse
 import datetime
 import gzip
 import hashlib
@@ -11,6 +12,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import uuid
 
 HERE = Path(__file__).resolve().parent
@@ -65,9 +67,22 @@ def resolve_observed(path):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path,
+        help="absolute directory receiving one unique receipt subdirectory "
+             "per run (default: a new private directory made with mkdtemp "
+             "in the temporary directory); it must be outside the repository")
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = Path(tempfile.mkdtemp(prefix="api-audit-receipts-"))
+    args.output = args.output.resolve()
+    if args.output == ROOT or ROOT in args.output.parents:
+        parser.error("--output must be outside the repository: " +
+                     str(args.output))
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    evidence = HERE / "evidence" / stamp
+    evidence = args.output / stamp
     evidence.mkdir(parents=True, exist_ok=False)
     receipt = {
         "task": 27,
@@ -142,7 +157,7 @@ def main():
     receipt["pass"] = all(case["pass"] for case in receipt["cases"])
     (evidence / "receipt.json").write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-    print("Evidence: " + str(evidence))
+    print("Receipt: " + str(evidence))
     return 0 if receipt["pass"] else 1
 
 

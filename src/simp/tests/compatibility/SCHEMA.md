@@ -4,9 +4,9 @@
 kinds, wrong arities, reordered/missing/duplicate events, mismatching source
 paths/hashes, wrong process exits and timeouts are errors. `test_runner.py`
 mutates valid receipts to exercise the validator independently of HOL.
-All counts are exact, not minima. TASK_03 adds the optional performance
-fixture; TASK_04 adds frozen public clients; TASK_05 adds independent staged
-proof contracts. TASK_02 observations are unchanged.
+All counts are exact, not minima. The base observations are extended by an
+optional performance fixture, frozen public clients, independent staged
+proof contracts and prior contracts, described below.
 
 ## Ordered process protocol
 

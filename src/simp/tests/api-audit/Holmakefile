@@ -5,6 +5,14 @@ EXTRA_CLEANS = selftest.exe
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
+# Receipts go below $(API_AUDIT_OUTPUT), an absolute path outside the
+# repository; run.py refuses a path inside it.  Unset or empty: run.py makes
+# a private directory in the temporary directory.
+ifneq ($(API_AUDIT_OUTPUT),)
+AUDIT_ARGS = --output $(API_AUDIT_OUTPUT)
+else
+AUDIT_ARGS =
+endif
 .PHONY: check
 check: selftest.exe Documentation.uo
-	python3 run.py
+	python3 run.py $(AUDIT_ARGS)

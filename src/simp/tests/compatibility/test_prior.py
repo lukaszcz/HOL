@@ -1,5 +1,7 @@
 """Fail closed on changed cases/callbacks, not just count differences."""
 import copy
+import gzip
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +15,9 @@ HERE = Path(__file__).resolve().parent
 
 class PriorTests(unittest.TestCase):
     def test_historical_counts(self):
+        # The oracle fixture holds exactly the four counted fixtures.
+        with gzip.open(HERE / prior.ORACLE, "rt") as f:
+            self.assertEqual(sorted(prior.COUNTS), sorted(json.load(f)))
         for fixture, count in prior.COUNTS.items():
             stream = prior.historical(HERE, fixture)
             self.assertEqual(count, sum(s.endswith("OK") and not
