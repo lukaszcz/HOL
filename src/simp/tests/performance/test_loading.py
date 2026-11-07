@@ -522,6 +522,12 @@ class ExitTests(unittest.TestCase):
                     patch.object(l, "run", return_value=report):
                 self.assertEqual(l.main(argv), code)
 
+    def test_cli_requires_inputs_except_for_replay(self):
+        self.assertEqual(l.main(["--module", "simpLib"]), 1)
+        with patch.object(l, "replay", return_value={"exit": None}) as r:
+            self.assertEqual(l.main(["--replay", "/unused"]), 0)
+        r.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

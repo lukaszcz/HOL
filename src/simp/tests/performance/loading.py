@@ -750,9 +750,9 @@ def replay(folder):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=HERE.parents[3])
-    parser.add_argument("--baseline", required=True)
+    parser.add_argument("--baseline")
     parser.add_argument("--candidate")
-    parser.add_argument("--module", choices=MODULES, required=True)
+    parser.add_argument("--module", choices=MODULES)
     parser.add_argument("--pairs", type=int, default=PAIRS)
     parser.add_argument("--reps", type=int, default=REPS,
                         help="fresh processes per side of a pair")
@@ -760,7 +760,7 @@ def main(argv=None):
                         help="B/B only: measure jitter, derive pairs")
     parser.add_argument("--replay", type=Path,
                         help="recompute a finished run's decisions")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--api-audit", type=Path)
     parser.add_argument("--timeout", type=float, default=1800)
     parser.add_argument("--smoke", action="store_true")
@@ -770,6 +770,8 @@ def main(argv=None):
         if args.replay:
             print(json.dumps(replay(args.replay)))
             return 0
+        require(args.baseline and args.module and args.output,
+                "--baseline, --module and --output are required")
         if args.calibrate and args.candidate is None:
             args.candidate = args.baseline
         require(args.candidate, "--candidate required")
