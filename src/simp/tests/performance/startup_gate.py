@@ -269,7 +269,7 @@ def parse_process(stdout, kind, holdir, library, aliases):
         elif event == "holdir":
             require(payload == holdir, "wrong HOLDIR: " + payload)
         elif event == "result":
-            record["result"] = payload
+            record["result"] = payload if name == "ok" else name
         elif event in ("loaded", "files", "structures"):
             if name == "count":
                 record[event + "_count"] = int(payload)
@@ -397,8 +397,9 @@ def analyse(records, pairs):
         for side in ("base", "candidate", "control", "repeat"):
             for r in by.get((kind, side), [])[:1]:
                 found = sorted(
-                    [m for m in r["loaded"] if is_extension(m, allowed_m)] +
-                    [s for s in r["structures"]
+                    ["module " + m for m in r["loaded"]
+                     if is_extension(m, allowed_m)] +
+                    ["structure " + s for s in r["structures"]
                      if is_extension(s, allowed_s)])
                 extension["%s/%s" % (kind, side)] = found
                 if found:

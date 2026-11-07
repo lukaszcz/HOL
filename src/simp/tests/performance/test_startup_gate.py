@@ -36,7 +36,8 @@ def stdout(kind="hol-startup", brackets=None, loaded=MODULES, files=FILES,
                                 ",".join(map(str, s)) + ";" +
                                 ",".join(map(str, e))]))
     rows = [("holdir", "path", holdir), ("foreign", "path", foreign),
-            ("result", "none" if result == "none" else "ok", result),
+            ("result", "none" if result == "none" else "ok",
+             "-" if result == "none" else result),
             ("loaded", "count", str(len(loaded))),
             ("loaded", "modules", ",".join(loaded)),
             ("files", "count", str(len(files))),
@@ -158,7 +159,7 @@ class DecisionTest(unittest.TestCase):
         report = g.analyse(records, 10)
         self.assertEqual(report["decision"], "fail")
         self.assertEqual(report["extension"]["hol-startup/candidate"],
-                         ["SimpTracking"])
+                         ["module SimpTracking"])
         self.assertEqual(report["loaded_diff"]["hol-startup"]["modules"],
                          dict(only_left=[], only_right=["SimpTracking"]))
 
