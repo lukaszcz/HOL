@@ -89,7 +89,7 @@ class ParseTest(unittest.TestCase):
             g.parse_process(text, "hol-startup", HOLDIR, LIB, ())
 
 
-def record(kind, side, pair, total=100, extra=0, **kw):
+def record(kind, side, pair, experiment, total=100, extra=0, **kw):
     brackets = [("startup", snap(total + extra, 90 + extra), snap()),
                 ("empty", snap(), snap(104, 94))]
     if kind.startswith("load"):
@@ -98,7 +98,7 @@ def record(kind, side, pair, total=100, extra=0, **kw):
         stdout(kind=kind, brackets=brackets,
                result="true" if kind in g.USES_SIMP else "none", **kw),
         kind, HOLDIR, LIB, ())
-    r.update(side=side, pair=pair)
+    r.update(side=side, pair=pair, experiment=experiment)
     return r
 
 
@@ -107,9 +107,12 @@ def grid(kinds=("hol-startup", "load-simpLib"), pairs=10, delta=None):
     out, delta = [], delta or {}
     for kind in kinds:
         for pair in range(pairs):
-            for side in ("base", "candidate", "control", "repeat"):
-                out.append(record(kind, side, pair,
-                                  extra=delta.get((kind, side), 0)))
+            for exp, sides in (("candidate", ("base", "candidate")),
+                               ("control", ("base", "control")),
+                               ("repeat", ("candidate", "repeat"))):
+                for side in sides:
+                    out.append(record(kind, side, pair, exp,
+                                      extra=delta.get((kind, side), 0)))
     return out
 
 
@@ -136,7 +139,7 @@ class DecisionTest(unittest.TestCase):
 
     def test_nondeterminism_fails(self):
         records = grid()
-        records[0] = record("hol-startup", "base", 0, extra=3)
+        records[0] = record("hol-startup", "base", 0, "candidate", extra=3)
         report = g.analyse(records, 10)
         self.assertEqual(report["decision"], "fail")
         self.assertTrue(any("nondeterministic" in r
@@ -199,7 +202,8 @@ class DecisionTest(unittest.TestCase):
 
     def test_unpaired_records_refused(self):
         records = [r for r in grid() if not (
-            r["side"] == "control" and r["pair"] == 3)]
+            r["experiment"] == "control" and r["side"] == "control" and
+            r["pair"] == 3)]
         with self.assertRaisesRegex(sc.InvalidAllocation, "unpaired"):
             g.analyse(records, 10)
 

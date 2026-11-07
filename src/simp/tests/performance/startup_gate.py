@@ -344,9 +344,11 @@ def analyse(records, pairs):
     deterministic and no extension module or structure in any process."""
     reasons, report = [], {}
     kinds = sorted({r["kind"] for r in records})
-    by = {}
+    by, by_exp = {}, {}
     for r in records:
         by.setdefault((r["kind"], r["side"]), []).append(r)
+        by_exp.setdefault((r["kind"], r["experiment"], r["side"]),
+                          []).append(r)
     determinism = {}
     for (kind, side), rs in sorted(by.items()):
         sigs = {signature(r) for r in rs}
@@ -361,8 +363,10 @@ def analyse(records, pairs):
     for name, left, right in EXPERIMENTS:
         exp = experiments[name] = dict(left=left, right=right, kinds={})
         for kind in kinds:
-            ls = sorted(by.get((kind, left), []), key=lambda r: r["pair"])
-            rs = sorted(by.get((kind, right), []), key=lambda r: r["pair"])
+            ls = sorted(by_exp.get((kind, name, left), []),
+                        key=lambda r: r["pair"])
+            rs = sorted(by_exp.get((kind, name, right), []),
+                        key=lambda r: r["pair"])
             if not ls and not rs:
                 continue
             ok = [l["pair"] for l in ls] == [r["pair"] for r in rs]
