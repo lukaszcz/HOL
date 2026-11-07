@@ -207,7 +207,7 @@ source-isolated loading is still not independent-build loading acceptance.
 | External check | Executable coverage / task owner |
 | --- | --- |
 | `loading_audit` | TASK27's eight fresh-process simpLib/congLib order/path/callback/extension-absence scenarios. TASK28/31/33; semantic checks only, not startup timings. |
-| `loading_timing` | `loading.py` first-import CPU/wall/GC timings, two fresh pilots, baseline controls and >=10 AB/BA pairs, bound to the candidate semantic receipt; TASK28/31/33. Source isolation, not independent-build acceptance. |
+| `loading_timing` | `loading.py` first-import CPU/wall/GC timings, two fresh pilots, baseline controls and 40 AB/BA pairs of 5 fresh imports, bound to the candidate semantic receipt; TASK28/31/33. Source isolation, not independent-build acceptance. |
 | `extension_consumer` | Existing TASK25 isolated migration driver with the sealed patch against the final candidate; TASK28/32. Does not itself supply paired independent proof-performance acceptance. |
 | `independent_build_mode` | Existing strict independent-build manifest verifier; TASK28/32/33. Actual clean snapshot prerequisites remain at the blocked downstream build gates. |
 | `extension_suite` | Normal-level ordinary/extension integration and strict post-list native suite; TASK28/35/36. Suites remain enabled; no fresh receipt is claimed by listing a command. |
@@ -228,7 +228,7 @@ The ledger's command templates must be completed with that option:
 ```sh
 python3 -B src/simp/tests/performance/loading.py \
   --baseline BASELINE_FULL_40_HEX_COMMIT \
-  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib --pairs 10 \
+  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib \
   --api-audit /absolute/path/to/receipt.json \
   --authorize-measurements --output NEW_LOADING_DIRECTORY
 ```

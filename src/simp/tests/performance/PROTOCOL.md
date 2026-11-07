@@ -2159,14 +2159,16 @@ against a malicious producer. Preserve actual pristine-state evidence too.
 ## Fresh loading: runnable external gate
 
 `loading.py` now times actual first imports in fresh shared-heap processes,
-with one pilot per revision, >=10 AB/BA pairs, baseline/baseline controls and
-raw CPU/wall/GC. It requires **both** exact commit options and a source-bound
-eight-process API-audit receipt (except explicit non-acceptance smoke):
+with one pilot per revision, 40 AB/BA pairs of 5 fresh imports per side,
+baseline/baseline controls and raw CPU/wall/GC. It requires **both** exact
+commit options (the baseline is the develop pin `acceptance.BASE`) and a
+source-bound eight-process API-audit receipt (except explicit non-acceptance
+smoke):
 
 ```sh
 python3 -B src/simp/tests/performance/loading.py \
   --baseline BASELINE_FULL_40_HEX_COMMIT \
-  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib --pairs 10 \
+  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib \
   --api-audit /absolute/path/to/receipt.json \
   --authorize-measurements --output NEW_LOADING_DIRECTORY
 ```

@@ -151,19 +151,23 @@ All private smoke trees are automatically removed after use.
 ### Fresh loading commands
 
 `loading.py` requires **both** `--baseline` and `--candidate` as exact full
-commit hashes, even though `acceptance.py` has a pinned baseline default:
+commit hashes. A decision run's baseline is the develop pin
+(`acceptance.BASE`) and its counts are fixed at 40 pairs of 5 fresh imports
+per side, so neither `--pairs` nor `--reps` is given:
 
 ```sh
 python3 -B src/simp/tests/performance/loading.py \
-  --baseline BASELINE_FULL_40_HEX_COMMIT \
-  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib --pairs 10 \
+  --baseline DEVELOP_PIN_FULL_40_HEX_COMMIT \
+  --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib \
   --api-audit /absolute/path/to/source-bound/receipt.json \
   --authorize-measurements --output /absolute/path/to/new-loading-simp
 ```
 
-Repeat for `--module congLib` with a different output directory. An explicit
-`--smoke --pairs 1` may omit the semantic receipt but gives no performance
-decision. The congLib import includes simpLib, not marginal cost after it.
+Repeat for `--module congLib` with a different output directory. When the
+B/B control misses its window and nothing failed, `--extend RUN_DIR` runs the
+one second stage. An explicit `--smoke` (with `--pairs`/`--reps`) may omit the
+semantic receipt but gives no performance decision. The congLib import
+includes simpLib, not marginal cost after it.
 `success` means protocol completion; inspect every metric's decision. A fresh
 semantic receipt alone is not startup timing or independent-build acceptance.
 
