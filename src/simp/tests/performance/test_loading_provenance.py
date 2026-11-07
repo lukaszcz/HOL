@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Loading provenance controls; synthetic builds/processes are NOT timings."""
 from contextlib import nullcontext
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -23,24 +25,34 @@ def receipt(text="", code=0, timeout=False):
 
 
 class ChildStdin(unittest.TestCase):
+    # `cat` waits for EOF on the inherited descriptor; an open pipe that is
+    # never closed hung the Poly/ML version query the same way. The pipe is
+    # the stdin of a separate Python process, so that this process's own
+    # descriptors (fd 0 may be closed) are not touched.
+    CODE = (
+        "import json, os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from pathlib import Path\n"
+        "import loading as l\n"
+        "got = l.execute(['cat'], Path.cwd(), dict(os.environ), 20, ())\n"
+        "logged = l.a.run_logged(['cat'], Path(sys.argv[2]) / 'log', (), 20)\n"
+        "print(json.dumps([[got['exit'], got['timed_out']],\n"
+        "                  [logged['exit'], logged['timed_out']]]))\n")
+
     def test_children_never_inherit_an_open_stdin(self):
-        # `cat` waits for EOF on the inherited descriptor; an open pipe that
-        # is never closed hung the Poly/ML version query the same way.
-        read, write = os.pipe()
-        saved = os.dup(0)
-        try:
-            os.dup2(read, 0)
-            got = l.execute(["cat"], Path.cwd(), dict(os.environ), 20, ())
-            logged = l.a.run_logged(
-                ["cat"], Path(tempfile.mkdtemp(prefix="stdin-")) / "log",
-                (), 20)
-        finally:
-            os.dup2(saved, 0)
-            for fd in (saved, read, write):
-                os.close(fd)
-        self.assertEqual((got["exit"], got["timed_out"]), (0, False))
-        self.assertEqual((logged["exit"], logged["timed_out"]), (0, False))
-        shutil.rmtree(Path(logged["log"]).parent)
+        temp = tempfile.TemporaryDirectory(prefix="stdin-")
+        self.addCleanup(temp.cleanup)
+        child = subprocess.Popen(
+            [sys.executable, "-B", "-c", self.CODE,
+             str(Path(__file__).parent), temp.name],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.stdin.close)
+        self.addCleanup(child.kill)
+        self.addCleanup(child.stdout.close)
+        out = child.stdout.read()
+        child.wait(timeout=90)
+        self.assertEqual(child.returncode, 0)
+        self.assertEqual(json.loads(out), [[0, False], [0, False]])
 
 
 class LibraryDiscovery(unittest.TestCase):

@@ -17,6 +17,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 SOURCES = ("Holmakefile", "selftest.sml", "ordinary.ML", "runtime.ML",
            "Documentation.sml", "run.py")
+# Children never read the caller's standard input (an open pipe that is
+# never closed would hang a Poly/ML top level), and neither may wait for
+# ever. The version query takes a moment; one selftest.exe process loads HOL
+# and runs its checks in minutes at most, so half an hour is generous.
+VERSION_TIMEOUT = 30
+SELFTEST_TIMEOUT = 1800
 
 
 def seal(path):
@@ -81,7 +87,8 @@ def main():
             HERE / 'selftest.exe', ROOT / 'bin/hol.state0',
             ROOT / 'bin/Holmake')},
         "runtime": subprocess.check_output(
-            [shutil.which('poly'), '--version'], text=True).strip(),
+            [shutil.which('poly'), '-v'], text=True,
+            stdin=subprocess.DEVNULL, timeout=VERSION_TIMEOUT).strip(),
         "cases": [],
     }
     actual_paths = set()
@@ -93,8 +100,10 @@ def main():
                    API_AUDIT_OWNER=owner)
         command = [str(HERE / "selftest.exe")]
         proc = subprocess.run(command, cwd=HERE, env=env,
+                              stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT)
+                              stderr=subprocess.STDOUT,
+                              timeout=SELFTEST_TIMEOUT)
         name = f"{order}-{kind}-{owner}.log.gz"
         (evidence / name).write_bytes(gzip.compress(proc.stdout, mtime=0))
         text = proc.stdout.decode("utf-8", errors="replace")

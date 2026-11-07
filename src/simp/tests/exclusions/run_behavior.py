@@ -119,7 +119,7 @@ def main():
         version = paired.execute([poly, "-v"], repo, env, args.timeout)
         manifest["poly_version"] = version
         require(version["exit"] == 0 and not version["timed_out"],
-                "poly --version failed")
+                "poly -v failed")
         with tempfile.TemporaryDirectory(prefix="task17-behavior-") as temp:
             root, inventories, seals = Path(temp), {}, {}
             for side, ref in (("baseline", paired.BASE),

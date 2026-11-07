@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Harness-only parser/validator controls, without rebuilding HOL."""
+import ast
 import copy
+import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -170,22 +173,35 @@ class ProtocolTests(unittest.TestCase):
 
 class OpenStdinTests(unittest.TestCase):
     """A child must never inherit this process's stdin: Poly/ML reads it, so
-    an open pipe that is never closed hung `poly --version` (which is no
-    option, Poly/ML takes -v) until the timeout."""
+    an open pipe that is never closed hung `poly --version` (no option, and
+    it enters the top level) until the timeout. The pipe is the stdin of a
+    separate Python process that calls `execute`, so this process's own
+    descriptors, which may be closed or redirected, are not touched."""
+
+    CODE = (
+        "import json, os, sys, time\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import run_paired as runner\n"
+        "started = time.monotonic()\n"
+        "result = runner.execute(json.loads(sys.argv[2]), os.getcwd(),\n"
+        "                        dict(os.environ), 20)\n"
+        "result['elapsed'] = time.monotonic() - started\n"
+        "print(json.dumps(result))\n")
 
     def run_with_open_stdin(self, command):
-        read, write = os.pipe()
-        saved = os.dup(0)
-        try:
-            os.dup2(read, 0)  # open, empty, never closed during the run
-            started = time.monotonic()
-            result = runner.execute(command, Path.cwd(), dict(os.environ), 20)
-            elapsed = time.monotonic() - started
-        finally:
-            os.dup2(saved, 0)
-            for fd in (saved, read, write):
-                os.close(fd)
-        return result, elapsed
+        # Popen's stdin pipe stays open and empty until the child is done.
+        child = subprocess.Popen(
+            [sys.executable, "-B", "-c", self.CODE, str(Path(__file__).parent),
+             json.dumps(command)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.stdin.close)
+        self.addCleanup(child.kill)
+        self.addCleanup(child.stdout.close)
+        out = child.stdout.read()
+        child.wait(timeout=60)
+        self.assertEqual(child.returncode, 0)
+        result = json.loads(out)
+        return result, result["elapsed"]
 
     def test_child_reading_stdin_sees_eof_not_the_callers_pipe(self):
         result, elapsed = self.run_with_open_stdin(["cat"])
@@ -193,15 +209,48 @@ class OpenStdinTests(unittest.TestCase):
         self.assertEqual((result["exit"], result["stdout"]), (0, ""))
         self.assertLess(elapsed, 15)
 
-    def test_poly_version_query_finishes_promptly(self):
+    def test_poly_version_option_finishes_promptly(self):
+        # `poly --version` reads stdin: with the caller's open pipe it hangs
+        # until the timeout (timed_out), with /dev/null it ends at once.
         poly = shutil.which("poly")
         if poly is None:
             self.skipTest("poly is unavailable")
-        result, elapsed = self.run_with_open_stdin([poly, "-v"])
+        result, elapsed = self.run_with_open_stdin([poly, "--version"])
         self.assertFalse(result["timed_out"])
         self.assertEqual(result["exit"], 0)
         self.assertTrue(result["stdout"].startswith("Poly/ML "))
         self.assertLess(elapsed, 15)
+
+    def test_poly_dash_v_prints_the_banner_and_the_rts_version(self):
+        poly = shutil.which("poly")
+        if poly is None:
+            self.skipTest("poly is unavailable")
+        result, elapsed = self.run_with_open_stdin([poly, "-v"])
+        self.assertEqual(result["exit"], 0)
+        self.assertRegex(result["stdout"], r"^Poly/ML .*RTS version: ")
+
+
+class VersionQueryTests(unittest.TestCase):
+    def test_main_queries_the_compiler_with_dash_v(self):
+        # `poly --version` hangs on an open stdin and is no option; the
+        # manifest's version receipt must come from `poly -v`.
+        tree = ast.parse(Path(runner.__file__).read_text())
+        queries = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and
+                    isinstance(node.value, ast.Call) and
+                    isinstance(node.value.func, ast.Name) and
+                    node.value.func.id == "execute"):
+                continue
+            target = node.targets[0]
+            if (isinstance(target, ast.Subscript) and
+                    isinstance(target.slice, ast.Constant) and
+                    target.slice.value == "poly_version"):
+                queries.append(ast.literal_eval(ast.Tuple(
+                    [e if isinstance(e, ast.Constant) else
+                     ast.Constant("<" + ast.unparse(e) + ">")
+                     for e in node.value.args[0].elts])))
+        self.assertEqual(queries, [("<poly>", "-v")])
 
 
 if __name__ == "__main__":

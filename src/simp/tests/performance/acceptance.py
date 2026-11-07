@@ -535,14 +535,14 @@ def verify_builds(path, baseline, candidate):
             "missing compiler/runtime version")
     # `poly -v` prints the banner and the RTS version; `poly --version` is no
     # option (it enters the top level and reads stdin), which older records
-    # used, so only the banner before "RTS version" is compared.
+    # used. A record holding "RTS version" is compared in full; a legacy
+    # record is compared by its banner alone (see poly_version_matches).
     version = subprocess.run([tools["poly"]["path"], "-v"],
                              text=True, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, timeout=10)
     require(version.returncode == 0 and
-            poly_banner(version.stdout) ==
-            poly_banner(tools["poly"]["version"]) and
+            poly_version_matches(tools["poly"]["version"], version.stdout) and
             version.stdout.startswith("Poly/ML"),
             "compiler/runtime version changed")
     roots, products, logs, commands = [], [], set(), []
@@ -643,6 +643,18 @@ def poly_banner(text):
     """The Poly/ML version banner of a version query's output: `poly -v`
     appends "RTS version: ..." to the line `poly --version` printed."""
     return text.split("RTS version")[0].strip()
+
+
+def poly_version_matches(recorded, probe):
+    """Whether `probe`, the output of `poly -v` now, is the version a record
+    holds. A record made by `poly -v` holds the RTS version too, and the
+    whole stripped text must be equal (a different RTS build, as another
+    architecture or an interpreter, is another runtime). A legacy record,
+    made by `poly --version`, holds the banner alone, and only the banner of
+    the probe is compared with it."""
+    if "RTS version" in recorded:
+        return recorded.strip() == probe.strip()
+    return poly_banner(probe) == poly_banner(recorded)
 
 
 def run_logged(command, output, fds, timeout, stdin=subprocess.DEVNULL,

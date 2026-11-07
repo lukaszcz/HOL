@@ -105,6 +105,22 @@ class Table(unittest.TestCase):
         for value in counts["iterations"].values():
             self.assertEqual(value & (value - 1), 0)
 
+    def test_the_seal_histories_hold_only_seals_that_records_carry(self):
+        # Every TASK30 record (pilot, grid, stage 2) carries these seals of
+        # the driver, the engine, acceptance.py and run_paired.py. The only
+        # later entry is task29_gate.py (the Y records), the file before the
+        # "exclusive window" wording was dropped; the follow-up's own table
+        # (task30_followup.py) holds the seals its records carry.
+        self.assertEqual([d["bytes"] for d in t30.DRIVERS], [9634])
+        self.assertEqual([d["bytes"] for d in t30.ENGINES], [131311])
+        self.assertEqual([d["bytes"] for d in t30.ACCEPTANCE], [38678])
+        history = t30.SEALED_HISTORY
+        self.assertEqual(
+            [d["bytes"] for d in history["../compatibility/run_paired.py"]],
+            [48705])
+        self.assertEqual([d["bytes"] for d in history["task29_gate.py"]],
+                         [9766])
+
     def test_the_baseline_sources_and_sealed_files_are_named(self):
         table = t30.TABLE
         self.assertEqual(table.baseline, a.BASE)
@@ -383,8 +399,8 @@ class Followup(unittest.TestCase):
                    sha256="1076ad0d8f984a9081eaa2408554a483"
                           "2a0f3c092f6c5be25820537fa3c1a8e6"),),
              {"task30_grid.py": (dict(
-    bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
-                   "ca43853d5b5cccf4e0dc34cd38dc9978"),),
+                 bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
+                                "ca43853d5b5cccf4e0dc34cd38dc9978"),),
               "../compatibility/run_paired.py": (dict(
                   bytes=49616, sha256="52622f55fa6399bd2df1557faeb0d881"
                                  "8358e6c46695487fd70e036f3c1fa4c7"),),
@@ -638,8 +654,9 @@ class Whole(ttg.Rig):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err):
                     self.assertEqual(t30.main(argv), tg.REFUSED)
-                self.assertEqual(err.getvalue(),
-                                 "REFUSED: measurement authorization required\n")
+                self.assertEqual(
+                    err.getvalue(),
+                    "REFUSED: measurement authorization required\n")
 
 
 class Closing(unittest.TestCase):

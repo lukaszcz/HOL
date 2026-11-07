@@ -35,7 +35,7 @@ line naming its table; the build stamp and the prepare log are this table's
 own (`build-stamp-task30f.json`, `prepare-task30f.log`).
 
   prepare     configure, build and stamp the checkout    (takes the lock)
-  pilot       develop-only cells for the counts          (needs a window)
+  pilot       develop-only cells for the counts          (authorized)
   predeclare  counts file from the pilot (--replaces GRID --replaces-pilot
               DIR: the grid replaced and its pilot)   (replays that grid)
   verify-counts  the counts file against its pilot and the replaced grid
@@ -67,8 +67,8 @@ COUNTS = a.HERE / "task30_followup_iterations.json"
 # records were made by: the old timing_grid.py to ENGINES, acceptance.py to
 # ACCEPTANCE, this file to DRIVERS, and (a reviewed change that alters
 # nothing measured, only after `run`) the old task30_grid.py to
-# SEALED_HISTORY["task30_grid.py"]; edit test_task30_grid.py, which pins them
-# empty, too. Per file a later change needs: timing_grid.py the ENGINES entry,
+# SEALED_HISTORY["task30_grid.py"]; edit test_task30_grid.py, which pins them,
+# too. Per file a later change needs: timing_grid.py the ENGINES entry,
 # acceptance.py the ACCEPTANCE entry, task30_followup.py the DRIVERS entry
 # (every record of this table carries those seals), task30_pins.py a
 # PIN_HISTORY entry; summarize.py, audit_evidence.py, runtime_metrics.py and

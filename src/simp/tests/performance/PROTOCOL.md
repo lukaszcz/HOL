@@ -10,11 +10,13 @@ measurements also need the corresponding source/layout/callback work audit.
 From the repository root. The host is shared and no exclusive window is
 required; a checkout's own builds and measurements stay serial, under its lock.
 `--authorize-measurements` is the explicit authorization to build and measure,
-not a claim of exclusive access. Every child process the harness starts gets
-`/dev/null` as standard input, and the compiler version is queried with
-`poly -v` (Poly/ML has no `--version`: it enters the top level and reads
-stdin, which hung on an inherited open pipe; archived records of the earlier
-command stay valid):
+not a claim of exclusive access. Every child process of the measurement
+harness (`run_paired.execute`, `loading.execute`, `acceptance.run_logged`,
+`verify_builds`, `api-audit/run.py`) gets `/dev/null` as standard input, and
+the compiler version is queried with `poly -v` (Poly/ML has no `--version`: it
+enters the top level and reads stdin, which hung on an inherited open pipe;
+archived records of the earlier command stay valid). The exceptions, with the
+reasons, are in "Standard input and the version query" at the end:
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -1642,8 +1644,9 @@ table of its own on the shared engine, with the following additions to it.
     repository's (`Table.root`), the same whatever checkout `--repo` names,
     and a sealed file outside that repository is refused.
 - **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
-  `ACCEPTANCE` (empty tuples) and `SEALED_HISTORY` (empty), passed to its
-  table as TASK30's are to its own: `check_code` accepts a record whose
+  `ACCEPTANCE` and `SEALED_HISTORY`, each with the entries of the
+  `40e176538f` round (see "Standard input and the version query"), passed to
+  its table as TASK30's are to its own: `check_code` accepts a record whose
   driver, engine or acceptance seal is the current one or one listed, and a
   sealed file's seal is the current one or one of its history. They are read
   by `replay` only; `run` compares the counts' `sealed` with the current
@@ -1687,7 +1690,7 @@ table of its own on the shared engine, with the following additions to it.
     `"task30_grid.py": (SEAL,),` for `SEALED_HISTORY` (the same form: a dict
     keyed by file), `SEAL,` for `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and
     the tests that pin those
-    constants empty (`test_task30_dispose.py` for `HISTORY`,
+    constants (`test_task30_dispose.py` for `HISTORY`,
     `test_task30_grid.py` for the follow-up's), which the same commit edits;
     nothing is looked up by hand.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
@@ -2115,8 +2118,12 @@ Required top-level fields:
 - `toolchain`: map including `poly` with absolute `path`, nonempty `version`, and
   `fingerprint: {sha256: HEX, bytes: INTEGER}`. Admission executes
   `poly -v` (stdin is /dev/null) and requires its successful Poly/ML output to
-  match `version`: the banner before `RTS version` must be equal (records
-  made with the earlier `poly --version` carry only the banner). Include other external tools too;
+  match `version`. A `version` that contains `RTS version` (made by
+  `poly -v`) must equal the output in full once stripped, so another RTS
+  build (architecture, interpreter) is refused. A legacy `version` (made by
+  `poly --version`, the banner alone) is compared with the banner of the
+  output, the text before `RTS version`; that is also how a legacy record
+  meets a new probe. Include other external tools too;
 - `selections`: exactly `baseline` and `candidate`.
 
 Each selection contains:
@@ -2195,3 +2202,63 @@ independent downstream proof/build acceptance and migrated-consumer costs remain
 separate. Keep normal ordinary/extension suites enabled. Passing Python tests,
 smokes or controls establishes machinery behavior, not numerical parity or the
 final release gate. See [`README.md`](README.md) for maintained check targets.
+
+## Standard input and the version query
+
+Two rounds touched every child of the harness. The first (`40e176538f`)
+gave `run_paired.execute`, `loading.execute`, `acceptance.run_logged` and
+`verify_builds` `/dev/null` as standard input, queried the compiler with
+`poly -v`, and dropped "exclusive window" from live code. `poly --version` is
+no option: Poly/ML enters the top level and reads stdin, which hangs on an
+inherited open pipe. The second round (this one) answered a review of the
+first:
+
+- **Runners sealed by a checksum manifest keep `poly --version`** and their
+  text as it was: `fragments/assembly/run_assembly.py`
+  (`fragments/assembly/SHA256SUMS`), `tactics/performance/run_tactics.py`,
+  `tactics/performance/README.md` (`FOLLOWUP_SHA256SUMS`) and
+  `exclusions/performance/{gc_run,gc_trace,run_exclusions}.py`, `HANDOFF.md`,
+  `README.md`, `assembly/README.md` (`evidence/SHA256SUMS`). They reach
+  poly only through `run_paired.execute`, which now uses `/dev/null`, so
+  `poly --version` reads end of file and prints exactly
+  `Poly/ML 5.9.2 Release` (exit 0): safe, and the old checks of that text
+  (`run_assembly.py` requires the exact line) still hold. Every manifest
+  passes `sha256sum -c` again, from the directories their handoffs name.
+  Unsealed runners use `-v`; no check compares raw `-v` output with a fixed
+  `--version` string.
+- **Version comparison.** `acceptance.poly_version_matches`: a recorded
+  version that contains `RTS version` (a `poly -v` record) must equal the
+  live `poly -v` output in full once stripped; a legacy record (banner
+  alone) is compared with the banner of the live output, as is a legacy
+  record against a new probe.
+- **`api-audit/run.py`** queries `poly -v` and runs `selftest.exe` with
+  `/dev/null` as stdin and timeouts (30 s, 1800 s). No retained receipt or
+  manifest seals it other than the receipts' own `sources` entry, which
+  `loading.py` compares in the tree the receipt was made in; the fresh
+  eight-process receipt TASK31 needs is made by the new `run.py`.
+- **Older audits** `check_task27_docs.py`, `run_task22_negative.py`,
+  `audit_task27.py`, `compatibility/interfaces/check_design.py` and
+  `native-extension/check.py` got `stdin=/dev/null` (and a timeout where one
+  was missing). They start Holmake, HOL-compiled executables or a dependency
+  tool, no Poly/ML top level. `performance/review-20261021/reproduce.py`
+  keeps inheriting stdin: `compatibility/SHA256SUMS` seals it, and it starts
+  no top level either. Git calls everywhere are left alone.
+- **Seal histories.** Changed files whose seals records carry get an entry
+  in the commit that changes them. TASK30's own table gets one, the
+  `task29_gate.py` of the Y records, because the harness dropped its
+  "exclusive window" wording. The earlier entries for TASK30's driver,
+  engine, acceptance and run_paired were removed: no TASK30 record (pilot,
+  grid, stage 2) carries those seals. The follow-up's tables hold the seals
+  its records carry (`DRIVERS` 6360, `ENGINES` 190317, `ACCEPTANCE` 39557,
+  `SEALED_HISTORY` `task30_grid.py` 11833, `run_paired.py` 49616,
+  `task29_gate.py` 9766), and `task30_dispose.HISTORY` those of
+  `followup-r2/disposition.json`; all are the blobs of `40e176538f`. Later
+  edits of the same files in this round (usage text, style) need no entry:
+  no record carries their new seals.
+- **Nothing measured changes.** TASK30's runs were launched with
+  `</dev/null`, so their measured children already read `/dev/null`; the
+  queried version differs in output only.
+- Wording: a past measurement keeps saying it ran in an exclusive window;
+  the requirement lists of TASK29A, `RUNTIME_POOLS.md`, `README.md` and
+  `TASK_28_HANDOFF.md` carry a dated amendment (2026-11-05: waived by the
+  policy owner; the host is shared) instead of a rewrite.

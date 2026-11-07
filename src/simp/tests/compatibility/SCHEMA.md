@@ -82,7 +82,9 @@ success and failure, after processes terminate.
 - `runtime_options`: common launcher options; `environment`: effective HOLDIR,
   PATH, TERM, LC_ALL, TZ. Inherited HOL*, POLY*, ML*, PAIR_* are stripped.
 - `tools`: path → `{sha256, bytes}` for runtime, heaps, Holmake, poly executable
-  and project config; `poly_version`: captured process receipt.
+  and project config; `poly_version`: captured process receipt of `poly -v`
+  (the banner and `RTS version: ...`; records made before 2026-11-05 hold
+  the output of `poly --version`, the banner alone).
 - `inputs`: maintained fixture/driver/schema path → `{sha256, bytes}`.
 - `selections`: baseline/candidate → requested ref, resolved revision, private
   path, exact Git source inventory (`git_path`, `git_blob`, `private_path`,
@@ -100,7 +102,9 @@ success and failure, after processes terminate.
 All receipts: `command` (argv), `cwd`, `exit` (integer or null), `timed_out`,
 `stdout_sha256`, `stdout_bytes`, `diagnostics` (non-protocol lines in order).
 Build receipts have just these fields. Both builds must exit 0; .uo generation
-is never a test result. `poly_version` additionally retains stdout inline.
+is never a test result. `poly_version` additionally retains stdout inline:
+`Poly/ML ... Release    RTS version: ...` for `poly -v`, the banner alone in
+the legacy `poly --version` records.
 
 Test receipts additionally contain `selection`, `fixture`, `control`, effective
 PAIR_* `environment`, `accepted` and either:
