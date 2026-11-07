@@ -130,7 +130,9 @@ def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
     report["hol_configuration_override"] = overrides.read_text()
     run([str(prefix / "bin/poly"), "--error-exit", "--use",
          "tools/smart-configure.sml"], hol, env)
-    run([str(hol / "bin/build"), "--no-cache", "-j2",
+    jobs = os.environ.get("GATE_BUILD_JOBS", "2")
+    report["hol_build_jobs"] = jobs
+    run([str(hol / "bin/build"), "--no-cache", "-j" + jobs,
          "--seq=" + pr.HOL_SEQUENCE], hol, env)
     report["hol_products"] = {str(hol / n): a.seal(hol / n) for n in (
         "bin/hol", "bin/hol.state0", "bin/hol.state", "bin/Holmake")}
