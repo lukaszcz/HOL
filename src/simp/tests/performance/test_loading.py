@@ -48,6 +48,7 @@ class LoadingProtocol(unittest.TestCase):
         self.events += [
             ["observation", "loading.end", "simpLib"],
             ["observation", "loading.raw", RAW],
+            ["observation", "loading.extensions", l.NO_EXTENSIONS],
             ["use", str(self.dst / "selftest.sml")],
             ["check", "ordinary exact kernel equality", "pass"],
             ["used", str(self.dst / "selftest.sml")],
@@ -262,19 +263,169 @@ class PairingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             l.statistics(rows, 10, False)
 
-    def test_zero_gc_inconclusive_and_no_pairs_dropped(self):
+    def test_zero_gc_is_reported_not_gated_and_no_pairs_dropped(self):
         rows = self.rows()
         rows[0]["measurement"]["raw"]["gc_cpu"] = 0
         result = l.statistics(rows, 10, False)["metrics"]["gc_cpu"]
-        self.assertEqual(result["decision"], "inconclusive")
+        self.assertEqual(result["decision"], "reported")
         self.assertEqual(len(result["observations"]), 10)
 
     def test_calibration_failure_not_pass(self):
         rows = self.rows()
         rows[4]["measurement"]["calibrated"] = False
         result = l.statistics(rows, 10, False)
-        self.assertTrue(all(m["decision"] == "inconclusive"
-                            for m in result["metrics"].values()))
+        self.assertEqual({k: m["decision"] for k, m in
+                          result["metrics"].items()},
+                         {"wall": "inconclusive", "cpu": "inconclusive",
+                          "gc_cpu": "reported"})
+
+
+class UnitAndPolicyTests(unittest.TestCase):
+    """The TASK31 loading unit and the timing grid's equivalence policy."""
+
+    def rows(self, n, reps, value, phase_scale=1.0):
+        """`value(pair, side, rep)` is the wall and cpu of each process."""
+        return [dict(pair=i, selection=side, rep=r, accepted=True, exit=0,
+                     measurement=dict(calibrated=True, raw={
+                         "wall": value(i, side, r) * (
+                             phase_scale if side == "candidate" else 1),
+                         "cpu": value(i, side, r) * (
+                             phase_scale if side == "candidate" else 1),
+                         "gc_cpu": 0.1}))
+                for i, side, r in l.schedule(n, reps)]
+
+    def test_policy_is_the_grids_single_definition(self):
+        import timing_grid
+        self.assertIs(l.POLICY, l.a.EQUIVALENCE_POLICY)
+        self.assertIs(timing_grid.a.EQUIVALENCE_POLICY, l.POLICY)
+        self.assertEqual(l.POLICY["margin"], 0.03)
+        self.assertEqual(l.POLICY["gated_timing"], ["cpu", "wall"])
+        self.assertEqual(l.a.timing_rule(l.POLICY, "gc_cpu"), (0.0, False))
+
+    def test_schedule_is_fresh_processes_ab_ba_interleaved(self):
+        self.assertEqual(l.schedule(2, 1), [(i, s, 0) for i, s in l.plan(2)])
+        self.assertEqual(l.schedule(2, 2), [
+            (0, "baseline", 0), (0, "candidate", 0),
+            (0, "baseline", 1), (0, "candidate", 1),
+            (1, "candidate", 0), (1, "baseline", 0),
+            (1, "candidate", 1), (1, "baseline", 1)])
+        self.assertEqual(len(l.schedule(30, l.REPS)), 60 * l.REPS)
+
+    def test_sample_is_the_mean_of_its_fresh_processes(self):
+        rows = self.rows(10, 3, lambda i, s, r: 1 + r)
+        result = l.statistics(rows, 10, False, 3)["metrics"]["wall"]
+        self.assertEqual(result["observations"][0],
+                         {"baseline": 2.0, "candidate": 2.0})
+        with self.assertRaisesRegex(ValueError, "fresh pair"):
+            l.statistics(rows[:-1], 10, False, 3)
+        with self.assertRaisesRegex(ValueError, "fresh pair"):
+            l.statistics(rows, 10, False, 2)
+
+    def decide(self, scale, control_spread):
+        wiggle = lambda i, s, r: 1 + control_spread * (
+            (i * 7 + r * 3 + (s == "candidate")) % 5 - 2) / 2
+        results = {
+            "control": l.statistics(self.rows(10, 1, wiggle), 10, False),
+            "candidate": l.statistics(
+                self.rows(10, 1, lambda i, s, r: 1.0, scale), 10, False)}
+        for metric, data in results["candidate"]["metrics"].items():
+            l.a.apply_control(data, results["control"]["metrics"][metric])
+        return {m: d["decision"] for m, d in
+                results["candidate"]["metrics"].items()}
+
+    def test_two_percent_passes_under_the_margin_with_a_valid_control(self):
+        got = self.decide(1.02, 0.0)
+        self.assertEqual((got["wall"], got["cpu"]), ("pass", "pass"))
+        self.assertEqual(l.exit_status({k: {"decision": v}
+                                        for k, v in got.items()}), 0)
+
+    def test_five_percent_slowdown_fails(self):
+        got = self.decide(1.05, 0.0)
+        self.assertEqual((got["wall"], got["cpu"]), ("fail", "fail"))
+
+    def test_wide_control_makes_the_comparison_inadmissible(self):
+        got = self.decide(1.0, 0.4)
+        self.assertEqual((got["wall"], got["cpu"]),
+                         ("inconclusive", "inconclusive"))
+        self.assertEqual(l.exit_status({k: {"decision": v}
+                                        for k, v in got.items()}), 2)
+
+    def test_exit_status_ignores_reported_and_requires_gated_pass(self):
+        self.assertEqual(l.exit_status({
+            "wall": {"decision": "pass"}, "cpu": {"decision": "pass"},
+            "gc_cpu": {"decision": "reported"}}), 0)
+        self.assertEqual(l.exit_status({
+            "wall": {"decision": "pass"}, "cpu": {"decision": "fail"},
+            "gc_cpu": {"decision": "reported"}}), 1)
+
+    def test_pairs_scale_with_control_width_squared(self):
+        import timing_grid
+        t = timing_grid.TARGET
+        self.assertEqual(l.pairs_for(t, 30), 30)
+        self.assertEqual(l.pairs_for(2 * t, 30), 120)
+        self.assertEqual(l.pairs_for(0.0, 30), 10)
+        self.assertIsNone(l.pairs_for(math.inf, 30))
+
+    def test_acceptance_defaults_meet_the_derived_floor(self):
+        self.assertGreaterEqual(l.PAIRS, 10)
+        self.assertGreaterEqual(l.REPS, 1)
+
+
+class ExtensionAbsenceTests(LoadingProtocol):
+    def with_extensions(self, value):
+        es = copy.deepcopy(self.events)
+        for e in es:
+            if e[:2] == ["observation", "loading.extensions"]:
+                e[2] = value
+        return es
+
+    def test_absent_extensions_pass_when_enforced(self):
+        _, measured = self.check_enforced(self.events)
+        self.assertEqual(measured["extensions_loaded"], [])
+        self.assertTrue(measured["extension_absence_enforced"])
+
+    def check_enforced(self, es):
+        receipt = self.receipt(es)
+        return l.validate(receipt, enforce_absence=True, **self.args)
+
+    def test_loaded_extension_name_rejected_for_the_candidate(self):
+        for value in ("simpExtLib", "congExtLib,TraverseExt",
+                      "SimpTracking", "trackedSimpDefaults", "splitLib"):
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, "extension module"):
+                self.check_enforced(self.with_extensions(value))
+
+    def test_extension_source_in_the_actual_trace_rejected(self):
+        es = copy.deepcopy(self.events)
+        index = next(i for i, e in enumerate(es) if e[0] == "loaded")
+        es.insert(index, ["loaded", str(self.dst / "SimpTracking.sml")])
+        with self.assertRaisesRegex(ValueError, "SimpTracking"):
+            self.check_enforced(es)
+
+    def test_baseline_records_but_does_not_reject(self):
+        _, measured = self.check(self.with_extensions("SimpTracking"))
+        self.assertEqual(measured["extensions_loaded"], ["SimpTracking"])
+        self.assertFalse(measured["extension_absence_enforced"])
+
+    def test_missing_extension_observation_rejected(self):
+        es = [e for e in self.events
+              if e[:2] != ["observation", "loading.extensions"]]
+        with self.assertRaises(ValueError):
+            self.check_enforced(es)
+
+    def test_name_predicate_matches_the_api_audit(self):
+        for name in ("simpExtLib", "boolSimpsExt", "simpMarkerLib",
+                     "SplitData", "SimpTracking"):
+            self.assertTrue(l.extension_name(name), name)
+        for name in ("simpLib", "congLib", "Traverse", "Cond_rewr",
+                     "pureSimps", "boolSimps", "Trace"):
+            self.assertFalse(l.extension_name(name), name)
+
+    def test_generated_runner_probes_the_same_names(self):
+        for name in l.EXTENSION_NAMES:
+            self.assertIn('"%s"' % name, l.TIMING)
+        for mark in ("@PROBE@", "@NONE@"):
+            self.assertNotIn(mark, l.TIMING)
 
 
 class SemanticGateTests(unittest.TestCase):

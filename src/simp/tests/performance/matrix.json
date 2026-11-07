@@ -202,8 +202,8 @@
   "externals": {
     "loading_timing": {
       "status": "runnable_external", "gate_owner": "TASK28, TASK31, TASK33",
-      "reason": "Fresh first-import loading.py measures each ordinary library with raw CPU/wall/GC, two calibration pilots and at least ten AB/BA pairs, baseline controls and candidate semantic audit binding. Isolated-source timing is not independent loading acceptance; the latter requires clean snapshots.",
-      "commands": ["python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module simpLib --pairs 10 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_SIMP_LOADING", "python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module congLib --pairs 10 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_CONG_LOADING"]
+      "reason": "Fresh first-import loading.py measures each ordinary library with raw CPU/wall/GC, two calibration pilots and at least 40 AB/BA pairs of 5 fresh imports each (3% equivalence margin, B/B controls decide admissibility; TASK31), baseline controls and candidate semantic audit binding. Isolated-source timing is not independent loading acceptance; the latter requires clean snapshots.",
+      "commands": ["python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module simpLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_SIMP_LOADING", "python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module congLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_CONG_LOADING"]
     },
     "loading_audit": {
       "status": "runnable_external", "gate_owner": "TASK28, TASK31, TASK33",

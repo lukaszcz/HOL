@@ -190,6 +190,9 @@ class BuildBinding(unittest.TestCase):
             events += [
                 ["observation", "loading.end", "congLib"],
                 ["observation", "loading.raw", RAW],
+                ["observation", "loading.extensions",
+                 "SimpTracking" if self.mutation == "extension" and
+                 dst.name == "candidate" else l.NO_EXTENSIONS],
                 ["use", str(dst / "selftest.sml")],
                 ["check", "ordinary exact kernel equality", "pass"],
                 ["check", "congruence exact kernel equality", "pass"],
@@ -203,12 +206,14 @@ class BuildBinding(unittest.TestCase):
                            for i, e in enumerate(events))
         return dict(command=command, cwd=str(cwd), **receipt(text))
 
-    def run_protocol(self):
+    def run_protocol(self, **changes):
         options = SimpleNamespace(
             repo=self.repo, baseline=self.pin, candidate=self.pin,
-            module="congLib", pairs=1, smoke=True, timeout=30,
+            module="congLib", pairs=1, reps=1, smoke=True, calibrate=False,
+            timeout=30,
             authorize_measurements=True, api_audit=None,
             output=self.repo / "output")
+        options.__dict__.update(changes)
         install = l.install
 
         def install_mutation(dst, module):
@@ -239,6 +244,34 @@ class BuildBinding(unittest.TestCase):
                 expected = {k: source[k] for k in ("bytes", "sha256")}
                 self.assertEqual(selection["products"][
                     Path(source["private_path"]).name], expected)
+
+    def test_calibration_run_records_reps_and_replays(self):
+        report = self.run_protocol(pairs=10, reps=2, smoke=False,
+                                   calibrate=True)
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertEqual(report["mode"], "calibration")
+        self.assertEqual((report["schema"], report["reps"]),
+                         (l.SCHEMA, 2))
+        self.assertEqual(self.processes, 2 + 2 * 10 * 2)
+        self.assertEqual(report["policy"], l.a.EQUIVALENCE_POLICY)
+        self.assertEqual(sorted({r["rep"] for r in report["runs"]}), [0, 1])
+        self.assertEqual(report["jitter"]["pairs_for_target"], 10)
+        out = self.repo / "output"
+        self.assertEqual(l.replay(out), {"replayed": 42, "exit": None})
+        # Tampering with a process receipt is caught by its seal.
+        victim = out / report["runs"][5]["receipt"]
+        victim.write_bytes(victim.read_bytes() + b"x")
+        with self.assertRaisesRegex(ValueError, "changed process receipt"):
+            l.replay(out)
+
+    def test_candidate_extension_load_blocks_the_run(self):
+        self.mutation = "extension"
+        report = self.run_protocol()
+        self.assertFalse(report["success"])
+        self.assertIn("extension module loaded", report["failure"])
+        # The baseline pilot ran first and was admitted; the candidate's
+        # pilot stopped the run.
+        self.assertEqual(self.processes, 2)
 
     def reject(self, mutation, error, processes=0):
         self.mutation = mutation

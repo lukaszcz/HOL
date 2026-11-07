@@ -26,6 +26,26 @@ MODULES = ("simpLib", "congLib")
 FIELDS = ("wall", "nongc_usr", "nongc_sys", "gc_usr", "gc_sys",
           "cpu_usr", "cpu_sys", "gc_user_only")
 METRICS = ("wall", "cpu", "gc_cpu")
+# TASK31 loading unit: every sample is the mean of REPS first imports, each in
+# its own fresh process; a module is never loaded twice in one process.
+REPS = 5
+PAIRS = 40
+SCHEMA = "task31-loading-v3"
+POLICY = a.EQUIVALENCE_POLICY  # the timing grid's 3% margin, one definition
+# Names that no ordinary import may load (the API audit's forbidden list).
+EXTENSION_NAMES = (
+    "TraverseExt", "Cond_rewrExt", "OpeningExt", "TravrulesExt",
+    "simpExtLib", "congExtLib", "pureSimpsExt", "boolSimpsExt",
+    "combinSimpsExt", "numSimpsExt", "pred_setSimpsExt", "listSimpsExt",
+    "intReduceExt", "integer_wordLibExt", "realSimpsExt", "SimpTracking",
+    "trackedSimpDefaults", "simpMarkerTheory", "simpMarkerLib",
+    "SplitData", "splitLib", "splitPersistLib")
+NO_EXTENSIONS = "none"
+
+
+def extension_name(name):
+    return (name in EXTENSION_NAMES or name.endswith(("Ext", "ExtLib"))
+            or name.startswith("simpMarker"))
 # The loading call is a top-level runner operation, NOT inside a pending
 # traced selftest use. Thus nested source uses never defeat rp.validate.
 TIMING = '''fun loadingMeasure f = let
@@ -39,6 +59,21 @@ TIMING = '''fun loadingMeasure f = let
 in map Time.toReal [elapsed,usr,sys,gu,gs,cu,cs,gc] end
 fun loadingEmit key xs = Paired.observe key
   (String.concatWith "," (map (Real.fmt (StringCvt.SCI (SOME 12))) xs))
+val loadingProbe = [@PROBE@]
+fun loadingForbidden n = List.exists (fn m => m = n) loadingProbe orelse
+  String.isSuffix "Ext" n orelse String.isSuffix "ExtLib" n orelse
+  String.isPrefix "simpMarker" n
+fun loadingExtensions () = let
+  val files = map (fn (f, _) => OS.Path.base f)
+    (Binarymap.listItems (Meta.fileDirMap ()))
+  val bound = List.filter (fn n =>
+    Option.isSome (#lookupStruct PolyML.globalNameSpace n)) loadingProbe
+  val found = List.filter loadingForbidden (Meta.loaded () @ files @ bound)
+  fun add (x, acc) = if List.exists (fn y => y = x) acc then acc
+                     else acc @ [x]
+  val unique = List.foldl add [] found
+in case unique of [] => "@NONE@"
+                      | xs => String.concatWith "," xs end
 fun loadingImport () = let
   val name = Paired.env "LOADING_MODULE"
   val _ = if List.exists (fn n => n = "simpLib" orelse n = "congLib")
@@ -50,8 +85,11 @@ fun loadingImport () = let
   val _ = Paired.observe "loading.begin" name
   val data = loadingMeasure (fn () => Meta.loadPlan tracedUse name)
   val _ = Paired.observe "loading.end" name
-in loadingEmit "loading.raw" data end
+  val _ = loadingEmit "loading.raw" data
+in Paired.observe "loading.extensions" (loadingExtensions ()) end
 '''
+TIMING = TIMING.replace("@PROBE@", ", ".join(
+    '"%s"' % n for n in EXTENSION_NAMES)).replace("@NONE@", NO_EXTENSIONS)
 VERIFY = '''open HolKernel
 val p = mk_var ("loading_p",bool)
 val input = boolSyntax.mk_conj (boolSyntax.T,p)
@@ -76,6 +114,16 @@ def plan(pairs):
     return [(i, side) for i in range(pairs) for side in
             (("baseline", "candidate") if i % 2 == 0 else
              ("candidate", "baseline"))]
+
+
+def schedule(pairs, reps):
+    """(pair, side, rep) in execution order. A pair's sample on each side is
+    `reps` fresh processes; the sides alternate inside the pair, and the
+    first side alternates between pairs (AB, then BA). With one rep this is
+    `plan`. Lengthening the unit adds processes, never repeated imports."""
+    return [(i, side, r) for i in range(pairs) for r in range(reps)
+            for side in (("baseline", "candidate") if i % 2 == 0 else
+                         ("candidate", "baseline"))]
 
 
 def install(dst, module):
@@ -125,16 +173,17 @@ def observations(events, module):
     obs = [e for e in events if e[0] in ("observation", "check")]
     keys = ["timer.accounting", "timer.empty", "loading.begin",
             "loading.end", "loading.raw"]
-    require(len(obs) == 6 + (module == "congLib"),
+    keys.append("loading.extensions")
+    require(len(obs) == 7 + (module == "congLib"),
             "missing/extra loading observation")
-    require([e[:2] for e in obs[:5]] ==
+    require([e[:2] for e in obs[:6]] ==
             [["observation", key] for key in keys] and
             all(len(e) == 3 for e in obs), "wrong timer observations")
     require(obs[2][2] == obs[3][2] == module, "wrong import target")
     expected = [["check", "ordinary exact kernel equality", "pass"]]
     if module == "congLib":
         expected += [["check", "congruence exact kernel equality", "pass"]]
-    require(obs[5:] == expected, "missing exact proof verification")
+    require(obs[6:] == expected, "missing exact proof verification")
     start, end = events.index(obs[2]), events.index(obs[3])
     between = events[start + 1:end]
     require(between and all(e[0] in ("use", "used") for e in between),
@@ -152,14 +201,28 @@ def observations(events, module):
     # Require >=100x empty-bracket overhead AND the 1us timer granularity.
     calibrated = all(raw[k] >= 100 * max(empty[k], 1e-6)
                      for k in ("wall", "cpu"))
+    found = sorted(set(obs[5][2].split(",")) - {NO_EXTENSIONS})
+    # Also the sources the process actually used and the final file map.
+    found = sorted(set(found) | {
+        Path(e[1]).stem for e in events
+        if e[0] in ("use", "used", "heapfile", "loaded") and
+        extension_name(Path(e[1]).stem)})
     return obs, {"raw": raw, "empty": empty, "accounting": accounting,
-                 "calibrated": calibrated,
+                 "extensions_loaded": found, "calibrated": calibrated,
                  "calibration_rule": "wall/cpu >=100*max(empty,1us)"}
 
 
-def validate(receipt, *, side, dst, repo, names, sources, module):
+def validate(receipt, *, side, dst, repo, names, sources, module,
+             enforce_absence=False):
+    """`enforce_absence` is for the candidate: the historical baseline need
+    not satisfy the extension split, so its loaded extensions are recorded
+    but never rejected."""
     events = rp.parse_events(receipt["stdout"])
     obs, measurement = observations(events, module)
+    measurement["extension_absence_enforced"] = bool(enforce_absence)
+    require(not (enforce_absence and measurement["extensions_loaded"]),
+            "extension module loaded by an ordinary import: " +
+            ",".join(measurement["extensions_loaded"]))
     contract = {"target": "selftest", "modules": list(MODULES)
                 if module == "congLib" else ["simpLib"],
                 "signatures": [], "observations": obs, "red": False,
@@ -335,9 +398,17 @@ def archive(folder, name, receipt):
     return {"receipt": path.name, "seal": a.seal(path)}
 
 
-def statistics(rows, pairs, smoke):
-    require(len(rows) == 2 * pairs and
-            [(r["pair"], r["selection"]) for r in rows] == plan(pairs),
+def sample(rows, pair, selection, metric):
+    """The unit of one side of a pair: the mean over its fresh processes."""
+    values = [r["measurement"]["raw"][metric] for r in rows
+              if r["pair"] == pair and r["selection"] == selection]
+    return math.fsum(values) / len(values)
+
+
+def statistics(rows, pairs, smoke, reps=1):
+    require(len(rows) == 2 * pairs * reps and
+            [(r["pair"], r["selection"], r.get("rep", 0)) for r in rows] ==
+            schedule(pairs, reps),
             "missing/duplicate/reordered fresh pair")
     require(all(r["accepted"] and r["exit"] == 0 for r in rows),
             "failed process in loading statistics")
@@ -345,37 +416,68 @@ def statistics(rows, pairs, smoke):
         return {"decision": "smoke-only", "metrics": {}}
     metrics = {}
     for metric in METRICS:
-        paired = []
-        for i in range(pairs):
-            paired.append({r["selection"]: r["measurement"]["raw"][metric]
-                           for r in rows if r["pair"] == i})
-        metrics[metric] = a.paired_statistics(paired)
-        if not all(r["measurement"]["calibrated"] for r in rows):
+        margin, gated = a.timing_rule(POLICY, metric)
+        paired = [{side: sample(rows, i, side, metric)
+                   for side in ("baseline", "candidate")}
+                  for i in range(pairs)]
+        metrics[metric] = a.paired_statistics(paired, margin, gated)
+        if gated and not all(r["measurement"]["calibrated"] for r in rows):
             metrics[metric]["decision"] = "inconclusive"
             metrics[metric]["reason"] = "sub-resolution first import"
     return {"metrics": metrics}
 
 
+def control_width(control):
+    """Larger half log-width of the B/B intervals of the gated metrics: the
+    quantity the timing grid's second-stage rule reads."""
+    width = 0.0
+    for metric, data in control["metrics"].items():
+        if data.get("gated", True) is False:
+            continue
+        ci = data["paired_ratio_bootstrap_95_percent"]
+        width = max(width, math.log(ci[1] / ci[0]) / 2
+                    if ci and ci[0] > 0 else math.inf)
+    return width
+
+
+def pairs_for(width, pairs):
+    """Pairs for the grid's target half width, scaled from a B/B interval of
+    `width` at `pairs` pairs (n proportional to width squared)."""
+    import timing_grid as tg
+    wanted = pairs * (width / tg.TARGET) ** 2
+    return None if not math.isfinite(wanted) else \
+        max(10, 10 * math.ceil(wanted / 10))
+
+
 def run(args):
     require(args.module in MODULES, "unknown ordinary module")
+    light = args.smoke or args.calibrate
+    require(not (args.smoke and args.calibrate),
+            "--smoke and --calibrate are exclusive")
+    require(args.reps >= 1, "invalid repetitions")
     require(args.pairs >= (1 if args.smoke else 10),
             "acceptance requires >=10 pairs (or explicit --smoke)")
+    require(light or (args.pairs >= PAIRS and args.reps >= REPS),
+            "acceptance requires >=%d pairs of %d fresh imports each "
+            "(or --smoke/--calibrate)" % (PAIRS, REPS))
     require(args.timeout > 0, "invalid timeout")
     require(args.authorize_measurements,
             "measurement authorization required")
     a.exact_pin(args.baseline)
     a.exact_pin(args.candidate)
-    require(args.smoke or args.api_audit,
+    require(light or args.api_audit,
             "candidate eight-process --api-audit receipt required")
     repo, output = args.repo.resolve(strict=True), args.output.resolve()
     with a.serial_lock(repo) as fds:
         output.mkdir(parents=True, exist_ok=False)
-        report = {"schema": "task28-loading-v2", "success": False,
-                  "mode": "smoke" if args.smoke else "isolated-source",
+        report = {"schema": SCHEMA, "success": False,
+                  "mode": "smoke" if args.smoke else
+                  "calibration" if args.calibrate else "isolated-source",
                   "claims": "NOT independent-build or release acceptance",
                   "repo": str(repo), "module": args.module,
-                  "pairs": args.pairs, "outliers": "none removed",
-                  "policy": a.POLICY, "timer_fields": FIELDS,
+                  "pairs": args.pairs, "reps": args.reps,
+                  "outliers": "none removed",
+                  "policy": POLICY, "timer_fields": FIELDS,
                   "timeout": args.timeout, "selections": {}, "runs": [],
                   "argv": sys.argv, "inputs": {}, "tools": {}}
         try:
@@ -473,7 +575,7 @@ def run(args):
                     report["semantic_gate"] = "not admitted: smoke only"
                 shared = {}
 
-                def launch(phase, pair, side):
+                def launch(phase, pair, side, rep=0):
                     actual = "baseline" if phase == "control" else side
                     dst = root / actual
                     runenv = dict(env, PAIR_SELECTION=side,
@@ -484,6 +586,7 @@ def run(args):
                     receipt = execute([str(dst / "paired.exe")], dst,
                                       runenv, args.timeout, fds)
                     receipt.update(phase=phase, pair=pair, selection=side,
+                                   rep=rep,
                                    actual_selection=actual,
                                    environment={k: v for k, v in runenv.items()
                                                 if k.startswith(("PAIR_",
@@ -493,7 +596,8 @@ def run(args):
                         result, measurement = validate(
                             receipt, side=side, dst=dst, repo=repo,
                             names=names,
-                            sources=sources, module=args.module)
+                            sources=sources, module=args.module,
+                            enforce_absence=actual == "candidate")
                         # Seal all shared actual inputs across every fresh run.
                         for info in result["paths"].values():
                             for raw, seal in [(info["physical"],
@@ -508,10 +612,11 @@ def run(args):
                                        accepted=True)
                     except (ValueError, OSError) as error:
                         receipt["rejection"] = str(error)
-                    label = "%s-%03d-%s" % (phase, pair, side)
+                    label = "%s-%03d-%s-%02d" % (phase, pair, side, rep)
                     evidence = archive(output, label, receipt)
                     report["runs"].append(dict(evidence, phase=phase,
                                                pair=pair, selection=side,
+                                               rep=rep,
                                                accepted=receipt["accepted"]))
                     require(receipt["accepted"],
                             "loading process rejected: " + label + ": " +
@@ -523,20 +628,31 @@ def run(args):
                     launch("pilot", 0, side)["measurement"]
                     for side in ("baseline", "candidate")]
                 results = {}
-                for phase in ("control", "candidate"):
-                    rows = [launch(phase, i, side)
-                            for i, side in plan(args.pairs)]
-                    results[phase] = statistics(rows, args.pairs, args.smoke)
-                if not args.smoke:
+                for phase in (("control",) if args.calibrate else
+                              ("control", "candidate")):
+                    rows = [dict(launch(phase, i, side, r), rep=r)
+                            for i, side, r in schedule(args.pairs,
+                                                       args.reps)]
+                    results[phase] = statistics(
+                        rows, args.pairs, args.smoke, args.reps)
+                if args.calibrate:
+                    report["jitter"] = jitter(results["control"], args.pairs,
+                                              args.reps)
+                if not light:
                     metrics = results["candidate"]["metrics"]
                     for metric, data in metrics.items():
                         control = results["control"]["metrics"][metric]
                         a.apply_control(data, control)
-                        if not all(m["calibrated"] for m in
-                                   report["calibration"]):
+                        if data.get("gated", True) and not all(
+                                m["calibrated"] for m in
+                                report["calibration"]):
                             data["decision"] = "inconclusive"
                             data["reason"] = "uncalibrated pilot import"
                 report["results"] = results
+                if not light:
+                    width = control_width(results["control"])
+                    report["control_half_log_width"] = width
+                    report["pairs_for_target"] = pairs_for(width, args.pairs)
                 report["shared_inputs"] = shared
                 check_seals(inputs)
                 check_seals(sources)
@@ -558,13 +674,92 @@ def run(args):
     return report
 
 
+def exit_status(metrics):
+    """0 only when every gated metric passes; gc_cpu is reported only."""
+    decisions = [m["decision"] for m in metrics.values()]
+    return 1 if "fail" in decisions else \
+        2 if any(d not in ("pass", "reported") for d in decisions) else 0
+
+
+def jitter(control, pairs, reps):
+    """What B/B says about the host: per metric the median and interval of
+    the paired ratio, and the pairs the grid's rule would ask for."""
+    found = {}
+    for metric, data in control["metrics"].items():
+        ci = data["paired_ratio_bootstrap_95_percent"]
+        logs = [math.log(v) for row in data["observations"]
+                for v in row.values() if v > 0]
+        mean = math.fsum(logs) / len(logs) if logs else None
+        sd = (math.sqrt(math.fsum((x - mean) ** 2 for x in logs) /
+                        (len(logs) - 1)) if len(logs) > 1 else None)
+        found[metric] = dict(
+            median=data["median_paired_ratio"], ci95=ci,
+            sample_log_sd=sd, gated=data.get("gated", True))
+    width = control_width(control)
+    return dict(metrics=found, half_log_width=width,
+                pairs_for_target=pairs_for(width, pairs), pairs=pairs,
+                reps=reps)
+
+
+def replay(folder):
+    """Recompute every observation, extension check and decision of a
+    finished run from its archived process receipts."""
+    folder = Path(folder).resolve(strict=True)
+    report = a.load(folder / "loading.json")
+    require(report.get("schema") == SCHEMA and report["success"],
+            "not a successful " + SCHEMA + " run")
+    module, pairs, reps = report["module"], report["pairs"], report["reps"]
+    require(report["policy"] == POLICY, "unexpected loading policy")
+    light = report["mode"] != "isolated-source"
+    by_phase = {}
+    for run_ in report["runs"]:
+        path = a.safe_child(folder, run_["receipt"])
+        require(a.seal(path) == run_["seal"], "changed process receipt")
+        receipt = a.load(path)
+        events = rp.parse_events(receipt["stdout"])
+        _, measured = observations(events, module)
+        require(measured == {k: v for k, v in receipt["measurement"].items()
+                             if k != "extension_absence_enforced"},
+                "changed measurement: " + run_["receipt"])
+        actual = receipt["actual_selection"]
+        require(not (actual == "candidate" and
+                     measured["extensions_loaded"]),
+                "extension module loaded by candidate: " + run_["receipt"])
+        row = dict(receipt, pair=run_["pair"], selection=run_["selection"],
+                   rep=run_["rep"], accepted=run_["accepted"])
+        by_phase.setdefault(run_["phase"], []).append(row)
+    pilots = by_phase.pop("pilot")
+    require(len(pilots) == 2, "missing pilots")
+    results = {phase: statistics(rows, pairs, report["mode"] == "smoke",
+                                 reps)
+               for phase, rows in by_phase.items()}
+    if not light:
+        for metric, data in results["candidate"]["metrics"].items():
+            a.apply_control(data, results["control"]["metrics"][metric])
+            if data.get("gated", True) and not all(
+                    p["measurement"]["calibrated"] for p in pilots):
+                data["decision"] = "inconclusive"
+                data["reason"] = "uncalibrated pilot import"
+    require(json.dumps(results, sort_keys=True) ==
+            json.dumps(report["results"], sort_keys=True),
+            "recomputed statistics differ from the report")
+    status = None if light else exit_status(results["candidate"]["metrics"])
+    return {"replayed": len(report["runs"]), "exit": status}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=HERE.parents[3])
     parser.add_argument("--baseline", required=True)
-    parser.add_argument("--candidate", required=True)
+    parser.add_argument("--candidate")
     parser.add_argument("--module", choices=MODULES, required=True)
-    parser.add_argument("--pairs", type=int, default=10)
+    parser.add_argument("--pairs", type=int, default=PAIRS)
+    parser.add_argument("--reps", type=int, default=REPS,
+                        help="fresh processes per side of a pair")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="B/B only: measure jitter, derive pairs")
+    parser.add_argument("--replay", type=Path,
+                        help="recompute a finished run's decisions")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--api-audit", type=Path)
     parser.add_argument("--timeout", type=float, default=1800)
@@ -572,17 +767,20 @@ def main(argv=None):
     parser.add_argument("--authorize-measurements", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.replay:
+            print(json.dumps(replay(args.replay)))
+            return 0
+        if args.calibrate and args.candidate is None:
+            args.candidate = args.baseline
+        require(args.candidate, "--candidate required")
         report = run(args)
         print(json.dumps({k: report[k] for k in
                           ("success", "mode", "module")}))
         if not report["success"]:
             return 2
-        if args.smoke:
+        if args.smoke or args.calibrate:
             return 0
-        decisions = [metric["decision"] for metric in
-                     report["results"]["candidate"]["metrics"].values()]
-        return 1 if "fail" in decisions else \
-            2 if "inconclusive" in decisions else 0
+        return exit_status(report["results"]["candidate"]["metrics"])
     except (ValueError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 1

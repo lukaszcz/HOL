@@ -178,3 +178,110 @@ Non-timing regressions (no HOL imports or benchmarks):
 python3 -B -m unittest discover -s src/simp/tests/performance \
   -p 'test_loading*.py' -v
 ```
+
+## Amendment 2026-11-07 (TASK31 gate 4): equivalence margin and loading unit
+
+The text above is kept as the TASK28 history. Where it conflicts, this
+amendment governs the `task31-loading-v3` schema; older `task28-loading-v2`
+archives keep their recorded zero-margin policy and are not replayed here.
+
+### Decision policy: the timing grid's, from one place
+
+TASK28 loading was inconclusive because the zero-margin rule asked a
+~1 s process to resolve 0%. The decision now uses
+`acceptance.EQUIVALENCE_POLICY` itself (`loading.POLICY` is that object, never
+a copy of its constants), exactly as `timing_grid.py` does:
+
+- 3% margin on inclusive CPU and wall (`gated_timing`); GC CPU is reported,
+  not gated (inclusive CPU already contains GC time).
+- Per metric `a.timing_rule` gives `(margin, gated)`; `a.paired_statistics`
+  gives the median paired candidate/baseline ratio and the 20000-resample
+  bootstrap interval; `low > 1.03` fails, `high <= 1.03` passes, else
+  inconclusive.
+- `a.apply_control` applies the B/B control as the grid does: the control's
+  whole interval must lie in `[1/1.03, 1.03]`; otherwise the comparison is
+  not admissible and a non-fail becomes inconclusive ("baseline-control
+  outside equivalence window"). A candidate fail is never excused.
+- Exit status: 0 only if every gated metric passes, 1 on any fail, 2
+  otherwise. `reported` metrics do not affect it.
+- The pair count is read the grid's way: `pairs_for_target` in the report is
+  `pairs * (control half log-width / timing_grid.TARGET)^2`, rounded up to
+  tens (`TARGET` = 0.015, half the margin). It is computed from the control
+  interval only and is advice for a rerun; the run never changes its own
+  count.
+
+### Unit: more fresh processes per sample, never repeated loads
+
+A module is imported once per process (a second load measures a cache hit).
+The unit is lengthened by `--reps R`: each side of a pair is R fresh
+processes, interleaved (`A B A B ...` in AB pairs, `B A B A ...` in BA
+pairs), and the sample is the **mean** of the R first imports of that side
+(no sample removed). `schedule(pairs, reps)` is the order; `plan` is its
+`reps = 1` case. Every process keeps the fresh-process contract, pilots
+included, and every one is archived (`phase-pair-side-rep`).
+
+### Calibration and the derived counts
+
+`--calibrate` runs the two pilots and the B/B phase only (no candidate, no
+audit receipt, not evidence) and reports per metric the sample log
+standard deviation and the grid's `pairs_for_target`.
+
+Model: a single import has log standard deviation s1, so the paired log
+ratio of two R-means has `sd = sqrt(2/R) * s1`; the 95% interval half width
+of the median of n ratios is about `1.96 * 1.2533 * sd / sqrt(n)`. Requiring
+it to be at most `TARGET`:
+
+    n * R  >=  (1.96 * 1.2533 * sqrt(2) * s1 / 0.015)^2  =  (231.6 * s1)^2
+
+Calibration on 2026-11-07 (develop baseline against itself, shared host,
+`--repo` = the t31-src build, scratch only):
+
+| library | R | pairs | median import | s1 (log sd) | sd of paired log ratio | B/B 95% interval (wall) |
+|---|---|---|---|---|---|---|
+| simpLib | 1 | 20 | 0.875 s | 0.0205 | 0.033 | [0.9814, 1.0088] |
+| congLib | 1 | 20 | 1.161 s | 0.0093 | 0.013 | [0.9951, 1.0086] |
+| simpLib | 3 | 12 | 0.863 s | 0.0109 | 0.012 | [0.9903, 1.0064] |
+| congLib | 3 | 12 | 1.162 s | 0.0204 | 0.031 | [0.9989, 1.0061] |
+
+The worst per-unit spread is the congLib R=3 run: `0.0314 * sqrt(3) = 0.054`
+(equivalently s1 = 0.038, heavier-tailed than the iid model), so
+`n * R >= (2.457 * 0.054 / 0.015)^2 = 78`. The constants keep a factor of
+2.5 over that. TASK28's reported 10-30% jitter on a busier host would need
+`n * R` of 540 and up and is not covered; it would end inconclusive:
+
+    R = 5, n = 40 pairs  ->  n * R = 200  (covers a unit spread up to 0.061)
+
+`--pairs 40 --reps 5` are the acceptance floor (`loading.PAIRS`,
+`loading.REPS`; smaller values only with `--smoke` or `--calibrate`). If the
+host is noisier, B/B is wide, the comparison is inconclusive by the rule
+above and `pairs_for_target` says by how much. A larger R also averages out
+slow drift inside a pair.
+
+Cost per library: 2 pilots + 2 phases * 2 sides * 40 * 5 = 802 processes at
+about 1.2 s (simpLib) and 1.7 s (congLib) each, i.e. about 16 and 23
+minutes plus two builds: well under an hour for both, inside the 2 h target.
+
+### Extension absence in every process
+
+After the timed import, and outside the timer, the runner emits
+`loading.extensions`: the names (in order of first occurrence, `none` if empty)
+of every loaded module (`Meta.loaded`), file in the final file map, or
+structure bound in the global name space that is an extension: `*Ext`,
+`*ExtLib`, `simpMarker*`, `SimpTracking`, `trackedSimpDefaults`, `SplitData`,
+`splitLib`, `splitPersistLib` and the API audit's other forbidden names
+(`EXTENSION_NAMES`; extension caches are the persistence modules in that
+list). The validator additionally scans the used, heap and final file paths.
+The assertion is enforced for processes that run the **candidate** and is
+recorded, never rejected, for the historical baseline, which need not satisfy
+the split. A candidate process with a loaded extension is rejected, which
+stops the run.
+
+### Receipt binding and replay
+
+Non-smoke runs still require the fresh eight-process API-audit receipt
+(`bin/Holmake -C src/simp/tests/api-audit check`) bound to the candidate's
+git bytes; `--calibrate` does not. `loading.py --replay RUN_DIR` recomputes
+every observation (including extension absence) from the sealed process
+receipts, rebuilds the statistics and control decisions under the recorded
+policy, and fails on any difference; with a decision run it prints the exit
+status the CLI gave.
