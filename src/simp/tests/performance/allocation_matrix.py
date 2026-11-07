@@ -243,17 +243,39 @@ def grid_digest(header):
     return hashlib.sha256(data).hexdigest()
 
 
-def dependency_products(installed):
+PRIVATE = "@PRIVATE@"
+
+
+def dependency_products(installed, directory):
     """The files of a private directory that client_dependencies installed,
-    by file name (theories sit below .hol/objs): sha256 and bytes."""
-    found = {}
-    for path, info in installed["products"].items():
+    by file name (theories sit below .hol/objs): sha256 and bytes. The
+    loader descriptors name the directory they were installed in; those are
+    sealed as a template (the directory replaced by PRIVATE, kept as text)
+    so that every job, in its own directory, installs the same product."""
+    found, here = {}, str(Path(directory).resolve())
+    for path in installed["products"]:
         if path == "Holmakefile":  # the rules, not a source
             continue
         name = Path(path).name
         sc.require(name not in found, "ambiguous installed file: " + name)
-        found[name] = {k: info[k] for k in ("sha256", "bytes")}
+        data = (Path(directory) / path).read_bytes()
+        if here.encode() in data:
+            data = data.replace(here.encode(), PRIVATE.encode())
+            found[name] = dict(sha256=hashlib.sha256(data).hexdigest(),
+                               bytes=len(data), template=data.decode())
+        else:
+            found[name] = dict(sha256=hashlib.sha256(data).hexdigest(),
+                               bytes=len(data))
     return found
+
+
+def dependency_seal(want, private):
+    """What the installed file of a dependency entry must seal as in the
+    given private directory."""
+    if "template" not in want:
+        return {k: want[k] for k in ("sha256", "bytes")}
+    data = want["template"].replace(PRIVATE, str(private)).encode()
+    return dict(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
 
 
 def places(header):
@@ -652,7 +674,7 @@ class Grid:
             directory = self.scratch / ("probe-" + side)
             inventory = [dict(git_path=n) for n in self.sources[side]]
             installed = self.install_private(directory, inventory)
-            found[side] = dependency_products(installed)
+            found[side] = dependency_products(installed, directory)
             shared.update(installed["inputs"])
         sc.require(found["control"] == found["baseline"],
                    "control dependencies differ from the baseline's")
@@ -733,7 +755,7 @@ class Grid:
                        "checkout differs from the grid's sources")
             installed = self.install_private(directory, sources)
             if installed is not None:
-                sc.require(dependency_products(installed) ==
+                sc.require(dependency_products(installed, directory) ==
                            self.dependencies[side] and all(
                                self.tools.get(k) == v for k, v in
                                installed["inputs"].items()),
@@ -1009,11 +1031,18 @@ def check_receipt(receipt, meta, experiment):
         seal = {k: info[k] for k in ("sha256", "bytes")}
         if physical.is_relative_to(private):
             want = (source.get(physical.name) or
-                    meta["fixtures"].get(physical.name) or
-                    meta.get("dependencies", {}).get(side, {}).get(
-                        physical.name))
-            sc.require(want is not None and
-                       seal == {k: want[k] for k in ("sha256", "bytes")},
+                    meta["fixtures"].get(physical.name))
+            wanted = None if want is None else {
+                k: want[k] for k in ("sha256", "bytes")}
+            if want is None:
+                made = meta.get("dependencies", {}).get(side, {}).get(
+                    physical.name)
+                if made is not None:  # the directory may be a symlink's
+                    wanted = dependency_seal(made, private)
+                    if seal != wanted:
+                        wanted = dependency_seal(
+                            made, Path(private).resolve())
+            sc.require(wanted is not None and seal == wanted,
                        "wrong selected source: " + physical.name)
         else:
             sc.require(physical.is_relative_to(repo) and not

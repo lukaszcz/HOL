@@ -497,18 +497,30 @@ class Dependencies(unittest.TestCase):
                     m.check_receipt(receipt, meta, "candidate")
 
     def test_the_products_of_an_installation_are_listed_by_name(self):
+        root = Path(self.tmp.name) / "inst"
+        (root / ".hol/objs").mkdir(parents=True)
+        (root / ".hol/objs/numTheory.sml").write_text("val n = 1\n")
+        (root / "Holmakefile").write_text("rules\n")
+        (root / "arithmeticTheory.uo").write_text("%s/Foo.uo\n" % root)
         installed = dict(products={
-            ".hol/objs/numTheory.sml": dict(role="r", source="s",
-                                            sha256="1" * 64, bytes=3),
-            "Holmakefile": dict(sha256="2" * 64, bytes=4),
-            "arithmeticTheory.uo": dict(sha256="3" * 64, bytes=5)})
-        self.assertEqual(m.dependency_products(installed), {
-            "numTheory.sml": dict(sha256="1" * 64, bytes=3),
-            "arithmeticTheory.uo": dict(sha256="3" * 64, bytes=5)})
-        installed["products"]["x/numTheory.sml"] = installed["products"][
-            "Holmakefile"]
+            ".hol/objs/numTheory.sml": {}, "Holmakefile": {},
+            "arithmeticTheory.uo": {}})
+        found = m.dependency_products(installed, root)
+        self.assertEqual(sorted(found), ["arithmeticTheory.uo",
+                                         "numTheory.sml"])
+        self.assertNotIn("template", found["numTheory.sml"])
+        # a descriptor naming its directory is sealed as a template
+        self.assertEqual(found["arithmeticTheory.uo"]["template"],
+                         m.PRIVATE + "/Foo.uo\n")
+        other = Path(self.tmp.name) / "elsewhere"
+        data = (m.PRIVATE + "/Foo.uo\n").replace(m.PRIVATE, str(other))
+        self.assertEqual(
+            m.dependency_seal(found["arithmeticTheory.uo"], other),
+            dict(sha256=__import__("hashlib").sha256(
+                data.encode()).hexdigest(), bytes=len(data)))
+        installed["products"]["x/numTheory.sml"] = {}
         with self.assertRaisesRegex(sc.InvalidAllocation, "ambiguous"):
-            m.dependency_products(installed)
+            m.dependency_products(installed, root)
 
 
 class Installation(unittest.TestCase):
@@ -607,8 +619,8 @@ class Installation(unittest.TestCase):
     def test_a_control_that_differs_from_the_baseline_is_refused(self):
         original = m.dependency_products
 
-        def other(installed):
-            found = original(installed)
+        def other(installed, directory):
+            found = original(installed, directory)
             self.content["n"] = "2"
             return found
         for side in m.SIDES:
