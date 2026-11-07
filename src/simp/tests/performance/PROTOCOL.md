@@ -8,7 +8,13 @@ measurements also need the corresponding source/layout/callback work audit.
 ## Isolated-source front end
 
 From the repository root. The host is shared and no exclusive window is
-required; a checkout's own builds and measurements stay serial, under its lock:
+required; a checkout's own builds and measurements stay serial, under its lock.
+`--authorize-measurements` is the explicit authorization to build and measure,
+not a claim of exclusive access. Every child process the harness starts gets
+`/dev/null` as standard input, and the compiler version is queried with
+`poly -v` (Poly/ML has no `--version`: it enters the top level and reads
+stdin, which hung on an inherited open pipe; archived records of the earlier
+command stay valid):
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -2108,8 +2114,9 @@ Required top-level fields:
 - `runtime_options`: `["--gcthreads=1"]`;
 - `toolchain`: map including `poly` with absolute `path`, nonempty `version`, and
   `fingerprint: {sha256: HEX, bytes: INTEGER}`. Admission executes
-  `poly --version` and requires its successful Poly/ML output to match `version`
-  exactly. Include other external tools too;
+  `poly -v` (stdin is /dev/null) and requires its successful Poly/ML output to
+  match `version`: the banner before `RTS version` must be equal (records
+  made with the earlier `poly --version` carry only the banner). Include other external tools too;
 - `selections`: exactly `baseline` and `candidate`.
 
 Each selection contains:

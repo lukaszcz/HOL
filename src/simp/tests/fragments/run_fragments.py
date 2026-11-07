@@ -441,7 +441,7 @@ def main():
         poly = Path(shutil.which("poly")).resolve()
         manifest["poly"] = dict(path=str(poly), **paired.fingerprint(poly))
         manifest["poly_version"] = paired.execute(
-            [str(poly), "--version"], repo, env, args.timeout)
+            [str(poly), "-v"], repo, env, args.timeout)
         with tempfile.TemporaryDirectory(prefix="task15-fragments-") as temp:
             root, hashes, inventories = Path(temp), {}, {}
             supplements = (supplement_snapshot(repo, root / "current-deps")

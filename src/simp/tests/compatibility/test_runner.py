@@ -3,6 +3,7 @@
 import copy
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -165,6 +166,42 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(r["timed_out"])
         time.sleep(1.1)
         self.assertFalse(marker.exists(), "child escaped timeout cleanup")
+
+
+class OpenStdinTests(unittest.TestCase):
+    """A child must never inherit this process's stdin: Poly/ML reads it, so
+    an open pipe that is never closed hung `poly --version` (which is no
+    option, Poly/ML takes -v) until the timeout."""
+
+    def run_with_open_stdin(self, command):
+        read, write = os.pipe()
+        saved = os.dup(0)
+        try:
+            os.dup2(read, 0)  # open, empty, never closed during the run
+            started = time.monotonic()
+            result = runner.execute(command, Path.cwd(), dict(os.environ), 20)
+            elapsed = time.monotonic() - started
+        finally:
+            os.dup2(saved, 0)
+            for fd in (saved, read, write):
+                os.close(fd)
+        return result, elapsed
+
+    def test_child_reading_stdin_sees_eof_not_the_callers_pipe(self):
+        result, elapsed = self.run_with_open_stdin(["cat"])
+        self.assertFalse(result["timed_out"])
+        self.assertEqual((result["exit"], result["stdout"]), (0, ""))
+        self.assertLess(elapsed, 15)
+
+    def test_poly_version_query_finishes_promptly(self):
+        poly = shutil.which("poly")
+        if poly is None:
+            self.skipTest("poly is unavailable")
+        result, elapsed = self.run_with_open_stdin([poly, "-v"])
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["exit"], 0)
+        self.assertTrue(result["stdout"].startswith("Poly/ML "))
+        self.assertLess(elapsed, 15)
 
 
 if __name__ == "__main__":

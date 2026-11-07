@@ -1,6 +1,6 @@
 # TASK17 focused ordinary exclusions and replay
 
-**Preparation only until main authorizes an exclusive window.** This suite
+**Preparation only until main authorizes measurements.** This suite
 never runs implicitly: even its Holmake `all` runs Python synthetic tests only.
 No production files or existing runners are modified. All new files live here.
 

@@ -284,7 +284,8 @@ The archived audit revalidates graph, runtime, release, option and fixture
 bindings. Private builds finish before paired observations. Host/user and Git
 common/worktree directory locks serialize cooperating runners; inherited file
 handles keep locks in launcher descendants. Noncooperating external builds
-still require the explicit exclusive-window authorization.
+still require explicit measurement authorization (no exclusive window
+is required; the host is shared).
 
 Actual client integration exposed absolute shared `.uo/.ui` paths bypassing
 private simplifier sources. `client_dependencies.py` traces both dependency

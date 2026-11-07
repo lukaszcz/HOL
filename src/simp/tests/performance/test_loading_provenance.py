@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Loading provenance controls; synthetic builds/processes are NOT timings."""
 from contextlib import nullcontext
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -18,6 +20,27 @@ def receipt(text="", code=0, timeout=False):
     return dict(exit=code, timed_out=timeout, stdout=text,
                 stdout_sha256=l.rp.digest(text.encode()),
                 stdout_bytes=len(text.encode()), process_wall=0.001)
+
+
+class ChildStdin(unittest.TestCase):
+    def test_children_never_inherit_an_open_stdin(self):
+        # `cat` waits for EOF on the inherited descriptor; an open pipe that
+        # is never closed hung the Poly/ML version query the same way.
+        read, write = os.pipe()
+        saved = os.dup(0)
+        try:
+            os.dup2(read, 0)
+            got = l.execute(["cat"], Path.cwd(), dict(os.environ), 20, ())
+            logged = l.a.run_logged(
+                ["cat"], Path(tempfile.mkdtemp(prefix="stdin-")) / "log",
+                (), 20)
+        finally:
+            os.dup2(saved, 0)
+            for fd in (saved, read, write):
+                os.close(fd)
+        self.assertEqual((got["exit"], got["timed_out"]), (0, False))
+        self.assertEqual((logged["exit"], logged["timed_out"]), (0, False))
+        shutil.rmtree(Path(logged["log"]).parent)
 
 
 class LibraryDiscovery(unittest.TestCase):
@@ -88,7 +111,7 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(env["LC_ALL"], "C")
         self.assertEqual(timeout, 30)
         text = ""
-        if command == [str(self.repo / "bin/poly"), "--version"]:
+        if command == [str(self.repo / "bin/poly"), "-v"]:
             text = "Poly/ML synthetic\n"
         elif command == ["ldd", str(self.repo / "bin/hol")]:
             self.discovery += 1

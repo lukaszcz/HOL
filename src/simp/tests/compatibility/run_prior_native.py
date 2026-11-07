@@ -51,7 +51,7 @@ def main():
                            for p in source_inputs(repo)},
                 "tools": {n: fingerprint(repo / n) for n in
                           ("bin/hol", "bin/hol.state0", "bin/Holmake")},
-                "poly_version": execute([poly, "--version"], repo, env, 30),
+                "poly_version": execute([poly, "-v"], repo, env, 30),
                 "poly": fingerprint(Path(poly).resolve()),
                 "runs": [], "success": False}
     ledger = coverage.receipt(HERE / "coverage-ledger.json.gz")

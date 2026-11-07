@@ -116,7 +116,7 @@ def main():
         require(poly is not None, "poly not found")
         manifest["tools"][str(Path(poly).resolve())] = paired.fingerprint(
             Path(poly).resolve())
-        version = paired.execute([poly, "--version"], repo, env, args.timeout)
+        version = paired.execute([poly, "-v"], repo, env, args.timeout)
         manifest["poly_version"] = version
         require(version["exit"] == 0 and not version["timed_out"],
                 "poly --version failed")

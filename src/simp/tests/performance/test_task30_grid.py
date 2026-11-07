@@ -486,7 +486,7 @@ class Followup(unittest.TestCase):
                                          "--candidate", "c" * 40]),
                                  tg.REFUSED)
             self.assertEqual(err.getvalue(),
-                             "REFUSED: exclusive window required\n")
+                             "REFUSED: measurement authorization required\n")
 
 
 class Harness(unittest.TestCase):
@@ -619,7 +619,7 @@ class Whole(ttg.Rig):
                 with contextlib.redirect_stderr(err):
                     self.assertEqual(t30.main(argv), tg.REFUSED)
                 self.assertEqual(err.getvalue(),
-                                 "REFUSED: exclusive window required\n")
+                                 "REFUSED: measurement authorization required\n")
 
 
 class Closing(unittest.TestCase):

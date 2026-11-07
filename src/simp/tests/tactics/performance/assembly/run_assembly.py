@@ -74,7 +74,7 @@ def main():
     p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--authorize-measurements", action="store_true")
     args = p.parse_args()
-    require(args.authorize_measurements, "require exclusive authorization")
+    require(args.authorize_measurements, "require measurement authorization")
     output = args.output.resolve()
     original_snapshot, original_extract = (audit.fragments.snapshot,
                                            audit.extract)

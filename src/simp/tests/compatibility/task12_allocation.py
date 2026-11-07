@@ -157,7 +157,7 @@ def main():
         poly = Path(shutil.which("poly")).resolve()
         manifest["poly"] = dict(path=str(poly), **paired.fingerprint(poly))
         manifest["poly_version"] = paired.execute(
-            [str(poly), "--version"], repo, env, args.timeout)
+            [str(poly), "-v"], repo, env, args.timeout)
         with tempfile.TemporaryDirectory(prefix="task12-allocation-") as tmp:
             root = Path(tmp)
             for side, ref in (("baseline", args.baseline),

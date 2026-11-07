@@ -251,7 +251,7 @@ class CallerCodegenTests(unittest.TestCase):
     def test_authorization_before_creating_output(self):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "no-output"
-            with self.assertRaisesRegex(ValueError, "exclusive"):
+            with self.assertRaisesRegex(ValueError, "authorization"):
                 c.main(["--output", str(output)])
             self.assertFalse(output.exists())
 

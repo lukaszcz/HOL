@@ -7,7 +7,7 @@ records, named native bodies (all repeated occurrences), and exact comparisons.
 The trigger reuses the campaign's proof/name/persistence/callback fixture at
 sizes 0 and 10; code printing is enabled only around private simpLib source use.
 
-From the repository root, in the authorized exclusive window:
+From the repository root, with measurements authorized:
 
 ```sh
 P=src/simp/tests/exclusions/performance

@@ -1,6 +1,6 @@
 # TASK18 ordinary tactic staging performance
 
-**Measured in the parent-authorized exclusive window.** See
+**Measured in the parent-authorized measurement runs.** See
 `evidence/RESULTS.md`, `evidence/ROWS.md` and `evidence/LOCAL_COSTS.md`.
 Two original final 10-pair campaigns and targeted current/control codegen
 are retained. The original seven GC family-slower rows and individual CPU
