@@ -3,17 +3,17 @@
  "entries": [
   {
    "kind": "load-simpLib",
-   "file": "$HOLDIR/src/simp/src/Cond_rewr.sig",
+   "file": "$(HOLDIR)/src/simp/src/Cond_rewr.sig",
    "reason": "adds note_rewrite : thm -> unit (single tracking extent)"
   },
   {
    "kind": "load-simpLib",
-   "file": "$HOLDIR/src/simp/src/Cond_rewr.sml",
+   "file": "$(HOLDIR)/src/simp/src/Cond_rewr.sml",
    "reason": "structure matched against the signature, one more value"
   },
   {
    "kind": "load-simpLib",
-   "file": "$HOLDIR/src/simp/src/simpLib.sml",
+   "file": "$(HOLDIR)/src/simp/src/simpLib.sml",
    "reason": "open Cond_rewr sees one more binding"
   }
  ]

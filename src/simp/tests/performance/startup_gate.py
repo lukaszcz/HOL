@@ -414,7 +414,7 @@ def load_declared(path=DECLARED):
     seen = set()
     for e in data["entries"]:
         require(sorted(e) == ["file", "kind", "reason"] and
-                e["kind"] in LOADS and e["file"].startswith("$HOLDIR/") and
+                e["kind"] in LOADS and e["file"].startswith("$(HOLDIR)/") and
                 e["reason"].strip(), "bad declaration entry: %r" % (e,))
         require((e["kind"], e["file"]) not in seen, "duplicate entry")
         seen.add((e["kind"], e["file"]))

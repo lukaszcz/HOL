@@ -2214,17 +2214,74 @@ unless the baseline also has it) is loaded in an ordinary process. There is
 no tolerance, subtraction or outlier removal. `replay` recomputes the
 decision from the archive.
 
-Known limitation (measured): the fresh-load brackets depend on the
-layout of the exported `hol.state0` image, which is not reproducible
-between builds. Four clean builds of the same tree at the same path
-differ by 8 to 54 words in the 3.3M-word `Trace.sml` step of
-`load "simpLib"` (3,306,279 / 3,306,271 with `-j2`, 3,306,249 / 3,306,303
-with `-j1`), and with a fixed image the count is deterministic (the same
-image gives the same count whichever tree is named). `hol-startup` and the
-`hol-first-use` brackets do not show it. So a load-bracket control between
-two independent builds is non-zero by a few words, and the exactly-zero
-rule fails for the load kinds until the image build is deterministic.
-The failure is reported, not hidden.
+Image determinism (measured). The fresh-load brackets depend on the layout
+of the exported `hol.state0` image, and independent clean builds of one
+tree at one path do not give byte-identical images: the 3.3M-word
+`Trace.sml` step of `load "simpLib"` was 3,306,279 / 3,306,271 (`-j2`),
+3,306,249 / 3,306,303 (`-j1`), and for a fixed image the count is
+deterministic whichever tree is named. `hol-startup` and `hol-first-use`
+are not affected. Attempts to make the export deterministic
+(`GATE_BUILD_DETERMINISTIC=1`, the default of `build`, recorded as
+`hol_determinism_diff`): the whole build under `setarch -R` (ASLR off),
+`--gcthreads=1` for every `buildheap`, two `PolyML.fullGC` calls around
+`shareCommonData` before the heap export, and a `polyc` copy that does the
+same before `PolyML.export`. In isolation these make a saved child heap
+identical to within about 10 bytes (stock `poly`: 0 bytes), but in the
+real build `bin/hol`, `bin/Holmake`, `bin/build` and the three images still
+differ between two builds, so determinism was not reached and the exact rule
+cannot be kept for the load kinds. The residual load-kind noise between
+builds is a few tens of words in 1M (measured -12 and +4 on load; 8 to 54
+on the `Trace.sml` step).
+
+Decisions for the load kinds (`load-simpLib`, `load-congLib`):
+
+  - `pass`: every field of every pair is exactly 0 (and the control is 0);
+  - `attributed`: the delta is reproducible (identical in all pairs), it
+    is carried entirely by files listed in the reviewed data file
+    `startup_gate_declared.json` (kind, `$(HOLDIR)/` file, reason; never
+    the command line; copied into `header.json`), the per-`use` brackets of
+    `files-simpLib` / `files-congLib` (candidate minus baseline, a file on
+    one side only counting in full) sum exactly to the load delta, and no
+    other bracket differs. Any word outside the declared files is `fail`.
+    The control and the repeat must still be exactly 0;
+  - `fail` otherwise, with the delta published.
+
+`hol-startup` and `hol-first-use` are always exact zero; no declaration
+applies to them.
+
+Because builds are not reproducible, `startup_gate.py images` gives the
+envelope variant: at least 5 independent clean images per side by the
+identical procedure, one process per image and kind plus a determinism
+repeat of each side's first image. `hol-startup` / `hol-first-use` must be
+identical across all images of both sides. For a load kind and every
+(bracket, field): `within` if all candidate images lie inside the
+[min, max] envelope of the baseline images, `shift` if all lie strictly
+above or all strictly below it, `mixed` otherwise. All within is `pass`;
+any `mixed` entry (and no failure) is `inconclusive`; a `shift` must sit on
+declared files (the per-file envelope), else `fail`; a declared shift is
+`attributed`. Fewer than 5 images is `smoke`. The envelope and per-image
+counts are published in `decisions.json`. No tolerance is assumed.
+
+Findings recorded with the gate:
+
+  - The +9 words at `hol` startup (830,137 against 830,128) are not
+    reproduced by the gate: `hol-startup` is 830,162 on every clean build
+    of develop, 40e176538f and the t31-src tip, with SimpTracking in the
+    candidate heap (0 delta). The Meta.loaded-records hypothesis is
+    refuted. The +9 came from the earlier probe mixing build procedures (a
+    toolchain heap against in-place local rebuilds), which this gate
+    forbids; those heaps no longer exist.
+  - The TASK30 `alloc` (1,014,533) and `alloc-z` (1,014,452) deltas differ
+    by 81 words with the same `src/simp/src`: they used different
+    toolchain builds (`toolchain` and `toolchain-z`, different harness
+    heads, directory names differing by 2 characters), hence different
+    `hol.state0` images. Image-to-image variation of tens of words per
+    load was measured here, so an 81-word difference over about 800
+    compiled files is the same order of magnitude (inferred; the retained
+    data cannot separate image layout from the 2-character path-length
+    difference). 1,016,803 (TASK29B `decisions.json`) and 1,014,092 (probe)
+    are likewise inferred to come from other images and path lengths, and
+    1,017,367 is not reproducible from retained evidence.
 
 ## Matrix boundaries and final evidence
 

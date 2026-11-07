@@ -126,8 +126,7 @@ def words(n):
 def lrec(kind, side, pair, experiment, brackets):
     """A record whose named brackets hold the given words."""
     rows = [("startup", snap(), snap()), ("empty", snap(), snap(104, 94))]
-    rows += [(HOLDIR + "/" + n if n.startswith("src/") else n,
-              words(0), words(w)) for n, w in brackets.items()]
+    rows += [(n, words(0), words(w)) for n, w in brackets.items()]
     r = g.parse_process(
         stdout(kind=kind, brackets=rows,
                result="true" if kind in g.USES_SIMP else "none"),
@@ -136,8 +135,9 @@ def lrec(kind, side, pair, experiment, brackets):
     return r
 
 
-SIG = "src/simp/src/Cond_rewr.sig"
-OTHER = "src/simp/src/Other.sml"
+SIG = "$(HOLDIR)/src/simp/src/Cond_rewr.sig"
+AFILE = "$(HOLDIR)/src/simp/src/A.sml"
+OTHER = "$(HOLDIR)/src/simp/src/Other.sml"
 
 
 def attributed_grid(load, sig, other=0, pairs=10):
@@ -154,7 +154,7 @@ def attributed_grid(load, sig, other=0, pairs=10):
                 out.append(lrec("load-simpLib", side, pair, exp, dict(
                     load_simpLib=1000 + (load if c else 0))))
                 out.append(lrec("files-simpLib", side, pair, exp, {
-                    "src/simp/src/A.sml": 400,
+                    "$(HOLDIR)/src/simp/src/A.sml": 400,
                     SIG: 5 + (sig if c else 0),
                     OTHER: 6 + (other if c else 0)}))
     return out
@@ -162,7 +162,7 @@ def attributed_grid(load, sig, other=0, pairs=10):
 
 def declared(*files):
     return dict(schema=g.DECLARED_SCHEMA, entries=[
-        dict(kind="load-simpLib", file="$HOLDIR/" + f, reason="r")
+        dict(kind="load-simpLib", file=f, reason="r")
         for f in files])
 
 
@@ -172,7 +172,7 @@ class AttributionTest(unittest.TestCase):
         self.assertEqual(report["decision"], "attributed",
                          report["reasons"])
         got = report["attributed"]["load-simpLib"]
-        self.assertEqual(list(got["files"]), ["$HOLDIR/" + SIG])
+        self.assertEqual(list(got["files"]), [SIG])
         self.assertEqual(got["total"]["total"], 7)
 
     def test_undeclared_file_fails(self):
@@ -219,7 +219,7 @@ def image_grid(base_noise, cand_noise, sig=0, n=5, startup=0):
             for kind, br in (
                     ("load-simpLib", dict(load_simpLib=1000 + noise[i] +
                                           (sig if c else 0))),
-                    ("files-simpLib", {"src/simp/src/A.sml": 400 + noise[i],
+                    ("files-simpLib", {AFILE: 400 + noise[i],
                                        SIG: 5 + (sig if c else 0)}),
                     ("hol-startup", {})):
                 r = lrec(kind, side, 0, "x", br)
