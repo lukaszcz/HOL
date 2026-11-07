@@ -262,8 +262,15 @@ def build(args):
 # --------------------------------------------------------------- measuring
 
 OUT_FIELDS = sc.COUNTS + ("heap",)
-ATTRIBUTION = ("files-simpLib",)
-KINDS["files-simpLib"] = ("hol.state0", ("simpLib",))
+ATTRIBUTION = ("files-simpLib", "files-congLib")
+KINDS["files-simpLib"] = ("hol.state0", ("simpLib", "pureSimps"))
+KINDS["files-congLib"] = ("hol.state0", ("congLib",))
+# Load kinds whose reproducible delta may be attributed to declared files:
+# kind -> (per-file kind, the load brackets the per-file brackets sum to).
+LOADS = {"load-simpLib": ("files-simpLib", ("load_simpLib", "load_pureSimps")),
+         "load-congLib": ("files-congLib", ("load_congLib",))}
+DECLARED = HERE / "startup_gate_declared.json"
+DECLARED_SCHEMA = "task31-startup-declared-v1"
 USES_SIMP = ("hol-first-use", "load-simpLib")
 EXPERIMENTS = (("candidate", "base", "candidate"),
                ("control", "base", "control"),
@@ -374,7 +381,76 @@ def setdiff(left, right):
                 only_right=sorted(set(right) - set(left)))
 
 
-def analyse(records, pairs):
+def load_declared(path=DECLARED):
+    """The reviewed declaration of files whose fresh-load words may differ
+    between baseline and candidate (data file, never the command line)."""
+    data = json.loads(Path(path).read_text())
+    require(data.get("schema") == DECLARED_SCHEMA, "declaration schema")
+    seen = set()
+    for e in data["entries"]:
+        require(sorted(e) == ["file", "kind", "reason"] and
+                e["kind"] in LOADS and e["file"].startswith("$HOLDIR/") and
+                e["reason"].strip(), "bad declaration entry: %r" % (e,))
+        require((e["kind"], e["file"]) not in seen, "duplicate entry")
+        seen.add((e["kind"], e["file"]))
+    return data
+
+
+def file_deltas(base, cand):
+    """Per-source-file candidate-minus-baseline words (every field), a file
+    present on one side only counting in full; startup and empty skipped."""
+    b, c = dict(signature(base)), dict(signature(cand))
+    zero = (0,) * len(OUT_FIELDS)
+    out = {}
+    for name in list(b) + [n for n in c if n not in b]:
+        if name in ("startup", "empty"):
+            continue
+        d = [x - y for x, y in zip(c.get(name, zero), b.get(name, zero))]
+        if any(d):
+            out[name] = dict(zip(OUT_FIELDS, d))
+    return out
+
+
+def attribute(kind, load_tables, base_files, cand_files, declared):
+    """(attribution or None, reasons) for a reproducible load delta: every
+    word must sit on a declared file of this kind, and the declared files'
+    words must add up to the load delta."""
+    why = []
+    if len({json.dumps(t, sort_keys=True) for t in load_tables}) != 1:
+        return None, ["%s: delta not reproducible across pairs" % kind]
+    if not base_files or len(base_files) != len(cand_files):
+        return None, ["%s: no per-file attribution measured" % kind]
+    per_pair = [file_deltas(b, c) for b, c in zip(base_files, cand_files)]
+    if len({json.dumps(d, sort_keys=True) for d in per_pair}) != 1:
+        return None, ["%s: per-file delta not reproducible" % kind]
+    files = per_pair[0]
+    entries = {e["file"]: e["reason"] for e in declared["entries"]
+               if e["kind"] == kind}
+    for name in sorted(files):
+        if name not in entries:
+            why.append("%s: undeclared file %s carries %s" % (
+                kind, name, json.dumps(files[name], sort_keys=True)))
+    brackets = LOADS[kind][1]
+    total = {k: sum(load_tables[0][b][k] for b in brackets if b in
+                    load_tables[0]) for k in OUT_FIELDS}
+    summed = {k: sum(f[k] for f in files.values()) for k in OUT_FIELDS}
+    if total != summed:
+        why.append("%s: load delta %s but declared files sum to %s" % (
+            kind, json.dumps(total, sort_keys=True),
+            json.dumps(summed, sort_keys=True)))
+    others = {n: r for n, r in nonzero(load_tables[0]).items()
+              if n not in brackets}
+    if others:
+        why.append("%s: delta outside the load brackets: %s" % (
+            kind, ", ".join(sorted(others))))
+    if why:
+        return None, why
+    return dict(total=total, files=files,
+                reasons={f: entries[f] for f in files},
+                unused=sorted(set(entries) - set(files))), []
+
+
+def analyse(records, pairs, declared=None):
     """Every decision of one run from its process records alone.
 
     records: dicts with kind, side (base/candidate/control/repeat), pair,
@@ -420,7 +496,23 @@ def analyse(records, pairs):
             exp["kinds"][kind] = row
             if kind in ATTRIBUTION:
                 continue
-            if any(b for b in bad):
+            if any(b for b in bad) and name == "candidate" and \
+                    kind in LOADS and declared is not None:
+                files_kind = LOADS[kind][0]
+                key = lambda side: sorted(
+                    by_exp.get((files_kind, "candidate", side), []),
+                    key=lambda r: r["pair"])
+                got, why = attribute(kind, tables, key("base"),
+                                     key("candidate"), declared)
+                attributed = report.setdefault("attributed", {})
+                if got is None:
+                    reasons.append("candidate %s: non-zero delta in %d of "
+                                   "%d pairs" % (kind, sum(map(bool, bad)),
+                                                 len(ls)))
+                    reasons += why
+                else:
+                    attributed[kind] = got
+            elif any(b for b in bad):
                 reasons.append("%s %s: non-zero delta in %d of %d pairs"
                                % (name, kind, sum(map(bool, bad)), len(ls)))
             if any(any(v is None for v in t_row.values())
@@ -464,6 +556,8 @@ def analyse(records, pairs):
     counts = {len({r["pair"] for r in rs}) for rs in by.values()}
     report["acceptance_pairs"] = min(counts) >= PAIRS
     report["decision"] = "pass" if not reasons else "fail"
+    if not reasons and report.get("attributed"):
+        report["decision"] = "attributed"
     if not reasons and not report["acceptance_pairs"]:
         report["decision"] = "smoke"
     report["reasons"] = sorted(set(reasons))
@@ -489,6 +583,12 @@ def render(report, header):
             for k, v in fields.items():
                 lines.append("| %s | %s | %s | %s | %s |" % (
                     kind, name, k, v, control.get(name, {}).get(k)))
+    for kind, got in sorted(report.get("attributed", {}).items()):
+        lines += ["", "Attributed %s delta %s to declared files:" % (
+            kind, json.dumps(got["total"], sort_keys=True)), ""]
+        for name, d in sorted(got["files"].items()):
+            lines.append("- %s %s: %s" % (name, json.dumps(
+                d, sort_keys=True), got["reasons"][name]))
     lines += ["", "Determinism (distinct signatures over the runs of a "
               "side): " + json.dumps(report["determinism"], sort_keys=True)]
     return "\n".join(lines) + "\n"
@@ -538,6 +638,7 @@ def measure(args):
                      p.resolve(strict=True) == lib and p != lib)
     out = args.output
     out.mkdir(parents=True, exist_ok=False)
+    declared = load_declared()
     env = tool_env(args.tmpdir)
     harness = harness_state(HERE.parents[3])
     seals = {str(lib): lineage["runtime"], str(shim): lineage["shim_seal"]}
@@ -592,23 +693,25 @@ def measure(args):
         holdir_length=len(next(iter(trees.values()))["hol"]),
         library=str(lib), runtime=lineage["runtime"],
         shim=lineage["shim_seal"],
+        declared=declared, declared_sha256=hashlib.sha256(
+            DECLARED.read_bytes()).hexdigest(),
         controls=controls, harness=harness, pairs=args.pairs,
         kinds=list(args.kinds), environment={k: v for k, v in env.items()},
         seconds=round(time.time() - started, 1))
-    report = analyse(records, args.pairs)
+    report = analyse(records, args.pairs, declared)
     (out / "records.json.gz").write_bytes(am.compact(records))
     (out / "header.json").write_text(json.dumps(header, indent=1))
     (out / "decisions.json").write_text(json.dumps(report, indent=1))
     (out / "RESULTS.md").write_text(render(report, header))
     print("DECISION", report["decision"], *report["reasons"], sep="\n  ")
-    return 0 if report["decision"] == "pass" else 1
+    return 0 if report["decision"] in ("pass", "attributed") else 1
 
 
 def replay(args):
     import allocation_matrix as am
     records = a.load(args.output / "records.json.gz")
     header = a.load(args.output / "header.json")
-    report = analyse(records, header["pairs"])
+    report = analyse(records, header["pairs"], header.get("declared"))
     stored = a.load(args.output / "decisions.json")
     require(json.loads(json.dumps(report)) == stored,
             "stored decisions differ from a replay")

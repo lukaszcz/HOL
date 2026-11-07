@@ -6,8 +6,10 @@
      load-simpLib   hol.state0: a fresh `load "simpLib"` and `load
                     "pureSimps"`, then the same calls
      load-congLib   hol.state0: a fresh `load "congLib"`
-     files-simpLib  hol.state0: `load "simpLib"` with a bracket around every
-                    source file the loader uses (attribution, not a gate)
+     files-simpLib  hol.state0: `load "simpLib"` and `load "pureSimps"`
+     files-congLib  and `load "congLib"` with a bracket around every
+                    source file the loader uses (attribution of a load
+                    delta to declared files, never a gate by itself)
    The first lines are the whole prologue before the `startup` record: the
    foreign setup and one snapshot, so that startup is the words of the
    process load up to the first user code (plus compiling these lines).
@@ -77,7 +79,9 @@ val _ = if kind = "hol-startup" then ()
     (bracket "load_simpLib" (fn () => Meta.load "simpLib");
      bracket "load_pureSimps" (fn () => Meta.load "pureSimps");
      prepare (); use1 (); use2 ())
-  else if kind = "files-simpLib" then Meta.loadPlan tracedUse "simpLib"
+  else if kind = "files-simpLib" then
+    (Meta.loadPlan tracedUse "simpLib"; Meta.loadPlan tracedUse "pureSimps")
+  else if kind = "files-congLib" then Meta.loadPlan tracedUse "congLib"
   else if kind = "hol-first-use" then (prepare (); use1 (); use2 ())
   else raise Fail ("unknown GATE_KIND " ^ kind)
 

@@ -119,6 +119,96 @@ def grid(kinds=("hol-startup", "load-simpLib"), pairs=10, delta=None):
     return out
 
 
+def words(n):
+    return snap(n, n, 0, 0, 0)
+
+
+def lrec(kind, side, pair, experiment, brackets):
+    """A record whose named brackets hold the given words."""
+    rows = [("startup", snap(), snap()), ("empty", snap(), snap(104, 94))]
+    rows += [(HOLDIR + "/" + n if n.startswith("src/") else n,
+              words(0), words(w)) for n, w in brackets.items()]
+    r = g.parse_process(
+        stdout(kind=kind, brackets=rows,
+               result="true" if kind in g.USES_SIMP else "none"),
+        kind, HOLDIR, LIB, ())
+    r.update(side=side, pair=pair, experiment=experiment)
+    return r
+
+
+SIG = "src/simp/src/Cond_rewr.sig"
+OTHER = "src/simp/src/Other.sml"
+
+
+def attributed_grid(load, sig, other=0, pairs=10):
+    """load-simpLib and files-simpLib; the candidate side (and its repeat)
+    pays `load` words in the load bracket, `sig` on Cond_rewr.sig and
+    `other` on Other.sml."""
+    out = []
+    for pair in range(pairs):
+        for exp, sides in (("candidate", ("base", "candidate")),
+                           ("control", ("base", "control")),
+                           ("repeat", ("candidate", "repeat"))):
+            for side in sides:
+                c = side in ("candidate", "repeat")
+                out.append(lrec("load-simpLib", side, pair, exp, dict(
+                    load_simpLib=1000 + (load if c else 0))))
+                out.append(lrec("files-simpLib", side, pair, exp, {
+                    "src/simp/src/A.sml": 400,
+                    SIG: 5 + (sig if c else 0),
+                    OTHER: 6 + (other if c else 0)}))
+    return out
+
+
+def declared(*files):
+    return dict(schema=g.DECLARED_SCHEMA, entries=[
+        dict(kind="load-simpLib", file="$HOLDIR/" + f, reason="r")
+        for f in files])
+
+
+class AttributionTest(unittest.TestCase):
+    def test_declared_file_carries_the_whole_delta(self):
+        report = g.analyse(attributed_grid(7, 7), 10, declared(SIG))
+        self.assertEqual(report["decision"], "attributed",
+                         report["reasons"])
+        got = report["attributed"]["load-simpLib"]
+        self.assertEqual(list(got["files"]), ["$HOLDIR/" + SIG])
+        self.assertEqual(got["total"]["total"], 7)
+
+    def test_undeclared_file_fails(self):
+        report = g.analyse(attributed_grid(10, 7, 3), 10, declared(SIG))
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("undeclared file" in r
+                            for r in report["reasons"]))
+
+    def test_delta_outside_declared_files_fails(self):
+        report = g.analyse(attributed_grid(9, 7), 10, declared(SIG))
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("declared files sum" in r
+                            for r in report["reasons"]))
+
+    def test_no_declaration_fails(self):
+        report = g.analyse(attributed_grid(7, 7), 10, None)
+        self.assertEqual(report["decision"], "fail")
+
+    def test_declaration_cannot_excuse_other_kinds(self):
+        grid_ = attributed_grid(7, 7) + [
+            lrec("hol-startup", s, p, e, {}) for p in range(10)
+            for e, sides in (("candidate", ("base", "candidate")),
+                             ("control", ("base", "control")),
+                             ("repeat", ("candidate", "repeat")))
+            for s in sides]
+        for r in grid_:
+            if r["kind"] == "hol-startup" and r["side"] == "candidate":
+                r["brackets"][0]["start"][3] += 1
+        report = g.analyse(grid_, 10, declared(SIG))
+        self.assertEqual(report["decision"], "fail")
+
+    def test_repository_declaration_is_well_formed(self):
+        data = g.load_declared()
+        self.assertTrue(data["entries"])
+
+
 class DecisionTest(unittest.TestCase):
     def test_exact_zero_passes(self):
         report = g.analyse(grid(), 10)
