@@ -13,10 +13,10 @@ import subprocess
 import sys
 import uuid
 
+from audit_constants import CASE_CHECKS, NATIVE_MODULES, SOURCES
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
-SOURCES = ("Holmakefile", "selftest.sml", "ordinary.ML", "runtime.ML",
-           "Documentation.sml", "run.py")
 # Children never read the caller's standard input (an open pipe that is
 # never closed would hang a Poly/ML top level), and neither may wait for
 # ever. The version query takes a moment; one selftest.exe process loads HOL
@@ -33,10 +33,7 @@ def seal(path):
 def validate_output(text, returncode, kind, owner):
     """Reject truncated observations, wrong counts and foreign core inputs."""
     lines = text.splitlines()
-    expected = {("attribute", "before"): 172,
-                ("attribute", "after"): 168,
-                ("exporter", "before"): 176,
-                ("exporter", "after"): 171}[kind, owner]
+    expected = CASE_CHECKS[kind, owner]
     clean = re.sub(r"\x1b\[[0-9;]*[mCG]", "", text)
     checks = clean.count("OK\n")
     if (returncode != 0 or not text.endswith("\n") or
@@ -47,9 +44,7 @@ def validate_output(text, returncode, kind, owner):
     # evidence; reject sigobj/foreign copies and bind the receipt to live bytes.
     used = {line.split("=", 1)[1] for line in lines
             if line.startswith("OBS used.path=")}
-    for module in ("simpLib", "congLib", "Traverse", "Cond_rewr", "Trace",
-                   "SimpTracking", "simpExtLib", "TraverseExt",
-                   "Cond_rewrExt", "congExtLib"):
+    for module in NATIVE_MODULES:
         for suffix in (".sig", ".sml"):
             path = ROOT / "src/simp/src" / (module + suffix)
             if str(path) not in used or not path.is_file():
