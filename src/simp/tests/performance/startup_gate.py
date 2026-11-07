@@ -107,6 +107,38 @@ def build_native(pristine, root, run, report):
     return prefix
 
 
+DETERMINISM = (
+    ("tools-poly/hol.ML",
+     '  p "Sharing common data";\n  PolyML.shareCommonData '
+     'PolyML.rootFunction;\n',
+     '  PolyML.fullGC (); PolyML.fullGC ();\n'
+     '  p "Sharing common data";\n  PolyML.shareCommonData '
+     'PolyML.rootFunction;\n  PolyML.fullGC (); PolyML.fullGC ();\n'),
+    ("src/proofman/Holmakefile",
+     "$(protect $(HOLDIR)/bin/hol) buildheap",
+     "$(protect $(HOLDIR)/bin/hol) --gcthreads=1 buildheap"),
+    ("src/boss/Holmakefile",
+     "$(protect $(HOLDIR)/bin/hol) buildheap",
+     "$(protect $(HOLDIR)/bin/hol) --gcthreads=1 buildheap"),
+    ("src/num/termination/Holmakefile",
+     "$(protect $(HOLDIR)/bin/hol) buildheap",
+     "$(protect $(HOLDIR)/bin/hol) --gcthreads=1 buildheap"))
+
+
+def make_deterministic(hol, run):
+    """Image-export determinism (TASK31): the exported hol.state0/hol.state
+    are byte-identical between builds only if the export runs with one GC
+    thread, two full collections before the export and ASLR off (the
+    build itself runs under `setarch -R`). Applied identically to every
+    tree; touches image creation only. Returns the recorded diff."""
+    for name, old, new in DETERMINISM:
+        path = hol / name
+        text = path.read_text()
+        require(text.count(old) >= 1, "determinism: no " + name)
+        path.write_text(text.replace(old, new))
+    return a.git(hol, "diff")
+
+
 def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
     """A fresh HOL tree: shared clone at rev (plus a recorded patch file),
     the configuration override, smart-configure and a no-cache build
@@ -119,6 +151,10 @@ def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
         run(["git", "apply", "--check", str(patch)], hol)
         run(["git", "apply", str(patch)], hol)
     require(not (hol / "bin/hol.state0").exists(), "prebuilt HOL image")
+    deterministic = os.environ.get("GATE_BUILD_DETERMINISTIC", "1") == "1"
+    if deterministic:
+        report["hol_determinism_diff"] = make_deterministic(hol, run)
+    report["hol_build_deterministic"] = deterministic
     env = dict(env, HOLDIR=str(hol))
     report.update(hol_snapshot=head,
                   hol_patch=None if patch is None else a.seal(patch),
@@ -132,7 +168,8 @@ def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
          "tools/smart-configure.sml"], hol, env)
     jobs = os.environ.get("GATE_BUILD_JOBS", "2")
     report["hol_build_jobs"] = jobs
-    run([str(hol / "bin/build"), "--no-cache", "-j" + jobs,
+    run((["setarch", "-R"] if deterministic else []) +
+        [str(hol / "bin/build"), "--no-cache", "-j" + jobs,
          "--seq=" + pr.HOL_SEQUENCE], hol, env)
     report["hol_products"] = {str(hol / n): a.seal(hol / n) for n in (
         "bin/hol", "bin/hol.state0", "bin/hol.state", "bin/Holmake")}

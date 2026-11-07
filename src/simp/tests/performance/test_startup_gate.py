@@ -5,6 +5,8 @@ Synthetic fixtures only: no runtime, toolchain or HOL tree is needed. Every
 guard of the decision rule is killed by a case below.
 """
 import copy
+import os
+from unittest import mock
 from pathlib import Path
 import subprocess
 import tempfile
@@ -279,7 +281,10 @@ class RecipeTest(unittest.TestCase):
             hol, prefix = t / "h" / "hol-source", t / "native-install"
             hol.parent.mkdir()
             report = {}
-            g.build_hol(repo, "HEAD", hol, prefix, env, run, report, patch)
+            with mock.patch.dict(os.environ,
+                                 GATE_BUILD_DETERMINISTIC="0"):
+                g.build_hol(repo, "HEAD", hol, prefix, env, run, report,
+                            patch)
             self.assertEqual((hol / "f.txt").read_text(), "two\n")
             commands = [c for c, _ in seen]
             self.assertEqual(commands[0][:4],
@@ -300,6 +305,26 @@ class RecipeTest(unittest.TestCase):
                              % (prefix / "bin/poly", prefix / "lib"))
             self.assertEqual(report["hol_snapshot"], report["hol_snapshot"])
             self.assertIsNotNone(report["hol_patch"])
+
+    def test_determinism_edits_touch_image_creation_only(self):
+        with tempfile.TemporaryDirectory() as t:
+            hol = Path(t)
+            subprocess.run(["git", "init", "-q", str(hol)], check=True)
+            for name, old, _ in g.DETERMINISM:
+                path = hol / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("x\n" + old + "y\n")
+            subprocess.run(["git", "-C", str(hol), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(hol), "-c", "user.name=t",
+                            "-c", "user.email=t@t", "commit", "-qm", "m"],
+                           check=True)
+            diff = g.make_deterministic(hol, None)
+            self.assertIn("PolyML.fullGC", diff)
+            self.assertEqual(diff.count("--gcthreads=1 buildheap"), 3)
+            self.assertEqual(
+                sorted(n for n, _, _ in g.DETERMINISM),
+                ["src/boss/Holmakefile", "src/num/termination/Holmakefile",
+                 "src/proofman/Holmakefile", "tools-poly/hol.ML"])
 
     def test_mktool_patch_is_build_tooling_only(self):
         text = (HERE / "startup_gate_mktool.patch").read_text()
