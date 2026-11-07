@@ -49,32 +49,14 @@ class Cases(unittest.TestCase):
         self.assertLessEqual(set(c.INFEASIBLE), names)
         self.assertTrue(all(x.endswith("-10000") for x in c.INFEASIBLE))
         self.assertFalse(set(c.INFEASIBLE) & set(c.SAMPLE))
-        self.assertEqual(set(c.INFEASIBLE_COST), set(c.INFEASIBLE))
         for x in c.INFEASIBLE:
             self.assertIn(x.rsplit("-", 1)[0] + "-0", names)
             self.assertNotIn(g.anchor(x), c.INFEASIBLE)
-        self.assertEqual(len(c.FEASIBLE_10000), 9)
-
-    def test_no_sampled_operation_is_long_against_the_batch(self):
-        self.assertEqual(set(c.SURVEY_SAMPLE), set(c.SAMPLE))
-        for name, (op, setup, check) in c.SURVEY_SAMPLE.items():
-            self.assertLess(op, g.SECONDS / 2, name)
-            self.assertLess(setup + check, c.PROCESS_TIMEOUT, name)
-
-    def test_the_infeasible_costs_are_nonnegative_and_grow_with_size(self):
-        for name, cost in c.INFEASIBLE_COST.items():
-            self.assertEqual(len(cost), 6, name)
-            self.assertTrue(all(x >= 0 for x in cost), name)
-            self.assertGreaterEqual(cost[4], cost[1], name)
 
     def test_the_sources_are_tracked_files_present_at_the_baseline(self):
         self.assertEqual(list(c.SOURCES), sorted(set(c.SOURCES)))
         for path in c.SOURCES:
             self.assertIsNotNone(tg.git_blob(REPO, a.BASE, path), path)
-
-    def test_the_heap_sources_are_among_the_sources(self):
-        self.assertLessEqual(set(c.HEAP), set(c.SOURCES))
-        self.assertEqual(len(c.HEAP), 16)
 
 
 class Table(unittest.TestCase):
@@ -85,7 +67,9 @@ class Table(unittest.TestCase):
                          ("warmup", 1, 20, 5))
         self.assertTrue(t.fixed_seconds)
         self.assertEqual(t.baseline, a.BASE)
-        self.assertEqual(t.seconds_map(), {n: 0.3 for n in c.SAMPLE})
+        self.assertEqual(t.seconds_map(), {
+            n: g.LONG_SECONDS if n.endswith("-0") and
+            n.startswith("traversal_") else g.SECONDS for n in c.SAMPLE})
         self.assertEqual(t.seed, "task31-layout-1")
         self.assertEqual(t.family, "task31")
         self.assertIsNone(t.replaces)
@@ -108,14 +92,22 @@ class Table(unittest.TestCase):
                   if "/paired/" in n}
         self.assertEqual(paired, listed)
 
-    def test_no_source_files_are_demanded_identical_for_timing(self):
-        self.assertEqual(g.TABLE.sources, ())
+    def test_the_elaborated_sources_are_the_timing_tables_sources(self):
+        import task31_attribution as attr
+        self.assertEqual(
+            g.TABLE.sources,
+            tuple(sorted(set(c.SOURCES) | set(attr.paths(g.ATTRIBUTED)))))
         self.assertEqual(g.TABLE.tree, "src")
+
+    def test_the_cases_hold_no_cost_numbers_or_narrative(self):
+        for word in ("COST", "SURVEY", "HEAP ="):
+            self.assertNotIn(word, (a.HERE / "task31_cases.py").read_text())
 
     def test_no_line_has_tabs_trailing_blanks_or_80_columns(self):
         for name in ("task31_cases.py", "task31_grid.py",
                      "task31_identity.py", "task31_snapshot.py",
-                     "task31_dispose.py"):
+                     "task31_dispose.py", "task31_attribution.py",
+                     "task31_followup.py"):
             for i, line in enumerate((a.HERE / name).read_text()
                                      .split("\n"), 1):
                 where = "%s:%d" % (name, i)

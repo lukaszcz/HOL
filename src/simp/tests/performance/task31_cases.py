@@ -7,12 +7,12 @@ cannot disagree about which cells are in scope. The scope is the
 traversal and tactic cases (the `downstream_*` cases belong to TASK_32/33).
 Their sizes come from the matrix ledger: a `singleton` case has the one size
 0, a `depth` case 0/1/10/100 and an `assumptions` case 0/1/10/100/1000/10000.
-That is 6 singleton and 5 depth traversal cases (26 cells: the design note
-says 7 and 12 cases, the ledger has 11) and 14 tactic families of 3 stages
-(252 cells), 278 cells in all.
+That is 6 singleton and 5 depth traversal cases (26 cells) and 14 tactic
+families of 3 stages (252 cells), 278 cells in all. CASES is the order of the
+matrix ledger, and the canonical order of every gate.
 
-Reference: .agent-files/tasks/TASK_31_design.md (the decision),
-.agent-files/evidence/task31/cost-survey/REPORT.md (the costs quoted below).
+The reviewed differences from the baseline are not here but in
+task31_attributed.json (task31_attribution.py), which no count is sealed to.
 """
 
 TRAVERSAL_SINGLETON = (
@@ -24,8 +24,7 @@ TRAVERSAL_DEPTH = (
     "traversal_failed_candidates", "traversal_saved")
 TRAVERSAL = TRAVERSAL_SINGLETON + TRAVERSAL_DEPTH
 STAGES = ("construct", "reuse", "complete")
-# The families that cost little at every size (an operation is milliseconds at
-# 1000 assumptions and below a second at 10000), and the eleven whose
+# The families that stay cheap at every size, and the eleven whose
 # application is quadratic or worse in the assumptions.
 LIGHT_FAMILIES = ("supplied", "installed", "asm")
 HEAVY_FAMILIES = (
@@ -44,8 +43,7 @@ SAMPLE_ASSUMPTIONS = 100
 # The timing sample (gate 3), 28 cells: every traversal case (the singletons
 # at their one size 0, the depth cases at depth 100), the `complete` stage of
 # each of the 14 tactic families at 100 assumptions, and three cells at 1000
-# assumptions. The design note counts about 29 (it counts 12 traversal
-# cases; the ledger has 11).
+# assumptions.
 SAMPLE = (
     tuple("%s-0" % case for case in TRAVERSAL_SINGLETON) +
     tuple("%s-%d" % (case, SAMPLE_DEPTH) for case in TRAVERSAL_DEPTH) +
@@ -57,193 +55,28 @@ SAMPLE_CASES = tuple(dict.fromkeys(cell.rsplit("-", 1)[0]
                                    for cell in SAMPLE))
 
 # The infeasible cells: the 33 cells of the eleven heavy families at 10000
-# assumptions. The cost survey measured every family at 1000 assumptions and,
-# for tactic_full_complete-10000 alone, at 10000: its untimed setup (one
-# application, then the check) ran 1426 s and the survey stopped it at its
-# cap of 1500 s (phaseD.jsonl). The process timeout of the grid is 1800 s
-# (`run_paired.py`'s default 300 s). The other 32 cells extrapolate each
-# family's own power law from 100 to 1000 assumptions (exponent about 2.2);
-# the one measurement, 1426 s against the 303 s that law gives for that
-# setup, shows the law underestimates. By the extrapolation one application
-# takes 300 to 1100 s (the construct stage pays it as the check after every
-# batch, 240 to 900 s) and a setup 300 to 1800 s; a process is the setup and
-# six batches of at least one application each, 2000 to 7800 s, so none fits
-# the timeout. These cells are not timed and not allocation-counted; the
-# identity gate covers them by the closure of their case, which is the same
-# for every size (PROTOCOL.md, "TASK31"). Per cell:
-# seconds at 1000 assumptions, measured (one timed operation, untimed setup,
-# untimed check), then the same three at 10000, extrapolated.
-INFEASIBLE_COST = {
-    "tactic_full_construct-10000": (
-        1.9e-07, 4.3, 2.1,
-        1.92e-07, 523, 243),
-    "tactic_full_reuse-10000": (
-        2.1, 2.4, 4.3e-05,
-        303, 295, 0),
-    "tactic_full_complete-10000": (
-        2.1, 2.4, 3.2e-05,
-        298, 303, 0),
-    "tactic_reverse_construct-10000": (
-        1.8e-07, 4.6, 2.2,
-        1.93e-07, 579, 269),
-    "tactic_reverse_reuse-10000": (
-        2.2, 2.5, 2.9e-05,
-        344, 335, 0),
-    "tactic_reverse_complete-10000": (
-        2.2, 2.4, 2.8e-05,
-        326, 303, 0),
-    "tactic_no_strip_full_construct-10000": (
-        1.9e-07, 4.3, 2.1,
-        1.9e-07, 509, 234),
-    "tactic_no_strip_full_reuse-10000": (
-        2, 2.3, 3.1e-05,
-        297, 297, 0),
-    "tactic_no_strip_full_complete-10000": (
-        2, 2.2, 3.1e-05,
-        287, 271, 0),
-    "tactic_no_strip_reverse_construct-10000": (
-        1.9e-07, 4.6, 2.2,
-        2e-07, 574, 262),
-    "tactic_no_strip_reverse_reuse-10000": (
-        2.2, 2.5, 3.1e-05,
-        350, 348, 0),
-    "tactic_no_strip_reverse_complete-10000": (
-        2.2, 2.4, 3.1e-05,
-        331, 309, 0),
-    "tactic_global_construct-10000": (
-        1.5e-07, 11, 5.6,
-        1.55e-07, 1.77e+03, 892),
-    "tactic_global_reuse-10000": (
-        5.5, 5.9, 2e-06,
-        1.04e+03, 942, 0),
-    "tactic_global_complete-10000": (
-        5.6, 5.9, 2e-06,
-        1.11e+03, 931, 0),
-    "tactic_req0_construct-10000": (
-        0.00085, 11, 5.6,
-        0.000922, 1.74e+03, 854),
-    "tactic_req0_reuse-10000": (
-        5.5, 5.9, 2e-06,
-        1.07e+03, 922, 0),
-    "tactic_req0_complete-10000": (
-        5.6, 5.9, 2e-06,
-        1.06e+03, 896, 0),
-    "tactic_reqd_construct-10000": (
-        0.00085, 11, 5.6,
-        0.000925, 1.77e+03, 899),
-    "tactic_reqd_reuse-10000": (
-        5.6, 5.9, 3e-06,
-        1.08e+03, 913, 0),
-    "tactic_reqd_complete-10000": (
-        5.6, 5.8, 2e-06,
-        1.06e+03, 881, 0),
-    "tactic_req0_reqd_construct-10000": (
-        0.0017, 11, 5.6,
-        0.00194, 1.72e+03, 875),
-    "tactic_req0_reqd_reuse-10000": (
-        5.7, 6.1, 3e-06,
-        1.14e+03, 943, 0),
-    "tactic_req0_reqd_complete-10000": (
-        5.6, 5.8, 2e-06,
-        1.01e+03, 858, 0),
-    "tactic_reqd_req0_construct-10000": (
-        0.0017, 11, 5.6,
-        0.00186, 1.66e+03, 823),
-    "tactic_reqd_req0_reuse-10000": (
-        5.7, 6.1, 3e-06,
-        1.14e+03, 924, 0),
-    "tactic_reqd_req0_complete-10000": (
-        5.6, 5.8, 3e-06,
-        983, 850, 0),
-    "tactic_dependency_full_construct-10000": (
-        1e-07, 3.9, 1.9,
-        1.04e-07, 1.07e+03, 469),
-    "tactic_dependency_full_reuse-10000": (
-        1.9, 2, 9.8e-05,
-        625, 521, 0),
-    "tactic_dependency_full_complete-10000": (
-        1.9, 2, 0.0001,
-        610, 553, 0),
-    "tactic_dependency_reverse_construct-10000": (
-        1.1e-07, 4.4, 2.1,
-        1.16e-07, 1.35e+03, 604),
-    "tactic_dependency_reverse_reuse-10000": (
-        2.2, 2.3, 0.0001,
-        870, 704, 0),
-    "tactic_dependency_reverse_complete-10000": (
-        2.1, 2.3, 0.00011,
-        766, 707, 0),
-}
-
+# assumptions, which exceed the process timeout of a cell. They are not timed
+# and not allocation-counted; the identity gate covers them by the closure of
+# their case, which is the same for every size (PROTOCOL.md, "TASK31"), and
+# the disposition cites the cost survey it is given (`--survey`).
 INFEASIBLE = tuple(
     "tactic_%s_%s-10000" % (family, stage)
     for family in HEAVY_FAMILIES for stage in STAGES)
-# What the survey measured at 10000 for the cells that are not infeasible:
-# the nine cells of the light families, one operation 0.4 to 0.95 s.
-FEASIBLE_10000 = tuple(
-    "tactic_%s_%s-10000" % (family, stage)
-    for family in LIGHT_FAMILIES for stage in STAGES)
-# The timeout of an infeasible cell's process, 1800 s, and the longest
-# survey measurement of a setup at 10000 (seconds).
+# The timeout of an infeasible cell's process, in seconds.
 PROCESS_TIMEOUT = 1800
-MEASURED_SETUP_10000 = 1426
 
-# The survey's per-operation costs of the sample cells (seconds at baseline
-# cccaa27d7099: timed operation, untimed setup, untimed check), which the
-# table's batch seconds are set against: no operation is longer than 31 ms,
-# so a batch of the target 0.3 s holds at least ten operations and no cell
-# needs a longer `batch_seconds` (the engine refuses nothing below the half
-# of the target; the survey's own bound is an operation of 150 ms).
-SURVEY_SAMPLE = {
-    "traversal_construct-0": (1.7e-07, 3.8e-05, 3e-06),
-    "traversal_context_construct-0": (3.3e-07, 4.4e-05, 3e-06),
-    "traversal_complete-0": (9e-07, 5.3e-05, 2e-06),
-    "traversal_reuse_hit-0": (5.9e-07, 3.8e-05, 2e-06),
-    "traversal_reuse_miss-0": (6.3e-07, 3.4e-05, 1e-06),
-    "traversal_weakening-0": (4.8e-07, 3.8e-05, 2e-06),
-    "traversal_deep-100": (0.0001, 0.00021, 5e-06),
-    "traversal_congruence-100": (0.0001, 0.00021, 5e-06),
-    "traversal_side_conditions-100": (0.0001, 0.00027, 4e-06),
-    "traversal_failed_candidates-100": (0.00011, 0.00022, 4e-06),
-    "traversal_saved-100": (0.0001, 0.0002, 3e-06),
-    "tactic_supplied_complete-100": (5.3e-05, 0.00015, 3e-06),
-    "tactic_installed_complete-100": (5e-05, 0.00015, 3e-06),
-    "tactic_asm_complete-100": (0.00034, 0.00047, 3e-06),
-    "tactic_full_complete-100": (0.014, 0.018, 1.3e-05),
-    "tactic_reverse_complete-100": (0.014, 0.018, 1.4e-05),
-    "tactic_no_strip_full_complete-100": (0.014, 0.018, 1.3e-05),
-    "tactic_no_strip_reverse_complete-100": (0.014, 0.018, 1.1e-05),
-    "tactic_global_complete-100": (0.028, 0.037, 2e-06),
-    "tactic_req0_complete-100": (0.03, 0.039, 3e-06),
-    "tactic_reqd_complete-100": (0.03, 0.038, 2e-06),
-    "tactic_req0_reqd_complete-100": (0.031, 0.039, 3e-06),
-    "tactic_reqd_req0_complete-100": (0.031, 0.039, 2e-06),
-    "tactic_dependency_full_complete-100": (0.0056, 0.0072, 1.2e-05),
-    "tactic_dependency_reverse_complete-100": (0.0058, 0.0073, 1.6e-05),
-    "tactic_supplied_complete-1000": (0.004, 0.0041, 5e-06),
-    "tactic_asm_complete-1000": (0.011, 0.011, 2e-06),
-    "tactic_installed_reuse-1000": (0.004, 0.0041, 6e-06),
-}
-
-# The files on the path of the operations, whose git blobs must be the same
-# at the baseline and at the candidate for the timing table to measure the
-# same code on both sides (the sources of the table, see timing_grid.Table).
-# ELABORATED is derived, not chosen: every repository file the client
-# fixture's process elaborates (`use`), as the runner's loaded-source audit
-# records it for a cell, mapped to the tracked source the file is built from
-# (a generated `XTheory.sml` to its `XScript.sml`). The audit shows the same
-# files for every cell (the fixture is one text; the case and size only
-# select a branch at run time), and the identity gate checks every cell's
-# elaborated files against this list (`uncovered`), so the list cannot go
-# stale unnoticed. `task31_grid.py sources` prints it from an identity run.
-# It holds the 33 simplifier sources and the shared modules that the private
-# build recompiles against them.
-#
-# HEAP lists the heap-resident modules on the path that TASK30 listed too
-# (the rest of the shared heap is built once from the candidate's tree and
-# is the same on both sides; the heap files outside this list are covered
-# by the startup gate and TASK_32/33, and `src/1/ThmAttribute` is outside
-# the gate by decision, see the design note).
+# The repository files every cell's process elaborates (`use`), whose git
+# blobs the timing table compares at the baseline and at the candidate (the
+# sources of the table, see timing_grid.Table). SOURCES is derived, not
+# chosen: the union of the files the runner's loaded-source audit records for
+# the cells, mapped to the tracked source each is built from (a generated
+# `XTheory.sml` to its `XScript.sml`). `task31_grid.py sources --output DIR`
+# prints it from an identity grid, and the full grid is inconclusive if a
+# file elaborated is missing here (`uncovered`) or a file here is elaborated
+# by no cell (`unused_sources`), so the list is exact. The files of the
+# initial heap are not listed: the identity grid derives them from the
+# receipts of every cell. It holds the 33 simplifier sources and the shared
+# modules that the private build recompiles against them.
 ELABORATED = (
     "src/1/BoolExtractShared.sig", "src/1/BoolExtractShared.sml",
     "src/1/Mutual.sig", "src/1/Mutual.sml", "src/1/bnfBase.sig",
@@ -483,12 +316,4 @@ ELABORATED = (
     "src/tfl/src/Rules.sig", "src/tfl/src/Rules.sml",
     "src/tfl/src/wfrecUtils.sig", "src/tfl/src/wfrecUtils.sml",
     "src/unwind/unwindLib.sig", "src/unwind/unwindLib.sml",)
-HEAP = (
-    "src/1/Ho_Net.sml", "src/1/Ho_Net.sig", "src/1/BoundedRewrites.sml",
-    "src/1/BoundedRewrites.sig", "src/postkernel/Theory.sml",
-    "src/postkernel/Theory.sig", "src/prekernel/Context.sml",
-    "src/prekernel/Context.sig", "src/portableML/Uref.sml",
-    "src/portableML/Uref.sig", "src/1/Drule.sml", "src/1/Drule.sig",
-    "src/1/Conv.sml", "src/1/Conv.sig", "src/1/Tactical.sml",
-    "src/1/Tactical.sig",)
-SOURCES = tuple(sorted(set(ELABORATED) | set(HEAP)))
+SOURCES = tuple(sorted(set(ELABORATED)))
