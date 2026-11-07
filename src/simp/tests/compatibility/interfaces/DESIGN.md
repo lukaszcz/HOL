@@ -54,7 +54,7 @@ the original context exception payload, closure, solver/conv/relation and stack.
 opaque reducers may contain inaccessible counters: we **cannot** enumerate,
 reset or recover them. Lifting promises callback/context compatibility, **not**
 source inventory, view bindings, or private quota reset inside opaque closures.
-The TASK_08 executable runs against today's mixed Traverse only for REDUCER
+The prototype executable runs against today's mixed Traverse only for REDUCER
 inputs; lifting the two soon-to-be-removed constructors is not a migration path.
 
 Both extension projections have **extension types**:
@@ -247,7 +247,7 @@ callback exception payloads or handler scopes, even when a new implementation
 module has a different name.
 
 SimpTracking extraction adds no per-rule inventory or new ordinary dispatch. Its
-extra helper call/source correspondence still needs final cost audit (12/34);
+extra helper call/source correspondence still needs a final cost audit;
 sharing identity is not itself a performance waiver. Do not move stack_limit to
 the extension, duplicate tracking/Trace modules, or copy split persistence.
 

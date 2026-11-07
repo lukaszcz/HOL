@@ -22,7 +22,7 @@ verifier checks old Git blobs and current hashes/anchors for the four explicitly
 relocated sources; all other sources and non-native streams remain exact.
 Ordinary destructor/R6/R7/reflexivity pins remain ordinary. Type-driven tracked
 projection/optional-eligibility predicate changes are explicit, not hidden by
-renaming labels. The tables below are not rewritten.
+renaming labels.
 
 ## Actual case map (paths relative to `src/simp/`)
 

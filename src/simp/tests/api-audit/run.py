@@ -76,6 +76,8 @@ def main():
     args = parser.parse_args()
     if args.output is None:
         args.output = Path(tempfile.mkdtemp(prefix="api-audit-receipts-"))
+    if not args.output.is_absolute():
+        parser.error("--output must be an absolute path: " + str(args.output))
     args.output = args.output.resolve()
     if args.output == ROOT or ROOT in args.output.parents:
         parser.error("--output must be outside the repository: " +

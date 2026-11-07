@@ -115,7 +115,8 @@ their contracts.
 
 Use the paired runner (`run_paired.py`), which builds deferred `.uo`
 dependencies and then really executes every client in its own fresh process.
-Explicit Holmake dependencies are essential: its scanner misses some names used only in module ascriptions.
+Explicit Holmake dependencies are essential: its scanner misses some names
+used only in module ascriptions.
 The validator requires completed elaboration of each entire `Legacy*.sig`,
 not just building a `.ui`/`.uo` or seeing a check string.
 
@@ -142,7 +143,7 @@ bin/Holmake --no-project --no-cache --no_prereqs \
   PAIRED_OUTPUT=/tmp/public-baseline public-baseline-control
 ```
 
-These targets run 23 Python controls, 22 independent normal fixture launches
+These targets run the Python controls, 22 independent normal fixture launches
 and 12 rejected executable negative controls per comparison. The ordinary
 signature/staging fixtures and failure controls remain active.
 For a restoration gate explicitly choose `--candidate-signature pass` (and

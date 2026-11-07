@@ -30,10 +30,14 @@ runs are not stored in the repository: every runner takes an explicit
 - `tools/root-wrapper.sh`: runs a command in a checkout whose configured root
   (`HOLDIR` in `tools/Holmake/Systeml.sml`) differs from its real location,
   using `bwrap` to map the checkout at the configured root.  It needs no
-  editing: `HOL_CHECKOUT` and `HOL_CONFIGURED_ROOT` override the detected
-  checkout (default: the enclosing git work tree) and configured root.  The
-  command runs directly when the two are equal; the wrapper exits 2 if it
-  cannot map the root (no `bwrap`, no configured root).
+  editing: the checkout is the git work tree containing the script, and
+  `HOL_CHECKOUT` and `HOL_CONFIGURED_ROOT` override it and the detected
+  configured root.  The command runs from the checkout root (the configured
+  root when mapped), directly when the two paths are equal.  Apart from the
+  configured root the host is visible, including `/dev/shm`; directories the
+  mapping creates on the host are removed afterwards if empty.  Exit status 2
+  means no command, no git work tree, no configured root or no `bwrap`;
+  otherwise it is the command's status.
 - `tools/require_output.py`: the Holmakefile's output-directory check.
 - `interfaces/`, `migration/`: design prototypes and the API mapping tables
   (`apis.tsv`, `final-apis.tsv`) and relocation overlays; see

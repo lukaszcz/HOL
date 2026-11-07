@@ -135,9 +135,9 @@ successfully and application raises Basis `Option`. Do not normalize or move it.
   the candidate incorrectly captures `B/B`. Context/grammar restoration before
   reuse restores `A/A`, but must not trigger a new develop callback.
 
-## Independently observed initial reds
+## Expected-red diagnostics
 
-`staging/reviewed.json` records exact initial broken behavior. All requirement
+`staging/reviewed.json` holds the expected-red (diagnostic) behavior. All requirement
 construction counts become zero; their callbacks and two/four inferences move
 to **each application**. Plain/empty, late lookup and nonthrowing proof outcomes
 otherwise match develop on this fixture. Exception stages do not:
@@ -155,7 +155,8 @@ from develop. Extra exceptions, static errors, missing proofs/uses, reversed
 subgoals, changed hypotheses, failed processes, wrong paths or truncated streams
 are failures. Python controls mutate these observations independently of the
 historical reproducer. A standalone strict baseline-contract run executes only
-`Staging`, passes develop and exits 1 on current sources at `candidate-Staging`.
+`Staging` and passes develop; it exits 1 on a candidate that regresses the
+staging contracts.
 
 ## Reproduction
 
@@ -179,7 +180,7 @@ To run the strict gate **without executing either old reproducer**:
 ```sh
 python3 -B src/simp/tests/compatibility/run_paired.py \
   --staging-contracts --staging-only --candidate HEAD \
-  --candidate-behavior baseline --output /tmp/staging-strict-red
+  --candidate-behavior baseline --output /tmp/staging-strict
 ```
 
 That command must exit **0** on restored sources and exits **1** on a candidate
