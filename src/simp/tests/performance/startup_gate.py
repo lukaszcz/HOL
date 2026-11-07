@@ -589,6 +589,245 @@ def analyse(records, pairs, declared=None):
     return report
 
 
+# ------------------------------------------------- build-noise (envelope)
+
+IMAGES = 5  # independent clean images per side for an acceptance decision
+EXACT_KINDS = ("hol-startup", "hol-first-use")
+
+
+def band(base_values, cand_values):
+    """within / shift / mixed of the candidate images against the
+    [min, max] envelope of the baseline images (never a tolerance)."""
+    lo, hi = min(base_values), max(base_values)
+    if all(lo <= v <= hi for v in cand_values):
+        return "within"
+    if all(v > hi for v in cand_values) or all(v < lo for v in cand_values):
+        return "shift"
+    return "mixed"
+
+
+def image_table(records):
+    """{bracket name: {field: [value per image]}} for one side of a kind,
+    a bracket absent in an image counting 0 there."""
+    names = []
+    for r in records:
+        for n, _ in signature(r):
+            if n not in names:
+                names.append(n)
+    out = {}
+    for n in names:
+        rows = [dict(signature(r)).get(n, (0,) * len(OUT_FIELDS))
+                for r in records]
+        out[n] = {k: [row[i] for row in rows]
+                  for i, k in enumerate(OUT_FIELDS)}
+    return out
+
+
+def envelope(base, cand):
+    """{name: {field: dict(min, max, cand, status)}} for entries that are
+    not identical in every image of both sides."""
+    out = {}
+    b, c = image_table(base), image_table(cand)
+    for n in list(b) + [x for x in c if x not in b]:
+        zero = {k: [0] * len(base) for k in OUT_FIELDS}
+        zeroc = {k: [0] * len(cand) for k in OUT_FIELDS}
+        for k in OUT_FIELDS:
+            bv, cv = b.get(n, zero)[k], c.get(n, zeroc)[k]
+            if len(set(bv + cv)) > 1:
+                out.setdefault(n, {})[k] = dict(
+                    min=min(bv), max=max(bv), base=bv, cand=cv,
+                    status=band(bv, cv))
+    return out
+
+
+def analyse_images(records, declared=None, minimum=IMAGES):
+    """Decision when images cannot be made byte-identical: records carry
+    kind, side (base/candidate), image (label), again (a determinism
+    repeat of the first image). hol-startup and hol-first-use stay exact
+    across every image of both sides; load kinds use the envelope of the
+    baseline images, with shifts attributed to declared files only."""
+    reasons, report, notes = [], {}, []
+    kinds = sorted({r["kind"] for r in records})
+    main = [r for r in records if not r.get("again")]
+    by = {}
+    for r in main:
+        by.setdefault((r["kind"], r["side"]), []).append(r)
+    for r in records:
+        if r.get("again"):
+            first = [m for m in by[(r["kind"], r["side"])]
+                     if m["image"] == r["image"]]
+            if not first or signature(first[0]) != signature(r):
+                reasons.append("nondeterministic: %s %s image %s" % (
+                    r["kind"], r["side"], r["image"]))
+    counts = {len(v) for v in by.values()}
+    report["images"] = {"%s/%s" % k: [r["image"] for r in v]
+                        for k, v in sorted(by.items())}
+    tables = {}
+    for kind in kinds:
+        base, cand = by.get((kind, "base"), []), by.get((kind, "candidate"),
+                                                       [])
+        if not base or not cand:
+            reasons.append("%s: a side has no image" % kind)
+            continue
+        table = tables[kind] = envelope(base, cand)
+        if kind in EXACT_KINDS:
+            if table:
+                reasons.append("%s: images differ (exact-zero kind): %s" % (
+                    kind, ", ".join(sorted(table))))
+            continue
+        if kind in ATTRIBUTION:
+            continue
+        shifted = {n: {k: v for k, v in row.items()
+                       if v["status"] == "shift"}
+                   for n, row in table.items()}
+        shifted = {n: r for n, r in shifted.items() if r}
+        mixed = sorted(n for n, row in table.items()
+                       if any(v["status"] == "mixed" for v in row.values()))
+        if mixed:
+            notes.append("%s: candidate images straddle the envelope in %s"
+                         % (kind, ", ".join(mixed)))
+        if not shifted:
+            continue
+        files_kind = LOADS[kind][0] if kind in LOADS else None
+        ft = tables.get(files_kind)
+        if declared is None or ft is None:
+            reasons.append("%s: reproducible shift, no attribution: %s" % (
+                kind, ", ".join(sorted(shifted))))
+            continue
+        entries = {e["file"]: e["reason"] for e in declared["entries"]
+                   if e["kind"] == kind}
+        fshift = {n: r for n, r in ft.items()
+                  if n not in ("startup", "empty") and
+                  any(v["status"] != "within" for v in r.values())}
+        bad = sorted(n for n in fshift if n not in entries)
+        outside = sorted(n for n in shifted if n not in LOADS[kind][1])
+        if bad:
+            reasons.append("%s: shift on undeclared files: %s" % (
+                kind, ", ".join(bad)))
+        elif outside:
+            reasons.append("%s: shift outside the load brackets: %s" % (
+                kind, ", ".join(outside)))
+        elif not fshift:
+            reasons.append("%s: load shift with no file carrying it" % kind)
+        else:
+            report.setdefault("attributed", {})[kind] = dict(
+                shifted=sorted(shifted), files=sorted(fshift),
+                reasons={f: entries[f] for f in fshift})
+    report["envelope"] = tables
+    for kind in kinds:
+        base = by.get((kind, "base"), [])
+        allowed_m = set(base[0]["loaded"]) if base else set()
+        allowed_s = set(base[0]["structures"]) if base else set()
+        for r in main:
+            if r["kind"] != kind:
+                continue
+            found = sorted(
+                ["module " + m for m in r["loaded"]
+                 if is_extension(m, allowed_m)] +
+                ["structure " + x for x in r["structures"]
+                 if is_extension(x, allowed_s)])
+            if found:
+                reasons.append("extension in ordinary process %s %s %s: %s"
+                               % (kind, r["side"], r["image"],
+                                  ", ".join(found)))
+    for r in main:
+        want = "true" if r["kind"] in USES_SIMP else "none"
+        if r["kind"] not in ATTRIBUTION and r["result"] != want:
+            reasons.append("wrong simplifier result: %s %s" % (
+                r["kind"], r["side"]))
+    report["notes"] = sorted(set(notes))
+    report["reasons"] = sorted(set(reasons))
+    report["acceptance_images"] = min(counts) >= minimum
+    if reasons:
+        report["decision"] = "fail"
+    elif not report["acceptance_images"]:
+        report["decision"] = "smoke"
+    elif notes:
+        report["decision"] = "inconclusive"
+    elif report.get("attributed"):
+        report["decision"] = "attributed"
+    else:
+        report["decision"] = "pass"
+    return report
+
+
+def measure_images(args):
+    """One process per image and kind (plus a determinism repeat of the
+    first image of each side), for the envelope decision."""
+    import allocation_matrix as am
+    pr.use_fixed_path()
+    repo = args.repo.resolve(strict=True)
+    root = args.toolchain.resolve(strict=True)
+    lineage = a.load(root / "lineage.json")
+    require(lineage.get("schema") == LINEAGE_SCHEMA and
+            lineage.get("success") is True, "toolchain not built")
+    sides = dict(base=args.base, candidate=args.candidate)
+    trees = {l: lineage["trees"][l] for ls in sides.values() for l in ls}
+    lib, shim = Path(lineage["library"]), Path(lineage["shim"])
+    aliases = sorted(str(p) for p in lib.parent.iterdir()
+                     if p.name.startswith("libpolyml.so") and
+                     p.resolve(strict=True) == lib and p != lib)
+    out = args.output
+    out.mkdir(parents=True, exist_ok=False)
+    declared = load_declared()
+    env = tool_env(args.tmpdir)
+    harness = harness_state(HERE.parents[3])
+    seals = {str(lib): lineage["runtime"], str(shim): lineage["shim_seal"]}
+    for tree in trees.values():
+        seals.update(tree["hol_products"])
+    records, started = [], time.time()
+    with a.serial_lock(repo) as fds:
+        loading.check_seals(seals)
+        tree_hash = pr.tree_outside_performance(
+            HERE.parents[3], harness["head"])
+        any_tree = next(iter(trees.values()))
+        controls = am.controls_receipt(
+            args.controls_receipt, lineage["runtime"], tree_hash,
+            any_tree["libraries"], lineage["native_configuration"])
+        args.work.mkdir(parents=True, exist_ok=True)
+        for kind in args.kinds:
+            plan = []
+            for i in range(max(map(len, sides.values()))):
+                for side in ("base", "candidate") if i % 2 == 0 else \
+                        ("candidate", "base"):
+                    if i < len(sides[side]):
+                        plan.append((side, sides[side][i], False))
+            plan += [(side, sides[side][0], True)
+                     for side in ("base", "candidate")]
+            for side, label, again in plan:
+                tree = trees[label]
+                receipt = loading.execute(
+                    command(tree["hol"], kind, CLIENT), args.work,
+                    process_env(env, tree["hol"], lib, shim, args.tmpdir,
+                                kind), args.timeout, fds)
+                require(receipt["exit"] == 0 and not receipt["timed_out"],
+                        "client failed: %s %s" % (kind, label))
+                rec = parse_process(receipt["stdout"], kind, tree["hol"],
+                                    lib, aliases)
+                rec.update(side=side, image=label, again=again,
+                           stdout_sha256=receipt["stdout_sha256"])
+                records.append(rec)
+                print(kind, side, label, again, rec["brackets"][0]["end"][3],
+                      flush=True)
+        loading.check_seals(seals)
+    header = dict(
+        schema=SCHEMA + "-images", labels=sides,
+        hol={l: t["hol"] for l, t in trees.items()},
+        trees={l: dict(rev=t["rev"], head=t["head"], tree=t["hol_tree"],
+                       patch=t["hol_patch"]) for l, t in trees.items()},
+        declared=declared, library=str(lib), runtime=lineage["runtime"],
+        shim=lineage["shim_seal"], controls=controls, harness=harness,
+        kinds=list(args.kinds), environment=dict(env),
+        seconds=round(time.time() - started, 1))
+    report = analyse_images(records, declared, args.images)
+    (out / "records.json.gz").write_bytes(am.compact(records))
+    (out / "header.json").write_text(json.dumps(header, indent=1))
+    (out / "decisions.json").write_text(json.dumps(report, indent=1))
+    print("DECISION", report["decision"], *report["reasons"],
+          *report["notes"], sep="\n  ")
+    return 0 if report["decision"] in ("pass", "attributed") else 1
+
+
 def render(report, header):
     """RESULTS.md: the figures of every bracket, base/candidate/control."""
     lines = ["# TASK31 ordinary-startup allocation gate", "",
@@ -869,6 +1108,20 @@ def main(argv=None):
     m.add_argument("--kinds", nargs="+", default=list(KINDS),
                    choices=list(KINDS))
     m.add_argument("--timeout", type=int, default=1800)
+    i = sub.add_parser("images")
+    i.add_argument("--toolchain", type=Path, required=True)
+    i.add_argument("--repo", type=Path, default=HERE.parents[3])
+    i.add_argument("--output", type=Path, required=True)
+    i.add_argument("--work", type=Path, required=True)
+    i.add_argument("--tmpdir", type=Path, required=True)
+    i.add_argument("--controls-receipt", type=Path, required=True)
+    i.add_argument("--base", nargs="+", required=True,
+                   help="labels of the independent baseline images")
+    i.add_argument("--candidate", nargs="+", required=True)
+    i.add_argument("--images", type=int, default=IMAGES)
+    i.add_argument("--kinds", nargs="+", default=list(KINDS),
+                   choices=list(KINDS))
+    i.add_argument("--timeout", type=int, default=1800)
     c = sub.add_parser("cell")
     c.add_argument("--toolchain", type=Path, required=True)
     c.add_argument("--tree", required=True, help="label of the HOL tree")
@@ -886,7 +1139,8 @@ def main(argv=None):
     r.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     return {"build": build, "measure": measure, "replay": replay,
-            "cell": cell_startup}[args.action](args)
+            "cell": cell_startup,
+            "images": measure_images}[args.action](args)
 
 
 if __name__ == "__main__":

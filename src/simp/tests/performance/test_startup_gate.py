@@ -209,6 +209,82 @@ class AttributionTest(unittest.TestCase):
         self.assertTrue(data["entries"])
 
 
+def image_grid(base_noise, cand_noise, sig=0, n=5, startup=0):
+    """Per-image records: the load bracket carries the per-image noise,
+    Cond_rewr.sig the candidate shift `sig`."""
+    out = []
+    for side, noise in (("base", base_noise), ("candidate", cand_noise)):
+        for i in range(n):
+            c = side == "candidate"
+            for kind, br in (
+                    ("load-simpLib", dict(load_simpLib=1000 + noise[i] +
+                                          (sig if c else 0))),
+                    ("files-simpLib", {"src/simp/src/A.sml": 400 + noise[i],
+                                       SIG: 5 + (sig if c else 0)}),
+                    ("hol-startup", {})):
+                r = lrec(kind, side, 0, "x", br)
+                if kind == "hol-startup" and c:
+                    r["brackets"][0]["start"][3] += startup
+                r.update(image="%s%d" % (side[0], i), again=False)
+                out.append(r)
+    for side in ("base", "candidate"):
+        for r in [x for x in out if x["side"] == side and
+                  x["image"].endswith("0")]:
+            out.append(dict(copy.deepcopy(r), again=True))
+    return out
+
+
+class EnvelopeTest(unittest.TestCase):
+    NOISE = [0, 7, -5, 12, 3]
+
+    def test_candidate_inside_the_envelope_passes(self):
+        report = g.analyse_images(
+            image_grid(self.NOISE, [4, -3, 11, 0, 2]), None)
+        self.assertEqual(report["decision"], "pass", report["reasons"])
+
+    def test_reproducible_shift_without_declaration_fails(self):
+        report = g.analyse_images(image_grid(self.NOISE, self.NOISE, 40),
+                                  None)
+        self.assertEqual(report["decision"], "fail")
+
+    def test_straddling_images_are_inconclusive(self):
+        noise = [0, 7, -5, 12, 3]
+        report = g.analyse_images(
+            image_grid(noise, [40, 0, 1, 2, 3]), None)
+        self.assertEqual(report["decision"], "inconclusive",
+                         report["reasons"])
+
+    def test_declared_shift_is_attributed(self):
+        report = g.analyse_images(
+            image_grid(self.NOISE, self.NOISE, 40), declared(SIG))
+        self.assertEqual(report["decision"], "attributed",
+                         report["reasons"])
+
+    def test_noise_in_an_undeclared_file_fails_when_shifted(self):
+        report = g.analyse_images(
+            image_grid(self.NOISE, [x + 100 for x in self.NOISE]),
+            declared(SIG))
+        self.assertEqual(report["decision"], "fail")
+
+    def test_startup_is_exact_zero_across_images(self):
+        report = g.analyse_images(
+            image_grid(self.NOISE, self.NOISE, 0, startup=1), None)
+        self.assertEqual(report["decision"], "fail")
+
+    def test_fewer_than_five_images_is_smoke(self):
+        report = g.analyse_images(
+            image_grid(self.NOISE[:3], self.NOISE[:3], n=3), None)
+        self.assertEqual(report["decision"], "smoke")
+
+    def test_repeat_of_an_image_must_agree(self):
+        recs = image_grid(self.NOISE, self.NOISE)
+        for r in recs:
+            if r["again"] and r["kind"] == "load-simpLib":
+                r["brackets"][2]["end"][3] += 1
+                break
+        self.assertEqual(g.analyse_images(recs, None)["decision"], "fail")
+
+
 class DecisionTest(unittest.TestCase):
     def test_exact_zero_passes(self):
         report = g.analyse(grid(), 10)
