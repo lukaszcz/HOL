@@ -1324,15 +1324,19 @@ rebuild the simpset from the filtered history (`build_from_history`, as on
 develop and by the same source), and that rebuild is visible in the counts
 only where the remaining fragments carry rules or counted callbacks. In
 `history_excluded` the rebuild re-adds only the empty `matrix_drop`
-fragment, and the workloads of the `-*` cells install no counted maker or
-collector, so the empty `work.first` and `work.second` of those cells are
-guaranteed by construction and are not observations: zero maker and
-collector counts are no evidence that nothing was replayed. For such a cell
-the rows show:
+fragment. The workloads of the six `-*` deletion cells install no counted
+maker or collector, so the empty `work.first` and `work.second` of those cells
+are guaranteed by construction and are not observations: zero maker and
+collector counts are no evidence that nothing was replayed. The two dproc
+cells do install them (`setup (SOME maker) ds`, checked by `callbacks 0 0`):
+in `exclude_dproc` no data follows, so a rebuild of the history would call
+every collector and no maker, and in `exclude_mixed` data follows, so it
+would call the maker and every collector; no rebuild applies a dproc. For
+such a cell the rows show:
 
-- nothing of the operation by itself (its rows are empty by construction,
-  on both sides), except in the dproc cases, whose fixture is built so that
-  a rebuild of the history would call the maker and the collectors;
+- nothing of the operation by itself in the six deletion cells (their rows
+  are empty by construction, on both sides); in the dproc cells the zero
+  maker and collector counts do show that no rebuild ran;
 - `work.use`: through the net only, the events and inferences of the n
   lookups. With the per-index REFL set and the hash of the non-REFL results
   of the digest, that pins which installed left sides still rewrite and to
@@ -1714,11 +1718,19 @@ table of its own on the shared engine, with the following additions to it.
   nothing, and it is rerun with the same settings as a new attempt (a rerun
   is a new draw; `--resume` cannot redo recorded protocol cells). Both stay
   in the ledger, and `task30_dispose.py` checks and records them
-  (`followup_attempts`): an unjudged attempt of the follow-up's table whose
-  output directory is missing, or whose inventory has an admitted run, is
-  refused (exit 3). The
-  follow-up writes no `final.json`: the TASK30 decision with these two cells
-  in place of the replaced ones is the disposition step's
+  (`followup_attempts`). The judged attempts are the `attempt` ids in the
+  inventory of `--followup` and, where that is a second stage, of its first
+  stage (not output paths). Every other attempt of the follow-up's table must
+  be shown void from its own output: the directory exists, its
+  `inventory.json` is of that attempt id, it has a row for every cell the
+  follow-up measures, every row has `protocol` present and false, every
+  row's archive exists and is the sealed one (`seal`), and no runner
+  `manifest.json` in an archive records an admitted run (`runs` empty and
+  `success` false). Anything else is refused (exit 3), naming the attempt,
+  its status, its output and the failed condition: an interrupted attempt
+  with missing cells or no close line is refused too, as it may have
+  measured. The follow-up writes no `final.json`: the TASK30 decision with
+  these two cells in place of the replaced ones is the disposition step's
   (`task30_dispose.py`), which owns `final.json` and builds it from the
   replayed reports of both grids.
 - **Sequence.** At the commit Z0 (code and documents; no counts): `prepare`,
@@ -1881,20 +1893,26 @@ says so, and equal rows show equal work and result, not equal time.
         --followup-pilot E/followup-pilot \
         --followup-allocation E/alloc-z [--ledger FILE] [--record]
 
-It first makes the cheap refusals, before any replay: in check mode the
-recorded files and the code seals (below), and the pairing of each timing
-grid with the allocation grid of its own harness (`task30_grid.harness_match`;
-TASK30 at Y with `alloc/`, the follow-up at Z with `alloc-z/`, each also of
-one candidate, one baseline and the task `task30`), `--grid` the grid the
-follow-up records as replaced, the two allocation grids different. It then
+It first makes the cheap refusals, before any replay: the pairing of each
+timing grid with the allocation grid of its own harness
+(`task30_grid.harness_match`; TASK30 at Y with `alloc/`, the follow-up at Z
+with `alloc-z/`, each also of one candidate, one baseline and the task
+`task30`), `--grid` the grid the follow-up records as replaced, the two
+allocation grids different, every attempt of the follow-up's table in the
+ledger (judged, by the attempt ids of `--followup` and its first stage, or
+void as defined in the follow-up's Decisions above; a second stage named by
+nothing, or a first stage named while a second exists, is refused here), and
+in check mode the recorded files and the code seals (below). It then
 replays the follow-up in full (which replays the TASK30 grid in full with
 `--pilot`, by its own table, and requires that the follow-up replaced exactly
 the cells that grid left inconclusive and that its candidate sources equal
 that grid's), and the two allocation grids (`allocation_matrix.replay`). It
 prints the replays' reports (every attempt of both tables), the class report
 of the final decision (`TASK30 final grid: ...`), the follow-up's status,
-each allocation gate, per attributed cell (`ATTRIBUTED` or `BLOCKING`, its
-class and what failed) its numbers from `disposition.json`, and
+one `FOLLOW-UP-ATTEMPT ID status S output O: judged|void (no measurement
+admitted)` line per attempt of the follow-up's table, each allocation gate,
+per attributed cell (`ATTRIBUTED` or `BLOCKING`, its class and what failed)
+its numbers from `disposition.json`, and
 `TASK30 disposition: pass|fail|blocked {counts, "allocation": {"alloc":
 OUTCOME, "alloc-z": OUTCOME}}`. The status is 0 for pass, 1
 for fail, 2 for blocked and 3 for a refusal (one `REFUSED` line on the
@@ -1923,8 +1941,9 @@ listed cell: the evidence class, the note (the only free text), the decision
 and what failed, the candidate's decision, median and 95% interval for CPU,
 wall and GC, the control's interval beside, its `control_decision` (the
 candidate rule applied to the control, not its validity) and `control_valid`
-(whether the control's interval lies within the window
-`[1/(1+margin), 1+margin]`), the work counts
+(for CPU and wall, the gated metrics: whether the control's interval lies
+within the window `[1/(1+margin), 1+margin]`, as acceptance computed it;
+null for GC, which has no window), the work counts
 (`first`, `second`, `use`, the count rows of the candidate that are not zero
 throughout, each with all its distinct values), the result digest (likewise
 a list of the distinct values) and the number of allocation rows of the

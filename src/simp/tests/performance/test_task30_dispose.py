@@ -14,6 +14,7 @@ import copy
 import io
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 import unittest
@@ -85,13 +86,19 @@ class Spec(unittest.TestCase):
                 self.assertIn("TASK_31", text)
                 self.assertNotIn("\t", text)
 
-    def test_every_note_names_all_six_things_no_row_shows(self):
+    def test_the_tail_names_all_six_things_no_row_shows(self):
         for item in ("CPU that neither allocates nor traces",
                      "net node visits", "live heap and retention",
                      "work outside Trace and the kernel counter",
                      "the work phase runs inside the allocation process",
-                     "code-layout effects of files outside"):
+                     "not cold and not the timed process",
+                     "code-layout and heap effects of the files outside "
+                     "the compared sources (the list SOURCES of the cases "
+                     "module) that the candidate changes"):
             self.assertIn(item, td.TAIL)
+        self.assertNotIn("likeliest", td.TAIL)
+        for cell, entry in td.DISPOSITION["attributed"].items():
+            self.assertTrue(entry["note"].endswith(td.TAIL), cell)
 
     def test_the_notes_do_not_present_zeros_by_construction(self):
         notes = td.DISPOSITION["attributed"]
@@ -112,13 +119,56 @@ class Spec(unittest.TestCase):
         self.assertNotIn("no replay", text)
         text = " ".join(notes["exclude_literal_namespace-1"]["note"].split())
         self.assertIn("single lookup", text)
-        self.assertIn("control is inconclusive", text)
+        self.assertIn("lies outside the equivalence window", text)
+        self.assertIn("exact allocation words", text)
+        self.assertNotIn("operation words", text.replace(
+            "exact allocation words", ""))
+        self.assertNotIn("inconclusive", text)
 
-    def test_the_control_is_valid_only_within_the_window(self):
-        self.assertTrue(td.within_window([0.98, 1.02]))
-        self.assertTrue(td.within_window([1 / 1.03, 1.03]))
-        self.assertFalse(td.within_window([0.882, 0.987]))
-        self.assertFalse(td.within_window([0.99, 1.04]))
+    def test_the_notes_of_the_dproc_cells_say_what_a_rebuild_would_call(
+            self):
+        notes = td.DISPOSITION["attributed"]
+        text = " ".join(notes["exclude_dproc-10000"]["note"].split())
+        self.assertIn("would call every collector; it would call no "
+                      "maker, as no data follows, and no rebuild applies "
+                      "a dproc", text)
+        text = " ".join(notes["exclude_mixed-10000"]["note"].split())
+        self.assertIn("a rebuild would call the maker and every "
+                      "collector", text)
+        text = " ".join(notes["history_excluded-10000"]["note"].split())
+        self.assertIn("The filtered history it rebuilds from carries only "
+                      "the empty matrix_drop fragment", text)
+        self.assertIn("so the work rows cannot show the rebuild", text)
+
+    def metric(self, interval, **more):
+        return dict(decision="inconclusive", reason="r",
+                    median_paired_ratio=1.0,
+                    paired_ratio_bootstrap_95_percent=interval, **more)
+
+    def test_the_control_validity_is_the_one_acceptance_computed(self):
+        def report(**valid):
+            keys = ("cpu", "wall", "gc")
+            return dict(workloads=[dict(
+                candidate=dict(metrics={k: self.metric(
+                    [1.0, 1.0], **({"control_valid": valid[k]}
+                                   if k in valid else {}))
+                    for k in keys}),
+                control=dict(metrics={k: dict(
+                    decision="pass", paired_ratio_bootstrap_95_percent=(
+                        None if k == "wall" else [0.9, 1.1]))
+                    for k in keys}))])
+        found = td.metrics(report(cpu=False, wall=True))
+        self.assertIs(found["cpu"]["control_valid"], False)
+        self.assertIs(found["wall"]["control_valid"], True)
+        self.assertIsNone(found["gc"]["control_valid"])
+        self.assertIsNone(found["wall"]["control_interval"])
+        lines = td.cell_lines("c", dict(
+            decision="attributed", evidence_class="deletion", failed=None,
+            work=None, metrics=found, digest=None, allocation_rows=0))
+        self.assertTrue(any(x.startswith("  cpu ") and x.endswith(
+            "(within the window: no)") for x in lines))
+        self.assertTrue(any(x.startswith("  gc ") and
+                            "within the window" not in x for x in lines))
 
     def test_no_note_carries_a_number(self):
         # Every number of a cell comes from disposition.json, derived from
@@ -517,10 +567,18 @@ class Evidence(unittest.TestCase):
             "allocation:"))
 
 
+def after_void(test):
+    """The test judges follow-ups of its own: setUp's first follow-up is a
+    void attempt (every cell a protocol failure, as the rig's
+    `protocol_failure` makes them), not the settled one."""
+    test.void_first = True
+    return test
+
+
 class Toy(ttf.Rig):
     """The replaced toy grid with two control-limited cells beside its two
-    open ones, its follow-up (settled by default) and two hand-written
-    allocation grids."""
+    open ones, its follow-up (settled by default; a void attempt for a test
+    marked `after_void`) and two hand-written allocation grids."""
 
     def mid_control(self, case, size, pairs, seed):
         if (case, size) in ((c, s) for c, s in LIMITED):
@@ -532,8 +590,15 @@ class Toy(ttf.Rig):
         self.declare()
         self.committed_counts = True
         self.settled()
-        self.out, code, text = self.run_followup()
-        self.assertEqual(code, 0, text)
+        if getattr(getattr(self, self._testMethodName), "void_first",
+                   False):
+            self.protocol_failure = lambda case, size: True
+            self.out, code, text = self.run_followup()
+            self.assertEqual(code, 2, text)
+            self.protocol_failure = lambda case, size: False
+        else:
+            self.out, code, text = self.run_followup()
+            self.assertEqual(code, 0, text)
         self.work = {"y": alloc_decisions(LIMITED, setup=7),
                      "z": alloc_decisions(LIMITED, setup=9)}
         self.replayed = []
@@ -578,15 +643,6 @@ class Toy(ttf.Rig):
 
     def save_decisions(self, folder, decisions):
         (folder / "decisions.json").write_text(json.dumps(decisions))
-
-    def void_first_attempt(self):
-        """The follow-up that setUp made did not admit a measurement: a
-        test that judges another follow-up has it as a void attempt."""
-        path = self.out / "inventory.json"
-        found = self.load(path)
-        for run in found["runs"]:
-            run["protocol"] = False
-        path.write_text(json.dumps(found))
 
     def dargv(self, *extra, record=False, **given):
         paths = dict(grid=self.replaced, pilot=self.pilot_dir,
@@ -681,6 +737,7 @@ class Command(Toy):
         self.assertEqual(cpu["interval"], list(ttg.GOOD))
         self.assertIsNotNone(cpu["median"])
         self.assertEqual(found["metrics"]["gc"]["decision"], "reported")
+        self.assertIsNone(found["metrics"]["gc"]["control_valid"])
         other = record["attributed"]["exclude_empty-10000"]
         self.assertEqual(other["work"], dict(
             first={"trace.4.REDUCE": [1], "kernel.total": [4]},
@@ -762,12 +819,12 @@ class Command(Toy):
             self.dispose()
         self.assertEqual(self.dispose()[0], 0)
 
+    @after_void
     def test_a_follow_up_fail_stays_a_fail(self):
         # A new follow-up (the toy one is settled in setUp).
         self.settled(ci_b=(1.04, 1.08))
         out, code, text = self.run_followup("failing")
         self.assertEqual(code, 1, text)
-        self.void_first_attempt()
         code, text = self.dispose(
             record=True, followup=out, followup_allocation=(
                 self.allocation("alloc-z-2", out, self.work["z"])))
@@ -778,11 +835,11 @@ class Command(Toy):
             '"attributed": 2, "blocking": 0, "allocation": {"alloc": '
             '"pass", "alloc-z": "pass"}}'), text)
 
+    @after_void
     def test_an_inconclusive_follow_up_blocks(self):
         self.new_candidate = self.old_candidate
         out, code, text = self.run_followup("open")
         self.assertEqual(code, 2, text)
-        self.void_first_attempt()
         code, text = self.dispose(
             record=True, followup=out, followup_allocation=(
                 self.allocation("alloc-z-2", out, self.work["z"])))
@@ -1247,12 +1304,12 @@ class Reproducibility(Toy):
             use={"trace.4.REDUCE": [3, 10]}))
         self.assertEqual(td.counts(None), dict(first={}, second={}, use={}))
 
+    @after_void
     def test_a_fail_stays_a_fail_beside_a_row_that_does_not_reproduce(self):
         self.spread()
         self.settled(ci_b=(1.04, 1.08))
         out, code, text = self.run_followup("failing")
         self.assertEqual(code, 1, text)
-        self.void_first_attempt()
         code, text = self.dispose(
             record=True, followup=out, followup_allocation=(
                 self.allocation("alloc-z-2", out, self.load(
@@ -1275,12 +1332,15 @@ class Printed(Toy):
                     text)
             for key in ("cpu", "wall", "gc"):
                 m = found["metrics"][key]
+                valid = m["control_valid"]
+                self.assertEqual(valid is None, key == "gc")
                 self.assertIn(
-                    "  %s %s: median %s, interval %s, control interval %s "
-                    "(within the window: %s)" % (
+                    "  %s %s: median %s, interval %s, control interval "
+                    "%s%s" % (
                         key, m["decision"], m["median"], m["interval"],
-                        m["control_interval"],
-                        "yes" if m["control_valid"] else "no"), text)
+                        m["control_interval"], "" if valid is None else
+                        " (within the window: %s)" % (
+                            "yes" if valid else "no")), text)
             self.assertIn("  digest %s; allocation rows %d" % (
                 json.dumps(found["digest"]), found["allocation_rows"]),
                 text)
@@ -1300,12 +1360,12 @@ class FollowUpOutcomes(Toy):
         out, code, text = self.run_followup(name)
         return out, code, text
 
+    @after_void
     def test_a_cell_that_stays_control_limited_blocks(self):
         out, code, text = self.open_follow_up("first-open", ttg.WIDE)
         self.assertEqual(code, 2, text)
         ext, code, text = self.extend_followup(out)
         self.assertEqual(code, 2, text)
-        self.void_first_attempt()
         code, text = self.dispose(
             record=True, followup=ext, followup_allocation=(
                 self.allocation("alloc-z-2", ext, self.work["z"])))
@@ -1325,11 +1385,11 @@ class FollowUpOutcomes(Toy):
         self.assertEqual(record["replaced"]["followup_second_seed"],
                          "f0-ext")
 
+    @after_void
     def test_a_cell_that_stays_inconclusive_blocks(self):
         out, code, text = self.open_follow_up(
             "first-open", ttg.GOOD, candidate=ttg.WIDE)
         ext, code, text = self.extend_followup(out)
-        self.void_first_attempt()
         code, text = self.dispose(
             record=True, followup=ext, followup_allocation=(
                 self.allocation("alloc-z-2", ext, self.work["z"])))
@@ -1337,10 +1397,10 @@ class FollowUpOutcomes(Toy):
         self.assertRegex(text, r"BLOCKING exclude_\w+-\d+: follow-up: "
                          "inconclusive")
 
+    @after_void
     def test_a_first_stage_with_a_second_stage_to_come_is_refused(self):
         out, code, text = self.open_follow_up("first-open", ttg.WIDE)
         self.assertEqual(code, 2, text)
-        self.void_first_attempt()
         with self.assertRaisesRegex(
                 ValueError, "--followup is not the follow-up's final "
                 "stage: its second stage is still to come"):
@@ -1352,7 +1412,8 @@ class FollowUpOutcomes(Toy):
 
 class Attempts(Toy):
     """Every attempt of the follow-up's table in the ledger is judged or
-    void: one that admitted a measurement and is not judged is refused."""
+    void: a void attempt is shown void from its own output, by the id of
+    its attempt. Anything else is refused, before any replay."""
 
     def rerun(self, name="rerun"):
         """A second attempt of the follow-up, settled, and its dispose
@@ -1362,16 +1423,41 @@ class Attempts(Toy):
         return dict(followup=out, followup_allocation=self.allocation(
             "alloc-z-" + name, out, self.work["z"]))
 
-    def refuses(self, regex, **kw):
+    def refuses(self, regex, check=False, **kw):
         boom = AssertionError("a replay ran before the refusal")
         with patch.object(self.fgrid, "replay", side_effect=boom), \
                 patch.object(self.grid, "replay", side_effect=boom), \
                 patch.object(am, "replay", side_effect=boom), \
                 self.assertRaisesRegex(ValueError, regex):
-            self.dispose(record=True, **kw)
+            self.dispose(record=not check, **kw)
 
+    def reasons(self, attempt, status, output, why):
+        return ("follow-up attempt %s \\(status %s, output %s\\) is not "
+                "void: %s; only a void attempt .no admitted measurement in "
+                "any cell. may stand beside the judged one; anything else "
+                "needs a new policy decision" % (
+                    attempt, status, re.escape(str(output)), why))
+
+    def edit(self, out, change):
+        """Change the inventory of an output; returns the first attempt's
+        id."""
+        path = out / "inventory.json"
+        found = self.load(path)
+        change(found)
+        path.write_text(json.dumps(found))
+        return found["attempt"]
+
+    def refused_void(self, why, change, status="inconclusive"):
+        """The void attempt (setUp's) is changed by `change`, and a judged
+        rerun beside it is refused for `why`."""
+        given = self.rerun()
+        attempt = self.edit(self.out, change)
+        self.refuses(self.reasons(attempt, status, self.out, why), **given)
+        self.assertFalse((given["followup"] / "disposition.json").exists())
+        return given
+
+    @after_void
     def test_a_void_earlier_attempt_passes_and_is_recorded(self):
-        self.void_first_attempt()
         first = self.load(self.out / "inventory.json")["attempt"]
         given = self.rerun()
         code, text = self.dispose(record=True, **given)
@@ -1380,51 +1466,222 @@ class Attempts(Toy):
             "followup_attempts"]
         second = self.load(given["followup"] / "inventory.json")["attempt"]
         self.assertEqual(found, [
-            dict(attempt=first, status="pass", output=str(self.out),
-                 judged=False, void=True),
+            dict(attempt=first, status="inconclusive",
+                 output=str(self.out), judged=False, void=True),
             dict(attempt=second, status="pass",
                  output=str(given["followup"]), judged=True, void=False)])
-        self.assertIn("FOLLOW-UP-ATTEMPT %s status pass output %s: void"
-                      % (first, self.out), text)
+        self.assertIn("FOLLOW-UP-ATTEMPT %s status inconclusive output %s: "
+                      "void" % (first, self.out), text)
         self.assertIn("FOLLOW-UP-ATTEMPT %s status pass output %s: judged"
                       % (second, given["followup"]), text)
         # ... and is checked again, without --record.
         code, text = self.dispose(**given)
         self.assertEqual(code, 0, text)
 
-    def test_an_inventory_without_runs_is_void(self):
-        self.void_first_attempt()
+    @after_void
+    def test_a_void_attempt_is_void_in_every_archive(self):
+        # What the rig's protocol failure leaves is what a real one does:
+        # every row false, every archive sealed, no admitted manifest.
         found = self.load(self.out / "inventory.json")
-        found["runs"] = []
-        (self.out / "inventory.json").write_text(json.dumps(found))
-        code, text = self.dispose(record=True, **self.rerun())
-        self.assertEqual(code, 0, text)
+        self.assertEqual(sorted((r["case"], r["size"])
+                                for r in found["runs"]),
+                         sorted(self.fgrid.t.keys()))
+        self.assertEqual({r["protocol"] for r in found["runs"]}, {False})
+        self.assertEqual(self.load(self.out / "decisions.json")["status"],
+                         "inconclusive")
 
     def test_an_earlier_attempt_with_an_admitted_row_is_refused(self):
         given = self.rerun()
         first = self.load(self.out / "inventory.json")["attempt"]
-        self.refuses("follow-up attempt %s \\(status pass, output %s\\) "
-                     "is not judged and admitted a measurement.*new policy "
-                     "decision" % (first, self.out), **given)
+        self.refuses(self.reasons(
+            first, "pass", self.out,
+            r"the row of exclude_\w+-\d+ is not a protocol failure "
+            r"\(protocol True\)"), **given)
         self.assertFalse((given["followup"] / "disposition.json").exists())
+
+    @after_void
+    def test_an_inventory_without_runs_is_refused(self):
+        self.refused_void(r"its inventory has rows for 0 cell\(s\), not "
+                          r"each of the 2 the follow-up measures",
+                          lambda found: found.update(runs=[]))
+
+    @after_void
+    def test_an_inventory_without_a_row_for_a_cell_is_refused(self):
+        self.refused_void(r"its inventory has rows for 1 cell\(s\), not "
+                          r"each of the 2 the follow-up measures",
+                          lambda found: found["runs"].pop())
+
+    @after_void
+    def test_a_row_without_a_protocol_flag_is_refused(self):
+        self.refused_void(
+            r"the row of exclude_\w+-\d+ is not a protocol failure "
+            r"\(protocol None\)",
+            lambda found: found["runs"][0].pop("protocol"))
+
+    @after_void
+    def test_a_row_with_a_protocol_flag_that_is_not_false_is_refused(self):
+        self.refused_void(
+            r"the row of exclude_\w+-\d+ is not a protocol failure "
+            r"\(protocol 0\)",
+            lambda found: found["runs"][0].update(protocol=0))
+
+    @after_void
+    def test_a_missing_archive_is_refused(self):
+        def change(found):
+            (self.out / found["runs"][0]["archive"]).unlink()
+        self.refused_void(r"the archive of exclude_\w+-\d+ is missing",
+                          change)
+
+    @after_void
+    def test_an_archive_that_is_not_the_sealed_one_is_refused(self):
+        self.refused_void(
+            r"the archive of exclude_\w+-\d+ is not the sealed one",
+            lambda found: found["runs"][0]["seal"].update(bytes=1))
+
+    @after_void
+    def test_an_archive_with_an_admitted_runner_manifest_is_refused(self):
+        def change(found):
+            row = found["runs"][0]
+            archive = self.out / row["archive"]
+            folder = self.root / "poisoned"
+            tg.bundle.unpack(archive, folder)
+            (folder / "cell").mkdir()
+            (folder / "cell" / "manifest.json").write_text(json.dumps(
+                dict(runs=[dict(exit=0)], success=True)))
+            archive.unlink()
+            row["files"] = tg.bundle.pack(folder, archive)
+            row["seal"] = a.seal(archive)
+            shutil.rmtree(folder)
+        self.refused_void(
+            r"the archive of exclude_\w+-\d+ holds a runner manifest that "
+            r"records an admitted run \(cell/manifest.json\)", change)
+
+    @after_void
+    def test_a_manifest_that_records_no_run_is_void(self):
+        found = self.load(self.out / "inventory.json")
+        row = found["runs"][0]
+        archive = self.out / row["archive"]
+        folder = self.root / "clean"
+        tg.bundle.unpack(archive, folder)
+        (folder / "cell").mkdir()
+        (folder / "cell" / "manifest.json").write_text(json.dumps(
+            dict(runs=[], success=False)))
+        archive.unlink()
+        row["files"] = tg.bundle.pack(folder, archive)
+        row["seal"] = a.seal(archive)
+        shutil.rmtree(folder)
+        (self.out / "inventory.json").write_text(json.dumps(found))
+        code, text = self.dispose(record=True, **self.rerun())
+        self.assertEqual(code, 0, text)
 
     def test_a_missing_output_directory_is_refused(self):
         given = self.rerun()
         first = self.load(self.out / "inventory.json")["attempt"]
         shutil.rmtree(self.out)
-        self.refuses("follow-up attempt %s .*output directory or "
-                     "inventory.json is missing" % first, **given)
+        self.refuses(self.reasons(first, "pass", self.out,
+                                  "its output directory is missing"),
+                     **given)
 
+    @after_void
+    def test_an_output_without_an_inventory_is_refused(self):
+        given = self.rerun()
+        attempt = self.load(self.out / "inventory.json")["attempt"]
+        (self.out / "inventory.json").unlink()
+        self.refuses(self.reasons(attempt, "inconclusive", self.out,
+                                  "its output has no inventory.json"),
+                     **given)
+
+    @after_void
+    def test_an_inventory_of_another_attempt_is_refused(self):
+        given = self.rerun()
+        second = self.load(given["followup"] / "inventory.json")
+        first = self.load(self.out / "inventory.json")["attempt"]
+        (self.out / "inventory.json").write_text(json.dumps(dict(
+            self.load(self.out / "inventory.json"),
+            attempt=second["attempt"])))
+        self.refuses(self.reasons(
+            first, "inconclusive", self.out,
+            "the output holds attempt %s" % second["attempt"]), **given)
+
+    def test_an_attempt_that_measured_and_whose_path_was_reused_is_refused(
+            self):
+        # The measured attempt's directory is moved aside and a rerun
+        # reuses the path: the path no longer says which attempt it holds.
+        measured = self.load(self.out / "inventory.json")["attempt"]
+        self.out.rename(self.root / "moved-aside")
+        out, code, text = self.run_followup()
+        self.assertEqual((out, code), (self.out, 0), text)
+        given = dict(followup=out, followup_allocation=self.allocation(
+            "alloc-z-reuse", out, self.work["z"]))
+        now = self.load(out / "inventory.json")["attempt"]
+        self.assertNotEqual(measured, now)
+        self.refuses(self.reasons(
+            measured, "pass", out, "the output holds attempt %s" % now),
+            **given)
+        self.refuses(self.reasons(
+            measured, "pass", out, "the output holds attempt %s" % now),
+            check=True, **given)
+
+    @after_void
+    def test_an_attempt_left_open_without_a_close_is_refused(self):
+        # An interrupted attempt may have measured: even one whose output
+        # is a clean void inventory with no finished cell is refused.
+        given = self.rerun()
+        out = self.root / "interrupted"
+        out.mkdir()
+        inventory = self.load(self.out / "inventory.json")
+        (out / "inventory.json").write_text(json.dumps(
+            dict(inventory, attempt="open-attempt", runs=[])))
+        tg.ledger_append(
+            self.attempts, event="open", stage="first",
+            table=self.fgrid.t.name, attempt="open-attempt",
+            candidate=inventory["candidate"], counts_file="x",
+            counts=inventory["iterations_seal"], seed="f0",
+            output=str(out), checkout=str(self.repo))
+        self.refuses(self.reasons(
+            "open-attempt", "interrupted", out,
+            r"its inventory has rows for 0 cell\(s\), not each of the 2 "
+            r"the follow-up measures"), **given)
+        # ... also with no output directory at all.
+        shutil.rmtree(out)
+        self.refuses(self.reasons("open-attempt", "interrupted", out,
+                                  "its output directory is missing"),
+                     **given)
+
+    @after_void
+    def test_a_ledger_line_without_a_table_is_not_of_the_follow_up(self):
+        # A line without `table` is of the family's first table, the
+        # replaced grid's, whatever its output.
+        tg.ledger_append(
+            self.attempts, event="open", stage="first",
+            attempt="legacy-attempt", candidate="c", counts_file="x",
+            counts="y", seed="s", output=str(self.root / "nowhere"),
+            checkout=str(self.repo))
+        given = self.rerun()
+        code, text = self.dispose(record=True, **given)
+        self.assertEqual(code, 0, text)
+        found = self.load(given["followup"] / "disposition.json")[
+            "followup_attempts"]
+        self.assertNotIn("legacy-attempt", [x["attempt"] for x in found])
+
+    def test_the_refusal_comes_before_any_replay_in_check_mode(self):
+        given = self.rerun()
+        first = self.load(self.out / "inventory.json")["attempt"]
+        self.refuses("follow-up attempt %s .*is not void" % first,
+                     check=True, **given)
+
+    @after_void
     def test_a_second_stage_and_its_first_stage_are_both_judged(self):
-        self.void_first_attempt()
         self.new_control = lambda c, s, pairs, seed: (
             ttg.WIDE if (c, s) == ttf.CELL_B else ttg.GOOD)
         out, code, text = self.run_followup("first-open")
         self.assertEqual(code, 2, text)
         ext, code, text = self.extend_followup(out)
+        self.assertEqual(code, 2, text)
         code, text = self.dispose(
             record=True, followup=ext, followup_allocation=(
                 self.allocation("alloc-z-2", ext, self.work["z"])))
+        self.assertEqual(code, 2, text)
         found = self.load(ext / "disposition.json")["followup_attempts"]
         self.assertEqual([(x["output"], x["judged"], x["void"])
                           for x in found], [
@@ -1432,6 +1689,14 @@ class Attempts(Toy):
             (str(ext), True, False)])
         self.assertEqual(len([x for x in text.splitlines()
                               if x.startswith("FOLLOW-UP-ATTEMPT")]), 3)
+        # Naming the first stage leaves the second unjudged and measured:
+        # refused, before the replay can say a second stage is to come.
+        later = self.load(ext / "inventory.json")["attempt"]
+        self.refuses(self.reasons(
+            later, "inconclusive", ext,
+            r"its inventory has rows for 1 cell\(s\), not each of the 2 "
+            r"the follow-up measures"),
+            followup=out, followup_allocation=self.allocz)
 
 
 class Ordering(Toy):

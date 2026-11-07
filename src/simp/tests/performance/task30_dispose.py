@@ -40,11 +40,15 @@ class report, the follow-up's status, each allocation gate, the evidence and
 numbers of each attributed cell (all from `disposition.json`; the notes carry
 none) and one line, `TASK30 disposition: pass|fail|blocked {counts,
 "allocation": {"alloc": OUTCOME, "alloc-z": OUTCOME}}`. Every
-attempt of the follow-up's table that is not judged (its output is not
-`--followup`, nor that stage's first stage) must be void: its output
-directory exists and no run of its inventory was admitted (`protocol`). A
-rerun after an admitted measurement is refused, as it needs a new policy
-decision; the attempts are recorded as `followup_attempts` and printed. Exit
+attempt of the follow-up's table that is not judged (its id is not the
+`attempt` of the inventory of `--followup`, nor of that stage's first stage)
+must be void, shown from its output: the inventory there is of that attempt
+and has a row for every cell the follow-up measures, every row is a protocol
+failure whose archive exists and is the sealed one, and no runner manifest in
+an archive records an admitted run. Anything else is refused, as it needs a
+new policy decision (name the follow-up's final stage; an attempt that
+measured, or may have, is no void attempt); the attempts are recorded as
+`followup_attempts` and printed. Exit
 status 0 pass, 1 fail, 2 blocked, 3 a refusal. `final.json` and
 `disposition.json` are in the follow-up's output directory (`--followup`).
 `--record` writes them (and refuses to replace files that exist); without it
@@ -63,6 +67,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True
 import acceptance as a
@@ -109,12 +114,13 @@ TAIL = (
     "candidate's startup heap is larger in every cell: GC, reported and not "
     "gated; its attribution belongs to TASK_31), work outside Trace and the "
     "kernel counter, the context (the work phase runs inside the "
-    "allocation process, after all bracketed runs, not cold), and the "
-    "code-layout effects of files outside the pinned sources, the likeliest "
-    "account of the residual cells. Equal rows show equal work and result, "
-    "not equal time. Every number of the cell (the counts, the intervals, "
-    "the digest and the allocation rows) is in disposition.json, derived "
-    "from the rows, never from this note.")
+    "allocation process, after all bracketed runs: not cold and not the "
+    "timed process), and the code-layout and heap effects of the files "
+    "outside the compared sources (the list SOURCES of the cases module) "
+    "that the candidate changes, which are timing-only. Equal rows show "
+    "equal work and result, not equal time. Every number of the cell (the "
+    "counts, the intervals, the digest and the allocation rows) is in "
+    "disposition.json, derived from the rows, never from this note.")
 
 
 def note(text):
@@ -165,25 +171,27 @@ DISPOSITION = dict(
         ("history_excluded-10000", note(
             "exclude_ssfrags of a data theory. It rebuilds the simpset "
             "from the filtered history, as on develop and by the same "
-            "source. The history of this workload carries only the empty "
-            "matrix_drop fragment: no rule, no counted maker and no "
-            "collector, so the rows cannot show the rebuild or its cost, "
-            "and their empty operation counts say nothing about it. The "
-            "case rests on source identity, the exact allocation words and "
-            "a use whose counts equal develop's (the data entries are "
+            "source. The filtered history it rebuilds from carries only the "
+            "empty matrix_drop fragment: no rule, no counted maker and no "
+            "collector, so the work rows cannot show the rebuild, and "
+            "their empty operation counts say nothing about it. The case "
+            "rests on source identity, the exact allocation words and a "
+            "use whose counts equal develop's (the data entries are "
             "gone), with the same result digest.")),
         ("exclude_literal_namespace-1", note(
             "-* of a literal namespace, which removes nothing. " +
             FIRES_NOTHING + " At this size the use is a single lookup, so "
-            "the work evidence is thin, and the cell's own control is "
-            "inconclusive: the case rests on source identity and the exact "
-            "operation words.")),
+            "the work evidence is thin, and the control interval of the "
+            "cell lies outside the equivalence window: the case rests on "
+            "source identity and the exact allocation words.")),
         ("exclude_dproc-10000", note(
             "-* of one dproc name. The rows show the operation firing no "
             "event and calling no maker, collector or dproc (the fixture is "
-            "built so that a rebuild would call them). The net is "
-            "empty by construction, so the traced lookups show nothing "
-            "about the dprocs. The deletion is shown by the dproc count of "
+            "built so that a rebuild of the history would call every "
+            "collector; it would call no maker, as no data follows, and no "
+            "rebuild applies a dproc). The net is empty by construction, "
+            "so the traced lookups show nothing about the dprocs. The "
+            "deletion is shown by the dproc count of "
             "the use (equal to develop's; it restates the length of the "
             "digest's dproc names, it is not an independent witness), by "
             "the exact allocation words and by source identity.")),
@@ -191,7 +199,8 @@ DISPOSITION = dict(
             "-* of one dproc and one rule. The rows show the operation "
             "firing nothing and a use with the same counts as develop's, "
             "its dproc count included (it restates the digest's dproc "
-            "names), and the same result digest.")),
+            "names), and the same result digest. The fixture is built so "
+            "that a rebuild would call the maker and every collector.")),
         ("exclude_marker-10000", note(
             "A timed SIMP_CONV with Excl: the rows show the traced events "
             "and inferences of the operation, equal to develop's in both "
@@ -403,20 +412,12 @@ def counts(rows):
     return found
 
 
-def within_window(interval):
-    """Whether an interval lies within the equivalence window
-    [1/(1+margin), 1+margin], the test of the policy: for the control it is
-    the control's validity (its `decision` is the candidate rule applied to
-    it, which says nothing of that)."""
-    margin = 1 + a.EQUIVALENCE_POLICY["margin"]
-    low, high = interval
-    return bool(low >= 1 / margin and high <= margin)
-
-
 def metrics(report):
     """The candidate's and the control's CPU, wall and GC of one cell:
     decision, median ratio and 95% interval; the control's interval and
-    decision beside."""
+    decision beside, and for a gated metric (CPU, wall) whether the control
+    is valid, as acceptance computed it (`control_valid`: its interval lies
+    within the equivalence window; None for GC, which has no window)."""
     result, = report["workloads"]
     found = {}
     for key, m in result["candidate"]["metrics"].items():
@@ -427,8 +428,7 @@ def metrics(report):
             interval=m["paired_ratio_bootstrap_95_percent"],
             control_decision=control["decision"],
             control_interval=control["paired_ratio_bootstrap_95_percent"],
-            control_valid=within_window(
-                control["paired_ratio_bootstrap_95_percent"]))
+            control_valid=m.get("control_valid"))
     return found
 
 
@@ -601,31 +601,73 @@ def cheap(args, old, new):
     pair(timing_z, counted_z, "follow-up (Z)")
     a.require(new.t.replaces is not None and new.t.replaces.engine is old,
               "the follow-up does not replace the TASK30 table's grid")
-    judged = {followup}
+    judged = {timing_z["attempt"]}
     if timing_z["schema"] == new.t.schema("extension"):
-        judged.add((followup / timing_z["grid"]).resolve())
+        judged.add(loaded(followup / timing_z["grid"],
+                          "the first stage of --followup")["attempt"])
     return dict(grid=grid, followup=followup, allocation=allocation,
                 allocz=allocz, attempts=attempts_of(args, new, judged))
 
 
-def inventory_runs(output):
-    """The runs of the inventory of an output directory, or None when the
-    directory or its inventory is missing."""
-    if not output.is_dir() or not (output / "inventory.json").is_file():
-        return None
-    return a.load(output / "inventory.json").get("runs") or []
+def void_failure(new, key, output):
+    """None when the attempt `key` (id, stage), whose ledger output is
+    `output`, is void, else the text of the condition it fails. Void: the
+    output directory exists and holds the inventory of that attempt, which
+    has a row for every cell the follow-up measures; every row is a
+    protocol failure (`protocol` present and false) whose archive exists
+    and is the sealed one; and no runner manifest in an archive records an
+    admitted run (`runs` empty and `success` false)."""
+    if output is None or not Path(output).is_dir():
+        return "its output directory is missing"
+    output = Path(output)
+    if not (output / "inventory.json").is_file():
+        return "its output has no inventory.json"
+    inventory = a.load(output / "inventory.json")
+    if inventory.get("attempt") != key[0]:
+        return "the output holds attempt %s" % inventory.get("attempt")
+    runs = inventory.get("runs")
+    if not isinstance(runs, list) or not all(
+            isinstance(r, dict) for r in runs):
+        return "its inventory has no list of runs"
+    cells = [(r.get("case"), r.get("size")) for r in runs]
+    want = set(new.t.keys())
+    if set(cells) != want or len(cells) != len(want):
+        return ("its inventory has rows for %d cell(s), not each of the "
+                "%d the follow-up measures" % (len(set(cells)), len(want)))
+    for r in runs:
+        if r.get("protocol") is not False:
+            return ("the row of %s-%d is not a protocol failure (protocol "
+                    "%r)" % (r["case"], r["size"], r.get("protocol")))
+    for r in runs:
+        name = "%s-%d" % (r["case"], r["size"])
+        try:
+            archive = a.safe_child(output, r.get("archive"))
+        except (ValueError, OSError):
+            return "the archive of %s is missing" % name
+        if a.seal(archive) != r.get("seal"):
+            return "the archive of %s is not the sealed one" % name
+        with tempfile.TemporaryDirectory(prefix="t30-void-") as scratch:
+            folder = Path(scratch) / "unpacked"
+            tg.bundle.unpack(archive, folder)
+            for manifest in sorted(folder.rglob("manifest.json")):
+                found = a.load(manifest)
+                if found.get("runs") or found.get("success") is not False:
+                    return ("the archive of %s holds a runner manifest "
+                            "that records an admitted run (%s)" % (
+                                name, manifest.relative_to(folder)))
+    return None
 
 
 def attempts_of(args, new, judged):
     """Every attempt of the follow-up's table in the ledger: the judged ones
-    (the output is `judged`, the follow-up's final stage and, where it is a
-    second stage, its first) and the others, which must be void. An attempt
-    is void when its output directory exists and no run of its inventory
-    was a protocol run (a measurement admitted): it took no sample, is no
-    outcome and may be rerun with the same settings as a new attempt. An
-    attempt after an admitted measurement needs a new policy decision, so it
-    is refused. [{attempt, status, output, judged, void}], in the order the
-    ledger names them."""
+    (`judged`: the attempt ids of the inventory of the follow-up's final
+    stage and, where it is a second stage, of its first) and the others,
+    which must be void (`void_failure`): no cell of them admitted a
+    measurement, so they are no outcome and the settings may be run again as
+    a new attempt. Any other attempt, an interrupted one included, may have
+    measured, and is refused: it needs a new policy decision, or `--followup`
+    names the wrong stage. [{attempt, status, output, judged, void}], in the
+    order the ledger names them."""
     path = new.attempts_file(args, False)
     a.require(path is not None and Path(path).is_file(),
               "no attempts ledger: %s" % path)
@@ -641,24 +683,16 @@ def attempts_of(args, new, judged):
     for key, row in state.attempts(table, family).items():
         output = where.get(key)
         entry = dict(attempt=key[0], status=row["status"], output=output,
-                     judged=output is not None and
-                     Path(output).resolve() in judged, void=False)
+                     judged=key[0] in judged, void=False)
         if not entry["judged"]:
-            runs = None if output is None else inventory_runs(Path(output))
+            failed = void_failure(new, key, output)
             a.require(
-                runs is not None,
-                "follow-up attempt %s (status %s, output %s) is not "
-                "judged and its output directory or inventory.json is "
-                "missing, so it cannot be shown to have admitted no "
-                "measurement" % (key[0], row["status"], output))
-            admitted = [r for r in runs if r.get("protocol") is True]
-            a.require(
-                not admitted,
-                "follow-up attempt %s (status %s, output %s) is not "
-                "judged and admitted a measurement (%d protocol run(s) in "
-                "its inventory): a rerun after an admitted measurement "
+                failed is None,
+                "follow-up attempt %s (status %s, output %s) is not void: "
+                "%s; only a void attempt (no admitted measurement in any "
+                "cell) may stand beside the judged one; anything else "
                 "needs a new policy decision" % (
-                    key[0], row["status"], output, len(admitted)))
+                    key[0], row["status"], output, failed))
             entry["void"] = True
         found.append(entry)
     return found
@@ -758,12 +792,12 @@ def cell_lines(cell, found):
                 run, json.dumps(found["work"][run], sort_keys=True)))
     for key in ("cpu", "wall", "gc"):
         m = found["metrics"][key]
+        valid = m["control_valid"]
         lines.append(
-            "  %s %s: median %s, interval %s, control interval %s "
-            "(within the window: %s)" % (
+            "  %s %s: median %s, interval %s, control interval %s%s" % (
                 key, m["decision"], m["median"], m["interval"],
-                m["control_interval"],
-                "yes" if m["control_valid"] else "no"))
+                m["control_interval"], "" if valid is None else
+                " (within the window: %s)" % ("yes" if valid else "no")))
     lines.append("  digest %s; allocation rows %d" % (
         json.dumps(found["digest"]), found["allocation_rows"]))
     return lines
