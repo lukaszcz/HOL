@@ -285,3 +285,12 @@ every observation (including extension absence) from the sealed process
 receipts, rebuilds the statistics and control decisions under the recorded
 policy, and fails on any difference; with a decision run it prints the exit
 status the CLI gave.
+
+### Matrix commands (open item)
+
+`matrix.json` / `matrix_schema.py` still carry the TASK28 `--pairs 10`
+commands for `loading_timing`. `matrix_schema.py` is a file the TASK30 grid
+seals, so changing it needs the seal-history chain of `task30_grid.py`,
+`task30_followup.py` and `task30_dispose.py`; that is left to the landing of
+this gate. The invocation to run is the one above with `--pairs 40 --reps 5`
+(the defaults), which the harness now requires for a decision run.

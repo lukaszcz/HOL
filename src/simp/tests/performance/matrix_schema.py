@@ -176,10 +176,10 @@ REQUIRED_REQUIREMENTS = frozenset(
 EXTERNAL_COMMANDS = {
     "loading_timing": [
         "python3 src/simp/tests/performance/loading.py --baseline " + BASELINE +
-        " --candidate CANDIDATE --module simpLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT "
+        " --candidate CANDIDATE --module simpLib --pairs 10 --api-audit API_AUDIT_RECEIPT "
         "--authorize-measurements --output FRESH_SIMP_LOADING",
         "python3 src/simp/tests/performance/loading.py --baseline " + BASELINE +
-        " --candidate CANDIDATE --module congLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT "
+        " --candidate CANDIDATE --module congLib --pairs 10 --api-audit API_AUDIT_RECEIPT "
         "--authorize-measurements --output FRESH_CONG_LOADING"],
     "loading_audit": [
         "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh "
