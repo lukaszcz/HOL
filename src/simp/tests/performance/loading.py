@@ -47,7 +47,7 @@ LAYOUT_SEED = "task31-loading"
 EXTENSION_SEED = LAYOUT_SEED + "-ext"
 # The first stage is sized for a per-unit log sd (the sd of the paired log
 # ratio times sqrt(R)) of at most this much: PAIRS * REPS >= required_units.
-UNIT_SD_BOUND = 0.075
+UNIT_SD_BOUND = 0.08
 # Variance model of a sample that is the mean of R processes (see
 # PROTOCOL_LOADING.md): the 95% interval half width of the median of n paired
 # log ratios of sd s is about Z95 * MEDIAN_FACTOR * s / sqrt(n).
