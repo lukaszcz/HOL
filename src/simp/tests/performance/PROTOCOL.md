@@ -1316,14 +1316,23 @@ A disposition that cites the work rows still reads the per-cell rows of
 exactly its 13 cells (`work.cells`, and `cases[...].cells[...].work`), not the
 grid-level `work_status` alone.
 
-**What the counts cover.** A deletion (`-*`, `remove_ssfrags`,
-`exclude_ssfrags`) filters the net and the dprocs and runs no simplification,
-so the operation itself emits no trace event and no inference: the counts of
-`work.first` and `work.second` for those cases are empty (apart from callback
-counts that are zero by construction). For such a cell the rows show:
+**What the counts cover.** `-*` filters the net (untraced, with
+`Ho_Net.vfilter`) and the dprocs, rebuilds nothing and runs no
+simplification, so the operation itself emits no trace event and no
+inference. `remove_ssfrags` and `exclude_ssfrags` do not only filter: they
+rebuild the simpset from the filtered history (`build_from_history`, as on
+develop and by the same source), and that rebuild is visible in the counts
+only where the remaining fragments carry rules or counted callbacks. In
+`history_excluded` the rebuild re-adds only the empty `matrix_drop`
+fragment, and the workloads of the `-*` cells install no counted maker or
+collector, so the empty `work.first` and `work.second` of those cells are
+guaranteed by construction and are not observations: zero maker and
+collector counts are no evidence that nothing was replayed. For such a cell
+the rows show:
 
-- the operation fires no counted event, no inference, no maker and no
-  collector, on both sides;
+- nothing of the operation by itself (its rows are empty by construction,
+  on both sides), except in the dproc cases, whose fixture is built so that
+  a rebuild of the history would call the maker and the collectors;
 - `work.use`: through the net only, the events and inferences of the n
   lookups. With the per-index REFL set and the hash of the non-REFL results
   of the digest, that pins which installed left sides still rewrite and to
@@ -1334,7 +1343,9 @@ counts that are zero by construction). For such a cell the rows show:
   They show nothing about the deleted dproc. The dproc deletion is shown
   there by the `dproc` count of the use (the dprocs held, applied directly,
   `3(n-1)`, which restates the `dpnames` of the digest), by the exact
-  allocation words and by source identity;
+  allocation words and by source identity. What discriminates in the other
+  deletion cells is the use rows, the result digest and the exact
+  allocation words;
 - the records are deterministic across processes, and the same on both sides.
 
 The marker and tactic cases (`operation` class) run one `SIMP_CONV` or
@@ -1696,7 +1707,16 @@ table of its own on the shared engine, with the following additions to it.
   (class report `TASK30-FOLLOWUP grid: ...`). A follow-up outcome other than
   pass blocks: a fail is final, and an inconclusive or control-limited cell
   after the follow-up's own second stage blocks too. No further timing retry
-  and no automatic attribution follows without a new policy decision. The
+  and no automatic attribution follows without a new policy decision. An
+  attempt that admitted no measurement (every cell a protocol failure, no
+  `protocol` run in its inventory, as when `poly --version` hung on an
+  inherited stdin) is void: it is no outcome, took no sample and selects
+  nothing, and it is rerun with the same settings as a new attempt (a rerun
+  is a new draw; `--resume` cannot redo recorded protocol cells). Both stay
+  in the ledger, and `task30_dispose.py` checks and records them
+  (`followup_attempts`): an unjudged attempt of the follow-up's table whose
+  output directory is missing, or whose inventory has an admitted run, is
+  refused (exit 3). The
   follow-up writes no `final.json`: the TASK30 decision with these two cells
   in place of the replaced ones is the disposition step's
   (`task30_dispose.py`), which owns `final.json` and builds it from the
@@ -1736,7 +1756,9 @@ table of its own on the shared engine, with the following additions to it.
   disposition step does (head and tree outside the performance area, exactly).
   The last step is `task30_dispose.py --record`, reviewed, and then the same
   command without `--record` (below). `--followup` is the follow-up's final
-  stage (its second stage, where it has one), as `--replaces` is.
+  judged stage directory (its second stage, where it has one), as
+  `--replaces` is; for the real TASK30 follow-up it was a rerun,
+  `followup-r2`, as the first attempt in `followup` was void.
 
 #### Structural evidence and the TASK30 disposition
 
@@ -1855,7 +1877,7 @@ says so, and equal rows show equal work and result, not equal time.
 **Command.**
 
     python3 -B task30_dispose.py --grid E/stage2 --pilot E/pilot \
-        --allocation E/alloc --followup E/followup \
+        --allocation E/alloc --followup E/followup-FINAL \
         --followup-pilot E/followup-pilot \
         --followup-allocation E/alloc-z [--ledger FILE] [--record]
 
@@ -1892,12 +1914,17 @@ is in `disposition.json`. `dispose` owns it: the follow-up writes none, and
 it is written in the follow-up's output directory (`--followup`), beside
 `disposition.json`, because that is where the follow-up's evidence is.
 
-**`disposition.json`**: the schema, the decision date, the evidence names,
+**`disposition.json`**: `followup_attempts` (every attempt of the
+follow-up's table in the ledger, as {attempt, status, output, judged, void}),
+the schema, the decision date, the evidence names,
 the status, the counts and the class lists, the blocking cells with their
 reasons, the reviewed (pinned) source files, the `replaced` block, and per
 listed cell: the evidence class, the note (the only free text), the decision
 and what failed, the candidate's decision, median and 95% interval for CPU,
-wall and GC, the control's decision and interval beside, the work counts
+wall and GC, the control's interval beside, its `control_decision` (the
+candidate rule applied to the control, not its validity) and `control_valid`
+(whether the control's interval lies within the window
+`[1/(1+margin), 1+margin]`), the work counts
 (`first`, `second`, `use`, the count rows of the candidate that are not zero
 throughout, each with all its distinct values), the result digest (likewise
 a list of the distinct values) and the number of allocation rows of the
