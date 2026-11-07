@@ -2267,11 +2267,13 @@ first:
 
 TASK31 gates the traversal and tactic cases of the matrix (11 `traversal_*`
 cases and 42 `tactic_*` cases, 278 cells; `downstream_*` belongs to later
-tasks). The design note of the task says "12" traversal cases; the case
-ledger has 11 (six singleton cases at size 0, five depth cases), and the code
-follows the ledger. Gates 1 and 3 are in `task31_grid.py`, the decision per
-cell in `task31_dispose.py`; the cases, the sample, the infeasible set and the
-list of sources are data in `task31_cases.py`.
+tasks). The case ledger has six singleton traversal cases (size 0) and five
+depth cases; the code follows the ledger, whose order (`task31_cases.CASES`)
+is the canonical order of every gate. Gates 1 and 3 are in `task31_grid.py`,
+the decision per cell in `task31_dispose.py`; the cases, the sample, the
+infeasible set and the list of sources are data in `task31_cases.py`, which
+holds no measured number. The reviewed differences of the candidate are the
+data of `task31_attributed.json` (`task31_attribution.py`).
 
 ### Gate 1: source identity, every cell
 
@@ -2281,64 +2283,113 @@ runner (`run_paired.py --matrix-performance`) once: one fresh process for
 the baseline and one for the candidate, the runner's own loaded-source audit,
 one pair of three samples, free ramp calibration of 0.1 s batches (nothing is
 timed for a decision). The runner is started through `task31_snapshot.py`,
-which runs it unchanged (`runpy`, the same arguments and exit status) and, just
-before the runner deletes its private trees, records every file of them as
-`private-snapshot.json`: its size, its sha256, and its sha256 with the
-directory of the side replaced by `<PRIVATE>`. A loader product (`.uo`,
-`.ui`) names the directory of its side, so the raw hashes of two sides always
-differ; the normalized ones differ only if the compiled content does. The
-snapshot must agree with the runner's own hashes, and the files of
-`.hol/locks/` (named after process ids) are never part of a closure.
+which runs it unchanged (`runpy`, the same arguments and exit status) and,
+just before the runner deletes its private trees, records every file of
+them as `private-snapshot.json`: its size, its sha256, its sha256 with the
+directory of the side replaced by `<PRIVATE>`, and for a file of at most
+256 KiB its text. A loader product (`.uo`, `.ui`) names the directory of its
+side, so the raw hashes of two sides always differ; the normalized ones
+differ only if the compiled content does. The row derivation checks the
+snapshot against the runner's own hashes and derives the normalized digest
+again from the stored text. The files of `.hol/locks/` (named after process
+ids) are never part of a closure.
 
 `task31_identity.py` derives the row of a cell from the archived folder:
 
 - the closure: every source the process elaborated (`use`), private (the
-  simplifier sources and the relocated shared modules) or shared, with
-  its sha256 and, for a private source, the normalized digests of its
-  products; the elaboration order; the initial heap sources. A source or
-  product that one side lacks or that differs, a different order, or a
+  simplifier sources and the relocated shared modules) or shared, with its
+  sha256 and, for a private source, the normalized digests of its products;
+  the elaboration order; the files of the initial heap (the `heapfile`
+  events). A source or product that one side lacks or that differs, a
+  different order (the first position where they part is named), or a
   different heap list is a difference, listed by file;
 - the work: the ordered checks of the fixture (each proof is compared inside
-  the process with an independently built expected theorem, and the residual
-  goals and hypotheses are checked, so a wrong result aborts the process; the
-  fixture has no result digest), the keys of the observations, the expected
-  test count, the outcome, the samples, schedule and result consumption of
-  each timed workload, and the storage rows. Counts that depend on the host
-  (the calibration batches and their times) are not part of it.
+  the process with an independently built expected theorem), the keys of the
+  observations, the expected test count, the outcome, the samples, schedule
+  and result consumption of each timed workload, and the storage rows.
+  Counts that depend on the host (the calibration batches and their times)
+  are not part of it;
+- the tracked file behind each private file (a generated theory file maps to
+  its script); a private file that maps to none is refused;
+- the head and dirty state of the checkout, the inputs and the tools.
 
-A cell is `identical` when both lists of differences are empty, else
-`different`: it is not passed by identity and its result is read together
-with the timing sample. The shared heap is the same on both sides, so heap
-sources outside the closure (e.g. `src/1/ThmAttribute`) are outside this gate.
+A cell is `identical` when both lists of differences are empty. It is
+`attributed` when every difference is of a `source` entry of the reviewed
+table whose two git blobs are exactly the cell's, the elaboration order is
+equal and the work is equal; the entry records the sha256 of the file on each
+side. Any other difference makes it `different`: it is not passed by identity.
+
+Reviewed table. `task31_attributed.json` holds `{"schema", "entries",
+"history"}`. An entry is `{path, kind, baseline_blob, candidate_blob, reason,
+gate}`, `kind` being `source` (a simplifier source whose private copy
+differs), `heap` (a file of the shared heap) or `build` (a Holmakefile,
+manifest or tool script of a loaded directory); `gate` says what measures the
+difference. A `candidate_blob` of `null` is a placeholder that `identity`
+refuses (it names the blob git has, to be filled at integration); the filled
+entries are the pins of the timing table. The file is outside the seals of
+the counts; every record carries its sha256 and the entries it was judged by,
+and `history` maps the sha256 of an earlier file to its entries, so that an
+old grid still replays. `--attributed PATH` names another file.
+
+The tree. The runner takes only `src/simp/src` from each commit; the shared
+sources, the heap, the fixtures and the launcher come from the one checkout,
+so differences there are invisible to the closure comparison. The grid
+therefore lists every file below `src/` that differs between the commits
+and classifies each one from the git blobs and from the files the receipts show
+were loaded (elaborated, found loaded, or in the initial heap, over all
+measured cells and both sides):
+
+- `attributed`: an entry names exactly its two blobs;
+- `mismatch`: an entry names other blobs;
+- `unattributed`: loaded, no entry;
+- `unattributed-build`: a build file of a directory that a loaded file
+  comes from, no entry;
+- `harness`: below `src/simp/tests/`, installed from the checkout, the same
+  file on both sides;
+- `unloaded`: no receipt shows it loaded on either side.
+
+The first, fifth and sixth pass; the others make the grid `different`, with
+the file and the reason in the decisions and the report. A grid whose loaded
+closure is not the same in every measured cell, whose cells ran in different
+checkouts, or that has an uncovered or unused source is `inconclusive`. A
+cell, and the grid, are `attributed` when a reviewed difference is present,
+else `identical`.
 
 Infeasible cells. The 33 cells of the eleven heavy families at 10000
-assumptions (`task31_cases.INFEASIBLE`) do not fit the process timeout of the
-grid (1800 s): their untimed setup alone is 295 to 1800 s extrapolated from
-the cost survey (`tactic_full_complete-10000` measured 1426 s, against 303 s
-by the extrapolation), and a process also runs the batches. They still get a
-row, whose route says so: the identity of the size-0 cell of the same case,
-valid only if the loaded closure is the same in every measured cell of the
-grid (it is built from one fixture text; the grid checks it: the closure
-digest is one per side over all measured cells, else the row is `unresolved`).
-The work is recorded as "not run: infeasible", with the survey numbers.
+assumptions (`task31_cases.INFEASIBLE`) do not fit the process timeout of
+the grid (1800 s). They still get a row, whose route says so: the worst
+identity of the measured cells of the same case, valid only if the loaded
+closure is the same in every measured cell of the grid (it is built from one
+fixture text; the closure digest is one per side over all measured cells,
+else the row is `unresolved`). The work is recorded as "not run:
+infeasible".
 
 Checks beside the cells: `uncovered` lists the tracked files the baseline
-elaborated that `task31_cases.SOURCES` lacks (a defect of the list: the grid is
-inconclusive); `candidate_only` the files only the candidate elaborates;
-`git_differing` the files of SOURCES whose git blobs differ.
+elaborated that `SOURCES` lacks; `candidate_only` the files only the
+candidate elaborates; `unused_sources` the files of `task31_cases.SOURCES`
+that no cell elaborated; `git_differing` the files whose git blobs differ.
+`task31_grid.py sources --output DIR [--heap]` prints the files the cells
+elaborated (with the heap files) from a grid; `task31_cases.SOURCES` is the
+sorted union of the elaborated files.
 
 Records. `DIR/inventory.json` (baseline, candidate, the cell list, the seals
-of the identity code, the git blobs of SOURCES, the checkout record, one run
-per cell with the archive and its seal) and `decisions.json`; each cell's
-folder is packed to `NAME.json.xz`. `identity-replay --output DIR` verifies
-the seals, unpacks every archive, derives every row and every decision again
-from the bytes, and requires them equal to the records. The grid is made in
-the checkout of the candidate (`prepare` as for the timing tables; the stamp
-and `recheck` bind the head, the tree and the products, and the grid is dead
-if the checkout changes); `--only CELL ...` is a diagnostic, in any
-checkout, never a grid decision. The exit status is 0 when every cell is
-identical, 1 when one is different, 2 when the grid is not conclusive, 3
-when refused. Each feasible cell costs about 50 s.
+of the identity code, the attribution table and its seal, the git blobs of
+the sources, of the entries and of every file that differs, the checkout
+record, one run per cell with the archive and its seal) and
+`decisions.json`; each cell's folder is packed to `NAME.json.xz`. The
+attempts ledger of the checkout records the opening and the close of each
+identity grid (table `task31-identity`, stage `identity`).
+`identity-replay --output DIR` verifies the seals of the code (the grid's
+modules, the timing engine and the runner), the checkout, the attribution
+table, the source blobs and the tree, unpacks every archive, derives every
+row and every decision again from the bytes, and requires them equal to the
+records; `--ledger FILE` also requires the opening in a ledger. The grid is
+made in the checkout of the candidate (`prepare` as for the timing tables;
+the stamp and `recheck` bind the head, the tree and the products, and the
+grid is dead if the checkout changes); `--only CELL ...` is a diagnostic, in
+any checkout, never a grid decision. The exit status is 0 when the grid is
+identical or attributed, 1 when it is different, 2 when it is not
+conclusive, 3 when refused.
 
 ### Gate 3: the stratified timing table
 
@@ -2347,15 +2398,20 @@ when refused. Each feasible cell costs about 50 s.
 depth cases at depth 100, the `complete` stage of each of the 14 tactic
 families at 100 assumptions, and `tactic_supplied_complete-1000`,
 `tactic_asm_complete-1000` and `tactic_installed_reuse-1000`. Schedule
-`warmup`, headroom 1, 20 pairs of 5 samples per cell in the first stage, batch
-seconds 0.3, layout seed `task31-layout-1`, the baseline `cccaa27d70...`,
-and TASK30's equivalence policy and second stage (3% margin on inclusive CPU
-and wall, GC reported, no outlier removal, the pair counts of the second
-stage from the develop/develop control). The table names no `sources`: a
-sampled candidate may differ from the baseline in the closure (that is what
-the sample measures; gate 1 says where), and the difference below `src` is
-published by `tree`. The counts file `task31_iterations.json` does not exist
-until `pilot` and `predeclare` make it; the commands are the engine's:
+`warmup`, headroom 1, 20 pairs of 5 samples per cell in the first stage,
+batch seconds 0.3 (1.0 for the six singleton traversal cases, whose
+operations are sub-microsecond), layout seed `task31-layout-1`, and
+TASK30's equivalence policy and second stage (3% margin on inclusive CPU and
+wall, GC reported, no outlier removal, the pair counts of the second stage
+from the develop/develop control).
+
+The table names `sources` (the elaborated sources and the paths of the
+reviewed table) and pins the blobs of the filled entries, with the reason of
+each and the sha256 of `task31_attributed.json`: a source that differs
+without a current pin never passes, and `run` refuses to measure it. The
+difference below `src` is published by `tree`. The counts file
+`task31_iterations.json` does not exist until `pilot` and `predeclare` make
+it; the commands are the engine's:
 
     task31_grid.py prepare
     task31_grid.py pilot --output DIR --authorize-measurements
@@ -2367,30 +2423,46 @@ until `pilot` and `predeclare` make it; the commands are the engine's:
         --authorize-measurements
     task31_grid.py replay --output DIR --pilot PILOT
 
-Parameters against the batch checks: a batch must last at least half its
-seconds (`performance_schema.validate`) and a warmup count is
-ceil(seconds * n / wall) of the calibration, never below one. The longest
-timed operation of a sample cell in the cost survey is 31 ms
-(`complete` of the `global` and `req` families at 100), under 0.3 s / 2, so
-no cell needs a longer batch (`test_task31_cases.py` checks every cell's
-survey operation against it). The survey's total for the table is about
-12 to 14 hours.
+A batch must last at least half its seconds (`performance_schema.validate`)
+and a warmup count is ceil(seconds * n / wall) of the calibration, never
+below one.
+
+Follow-up. `task31_followup.py` is the table of the cells that the first
+grid and its second stage left open (`CELLS`, empty until a decision names
+cells; with none it refuses every command). It takes the policy, the batch
+seconds, the samples, the baseline, the sources and the pins of the TASK31
+table, twice its pairs, its own layout seed and counts file; the first grid
+is replayed in full by its own table before the counts are derived. Its
+commands are the engine's, and its attempts go into the TASK31 ledger.
 
 ### The decision per cell
 
-`task31_dispose.py --identity DIR --grid DIR --pilot PILOT --allocation DIR`
-replays the identity grid and the timing grid in full and decides every cell:
+`task31_dispose.py --identity DIR --grid DIR --pilot PILOT --allocation DIR
+--survey PATH` replays the identity grid and the timing grid in full (and a
+follow-up with `--followup DIR --followup-pilot PILOT`, whose cells replace
+the first grid's) and decides every cell:
 
-- **pass** iff its identity is `identical`, AND its allocation decision is
-  `pass` where the allocation gate measures it (every cell but the
-  infeasible ones), AND the timing class is `pass` where the cell is sampled
-  (and a cell outside the sample has no timing row);
+- **pass** iff its identity is `identical` or `attributed`, AND its
+  allocation decision is `pass` where the allocation gate measures it (every
+  cell but the infeasible ones), AND the timing class is `pass` where the
+  cell is sampled (and a cell outside the sample has no timing row);
 - an infeasible cell passes by identity alone and is recorded as "untimed,
-  unallocated: infeasible", with the survey numbers (operation, setup and
-  check at 1000 and extrapolated at 10000) and the timeout;
+  unallocated: infeasible". When its identity is `attributed`, the record
+  names the attribution and the cells of its family that measured it
+  (allocation cells of at most 1000 assumptions that passed with an
+  attributed identity, and the family's passing cells of the timing sample);
+  with none of either it is `incomplete`;
 - a gate that decided against a cell makes it `fail`; a gate with no
-  decision for a cell it must decide leaves it `incomplete`; nothing is
-  excused here, including a `different` cell with a good timing result.
+  decision for a cell it must decide leaves it `incomplete`, which includes
+  a timing class that is not a decision (`inconclusive`, `control_limited`,
+  `protocol`) and an identity grid that is inconclusive; a file below `src/`
+  that the grid could not account for fails the whole.
+
+The cost survey is an input of the command, not of the repository: `--survey`
+is a JSON file `{"schema": "task31-cost-survey-v1", "process_timeout": N,
+"cells": {CELL: {op1000, setup1000, check1000, op10000, setup10000,
+check10000}}}` with one entry per infeasible cell. Its numbers and its
+sha256 are recorded, and `--check` reads it again.
 
 The allocation interface is a directory whose `decisions.json` is
 
@@ -2401,12 +2473,18 @@ The allocation interface is a directory whose `decisions.json` is
 allocation gate measures, none for an infeasible cell, none repeated, only
 cells of the task; a row of any other decision or shape is refused. Nothing
 else of the allocation grid is read here: it is run and replayed by its own
-tool, whose verdict is the caller's to read. The command prints one line per
-cell that did not pass and every infeasible cell, then the verdict line
-`TASK31 disposition: STATUS {counts} (candidate ...; timing ...)` (STATUS
-is pass, fail or incomplete), and exits 0, 1, 2 (3: refused).
+tool, whose verdict is the caller's to read.
+
+The record carries the seals of the code (`task31_dispose.CODE`, with
+`HISTORY` for earlier versions) and of every input it read, and the attempts
+the ledger holds for the timing table and for identity (all, and the
+candidate's). The command prints one line per cell that did not pass and
+every infeasible cell, then the verdict line (status, counts, the identity
+status and attributed files, allocation, timing, the infeasible count,
+candidate, harness, attempts), and exits 0, 1, 2 (3: refused).
 `--record FILE` writes the disposition, `--check FILE` requires that it
 derives again.
 
-Tests: `test_task31_cases.py`, `test_task31_identity.py`,
-`test_task31_grid.py`, `test_task31_dispose.py`.
+Tests: `test_task31_cases.py`, `test_task31_attribution.py`,
+`test_task31_identity.py`, `test_task31_grid.py`, `test_task31_followup.py`,
+`test_task31_dispose.py`.
