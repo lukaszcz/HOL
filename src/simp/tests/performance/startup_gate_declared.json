@@ -1,20 +1,57 @@
 {
- "schema": "task31-startup-declared-v1",
+ "schema": "task31-startup-declared-v2",
  "entries": [
   {
-   "kind": "load-simpLib",
-   "file": "$(HOLDIR)/src/simp/src/Cond_rewr.sig",
-   "reason": "adds note_rewrite : thm -> unit (single tracking extent)"
+   "path": "src/simp/src/Cond_rewr.sig",
+   "baseline_blob": "7d79866a5b57a97a2a898d9645b3aa62a6acf43e",
+   "candidate_blob": "7ab7bafd0ea45756b6f4ac2a35447e7da33fe085",
+   "kinds": [
+    "load-simpLib",
+    "load-congLib"
+   ],
+   "reason": "adds val note_rewrite : thm -> unit (single tracking extent)",
+   "mechanism": "source differs: the compiler elaborates one more specification"
   },
   {
-   "kind": "load-simpLib",
-   "file": "$(HOLDIR)/src/simp/src/Cond_rewr.sml",
-   "reason": "structure matched against the signature, one more value"
+   "path": "src/simp/src/Cond_rewr.sml",
+   "baseline_blob": "7df15d67b3c3e427e530639b5d16627346ed41fc",
+   "candidate_blob": "7df15d67b3c3e427e530639b5d16627346ed41fc",
+   "kinds": [
+    "load-simpLib",
+    "load-congLib"
+   ],
+   "reason": "source identical; matched against the changed signature",
+   "mechanism": "opaque ascription :> Cond_rewr matches one more specification"
   },
   {
-   "kind": "load-simpLib",
-   "file": "$(HOLDIR)/src/simp/src/simpLib.sml",
-   "reason": "open Cond_rewr sees one more binding"
+   "path": "src/simp/src/simpLib.sml",
+   "baseline_blob": "02914a4385d1ab8eedbe84ae31cbb080ebd80f9f",
+   "candidate_blob": "02914a4385d1ab8eedbe84ae31cbb080ebd80f9f",
+   "kinds": [
+    "load-simpLib",
+    "load-congLib"
+   ],
+   "reason": "source identical; opens the changed structure",
+   "mechanism": "open Cond_rewr binds one more value"
+  },
+  {
+   "path": "src/simp/src/congLib.sml",
+   "baseline_blob": "e357326f63ee7201d3dac57f4153efe9c2bfba68",
+   "candidate_blob": "e357326f63ee7201d3dac57f4153efe9c2bfba68",
+   "kinds": [
+    "load-congLib"
+   ],
+   "reason": "source identical; opens the changed structure",
+   "mechanism": "open ... Cond_rewr binds one more value"
   }
- ]
+ ],
+ "noise": [
+  {
+   "path": "src/simp/src/Trace.sml",
+   "blob": "6735cef75f308d1707c3c71373a83ac77f873ac6",
+   "reason": "bracket differs between images with the sources fixed",
+   "mechanism": null
+  }
+ ],
+ "candidate_only": []
 }

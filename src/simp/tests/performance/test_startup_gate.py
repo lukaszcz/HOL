@@ -4,7 +4,8 @@
 Synthetic fixtures only: no runtime, toolchain or HOL tree is needed. Every
 guard of the decision rule is killed by a case below.
 """
-import copy
+import hashlib
+import json
 import os
 from unittest import mock
 from pathlib import Path
@@ -92,298 +93,502 @@ class ParseTest(unittest.TestCase):
             g.parse_process(text, "hol-startup", HOLDIR, LIB, ())
 
 
-def record(kind, side, pair, experiment, total=100, extra=0, **kw):
-    brackets = [("startup", snap(total + extra, 90 + extra), snap()),
-                ("empty", snap(), snap(104, 94))]
-    if kind.startswith("load"):
-        brackets.append(("load_x", snap(), snap(1000 + extra, 900 + extra)))
-    r = g.parse_process(
-        stdout(kind=kind, brackets=brackets,
-               result="true" if kind in g.USES_SIMP else "none", **kw),
-        kind, HOLDIR, LIB, ())
-    r.update(side=side, pair=pair, experiment=experiment)
-    return r
+PATHS = {n: "src/simp/src/%s" % n for n in (
+    "A.sml", "Cond_rewr.sig", "Cond_rewr.sml", "simpLib.sml", "congLib.sml",
+    "Other.sml", "Trace.sml")}
+BR = {n: "$(HOLDIR)/" + p for n, p in PATHS.items()}
+BLOB = {"Cond_rewr.sig": ("1" * 40, "2" * 40),
+        "Cond_rewr.sml": ("3" * 40,) * 2,
+        "simpLib.sml": ("4" * 40,) * 2, "congLib.sml": ("5" * 40,) * 2,
+        "Trace.sml": ("6" * 40,) * 2}
+SOURCES = {"base": {PATHS[n]: b[0] for n, b in BLOB.items()},
+           "candidate": {PATHS[n]: b[1] for n, b in BLOB.items()}}
+# Words of each source file with the baseline sources.
+FILE_WORDS = {"A.sml": 400, "Cond_rewr.sig": 5, "Cond_rewr.sml": 60,
+              "simpLib.sml": 90, "Other.sml": 6, "Trace.sml": 3000,
+              "congLib.sml": 70}
+LOAD_FILES = {"files-simpLib": ("A.sml", "Cond_rewr.sig", "Cond_rewr.sml",
+                                "simpLib.sml", "Other.sml", "Trace.sml"),
+              "files-congLib": ("A.sml", "Cond_rewr.sig", "Cond_rewr.sml",
+                                "simpLib.sml", "Other.sml", "Trace.sml",
+                                "congLib.sml")}
+GAPS = {"load-simpLib": 11, "load-congLib": 13}
+BASE = ("b1", "b2")
+CAND = ("s1", "s2")
+SIDES = dict(base=list(BASE), candidate=list(CAND))
+TEST_PAIRS = 2
 
 
-def grid(kinds=("hol-startup", "load-simpLib"), pairs=10, delta=None):
-    """Records for every side; delta maps (kind, side) to extra words."""
-    out, delta = [], delta or {}
-    for kind in kinds:
-        for pair in range(pairs):
-            for exp, sides in (("candidate", ("base", "candidate")),
-                               ("control", ("base", "control")),
-                               ("repeat", ("candidate", "repeat"))):
-                for side in sides:
-                    out.append(record(kind, side, pair, exp,
-                                      extra=delta.get((kind, side), 0)))
-    return out
+def brec(kind, image, variant, pair, words, loaded=MODULES, structs=STRUCTS,
+         files=FILES):
+    """A process record whose named brackets hold the given words."""
+    rows = [("startup", snap(), snap()), ("empty", snap(), snap(104, 94))]
+    rows += [(n, words_(0), words_(w)) for n, w in words.items()]
+    brackets = [dict(name=n, start=s, end=e) for n, s, e in rows]
+    return dict(kind=kind, brackets=brackets, loaded=list(loaded),
+                files=list(files) if pair == 0 else None,
+                structures=list(structs), result="true" if kind in
+                g.USES_SIMP else "none", files_sha=g.sha(list(files)),
+                image=image, variant=variant, pair=pair)
 
 
-def words(n):
+def words_(n):
     return snap(n, n, 0, 0, 0)
 
 
-def lrec(kind, side, pair, experiment, brackets):
-    """A record whose named brackets hold the given words."""
-    rows = [("startup", snap(), snap()), ("empty", snap(), snap(104, 94))]
-    rows += [(n, words(0), words(w)) for n, w in brackets.items()]
-    r = g.parse_process(
-        stdout(kind=kind, brackets=rows,
-               result="true" if kind in g.USES_SIMP else "none"),
-        kind, HOLDIR, LIB, ())
-    r.update(side=side, pair=pair, experiment=experiment)
-    return r
-
-
-SIG = "$(HOLDIR)/src/simp/src/Cond_rewr.sig"
-AFILE = "$(HOLDIR)/src/simp/src/A.sml"
-OTHER = "$(HOLDIR)/src/simp/src/Other.sml"
-
-
-def attributed_grid(load, sig, other=0, pairs=10):
-    """load-simpLib and files-simpLib; the candidate side (and its repeat)
-    pays `load` words in the load bracket, `sig` on Cond_rewr.sig and
-    `other` on Other.sml."""
+def world(delta=None, noise=None, gap_delta=None, post=None, startup=None,
+          first_use=None, kinds=None, base=BASE, cand=CAND, pairs=TEST_PAIRS,
+          extra=None):
+    """Records of a whole run. delta: file -> extra words of the candidate
+    sources; noise: {image: {file: words}} on every variant of an image;
+    gap_delta: {kind: words} loader words of the candidate sources; post:
+    words of the post-load SIMP bracket of the candidate; startup /
+    first_use: {image: words} on the image kinds; extra: {(kind, image,
+    variant): {field: value}} overrides applied to a record."""
+    delta, noise = delta or {}, noise or {}
+    kinds = kinds or list(g.KINDS)
     out = []
-    for pair in range(pairs):
-        for exp, sides in (("candidate", ("base", "candidate")),
-                           ("control", ("base", "control")),
-                           ("repeat", ("candidate", "repeat"))):
-            for side in sides:
-                c = side in ("candidate", "repeat")
-                out.append(lrec("load-simpLib", side, pair, exp, dict(
-                    load_simpLib=1000 + (load if c else 0))))
-                out.append(lrec("files-simpLib", side, pair, exp, {
-                    "$(HOLDIR)/src/simp/src/A.sml": 400,
-                    SIG: 5 + (sig if c else 0),
-                    OTHER: 6 + (other if c else 0)}))
+    for kind in kinds:
+        for image in base + cand:
+            for variant in g.variants_of(kind):
+                cand_v = variant == "candidate"
+                fw = {}
+                for f in LOAD_FILES["files-congLib"]:
+                    fw[f] = (FILE_WORDS[f] + noise.get(image, {}).get(f, 0) +
+                             (delta.get(f, 0) if cand_v else 0))
+                if kind in g.FILES_KINDS:
+                    br = {BR[f]: fw[f] for f in LOAD_FILES[kind]}
+                elif kind in g.LOADS:
+                    fk, lb = g.LOADS[kind]
+                    total = sum(fw[f] for f in LOAD_FILES[fk]) + \
+                        GAPS[kind] + (gap_delta or {}).get(kind, 0) * cand_v
+                    br = {lb[0]: total}
+                    for extra_bracket in lb[1:]:
+                        br[extra_bracket] = 0
+                    if kind == "load-simpLib":
+                        br["SIMP_CONV_1"] = 500 + (post or 0) * cand_v
+                        br["SIMP_TAC_1"] = 700
+                elif kind == "hol-first-use":
+                    br = {"SIMP_CONV_1": 500 + (first_use or {}).get(image, 0),
+                          "SIMP_TAC_1": 700}
+                else:
+                    br = {}
+                for pair in range(pairs):
+                    r = brec(kind, image, variant, pair, br)
+                    if kind == "hol-startup":
+                        r["brackets"][0]["start"][3] += (startup or {}).get(
+                            image, 0)
+                    for field, value in (extra or {}).get(
+                            (kind, image, variant), {}).items():
+                        r[field] = value
+                    out.append(r)
     return out
 
 
-def declared(*files):
-    return dict(schema=g.DECLARED_SCHEMA, entries=[
-        dict(kind="load-simpLib", file=f, reason="r")
-        for f in files])
+def bump(records, kind, image, variant, name, words=1):
+    """Add words to one named bracket of every process of a cell."""
+    hit = 0
+    for r in records:
+        if (r["kind"], r["image"], r["variant"]) == (kind, image, variant):
+            for b in r["brackets"]:
+                if b["name"] == name:
+                    b["end"][3] += words
+                    hit += 1
+    assert hit, (kind, image, variant, name)
 
 
-class AttributionTest(unittest.TestCase):
-    def test_declared_file_carries_the_whole_delta(self):
-        report = g.analyse(attributed_grid(7, 7), 10, declared(SIG))
-        self.assertEqual(report["decision"], "attributed",
-                         report["reasons"])
-        got = report["attributed"]["load-simpLib"]
-        self.assertEqual(list(got["files"]), [SIG])
-        self.assertEqual(got["total"]["total"], 7)
+def declared_data(entries=None, noise=None, candidate_only=()):
+    def entry(n, kinds):
+        b, c = BLOB[n]
+        return dict(path=PATHS[n], baseline_blob=b, candidate_blob=c,
+                    kinds=kinds, reason="r", mechanism="m")
+    both = list(g.LOADS)
+    if entries is None:
+        entries = [entry("Cond_rewr.sig", both), entry("Cond_rewr.sml", both),
+                   entry("simpLib.sml", both),
+                   entry("congLib.sml", ["load-congLib"])]
+    if noise is None:
+        noise = [dict(path=PATHS["Trace.sml"], blob=BLOB["Trace.sml"][0],
+                      reason="r", mechanism="shown")]
+    return g.parse_declared(json.dumps(dict(
+        schema=g.DECLARED_SCHEMA, entries=entries, noise=noise,
+        candidate_only=list(candidate_only))))
 
-    def test_undeclared_file_fails(self):
-        report = g.analyse(attributed_grid(10, 7, 3), 10, declared(SIG))
+
+def entry_of(name, kinds=None):
+    b, c = BLOB[name]
+    return dict(path=PATHS[name], baseline_blob=b, candidate_blob=c,
+                kinds=kinds or list(g.LOADS), reason="r", mechanism="m")
+
+
+# The words the declared set carries in the baseline: sig +4, sml +2, simpLib
+# +1, congLib +1 (an arbitrary but fixed vector).
+DELTA = {"Cond_rewr.sig": 4, "Cond_rewr.sml": 2, "simpLib.sml": 1,
+         "congLib.sml": 1}
+
+
+RECORD = "7" * 64
+
+
+def run(records, declared=None, null=False, pairs=TEST_PAIRS, sides=None,
+        record=RECORD):
+    with mock.patch.object(g, "PAIRS", pairs):
+        return g.analyse(records, sides or SIDES, declared or declared_data(),
+                         SOURCES, pairs, null, record)
+
+
+def delta_for(kind, **over):
+    d = dict(DELTA, **over)
+    if kind == "load-simpLib":
+        d.pop("congLib.sml")
+    return d
+
+
+def attributed_world(**kw):
+    """A run in which the declared files carry exactly DELTA on every
+    image; the load brackets carry the same words."""
+    gap = {"load-simpLib": sum(v for k, v in DELTA.items()
+                               if k != "congLib.sml"),
+           "load-congLib": sum(DELTA.values())}
+    # The load kinds add the file words themselves: the loader gap is the
+    # difference and so stays 0.
+    kw.setdefault("delta", DELTA)
+    return world(**kw), gap
+
+
+class DeclaredTest(unittest.TestCase):
+    def test_repository_declaration_is_well_formed(self):
+        text, data = g.load_declared()
+        self.assertTrue(data["entries"])
+        self.assertTrue(text.endswith("\n"))
+
+    def rejects(self, **change):
+        data = dict(schema=g.DECLARED_SCHEMA,
+                    entries=[entry_of("simpLib.sml")], noise=[],
+                    candidate_only=[])
+        data.update(change)
+        with self.assertRaises(sc.InvalidAllocation):
+            g.parse_declared(json.dumps(data))
+
+    def test_entries_are_checked(self):
+        self.rejects(schema="old")
+        self.rejects(entries=[dict(entry_of("simpLib.sml"), kinds=[])])
+        self.rejects(entries=[dict(entry_of("simpLib.sml"),
+                                   kinds=["files-simpLib"])])
+        self.rejects(entries=[dict(entry_of("simpLib.sml"), mechanism=" ")])
+        self.rejects(entries=[dict(entry_of("simpLib.sml"),
+                                   candidate_blob="zz")])
+        self.rejects(entries=[entry_of("simpLib.sml")] * 2)
+        self.rejects(candidate_only=["Foo"])
+        self.rejects(noise=[dict(path=PATHS["simpLib.sml"], blob="1" * 40,
+                                 reason="r", mechanism=None)])
+
+    def test_stale_blob_is_not_declared(self):
+        wrong = dict(entry_of("Cond_rewr.sig"), candidate_blob="9" * 40)
+        records, _ = attributed_world()
+        report = run(records, declared_data(entries=[wrong]))
         self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("does not match the sources" in r
+                            for r in report["reasons"]))
         self.assertTrue(any("undeclared file" in r
                             for r in report["reasons"]))
 
-    def test_delta_outside_declared_files_fails(self):
-        report = g.analyse(attributed_grid(9, 7), 10, declared(SIG))
-        self.assertEqual(report["decision"], "fail")
-        self.assertTrue(any("declared files sum" in r
-                            for r in report["reasons"]))
 
-    def test_no_declaration_fails(self):
-        report = g.analyse(attributed_grid(7, 7), 10, None)
-        self.assertEqual(report["decision"], "fail")
+class ImageRuleTest(unittest.TestCase):
+    """R1: the image content, exact on every image of both sides."""
 
-    def test_declaration_cannot_excuse_other_kinds(self):
-        grid_ = attributed_grid(7, 7) + [
-            lrec("hol-startup", s, p, e, {}) for p in range(10)
-            for e, sides in (("candidate", ("base", "candidate")),
-                             ("control", ("base", "control")),
-                             ("repeat", ("candidate", "repeat")))
-            for s in sides]
-        for r in grid_:
-            if r["kind"] == "hol-startup" and r["side"] == "candidate":
-                r["brackets"][0]["start"][3] += 1
-        report = g.analyse(grid_, 10, declared(SIG))
-        self.assertEqual(report["decision"], "fail")
-
-    def test_repository_declaration_is_well_formed(self):
-        data = g.load_declared()
-        self.assertTrue(data["entries"])
-
-
-def image_grid(base_noise, cand_noise, sig=0, n=5, startup=0):
-    """Per-image records: the load bracket carries the per-image noise,
-    Cond_rewr.sig the candidate shift `sig`."""
-    out = []
-    for side, noise in (("base", base_noise), ("candidate", cand_noise)):
-        for i in range(n):
-            c = side == "candidate"
-            for kind, br in (
-                    ("load-simpLib", dict(load_simpLib=1000 + noise[i] +
-                                          (sig if c else 0))),
-                    ("files-simpLib", {AFILE: 400 + noise[i],
-                                       SIG: 5 + (sig if c else 0)}),
-                    ("hol-startup", {})):
-                r = lrec(kind, side, 0, "x", br)
-                if kind == "hol-startup" and c:
-                    r["brackets"][0]["start"][3] += startup
-                r.update(image="%s%d" % (side[0], i), again=False)
-                out.append(r)
-    for side in ("base", "candidate"):
-        for r in [x for x in out if x["side"] == side and
-                  x["image"].endswith("0")]:
-            out.append(dict(copy.deepcopy(r), again=True))
-    return out
-
-
-class EnvelopeTest(unittest.TestCase):
-    NOISE = [0, 7, -5, 12, 3]
-
-    def test_candidate_inside_the_envelope_passes(self):
-        report = g.analyse_images(
-            image_grid(self.NOISE, [4, -3, 11, 0, 2]), None)
+    def test_identical_images_pass(self):
+        report = run(world(), declared_data(entries=[]))
         self.assertEqual(report["decision"], "pass", report["reasons"])
 
-    def test_reproducible_shift_without_declaration_fails(self):
-        report = g.analyse_images(image_grid(self.NOISE, self.NOISE, 40),
-                                  None)
+    def test_startup_word_on_one_candidate_image_fails(self):
+        report = run(world(startup={"s2": 1}))
         self.assertEqual(report["decision"], "fail")
-
-    def test_straddling_images_are_inconclusive(self):
-        noise = [0, 7, -5, 12, 3]
-        report = g.analyse_images(
-            image_grid(noise, [40, 0, 1, 2, 3]), None)
-        self.assertEqual(report["decision"], "inconclusive",
-                         report["reasons"])
-
-    def test_declared_shift_is_attributed(self):
-        report = g.analyse_images(
-            image_grid(self.NOISE, self.NOISE, 40), declared(SIG))
-        self.assertEqual(report["decision"], "attributed",
-                         report["reasons"])
-
-    def test_noise_in_an_undeclared_file_fails_when_shifted(self):
-        report = g.analyse_images(
-            image_grid(self.NOISE, [x + 100 for x in self.NOISE]),
-            declared(SIG))
-        self.assertEqual(report["decision"], "fail")
-
-    def test_startup_is_exact_zero_across_images(self):
-        report = g.analyse_images(
-            image_grid(self.NOISE, self.NOISE, 0, startup=1), None)
-        self.assertEqual(report["decision"], "fail")
-
-    def test_fewer_than_five_images_is_smoke(self):
-        report = g.analyse_images(
-            image_grid(self.NOISE[:3], self.NOISE[:3], n=3), None)
-        self.assertEqual(report["decision"], "smoke")
-
-    def test_repeat_of_an_image_must_agree(self):
-        recs = image_grid(self.NOISE, self.NOISE)
-        for r in recs:
-            if r["again"] and r["kind"] == "load-simpLib":
-                r["brackets"][2]["end"][3] += 1
-                break
-        self.assertEqual(g.analyse_images(recs, None)["decision"], "fail")
-
-
-class DecisionTest(unittest.TestCase):
-    def test_exact_zero_passes(self):
-        report = g.analyse(grid(), 10)
-        self.assertEqual(report["decision"], "pass", report["reasons"])
-        self.assertEqual(report["experiments"]["candidate"]["kinds"][
-            "hol-startup"]["nonzero_pairs"], 0)
-
-    def test_one_word_fails_with_delta(self):
-        report = g.analyse(grid(delta={("load-simpLib", "candidate"): 1}), 10)
-        self.assertEqual(report["decision"], "fail")
-        row = report["experiments"]["candidate"]["kinds"]["load-simpLib"]
-        self.assertEqual(row["first_nonzero"]["startup"]["total"], 1)
-        self.assertEqual(row["nonzero_pairs"], 10)
-        self.assertIn("load_x", row["first_nonzero"])
-
-    def test_control_must_be_zero(self):
-        report = g.analyse(grid(delta={("hol-startup", "control"): 9}), 10)
-        self.assertEqual(report["decision"], "fail")
-        self.assertTrue(any(r.startswith("control hol-startup")
+        self.assertTrue(any(r.startswith("R1 hol-startup")
                             for r in report["reasons"]))
 
-    def test_nondeterminism_fails(self):
-        records = grid()
-        records[0] = record("hol-startup", "base", 0, "candidate", extra=3)
-        report = g.analyse(records, 10)
+    def test_startup_word_on_a_baseline_image_fails(self):
+        self.assertEqual(run(world(startup={"b2": 3}))["decision"], "fail")
+
+    def test_first_use_word_fails(self):
+        report = run(world(first_use={"s1": 7}))
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any(r.startswith("R1 hol-first-use")
+                            for r in report["reasons"]))
+
+    def test_hol_state0_startup_bracket_fails(self):
+        records = world()
+        for r in records:
+            if r["kind"] == "load-simpLib" and r["image"] == "s2":
+                r["brackets"][1]["end"][3] += 1
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("R1 load-simpLib" in r for r in report["reasons"]))
+
+    def test_nondeterministic_cell_fails(self):
+        records = world()
+        records[0]["brackets"][0]["start"][3] += 1
+        report = run(records)
         self.assertEqual(report["decision"], "fail")
         self.assertTrue(any("nondeterministic" in r
                             for r in report["reasons"]))
 
-    def test_fewer_pairs_is_smoke(self):
-        report = g.analyse(grid(pairs=4), 4)
-        self.assertEqual(report["decision"], "smoke")
-        self.assertFalse(report["acceptance_pairs"])
 
-    def test_extension_module_fails(self):
-        records = grid()
-        for r in records:
-            if r["side"] == "candidate":
-                r["loaded"] = MODULES + ["SimpTracking"]
-        report = g.analyse(records, 10)
+class SourceRuleTest(unittest.TestCase):
+    """R2: sources against sources over one image."""
+
+    def attributed(self, **kw):
+        records, _ = attributed_world(**kw)
+        return run(records)
+
+    def test_declared_delta_is_attributed(self):
+        report = self.attributed()
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+        got = report["attributed"]["load-congLib"]
+        self.assertEqual(got[BR["Cond_rewr.sig"]]["delta"]["total"], 4)
+        self.assertEqual(sorted(report["attributed"]["load-simpLib"]),
+                         [BR[n] for n in ("Cond_rewr.sig", "Cond_rewr.sml",
+                                          "simpLib.sml")])
+
+    def test_attribution_needs_the_visibility_record(self):
+        records, _ = attributed_world()
+        report = run(records, record=None)
         self.assertEqual(report["decision"], "fail")
-        self.assertEqual(report["extension"]["hol-startup/candidate"],
-                         ["module SimpTracking"])
-        self.assertEqual(report["loaded_diff"]["hol-startup"]["modules"],
-                         dict(only_left=[], only_right=["SimpTracking"]))
+        self.assertTrue(any("not-client-visible" in r
+                            for r in report["reasons"]))
 
-    def test_extension_structure_fails(self):
-        records = grid()
-        for r in records:
-            if r["side"] == "candidate":
-                r["structures"] = STRUCTS + ["simpExtLib"]
-        self.assertEqual(g.analyse(records, 10)["decision"], "fail")
+    def test_no_change_is_a_pass(self):
+        report = run(world(), declared_data(entries=[]))
+        self.assertEqual(report["decision"], "pass", report["reasons"])
 
-    def test_extension_allowed_when_baseline_has_it(self):
-        records = grid()
+    def test_declared_entries_measuring_zero_fail(self):
+        report = run(world())
+        self.assertEqual(report["decision"], "fail")
+        self.assertIn("load-simpLib %s" % BR["Cond_rewr.sig"],
+                      report["declared_zero"])
+
+    def test_undeclared_word_fails_under_image_noise(self):
+        """The review's counterexample: Trace.sml-like noise on the load
+        bracket and +3 on an undeclared file that is stable."""
+        noise = {"b1": {"Trace.sml": 0}, "b2": {"Trace.sml": 40},
+                 "s1": {"Trace.sml": -12}, "s2": {"Trace.sml": 27}}
+        report = run(world(delta=dict(DELTA, **{"Other.sml": 3}),
+                           noise=noise))
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("undeclared file" in r and "Other.sml" in r
+                            for r in report["reasons"]))
+
+    def test_undeclared_word_without_any_other_change_fails(self):
+        for words in (1, 3):
+            report = run(world(delta=dict(DELTA, **{"A.sml": words})))
+            self.assertEqual(report["decision"], "fail", words)
+
+    def test_one_word_on_a_single_image_fails(self):
+        records, _ = attributed_world()
+        for kind in ("files-simpLib", "load-simpLib"):
+            name = BR["Other.sml"] if kind.startswith("files") else \
+                "load_simpLib"
+            bump(records, kind, "s2", "candidate", name)
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("undeclared file" in r and "Other.sml" in r
+                            for r in report["reasons"]))
+
+    def test_declared_delta_differing_between_images_fails(self):
+        records, _ = attributed_world()
+        bump(records, "files-simpLib", "b2", "candidate", BR["Cond_rewr.sig"])
+        bump(records, "load-simpLib", "b2", "candidate", "load_simpLib")
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("differs between images" in r
+                            for r in report["reasons"]))
+
+    def test_loader_gap_must_be_zero(self):
+        records, _ = attributed_world(gap_delta={"load-simpLib": 2})
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("loader gap" in r for r in report["reasons"]))
+
+    def test_load_bracket_without_its_files_fails(self):
+        report = self.attributed(gap_delta={"load-congLib": -5})
+        self.assertEqual(report["decision"], "fail")
+
+    def test_post_load_bracket_must_be_exact(self):
+        report = self.attributed(post=1)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("SIMP_CONV_1" in r for r in report["reasons"]))
+
+    def test_missing_bracket_is_a_reason_not_a_crash(self):
+        records, _ = attributed_world()
         for r in records:
-            r["loaded"] = MODULES + ["SimpTracking"]
-        self.assertEqual(g.analyse(records, 10)["decision"], "pass")
+            if r["kind"] == "load-simpLib" and r["variant"] == "candidate" \
+                    and r["image"] == "s1":
+                r["brackets"] = r["brackets"][:2]
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("one side only" in r for r in report["reasons"]))
+
+    def test_candidate_file_missing_from_the_load(self):
+        records, _ = attributed_world()
+        for r in records:
+            if r["kind"] == "files-congLib" and r["variant"] == "candidate":
+                r["brackets"] = r["brackets"][:-1]
+        self.assertEqual(run(records)["decision"], "fail")
+
+    def test_declaration_cannot_excuse_other_kinds(self):
+        records, _ = attributed_world(startup={"s1": 2})
+        self.assertEqual(run(records)["decision"], "fail")
+
+    def test_declaration_kind_scope(self):
+        """congLib.sml is declared for load-congLib only."""
+        records, _ = attributed_world()
+        for r in records:
+            if r["kind"] == "files-simpLib":
+                r["brackets"].append(dict(
+                    name=BR["congLib.sml"], start=words_(0),
+                    end=words_(7 if r["variant"] == "candidate" else 6)))
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("undeclared file" in r and "congLib.sml" in r
+                            for r in report["reasons"]))
+
+    def test_null_control_ignores_declarations(self):
+        report = run(world(), null=True)
+        self.assertEqual(report["decision"], "pass", report["reasons"])
+        records, _ = attributed_world()
+        self.assertEqual(run(records, null=True)["decision"], "fail")
+
+
+class NoiseRuleTest(unittest.TestCase):
+    """R3: with the sources fixed the images may differ only in the noise
+    files, and only with a mechanism."""
+
+    NOISE = {"b1": {"Trace.sml": 0}, "b2": {"Trace.sml": 12},
+             "s1": {"Trace.sml": 40}, "s2": {"Trace.sml": -27}}
+
+    def noisy(self, mechanism, noise=None, **kw):
+        n = dict(path=PATHS["Trace.sml"], blob=BLOB["Trace.sml"][0],
+                 reason="r", mechanism=mechanism)
+        records, _ = attributed_world(noise=noise or self.NOISE, **kw)
+        return run(records, declared_data(noise=[n]))
+
+    def test_noise_without_a_mechanism_is_a_blocker(self):
+        report = self.noisy(None)
+        self.assertEqual(report["decision"], "blocked", report["reasons"])
+        self.assertTrue(report["blockers"])
+        self.assertIn(BR["Trace.sml"], report["noise"])
+
+    def test_noise_with_a_mechanism_is_attributed(self):
+        report = self.noisy("shown")
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+
+    def test_asymmetric_noise_is_decided_not_inconclusive(self):
+        """Independent noise on the two sides with candidate images outside
+        the baseline envelope; the rule does not need an envelope."""
+        report = self.noisy("shown", noise={
+            "b1": {"Trace.sml": 5}, "b2": {"Trace.sml": 6},
+            "s1": {"Trace.sml": 90}, "s2": {"Trace.sml": -90}})
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+
+    def test_noise_cannot_hide_an_undeclared_word(self):
+        report = self.noisy("shown", delta=dict(DELTA, **{"Other.sml": 3}))
+        self.assertEqual(report["decision"], "fail")
+
+    def test_unexplained_image_difference_in_a_stable_file_fails(self):
+        report = self.noisy("shown", noise=dict(
+            self.NOISE, s1={"Trace.sml": 40, "Other.sml": 1}))
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any(r.startswith("R3 files-") and "Other.sml" in r
+                            for r in report["reasons"]))
+
+    def test_noise_not_in_a_declared_file_fails_even_if_equal_on_sides(self):
+        records, _ = attributed_world(noise={
+            "b1": {"A.sml": 2}, "b2": {"A.sml": 2}, "s1": {}, "s2": {}})
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+
+    def test_load_noise_not_explained_by_a_noise_file_fails(self):
+        records, _ = attributed_world(noise=self.NOISE)
+        for r in records:
+            if r["kind"] == "load-simpLib" and r["image"] == "s1":
+                r["brackets"][2]["end"][3] += 5
+        report = run(records, declared_data(noise=[dict(
+            path=PATHS["Trace.sml"], blob=BLOB["Trace.sml"][0], reason="r",
+            mechanism="shown")]))
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any(r.startswith("R3 load-simpLib")
+                            for r in report["reasons"]))
+
+    def test_noise_file_must_not_depend_on_the_change(self):
+        records, _ = attributed_world(delta=dict(DELTA, **{"Trace.sml": 1}))
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+
+    def test_noise_file_blob_must_match(self):
+        n = dict(path=PATHS["Trace.sml"], blob="9" * 40, reason="r",
+                 mechanism="shown")
+        records, _ = attributed_world()
+        report = run(records, declared_data(noise=[n]))
+        self.assertEqual(report["decision"], "fail")
+
+    def test_acceptance_needs_two_images_and_ten_pairs(self):
+        records, _ = attributed_world()
+        smoke = run(records, pairs=TEST_PAIRS)
+        with mock.patch.object(g, "PAIRS", TEST_PAIRS + 1):
+            report = g.analyse(records, SIDES, declared_data(), SOURCES,
+                               TEST_PAIRS, False, RECORD)
+        self.assertEqual(smoke["decision"], "attributed")
+        self.assertEqual(report["decision"], "smoke")
+        one = world(base=("b1",), cand=("s1",))
+        report = run(one, declared_data(entries=[]),
+                     sides=dict(base=["b1"], candidate=["s1"]))
+        self.assertEqual(report["decision"], "smoke")
+
+
+class ExtensionTest(unittest.TestCase):
+    def test_candidate_only_module_fails(self):
+        records, _ = attributed_world(extra={
+            ("load-simpLib", "s1", "candidate"): dict(
+                loaded=MODULES + ["fooLib"])})
+        for r in records:
+            if r["kind"] == "load-simpLib" and r["image"] == "s1" and \
+                    r["variant"] == "candidate":
+                r["loaded"] = MODULES + ["fooLib"]
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("module fooLib" in r for r in report["reasons"]))
+
+    def test_candidate_only_module_can_be_declared(self):
+        records, _ = attributed_world()
+        for r in records:
+            if r["kind"] == "hol-startup" and r["image"] in CAND:
+                r["loaded"] = MODULES + ["simpMarkerTheory"]
+        self.assertEqual(run(records)["decision"], "fail")
+        report = run(records, declared_data(
+            candidate_only=["module simpMarkerTheory"]))
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+
+    def test_candidate_only_structure_fails(self):
+        records, _ = attributed_world()
+        for r in records:
+            if r["kind"] == "hol-first-use" and r["image"] == "s2":
+                r["structures"] = STRUCTS + ["Anything"]
+        self.assertEqual(run(records)["decision"], "fail")
+
+    def test_baseline_only_module_is_not_an_extension(self):
+        records, _ = attributed_world()
+        for r in records:
+            if r["image"] in BASE:
+                r["loaded"] = MODULES + ["onlyBase"]
+        self.assertEqual(run(records)["decision"], "attributed")
 
     def test_wrong_simplifier_result_fails(self):
-        records = grid()
-        records[-1]["result"] = "false"
-        self.assertEqual(g.analyse(records, 10)["decision"], "fail")
-
-    def test_attribution_alone_does_not_fail(self):
-        records = grid(kinds=("hol-startup", "files-simpLib"))
+        records, _ = attributed_world()
         for r in records:
-            if r["kind"] == "files-simpLib" and r["side"] == "candidate":
-                r["brackets"].append(dict(
-                    name="$HOLDIR/Only.sml", start=snap(0, 0, 0, 0, 0),
-                    end=snap(9, 9, 0, 0, 0)))
-        report = g.analyse(records, 10)
-        self.assertEqual(report["decision"], "pass", report["reasons"])
-        self.assertIn("$HOLDIR/Only.sml", report["experiments"]["candidate"][
-            "kinds"]["files-simpLib"]["first"])
+            if r["kind"] == "hol-first-use":
+                r["result"] = "false"
+        self.assertEqual(run(records)["decision"], "fail")
 
-    def test_missing_bracket_fails_a_gated_kind(self):
-        records = grid()
-        for r in records:
-            if r["kind"] == "load-simpLib" and r["side"] == "candidate":
-                r["brackets"] = r["brackets"][:2]
-        self.assertEqual(g.analyse(copy.deepcopy(records), 10)["decision"],
-                         "fail")
-
-    def test_unpaired_records_refused(self):
-        records = [r for r in grid() if not (
-            r["experiment"] == "control" and r["side"] == "control" and
-            r["pair"] == 3)]
-        with self.assertRaisesRegex(sc.InvalidAllocation, "unpaired"):
-            g.analyse(records, 10)
-
-    def test_render_and_replay_stable(self):
-        report = g.analyse(grid(delta={("load-simpLib", "candidate"): 7}), 10)
-        text = g.render(report, {})
-        self.assertIn("| load-simpLib | startup | total | 7 | 0 |", text)
-        self.assertEqual(g.render(report, {}), text)
-
-
-class ExtensionNames(unittest.TestCase):
     def test_names(self):
         for name in ("simpExtLib", "congExtLib", "SimpTracking",
                      "intReduceExt", "Cond_rewrExt", "numSimpsExt"):
@@ -391,6 +596,195 @@ class ExtensionNames(unittest.TestCase):
         for name in ("simpLib", "congLib", "Cond_rewr", "boolSimps", "Text"):
             self.assertFalse(g.is_extension(name), name)
         self.assertFalse(g.is_extension("SimpTracking", ("SimpTracking",)))
+
+
+class SetupTest(unittest.TestCase):
+    def trees(self):
+        def t(label, rev, patch=None):
+            return dict(rev=rev, hol="/s/%s/hol-source" % label,
+                        hol_patch=patch, hol_build_deterministic=False,
+                        hol_build_jobs="2", hol_determinism_diff="",
+                        hol_configuration_override="")
+        return {"b1": t("b1", "B", {"sha256": "p"}),
+                "b2": t("b2", "B", {"sha256": "p"}),
+                "s1": t("s1", "C"), "s2": t("s2", "C")}
+
+    def check(self, trees=None, sides=SIDES, null=False):
+        return g.check_setup(trees or self.trees(), sides, null)
+
+    def test_valid(self):
+        self.assertEqual(self.check()["base"], ("B", "p"))
+
+    def test_guards(self):
+        with self.assertRaisesRegex(sc.InvalidAllocation, "not distinct"):
+            self.check(sides=dict(base=["b1", "b1"], candidate=["s1", "s2"]))
+        with self.assertRaisesRegex(sc.InvalidAllocation, "not distinct"):
+            self.check(sides=dict(base=["b1", "b2"], candidate=["b2", "s2"]))
+        with self.assertRaisesRegex(sc.InvalidAllocation, "no image"):
+            self.check(sides=dict(base=[], candidate=["s1"]))
+        trees = self.trees()
+        trees["s2"]["hol"] = "/s/s2x/hol-source"
+        with self.assertRaisesRegex(sc.InvalidAllocation, "HOLDIR lengths"):
+            self.check(trees)
+        trees = self.trees()
+        trees["s2"]["rev"] = "D"
+        with self.assertRaisesRegex(sc.InvalidAllocation, "more than one"):
+            self.check(trees)
+        trees = self.trees()
+        trees["b2"]["hol_patch"] = {"sha256": "q"}
+        with self.assertRaisesRegex(sc.InvalidAllocation, "more than one"):
+            self.check(trees)
+        trees = self.trees()
+        trees["s1"]["hol_build_deterministic"] = True
+        with self.assertRaisesRegex(sc.InvalidAllocation, "build flags"):
+            self.check(trees)
+        trees = self.trees()
+        trees["s1"]["hol_build_jobs"] = "1"
+        with self.assertRaisesRegex(sc.InvalidAllocation, "build flags"):
+            self.check(trees)
+
+    def test_null_needs_equal_sources_and_real_changes_need_unequal(self):
+        trees = self.trees()
+        with self.assertRaisesRegex(sc.InvalidAllocation, "null control"):
+            self.check(trees, null=True)
+        for l in ("s1", "s2"):
+            trees[l]["rev"], trees[l]["hol_patch"] = "B", {"sha256": "p"}
+        self.check(trees, null=True)
+        with self.assertRaisesRegex(sc.InvalidAllocation, "same revision"):
+            self.check(trees)
+
+
+class OverlayTest(unittest.TestCase):
+    def tree(self, root, files):
+        for rel, data in files.items():
+            p = Path(root) / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+
+    def test_overlay_exchanges_only_differing_files(self):
+        with tempfile.TemporaryDirectory() as raw:
+            t = Path(raw)
+            common = {"src/simp/src/A.sml": b"a\n",
+                      "src/simp/src/.hol/objs/A.uo": b"u\n",
+                      "src/simp/src/notes.md": b"n\n"}
+            self.tree(t / "b", dict(common, **{
+                "src/simp/src/Cond_rewr.sig": b"old\n",
+                "src/simp/src/OnlyBase.sml": b"x\n"}))
+            self.tree(t / "c", dict(common, **{
+                "src/simp/src/Cond_rewr.sig": b"new\n",
+                "src/simp/src/notes.md": b"changed\n",
+                "src/simp/src/Ext.sml": b"e\n"}))
+            ov = g.Overlay(t / "b", t / "c", extra=["src/simp/src/A.sml"])
+            self.assertEqual(ov.paths(), ["src/simp/src/Cond_rewr.sig"])
+            self.assertEqual(ov.blobs["base"]["src/simp/src/A.sml"],
+                             g.blob_id(b"a\n"))
+            self.assertEqual(ov.blobs["candidate"][
+                "src/simp/src/Cond_rewr.sig"], g.blob_id(b"new\n"))
+            self.assertEqual(ov.apply(t / "b", "candidate"), 1)
+            self.assertEqual(
+                (t / "b/src/simp/src/Cond_rewr.sig").read_bytes(), b"new\n")
+            self.assertEqual(ov.apply(t / "b", "candidate"), 0)
+            self.assertTrue(ov.check(t / "b", "candidate"))
+            self.assertFalse(ov.check(t / "b", "base"))
+            self.assertEqual(ov.apply(t / "b", "base"), 1)
+            self.assertEqual(
+                (t / "b/src/simp/src/Cond_rewr.sig").read_bytes(), b"old\n")
+            self.assertEqual((t / "b/src/simp/src/OnlyBase.sml").read_bytes(),
+                             b"x\n")
+
+    def test_blob_id_is_the_git_blob(self):
+        with tempfile.TemporaryDirectory() as raw:
+            p = Path(raw) / "f"
+            p.write_bytes(b"hello\n")
+            want = subprocess.run(["git", "hash-object", str(p)], check=True,
+                                  capture_output=True, text=True).stdout
+            self.assertEqual(g.blob_id(b"hello\n"), want.strip())
+
+
+class PlanTest(unittest.TestCase):
+    def test_every_cell_once_with_alternating_order(self):
+        plan = g.plan_runs(["hol-startup", "load-simpLib"], SIDES, 4)
+        self.assertEqual(len(plan), 4 * 4 * (1 + 2))
+        self.assertEqual(len(set(plan)), len(plan))
+        by = {}
+        for i, (kind, image, variant, pair) in enumerate(plan):
+            by[(kind, image, variant, pair)] = i
+        for pair in range(4):
+            first = by[("load-simpLib", "b1", "base", pair)] < \
+                by[("load-simpLib", "b1", "candidate", pair)]
+            self.assertEqual(first, pair % 2 == 0)
+        self.assertLess(by[("load-simpLib", "b1", "base", 0)],
+                        by[("load-simpLib", "s2", "base", 0)])
+        self.assertLess(by[("load-simpLib", "s2", "base", 1)],
+                        by[("load-simpLib", "b1", "base", 1)])
+
+
+class ArchiveTest(unittest.TestCase):
+    def archive(self, root, records):
+        header = dict(
+            schema=g.SCHEMA, sides=SIDES, null=False, pairs=TEST_PAIRS,
+            record_sha256=RECORD,
+            hol={l: "/s/%s/hol-source" % l for l in BASE + CAND},
+            holdir_length=len("/s/b1/hol-source"), sources=SOURCES,
+            declared_text=json.dumps(declared_data_raw()),
+            declared_sha256=hashlib.sha256(
+                json.dumps(declared_data_raw()).encode()).hexdigest())
+        with mock.patch.object(g, "PAIRS", TEST_PAIRS):
+            report = g.analyse(records, SIDES, g.parse_declared(
+                header["declared_text"]), SOURCES, TEST_PAIRS, False, RECORD)
+        g.write_archive(root, records, header, report)
+        return report
+
+    def test_replay_and_tamper_detection(self):
+        records, _ = attributed_world()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.archive(root, records)
+            args = mock.Mock(output=root, record=None)
+            patch = mock.patch.object(g, "PAIRS", TEST_PAIRS)
+            patch.start()
+            self.addCleanup(patch.stop)
+            self.assertEqual(g.replay(args), 0)
+            self.assertIn("receipt.json", os.listdir(root))
+            text = (root / "decisions.json").read_text()
+            (root / "decisions.json").write_text(
+                text.replace('"attributed"', '"pass"'))
+            with self.assertRaisesRegex(sc.InvalidAllocation, "receipt"):
+                g.replay(args)
+
+    def test_replay_checks_the_declaration_seal(self):
+        records, _ = attributed_world()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.archive(root, records)
+            patch = mock.patch.object(g, "PAIRS", TEST_PAIRS)
+            patch.start()
+            self.addCleanup(patch.stop)
+            header = json.loads((root / "header.json").read_text())
+            header["declared_sha256"] = "0" * 64
+            (root / "header.json").write_text(json.dumps(header))
+            (root / "receipt.json").write_text(json.dumps({
+                n: g.sha_file(root / n) for n in (
+                    "records.json.gz", "header.json", "decisions.json",
+                    "RESULTS.md")}))
+            with self.assertRaisesRegex(sc.InvalidAllocation, "declaration"):
+                g.replay(mock.Mock(output=root, record=None))
+
+    def test_render_is_stable_and_shows_the_figures(self):
+        records, _ = attributed_world()
+        report = run(records)
+        text = g.render(report, {})
+        self.assertEqual(g.render(report, {}), text)
+        self.assertIn("Decision: **attributed**", text)
+        self.assertIn(BR["Cond_rewr.sig"], text)
+
+
+def declared_data_raw():
+    return dict(schema=g.DECLARED_SCHEMA, entries=[
+        entry_of("Cond_rewr.sig"), entry_of("Cond_rewr.sml"),
+        entry_of("simpLib.sml"), entry_of("congLib.sml", ["load-congLib"])],
+        noise=[dict(path=PATHS["Trace.sml"], blob=BLOB["Trace.sml"][0],
+                    reason="r", mechanism="shown")], candidate_only=[])
 
 
 class RecipeTest(unittest.TestCase):
@@ -447,10 +841,11 @@ class RecipeTest(unittest.TestCase):
             hol, prefix = t / "h" / "hol-source", t / "native-install"
             hol.parent.mkdir()
             report = {}
-            with mock.patch.dict(os.environ,
-                                 GATE_BUILD_DETERMINISTIC="0"):
+            with mock.patch.dict(os.environ):
+                os.environ.pop("GATE_BUILD_DETERMINISTIC", None)
                 g.build_hol(repo, "HEAD", hol, prefix, env, run, report,
                             patch)
+            self.assertIs(report["hol_build_deterministic"], False)
             self.assertEqual((hol / "f.txt").read_text(), "two\n")
             commands = [c for c, _ in seen]
             self.assertEqual(commands[0][:4],
