@@ -23,6 +23,13 @@ sys.path.insert(0, str(HERE.parent / "compatibility"))
 from prior_contracts import LIMIT_CHECKS
 
 
+# Retained words include the private path strings reachable from the
+# measured closure, and "baseline"/"candidate" differ in length (8 vs 9
+# bytes: one word).  Equal-length private directories compare like with like.
+PRIVATE_DIRS = {"baseline": "side-a", "candidate": "side-b"}
+assert len(set(map(len, PRIVATE_DIRS.values()))) == 1
+
+
 def options(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--repo", type=Path, default=HERE.parents[3])
@@ -95,7 +102,7 @@ def main(argv=None):
             for side, ref in (("baseline", paired.BASE),
                     ("candidate", paired.BASE if args.baseline_control else
                      args.candidate)):
-                dst = root / side
+                dst = root / PRIVATE_DIRS[side]
                 dst.mkdir()
                 rev, inventory = fragments.snapshot(repo, ref, dst)
                 paired.install_fixtures(dst)
@@ -137,7 +144,7 @@ def main(argv=None):
             observations, nongc = {}, {}
 
             def run(side, target, pair=-1):
-                dst = root / side
+                dst = root / PRIVATE_DIRS[side]
                 mode = "performance" if target == "Performance" else target
                 runenv = dict(env, PAIR_SELECTION=side, PAIR_FIXTURE=mode,
                     PAIR_CONTROL="none", PAIR_PRIVATE=str(dst),
