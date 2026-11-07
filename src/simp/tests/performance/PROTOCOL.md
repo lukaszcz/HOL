@@ -2164,6 +2164,68 @@ actual successful exits and exact kernel proofs are checked. See
 [`PROTOCOL_LOADING.md`](PROTOCOL_LOADING.md). Listing this executable external
 gate does not claim a fresh run or independent loading acceptance.
 
+## Ordinary startup allocation gate (TASK31)
+
+`startup_gate.py` (client `StartupGate.sml`, `StartupGateUse.sml`, unit
+tests `test_startup_gate.py`) measures, in exact words of the TASK29B private
+runtime counter (all fields: total, native, rts, interpreter, code, and
+heap = total - code), what an ordinary process pays before and when it first
+uses the simplifier:
+
+  - `hol-startup`: `hol` on `hol.state`, the absolute counter at the first
+    user code (a minimal prologue: FFI setup and one snapshot);
+  - `hol-first-use`: the first and second `SIMP_CONV` / `SIMP_TAC` call
+    (`pure_ss`, `AND_CLAUSES`) on `hol.state`;
+  - `load-simpLib`, `load-congLib`: from `hol.state0`, a fresh
+    `load "simpLib"` (then `load "pureSimps"`, then the same calls) and a
+    fresh `load "congLib"`;
+  - `files-simpLib`: `load "simpLib"` with a bracket around every `use`.
+    Attribution only, never part of the decision.
+
+Every bracket is the TASK29B one (counter read from C storage after the
+bracket; nothing is decoded or printed inside it). An `empty` bracket is
+recorded in every process: it is the direct per-bracket instrumentation
+cost (0 words in every field in all recorded runs).
+
+Trees are built by `startup_gate.py build`, which repeats the
+`bootstrap_probe.build_native_hol` procedure: one native Poly/ML, the
+private runtime and shim, and then one fresh `git clone --shared` per tree
+(`label=rev[+patch]`): `poly-includes.ML`, `smart-configure`, then
+`bin/build --no-cache -j2 --seq=tools/sequences/upto-parallel` with
+`env -i`-style environment (PATH, HOME=/nonexistent, TERM=dumb, LC_ALL=C,
+TZ=UTC, CONFIG_SITE=/dev/null, CC, CXX, HOLDIR). Everything is recorded in
+`lineage.json`. The develop `mktool` fix is applied as the recorded patch
+`startup_gate_mktool.patch` (`useB "theoryfiles"` in
+`src/portableML/rawtheory/mktool.ML`). The file is build tooling only: it
+is run by the build, is not in `Meta.loaded` or in the file records of any
+measured process and is not loaded by any client, so it cannot change a
+counted word (the gate asserts the loaded-module, file and structure lists
+per side and publishes their differences).
+
+A decision uses four trees: baseline, candidate, a second clean build of the
+baseline (the control) and a second clean build of the candidate (repeat).
+Each experiment is 10 pairs in AB/BA order (smoke mode, fewer pairs, can
+never pass). The gate passes only if every field of every candidate-minus-
+baseline pair is exactly 0, the control is exactly 0 in every field of
+every pair, every side is deterministic across its runs, the foreign-thread
+counters read 0,0, the simplifier results are correct, and no extension
+module or structure (`*Ext`, `simpExtLib`, `congExtLib`, `SimpTracking`
+unless the baseline also has it) is loaded in an ordinary process. There is
+no tolerance, subtraction or outlier removal. `replay` recomputes the
+decision from the archive.
+
+Known limitation (measured): the fresh-load brackets depend on the
+layout of the exported `hol.state0` image, which is not reproducible
+between builds. Four clean builds of the same tree at the same path
+differ by 8 to 54 words in the 3.3M-word `Trace.sml` step of
+`load "simpLib"` (3,306,279 / 3,306,271 with `-j2`, 3,306,249 / 3,306,303
+with `-j1`), and with a fixed image the count is deterministic (the same
+image gives the same count whichever tree is named). `hol-startup` and the
+`hol-first-use` brackets do not show it. So a load-bracket control between
+two independent builds is non-zero by a few words, and the exactly-zero
+rule fails for the load kinds until the image build is deterministic.
+The failure is reported, not hidden.
+
 ## Matrix boundaries and final evidence
 
 [`MATRIX.md`](MATRIX.md) and the frozen schema cover **69 requirements and 107
