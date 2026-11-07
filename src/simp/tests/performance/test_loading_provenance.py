@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Loading provenance controls; synthetic builds/processes are NOT timings."""
 from contextlib import nullcontext
+import gzip
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import loading as l
+import timing_grid as tg
 
 RAW = "1,0.4,0.1,0.1,0.1,0.5,0.2,0.1"
 EMPTY = "0.000001,0,0,0,0,0,0,0"
@@ -117,6 +119,9 @@ class BuildBinding(unittest.TestCase):
         self.discovery = 0
         self.mutation = None
         self.builds = []
+        # Scale of the loading.raw of process number n (1-based) on `side`.
+        self.scale = lambda n, side: 1.0
+        self.layouts = []
 
     def execute(self, command, cwd, env, timeout, fds):
         command = list(map(str, command))
@@ -163,6 +168,9 @@ class BuildBinding(unittest.TestCase):
             dst = Path(cwd)
             self.assertEqual(command, [str(dst / "paired.exe")])
             self.processes += 1
+            self.layouts.append(env.get("PERF_LAYOUT"))
+            raw = ",".join(repr(float(x) * self.scale(
+                self.processes, dst.name)) for x in RAW.split(","))
             if self.processes == 1:
                 if self.mutation == "library-bytes":
                     self.library.write_text("changed library\n")
@@ -189,9 +197,9 @@ class BuildBinding(unittest.TestCase):
                            for kind in ("use", "used")]
             events += [
                 ["observation", "loading.end", "congLib"],
-                ["observation", "loading.raw", RAW],
+                ["observation", "loading.raw", raw],
                 ["observation", "loading.extensions",
-                 "SimpTracking" if self.mutation == "extension" and
+                 "SplitData" if self.mutation == "extension" and
                  dst.name == "candidate" else l.NO_EXTENSIONS],
                 ["use", str(dst / "selftest.sml")],
                 ["check", "ordinary exact kernel equality", "pass"],
@@ -210,7 +218,7 @@ class BuildBinding(unittest.TestCase):
         options = SimpleNamespace(
             repo=self.repo, baseline=self.pin, candidate=self.pin,
             module="congLib", pairs=1, reps=1, smoke=True, calibrate=False,
-            timeout=30,
+            timeout=30, layout_seed=l.LAYOUT_SEED,
             authorize_measurements=True, api_audit=None,
             output=self.repo / "output")
         options.__dict__.update(changes)
@@ -250,19 +258,351 @@ class BuildBinding(unittest.TestCase):
                                    calibrate=True)
         self.assertTrue(report["success"], report.get("failure"))
         self.assertEqual(report["mode"], "calibration")
-        self.assertEqual((report["schema"], report["reps"]),
-                         (l.SCHEMA, 2))
+        self.assertEqual((report["schema"], report["reps"], report["stage"],
+                          report["layout_seed"]),
+                         (l.SCHEMA, 2, "first", l.LAYOUT_SEED))
         self.assertEqual(self.processes, 2 + 2 * 10 * 2)
         self.assertEqual(report["policy"], l.a.EQUIVALENCE_POLICY)
         self.assertEqual(sorted({r["rep"] for r in report["runs"]}), [0, 1])
-        self.assertEqual(report["jitter"]["pairs_for_target"], 10)
+        self.assertEqual(report["jitter"]["second_stage_pairs"], 20)
+        self.assertEqual(report["jitter"]["configured_units"],
+                         l.PAIRS * l.REPS)
+        self.assertEqual(report["semantic_gate"],
+                         "not admitted: calibration only")
         out = self.repo / "output"
-        self.assertEqual(l.replay(out), {"replayed": 42, "exit": None})
+        info = l.replay(out)
+        self.assertEqual((info["replayed"], info["exit"]), (42, None))
+        self.assertEqual(info["seal"], l.a.seal(out / "loading.json"))
         # Tampering with a process receipt is caught by its seal.
         victim = out / report["runs"][5]["receipt"]
         victim.write_bytes(victim.read_bytes() + b"x")
         with self.assertRaisesRegex(ValueError, "changed process receipt"):
             l.replay(out)
+
+    def test_every_process_gets_a_recorded_replayed_layout(self):
+        report = self.run_protocol(pairs=10, reps=2, smoke=False,
+                                   calibrate=True)
+        self.assertTrue(report["success"], report.get("failure"))
+        expected = [str(l.layout_units(l.LAYOUT_SEED, ph, i, side, r))
+                    for ph, i, side, r in l.expected_runs(10, 2, True)]
+        self.assertEqual(self.layouts, expected)
+        self.assertGreater(len(set(expected)), 10)
+        for entry in report["runs"]:
+            env = l.a.load(self.repo / "output" / entry["receipt"])[
+                "environment"]
+            self.assertEqual(env["PERF_LAYOUT"], str(l.layout_units(
+                l.LAYOUT_SEED, entry["phase"], entry["pair"],
+                entry["selection"], entry["rep"])))
+        self.run_protocol(pairs=1, reps=1, output=self.repo / "second",
+                          layout_seed="other")
+        self.assertNotEqual(self.layouts[len(expected):][:6],
+                            expected[:6])
+
+    # Decision runs: the develop pin is the fixture's, the counts are small.
+    def decision_settings(self, pairs=10, reps=2):
+        for target, name, value in ((l, "PAIRS", pairs), (l, "REPS", reps),
+                                    (l.a, "BASE", self.pin)):
+            patcher = patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        gate = dict(receipt="/nonexistent/receipt.json", seal={},
+                    actual_files={}, cases=8, candidate_sources_bound=True)
+        patcher = patch.object(l, "semantic_gate", return_value=gate)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def decide(self, name="output", **changes):
+        options = dict(smoke=False, calibrate=False, pairs=l.PAIRS,
+                       reps=l.REPS, baseline=self.pin, candidate=self.pin,
+                       api_audit=self.repo / "audit.json",
+                       output=self.repo / name)
+        options.update(changes)
+        return self.run_protocol(**options)
+
+    def wide(self, n, side):
+        return 1 + 0.3 * ((n * 7) % 5 - 2) / 2
+
+    def test_decision_run_is_exactly_the_predeclared_counts(self):
+        self.decision_settings()
+        for changes in (dict(pairs=11), dict(pairs=9), dict(reps=3),
+                        dict(reps=1), dict(layout_seed="free"),
+                        dict(baseline="b" * 40),
+                        dict(module="simpLib", pairs=40, reps=5)):
+            with self.subTest(changes=changes), \
+                    self.assertRaisesRegex(
+                        ValueError, "exactly|develop pin|layout seed"):
+                self.decide(**changes)
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "output").exists())
+        with self.assertRaisesRegex(ValueError, "exclusive"):
+            self.decide(smoke=True, calibrate=True)
+        report = self.decide()
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertEqual((report["stage"], report["pairs"], report["reps"]),
+                         ("first", 10, 2))
+        self.assertEqual(self.processes, 2 + 2 * 2 * 10 * 2)
+
+    def test_cli_refuses_other_counts_and_stray_flags(self):
+        base = ["--baseline", l.a.BASE, "--candidate", "c" * 40,
+                "--module", "simpLib", "--authorize-measurements",
+                "--api-audit", "/unused"]
+        out = self.repo / "cli"
+        for extra in (["--pairs", "30"], ["--reps", "4"],
+                      ["--pairs", "39", "--reps", "5"],
+                      ["--layout-seed", "mine"]):
+            with self.subTest(extra=extra):
+                self.assertEqual(l.main(base + extra + [
+                    "--output", str(out)]), 1)
+                self.assertFalse(out.exists())
+        for argv in (["--replay", str(out), "--pairs", "40"],
+                     ["--replay", str(out), "--output", str(out)],
+                     ["--extend", str(out), "--pairs", "80"],
+                     ["--extend", str(out), "--baseline", l.a.BASE],
+                     ["--replay", str(out), "--extend", str(out)],
+                     ["--expect-seal", "0" * 64, "--module", "simpLib"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(l.main(argv), 1)
+
+    def test_decision_run_replays_with_seal_and_exit_status(self):
+        self.decision_settings()
+        report = self.decide()
+        self.assertTrue(report["success"], report.get("failure"))
+        out = self.repo / "output"
+        info = l.replay(out)
+        self.assertEqual((info["exit"], info["replayed"], info["stage"]),
+                         (0, 82, "first"))
+        self.assertEqual(l.replay(out, expect_seal=info["seal"]["sha256"]),
+                         info)
+        with self.assertRaisesRegex(ValueError, "expected seal"):
+            l.replay(out, expect_seal="0" * 64)
+        self.assertEqual(l.main(["--replay", str(out), "--expect-seal",
+                                 info["seal"]["sha256"]]), 0)
+        self.assertEqual(l.main(["--replay", str(out), "--expect-seal",
+                                 "0" * 64]), 1)
+        # A decision run found at other counts is not a decision run.
+        with patch.object(l, "PAIRS", 12), \
+                self.assertRaisesRegex(ValueError, "exactly"):
+            l.replay(out)
+
+    def rewrite(self, out, edit_report=None, edit_run=None, index=3):
+        """Edit loading.json and/or one process receipt, keeping every seal
+        consistent: only the replay's own checks can then refuse it."""
+        report = l.a.load(out / "loading.json")
+        if edit_run:
+            entry = report["runs"][index]
+            path = out / entry["receipt"]
+            receipt = l.a.load(path)
+            edit_run(receipt)
+            path.write_bytes(gzip.compress(
+                (json.dumps(receipt, indent=2) + "\n").encode(), mtime=0))
+            entry["seal"] = l.a.seal(path)
+        if edit_report:
+            edit_report(report)
+        (out / "loading.json").write_text(json.dumps(report, indent=2))
+
+    def test_replay_refuses_every_inconsistent_report(self):
+        self.decision_settings()
+        self.assertTrue(self.decide()["success"])
+        out = self.repo / "output"
+        pristine = (out / "loading.json").read_text()
+        runs = l.a.load(out / "loading.json")["runs"]
+        control = next(i for i, r in enumerate(runs)
+                       if r["phase"] == "control" and r["rep"] == 1)
+        cand = next(i for i, r in enumerate(runs)
+                    if r["phase"] == "candidate" and
+                    r["selection"] == "candidate")
+
+        def relabel(r):
+            r["runs"][control]["pair"] += 1
+
+        def swap_phase(r):
+            r["runs"][control], r["runs"][cand] = (r["runs"][cand],
+                                                   r["runs"][control])
+
+        def swap_pilots(r):
+            r["runs"][0], r["runs"][1] = r["runs"][1], r["runs"][0]
+
+        def drop(r):
+            r["runs"].pop()
+
+        def selection(r):
+            r["runs"][cand]["selection"] = "baseline"
+
+        cases = {
+            "relabelled pair": (relabel, None, control, "reordered"),
+            "relabelled selection": (selection, None, cand, "reordered"),
+            "receipt pair": (
+                None, lambda x: x.update(pair=x["pair"] + 1), control,
+                "disagrees"),
+            "receipt phase": (
+                None, lambda x: x.update(phase="candidate"), control,
+                "disagrees"),
+            "cross-phase order": (swap_phase, None, control, "reordered"),
+            "pilot order": (swap_pilots, None, control, "reordered"),
+            "missing process": (drop, None, control, "reordered"),
+            "actual selection": (
+                None, lambda x: x.update(actual_selection="candidate"),
+                control, "actual selection"),
+            "candidate actual": (
+                None, lambda x: x.update(actual_selection="baseline"),
+                cand, "actual selection"),
+            "enforcement flag": (
+                None, lambda x: x["measurement"].update(
+                    extension_absence_enforced=False), cand, "enforcement"),
+            "layout": (
+                None, lambda x: x["environment"].update(PERF_LAYOUT="127"),
+                cand, "layout"),
+            "selection env": (
+                None, lambda x: x["environment"].update(
+                    PAIR_SELECTION="baseline"), cand, "environment"),
+            "stems": (
+                None, lambda x: x["measurement"].update(
+                    loaded_stems=x["measurement"]["loaded_stems"] + ["q"]),
+                cand, "changed measurement"),
+            "calibration": (
+                lambda r: r["calibration"][0].update(calibrated=False),
+                None, control, "calibration"),
+            "statistics": (
+                lambda r: r["results"]["candidate"]["metrics"]["wall"]
+                .update(decision="pass" if r["results"]["candidate"][
+                    "metrics"]["wall"]["decision"] != "pass" else "fail"),
+                None, control, "statistics"),
+            "width": (
+                lambda r: r.update(control_half_log_width=0.5),
+                None, control, "width"),
+            "pairs for target": (
+                lambda r: r.update(second_stage_pairs=99), None, control,
+                "width or count"),
+            "semantic gate": (
+                lambda r: r.update(semantic_gate="not admitted: smoke only"),
+                None, control, "semantic"),
+            "semantic cases": (
+                lambda r: r["semantic_gate"].update(cases=7), None, control,
+                "semantic"),
+            "first stage": (
+                lambda r: r.update(stage="second"), None, control,
+                "first_stage|KeyError|second"),
+            "floor": (
+                lambda r: r.update(layout_seed="free"), None, control,
+                "exactly"),
+        }
+        for name, (edit_report, edit_run, index, error) in cases.items():
+            (out / "loading.json").write_text(pristine)
+            # Receipt edits are made on a copy of the pristine files.
+            backup = {p.name: p.read_bytes() for p in out.glob("*.json.gz")}
+            self.rewrite(out, edit_report, edit_run, index)
+            with self.subTest(case=name):
+                try:
+                    with self.assertRaisesRegex(
+                            (ValueError, KeyError), error):
+                        l.replay(out)
+                finally:
+                    for file, data in backup.items():
+                        (out / file).write_bytes(data)
+        (out / "loading.json").write_text(pristine)
+        self.assertEqual(l.replay(out)["exit"], 0)
+
+    def test_replay_checks_the_calibration_jitter(self):
+        self.assertTrue(self.run_protocol(
+            pairs=10, reps=2, smoke=False, calibrate=True)["success"])
+        out = self.repo / "output"
+        self.rewrite(out, lambda r: r["jitter"].update(required_units=1))
+        with self.assertRaisesRegex(ValueError, "jitter"):
+            l.replay(out)
+
+    def second_stage(self, scale=None, **changes):
+        """A first stage with a wide B/B control and its second stage."""
+        self.decision_settings()
+        self.scale = scale or self.wide
+        self.assertTrue(self.decide()["success"])
+        first = self.repo / "output"
+        plan = l.first_stage(first)
+        args = dict(smoke=False, calibrate=False, pairs=plan["pairs"],
+                    reps=2, baseline=self.pin, candidate=self.pin,
+                    api_audit=self.repo / "audit.json",
+                    output=self.repo / "second",
+                    layout_seed=l.EXTENSION_SEED)
+        args.update(changes)
+        return first, plan, args
+
+    def test_second_stage_is_bound_to_the_first_and_its_control(self):
+        first, plan, args = self.second_stage()
+        report = plan["report"]
+        control = l.a.load(first / "loading.json")["results"]["control"]
+        width = tg.control_half_width({"control": control})
+        self.assertGreater(width, tg.TARGET)
+        self.assertEqual(plan["pairs"], tg.second_stage_pairs(
+            width, l.PAIRS, tg.TARGET, tg.MAX_PAIRS))
+        self.assertGreaterEqual(plan["pairs"], 2 * l.PAIRS)
+        patch_args = SimpleNamespace(**dict(
+            repo=self.repo, module="congLib", timeout=30,
+            authorize_measurements=True, **args))
+        self.processes = 0
+        with patch.object(l, "execute", self.execute), \
+                patch.object(l.shutil, "which", return_value=str(
+                    self.repo / "bin/poly")), \
+                patch.object(l.a, "serial_lock", lambda _: nullcontext(())):
+            second = l.run(patch_args, plan)
+        self.assertTrue(second["success"], second.get("failure"))
+        self.assertEqual(second["stage"], "second")
+        self.assertEqual(second["layout_seed"], l.EXTENSION_SEED)
+        self.assertEqual(second["first_stage"], dict(
+            run=str(first), seal=l.a.seal(first / "loading.json"),
+            pairs=l.PAIRS, second_stage_pairs=plan["pairs"]))
+        units = 2 + 4 * plan["pairs"] * 2
+        self.assertEqual(self.processes, units)
+        out = self.repo / "second"
+        info = l.replay(out)
+        self.assertEqual((info["stage"], info["replayed"]),
+                         ("second", units))
+        # The first stage may have moved; its seal and plan still bind.
+        moved = self.repo / "moved"
+        first.rename(moved)
+        with self.assertRaises(OSError):
+            l.replay(out)
+        self.assertEqual(l.replay(out, first_dir=moved), info)
+        (moved / "loading.json").write_text(
+            (moved / "loading.json").read_text() + " ")
+        with self.assertRaisesRegex(ValueError, "expected seal"):
+            l.replay(out, first_dir=moved)
+
+    def test_second_stage_count_and_settings_are_not_free(self):
+        first, plan, args = self.second_stage()
+        for changes in (dict(pairs=plan["pairs"] + 10),
+                        dict(pairs=plan["pairs"] - 10), dict(reps=3),
+                        dict(layout_seed=l.LAYOUT_SEED),
+                        dict(baseline="d" * 40), dict(candidate="d" * 40)):
+            with self.subTest(changes=changes), \
+                    self.assertRaisesRegex(ValueError,
+                                           "second stage|develop pin"):
+                l.run(SimpleNamespace(**dict(
+                    repo=self.repo, module="congLib", timeout=30,
+                    authorize_measurements=True, **dict(args, **changes))),
+                    plan)
+        self.assertFalse((self.repo / "second").exists())
+
+    def test_a_valid_control_or_a_fail_is_final(self):
+        # Resolving control: even an inconclusive candidate is final.
+        self.decision_settings()
+        self.scale = lambda n, side: 1.0
+        self.assertTrue(self.decide()["success"])
+        with self.assertRaisesRegex(ValueError, "first stage is final"):
+            l.first_stage(self.repo / "output")
+        # A fail is final whatever the control.
+        self.processes = 0
+        self.scale = lambda n, side: self.wide(n, side) * (
+            3.0 if side == "candidate" and n > 2 + 2 * 10 * 2 else 1.0)
+        self.assertTrue(self.decide("failing")["success"])
+        info = l.replay(self.repo / "failing")
+        self.assertEqual(info["exit"], 1)
+        with self.assertRaisesRegex(ValueError, "fail is final"):
+            l.first_stage(self.repo / "failing")
+        # Smoke and calibration runs have no second stage.
+        self.assertTrue(self.run_protocol(
+            pairs=10, reps=2, smoke=False, calibrate=True,
+            output=self.repo / "cal")["success"])
+        with self.assertRaises(ValueError):
+            l.first_stage(self.repo / "cal")
 
     def test_candidate_extension_load_blocks_the_run(self):
         self.mutation = "extension"

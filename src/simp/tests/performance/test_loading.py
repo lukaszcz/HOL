@@ -2,9 +2,12 @@
 """Non-timing loading protocol regressions; synthetic logs are NOT evidence."""
 import copy
 import gzip
+import importlib.util
 import json
 import math
 from pathlib import Path
+import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -12,6 +15,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 import loading as l
+import timing_grid as tg
 
 RAW = "1,0.4,0.1,0.1,0.1,0.5,0.2,0.1"
 EMPTY = "0.000001,0,0,0,0,0,0,0"
@@ -358,17 +362,98 @@ class UnitAndPolicyTests(unittest.TestCase):
             "wall": {"decision": "pass"}, "cpu": {"decision": "fail"},
             "gc_cpu": {"decision": "reported"}}), 1)
 
-    def test_pairs_scale_with_control_width_squared(self):
-        import timing_grid
-        t = timing_grid.TARGET
-        self.assertEqual(l.pairs_for(t, 30), 30)
-        self.assertEqual(l.pairs_for(2 * t, 30), 120)
-        self.assertEqual(l.pairs_for(0.0, 30), 10)
-        self.assertIsNone(l.pairs_for(math.inf, 30))
+    def control(self, half_width):
+        ci = [math.exp(-half_width), math.exp(half_width)]
+        return {"metrics": {m: {"paired_ratio_bootstrap_95_percent": ci}
+                            for m in l.POLICY["gated_timing"]}}
 
-    def test_acceptance_defaults_meet_the_derived_floor(self):
-        self.assertGreaterEqual(l.PAIRS, 10)
-        self.assertGreaterEqual(l.REPS, 1)
+    def test_second_stage_count_is_the_grids_rule(self):
+        t, n = tg.TARGET, l.PAIRS
+        self.assertEqual(l.control_width(self.control(0.01)),
+                         tg.control_half_width({"control": self.control(
+                             0.01)}))
+        for width in (0.0, t, 1.5 * t, 2 * t, 5 * t):
+            control = self.control(width)
+            self.assertEqual(
+                l.second_stage_count(control, n),
+                tg.second_stage_pairs(tg.control_half_width(
+                    {"control": control}), n, t, tg.MAX_PAIRS))
+        self.assertEqual(l.second_stage_count(self.control(0.0), n), 2 * n)
+        self.assertEqual(l.second_stage_count(self.control(5 * t), n),
+                         tg.MAX_PAIRS)
+        infinite = {"metrics": {m: {"paired_ratio_bootstrap_95_percent":
+                                    None} for m in ("cpu", "wall")}}
+        self.assertEqual(l.second_stage_count(infinite, n), tg.MAX_PAIRS)
+
+    def test_first_stage_covers_the_unit_sd_it_is_sized_for(self):
+        self.assertEqual(l.required_units(0.054), 79)
+        self.assertLessEqual(l.required_units(l.UNIT_SD_BOUND),
+                             l.PAIRS * l.REPS)
+        self.assertGreater(l.required_units(l.UNIT_SD_BOUND * 1.2),
+                           l.PAIRS * l.REPS)
+        self.assertEqual((l.PAIRS, l.REPS), (40, 5))
+
+    def test_chi_square_upper_bound(self):
+        self.assertAlmostEqual(l.chi2_quantile(0.05, 11), 4.5748, places=3)
+        self.assertAlmostEqual(l.chi2_quantile(0.05, 19), 10.1170, places=3)
+        self.assertAlmostEqual(l.chi2_quantile(0.5, 2), 2 * math.log(2),
+                               places=6)
+        self.assertAlmostEqual(l.sd_upper_bound(1.0, 12),
+                               math.sqrt(11 / 4.5748), places=3)
+        self.assertLess(l.sd_upper_bound(1.0, 40),
+                        l.sd_upper_bound(1.0, 12))
+
+    def test_jitter_reports_the_derivation_quantities(self):
+        n, reps = 12, 4
+        # Per-process log values: a pair offset (drift, invisible to s1) and
+        # a within-cell deviation of known size.
+        def value(i, side, r):
+            drift = 0.2 * i
+            dev = (-1.5, -0.5, 0.5, 1.5)[r] * 0.01
+            gap = 0.02 * (-1) ** i if side == "candidate" else 0.0
+            return math.exp(drift + dev + gap)
+
+        rows = [dict(pair=i, selection=side, rep=r, measurement=dict(raw={
+            m: value(i, side, r) for m in l.METRICS}))
+                for i, side, r in l.schedule(n, reps)]
+        control = l.statistics(
+            [dict(r, accepted=True, exit=0, measurement=dict(
+                r["measurement"], calibrated=True)) for r in rows],
+            n, False, reps)
+        got = l.jitter(rows, control, n, reps)
+        wall = got["metrics"]["wall"]
+        # Cell values deviate by +-0.015, +-0.005 about their mean.
+        ss = 0.01 ** 2 * (1.5 ** 2 + 0.5 ** 2) * 2
+        self.assertAlmostEqual(wall["process_log_sd"], math.sqrt(ss / 3),
+                               places=9)
+        # The pair offset never reaches the paired log ratio: it is +-0.02
+        # around zero, i.e. the sd of 0.02 * (-1)^i over 12 pairs.
+        paired = 0.02 * math.sqrt(12 / 11)
+        self.assertAlmostEqual(wall["paired_log_ratio_sd"], paired, places=9)
+        self.assertAlmostEqual(wall["unit_sd"], paired * 2, places=9)
+        self.assertAlmostEqual(wall["unit_sd_upper"],
+                               l.sd_upper_bound(paired * 2, 12), places=9)
+        self.assertEqual(wall["required_units"],
+                         l.required_units(wall["unit_sd_upper"]))
+        self.assertEqual(got["required_units"], wall["required_units"])
+        self.assertEqual(got["configured_units"], l.PAIRS * l.REPS)
+
+    def test_layout_units_are_replayable_and_independent(self):
+        key = ("seed", "control", 3, "candidate", 2)
+        self.assertEqual(l.layout_units(*key), l.layout_units(*key))
+        self.assertEqual(l.layout_units("seed", "control", 3, "candidate", 2),
+                         l.layout_units("seed", "candidate", 3, "candidate",
+                                        2))
+        drawn = {l.layout_units("seed", "control", i, side, r)
+                 for i in range(10) for side in ("baseline", "candidate")
+                 for r in range(5)}
+        self.assertGreater(len(drawn), 20)
+        self.assertTrue(all(0 <= u < l.ps.LAYOUT_UNITS for u in drawn))
+        self.assertNotEqual(
+            [l.layout_units("seed", "control", i, "baseline", 0)
+             for i in range(20)],
+            [l.layout_units("seed-ext", "control", i, "baseline", 0)
+             for i in range(20)])
 
 
 class ExtensionAbsenceTests(LoadingProtocol):
@@ -390,7 +475,7 @@ class ExtensionAbsenceTests(LoadingProtocol):
 
     def test_loaded_extension_name_rejected_for_the_candidate(self):
         for value in ("simpExtLib", "congExtLib,TraverseExt",
-                      "SimpTracking", "trackedSimpDefaults", "splitLib"):
+                      "SplitData", "trackedSimpDefaults", "splitLib"):
             with self.subTest(value=value), \
                     self.assertRaisesRegex(ValueError, "extension module"):
                 self.check_enforced(self.with_extensions(value))
@@ -398,14 +483,42 @@ class ExtensionAbsenceTests(LoadingProtocol):
     def test_extension_source_in_the_actual_trace_rejected(self):
         es = copy.deepcopy(self.events)
         index = next(i for i, e in enumerate(es) if e[0] == "loaded")
-        es.insert(index, ["loaded", str(self.dst / "SimpTracking.sml")])
-        with self.assertRaisesRegex(ValueError, "SimpTracking"):
+        es.insert(index, ["loaded", str(self.dst / "splitLib.sml")])
+        with self.assertRaisesRegex(ValueError, "splitLib"):
             self.check_enforced(es)
 
     def test_baseline_records_but_does_not_reject(self):
-        _, measured = self.check(self.with_extensions("SimpTracking"))
-        self.assertEqual(measured["extensions_loaded"], ["SimpTracking"])
+        _, measured = self.check(self.with_extensions("SplitData"))
+        self.assertEqual(measured["extensions_loaded"], ["SplitData"])
         self.assertFalse(measured["extension_absence_enforced"])
+
+    def test_extension_observation_names_must_be_extensions(self):
+        for value in ("simpLib", "none,SplitData", "SplitData,none", ""):
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, "loading.extensions"):
+                self.check_enforced(self.with_extensions(value))
+
+    def test_stems_the_baseline_never_loads_are_rejected(self):
+        rows = []
+        for side, extra in (("baseline", []), ("baseline", ["x"]),
+                            ("candidate", ["x"])):
+            _, measured = self.check_enforced(self.events)
+            measured = dict(measured, loaded_stems=measured[
+                "loaded_stems"] + extra)
+            rows.append(dict(actual_selection=side, measurement=measured))
+        l.check_new_stems(rows)
+        rows.append(dict(actual_selection="candidate", measurement=dict(
+            rows[0]["measurement"], loaded_stems=["Paired", "newHelper"])))
+        with self.assertRaisesRegex(ValueError, "newHelper"):
+            l.check_new_stems(rows)
+        with patch.object(l, "STEM_ALLOWANCE", frozenset({"newHelper"})):
+            l.check_new_stems(rows)
+        self.assertEqual(l.STEM_ALLOWANCE, frozenset())
+
+    def test_loaded_stems_come_from_every_load_event(self):
+        _, measured = self.check_enforced(self.events)
+        self.assertEqual(measured["loaded_stems"], sorted({
+            "Paired", "Traverse", "simpLib", "selftest"}))
 
     def test_missing_extension_observation_rejected(self):
         es = [e for e in self.events
@@ -414,8 +527,22 @@ class ExtensionAbsenceTests(LoadingProtocol):
             self.check_enforced(es)
 
     def test_name_predicate_matches_the_api_audit(self):
+        text = (l.AUDIT / "selftest.sml").read_text()
+        block = re.search(r"val forbidden_names\s*=\s*\[(.*?)\]", text,
+                          re.S)[1]
+        audit = re.findall(r'"([^"]+)"', block)
+        self.assertGreater(len(audit), 10)
+        # One source: the audit's list, in the audit's order.
+        self.assertEqual(list(l.EXTENSION_NAMES), audit)
+        for name in audit:
+            self.assertTrue(l.extension_name(name), name)
+        # The audit's own patterns are the predicate's.
+        for pattern in ('isSuffix "Ext"', 'isSuffix "ExtLib"',
+                        'isPrefix "simpMarker"'):
+            self.assertIn(pattern, text)
         for name in ("simpExtLib", "boolSimpsExt", "simpMarkerLib",
-                     "SplitData", "SimpTracking"):
+                     "SplitData", "someNewExt", "otherExtLib",
+                     "simpMarkerNew"):
             self.assertTrue(l.extension_name(name), name)
         for name in ("simpLib", "congLib", "Traverse", "Cond_rewr",
                      "pureSimps", "boolSimps", "Trace"):
@@ -424,6 +551,12 @@ class ExtensionAbsenceTests(LoadingProtocol):
     def test_generated_runner_probes_the_same_names(self):
         for name in l.EXTENSION_NAMES:
             self.assertIn('"%s"' % name, l.TIMING)
+        # Every structure of the global name space is tested, so a heap
+        # binding that matches only a pattern is seen too.
+        self.assertIn("#allStruct PolyML.globalNameSpace ()", l.TIMING)
+        self.assertNotIn("lookupStruct", l.TIMING)
+        for pattern in ('"Ext"', '"ExtLib"', '"simpMarker"'):
+            self.assertIn(pattern, l.TIMING)
         for mark in ("@PROBE@", "@NONE@"):
             self.assertNotIn(mark, l.TIMING)
 
@@ -433,14 +566,19 @@ class SemanticGateTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="loading-gate-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.build((l.AUDIT / "audit_constants.py").read_text())
+
+    def build(self, constants_text):
+        """The audited tree, with the audit's constants module as given."""
+        shutil.rmtree(self.root / "src", ignore_errors=True)
         self.audit = self.root / "src/simp/tests/api-audit"
         self.audit.mkdir(parents=True)
+        self.constants_file = self.audit / "audit_constants.py"
+        self.constants_file.write_text(constants_text)
+        self.constants = l.audit_constants(self.audit)
         native = self.root / "src/simp/src"
         self.selected, actual = [], {}
-        modules = ("simpLib", "congLib", "Traverse", "Cond_rewr", "Trace",
-                   "SimpTracking", "simpExtLib", "TraverseExt",
-                   "Cond_rewrExt", "congExtLib")
-        for module in modules:
+        for module in self.constants.NATIVE_MODULES:
             for suffix in (".sig", ".sml"):
                 name = module + suffix
                 path = native / name
@@ -451,9 +589,9 @@ class SemanticGateTests(unittest.TestCase):
                                           **seal))
                 actual[str(path)] = dict(resolved=str(path), **seal)
         sources = {}
-        for name in ("run.py", "Holmakefile", "selftest.sml", "ordinary.ML",
-                     "runtime.ML", "Documentation.sml"):
-            (self.audit / name).write_text("synthetic audit fixture\n")
+        for name in self.constants.SOURCES:
+            if name != "audit_constants.py":
+                (self.audit / name).write_text("synthetic audit fixture\n")
             sources[name] = l.a.seal(self.audit / name)
         inventory = self.audit / "actual-files.json.gz"
         inventory.write_bytes(gzip.compress(json.dumps(actual).encode()))
@@ -465,10 +603,7 @@ class SemanticGateTests(unittest.TestCase):
         for order, kind, owner in l.itertools.product(
                 ("simp-first", "cong-first"), ("attribute", "exporter"),
                 ("before", "after")):
-            count = {("attribute", "before"): 172,
-                     ("attribute", "after"): 168,
-                     ("exporter", "before"): 176,
-                     ("exporter", "after"): 171}[kind, owner]
+            count = self.constants.CASE_CHECKS[kind, owner]
             text = "OK\n" * count + "OBS result=pass\n" + "".join(
                 "OBS used.path=" + raw + "\n" for raw in actual)
             path = self.audit / (order + kind + owner + ".gz")
@@ -488,6 +623,51 @@ class SemanticGateTests(unittest.TestCase):
 
     def test_all_eight_actual_source_bound_scenarios(self):
         self.assertEqual(self.check()["cases"], 8)
+
+    def test_gate_follows_the_audits_constants_not_a_copy(self):
+        text = (l.AUDIT / "audit_constants.py").read_text()
+        changed = text.replace('"SimpTracking", ', "").replace(
+            "172", "178").replace("168", "174").replace("176", "182")
+        self.assertNotEqual(changed, text)
+        self.build(changed)
+        self.assertNotIn("SimpTracking", self.constants.NATIVE_MODULES)
+        self.assertEqual(self.check()["cases"], 8)
+        # A receipt of the old counts no longer fits the new constants.
+        self.build(changed)
+        for case in self.receipt["cases"]:
+            case["checks"] -= 6
+        with self.assertRaisesRegex(ValueError, "failed semantic process"):
+            self.check()
+
+    def test_audit_run_py_validates_with_the_same_constants(self):
+        sys.path.insert(0, str(l.AUDIT))
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "audit_run_under_test", l.AUDIT / "run.py")
+            run = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(run)
+        finally:
+            sys.path.remove(str(l.AUDIT))
+        real = l.audit_constants(l.AUDIT)
+        self.assertEqual(run.CASE_CHECKS, real.CASE_CHECKS)
+        self.assertEqual(run.NATIVE_MODULES, real.NATIVE_MODULES)
+        self.assertEqual(run.SOURCES, real.SOURCES)
+        self.assertIn("audit_constants.py", real.SOURCES)
+        # What run.py accepts per case is what the gate reads.
+        for (kind, owner), count in real.CASE_CHECKS.items():
+            used = "".join("OBS used.path=%s\n" % (run.ROOT / "src/simp/src"
+                                                    / (m + suffix))
+                           for m in real.NATIVE_MODULES
+                           for suffix in (".sig", ".sml"))
+            text = "OK\n" * count + "OBS result=pass\n" + used
+            present = all((run.ROOT / "src/simp/src" / (m + s)).is_file()
+                          for m in real.NATIVE_MODULES
+                          for s in (".sig", ".sml"))
+            if present:
+                self.assertEqual(
+                    run.validate_output(text, 0, kind, owner), count)
+            with self.assertRaises(ValueError):
+                run.validate_output(text + "OK\n", 0, kind, owner)
 
     def test_duplicate_missing_failed_or_unbound_semantics_rejected(self):
         original = copy.deepcopy(self.receipt)
@@ -515,7 +695,8 @@ class ExitTests(unittest.TestCase):
                 "--module", "congLib", "--output", "/unused"]
         for decision, code in (("pass", 0), ("fail", 1),
                                ("inconclusive", 2)):
-            report = dict(success=True, mode="isolated-source", module="congLib",
+            report = dict(success=True, mode="isolated-source",
+                          module="congLib", stage="first",
                           results={"candidate": {"metrics": {
                               "cpu": {"decision": decision}}}})
             with self.subTest(decision=decision), \
