@@ -66,6 +66,24 @@ def resolve_observed(path):
     raise ValueError("missing observed input: " + path)
 
 
+def inside(path, root):
+    """True if path or an existing ancestor of it is the same as root.
+
+    The comparison is by identity (device and inode), so symlinks and
+    bind-mounted aliases of the checkout are caught too.
+    """
+    p = Path(os.path.abspath(path))
+    while True:
+        try:
+            if os.path.samefile(p, root):
+                return True
+        except OSError:
+            pass
+        if p.parent == p:
+            return False
+        p = p.parent
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -78,8 +96,9 @@ def main():
         args.output = Path(tempfile.mkdtemp(prefix="api-audit-receipts-"))
     if not args.output.is_absolute():
         parser.error("--output must be an absolute path: " + str(args.output))
+    given = args.output
     args.output = args.output.resolve()
-    if args.output == ROOT or ROOT in args.output.parents:
+    if inside(args.output, ROOT) or inside(given, ROOT):
         parser.error("--output must be outside the repository: " +
                      str(args.output))
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
