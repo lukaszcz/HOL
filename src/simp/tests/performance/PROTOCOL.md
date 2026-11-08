@@ -2324,11 +2324,12 @@ that the collections leave, not a surviving allocation space.
 and the candidate-minus-baseline difference of the smallest and of the
 largest reading, with the allocation-area sizes seen and `comparable`
 (false when more than one allocation-area size is seen in the cell,
-in either variant or across the two; the difference is then not comparable). Live words are live data of the local
-heap. Compiled code lives in code spaces, outside `sizeHeap`, so it is not
-in the figure: the standalone `note_rewrite` code object is not counted, and
-a near-zero live difference says nothing about whether it is retained. The
-reading is measured and sealed in the archive, and is no decision input.
+in either variant or across the two; the difference is then not
+comparable).  Live words are live data of the local heap.  Compiled code
+lives in code spaces, outside `sizeHeap`, so it is not in the figure: the
+standalone `note_rewrite` code object is not counted, and a near-zero live
+difference says nothing about whether it is retained.  The reading is
+measured and sealed in the archive, and is no decision input.
 
 `cell` repeats the TASK29B startup bracket of two revisions under chosen
 path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
