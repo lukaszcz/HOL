@@ -69,13 +69,16 @@ the report line on stdout.
 Other exits. A command line that argparse rejects (an unknown option, a bad
 value) exits 2 with its usage message on stderr and nothing on stdout.
 `--replay` and `--ledger-status` exit 0 when they succeed, even if the
-replayed decision is a fail: the decision is the `exit` field of the JSON
-they print. They exit 1 on a refusal or a replay mismatch. A run that exits
-1 with nothing on stdout stopped without a report line. That covers a
-refusal before any report (an argument, ledger or output check), an
-uncaught exception (a traceback), and a failure to save `loading.json` at
-the end of the run. In the last case the decision attempt stays open and
-counts as judged, so no second draw is allowed.
+replayed decision is a fail. Only `--replay` prints a decision: its `exit`
+field. `--ledger-status` prints `{ledger, table, smokes}` instead, with the
+outcomes in `table[].statuses`; it has no `exit` field. Both exit 1 on a
+refusal (and `--replay` also on a replay mismatch), with nothing on
+stdout. A run that exits 1 with nothing on stdout stopped without a report
+line. That covers a refusal before any report (an argument, ledger or
+output check), and a decision run that ends in a traceback or in a failed
+save of `loading.json`: the `finally` saves, and an exception skips
+`close_attempt`. In both cases the decision attempt stays open, is judged
+as having no close line, and no second draw is allowed.
 
 ## Timed boundary and proof check
 
