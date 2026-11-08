@@ -16,7 +16,7 @@ for even a smoke run. Do not run concurrently with builds or telemetry probes.
 python3 src/simp/tests/performance/loading.py \
   --baseline BASELINE_FULL_COMMIT --candidate CANDIDATE_FULL_COMMIT \
   --module simpLib --pairs 10 \
-  --api-audit /absolute/path/to/api-audit/evidence/RUN/receipt.json \
+  --api-audit $API_AUDIT_OUTPUT/STAMP/receipt.json \
   --authorize-measurements --output /absolute/path/to/new-loading-simp
 ```
 

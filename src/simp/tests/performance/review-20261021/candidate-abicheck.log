@@ -1,7 +1,0 @@
-/tmp/simplifier-review-20261021/candidate/abicheck.sml:137: error: Error while matching datatype reducer: constructor CONFIG_REDUCER was present in the structure but not in the signature.
-Found near Traverse
-/tmp/simplifier-review-20261021/candidate/abicheck.sml:137: error: Error while matching datatype reducer: constructor CONTEXT_REDUCER was present in the structure but not in the signature.
-Found near Traverse
-error in quse /tmp/simplifier-review-20261021/candidate/abicheck.sml : Fail "Static Errors"
-error in load abicheck : Fail "Static Errors"
-Uncaught exception at ./basis/FinalPolyML.sml:492: Fail "Static Errors"

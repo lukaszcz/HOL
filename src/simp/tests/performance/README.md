@@ -1,36 +1,23 @@
-# Simplifier performance evidence
+# Simplifier performance harness
 
-## TASK29 isolated fragment/compiler/storage gate
+## Grids and gates
 
-[`TASK_29_HANDOFF.md`](TASK_29_HANDOFF.md) reports the full 27-case, six-size
-experiment: 6,480 timed fresh processes, exact per-workload CPU/wall/GC
-intervals, graph slopes and source/layout attribution. **TASK29 is blocked**:
-43 failed cells, 119 uncertain cells, and no supported cumulative HOL
-allocation counter. Passing retained-graph slopes do not waive timing failures.
-
-`task29_gate.py run` executes the entire fixed grid, uses unchanged TASK28
-admission/statistics and losslessly archives each cell before cleanup.
+`task29_gate.py run` executes the fixed 27-case, six-size grid, uses the
+TASK28 admission/statistics and losslessly archives each cell before cleanup.
 `task29_gate.py replay --output ARCHIVE_DIRECTORY` revalidates all archives
-and recomputes decisions without live private builds. Both commands deliberately
-exit 2 while the allocation/gate prerequisites remain blocked. Neither is an
-implicit normal selftest or independent-build measurement.
+and recomputes decisions without live private builds. Neither is an implicit
+normal selftest or independent-build measurement.
 
-`task29a_grid.py` reruns the same 162 cells under the equivalence policy
+`task29a_grid.py` runs the same 162 cells under the equivalence policy
 (version 2, `PROTOCOL.md`): 3% margin on CPU/wall, B/B validity window, GC
 reported. Every process of a cell uses one predeclared count from
-`evidence/task29a/iterations.json`; pairs and samples are run options.
+`task29a_iterations.json`; pairs and samples are run options.
 `task29a_grid.py replay --output DIR` recomputes every decision offline;
 `--partial` replays the finished cells of an interrupted run without a grid
-decision (`evidence/task29a/grid-partial/`). `--layout-seed` randomizes
-each process's code layout, `extend --grid DIR` runs the predeclared,
-candidate-blind second stage, and `--resume` continues after an
-infrastructure failure (`PROTOCOL.md`, "Code-layout randomization").
-The complete layout-randomized two-stage grid is `evidence/task29a/grid/`:
-144 pass, 18 inconclusive, 0 fail. `dispose --output DIR` replays it and
-applies the policy owner's disposition (13 cells unresolvable on this host,
-5 attributed): **pass**, recorded in `stage2/disposition.json`. Results:
-`evidence/task29a/` and
-[`TASK_29A_numerical_attribution_closure.md`](TASK_29A_numerical_attribution_closure.md).
+decision. `--layout-seed` randomizes each process's code layout, `extend
+--grid DIR` runs the predeclared, candidate-blind second stage, `dispose
+--output DIR` applies the policy owner's disposition, and `--resume` continues
+after an infrastructure failure (`PROTOCOL.md`, "Code-layout randomization").
 
 `timing_grid.py` is the TASK29A grid as a parameterized engine (`PROTOCOL.md`,
 "Shared timing grid"); `task29a_grid.py` and `task30_grid.py` are its tables.
@@ -49,19 +36,13 @@ pinned, reviewed one (`task30_pins.PINNED`), and the exit status is zero only
 when every cell passes. The exact-allocation counterpart
 is `allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
 `history_theory_change` the allocation fixture makes no `new_theory`
-transition, see `PROTOCOL.md` and `TASK_29B_allocation_counter.md`).
+transition, see `PROTOCOL.md` and `ALLOCATION_COUNTER.md`).
 
 Fresh post-workload actual object/code/pool diagnostics are documented in
-[`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md). The subsequent
-[`RUNTIME_POOLS.md`](RUNTIME_POOLS.md) supplies all previously omitted split
-pool slots, retaining raw B/B and B/C captures in
-`evidence/task29/runtime-pools/` without modifying old evidence. Both are
-explicitly **not timing acceptance** or TASK29A closure: measurement-boundary,
-executed-target/causal attribution, passing full-grid gates and explicit
-policy/exclusive-environment prerequisites remain open. The read-only
-environment diagnostic cannot certify exclusivity and observes concurrent
-work on this host. (Amendment 2026-11-05: the exclusive-environment
-requirement was waived by the policy owner; the host is shared.)
+[`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md) and
+[`RUNTIME_POOLS.md`](RUNTIME_POOLS.md).
+They are explicitly **not timing acceptance**. The read-only environment
+diagnostic cannot certify exclusivity.
 
 ## Maintained TASK28 integration
 
@@ -78,22 +59,17 @@ source seals, graph arithmetic, ordered runtime records and controlled weak-ref
 release. RSS snapshots and process-lifetime VmHWM are not exact temporary peaks;
 Poly/ML 5.9.2 lacks a cumulative allocated-byte counter. Weak collection proves
 only release of the controlled simpset-ref wrapper, not opaque internal objects
-or absence of global retention. Those stronger gates remain blocked, alongside
-missing independent integer/real dependencies and routine/full clean snapshots.
+or absence of global retention.
 
-The main ten-pair experiment validates integrated machinery, not matrix-wide
-performance approval. Shared-heap final-source isolation is **not independent
-builds**. Manifest verification is runnable, but independent mode still blocks
-until fresh independent launchers, inventories and consumed observations exist.
-Earlier temporary validation is not final evidence for changed source/fixtures.
+A runnable matrix is not a measured one, and the ten-pair experiment validates
+machinery, not matrix-wide performance approval. Shared-heap final-source
+isolation is **not independent builds**; independent mode blocks until fresh
+independent launchers, inventories and consumed observations exist.
 
-The TASK28 review repair requires manifest-bound shared sources/products and
-exact runtime/tool/launcher provenance; old matrix archives without
-`shared_inputs` are historical diagnostics, not admissible acceptance data.
-Storage slopes and their controls/uncertainty participate in CLI exits, and
-loading must exercise positive GC in its accounting control. Current commands,
-raw repair receipts and replay/mutation results are in
-[`TASK_28_HANDOFF.md`](TASK_28_HANDOFF.md) and `evidence/task28/repair/`.
+Matrix archives need manifest-bound shared sources/products (`shared_inputs`)
+and exact runtime/tool/launcher provenance to be admissible. Storage slopes and
+their controls/uncertainty participate in CLI exits, and loading must exercise
+positive GC in its accounting control.
 
 ### Maintained checks
 
@@ -109,17 +85,19 @@ python3 -B src/simp/tests/performance/matrix_schema.py --json
 bin/Holmake --no-project --no-cache --no_prereqs \
   --holstate="$PWD/bin/hol.state0" -C src/simp/tests/performance -j1 \
   PERFORMANCE_CANDIDATE=CANDIDATE_FULL_40_HEX_COMMIT \
-  PERFORMANCE_CHECK_OUTPUT=/absolute/path/to/new-task28-check check
+  PERFORMANCE_CHECK_OUTPUT=/absolute/path/to/new-check-output check
 ```
 
-`python-tests` discovers all performance tests (224 after review repair, with
-real HOL tests skipped unless enabled), plus compatibility runner tests. `check`
+`python-tests` discovers all performance tests (real HOL tests are skipped
+unless enabled), plus compatibility runner tests. `check`
 serially runs discovery, matrix completeness, real Python subprocess controls,
 then `smoke_matrix.py` and `smoke_clients.py --scope small`. It does **not** run
 performance acceptance,
 loading measurements, runtime smoke or expensive full-grid cases implicitly.
-Plain Holmake retains the Python-test default; `diagnostic` retains its original
-six-pair TASK03 settings and separate `PERFORMANCE_OUTPUT` paths.
+Plain Holmake runs the Python tests; `diagnostic` uses six pairs and separate
+`PERFORMANCE_OUTPUT` paths.  The targets that write output depend on a guard
+that refuses an unset, relative or in-repository output directory before
+anything else runs, at any `-j`.
 
 Other explicit targets in `src/simp/tests/performance/Holmakefile`:
 
@@ -140,7 +118,7 @@ single-add/AC cases. Nothing overwrites receipts: controls JSON and smoke JSON/
 sibling logs must be new. Do not invoke real targets concurrently; smoke drivers
 do not acquire the acceptance frontend's host-wide serial lock. Hosts with a
 heap embedding a historical root must use the configured-root wrapper from
-`../compatibility/evidence/task26/root-wrapper.sh`.
+`../compatibility/tools/root-wrapper.sh`.
 
 Optional serial real-integration discovery switches are `HOL_CLIENT_REPO` (an
 absolute configured tree) and `RUNTIME_METRICS_SML=1`; the latter can retain its
@@ -167,79 +145,11 @@ decision. The congLib import includes simpLib, not marginal cost after it.
 `success` means protocol completion; inspect every metric's decision. A fresh
 semantic receipt alone is not startup timing or independent-build acceptance.
 
-## Historical review bundle
+## Review-bundle inputs
 
-`review-20261021/` preserves the compact original review bundle unchanged.
-It is historical evidence tied to:
-
-- develop `cccaa27d7099cbadc886983020cbe745db7793f3`;
-- candidate `cf1f863b4e5a9712ce1b179f18274eb3451f3954`.
-
-Provenance, hashes, current-state fingerprints, coverage inventory and
-reproduction prerequisites are in
-[`../compatibility/`](../compatibility/README.md).
-The original behavior/ABI probes are colocated here solely to preserve
-`reproduce.py`'s relative input paths. This is a small evidence bundle, not
-an imported compatibility archive. The maintained diagnostic harness below
-is separate from these immutable historical inputs.
-
-## Bundle map
-
-| Files | Purpose |
-| --- | --- |
-| `staging.sml`, `abicheck.sml` | Callback/exception staging and old-signature elaboration probes |
-| `bench.sml` | 17 calibrated CPU workloads; five samples per workload |
-| `detail.sml` | Eight focused CPU/GC/wall workloads and graph-size report |
-| `memory.sml` | Incremental retained graph words at 0/10/100/1,000 rules |
-| `reproduce.py` | Original paired reconstruction script, preserved unchanged |
-| `review-results.json` | Original review summary, medians, behavior and storage observations |
-| `detailed-benchmarks.json` | Original focused CPU/GC/wall medians and iteration counts |
-| `validation-summary.json` | Original positive contract/native count summary |
-| `*-timings-*.log` | Five raw CPU samples, repetition counts and sink per workload |
-| `*-detail-*.log`, `*-memory.log` | Focused medians, counts, sink and graph words |
-| `*-staging.log`, `*-abicheck.log` | Unique callback stages and actual elaboration diagnostics |
-| `*-legacy.log`, `*-traversal.log.gz`, `*-exclusion.log.gz` | Original positive assertions and ordered observations |
-| `native*.log.gz` | Native expanded selftest and focused cleanup-suite observations |
-| `*-build.log`, `*-bench-build.log` | Original isolation/build context, not a build acceptance receipt |
-
-## What the review reported (not remeasured by TASK_01)
-
-The review shared the candidate heap/libraries between exact simplifier source
-versions on Poly/ML 5.9.2 with one GC thread. Timing processes ran in
-baseline/candidate/candidate/baseline order, with calibration and five measured
-samples per workload. These were not independent whole-repository builds.
-
-- Requirement callbacks/inferences moved from tactic construction to use;
-  a saved valid tactic returned one goal on develop but raised `PrinterFailure`
-  on the reviewed candidate after the printer began throwing.
-- The unchanged old reducer datatype signature accepted develop and rejected
-  the candidate's additional constructors. The log contains the actual SML
-  static error, not just a dependency-scan outcome.
-- 1,000-rule fragment creation was roughly 1.8–1.9x and merging 2.9–3.1x
-  develop cost in the original CPU batch. Missing-name deletion was roughly
-  3x; the separate focused wall-time batch was about 83 versus 245 us.
-- Incremental 1,000-rule retained storage was 83,071 versus 125,096 reachable
-  words after subtracting shared base and fragment graphs. This is neither
-  process RSS nor a byte count nor total allocation.
-- Positive evidence: 73 original selftests, 47 traversal checks (273 `OBS`
-  lines) and 929 exclusion checks (2,703 `OBS` lines) per implementation;
-  630 native selftest and 1,440 combined native checks. Traversal output was
-  identical, exclusions matched after removing theory build-timing lines.
-  `native` includes `native-selftest`; these counts are not additive.
-
-## Historical limitations (not repaired in immutable inputs)
-
-No repair, performance pass, independent build, fresh runtime measurement or
-complete source-compatibility claim follows from copying these files.
-There is no supplied historical exit-status manifest, loaded-path transcript,
-or binary hash record; missing provenance is explicitly recorded, not invented.
-Current fingerprints must not be relabeled as historical fingerprints.
-
-`reproduce.py` is not fail-closed on missing observations and does not record
-loaded paths. `bench.sml` discards projection/conversion construction results;
-its existing sink does not fix those probes. `detail.sml` prints only the
-per-field medians, not its five raw samples. These limitations remain visible
-in the originals; the new probes below do not alter historical inputs.
+`review-20261021/abicheck.sml` is the old-signature elaboration probe. It is
+installed into every private tree by the paired runners and sealed by content
+in the grid counts files, so it stays at this path, byte for byte.
 
 ## Maintained TASK_03 diagnostic harness
 
@@ -249,7 +159,7 @@ From the repository root, with **no other build or benchmark running**:
 bin/Holmake --no-project --no-cache --no_prereqs \
   --holstate="$PWD/bin/hol.state0" \
   -C src/simp/tests/performance -j1 \
-  PERFORMANCE_OUTPUT=/tmp/task03-fresh diagnostic
+  PERFORMANCE_OUTPUT=/tmp/diagnostic-output diagnostic
 ```
 
 The output directory must not exist from an earlier run. This now executes
@@ -276,8 +186,7 @@ also times complete operations. Every batch records wall, inclusive CPU
 user/system, non-GC user/system, GC user/system and consumption, including all
 calibration observations. Five forced GCs independently check timer accounting.
 Poly's `checkCPUTimer` includes GC; `checkGCTime` is GC **user only**. Never add
-GC to CPU. Runtime-version source attribution and the empirical timer control
-are retained with evidence. The validator requires the two timer views to
+GC to CPU. The validator requires the two timer views to
 agree within 20 ms (sequential reads are not atomic); this is an accounting
 sanity check, not a performance acceptance allowance.
 
@@ -329,7 +238,7 @@ and preexisting shared objects can contribute to constant terms. Do not call
 these RSS, allocated words, bytes, global roots or exact lifetime/release
 measurements. Graphs remain rooted in each process until process exit.
 
-### Statistics, interpretation and evidence
+### Statistics and interpretation
 
 `summarize.py` recomputes complete schemas/order and uses a per-process median
 of five per-operation batches, then paired candidate/baseline ratios. CPU,
@@ -341,24 +250,16 @@ iteration counts remain available. Baseline/baseline controls use the same
 options before reviewed measurements. Noise is uncertainty, **not a pass**.
 No aggregate score, fixed regression budget or offsetting fast traversal is
 used. Ten or more paired observations and expanded matrices remain required
-by later final-acceptance tasks, not this diagnostic baseline.
+by final acceptance, not this diagnostic baseline.
 
 The summary program assumes the runner's path validation already succeeded;
 it independently revalidates metrics/order, not source provenance. Audit the
-archived source/path bindings as well (including wrong-selection and mutated
-source negative controls):
+source/path bindings of the output directories as well:
 
 ```sh
 python3 -B src/simp/tests/performance/audit_evidence.py \
-  src/simp/tests/performance/evidence/task03/baseline-control \
-  src/simp/tests/performance/evidence/task03/reviewed \
-  src/simp/tests/performance/evidence/task03/current-head
+  BASELINE_CONTROL_DIR REVIEWED_DIR CURRENT_HEAD_DIR
 ```
-
-TASK_03 source-tied results, commands, exits, uncertainties and reproduction
-receipt are in [`TASK_03_HANDOFF.md`](TASK_03_HANDOFF.md) and
-[`evidence/task03/`](evidence/task03/). Immutable input integrity remains checked
-by `../compatibility/verify_evidence.py`.
 
 ## Focused TASK_11 ordinary traversal diagnostic
 
@@ -413,18 +314,18 @@ python3 -B src/simp/tests/compatibility/run_paired.py \
   --baseline "$BASELINE" --candidate "$BASELINE" \
   --candidate-signature pass --candidate-behavior baseline \
   --traversal-performance --performance-pairs 10 --samples 5 \
-  --batch-seconds 0.25 --timeout 1800 --output /tmp/task11-traverse-control
+  --batch-seconds 0.25 --timeout 1800 --output /tmp/traverse-control
 python3 -B src/simp/tests/compatibility/run_paired.py \
   --baseline "$BASELINE" --candidate "$CANDIDATE" \
   --candidate-signature pass --candidate-behavior baseline \
   --traversal-performance --performance-pairs 10 --samples 5 \
-  --batch-seconds 0.25 --timeout 1800 --output /tmp/task11-traverse-candidate
+  --batch-seconds 0.25 --timeout 1800 --output /tmp/traverse-candidate
 for name in control candidate; do
   python3 -B src/simp/tests/performance/summarize.py \
-    /tmp/task11-traverse-$name --output /tmp/task11-traverse-$name-summary.json
+    /tmp/traverse-$name --output /tmp/traverse-$name-summary.json
 done
 python3 -B src/simp/tests/performance/audit_evidence.py \
-  /tmp/task11-traverse-control /tmp/task11-traverse-candidate
+  /tmp/traverse-control /tmp/traverse-candidate
 ```
 
 This isolates ordinary traversal from the existing `raw_reuse_1000` mixture

@@ -73,7 +73,7 @@ complete expected theorem/hypothesis set. Saved-tactic checks run through
 ## Additive provenance
 
 These tests add separate-type assertions; they do not move or weaken original
-cases or alter the sealed TASK_06 coverage ledger. Comment anchors map to the
+cases or alter the sealed coverage ledger. Comment anchors map to the
 existing original contracts as follows:
 
 | New block | Original semantic provenance |
@@ -85,7 +85,7 @@ existing original contracts as follows:
 | `Prepared bundles retain` | main selftest `combined_bundle_fixture` |
 | `Child-first changes overlap` | main selftest `prepared_normalization_fixture`, observer/child-first contracts |
 | `Two typed Context slots` | main selftest R4 late FRAG lookup and Context restoration |
-| `One tracking slot` | TASK_08 singleton tracking/control ownership contract |
+| `One tracking slot` | singleton tracking/control ownership contract |
 
 ## Tracked compiler gate (TASK_14)
 
@@ -100,10 +100,8 @@ compare complete expected conclusions and hypothesis sets.
 
 The inventory getter `rewrite_sources` now rejects directives. First call
 `prepare_rewrite_arguments` explicitly and inspect its returned set/rules.
-See [TASK14 migration](../compatibility/migration/TASK14.md) for contracts and
-[handoff](../compatibility/TASK_14_HANDOFF.md) for final evidence. This is
-bounded tracked-compiler acceptance, not exhaustive TASK_21 view/bundle
-validation, TASK_26 test migration or performance acceptance.
+This is bounded tracked-compiler acceptance, not exhaustive view/bundle
+validation or performance acceptance.
 
 ## Exclusion and replay gate (TASK_19)
 
@@ -123,15 +121,14 @@ No original assertion is moved or relaxed. `src/selftest.sml` still runs its
 642 source-tied native checks, including parser/warning/ambiguity contracts,
 strategy targets, local/ambient split suppression, mixed views and failures.
 The unchanged coverage ledger verifies those assertions and the 929-check
-legacy exclusion suite. TASK21 below closes dependent-view invalidation;
-persistent split ownership/lifecycle remains TASK_23.
+legacy exclusion suite. Dependent-view invalidation is covered under
+"Sources, views and prepared bundles" below.
 
 Only extension-owned `looper_tac` changes: split/case suppression applies to
 split loopers, not unrelated ordinary names. Resolution, private history order,
 strict reparsing versus resolved replay, and ordinary-reset versus explicit
 preserving-control replay stay unchanged. There is no legacy-history identity
-inference, new ordinary import, or ordinary representation change. See the
-[TASK19 handoff](../compatibility/TASK_19_HANDOFF.md) for source-tied evidence.
+inference, new ordinary import, or ordinary representation change.
 
 ## Configured tactics and strategies (TASK_20)
 
@@ -146,7 +143,7 @@ called, and complete hypotheses and ordered goals compared.
 | Configured controls | Native live depth, custom order and root rewrite tests; saved conversions/tactics, shared default versus explicit depth |
 | Loopers | Native replacement/round-limit tests; zero/one/multiple/unlimited rounds, UNCHANGED/failure/exception behavior, changed subgoal restart and saved reuse |
 | Counted globals | Native mutual-assumption/fixpoint/root/implication groups; ordered branching and real reconstruction, counted unchanged rotations, conclusion fixpoint reentry and one invocation-wide looper budget |
-| Child-first passes | Native child-first overlap; explicit traversal order and configured global reconstruction; private derivation restoration is covered by TASK22 below |
+| Child-first passes | Native child-first overlap; explicit traversal order and configured global reconstruction; private derivation restoration is covered under "Child-first derivation and solver lifetimes" below |
 | Supplied invocation binding | Once rules across looper siblings, both traversal policies and saved reuse; final solvers receive untagged facts even when a maker drops their rewrites; Abbr failure precedes FRAG/binding on repeated explicit and configured-alias invocations, while label lookup remains earlier |
 | Nested directives | Requirement/multiply-bound-qualified SF and Split execute; genuine multiply-bounded rewrites retain the original theorem, selected bound, full hypotheses and live exhaustion; ReqD failures retain provenance; wrapped assumption policy, label and abbreviation options, including non-global ReqD failure retention |
 | Bound local replay | Native `bound_global_fixture`; independent spent ambient quota plus partially spent/exhausted installed bundle and attached view, exact maker/collector schedule, zero bundle/view recompilation traces, same adjusted object observed by loopers and old saved conversions |
@@ -163,8 +160,7 @@ addition returns its exact input before entering compilation.
 
 `APIExamples.sml` compiles explicit strategy, global, child-first and bound
 clients. Branch-only help examples now use `simpExtLib`/`TraverseExt` and tracked
-recipes; ordinary callers require no migration. See the
-[TASK20 handoff](../compatibility/TASK_20_HANDOFF.md) for validation/evidence.
+recipes; ordinary callers require no migration.
 
 ## Sources, views and prepared bundles (TASK_21)
 
@@ -177,7 +173,7 @@ Existing 642 native assertions and all previous focused suites remain intact.
 | --- | --- |
 | Inventory order | Native views/AC/duplicate fixtures; exact fragment/conjunct/component order and native versus installed-view visibility |
 | Invalidation matrix | Native view/suspension/filter/removal fixtures; both projections and native/prepared installation after partial use or exhaustion; dependent views disappear while siblings keep actual sharing through replay |
-| Statement compatibility | Native stale/support views and TASK14 changed-maker case; changed conclusion/hypotheses/declared bound invalidate installed aliases and old handles, whereas a different proof of the same statement shares exhaustion |
+| Statement compatibility | Native stale/support views and changed-maker case; changed conclusion/hypotheses/declared bound invalidate installed aliases and old handles, whereas a different proof of the same statement shares exhaustion |
 | Nested composition | Native prepared/composed fixtures; partially spent conjuncts plus exhausted and live independent bindings, complete grouping/install order, duplicate rejection before callbacks, preserving versus reset replay |
 | Rejected/foreign views | Cached rejected matcher shapes never recompile; foreign handles cannot invent identities or borrow another binding's control |
 | Source reinstallation | A compatible bundle reinstalled after its surviving old view event does not retroactively install that alias; explicit new attachment shares original controls and invalidation works in both directions |
@@ -191,13 +187,10 @@ composition checks additionally make makers/collectors throw if invoked.
 Prepared originals and both attached views replay without compilation;
 ordinary-reset replay refreshes only declared groups, not old saved controls.
 
-The added invalidation assertion fails on the pre-TASK21 implementation.
 `rewrite_context_changes` now compares active compatible view dependencies
 and compiled statements in installation order, not only history-event identity
 or final membership. All work remains extension-owned; no legacy
 allocation, cache, representation, registration or callback path changes.
-See the [migration audit](../compatibility/migration/TASK21.md) and
-[TASK21 handoff](../compatibility/TASK_21_HANDOFF.md).
 
 ## Child-first derivation and solver lifetimes (TASK_22)
 
@@ -229,5 +222,4 @@ capture avoidance, default/configured factory schedules, limit rollback and
 unchanged observer/reducer/solver/charge counts. `strategies.sml` retains
 safe/unsafe solver validation, counted global passes, looper limits and real
 proof reconstruction. Native tests and frozen legacy traversal streams are
-unchanged. See [TASK22 migration](../compatibility/migration/TASK22.md) and
-[TASK22 handoff](../compatibility/TASK_22_HANDOFF.md).
+unchanged.

@@ -31,11 +31,6 @@ cases or sizes outside that case's grid (no bool/float/string coercion).
 `report()` returns the machine-readable completeness report. All entry points
 validate live sources and the frozen contract; no stale validation cache.
 
-Reference: `.agent-files/PLAN_performance.md`, complete P09 matrix;
-`.agent-files/tasks/TASK_28_expanded_acceptance_harness.md`. API/coverage inputs:
-`../compatibility/migration/final-apis.tsv`, `migration/TASK27.md`,
-`COVERAGE.md`, TASK26 relocation and TASK27 handoffs. Actual final signatures
-are authoritative; the historical API table is not a runtime inventory.
 Ordinary clients use `simpLib`/`Traverse`; there is no implicit extension
 promotion or disabling of extensions to obtain ordinary performance numbers.
 
@@ -215,7 +210,7 @@ source-isolated loading is still not independent-build loading acceptance.
 For the runnable fresh-load gate, use TASK27's configured-root-aware command:
 
 ```sh
-sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh \
+sh src/simp/tests/compatibility/tools/root-wrapper.sh \
   bin/Holmake -C src/simp/tests/api-audit check
 ```
 
@@ -249,7 +244,7 @@ bin/build -t --seq=tools/sequences/upto-parallel
 bin/build -t -F
 python3 src/simp/tests/compatibility/run_task25_consumer.py \
   --consumer-patch \
-  src/simp/tests/compatibility/evidence/task25/consumer.patch \
+  src/simp/tests/compatibility/consumer/consumer.patch \
   --simplifier-revision CANDIDATE --output FRESH_CONSUMER_OUTPUT
 ```
 

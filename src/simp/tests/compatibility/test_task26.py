@@ -2,6 +2,7 @@
 import gzip
 import importlib.util
 import json
+import re
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -15,6 +16,68 @@ spec = importlib.util.spec_from_file_location(
     "native_legacy_runner", HERE.parent / "legacy-contracts/run.py")
 legacy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(legacy)
+
+
+def _strip_sml(text):
+    """Drop SML comments; keep string contents with punctuation masked."""
+    out, i, depth = [], 0, 0
+    while i < len(text):
+        if text.startswith("(*", i):
+            depth, i = depth + 1, i + 2
+        elif depth and text.startswith("*)", i):
+            depth, i = depth - 1, i + 2
+        elif depth:
+            i += 1
+        elif text[i] == '"':
+            j = i + 1
+            while text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(re.sub(r"[^A-Za-z0-9_ ]", "_", text[i:j + 1]))
+            i = j + 1
+        elif text.startswith("``", i):
+            i = text.index("``", i + 2) + 2
+            out.append("``")
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def _list_length(text, start):
+    """Top-level element count of the list literal opening at text[start]."""
+    depth, count = 0, 1
+    for j in range(start, len(text)):
+        ch = text[j]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return count
+        elif ch == "," and depth == 1:
+            count += 1
+    raise ValueError("unterminated list")
+
+
+def printed_vector_sizes(sml):
+    """Map each `NAME_RESULTS` print of the native selftest to its length.
+
+    Each print is `print ("NAME_RESULTS " ^ concatWith " " (map Bool.toString
+    L) ...)` where L is a list literal or the nearest preceding `val L = [..]`.
+    """
+    text = _strip_sml(sml)
+    pattern = (r'print \(\s*_([A-Z_]+_RESULTS) _ \^\s*String\.concatWith _ _'
+               r'\s*\(map Bool\.toString\s*(\[|\w+)')
+    sizes = {}
+    for m in re.finditer(pattern, text):
+        name, arg = m.groups()
+        if arg == "[":
+            start = m.end() - 1
+        else:
+            start = [d for d in re.finditer(
+                r"val " + arg + r"\s*=\s*\[", text[:m.start()])][-1].end() - 1
+        sizes[name] = _list_length(text, start)
+    return sizes
 
 
 class PhysicalTests(unittest.TestCase):
@@ -38,10 +101,15 @@ class PhysicalTests(unittest.TestCase):
                 with self.assertRaises(InvalidRun):
                     physical.apply(original)
 
+    def test_vectors_match_native_selftest_source(self):
+        sml = (HERE.parent / "native-extension/selftest.sml").read_text()
+        self.assertEqual(list(physical.VECTORS.items()),
+                         list(printed_vector_sizes(sml).items()))
+
     def test_vectors_cannot_be_truncated_or_replaced(self):
-        text = gzip.decompress((HERE.parent /
-            "performance/review-20261021/native-selftest.log.gz").read_bytes()
-            ).decode()
+        text = "".join(
+            "pin ... OK\n" + name + " " + " ".join(["true"] * count) + "\n"
+            for name, count in physical.VECTORS.items())
         physical.validate_vectors(text)
         for changed in (text.replace("POLICY_RESULTS ", "MISSING_RESULTS "),
                         text.replace("POLICY_RESULTS true",

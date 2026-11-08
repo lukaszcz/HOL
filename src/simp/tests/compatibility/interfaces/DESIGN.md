@@ -1,19 +1,15 @@
-# TASK_08: final interface and ownership decisions
+# Final interface and ownership decisions
 
-**Production closure (TASK27):** [the final ledger](../migration/TASK27.md)
-publishes actual module/signature ownership and maps every migration consumer,
-identity and temporary row to evidence. X1/X2 and M0–M6 are closed, including
-TASK26's physical test separation. This document retains the historical design
-and prototype contracts; `graph.json` is still a checked design, not a live
-import audit. Final production signatures include later additive APIs such as
-Cond_rewrExt.prepare/rebind and TraverseExt.CHILD_FIRST_WITH_ABORT. TASK25's
-isolated downstream migration passes its bounded normal-level gate; final
-release/performance and other explicitly excluded gates are not implied.
+Production `.sig` files are the current interface authority; this document
+retains the design and prototype contracts, and `graph.json` is a checked
+design, not a live import audit. Final production signatures include later
+additive APIs such as Cond_rewrExt.prepare/rebind and
+TraverseExt.CHILD_FIRST_WITH_ABORT.
 
 Source inspected: `74ddf80bef07bad35e55416786cbfe2ead8eb67f`.
 Reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 This specifies the split; it does **not** implement or pass the production
-engine split. TASK_09–16 implement [CUTOVERS.md](CUTOVERS.md).
+engine split.
 
 The executable interface is [Task08API.sml](Task08API.sml), with traversal in
 [Task08TraverseExt.sml](Task08TraverseExt.sml) and reducer records in
@@ -58,7 +54,7 @@ the original context exception payload, closure, solver/conv/relation and stack.
 opaque reducers may contain inaccessible counters: we **cannot** enumerate,
 reset or recover them. Lifting promises callback/context compatibility, **not**
 source inventory, view bindings, or private quota reset inside opaque closures.
-The TASK_08 executable runs against today's mixed Traverse only for REDUCER
+The prototype executable runs against today's mixed Traverse only for REDUCER
 inputs; lifting the two soon-to-be-removed constructors is not a migration path.
 
 Both extension projections have **extension types**:
@@ -269,8 +265,9 @@ Initial PURE/BOOL recipes land in 10, complete catalogs/provider in 24:
 3. Later default seed matches BasicProvers's initial recipe and its per-theory
    finalizer batching/order, TypeBase fold, and explicitly typed logged recipes.
    Theorem producer boolSimpsContextTheory stays shared and ordinary-load-safe.
-4. TASK_25 constructs clasimp and aesop *separately*: clasimp weak CONG/depth 40,
-   splitting/filter/removals/list conversions/ORDER/LINARITH/solvers; aesop weak
+4. Consumers construct clasimp and aesop *separately*: clasimp weak
+   CONG/depth 40, splitting/filter/removals/list conversions/ORDER/LINARITH/
+   solvers; aesop weak
    congruence/ETA and explicit solver replacement, without inheriting splitting.
    Static and budgeted ORDER/LINARITH variants explicitly lift ordinary reducers
    once at factory construction. External seed/bench/subject fragments have
@@ -320,23 +317,21 @@ ordinary `srw_ss` state as their authority. Ordinary local changes, opaque logge
 transforms and `Proof` context windows cannot be inferred from a persistent
 snapshot. Source-sensitive callers must supply/install the explicit provider and
 route each such update through its typed path; callers needing both engines
-supply both operations. The complete external producer/type/update closure is in
-EXTERNAL_TYPES.md/D1 and EXTERNAL_MARKERS.md (all TASK_25). Its default factories,
-temp_setsimpset, map/window/attribute paths and cached/derived state must move
-together. No migrated caller may still feed an arbitrary ordinary transform to
-a tracked getter or silently ignore that transform. TASK_24 supplies the recipe
-catalog/interface, TASK_25 migrates and validates those callers in isolation.
+supply both operations. The complete external producer/type/update closure
+covers default factories, temp_setsimpset, map/window/attribute paths and
+cached/derived state, which must move together. No migrated caller may still
+feed an arbitrary ordinary transform to a tracked getter or silently ignore
+that transform. The recipe catalog and interface supply the explicit provider
+paths, and each migrated consumer is validated in isolation.
 The arbitrary-state automatic mirroring contract is deliberately **not offered**;
 this is the necessary branch-only API change, not an unresolved promise.
 
 ## 7. Final migration coverage
 
-[migration/final-apis.tsv](../migration/final-apis.tsv) resolves **every** TASK_07
-API row with final module/type, construction decision, prototype witness and
-owner. [MIGRATION.md](../migration/MIGRATION.md), CONSUMERS.md, EXTERNAL.md,
-EXTERNAL_TYPES.md and the 14 actual marker entries remain the source-tied caller
-inventory. The finalized table is additive; it does not rewrite the historical
-TASK_07 snapshot/provenance. Existing APIs in B1/C2 explicitly retain their
+[migration/final-apis.tsv](../migration/final-apis.tsv) resolves **every**
+API row (`migration/apis.tsv`) with final module/type, construction decision,
+prototype witness and owner. The final table is additive over `apis.tsv`.
+Existing APIs in B1/C2 explicitly retain their
 ordinary versions; only branch extension callers move to the parallel types.
 
 Special resolutions: delete `legacy_traversedata_for_ss` (no replacement optional
@@ -347,9 +342,4 @@ inventory's `congLib.CONGRUENCE_EQ_SIMP_RULE` lexical entry maps to actual
 inspected congLib signature). SplitData/ThmAttribute/simpMarkerLib/splitLib keep
 one identity and their current owning modules. No legacy client must change.
 
-Migration timing: tasks 10/11 must already retype the active extension-test and
-consumer dependency closure so removing mixed constructors is buildable. Tasks
-24/26 complete recipes and assertion-preserving normal-suite separation, **not**
-a license to leave uncompilable tests until then. Preserve all 2,153 TASK_06 case
-IDs, original proof/exception/quota assertions and immutable baseline clients.
 No free retrospective metadata promise remains in this design.

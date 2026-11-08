@@ -55,10 +55,10 @@ reducer while retaining its context/callbacks; `congExtLib.lift_fragment`
 lifts public ordinary fragment data. Neither imports an opaque compiled set.
 There is no reverse adapter into ordinary traversal.
 
-The complete per-family, consumer, identity and temporary-cutover closure is
-[the TASK27 ledger](../tests/compatibility/migration/TASK27.md). Historical
-TASK07/08 inventories retain their original coordinates; final compiled
-signatures, not prototype spelling, are authoritative.
+The per-family, consumer and identity closure is checked by
+`../tests/compatibility/audit_task27.py`. The prototype API tables in
+`../tests/compatibility/migration/` keep their original coordinates; final
+compiled signatures, not prototype spelling, are authoritative.
 
 ## Executable tracked construction and projections
 
@@ -235,9 +235,10 @@ generic marker formats need no migration.
 `../tests/compatibility/audit_task27.py`; fresh ordinary load paths,
 initialization callbacks, shared controls and executable examples are checked
 in `../tests/api-audit`. Physical coverage ownership is in
-`../tests/compatibility/migration/TASK26.md` (the unchanged develop selftest
-is separate from the complete native-extension suite).
+`../tests/compatibility/task26_relocation.py` with the coverage ledger
+`../tests/compatibility/coverage-ledger.json.gz` (the unchanged develop
+selftest is separate from the complete native-extension suite).
 
 These are documentation/dependency/identity gates. They establish readiness
 for expanded acceptance measurements, **not** final runtime/allocation,
-independent clean-build, full regression or release approval (TASK28 onward).
+independent clean-build, full regression or release approval.

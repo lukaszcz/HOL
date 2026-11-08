@@ -73,9 +73,9 @@ set; the fixtures use kernel rules and explicit assumptions, not an oracle.
 These are additive tests, not relocations or replacements of existing cases.
 
 The executable establishes observable sharing and construction/application
-contracts. Proving that matcher preparation occurs **exactly once**, and that
-ordinary loading has no extension dependency, additionally requires TASK_12's
-production-source/dependency inspection; a black-box late-projection test
-alone cannot detect rebuilding an equivalent matcher while preserving its
-counter. Timing/allocation acceptance belongs to the separate paired probes,
-not this deterministic regression suite.
+contracts. This suite does not establish that matcher preparation occurs
+**exactly once**: a black-box late-projection test cannot detect rebuilding
+an equivalent matcher while preserving its counter.  That ordinary loading
+has no extension dependency is checked by `../api-audit`.  Timing and
+allocation acceptance belongs to the separate paired probes, not this
+deterministic regression suite.

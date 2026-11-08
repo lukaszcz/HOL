@@ -3,7 +3,7 @@
 `allocation_profiler_probe.py` demonstrates an information-loss path in the
 **actual linked HOL runtime**, not an inferred source-tree version. It is a
 negative control for a proposed `ProfileAllocations`-sum counter, **not an
-allocation instrument or performance experiment**. TASK29/29B remain blocked.
+allocation instrument or performance experiment**.
 
 ## Reproduce
 
@@ -56,7 +56,7 @@ The displayed entry sum also includes bracket/runtime allocations, so it is
 retained only as diagnostic output, never labelled workload allocation.
 
 Thus summing the profiler's displayed entries cannot generally give cumulative
-allocated words. This does not establish how frequently real TASK29 workloads
+allocated words. This does not establish how frequently real workloads
 hit that path, nor validate the other profile-coverage issues. No partial
 instrument or guessed correction factor is accepted as a counter.
 
@@ -74,8 +74,6 @@ sources, executables and DSO are removed on success or failure.
 This is local non-hostile-producer provenance, not authentication against
 transient malicious tool/runtime changes. The private ABI is reviewed only
 for the pinned binary, not all Poly/ML 5.9.2 builds. It adds no ordinary-client
-cost and is not run in any acceptance timing process. A complete, reviewed
-counter still needs native/RTS/interpreter/code coverage, successful versus
-requested allocation semantics, GC-copy exclusions, overflow/thread handling,
-and executed real allocation/no-allocation/GC controls. None is supplied by
-this falsification test.
+cost and is not run in any acceptance timing process. This test supplies
+none of the allocator counter's coverage requirements; see
+`ALLOCATION_COUNTER.md`.

@@ -5,6 +5,15 @@ EXTRA_CLEANS = selftest.exe
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
+# Receipts go below $(API_AUDIT_OUTPUT), an absolute path outside the
+# repository; run.py refuses a path inside it, and the receipts are kept
+# there.  Unset or empty: the receipts go to a temporary directory that is
+# removed when the audit finishes, whatever its result.
 .PHONY: check
 check: selftest.exe Documentation.uo
-	python3 run.py
+	out="$(API_AUDIT_OUTPUT)"; \
+	if [ -z "$$out" ]; then \
+	  tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	  out="$$tmp/receipts"; \
+	fi; \
+	python3 run.py --output "$$out"

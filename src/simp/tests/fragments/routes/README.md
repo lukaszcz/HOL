@@ -10,7 +10,7 @@ From the repository root, with existing shared build prerequisites available:
 
 ```sh
 python3 -B src/simp/tests/fragments/routes/run_routes.py \
-  --output /tmp/task15-routes-current-UNIQUE
+  --output /tmp/routes-current-UNIQUE
 ```
 
 The baseline is pinned to compatibility `run_paired.BASE`
@@ -21,7 +21,7 @@ harness control (not candidate acceptance):
 ```sh
 python3 -B src/simp/tests/fragments/routes/run_routes.py \
   --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
-  --output /tmp/task15-routes-base-control-UNIQUE
+  --output /tmp/routes-base-control-UNIQUE
 ```
 
 Pure Python schema/mutation tests (no build or benchmark; the parent's
@@ -117,13 +117,6 @@ sets. Collector-free force/add-again checks separately require precisely `r2`,
 including `route_h`. No assertion accepts missing/extra hypotheses. Proof
 mismatches print actual and expected conclusions and all hypotheses before the
 ordinary failing testutils check.
-
-The diagnosis receipt is
-`/tmp/task15-routes-proof-probe/baseline-routes.json.gz` (expected failure).
-The corrected full baseline/worktree pair passed in
-`/tmp/task15-routes-proof-fixed/manifest.json`; final sealed-input receipts are
-in `/tmp/task15-routes-final/` (`manifest.json`, both `*-build.json.gz`, and
-both `*-routes.json.gz`). No benchmark or whole-tree build was run.
 
 This is isolated-source compatibility evidence, not independent full builds,
 allocation/performance evidence, or proof of every simplifier route. AC order

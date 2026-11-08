@@ -1,10 +1,12 @@
 # TASK18 ordinary tactic contracts
 
-Maintained `selftest.sml` supplements (does not replace or regenerate) TASK05's
-43-scenario staged matrix. `run_behavior.py` uses the existing TASK15 snapshot
-and TASK02 private-first traced runner. It executes pinned develop and current
-worktree in fresh processes, with common state0/shared nonsimplifier dependencies;
-these are isolated-source experiments, not independent clean builds.
+Maintained `selftest.sml` supplements (does not replace or regenerate) the
+43-scenario staged matrix in `../compatibility/staging/`. `run_behavior.py`
+uses the fragments snapshot (`../fragments/run_fragments.py`) and the
+private-first traced runner `../compatibility/run_paired.py`. It executes
+pinned develop and current worktree in fresh processes, with common
+state0/shared nonsimplifier dependencies; these are isolated-source
+experiments, not independent clean builds.
 
 ```sh
 python3 -B -m unittest discover -s src/simp/tests/tactics -p 'test_*.py'
@@ -37,21 +39,12 @@ Both zero-subgoal and multiple-subgoal validations execute. No `VALID` synthetic
 oracle proofs are used. Python controls reject every omitted/wrong result,
 changed validation count, extra/reordered results and malformed sequence IDs.
 
-TASK05 separately owns exact inference counts, grammar/context changes, late
-fragment/abbreviation lookup, malformed bounds, ordering quirks and global tactic
-construction. See `../compatibility/STAGING_CONTRACTS.md`. Explicit extension
-recursion and marker controls remain in `../markers/selftest.sml`/TASK20;
-ordinary reentry here never imports those modules. See `AUDIT.md` for the exact
-source boundary. No production or generic-marker body needs a further edit:
-TASK16 already restored the original implementation. Final commands, source
-seals and receipts are in `evidence/task18/validation.json`; recheck offline:
-
-```sh
-python3 -B src/simp/tests/tactics/audit_evidence.py
-python3 -B src/simp/tests/tactics/performance/evidence/recheck.py
-python3 -B src/simp/tests/tactics/performance/evidence/followup.py --archive
-```
-
-Bounded acceptance and measured uncertainties are recorded in
-`../compatibility/TASK_18_HANDOFF.md`. Numerical parity and independent clean
-builds are not inferred from identical local source/native instructions.
+Exact inference counts, grammar/context changes, late fragment/abbreviation
+lookup, malformed bounds, ordering quirks and global tactic construction are
+covered by the staged matrix; see `../compatibility/STAGING_CONTRACTS.md`.
+Explicit extension recursion and marker controls are in
+`../markers/selftest.sml`; ordinary reentry here never imports those modules.
+The ordinary `simpLib.{sml,sig}` pair is byte-identical to develop
+(`cccaa27d7099cbadc886983020cbe745db7793f3`), checked by
+`performance/audit_sources.py`. Numerical parity and independent clean builds
+are not inferred from identical local source/native instructions.

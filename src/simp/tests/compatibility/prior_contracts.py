@@ -4,6 +4,7 @@ Only process-ending driver calls are adapted to the paired completion protocol.
 Every original assertion and observation remains byte-for-byte in its input.
 """
 import gzip
+import json
 import re
 from pathlib import Path
 
@@ -43,29 +44,33 @@ def semantic_stream(text):
     return result
 
 
+ORACLE = "inputs/develop/prior-streams.json.gz"
+
+
 def historical(here, fixture):
-    names = {"PriorOriginal": "develop-legacy.log",
-             "PriorTraversal": "develop-traversal.log.gz",
-             "PriorExclusion": "develop-exclusion.log.gz",
-             "PriorNative": "native-selftest.log.gz"}
-    p = here.parent / "performance/review-20261021" / names[fixture]
-    data = p.read_bytes()
-    return semantic_stream((gzip.decompress(data) if p.suffix == ".gz"
-                            else data).decode())
+    """Expected `semantic_stream` of the fixture, from the oracle file.
+
+    The oracle is a gzip-compressed JSON object mapping each fixture name to
+    the ordered list that `semantic_stream` keeps from a complete run of that
+    fixture: develop's original selftest (`PriorOriginal`), the traversal and
+    exclusion contracts run against develop (`PriorTraversal`,
+    `PriorExclusion`), and the branch-only native selftest (`PriorNative`).
+    Regenerate it only deliberately, by running the fixture against the
+    pinned reference, applying `semantic_stream` to the complete output, and
+    storing the result in sorted-key JSON compressed with a zero gzip mtime.
+    """
+    with gzip.open(here / ORACLE, "rt", encoding="utf-8") as f:
+        return json.load(f)[fixture]
 
 
 def inputs(here, repo):
     return [Path(__file__), here / "test_prior.py", here / "coverage_ledger.py",
             here / "coverage-ledger.json.gz",
             here / "inputs/develop/selftest.sml",
+            here / ORACLE,
             *sorted((here.parent / "contracts").glob("*.sml")),
             repo / "src/simp/src/selftest.sml",
-            repo / "src/simp/tests/native-extension/selftest.sml",
-            *sorted((here.parent / "performance/review-20261021").glob(
-                "*legacy.log")),
-            *[here.parent / "performance/review-20261021" / n for n in
-              ("develop-traversal.log.gz", "develop-exclusion.log.gz",
-               "native-selftest.log.gz")]]
+            repo / "src/simp/tests/native-extension/selftest.sml"]
 
 
 def install(here, repo, dst, require):

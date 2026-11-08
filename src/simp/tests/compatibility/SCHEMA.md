@@ -4,9 +4,9 @@
 kinds, wrong arities, reordered/missing/duplicate events, mismatching source
 paths/hashes, wrong process exits and timeouts are errors. `test_runner.py`
 mutates valid receipts to exercise the validator independently of HOL.
-All counts are exact, not minima. TASK_03 adds the optional performance
-fixture; TASK_04 adds frozen public clients; TASK_05 adds independent staged
-proof contracts. TASK_02 observations are unchanged.
+All counts are exact, not minima. The base observations are extended by an
+optional performance fixture, frozen public clients, independent staged
+proof contracts and prior contracts, described below.
 
 ## Ordered process protocol
 
@@ -162,7 +162,7 @@ match warning attributed to that client's source path. Its outcome is then
 `expected-candidate-red`, despite exit 0. Other public clients require all
 checks, complete frozen-signature elaboration, exit 0 and pass footer.
 
-The bootstrap no longer imports testutils/HolKernel before tracing.
+The bootstrap imports neither testutils nor HolKernel before tracing.
 `CheckSupport.sml` installs the unchanged testutils reporting behavior after
 recording the initial heap and setting private-first paths. The ordinary
 launcher still uses state0. For the early `PublicThmAttribute` fixture,
@@ -269,7 +269,7 @@ must raise exactly the documented argument-constructor HOL error. After all
 scenarios, three validator control checks must reject wrong conclusion, foreign
 hypothesis and oracle-tagged theorem; `validations.executed` must equal the
 number of successful real reconstructions. Footer counts are 60 develop / 57
-initial candidate; real validations are 57 / 54. All stage/proof observations
+reviewed candidate; real validations are 57 / 54. All stage/proof observations
 are mandatory even for unchanged or fully solved goals.
 
 The manifest uses `evidence_id: TASK_05-staging-contracts-v1`, adds
@@ -295,7 +295,7 @@ OBS event and warning header with the immutable review input; duplicate cases
 are retained. The new six-case limits fixture requires all six exact protocol
 checks. Prior receipts have a `prior` field with classification, exact counts
 and the full semantic stream. There is **no expected-red mode** for these
-suites. The separate original staging/signature probes keep their existing red
+suites. The separate original staging/signature probes keep their red
 classifications and original nonzero signature process exit.
 
 Terminal color/padding, testutils timing/backspaces and theory build times are
@@ -319,6 +319,6 @@ These are native current products, not an independent clean repository build.
 textual source anchors, including parameterized labels and duplicate cases.
 Anchors are navigation aids (not an SML parser); whole source hashes bind the
 actual assertions. `PRIOR_CONTRACTS.md` disambiguates family scopes, matrices,
-legacy-equal contracts, native/branch-only semantics and initial red owners.
+legacy-equal contracts, and native/branch-only semantics.
 Regenerating a ledger is explicit and refuses to overwrite an existing file;
 test runs never update it to accommodate changed or missing tests.

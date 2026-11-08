@@ -1,50 +1,59 @@
 # The Python driver installs paired/Holmakefile into each private source tree.
 # SignatureCheck.sml is derived there from the immutable complete ABI fixture.
-ifndef PAIRED_OUTPUT
-PAIRED_OUTPUT = paired-results
-endif
-.PHONY: check python-tests public-contracts public-baseline-control \
-        staging-contracts staging-baseline-control prior-contracts \
+# There is deliberately no default for PAIRED_OUTPUT: receipts never go into
+# the repository.  Every output-writing target depends on `output-dir`, which
+# fails unless PAIRED_OUTPUT is an absolute path outside the repository; the
+# targets that also run the Python tests do so in `checked-tests`, after
+# `output-dir`, at any -j.  A bare `Holmake` runs only python-tests.
+.PHONY: output-dir checked-tests check python-tests public-contracts \
+        public-baseline-control staging-contracts \
+        staging-baseline-control prior-contracts \
         prior-baseline-control prior-native
 python-tests:
 	python3 -B -m unittest discover -s . -p 'test_*.py'
 
-check: python-tests
-	python3 -B run_paired.py --negative-controls --output $(PAIRED_OUTPUT)
+output-dir:
+	python3 -B tools/require_output.py "$(PAIRED_OUTPUT)"
+
+checked-tests: output-dir
+	python3 -B -m unittest discover -s . -p 'test_*.py'
+
+check: checked-tests
+	python3 -B run_paired.py --negative-controls --output "$(PAIRED_OUTPUT)"
 
 # Prior legacy inputs are strict equal contracts, not expected failures.
-prior-contracts: python-tests
+prior-contracts: checked-tests
 	python3 -B run_paired.py --prior-contracts --negative-controls \
-	  --candidate HEAD --output $(PAIRED_OUTPUT)
+	  --candidate HEAD --output "$(PAIRED_OUTPUT)"
 
-prior-baseline-control: python-tests
+prior-baseline-control: checked-tests
 	python3 -B run_paired.py --prior-contracts \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
 	  --candidate-signature pass --candidate-behavior baseline \
-	  --output $(PAIRED_OUTPUT)
+	  --output "$(PAIRED_OUTPUT)"
 
-prior-native:
-	python3 -B run_prior_native.py --output $(PAIRED_OUTPUT)
+prior-native: output-dir
+	python3 -B run_prior_native.py --output "$(PAIRED_OUTPUT)"
 
-# Current repaired API gate. Historical red receipts remain immutable.
-public-contracts: python-tests
+# Current API gate.
+public-contracts: checked-tests
 	python3 -B run_paired.py --public-contracts --negative-controls \
 	  --candidate HEAD --candidate-signature pass \
-	  --candidate-behavior baseline --output $(PAIRED_OUTPUT)
+	  --candidate-behavior baseline --output "$(PAIRED_OUTPUT)"
 
-public-baseline-control: python-tests
+public-baseline-control: checked-tests
 	python3 -B run_paired.py --public-contracts --negative-controls \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
 	  --candidate-signature pass --candidate-behavior baseline \
-	  --output $(PAIRED_OUTPUT)
+	  --output "$(PAIRED_OUTPUT)"
 
-# TASK18 repaired staging: exact develop outcomes, not expected-red mode.
-staging-contracts: python-tests
+# Staging: exact develop outcomes, not expected-red mode.
+staging-contracts: checked-tests
 	python3 -B run_paired.py --staging-contracts --negative-controls \
 	  --candidate HEAD --candidate-signature pass \
-	  --candidate-behavior baseline --output $(PAIRED_OUTPUT)
+	  --candidate-behavior baseline --output "$(PAIRED_OUTPUT)"
 
-staging-baseline-control: python-tests
+staging-baseline-control: checked-tests
 	python3 -B run_paired.py --staging-contracts --staging-only \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
-	  --candidate-behavior baseline --output $(PAIRED_OUTPUT)
+	  --candidate-behavior baseline --output "$(PAIRED_OUTPUT)"

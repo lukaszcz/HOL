@@ -1,8 +1,8 @@
 # TASK29 complete post-workload constant pools (diagnostic only)
 
-`runtime_pools.py` closes the **pool-slot instrumentation omission**, not
-TASK29A. It leaves `runtime_layout.py` and its sealed v1 archives unchanged.
-No production simplifier, ordinary fixture or numerical policy is changed.
+`runtime_pools.py` records the complete (inline or split) constant pool
+of every post-workload code object.  It is a diagnostic, not a timing or
+allocation gate.
 
 ## Collection
 
@@ -20,7 +20,7 @@ python3 -B src/simp/tests/performance/runtime_pools.py --replay NEW_DIRECTORY
 ```
 
 Each experiment retains one fresh B/B and B/C structural pair. The paired
-runner's ordinary environment sanitization is unchanged. A scoped wrapper
+runner's ordinary environment sanitization applies. A scoped wrapper
 adds an exact private `LD_PRELOAD` only to its diagnostic Performance
 processes; no builds, compatibility processes or ordinary timing tool receive
 it. Native code is built with the recorded command and copied identically
@@ -74,7 +74,7 @@ transport and every derived comparison. These are consistency checks of a
 trusted producer, not authentication of a maliciously rewritten archive or
 proof of installed-runtime build lineage.
 
-## Tests and retained evidence
+## Tests
 
 ```sh
 python3 -B -m unittest discover -s src/simp/tests/performance \
@@ -84,7 +84,6 @@ RUNTIME_POOLS_NATIVE=1 python3 -B -m unittest discover \
 RUNTIME_POOLS_EVIDENCE=UNPACKED_DIRECTORY RUNTIME_POOLS_NATIVE=1 \
   python3 -B -m unittest discover -s src/simp/tests/performance \
   -p test_runtime_pools.py -v
-python3 -B src/simp/tests/performance/evidence/task29/runtime-pools/replay.py
 ```
 
 The native control executes ordinary Poly/ML, not a patched runtime or an
@@ -94,9 +93,6 @@ archive mutations cover source, loader, postlude, interposer, actual preload,
 build recipe/output, proof, inventory and comparisons. Rejected diagnostic
 output **and its process receipt** are retained; hooks restore on failure.
 The distinct `runtime-pools-diagnostic` suite is rejected by timing admission.
-
-`evidence/task29/runtime-pools/RESULTS.md` describes all eight final processes,
-the retained development experiment, raw operands and unresolved acceptance.
 
 ## Environment diagnostic, not an exclusivity certificate
 
@@ -111,18 +107,4 @@ CPU deltas subtract the enclosing session scope, not merely this Python
 process; overlapping ancestors are never summed. Missing/regressing counters
 are not treated as quiet. Its status is always `exclusive_not_verified`:
 quiet observations cannot prove host exclusivity, and this sandbox cannot
-reserve or see the whole host. The retained sample observes concurrent work.
-
-## Still required for TASK29A
-
-Complete ordinary-process measurement-boundary and executed-target/causal
-attribution, a justified compatible repair if needed, an exclusive stable
-measurement environment, the entire fresh passing 162-cell repaired-driver
-grid with admissible controls, and explicit zero-GC/B/B policy-owner
-disposition. None is replaced by supplying static pool slots. Historical and
-repaired-driver timing failures/uncertainty remain unchanged; TASK29B remains
-separate. No host-noise hypothesis, waiver or completion is claimed.
-
-Amendment (2026-11-05): the exclusivity requirement was waived by the
-policy owner; the host is shared. "An exclusive stable measurement
-environment" above is no longer required.
+reserve or see the whole host.

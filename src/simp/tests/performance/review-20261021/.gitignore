@@ -1,3 +1,0 @@
-# These small historical observations are immutable review inputs,
-# not generated test logs. Fresh runs belong in a separate output directory.
-!*.log

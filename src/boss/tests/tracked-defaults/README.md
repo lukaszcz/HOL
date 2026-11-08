@@ -10,7 +10,7 @@ bin/Holmake --no-project --no-cache \
 On the configured-path/bwrap checkout used during development:
 
 ```sh
-sh src/simp/tests/compatibility/evidence/task23/configured-path.sh \
+sh src/simp/tests/compatibility/tools/root-wrapper.sh \
   bin/Holmake --no-project --no-cache \
   -C src/boss/tests/tracked-defaults -j1 check
 ```

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fresh testutils launchers with unique source-tied TASK27 receipts."""
+"""Fresh testutils launchers with unique source-tied receipts."""
+import argparse
 import datetime
 import gzip
 import hashlib
@@ -11,6 +12,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import uuid
 
 HERE = Path(__file__).resolve().parent
@@ -70,10 +72,46 @@ def resolve_observed(path):
     raise ValueError("missing observed input: " + path)
 
 
+def inside(path, root):
+    """True if path or an existing ancestor of it is the same as root.
+
+    The comparison is by identity (device and inode), so symlinks and
+    bind-mounted aliases of the checkout are caught too.  The same check
+    exists in compatibility/tools/require_output.py; it is kept separate
+    so that the audit receipt seals all of its inputs.
+    """
+    p = Path(os.path.abspath(path))
+    while True:
+        try:
+            if os.path.samefile(p, root):
+                return True
+        except OSError:
+            pass
+        if p.parent == p:
+            return False
+        p = p.parent
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path,
+        help="absolute directory receiving one unique receipt subdirectory "
+             "per run (default: a new private directory made with mkdtemp "
+             "in the temporary directory); it must be outside the repository")
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = Path(tempfile.mkdtemp(prefix="api-audit-receipts-"))
+    if not args.output.is_absolute():
+        parser.error("--output must be an absolute path: " + str(args.output))
+    given = args.output
+    args.output = args.output.resolve()
+    if inside(args.output, ROOT) or inside(given, ROOT):
+        parser.error("--output must be outside the repository: " +
+                     str(args.output))
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    evidence = HERE / "evidence" / stamp
+    evidence = args.output / stamp
     evidence.mkdir(parents=True, exist_ok=False)
     receipt = {
         "task": 27,
@@ -151,7 +189,7 @@ def main():
     receipt["pass"] = all(case["pass"] for case in receipt["cases"])
     (evidence / "receipt.json").write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-    print("Evidence: " + str(evidence))
+    print("Receipt: " + str(evidence))
     return 0 if receipt["pass"] else 1
 
 

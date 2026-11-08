@@ -4,7 +4,7 @@ r"""Reproduce TASK25 using pinned sources and isolated build/test scratch.
 Fresh (expensive; bootstrap, routine tests, then consumer tests)::
 
   python3 -B src/simp/tests/compatibility/run_task25_consumer.py \
-    --consumer-patch /path/consumer.patch --output /tmp/task25-evidence
+    --consumer-patch /path/consumer.patch --output /tmp/task25-output
 
 Reuse explicitly supplied, already configured scratch (not a fresh-build claim)::
 

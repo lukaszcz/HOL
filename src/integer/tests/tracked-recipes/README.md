@@ -33,10 +33,10 @@ updates, rather than testing against a guessed reconstruction.
 Run from the repository root:
 
 ```sh
-sh src/simp/tests/compatibility/evidence/task23/configured-path.sh \
+sh src/simp/tests/compatibility/tools/root-wrapper.sh \
   sh -c 'cd src/integer/tests/tracked-recipes && Holmake check'
 ```
 
-Verified through that wrapper: `INTEGER_RECIPE_CHECKS=116`;
-`bin/build -t --seq=tools/sequences/upto-parallel` succeeded;
-`tools/h4pedant/h4pedant -q src/integer` passed.
+The check prints `INTEGER_RECIPE_CHECKS=<n>` on success.  Also run
+`bin/build -t --seq=tools/sequences/upto-parallel` and
+`tools/h4pedant/h4pedant -q src/integer`.

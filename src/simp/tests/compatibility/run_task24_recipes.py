@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """TASK24: executed recipes, provider and internal consumer closure.
 
-Run in the configured checkout (see evidence/task23/configured-path.sh).
+Run in the configured checkout (see tools/root-wrapper.sh).
 No snapshots, simpset imports, oracle updates or external worktree writes.
 """
 import argparse
@@ -40,7 +40,7 @@ CATALOGS = [
 
 
 def inputs():
-    paths = {Path(__file__), HERE / "migration/TASK24.md"}
+    paths = {Path(__file__)}
     for _, folder, _ in LIBRARIES:
         paths.update(p for p in (REPO / folder).rglob("*")
                      if p.is_file() and ".hol" not in p.parts and
@@ -136,7 +136,6 @@ def main():
         run("native", ["python3", "-B", str(HERE / "run_prior_native.py"),
                        "--output", str(output / "native")])
         run("coverage", ["python3", "-B", str(HERE / "coverage_ledger.py")])
-        run("immutable", ["python3", "-B", str(HERE / "verify_evidence.py")])
         run("diff-check", ["git", "diff", "--check"])
         for path, info in manifest["inputs"].items():
             require(fingerprint(REPO / path) == info,

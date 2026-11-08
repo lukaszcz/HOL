@@ -1,9 +1,10 @@
-# Frozen public source contracts (TASK_04)
+# Frozen public source contracts
 
 Baseline: `cccaa27d7099cbadc886983020cbe745db7793f3`.
-Initial candidate: `8b1e8c69f5dd819d1fbe8b75cf5755f21b450499`.
+Expected-red candidate pin: `8b1e8c69f5dd819d1fbe8b75cf5755f21b450499`.
 The production source diff from reviewed `cf1f863b4` to this candidate is empty.
-This is a **coverage/expected-red gate**, not restoration or a compatibility pass.
+In expected-red mode this is a **coverage gate**, not restoration or a
+compatibility pass; the restoration gate selects `--candidate-signature pass`.
 
 ## Complete inventory and mapping
 
@@ -23,7 +24,7 @@ empty companion `.sml` files make these signature-only modules loadable.
 
 Counts exclude the aliases inherited through `include Abbrev`:
 
-| Public signature | Old values/types/datatypes/constructors | Initial change | Client (under `public/`) |
+| Public signature | Old values/types/datatypes/constructors | Reviewed-candidate change | Client (under `public/`) |
 | --- | --- | --- | --- |
 | `src/1/ThmAttribute.sig` | 12/4/0/0 | 2 added values | `PublicThmAttribute.sml` |
 | `src/simp/src/Cond_rewr.sig` | 7/1/0/0 | 4 added values | `PublicCond_rewr.sml` |
@@ -78,9 +79,9 @@ These new clients were developed against the baseline, then sealed in
 The immutable review `abicheck.sml` and original `Traverse.sig` are untouched;
 that earlier complete-ascription control also still executes independently.
 
-## Expected initial outcomes and non-breaks
+## Expected outcomes and non-breaks
 
-| Contract | Baseline | Initial candidate |
+| Contract | Baseline | Reviewed candidate |
 | --- | --- | --- |
 | Six non-Traverse full signatures, including unchanged `congLib` | pass | pass |
 | Complete original `Traverse` structure ascription | pass | **exit 1**, both unexpected constructors |
@@ -103,18 +104,19 @@ and type components are additive for these qualified baseline **consumers**;
 `simpset` declaration movement and `ssf_upd_rewrs` reformatting are harmless.
 This does not promise universal safety for unqualified `open` name collisions
 or hand-written providers implementing today's expanded named signatures.
-Runtime, scheduling, allocation and loading equivalence are separate tasks.
+Runtime, scheduling, allocation and loading equivalence are outside this gate.
 
 Branch-only `SplitData.sig`, `simpMarkerLib.sig` and `splitLib.sig` have no
 baseline consumers to freeze. The added `inputs/develop/Traverse.sig` is a test
-input, not another public production API. Their migration belongs to TASK_07–08;
-this task neither imports nor alters their contracts.
+input, not another public production API. This gate neither imports nor alters
+their contracts.
 
 ## Execution and isolation
 
-Use TASK_02's runner, which builds deferred `.uo` dependencies and then really
-executes every client in its own fresh process. Explicit Holmake dependencies
-are essential: its scanner misses some names used only in module ascriptions.
+Use the paired runner (`run_paired.py`), which builds deferred `.uo`
+dependencies and then really executes every client in its own fresh process.
+Explicit Holmake dependencies are essential: its scanner misses some names
+used only in module ascriptions.
 The validator requires completed elaboration of each entire `Legacy*.sig`,
 not just building a `.ui`/`.uo` or seeing a check string.
 
@@ -141,13 +143,12 @@ bin/Holmake --no-project --no-cache --no_prereqs \
   PAIRED_OUTPUT=/tmp/public-baseline public-baseline-control
 ```
 
-These targets run 23 Python controls, 22 independent normal fixture launches
+These targets run the Python controls, 22 independent normal fixture launches
 and 12 rejected executable negative controls per comparison. The ordinary
-TASK_02 signature/staging fixtures and failure controls remain active.
+signature/staging fixtures and failure controls remain active.
 For a restoration gate explicitly choose `--candidate-signature pass` (and
 `--candidate-behavior baseline` when staging is repaired): expected-red modes
 must never stand in for restored compatibility.
 
-Evidence and precise exits: [`TASK_04_HANDOFF.md`](TASK_04_HANDOFF.md) and
-`evidence/task04/validation.json`. This is Linux/aarch64 Poly/ML 5.9.2
-mixed-source isolation, not independent clean builds or platform-wide proof.
+These runs are mixed-source isolation, not independent clean builds or
+platform-wide proof.

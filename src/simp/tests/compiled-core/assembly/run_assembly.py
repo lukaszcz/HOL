@@ -97,7 +97,7 @@ def collection_accepted(manifest):
         manifest["success"] or manifest.get("failure") == expected)
 
 
-# Exact pinned source ranges; callers of inlined helpers are linked in RESULTS.
+# Exact pinned source ranges.
 SOURCE_SPANS = {"appconv": (53, 62), "mk_rewr_convdata": (65, 86),
     "SSFRAG_CON": (94, 103), "SSFRAG": (109, 114),
     "empty_ssfrag": (115, 116), "ssf_upd_rewrs": (117, 124),

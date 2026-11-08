@@ -30,9 +30,9 @@ below). Nothing replaces the installed runtime or changes production HOL.
 - `PATCHED_SHA256.json`: expected bytes of every patched target.
 - `prepare_patch.py`: verify the pristine inventory and reproduce the patch.
 - `check_patch.py`: strict in-memory patch replay and static coverage checks.
-- `DESIGN_REVIEW.md`: semantics, source-path audit, limitations, and handoff.
+- `DESIGN.md`: semantics, source-path audit, and limitations.
 - `private_runtime.py`: source seal, patched-runtime build and process-binding
-  checks shared by `run_controls.py` and the TASK29B matrix driver.
+  checks shared by `run_controls.py` and the paired allocation matrix driver.
 - `run_controls.py`: authorized private build/execution driver; removes its
   source/build/fixture copies on success or failure and preserves receipts.
 - `selftest.sml`, `bracket.c`, `control_schema.py`: original allocator
@@ -207,7 +207,7 @@ These are protocol tests with synthetic data, not runtime evidence.
 
 ## Before using the counter for the TASK29B matrix
 
-1. Review `DESIGN_REVIEW.md` and the patch. Work on a separate runtime-source
+1. Review `DESIGN.md` and the patch. Work on a separate runtime-source
    copy and verify its pristine seal. Do not patch the installed source path.
 2. In that copy only, decompress `managed-allocation.patch.gz` and apply with
    `-p1`; verify the eight result hashes before configuration and build.

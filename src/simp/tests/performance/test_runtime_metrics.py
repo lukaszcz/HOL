@@ -4,7 +4,7 @@
 python3 -B test_runtime_metrics.py
 RUNTIME_METRICS_SML=1 RUNTIME_METRICS_EVIDENCE=/tmp/new-runtime.json \
   python3 -B test_runtime_metrics.py
-Use compatibility/evidence/task26/root-wrapper.sh if heaps embed the old root.
+Use compatibility/tools/root-wrapper.sh if heaps embed the old root.
 The SML control intentionally collects, but does not measure performance.
 """
 import copy

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Non-timing MatrixSupport smoke with private exact-source Holmake launchers.
 
-Run from a configured HOL tree (use the historical root-wrapper on hosts whose
-heap embeds that path). This is mixed-source semantic validation, NOT benchmark
-acceptance or independent repository builds. --scope grid excludes four costly
-10000-rule single-add/AC cases; --scope expensive runs those explicitly.
+Run from a configured HOL tree (use compatibility/tools/root-wrapper.sh on
+hosts whose heap embeds that path). This is mixed-source semantic validation,
+NOT benchmark acceptance or independent repository builds. --scope grid
+excludes four costly 10000-rule single-add/AC cases; --scope expensive runs
+those explicitly.
 Outputs are exclusive-created JSON (the full manifest: runs, fixture head,
 every work record) + a compact sibling .log + NAME.summary.json, which is
 derived from the manifest alone (`--compare MANIFEST --summary PATH`

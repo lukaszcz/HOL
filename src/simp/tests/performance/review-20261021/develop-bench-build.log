@@ -1,3 +1,0 @@
-Holmake: Scanning [1m$(HOLDIR)/src/simp/src/poly[0m
-Holmake: Scanned 2 directories
-HOLMOSMLC -o bench.exe bench.uo

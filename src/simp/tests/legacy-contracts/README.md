@@ -31,7 +31,7 @@ reject missing paths, foreign products, changed labels, zero-exit incomplete
 output and missing native aggregate fields. They run in the normal entry too.
 
 The compatibility Python tests include historical source-audit mutation tests.
-Their whole-source inputs are pinned to their original TASK15/TASK16 landings,
+Their whole-source inputs are pinned to the sources they were written against,
 not weakened to accept arbitrary later extension edits. Live ordinary sources
 still have byte-exact checks. These historical unit controls are not a final
 current-tree dependency/performance acceptance claim.

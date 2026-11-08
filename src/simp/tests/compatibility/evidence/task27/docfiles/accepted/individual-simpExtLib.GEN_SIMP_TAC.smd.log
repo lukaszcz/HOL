@@ -1,4 +1,0 @@
-Processing 1 entries from /tmp/claude/task27-docs-mp32qyy_/individual
-  simpExtLib.GEN_SIMP_TAC.smd
-...polyscripter pass done
-Can't find pandoc in PATH; wrote the mdbook .md mirror to /tmp/claude/task27-docs-mp32qyy_/individual-processed but skipped the .txt help text.

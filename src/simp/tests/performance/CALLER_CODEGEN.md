@@ -5,7 +5,7 @@ callers, rather than treating an older simpLib-only listing as their code.
 It does **not** approve timing, cumulative allocation or TASK29.
 
 From the repository root, with no other build or measurement in this checkout
-(W is the existing `compatibility/evidence/task26/root-wrapper.sh`):
+(W is the existing `compatibility/tools/root-wrapper.sh`):
 
 ```sh
 W python3 -B src/simp/tests/performance/caller_codegen.py \
@@ -74,16 +74,12 @@ inventory loss and changed comparison decisions. It rejects each at its
 intended guard. Default tests cover synthetic parser/loader/transport faults;
 synthetic listings are not measurement evidence.
 
-The final `evidence/task29/caller-attribution/*.json.xz` bundles use the
-existing lossless `evidence_bundle.py` schema. `pack.py` only increases XZ's dictionary
-for repeated compiler output; it verifies all original bytes and replays final
-bundles before temporary trees are removed. Unpack before inspection:
+A collected directory can be packed into the lossless `evidence_bundle.py`
+transport and unpacked later for inspection:
 
 ```sh
-P=src/simp/tests/performance
-python3 -B "$P/evidence_bundle.py" unpack \
-  "$P/evidence/task29/caller-attribution/record-zero.json.xz" \
-  NEW_SCRATCH_DIRECTORY
+python3 -B src/simp/tests/performance/evidence_bundle.py unpack \
+  BUNDLE.json.xz NEW_SCRATCH_DIRECTORY
 python3 -B src/simp/tests/performance/caller_codegen.py \
   --replay NEW_SCRATCH_DIRECTORY
 # Remove only this newly created scratch directory when finished.

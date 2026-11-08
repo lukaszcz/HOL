@@ -15,13 +15,13 @@ including its complete conclusion and exact hypothesis set.
 From the repository root, using the configured-path wrapper:
 
 ```sh
-W=src/simp/tests/compatibility/evidence/task23/configured-path.sh
+W=src/simp/tests/compatibility/tools/root-wrapper.sh
 sh "$W" sh -c 'cd src/real/tests/tracked-recipes && Holmake check'
 sh "$W" bin/build -t --seq=tools/sequences/upto-parallel
 sh "$W" tools/h4pedant/h4pedant src/real
 ```
 
-Verified: all three commands passed; `REAL_RECIPE_CHECKS=124`.
+The check prints `REAL_RECIPE_CHECKS=<n>` on success.
 Ordinary `realSimps.{sig,sml}` and the existing `src/real/Holmakefile`
 are unchanged. The standalone Holmakefile is new, not a build integration.
 

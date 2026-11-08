@@ -8,14 +8,15 @@ Candidate defaults to the working sources, including uncommitted changes.
 These are isolated-source comparisons, **not independent repository builds**.
 The manifest records whether simpLib.sml/.sig match the pinned bytes.
 
-Behavior/graph only (safe before timing is appropriate):
+Behavior/graph only (safe before timing is appropriate; `$OUT` is a new
+directory outside the repository, outputs never go into the tree):
 
 ```
 python3 -B src/simp/tests/compiled-core/test_core.py
 python3 -B src/simp/tests/compiled-core/run_core.py \
-  --output src/simp/tests/compiled-core/evidence/behavior
+  --output "$OUT"/behavior
 python3 -B src/simp/tests/compiled-core/run_core.py --baseline-control \
-  --output src/simp/tests/compiled-core/evidence/control
+  --output "$OUT"/control
 ```
 
 Every output directory must be new; failures retain complete compressed
@@ -54,10 +55,10 @@ Do not run these two commands concurrently with each other or with builds:
 ```
 python3 -B src/simp/tests/compiled-core/run_core.py --performance-pairs 10 \
   --samples 3 --batch-seconds .2 --timeout 1200 \
-  --output src/simp/tests/compiled-core/evidence/timing
+  --output "$OUT"/timing
 python3 -B src/simp/tests/compiled-core/run_core.py --baseline-control \
   --performance-pairs 10 --samples 3 --batch-seconds .2 --timeout 1200 \
-  --output src/simp/tests/compiled-core/evidence/timing-control
+  --output "$OUT"/timing-control
 ```
 
 Reuses unmodified `performance/Performance.sml` (1000 rules),
@@ -73,8 +74,8 @@ process medians. Recompute the maintained summary with:
 
 ```
 python3 -B src/simp/tests/performance/summarize.py \
-  src/simp/tests/compiled-core/evidence/timing \
-  --output src/simp/tests/compiled-core/evidence/timing/recomputed.json
+  "$OUT"/timing \
+  --output "$OUT"/timing/recomputed.json
 ```
 
 Timing is diagnostic, not an acceptance claim; the 10000-rule graph closes the
