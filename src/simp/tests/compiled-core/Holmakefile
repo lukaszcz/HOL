@@ -1,4 +1,5 @@
 # Private, fresh-process baseline/candidate selftest launchers.
+HOLHEAP = $(HOLDIR)/bin/hol.state0
 .PHONY: check python-tests
 
 python-tests:

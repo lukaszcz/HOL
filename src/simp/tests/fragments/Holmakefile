@@ -1,5 +1,6 @@
 # The Python driver builds/executes private selftest fixtures with hol.state0.
 # No production products are built by this directory's targets.
+HOLHEAP = $(HOLDIR)/bin/hol.state0
 .PHONY: check python-tests
 
 python-tests:
