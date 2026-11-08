@@ -10,7 +10,7 @@
     "load-congLib"
    ],
    "reason": "adds val note_rewrite : thm -> unit (single tracking extent)",
-   "mechanism": "source differs: the compiler elaborates one more specification"
+   "mechanism": "the signature text: one more specification is elaborated"
   },
   {
    "path": "src/simp/src/Cond_rewr.sml",
@@ -21,7 +21,7 @@
     "load-congLib"
    ],
    "reason": "source identical; matched against the changed signature",
-   "mechanism": "opaque ascription :> Cond_rewr matches one more specification"
+   "mechanism": "unchanged text, compiled against the larger signature"
   },
   {
    "path": "src/simp/src/simpLib.sml",
@@ -32,7 +32,7 @@
     "load-congLib"
    ],
    "reason": "source identical; opens the changed structure",
-   "mechanism": "open Cond_rewr binds one more value"
+   "mechanism": "unchanged text, compiled against the larger interface"
   },
   {
    "path": "src/simp/src/congLib.sml",
@@ -42,16 +42,9 @@
     "load-congLib"
    ],
    "reason": "source identical; opens the changed structure",
-   "mechanism": "open ... Cond_rewr binds one more value"
+   "mechanism": "unchanged text, compiled against the larger interface"
   }
  ],
- "noise": [
-  {
-   "path": "src/simp/src/Trace.sml",
-   "blob": "6735cef75f308d1707c3c71373a83ac77f873ac6",
-   "reason": "bracket differs between images with the sources fixed",
-   "mechanism": null
-  }
- ],
+ "noise": [],
  "candidate_only": []
 }
