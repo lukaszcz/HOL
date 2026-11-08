@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the paired runner unchanged, and record its private trees.
 
-The identity gate of TASK31 (task31_grid.py) compares what each side
+The identity gate of TASK31 (task31_identity_grid.py) compares what each side
 compiled. The runner keeps a hash of every private source and product, but
 a product is a loader descriptor (`.uo`, `.ui`) that names the directory of
 its side, so the hashes of two sides differ whatever they were built from.

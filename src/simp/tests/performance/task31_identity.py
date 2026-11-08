@@ -27,7 +27,7 @@ The row is `identical` when both lists of differences are empty,
 reviewed table (task31_attribution.py: the same blobs on the two sides as the
 table names, the elaboration order and the heap equal, the work equal), and
 `different` otherwise. Everything is re-derived from the archived folder, so
-`cell` is also the replay (task31_grid.py `identity-replay`).
+`cell` is also the replay (task31_identity_grid.py `identity-replay`).
 """
 import gzip
 import hashlib

@@ -41,17 +41,21 @@ class Shipped(unittest.TestCase):
         document = attr.load()
         self.assertEqual(attr.unfilled(document["entries"]),
                          [e["path"] for e in document["entries"]])
-        self.assertEqual(attr.pins(document["entries"]), {})
+        self.assertEqual(attr.pins(document["entries"], attr.paths(document)),
+                         {})
 
     def test_the_baseline_blobs_are_those_of_git(self):
         for e in attr.load()["entries"]:
             self.assertEqual(e["baseline_blob"],
                              tg.git_blob(REPO, a.BASE, e["path"]), e["path"])
 
-    def test_the_shipped_paths_are_among_the_timing_sources(self):
+    def test_the_shipped_source_entries_are_among_the_timing_sources(self):
         import task31_grid as g
-        self.assertLessEqual(set(attr.paths(attr.load())),
-                             set(g.TABLE.sources))
+        document = attr.load()
+        sources = {e["path"] for e in document["entries"]
+                   if e["kind"] == "source"}
+        self.assertTrue(sources)
+        self.assertLessEqual(sources, set(g.TABLE.sources))
 
 
 class Validate(unittest.TestCase):
@@ -91,8 +95,10 @@ class Files(unittest.TestCase):
         path = self.write()
         document = attr.load(path)
         self.assertEqual(document["seal"], a.seal(path))
-        self.assertEqual(attr.pins(document["entries"]), {
-            "src/simp/src/A.sig": dict(blob=C, reason="why")})
+        self.assertEqual(
+            attr.pins(document["entries"], ["src/simp/src/A.sig"]),
+            {"src/simp/src/A.sig": dict(blob=C, reason="why")})
+        self.assertEqual(attr.pins(document["entries"], []), {})
 
     def test_another_schema_or_extra_field_is_refused(self):
         for bad in (dict(schema="x"), dict(extra=1)):
@@ -109,9 +115,10 @@ class Files(unittest.TestCase):
         with self.assertRaises(ValueError):
             attr.entries_of(document, {"sha256": "b" * 64})
         self.assertIn("src/simp/src/A.sig", attr.paths(document))
-        self.assertEqual(attr.pin_history(document)[digest]["src/simp/src/"
-                                                            "A.sig"]["blob"],
+        history = attr.pin_history(document, ["src/simp/src/A.sig"])
+        self.assertEqual(history[digest]["src/simp/src/A.sig"]["blob"],
                          "3" * 40)
+        self.assertEqual(attr.pin_history(document, []), {digest: {}})
 
     def test_the_digest_follows_the_entries(self):
         self.assertEqual(attr.digest([entry()]), attr.digest([entry()]))
@@ -142,7 +149,55 @@ class Account(unittest.TestCase):
             "src/far/Z.sml": "unloaded",
             "src/simp/src/A.sig": "attributed",
             "src/simp/src/M.sml": "unattributed",
-            "src/simp/tests/performance/x.py": "harness"})
+            "src/simp/tests/performance/x.py": "excluded"})
+
+    def test_every_differing_path_outside_src_is_accounted(self):
+        blobs = self.diff(
+            "tools/sequences/base-hol", "tools/Holmake/Foo.sml",
+            "tools-poly/build.sml", "bin/build", "tools/README.md",
+            "tools/h4pedant/x.sml", "help/Docfiles/a.smd", "CLAUDE.md",
+            "holproject.toml", "Manual/Developers/x.md", "examples/e.sml",
+            "src/simp/tests/compatibility/run_paired.py",
+            "src/simp/tests/compatibility/paired/P.sml",
+            "src/simp/tests/compatibility/inputs/x.sml",
+            "src/simp/tests/native-extension/Holmakefile")
+        got = self.classes(blobs)
+        build = {p: "unattributed-build" for p in (
+            "tools/sequences/base-hol", "tools/Holmake/Foo.sml",
+            "tools-poly/build.sml", "bin/build", "tools/h4pedant/x.sml")}
+        excluded = {p: "excluded" for p in (
+            "help/Docfiles/a.smd", "CLAUDE.md",
+            "src/simp/tests/compatibility/run_paired.py",
+            "src/simp/tests/compatibility/paired/P.sml")}
+        unloaded = {p: "unloaded" for p in (
+            "tools/README.md", "holproject.toml", "Manual/Developers/x.md",
+            "examples/e.sml", "src/simp/tests/compatibility/inputs/x.sml",
+            "src/simp/tests/native-extension/Holmakefile")}
+        self.assertEqual(got, {**build, **excluded, **unloaded})
+        # An entry attributes a build tool; a mismatching one does not.
+        row = entry("tools/sequences/base-hol", "build")
+        self.assertEqual(
+            self.classes(self.diff("tools/sequences/base-hol"),
+                         [row])["tools/sequences/base-hol"], "attributed")
+        self.assertEqual(
+            self.classes(self.diff("tools/sequences/base-hol"),
+                         [dict(row, candidate_blob="4" * 40)])[
+                             "tools/sequences/base-hol"], "mismatch")
+
+    def test_a_loaded_path_is_never_excluded(self):
+        path = "src/simp/tests/performance/x.sml"
+        self.assertEqual(self.classes(self.diff(path), loaded=[path]),
+                         {path: "unattributed"})
+
+    def test_the_exclusions_are_reviewed_with_a_reason_each(self):
+        for found, reason in attr.EXCLUDED:
+            self.assertTrue(reason.strip() and len(reason) > 20, found)
+            self.assertIsNotNone(attr.excluded(found.rstrip("/") + (
+                "/x" if found.endswith("/") else "")))
+        self.assertIsNone(attr.excluded("src/simp/src/Cond_rewr.sml"))
+        self.assertIsNone(attr.excluded("tools/sequences/base-hol"))
+        self.assertIsNone(attr.excluded("holproject.toml"))
+        self.assertIsNone(attr.excluded("src/simp/tests/performance"))
 
     def test_an_entry_with_other_blobs_is_a_mismatch(self):
         got = self.classes(self.diff("src/simp/src/A.sig"),

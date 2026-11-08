@@ -14,8 +14,12 @@ import acceptance as a
 import allocation_matrix as am
 import task31_cases as c
 import task31_dispose as d
-import task31_grid as g
+import task31_attribution as attr
+import task31_followup as follow
+import task31_grid as timing
+import task31_identity_grid as g
 import timing_grid as tg
+from void_attempts import attempts_of
 
 CAND = "c" * 40
 NAMES = [g.name_of(*k) for k in g.every()]
@@ -232,6 +236,7 @@ class Rule(unittest.TestCase):
 
 
 BASE = a.BASE
+TABLE = attr.load()["seal"]
 
 
 def file_rows(*extra, **top):
@@ -331,7 +336,8 @@ class Command(unittest.TestCase):
             identity(), counts={}))
         self.checkout = dict(head="h" * 40, tree_outside_performance="t" * 40)
         a.save(self.root / "identity/inventory.json", dict(
-            candidate=CAND, baseline=a.BASE, checkout=self.checkout))
+            candidate=CAND, baseline=a.BASE, checkout=self.checkout,
+            attributed=dict(file=TABLE)))
         self.write_grid(CAND)
         self.write_alloc()
         self.survey = self.root / "survey.json"
@@ -344,7 +350,8 @@ class Command(unittest.TestCase):
                          table=g.IDENTITY_TABLE, attempt="x",
                          candidate=CAND, output="o", checkout="c")
         self.patches = [
-            mock.patch.object(d.grid, "identity_replay", lambda args: 0),
+            mock.patch.object(d.idgrid, "identity_replay",
+                              self.identity_replay),
             mock.patch.object(d.grid.ENGINE.h, "attempts_file",
                               lambda args, appending, create=True:
                               self.ledger),
@@ -357,11 +364,15 @@ class Command(unittest.TestCase):
             self.addCleanup(patch.stop)
         self.write_timing()
 
-    def write_grid(self, candidate):
+    def identity_replay(self, args):
+        self.identity_args = args
+        return 0
+
+    def write_grid(self, candidate, pins=None):
         path = self.root / "grid/inventory.json"
         path.unlink(missing_ok=True)
         a.save(path, dict(candidate=candidate, baseline=a.BASE,
-                          checkout=self.checkout))
+                          checkout=self.checkout, pins=pins or TABLE))
 
     def write_alloc(self, inventory=None, **top):
         inventory = dict(dict(
@@ -503,6 +514,72 @@ class Command(unittest.TestCase):
                                 "--followup-pilot", str(self.root / "fp"))
         self.assertEqual(code, tg.REFUSED)
 
+    def test_the_identity_grid_is_replayed_with_the_ledger(self):
+        self.assertEqual(self.run_main()[0], 0)
+        self.assertEqual(self.identity_args.ledger, self.ledger)
+        self.assertIsNone(self.identity_args.attributed)
+
+    def test_the_command_takes_no_other_attribution_table(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                self.run_main("--attributed", str(self.root / "t.json"))
+
+    def test_one_reviewed_table_binds_the_identity_and_timing_grids(self):
+        record = self.root / "disposition.json"
+        self.assertEqual(self.run_main("--record", str(record))[0], 0)
+        self.assertEqual(a.load(record)["inputs"]["attribution"], TABLE)
+        other = dict(TABLE, sha256="0" * 64)
+        self.write_grid(CAND, pins=other)
+        self.assertEqual(self.run_main()[0], tg.REFUSED)
+        self.write_grid(CAND)
+        found = a.load(self.root / "identity/inventory.json")
+        (self.root / "identity/inventory.json").unlink()
+        a.save(self.root / "identity/inventory.json", dict(
+            found, attributed=dict(file=other)))
+        self.assertEqual(self.run_main()[0], tg.REFUSED)
+
+    def test_the_binding_is_refused_for_a_missing_or_foreign_seal(self):
+        with self.assertRaises(ValueError):
+            d.table_binding(dict(attributed=dict(file=None)), [])
+        with self.assertRaises(ValueError):
+            d.table_binding(dict(attributed=dict(file=TABLE)),
+                            [("timing grid", [None])])
+        self.assertEqual(d.table_binding(
+            dict(attributed=dict(file=TABLE)), [("timing grid", [TABLE])]),
+            TABLE)
+
+    def test_a_redrawn_follow_up_attempt_is_refused(self):
+        engine = mock.Mock()
+        engine.t.schema = lambda kind: "x"
+        refuse = mock.Mock(side_effect=ValueError(
+            "a follow-up attempt that is not judged must be void"))
+        with mock.patch.object(d.follow, "ENGINE", engine), \
+                mock.patch.object(d, "attempts_of", refuse):
+            code, _ = self.run_main()
+        self.assertEqual(code, tg.REFUSED)
+        refuse.assert_called_once()
+
+    def test_the_attempt_rule_is_the_one_shared_with_task30(self):
+        import task30_dispose
+        import void_attempts
+        self.assertIs(d.attempts_of, void_attempts.attempts_of)
+        self.assertIs(task30_dispose.attempts_of,
+                      void_attempts.attempts_of)
+        self.assertIn("void_attempts.py", d.CODE)
+        self.assertIn("void_attempts.py", task30_dispose.CODE)
+
+    def test_an_unresolved_allocation_row_may_have_no_pairs(self):
+        found = file_rows()
+        found["rows"][0] = dict(found["rows"][0], decision="inconclusive",
+                                work="inconclusive", pairs=None)
+        (self.root / "alloc/decisions.json").unlink()
+        a.save(self.root / "alloc/decisions.json", found)
+        self.assertEqual(self.run_main()[0], 2)
+        for decision in ("pass", "fail"):
+            found["rows"][0] = dict(found["rows"][0], decision=decision)
+            with self.assertRaises(ValueError):
+                d.allocation_rows(found, CAND, BASE)
+
 
 class Code(unittest.TestCase):
     def test_the_recorded_code_seals_are_checked(self):
@@ -513,6 +590,11 @@ class Code(unittest.TestCase):
         with mock.patch.dict(d.HISTORY, {"task31_grid.py": [
                 {"sha256": "0"}]}):
             d.check_code(bad)
+
+    def test_the_code_includes_the_allocation_gate_and_its_schemas(self):
+        for name in ("allocation_boundary.py", "path_schema.py",
+                     "task31_identity_grid.py", "void_attempts.py"):
+            self.assertIn(name, d.CODE)
 
     def test_the_code_includes_the_attribution_and_the_follow_up(self):
         for name in ("task31_attribution.py", "task31_followup.py",

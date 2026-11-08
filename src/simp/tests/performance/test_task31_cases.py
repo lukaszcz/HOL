@@ -7,6 +7,7 @@ import acceptance as a
 import matrix_schema as ms
 import task31_cases as c
 import task31_grid as g
+import task31_identity_grid as ig
 import timing_grid as tg
 
 REPO = a.HERE.parents[3]
@@ -30,7 +31,7 @@ class Cases(unittest.TestCase):
         self.assertEqual(len(every()), 278)
 
     def test_the_sample_is_28_cells_of_the_cases(self):
-        names = {g.name_of(*k) for k in every()}
+        names = {ig.name_of(*k) for k in every()}
         self.assertEqual(len(c.SAMPLE), 28)
         self.assertEqual(len(set(c.SAMPLE)), 28)
         self.assertLessEqual(set(c.SAMPLE), names)
@@ -44,14 +45,14 @@ class Cases(unittest.TestCase):
         self.assertIn("tactic_installed_reuse-1000", c.SAMPLE)
 
     def test_the_infeasible_cells_are_the_heavy_size_10000_ones(self):
-        names = {g.name_of(*k) for k in every()}
+        names = {ig.name_of(*k) for k in every()}
         self.assertEqual(len(c.INFEASIBLE), 33)
         self.assertLessEqual(set(c.INFEASIBLE), names)
         self.assertTrue(all(x.endswith("-10000") for x in c.INFEASIBLE))
         self.assertFalse(set(c.INFEASIBLE) & set(c.SAMPLE))
         for x in c.INFEASIBLE:
             self.assertIn(x.rsplit("-", 1)[0] + "-0", names)
-            self.assertNotIn(g.anchor(x), c.INFEASIBLE)
+            self.assertNotIn(ig.anchor(x), c.INFEASIBLE)
 
     def test_the_sources_are_tracked_files_present_at_the_baseline(self):
         self.assertEqual(list(c.SOURCES), sorted(set(c.SOURCES)))
@@ -93,10 +94,7 @@ class Table(unittest.TestCase):
         self.assertEqual(paired, listed)
 
     def test_the_elaborated_sources_are_the_timing_tables_sources(self):
-        import task31_attribution as attr
-        self.assertEqual(
-            g.TABLE.sources,
-            tuple(sorted(set(c.SOURCES) | set(attr.paths(g.ATTRIBUTED)))))
+        self.assertEqual(g.TABLE.sources, tuple(sorted(c.SOURCES)))
         self.assertEqual(g.TABLE.tree, "src")
 
     def test_the_cases_hold_no_cost_numbers_or_narrative(self):
@@ -105,6 +103,7 @@ class Table(unittest.TestCase):
 
     def test_no_line_has_tabs_trailing_blanks_or_80_columns(self):
         for name in ("task31_cases.py", "task31_grid.py",
+                     "task31_identity_grid.py", "void_attempts.py",
                      "task31_identity.py", "task31_snapshot.py",
                      "task31_dispose.py", "task31_attribution.py",
                      "task31_followup.py"):

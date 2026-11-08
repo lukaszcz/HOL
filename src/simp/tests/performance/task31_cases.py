@@ -1,8 +1,8 @@
 """The TASK31 cases: what the identity, allocation and timing gates cover.
 
-Data only, so the identity gate (task31_grid.py), the timing table (the same
-module) and the allocation matrix (allocation_matrix.py, task `task31`)
-cannot disagree about which cells are in scope. The scope is the
+Data only, so the identity gate (task31_identity_grid.py), the timing table
+(task31_grid.py) and the allocation matrix (allocation_matrix.py, task
+`task31`) cannot disagree about which cells are in scope. The scope is the
 `ClientPerformance.sml` cases of matrix.json that TASK_31 gates: the
 traversal and tactic cases (the `downstream_*` cases belong to TASK_32/33).
 Their sizes come from the matrix ledger: a `singleton` case has the one size
@@ -73,8 +73,9 @@ PROCESS_TIMEOUT = 1800
 # sources of the table, see timing_grid.Table). SOURCES is derived, not
 # chosen: the union of the files the runner's loaded-source audit records for
 # the cells, mapped to the tracked source each is built from (a generated
-# `XTheory.sml` to its `XScript.sml`). `task31_grid.py sources --output DIR`
-# prints it from an identity grid, and the full grid is inconclusive if a
+# `XTheory.sml` to its `XScript.sml`).
+# `task31_identity_grid.py sources --output DIR` prints it from an identity
+# grid, and the full grid is inconclusive if a
 # file elaborated is missing here (`uncovered`) or a file here is elaborated
 # by no cell (`unused_sources`), so the list is exact. The files of the
 # initial heap are not listed: the identity grid derives them from the

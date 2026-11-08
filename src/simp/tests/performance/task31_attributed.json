@@ -79,6 +79,14 @@
       "kind": "build",
       "path": "src/simp/src/MANIFEST",
       "reason": "Directory manifest of the simplifier: describes the extension modules; read by no build step."
+    },
+    {
+      "baseline_blob": "1a80da5d362f42fb2fa97f64baf4dbe8d02e4763",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the sequence",
+      "kind": "build",
+      "path": "tools/sequences/base-hol",
+      "reason": "The build sequence: adds src/simp/tests/native-extension as a selftest-only directory (marked !), built only with selftests; the shared tree the cells load is built without them."
     }
   ],
   "history": {},

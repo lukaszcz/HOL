@@ -24,13 +24,14 @@ the reviewed git blob at the candidate; null is the placeholder of an entry
 whose blob is to be filled at integration, and the identity grid refuses to
 run while one is left (`unfilled`).
 
-`account` classifies every file below src/ that differs between the two
+`account` classifies every tracked file that differs between the two
 commits, from the git blobs and from the files the receipts show were
 loaded: a file is attributed (an entry with exactly the blobs), or decisive
-(loaded and unattributed, a build file of a loaded directory and
-unattributed, an entry with other blobs), or not loaded (proved by the
-receipts), or harness (installed from the checkout, the same file on both
-sides).
+(loaded and unattributed, a build tool or build sequence and unattributed, a
+build file of a loaded directory and unattributed, an entry with other
+blobs), or not loaded (proved by the receipts), or excluded. EXCLUDED is the
+reviewed list of the paths that are no part of any build a cell measures,
+each with its reason; no other path is left out.
 """
 import json
 import posixpath
@@ -46,10 +47,29 @@ FIELDS = ("baseline_blob", "candidate_blob", "gate", "kind", "path",
           "reason")
 SOURCE_SUFFIXES = (".sml", ".sig")
 BUILD_NAMES = ("Holmakefile", "MANIFEST")
-# The performance harness is installed from the checkout, the same file in
-# both private trees, and is bound by the harness seals and the checkout
-# record; it is never read from either commit.
-HARNESS_TREE = "src/simp/tests/"
+# The reviewed exclusions: (path or directory, reason). A path is excluded
+# only if no receipt shows it loaded. The measuring harness and the paired
+# runner are installed from the checkout, the same file in both private
+# trees, and are bound by the harness seals and the checkout record; neither
+# is read from either commit. The documentation sources are read by no build
+# of the shared tree or of a cell.
+EXCLUDED = (
+    ("src/simp/tests/performance/",
+     "the measuring harness: installed from the checkout, the same file in "
+     "both private trees"),
+    ("src/simp/tests/compatibility/run_paired.py",
+     "the paired runner: run from the checkout for both sides"),
+    ("src/simp/tests/compatibility/paired/",
+     "the paired fixtures: installed from the checkout, the same file in "
+     "both private trees"),
+    ("help/", "documentation sources (Docfiles): no build of a cell or of "
+     "the shared tree reads them"),
+    ("CLAUDE.md", "instructions for assistants: documentation, outside "
+     "every build"))
+# The build tools, their prelude and the build sequences decide what is
+# built into the shared tree and how, which the receipts do not record: a
+# difference there is attributed or the grid is different.
+TOOLCHAIN = ("tools/", "tools-poly/", "bin/")
 DECISIVE = ("unattributed", "unattributed-build", "mismatch")
 
 
@@ -135,15 +155,21 @@ def unfilled(entries):
     return [e["path"] for e in entries if e["candidate_blob"] is None]
 
 
-def pins(entries):
+def pins(entries, within):
     """The pins of a timing table: {path: {blob, reason}} of the filled
-    entries."""
+    entries whose path is one of `within`, the table's sources. The other
+    entries (the shared heap and the build files) are no source of the
+    table: adding one changes no pin."""
+    within = set(within)
     return {e["path"]: dict(blob=e["candidate_blob"], reason=e["reason"])
-            for e in entries if e["candidate_blob"] is not None}
+            for e in entries
+            if e["candidate_blob"] is not None and e["path"] in within}
 
 
-def pin_history(document):
-    return {seal: pins(earlier)
+def pin_history(document, within):
+    """The pins of each earlier version of the file (by its sha256), as
+    `pins` reads them."""
+    return {seal: pins(earlier, within)
             for seal, earlier in document["history"].items()}
 
 
@@ -169,21 +195,39 @@ def is_build(path):
         name.startswith("README"))
 
 
+def excluded(path):
+    """The reason a path is on the reviewed exclusion list, or None."""
+    for found, reason in EXCLUDED:
+        if path == found or (found.endswith("/") and
+                             path.startswith(found)):
+            return reason
+    return None
+
+
+def toolchain(path):
+    """A file of the build tools, the prelude or the sequences (not a
+    document)."""
+    name = posixpath.basename(path)
+    return path.startswith(TOOLCHAIN) and not (
+        name.endswith(".md") or name.startswith("README"))
+
+
 def account(blobs, entries, loaded):
     """{path: (class, note)} of every path of `blobs` whose two blobs
-    differ. `blobs` is {path: {baseline, candidate}} (every path that
-    differs below src/, and the sources), `loaded` the set of tracked paths
+    differ. `blobs` is {path: {baseline, candidate}} (every tracked path
+    that differs, and the sources), `loaded` the set of tracked paths
     that any measured cell loaded on either side (elaborated, found loaded,
     or in the initial heap). The classes:
 
     - attributed: an entry names exactly these blobs;
     - mismatch: an entry names other blobs;
     - unattributed: loaded, with no entry;
-    - harness: below HARNESS_TREE and not loaded from the repository;
-    - unattributed-build: a build file in a directory that something
-      loaded came from, with no entry;
+    - excluded: on the reviewed exclusion list (EXCLUDED) and not loaded;
+    - unattributed-build: a file of the build tools or the sequences
+      (TOOLCHAIN), or a build file in a directory that something loaded
+      came from, with no entry;
     - unloaded: no loaded file of either side is this one, and it is no
-      build file of a loaded directory."""
+      build file."""
     by_path = {e["path"]: e for e in entries}
     a.require(set(by_path) <= set(blobs),
               "attributed path unknown to the record: " + ", ".join(
@@ -208,9 +252,12 @@ def account(blobs, entries, loaded):
         elif path in loaded:
             out[path] = ("unattributed", "loaded by a measured cell or "
                          "the initial heap")
-        elif path.startswith(HARNESS_TREE):
-            out[path] = ("harness", "installed from the checkout, the "
-                         "same file in both trees")
+        elif excluded(path) is not None:
+            out[path] = ("excluded", excluded(path))
+        elif toolchain(path):
+            out[path] = ("unattributed-build", "a build tool or sequence: "
+                         "the receipts record no file of it, so they "
+                         "cannot show it unused")
         elif is_build(path) and posixpath.dirname(path) in folders:
             out[path] = ("unattributed-build", "build file of a directory "
                          "a measured cell loads from")
