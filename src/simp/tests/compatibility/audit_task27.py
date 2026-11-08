@@ -280,12 +280,13 @@ DECLARATION = re.compile(
 # applies it in-process when it loads the module (QUse.use, through
 # HOLSource.ToSML.mkPullTranslator); only Moscow ML's Holmake runs it as
 # `bin/unquote file1 file2`.  The two give the same output, and the file
-# name affects only what #(FILE) expands to.  Its declaration forms (`Quote x = f:`, `Theorem`, ...)
-# open quotations with no quotation character, and a quotation body is not
-# SML, so a scanner that read the unfiltered text could be desynchronised
-# from the compiler, or miss a binding.  The var_perm audit therefore reads
-# the filter's output, the text the compiler sees, in which a quotation is
-# an ordinary string or QUOTE list.
+# name affects only what #(FILE) expands to.  Its declaration forms
+# (`Quote x = f:`, `Theorem`, ...) open quotations with no quotation
+# character, and a quotation body is not SML, so a scanner that read the
+# unfiltered text could be desynchronised from the compiler, or miss a
+# binding.  The var_perm audit therefore reads the filter's output, the
+# text the compiler sees, in which a quotation is an ordinary string or
+# QUOTE list.
 UNQUOTE = ROOT / 'bin/unquote'
 
 
@@ -464,8 +465,9 @@ def vperm_block(source):
     scope; nor are the block's callers.  Those are left deliberately to
     the REVIEWED_31 blob seal (any byte change fails the audit until
     re-reviewed) and to the cond-rewr-ext selftest (both engines must
-    accept and refuse the same permutative rewrites).  The compared tokens and the shadowing analysis
-    are taken from the one filtered text, at the same offsets."""
+    accept and refuse the same permutative rewrites).  The compared
+    tokens and the shadowing analysis are taken from the one filtered
+    text, at the same offsets."""
     kept, code = lex(quote_filter(source))
     require(not re.search(r'\b(?:functor|abstype)\b', code),
             'functor or abstype outside a comment or string')
