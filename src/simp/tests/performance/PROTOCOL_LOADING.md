@@ -40,11 +40,14 @@ Other modes:
   pairs of 1 import (`loading.SMOKE_PAIRS`, `SMOKE_REPS`). No statistics;
   the audit receipt may be omitted. Never performance evidence. A smoke run
   may not use the layout seed of a decision run or of its second stage
-  (default `loading.SMOKE_SEED`). Every smoke run, whatever its outcome, is
-  recorded in the attempts ledger as a `smoke` line (see Attempts ledger).
+  (default `loading.SMOKE_SEED`). Every smoke run is recorded in the
+  attempts ledger before its first process, and its end is recorded
+  whatever its outcome (see Attempts ledger).
 - `--calibrate --pairs P --reps R`: pilots and the B/B phase only
-  (P >= 10). Reports the jitter quantities below. No candidate phase, no
-  audit receipt, no decision.
+  (P >= 10). It measures the develop pin against itself: the baseline and
+  the candidate are both `a.BASE` (`--candidate` may be omitted), and
+  anything else is refused before any process runs. Reports the jitter
+  quantities below. No candidate phase, no audit receipt, no decision.
 - `--layout-seed S`: the layout seed of a smoke or calibration run (a
   smoke run: neither of the decision seeds). A decision run uses
   `loading.LAYOUT_SEED`. At most 58 characters.
@@ -263,19 +266,30 @@ The rules:
   measuring, blocked) blocks the gate for that candidate, source key and
   module and stage;
 - an attempt with more than one close line or without exactly one opening,
-  a line of the table with an event other than `open`, `close` or `smoke`,
-  and a line that lacks a key its event requires, is a corrupt ledger,
-  refused for a new run, in `--ledger-status` and in replay;
-- a smoke run is recorded as one `smoke` line (taken under the serial lock,
-  after the check that the ledger is excluded from git, and written when
-  the run ends, whatever its outcome): the candidate, baseline, source key,
-  module, seed, pairs, repetitions, output, checkout and the seal of its
-  `loading.json`. It is information only: it is no attempt, never judged or
-  void, and blocks no draw. `--ledger-status` and the replay of a decision
-  run list the smokes of the same module and the same candidate commit or
-  source key. A smoke archive made before the line existed replays as a
-  plain smoke replay, and a smoke replay needs no ledger. The outputs of
-  smoke runs are published with the ledger;
+  a line of the table with an event other than `open`, `close`, `smoke` or
+  `smoke-end`, a line that lacks a field its event has in
+  `loading.EVENT_FIELDS` or holds a value of another type, a smoke with
+  two start lines, and a `smoke-end` with no start or a second end, is a
+  corrupt ledger, refused for a new run (a smoke run included), in
+  `--ledger-status` and in replay. That one table is what the readers and
+  the validator both use;
+- a smoke run is recorded by two lines. Under the serial lock, after the
+  check that the ledger is excluded from git, after the whole ledger was
+  read and validated, and before the output directory is created or any
+  process starts, a `smoke` line is appended: attempt id, candidate,
+  baseline, both source keys, module, seed, pairs, repetitions, output and
+  checkout. When the line cannot be appended, nothing runs. When the run
+  ends, whatever its outcome, a `smoke-end` line names the attempt, its
+  `success` and, if its `loading.json` was saved, the seal of it. A smoke
+  with no end line (its run was killed, or the end line could not be
+  written) is listed as `unfinished`. A smoke is information only: it is no
+  attempt, never judged or void, and blocks no draw. `--ledger-status`
+  lists every smoke (those of `--module` when given). The replay of a
+  decision run lists the smokes of its module in which its candidate commit
+  or extracted-source key is the candidate or the baseline. A smoke replay
+  does not consult the ledger, and an archive with no ledger line replays
+  without a ledger. The outputs of smoke runs are published with the
+  ledger;
 - `--extend` replays its first stage against the ledger before it runs;
 - `--replay` checks the run against the ledger and prints every attempt of
   the table (id, stage, candidate, source key, module, statuses, void and,

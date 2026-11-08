@@ -723,6 +723,10 @@ def check_settings(args, first):
                 "run or of its second stage")
         return
     if args.calibrate:
+        require(args.baseline == args.candidate == a.BASE,
+                "a calibration measures the develop pin %s against itself "
+                "(--baseline and --candidate, if given, are that pin)" %
+                a.BASE)
         require(args.reps >= 1, "invalid repetitions")
         require(args.pairs >= 10, "calibration requires >=10 pairs")
         return
@@ -806,30 +810,64 @@ def inventory_key(inventory):
     return key_of([(s["git_path"], s["git_blob"]) for s in inventory])
 
 
-# The keys each event of the table must have: a line without them is a
-# corrupt ledger, not a traceback.
-EVENT_KEYS = dict(
-    open=("attempt", "stage", "candidate", "module", "output", "checkout"),
-    close=("attempt", "stage", "status", "seal", "output"),
-    smoke=("attempt", "candidate", "source_key", "module", "seed", "output",
-           "seal", "checkout"))
+# The fields each event of the table has, with the type of each value: the
+# one table the readers and the validator share. A line without a field, or
+# with a value of another type, is a corrupt ledger and not a traceback.
+# `check_ledger`, `gate_attempts`, `attempts_table` and `table_smokes` read
+# only fields named here.
+STR_OR_NONE = (str, type(None))
+EVENT_FIELDS = dict(
+    open=dict(attempt=str, stage=str, candidate=str, baseline=str,
+              module=str, seed=str, source_key=str, baseline_key=str,
+              first_attempt=STR_OR_NONE, output=str, checkout=str),
+    close=dict(attempt=str, stage=str, status=str, seal=str, output=str),
+    smoke=dict(attempt=str, candidate=str, baseline=str, source_key=str,
+               baseline_key=str, module=str, seed=str, pairs=int, reps=int,
+               output=str, checkout=str),
+    **{"smoke-end": dict(attempt=str, success=bool, seal=STR_OR_NONE)})
+EVENT_KEYS = {event: tuple(fields)
+              for event, fields in EVENT_FIELDS.items()}
+
+
+def right_type(value, kind):
+    """Whether a value is of the type: a bool is no int."""
+    return isinstance(value, kind) and not (
+        isinstance(value, bool) and kind is int)
 
 
 def table_lines(state):
-    """The lines of the table, each of a known event and with the keys of
-    that event; anything else is a corrupt ledger. Lines of the other tables
-    of the shared ledger are skipped."""
-    lines = []
+    """The lines of the table, each of a known event, with the fields of
+    that event and values of their types; anything else is a corrupt
+    ledger. A smoke has at most one end line, and an end line belongs to a
+    smoke. Lines of the other tables of the shared ledger are skipped."""
+    lines, starts, ends = [], set(), set()
     for record in state.records:
         if record.get("table") != TABLE:
             continue
         event = record.get("event")
-        require(event in EVENT_KEYS,
+        require(event in EVENT_FIELDS,
                 "corrupt attempts ledger: a line of unknown event %r" %
                 (event,))
-        missing = [k for k in EVENT_KEYS[event] if k not in record]
+        missing = [k for k in EVENT_FIELDS[event] if k not in record]
         require(not missing, "corrupt attempts ledger: a line of event %r "
                 "lacks %s" % (event, ", ".join(missing)))
+        wrong = [k for k, t in EVENT_FIELDS[event].items()
+                 if not any(right_type(record[k], x) for x in (
+                     t if isinstance(t, tuple) else (t,)))]
+        require(not wrong, "corrupt attempts ledger: a line of event %r "
+                "has a value of the wrong type for %s" % (
+                    event, ", ".join(wrong)))
+        if event == "smoke":
+            require(record["attempt"] not in starts,
+                    "corrupt attempts ledger: smoke %s is recorded twice" %
+                    record["attempt"])
+            starts.add(record["attempt"])
+        elif event == "smoke-end":
+            require(record["attempt"] in starts and
+                    record["attempt"] not in ends,
+                    "corrupt attempts ledger: smoke %s has no start or "
+                    "several ends" % record["attempt"])
+            ends.add(record["attempt"])
         lines.append(record)
     return lines
 
@@ -841,7 +879,7 @@ def table_attempts(state):
     judges nothing and is listed apart (`table_smokes`)."""
     found = {}
     for record in table_lines(state):
-        if record["event"] == "smoke":
+        if record["event"] in ("smoke", "smoke-end"):
             continue
         row = found.setdefault((record["attempt"], record["stage"]),
                                dict(opens=[], closes=[]))
@@ -856,14 +894,29 @@ def table_attempts(state):
 
 def table_smokes(state, candidate=None, key=None, module=None):
     """The smoke runs the ledger records, in order: all of them, or those of
-    this module and of this candidate commit or extracted-source key."""
-    return [{k: v for k, v in r.items() if k not in ("prev", "time",
-                                                     "event", "table")}
-            for r in table_lines(state)
-            if r["event"] == "smoke" and
-            (module is None or r["module"] == module) and
-            (candidate is None or r["candidate"] == candidate or
-             (key is not None and r["source_key"] == key))]
+    this module with this candidate commit or extracted-source key on either
+    side. A smoke with no end line is `unfinished` (it has no seal); an
+    ended one names its `success` and the `seal` of its loading.json, if
+    saved."""
+    lines = table_lines(state)
+    ended = {r["attempt"]: r for r in lines if r["event"] == "smoke-end"}
+    out = []
+    for r in lines:
+        if r["event"] != "smoke" or (module is not None and
+                                     r["module"] != module):
+            continue
+        if candidate is not None and not (
+                candidate in (r["candidate"], r["baseline"]) or
+                key in (r["source_key"], r["baseline_key"])):
+            continue
+        end = ended.get(r["attempt"])
+        row = {k: v for k, v in r.items()
+               if k not in ("prev", "time", "event", "table")}
+        row.update(unfinished=end is None,
+                   success=None if end is None else end["success"],
+                   seal=None if end is None else end["seal"])
+        out.append(row)
+    return out
 
 
 PROCESS_PHASES = ("control", "candidate")
@@ -926,10 +979,6 @@ def judged_because(attempt, stage, row):
     return None
 
 
-def is_void(attempt, stage, row):
-    return judged_because(attempt, stage, row) is None
-
-
 def gate_attempts(found, candidate, key, module, stage):
     """attempt id -> its lines, for the table's attempts at `stage` of this
     module and of this candidate commit or this extracted-source key."""
@@ -937,7 +986,7 @@ def gate_attempts(found, candidate, key, module, stage):
             if st == stage and row["opens"][0]["module"] == module and
             (row["opens"][0]["candidate"] == candidate or
              (key is not None and
-              row["opens"][0].get("source_key") == key))}
+              row["opens"][0]["source_key"] == key))}
 
 
 def reasons(found):
@@ -964,7 +1013,7 @@ def attempts_table(found, why=None):
     for (i, st), r in found.items():
         table.append(dict(
             attempt=i, stage=st, candidate=r["opens"][0]["candidate"],
-            source_key=r["opens"][0].get("source_key"),
+            source_key=r["opens"][0]["source_key"],
             module=r["opens"][0]["module"],
             statuses=[c["status"] for c in r["closes"]] or ["unclosed"],
             void=why[i, st] is None, judged_because=why[i, st],
@@ -1031,18 +1080,35 @@ def ledger_status(args):
         smokes=table_smokes(state, module=args.module))
 
 
-def record_smoke(path, args, report, output, keys, repo):
-    """Append the line of a smoke run, whatever its outcome: information
-    only, never an attempt, never judged or void."""
+def open_smoke(path, args, output, keys, repo):
+    """Append the start line of a smoke run, before any process: information
+    only, never an attempt, never judged or void. Returns its id."""
     import timing_grid as tg
     path.parent.mkdir(parents=True, exist_ok=True)
+    attempt = "smoke-" + uuid.uuid4().hex[:12]
     tg.ledger_append(
-        path, event="smoke", table=TABLE,
-        attempt="smoke-" + uuid.uuid4().hex[:12], candidate=args.candidate,
-        baseline=args.baseline, source_key=keys["candidate"],
+        path, event="smoke", table=TABLE, attempt=attempt,
+        candidate=args.candidate, baseline=args.baseline,
+        source_key=keys["candidate"], baseline_key=keys["baseline"],
         module=args.module, seed=args.layout_seed, pairs=args.pairs,
-        reps=args.reps, success=report["success"], output=str(output),
-        seal=a.seal(output / "loading.json")["sha256"], checkout=str(repo))
+        reps=args.reps, output=str(output), checkout=str(repo))
+    return attempt
+
+
+def end_smoke(path, attempt, report, output, saved):
+    """Append the end line of a smoke run, whatever its outcome: its success
+    and, when loading.json was saved, the seal of it. When it cannot be
+    written the smoke stays listed as unfinished."""
+    import timing_grid as tg
+    try:
+        tg.ledger_append(
+            path, event="smoke-end", table=TABLE, attempt=attempt,
+            success=report["success"] is True,
+            seal=a.seal(output / "loading.json")["sha256"] if saved
+            else None)
+    except Exception as error:
+        print("SMOKE-NOT-ENDED %s: %s" % (attempt, error),
+              file=sys.stderr, flush=True)
 
 
 def close_attempt(path, report, output):
@@ -1091,7 +1157,7 @@ def check_ledger(path, report, seal, status, first_attempt):
             report["layout_seed"], first_attempt, key)
     require((opened["candidate"], opened["module"], opened["baseline"],
              opened["seed"], opened["first_attempt"],
-             opened.get("source_key")) == want,
+             opened["source_key"]) == want,
             "the ledger's opening disagrees with this run")
     closes = row["closes"]
     require(len(closes) == 1 and closes[0]["seal"] == seal["sha256"] and
@@ -1134,15 +1200,22 @@ def run(args, first=None):
     require(light or args.api_audit,
             "candidate eight-process --api-audit receipt required")
     repo, output = args.repo.resolve(strict=True), args.output.resolve()
-    ledger = None if light else ledger_path(repo)
-    smoke_ledger = ledger_path(repo) if args.smoke else None
+    ledger = None if args.calibrate else ledger_path(repo)
     # Before anything is created: a revision without sources is refused here.
     keys = {side: source_key(repo, getattr(args, side))
             for side in ("baseline", "candidate")}
     with a.serial_lock(repo) as fds:
-        if smoke_ledger is not None:
-            require_ignored(smoke_ledger, repo)
-        if ledger is not None:
+        smoke = None
+        if args.smoke:
+            # Before anything is created: the whole ledger is read, and
+            # the start line is written ahead of the first process.
+            require_ignored(ledger, repo)
+            if ledger.exists():
+                import timing_grid as tg
+                table_lines(tg.Ledger(ledger))
+            require(not output.exists(), "output exists: %s" % output)
+            smoke = open_smoke(ledger, args, output, keys, repo)
+        elif ledger is not None:
             refuse_second_draw(ledger, args, "first" if first is None
                                else "second", keys["candidate"])
         output.mkdir(parents=True, exist_ok=False)
@@ -1158,8 +1231,9 @@ def run(args, first=None):
                   "policy": POLICY, "timer_fields": FIELDS,
                   "timeout": args.timeout, "selections": {}, "runs": [],
                   "argv": sys.argv, "inputs": {}, "tools": {}}
-        if ledger is not None:
+        if ledger is not None and smoke is None:
             open_attempt(ledger, args, report, first, output, repo, keys)
+        saved = False
         try:
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("HOL", "POLY", "ML", "PAIR_",
@@ -1386,10 +1460,13 @@ def run(args, first=None):
             if isinstance(error, Blocked):
                 report["blocked"] = str(error)
         finally:
-            a.save(output / "loading.json", report)
-            if smoke_ledger is not None:
-                record_smoke(smoke_ledger, args, report, output, keys, repo)
-        if ledger is not None:
+            try:
+                a.save(output / "loading.json", report)
+                saved = True
+            finally:
+                if smoke is not None:
+                    end_smoke(ledger, smoke, report, output, saved)
+        if ledger is not None and smoke is None:
             close_attempt(ledger, report, output)
     return report
 

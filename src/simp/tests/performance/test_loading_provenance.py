@@ -269,6 +269,7 @@ class BuildBinding(unittest.TestCase):
                     Path(source["private_path"]).name], expected)
 
     def test_calibration_run_records_reps_and_replays(self):
+        self.decision_settings()
         report = self.run_protocol(pairs=10, reps=2, smoke=False,
                                    calibrate=True)
         self.assertTrue(report["success"], report.get("failure"))
@@ -310,6 +311,7 @@ class BuildBinding(unittest.TestCase):
                     self.assertFalse(out.exists())
 
     def test_every_process_gets_a_recorded_replayed_layout(self):
+        self.decision_settings()
         report = self.run_protocol(pairs=10, reps=2, smoke=False,
                                    calibrate=True)
         self.assertTrue(report["success"], report.get("failure"))
@@ -549,6 +551,7 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(l.replay(out)["exit"], 0)
 
     def test_replay_checks_the_calibration_jitter(self):
+        self.decision_settings()
         self.assertTrue(self.run_protocol(
             pairs=10, reps=2, smoke=False, calibrate=True)["success"])
         out = self.repo / "output"
@@ -708,7 +711,8 @@ class BuildBinding(unittest.TestCase):
         self.assertFalse(self.decide("void")["success"])
         found = tg.Ledger(self.ledger)
         row = next(iter(l.table_attempts(found).values()))
-        self.assertTrue(l.is_void(row["opens"][0]["attempt"], "first", row))
+        self.assertIsNone(
+            l.judged_because(row["opens"][0]["attempt"], "first", row))
         # Killed before any control or candidate process: still void.
         self.mutation, self.kill_at = None, 3
         self.processes = 0
@@ -807,7 +811,7 @@ class BuildBinding(unittest.TestCase):
         out = self.repo / "early"
         found = l.table_attempts(tg.Ledger(self.ledger))
         (key, row), = found.items()
-        self.assertTrue(l.is_void(key[0], key[1], row))
+        self.assertIsNone(l.judged_because(key[0], key[1], row))
         # The receipt says admitted although the report says it was not.
         name = "control-000-baseline-00.json.gz"
         path = out / name
@@ -829,7 +833,8 @@ class BuildBinding(unittest.TestCase):
 
         reseal_all()
         found = l.table_attempts(tg.Ledger(self.ledger))
-        self.assertFalse(l.is_void(key[0], key[1], next(iter(found.values()))))
+        self.assertIsNotNone(l.judged_because(
+            key[0], key[1], next(iter(found.values()))))
         self.kill_at = None
         with self.assertRaisesRegex(ValueError, "judged attempt already"):
             self.decide("retry")
@@ -837,11 +842,12 @@ class BuildBinding(unittest.TestCase):
         path.write_bytes(original)
         reseal_all()
         found = l.table_attempts(tg.Ledger(self.ledger))
-        self.assertTrue(l.is_void(key[0], key[1], next(iter(found.values()))))
+        self.assertIsNone(l.judged_because(
+            key[0], key[1], next(iter(found.values()))))
         (out / "candidate-000-candidate-00.json.gz").write_bytes(original)
         found = l.table_attempts(tg.Ledger(self.ledger))
-        self.assertFalse(l.is_void(key[0], key[1],
-                                   next(iter(found.values()))))
+        self.assertIsNotNone(l.judged_because(
+            key[0], key[1], next(iter(found.values()))))
 
     def test_a_baseline_rejection_with_nothing_admitted_is_void(self):
         self.decision_settings()
@@ -853,7 +859,7 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(self.processes, 1)
         self.assertEqual(self.records()[-1]["status"], l.FAILED)
         (key, row), = l.table_attempts(tg.Ledger(self.ledger)).items()
-        self.assertTrue(l.is_void(key[0], key[1], row))
+        self.assertIsNone(l.judged_because(key[0], key[1], row))
         self.mutation = None
         self.assertTrue(self.decide("retry")["success"])
         info = l.replay(self.repo / "retry")
@@ -947,6 +953,9 @@ class BuildBinding(unittest.TestCase):
     def smoke_lines(self):
         return [r for r in self.records() if r["event"] == "smoke"]
 
+    def smoke_ends(self):
+        return [r for r in self.records() if r["event"] == "smoke-end"]
+
     def test_a_smoke_run_is_capped_and_never_uses_a_decision_seed(self):
         for changes in (dict(pairs=3), dict(reps=2), dict(pairs=40, reps=5),
                         dict(layout_seed=l.LAYOUT_SEED),
@@ -983,15 +992,18 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         line = lines[0]
         self.assertEqual(
-            (line["table"], line["candidate"], line["module"],
-             line["seed"], line["output"], line["success"]),
-            (l.TABLE, self.pin, "congLib", l.SMOKE_SEED,
-             str(self.repo / "smoke1"), True))
-        self.assertEqual(line["source_key"],
-                         l.source_key(self.repo, self.pin))
-        self.assertEqual(line["seal"], l.a.seal(
+            (line["table"], line["candidate"], line["baseline"],
+             line["module"], line["seed"], line["output"]),
+            (l.TABLE, self.pin, self.pin, "congLib", l.SMOKE_SEED,
+             str(self.repo / "smoke1")))
+        self.assertEqual((line["source_key"], line["baseline_key"]),
+                         (l.source_key(self.repo, self.pin),) * 2)
+        ends = self.smoke_ends()
+        self.assertEqual([e["attempt"] for e in ends],
+                         [x["attempt"] for x in lines])
+        self.assertEqual(ends[0]["seal"], l.a.seal(
             self.repo / "smoke1/loading.json")["sha256"])
-        self.assertFalse(lines[2]["success"])
+        self.assertEqual([e["success"] for e in ends], [True, True, False])
         # Neither judged nor void: no attempt at all, and no draw blocked.
         self.assertEqual(l.table_attempts(tg.Ledger(self.ledger)), {})
         status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
@@ -1022,6 +1034,195 @@ class BuildBinding(unittest.TestCase):
             self.run_protocol()
         self.assertEqual(self.processes, 0)
         self.assertFalse((self.repo / "output").exists())
+
+    def forged(self, event, drop=None, **changes):
+        """A line of the event with a value of the right type for each
+        field of the table, less `drop`, with `changes`."""
+        values = {str: "x", int: 1, bool: True, l.STR_OR_NONE: None}
+        line = {k: values[t] for k, t in l.EVENT_FIELDS[event].items()
+                if k != drop}
+        line.update(changes)
+        return dict(event=event, table=l.TABLE, **line)
+
+    def test_every_field_of_every_event_is_required_and_typed(self):
+        self.decision_settings()
+        self.assertTrue(self.decide("good")["success"])
+        good = self.ledger.read_bytes()
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        cases = []
+        for event, fields in l.EVENT_FIELDS.items():
+            for key in fields:
+                cases.append((event, key, "lacks " + key,
+                              self.forged(event, drop=key)))
+                cases.append((event, key, "wrong type for.*" + key,
+                              self.forged(event, **{key: [1]})))
+        # The table is what the readers use: it names every field of an
+        # open line that check_ledger compares.
+        for key in ("baseline", "seed", "first_attempt", "source_key"):
+            self.assertIn(key, l.EVENT_KEYS["open"])
+        for event, key, error, line in cases:
+            with self.subTest(event=event, key=key, error=error):
+                self.ledger.write_bytes(good)
+                tg.ledger_append(self.ledger, **line)
+                regex = "corrupt attempts ledger.*" + error
+                with self.assertRaisesRegex(ValueError, regex):
+                    self.decide("retry")
+                with self.assertRaisesRegex(ValueError, regex):
+                    l.ledger_status(status)
+                with self.assertRaisesRegex(ValueError, regex):
+                    l.replay(self.repo / "good")
+                with self.assertRaisesRegex(ValueError, regex):
+                    self.run_protocol(output=self.repo / "smoke")
+                with patch("sys.stderr"):
+                    self.assertEqual(
+                        l.main(["--replay", str(self.repo / "good")]), 1)
+                    self.assertEqual(l.main(
+                        ["--ledger-status", "--repo", str(self.repo)]), 1)
+        self.assertEqual(self.processes, 2 + 2 * 2 * 10 * 2)
+        self.assertFalse((self.repo / "smoke").exists())
+        # A bool is no int.
+        self.ledger.write_bytes(good)
+        tg.ledger_append(self.ledger, **self.forged("smoke", pairs=True))
+        with self.assertRaisesRegex(ValueError, "wrong type for pairs"):
+            l.ledger_status(status)
+
+    def test_a_smoke_or_end_line_without_its_partner_is_corrupt(self):
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        self.ledger.parent.mkdir(parents=True)
+        tg.ledger_append(self.ledger, **self.forged("smoke-end"))
+        with self.assertRaisesRegex(ValueError, "no start"):
+            l.ledger_status(status)
+        self.ledger.unlink()
+        for _ in range(2):
+            tg.ledger_append(self.ledger, **self.forged("smoke"))
+        with self.assertRaisesRegex(ValueError, "recorded twice"):
+            l.ledger_status(status)
+
+    def test_a_smoke_is_recorded_before_its_first_process(self):
+        seen = []
+        execute = self.execute
+
+        def watch(*args, **kwargs):
+            seen.append((len(self.smoke_lines()), len(self.smoke_ends()),
+                         (self.repo / "smoke").is_dir()))
+            return execute(*args, **kwargs)
+
+        self.execute = watch
+        self.assertTrue(self.run_protocol(output=self.repo / "smoke")[
+            "success"])
+        self.assertEqual(set(seen), {(1, 0, True)})
+        self.assertEqual(len(self.smoke_ends()), 1)
+
+    def test_a_smoke_without_an_end_line_is_unfinished(self):
+        self.decision_settings()
+        # A kill after the start line leaves no end line.
+        with patch.object(l, "end_smoke"):
+            self.assertTrue(self.run_protocol(
+                output=self.repo / "killed")["success"])
+        self.assertTrue(self.run_protocol(
+            output=self.repo / "whole")["success"])
+        self.assertEqual((len(self.smoke_lines()), len(self.smoke_ends())),
+                         (2, 1))
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        listing = l.ledger_status(status)
+        self.assertEqual(listing["table"], [])
+        self.assertEqual([(r["unfinished"], r["seal"] is None)
+                          for r in listing["smokes"]],
+                         [(True, True), (False, False)])
+        self.assertEqual(l.table_attempts(tg.Ledger(self.ledger)), {})
+        self.assertTrue(self.decide("good")["success"])
+        info = l.replay(self.repo / "good")
+        self.assertEqual(info["attempts"]["first"],
+                         dict(attempts=1, judged=1))
+        self.assertEqual([r["unfinished"]
+                          for r in info["attempts"]["smokes"]],
+                         [True, False])
+
+    def test_a_smoke_whose_start_cannot_be_written_starts_nothing(self):
+        with patch.object(tg, "ledger_append", side_effect=OSError("full")):
+            with self.assertRaisesRegex(OSError, "full"):
+                self.run_protocol(output=self.repo / "smoke")
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "smoke").exists())
+        self.assertFalse(self.ledger.exists())
+        # A chain-broken ledger refuses the smoke as well.
+        self.assertTrue(self.run_protocol(output=self.repo / "s1")["success"])
+        text = self.ledger.read_text()
+        self.ledger.write_text(text.replace("smoke-", "smoke+", 1))
+        before = self.processes
+        with self.assertRaises(ValueError):
+            self.run_protocol(output=self.repo / "s2")
+        self.assertEqual(self.processes, before)
+        self.assertFalse((self.repo / "s2").exists())
+
+    def test_a_smoke_is_listed_with_the_roles_swapped(self):
+        self.decision_settings()
+        native = self.repo / "src/simp/src/simpLib.sml"
+        native.write_text("(* another git source *)\n")
+        l.rp.git(self.repo, "-c", "user.name=Protocol Test", "-c",
+                 "user.email=test@invalid", "commit", "-qam", "second")
+        other = l.rp.git(self.repo, "rev-parse", "HEAD").decode().strip()
+        self.assertNotEqual(other, self.pin)
+        # The candidate of the decision runs as the baseline of the smoke.
+        swapped = self.run_protocol(
+            candidate=self.pin, baseline=other,
+            output=self.repo / "swapped")
+        self.assertTrue(swapped["success"], swapped.get("failure"))
+        # Another module's smoke is recorded whatever its outcome.
+        self.run_protocol(candidate=self.pin, baseline=other,
+                          module="simpLib", output=self.repo / "elsewhere")
+        self.assertTrue(self.run_protocol(
+            candidate=self.pin, baseline=self.pin,
+            output=self.repo / "unrelated")["success"])
+        self.assertTrue(self.decide("good", candidate=other)["success"])
+        smokes = l.replay(self.repo / "good")["attempts"]["smokes"]
+        self.assertEqual([r["output"] for r in smokes],
+                         [str(self.repo / "swapped")])
+
+    def test_a_calibration_measures_only_the_pin_against_itself(self):
+        self.decision_settings()
+        other = "b" * 40
+        base = dict(smoke=False, calibrate=True, pairs=10, reps=1)
+        for changes in (dict(baseline=other, candidate=other),
+                        dict(baseline=self.pin, candidate=other),
+                        dict(baseline=other, candidate=self.pin)):
+            with self.subTest(changes=changes), \
+                    self.assertRaisesRegex(ValueError, "develop pin"):
+                self.run_protocol(**base, **changes)
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "output").exists())
+        cli = ["--calibrate", "--module", "congLib", "--repo",
+               str(self.repo), "--output", str(self.repo / "cli"),
+               "--authorize-measurements"]
+        for extra in (["--baseline", other],
+                      ["--baseline", self.pin, "--candidate", other]):
+            with patch("sys.stderr"):
+                self.assertEqual(l.main(cli + extra), 1)
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "cli").exists())
+        self.assertFalse(self.ledger.exists())
+        self.assertTrue(self.run_protocol(
+            **base, baseline=self.pin, candidate=self.pin)["success"])
+
+    def test_replay_reads_each_attempt_once(self):
+        self.decision_settings()
+        self.mutation = "candidate-build"
+        self.assertFalse(self.decide("void")["success"])
+        self.mutation = None
+        self.assertTrue(self.decide("retry")["success"])
+        calls = []
+        judged_because = l.judged_because
+
+        def counting(attempt, stage, row):
+            calls.append(attempt)
+            return judged_because(attempt, stage, row)
+
+        with patch.object(l, "judged_because", counting):
+            info = l.replay(self.repo / "retry")
+        self.assertEqual(len(info["attempts"]["table"]), 2)
+        self.assertEqual(sorted(calls),
+                         sorted(r["attempt"]
+                                for r in info["attempts"]["table"]))
 
     def test_the_receipt_names_have_one_definition(self):
         label = l.receipt_label("control", 7, "baseline", 3)
@@ -1220,6 +1421,7 @@ class BuildBinding(unittest.TestCase):
                      attempt="first-stray", candidate=self.pin,
                      module="congLib", baseline=self.pin, seed=l.LAYOUT_SEED,
                      first_attempt=None, output="/x", checkout="/x",
+                     source_key="k" * 64, baseline_key="k" * 64,
                      time="2026-01-01T00:00:00Z")
 
         def forget_open(r):
