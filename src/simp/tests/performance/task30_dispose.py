@@ -121,12 +121,16 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
 # the third element for the file, so that the normal rules of HISTORY apply
 # to it: a later edit of the file is refused until the commit that makes it
 # adds that seal to HISTORY. A record made by code that has the file
-# carries it.
+# carries it. The element is the file with the moved logic (the logic is
+# that of the host's inline functions; only the texts of the refusals were
+# reworded, to name the table and the attempt, as TASK31's disposition
+# also uses the rule): when the file is edited again, the seal before the
+# edit is appended here and to HISTORY.
 ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
     bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                    "8e864bf5d9298ce73366c88a069cef59"),), dict(
-    bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
-                   "3b59ed6de96df8bd2ef59625f24376de"))}
+    bytes=10626, sha256="72b817bf924edc824758ed6177a5830a"
+                   "2be890d44b5f7d70dec6a2a955acf989"))}
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
@@ -151,7 +155,10 @@ HISTORY = {
                        "2a0f3c092f6c5be25820537fa3c1a8e6"),),
     "allocation_matrix.py": (dict(
         bytes=67973, sha256="45d1fc4045f4b2dc57ce77f9ffd71211"
-                       "6561ec3bd652aa5ebfd37b96a818221f"),)}
+                       "6561ec3bd652aa5ebfd37b96a818221f"),),
+    "void_attempts.py": (dict(
+        bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
+                       "3b59ed6de96df8bd2ef59625f24376de"),)}
 
 TAIL = (
     "Not shown by any row: CPU that neither allocates nor traces, net node "

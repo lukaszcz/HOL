@@ -286,7 +286,12 @@ class Spec(unittest.TestCase):
                                "2a0f3c092f6c5be25820537fa3c1a8e6"),),
             "allocation_matrix.py": (dict(
                 bytes=67973, sha256="45d1fc4045f4b2dc57ce77f9ffd71211"
-                               "6561ec3bd652aa5ebfd37b96a818221f"),)})
+                               "6561ec3bd652aa5ebfd37b96a818221f"),),
+            # The file of 3f61e8b186, before the refusal texts were
+            # reworded; no record carries it.
+            "void_attempts.py": (dict(
+                bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
+                               "3b59ed6de96df8bd2ef59625f24376de"),)})
         self.assertEqual(set(td.seals()), set(td.CODE))
         for name in td.CODE:
             self.assertTrue((a.HERE / name).is_file(), name)
@@ -1099,8 +1104,8 @@ class Seals(Toy):
             "task30_dispose.py", (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                                "8e864bf5d9298ce73366c88a069cef59"),), dict(
-                bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
-                               "3b59ed6de96df8bd2ef59625f24376de"))})
+                bytes=10626, sha256="72b817bf924edc824758ed6177a5830a"
+                               "2be890d44b5f7d70dec6a2a955acf989"))})
         self.assertIn("void_attempts.py", td.CODE)
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
@@ -1145,6 +1150,16 @@ class Seals(Toy):
             # held at, the record checks again.
             with patch.dict(td.HISTORY, {"void_attempts.py": (held,)}):
                 td.check_code(old)
+
+    def test_the_seal_held_before_the_rewording_still_checks(self):
+        # A record made by the file of 3f61e8b186 (the held seal then)
+        # carries that seal, which HISTORY lists.
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        before = td.HISTORY["void_attempts.py"][0]
+        self.assertEqual(before["bytes"], 10546)
+        self.assertNotEqual(before, td.ADDED["void_attempts.py"][2])
+        td.check_code(dict(recorded, **{"void_attempts.py": before}))
 
     def test_the_printed_entries_are_literals_of_their_constant(self):
         import ast
@@ -1512,12 +1527,14 @@ class Attempts(Toy):
             self.dispose(record=not check, **kw)
 
     def reasons(self, attempt, status, output, why):
-        return ("follow-up attempt %s \\(status %s, output %s\\) is not "
-                "void: %s; only a void attempt .no admitted measurement in "
-                "any cell. may stand beside the judged one; anything else "
-                "needs a new policy decision, or --followup does not name "
-                "the follow-up's final stage .name the final stage" % (
-                    attempt, status, re.escape(str(output)), why))
+        return ("attempt %s of table %s \\(status %s, output %s\\) is "
+                "not void: %s; only a void attempt .no admitted measurement "
+                "in any cell. may stand beside the judged one; anything else "
+                "needs a new policy decision, or the option that names the "
+                "grid does not name the table's final stage .name the "
+                "final stage" % (
+                    attempt, self.fgrid.t.name, status,
+                    re.escape(str(output)), why))
 
     def edit(self, out, change):
         """Change the inventory of an output; returns the first attempt's
@@ -1594,13 +1611,13 @@ class Attempts(Toy):
     @after_void
     def test_an_inventory_without_runs_is_refused(self):
         self.refused_void(r"its inventory has rows for 0 cell\(s\), not "
-                          r"each of the 2 the follow-up measures",
+                          r"each of the 2 the table measures",
                           lambda found: found.update(runs=[]))
 
     @after_void
     def test_an_inventory_without_a_row_for_a_cell_is_refused(self):
         self.refused_void(r"its inventory has rows for 1 cell\(s\), not "
-                          r"each of the 2 the follow-up measures",
+                          r"each of the 2 the table measures",
                           lambda found: found["runs"].pop())
 
     @after_void
@@ -1733,7 +1750,7 @@ class Attempts(Toy):
         self.refuses(self.reasons(
             "open-attempt", "interrupted", out,
             r"its inventory has rows for 0 cell\(s\), not each of the 2 "
-            r"the follow-up measures"), **given)
+            r"the table measures"), **given)
         # ... also with no output directory at all.
         shutil.rmtree(out)
         self.refuses(self.reasons("open-attempt", "interrupted", out,
@@ -1836,9 +1853,11 @@ class Attempts(Toy):
         given = self.rerun()
         first = self.load(self.out / "inventory.json")["attempt"]
         self.fork(first, self.root / "fork", "inconclusive")
-        self.refuses("follow-up attempt %s ran in more than one output: "
-                     "%s, %s" % (first, re.escape(str(self.out)),
-                                 re.escape(str(self.root / "fork"))),
+        self.refuses("attempt %s of table %s ran in more than one "
+                     "output: %s, %s" % (
+                         first, self.fgrid.t.name,
+                         re.escape(str(self.out)),
+                         re.escape(str(self.root / "fork"))),
                      **given)
 
     @after_void
@@ -1846,8 +1865,8 @@ class Attempts(Toy):
         given = self.rerun()
         second = self.load(given["followup"] / "inventory.json")["attempt"]
         self.fork(second, self.root / "fork", "pass")
-        self.refuses("follow-up attempt %s ran in more than one output"
-                     % second, **given)
+        self.refuses("attempt %s of table %s ran in more than one output"
+                     % (second, self.fgrid.t.name), **given)
 
     @after_void
     def test_a_judged_attempt_at_another_output_is_refused(self):
@@ -1858,9 +1877,10 @@ class Attempts(Toy):
         copy = self.root / "copy"
         shutil.copytree(given["followup"], copy)
         self.refuses(
-            "follow-up attempt %s is judged, from %s, but the ledger has "
-            "it in %s" % (second, re.escape(str(copy)),
-                          re.escape(str(given["followup"]))),
+            "attempt %s of table %s is judged, from %s, but the ledger "
+            "has it in %s" % (second, self.fgrid.t.name,
+                              re.escape(str(copy)),
+                              re.escape(str(given["followup"]))),
             followup=copy, followup_allocation=self.allocation(
                 "alloc-z-copy", copy, self.work["z"]))
 
@@ -1970,7 +1990,7 @@ class Attempts(Toy):
     def test_the_refusal_comes_before_any_replay_in_check_mode(self):
         given = self.rerun()
         first = self.load(self.out / "inventory.json")["attempt"]
-        self.refuses("follow-up attempt %s .*is not void" % first,
+        self.refuses("attempt %s of table .*is not void" % first,
                      check=True, **given)
 
     @after_void

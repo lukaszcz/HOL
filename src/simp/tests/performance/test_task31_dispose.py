@@ -581,7 +581,8 @@ class Command(unittest.TestCase):
                 self.ledger, event=event, stage="first", table="task31",
                 attempt="g2", candidate=CAND, output=str(other),
                 checkout="c", **more)
-        self.refused(r"attempt g2 \(status pass, output .*\) is not void: "
+        self.refused(r"attempt g2 of table \w+ "
+                     r"\(status pass, output .*\) is not void: "
                      r"its inventory has rows for 0 cell")
         self.assertFalse((self.root / "disposition.json").exists())
 
@@ -597,7 +598,7 @@ class Command(unittest.TestCase):
         tg.ledger_append(self.ledger, event="resume", stage="first",
                          table="task31", attempt="g1", candidate=CAND,
                          output=str(self.root / "copy"), checkout="c")
-        self.refused(r"attempt g1 ran in more than one output")
+        self.refused(r"attempt g1 of table task31 ran in more than one output")
 
     def test_a_follow_up_attempt_that_measured_is_refused(self):
         # A real follow-up table over two cells of the sample, its attempt
@@ -615,7 +616,8 @@ class Command(unittest.TestCase):
         with mock.patch.object(d.follow, "ENGINE", engine), \
                 mock.patch.object(engine, "attempts_file", lambda *a_, **k:
                                   self.ledger):
-            self.refused(r"attempt f1 \(status pass, output .*\) is not "
+            self.refused(r"attempt f1 of table \w+ "
+                         r"\(status pass, output .*\) is not "
                          r"void")
 
     def test_the_attempt_rule_is_the_one_shared_with_task30(self):

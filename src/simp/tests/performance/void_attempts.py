@@ -60,10 +60,10 @@ def runner_failure(folder, name):
 def void_failure(new, key, output, row=None):
     """None when the attempt `key` (id, stage), whose ledger output is `output`
     and whose ledger row (`Ledger.attempts`) is `row`, is void, else the
-    text of the condition it fails. Void: the output directory exists and
-    holds the inventory of that attempt, which has a row for every cell it
-    measures (those of the follow-up for a first stage, those of its own
-    plan for a second); every row is a protocol failure (`protocol` present
+    text of the condition it fails. Void: the output directory exists
+    and holds the inventory of that attempt, which has a row for every
+    cell it measures (those of the table for a first stage, those of its
+    own plan for a second); every row is a protocol failure (`protocol` present
     and false) whose archive exists and is the sealed one and shows no
     measurement (`runner_failure`); and the ledger has no resume line for
     the attempt (a resumed attempt may have drawn samples in a cell it
@@ -72,7 +72,7 @@ def void_failure(new, key, output, row=None):
     (`timing_grid` summary: no cell passes or fails). A second stage closes
     with the combined status of both stages, so a void second stage is
     accepted only when its first stage has no fail; a fail there is final
-    and the follow-up blocks anyway. An attempt left open, resumed, closed
+    and the later stage blocks anyway. An attempt left open, resumed, closed
     more than once or closed otherwise may have measured."""
     if output is None or not Path(output).is_dir():
         return "its output directory is missing"
@@ -94,7 +94,7 @@ def void_failure(new, key, output, row=None):
             return "its inventory has no plan"
         want, what = {(p[0], p[1]) for p in plan}, "its plan names"
     else:
-        want, what = set(new.t.keys()), "the follow-up measures"
+        want, what = set(new.t.keys()), "the table measures"
     if set(cells) != want or len(cells) != len(want):
         return ("its inventory has rows for %d cell(s), not each of the "
                 "%d %s" % (len(set(cells)), len(want), what))
@@ -131,14 +131,14 @@ def void_failure(new, key, output, row=None):
             return ("its ledger closes it fail: a second stage closes "
                     "with the combined status of both stages, so a fail "
                     "in its first stage is final and blocks the "
-                    "follow-up, whatever this stage measured")
+                    "table's later stage, whatever this stage measured")
         return ("its ledger closes it %s, not inconclusive, the status of "
                 "a grid whose every cell is a protocol failure" % status)
     return None
 
 
 def attempts_of(args, new, judged):
-    """Every attempt of the follow-up's table in the ledger: the judged ones
+    """Every attempt of the table `new` in the ledger: the judged ones
     (`judged`: {attempt id: output directory} of the follow-up's final
     stage and, where it is a second stage, of its first) and the others,
     which must be void (`void_failure`): no cell of them admitted a
@@ -148,11 +148,11 @@ def attempts_of(args, new, judged):
     for it. A void attempt has no resume line and one close line,
     `inconclusive`; a second stage closes with the combined status of both
     stages, so a void one is accepted only when its first stage has no
-    fail (a fail there blocks the follow-up anyway). Any other attempt, an
+    fail (a fail there blocks the later stage anyway). Any other attempt, an
     interrupted or resumed one included, may have measured, and is
-    refused: it needs a new policy decision, or `--followup`
-    names the wrong stage (name the final one). [{attempt, status, output,
-    judged, void}], in the order the ledger names them."""
+    refused: it needs a new policy decision, or the option that names
+    the grid names the wrong stage (name the final one). [{attempt,
+    status, output, judged, void}], in the order the ledger names them."""
     path = new.attempts_file(args, False)
     a.require(path is not None and Path(path).is_file(),
               "no attempts ledger: %s" % path)
@@ -170,10 +170,10 @@ def attempts_of(args, new, judged):
     for key, row in state.attempts(table, family).items():
         outputs = where.get(key, [])
         a.require(len(outputs) == 1,
-                  "follow-up attempt %s ran in %s output: %s; one attempt "
-                  "is of one output, and a copy of a grid resumed is a "
-                  "second draw beside it" % (
-                      key[0], "more than one" if outputs else "no",
+                  "attempt %s of table %s ran in %s output: %s; one "
+                  "attempt is of one output, and a copy of a grid resumed "
+                  "is a second draw beside it" % (
+                      key[0], table, "more than one" if outputs else "no",
                       ", ".join(map(str, outputs))))
         output = outputs[0]
         entry = dict(attempt=key[0], status=row["status"], output=output,
@@ -181,21 +181,22 @@ def attempts_of(args, new, judged):
         if entry["judged"]:
             a.require(output is not None and
                       Path(output).resolve() == judged[key[0]],
-                      "follow-up attempt %s is judged, from %s, but the "
-                      "ledger has it in %s" % (
-                          key[0], judged[key[0]], output))
+                      "attempt %s of table %s is judged, from %s, but "
+                      "the ledger has it in %s" % (
+                          key[0], table, judged[key[0]], output))
         else:
             failed = void_failure(new, key, output, row)
             a.require(
                 failed is None,
-                "follow-up attempt %s (status %s, output %s) is not void: "
+                "attempt %s of table %s (status %s, output %s) is not "
+                "void: "
                 "%s; only a void attempt (no admitted measurement in any "
                 "cell) may stand beside the judged one; anything else "
-                "needs a new policy decision, or --followup does not name "
-                "the follow-up's final stage (name the final stage; a "
-                "first stage named while its second stage exists leaves "
-                "the second unjudged)" % (
-                    key[0], row["status"], output, failed))
+                "needs a new policy decision, or the option that names "
+                "the grid does not name the table's final stage (name "
+                "the final stage; a first stage named while its second "
+                "stage exists leaves the second unjudged)" % (
+                    key[0], table, row["status"], output, failed))
             entry["void"] = True
         found.append(entry)
     return found

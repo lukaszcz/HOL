@@ -95,7 +95,8 @@ class FollowUp(World):
                    status="pass")
         out = self.judged()
         with self.assertRaisesRegex(
-                ValueError, r"attempt N \(status pass, output .*\) is not "
+                ValueError, r"attempt N of table \w+ "
+                r"\(status pass, output .*\) is not "
                 r"void: the row of \w+-\d+ is not a protocol failure"):
             self.attempts(self.follow, {"J": out})
 
@@ -109,7 +110,8 @@ class FollowUp(World):
         self.lines(self.follow, "R", "first", resumed, "open", "resume",
                    "close", status="inconclusive")
         with self.assertRaisesRegex(
-                ValueError, r"attempt R \(status inconclusive, output .*\) "
+                ValueError, r"attempt R of table \w+ "
+                r"\(status inconclusive, output .*\) "
                 r"is not void: it was resumed"):
             self.attempts(self.follow, {"J": out})
 
@@ -190,7 +192,8 @@ class FirstStage(World):
                    status="pass")
         out = self.judged()
         with self.assertRaisesRegex(
-                ValueError, r"attempt N \(status pass, output .*\) is not "
+                ValueError, r"attempt N of table \w+ "
+                r"\(status pass, output .*\) is not "
                 r"void"):
             d.table_attempts(self.grid, out, self.root, self.ledger)
 
