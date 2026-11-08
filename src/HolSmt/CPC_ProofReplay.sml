@@ -14779,14 +14779,16 @@ local
                  listSyntax.is_nil chars
              | NONE => false)
         | _ => false
+      val smtstr_ty =
+        Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
       fun substring_reduction_theorem substring =
         case boolSyntax.strip_comb substring of
           (head, [string, start, count]) =>
             if same_const "smtstring" "smtstr_substr" head then
               Thm.INST
-                [{redex = ``s : smtstr``, residue = string},
-                 {redex = ``i : int``, residue = start},
-                 {redex = ``n : int``, residue = count}]
+                [{redex = Term.mk_var ("s", smtstr_ty), residue = string},
+                 {redex = Term.mk_var ("i", intSyntax.int_ty), residue = start},
+                 {redex = Term.mk_var ("n", intSyntax.int_ty), residue = count}]
                 smtstringTheory.smtstr_substr_reduction
             else raise ERR "string_reduction"
               "expected a substring argument"

@@ -96,35 +96,65 @@ struct
     named "HolSmt" ["smt_seq_nth", "smt_seq_extract", "smt_seq_at"] tm
     orelse named "list" ["TAKE", "DROP", "EL"] tm
 
+  (* The statements below are built, not parsed: a constant a client
+     theory exports must not capture s, i or x. *)
+  local
+    open boolSyntax
+    val element_ty = Type.alpha
+    val s = Term.mk_var ("s", listSyntax.mk_list_type element_ty)
+    val i = Term.mk_var ("i", intSyntax.int_ty)
+    val x = Term.mk_var ("x", element_ty)
+    fun seq_app name args =
+      HolKernel.list_mk_icomb
+        (Term.prim_mk_const {Thy = "HolSmt", Name = name}) args
+    fun unit v = listSyntax.mk_list ([v], element_ty)
+    val int_length = intSyntax.mk_injected (listSyntax.mk_length s)
+    val nth_s_i = seq_app "smt_seq_nth" [s, i]
+    (* i < 0 \/ &(LENGTH s) <= i *)
+    val out_of_range =
+      mk_disj (intSyntax.mk_less (i, intSyntax.zero_tm),
+               intSyntax.mk_leq (int_length, i))
+  in
   (* Z3's native Seq certificate uses its internal `seq.eq` and `seq.tail`
      witnesses for this list fact.  The parser reconstructs them as equality
-     and DROP, so one generic theorem handles all element types. *)
+     and DROP, so one generic theorem handles all element types.
+     &(LENGTH s) = 0 \/ s = [EL 0 s] ++ DROP 1 s *)
   val head_tail_thm = Library.prove
-    (``(&(LENGTH (s : 'a list)):int) = 0 \/
-        s = [EL 0 s] ++ DROP 1 s``,
-     Tactical.THEN (bossLib.Cases_on `s`,
+    (mk_disj (mk_eq (int_length, intSyntax.zero_tm),
+       mk_eq (s, listSyntax.mk_append
+         (unit (listSyntax.mk_el (numSyntax.zero_tm, s)),
+          listSyntax.mk_drop (numSyntax.term_of_int 1, s)))),
+     Tactical.THEN (bossLib.tmCases_on s [],
        bossLib.RW_TAC (bossLib.srw_ss()) []))
 
+  (* [x] = s ==> EL 0 s = x *)
   val nth_of_unit_thm = Library.prove
-    (``[x] = (s : 'a list) ==> EL 0 s = x``,
+    (mk_imp (mk_eq (unit x, s),
+             mk_eq (listSyntax.mk_el (numSyntax.zero_tm, s), x)),
      bossLib.METIS_TAC [listTheory.EL, listTheory.HD])
 
   (* SMT sequence nth is deliberately unspecified out of range.  Z3 rewrites
      it to an if whose out-of-range branch preserves that same application.
      Split on the complete semantic boundary once, then compare the resulting
      canonical forms.  This covers every element type and symbolic index
-     without assigning a value outside the specified range. *)
+     without assigning a value outside the specified range.
+     smt_seq_nth s i =
+       if i < 0 \/ &(LENGTH s) <= i then smt_seq_nth s i else EL (Num i) s *)
   val nth_boundary_thm = Library.prove
-    (``smt_seq_nth (s : 'a list) i =
-        if i < 0 \/ &(LENGTH s) <= i then smt_seq_nth s i
-        else EL (Num i) s``,
+    (mk_eq (nth_s_i,
+       mk_cond (out_of_range, nth_s_i,
+                listSyntax.mk_el (intSyntax.mk_Num i, s))),
      Tactical.THEN
-       (bossLib.Cases_on `i < 0 \/ &(LENGTH s) <= i`,
+       (bossLib.tmCases_on out_of_range [],
         Tactical.THEN
           (bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [],
            Tactical.THEN
              (Tactic.irule HolSmtTheory.smt_seq_nth_def,
               intLib.ARITH_TAC))))
+
+  (* smt_seq_nth s i, the shape nth_boundary_thm is instantiated at *)
+  val nth_pattern = nth_s_i
+  end
 
   fun nth_boundary_prove t =
     let
@@ -134,7 +164,7 @@ struct
         | _ => false
       val application = HolKernel.find_term is_nth_application t
       val instantiated = Drule.INST_TY_TERM
-        (Term.match_term ``smt_seq_nth (s : 'a list) i`` application)
+        (Term.match_term nth_pattern application)
         nth_boundary_thm
       val theorem = bossLib.SIMP_RULE seq_ss [] instantiated
       val normalization = simpLib.SIMP_CONV seq_ss [] t
