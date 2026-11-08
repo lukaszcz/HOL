@@ -690,22 +690,24 @@ class SemanticGateTests(unittest.TestCase):
 
     def test_gate_follows_the_audits_constants_not_a_copy(self):
         text = (l.AUDIT / "audit_constants.py").read_text()
-        changed = text.replace('"SimpTracking", ', "").replace(
-            "172", "178").replace("168", "174").replace("176", "182")
+        changed = text.replace('"simpExtLib"', '"SimpTracking", "simpExtLib"',
+                               1).replace("182", "176").replace(
+            "178", "172").replace("177", "171").replace("174", "168")
         self.assertNotEqual(changed, text)
         self.build(changed)
-        self.assertNotIn("SimpTracking", self.constants.NATIVE_MODULES)
+        self.assertIn("SimpTracking", self.constants.NATIVE_MODULES)
         self.assertEqual(self.check()["cases"], 8)
         # A receipt of the old counts no longer fits the new constants.
         self.build(changed)
         for case in self.receipt["cases"]:
-            case["checks"] -= 6
+            case["checks"] += 6
         with self.assertRaisesRegex(ValueError, "failed semantic process"):
             self.check()
 
     def test_two_trees_constants_stay_distinct_in_one_process(self):
         text = (l.AUDIT / "audit_constants.py").read_text()
-        changed = text.replace('"SimpTracking", ', "")
+        changed = text.replace('"simpExtLib"', '"SimpTracking", "simpExtLib"',
+                               1)
         self.assertNotEqual(changed, text)
         before = (list(sys.path), set(sys.modules))
         runs = []
@@ -719,8 +721,8 @@ class SemanticGateTests(unittest.TestCase):
             run = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(run)
             runs.append(run)
-        self.assertIn("SimpTracking", runs[0].NATIVE_MODULES)
-        self.assertNotIn("SimpTracking", runs[1].NATIVE_MODULES)
+        self.assertNotIn("SimpTracking", runs[0].NATIVE_MODULES)
+        self.assertIn("SimpTracking", runs[1].NATIVE_MODULES)
         self.assertEqual(runs[1].NATIVE_MODULES,
                          l.audit_constants(
                              self.root / "tree1/src/simp/tests/api-audit"
