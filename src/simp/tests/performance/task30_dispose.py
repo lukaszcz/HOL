@@ -127,8 +127,10 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
 # inline ones apart from message strings: docstrings, `"..." % (...)`,
 # returned strings, the message of `a.require` and two reviewed
 # non-message strings (test_task30_dispose.py `normalised` names them and
-# pins the hash). An edit of the file that keeps that property replaces
-# the third element, after that review. An edit that changes behaviour is
+# pins the hash); and the rest of the file (imports, constants, other
+# functions, module statements) is pinned by a second hash under the same
+# rules. An edit of the file that keeps both hashes replaces the third
+# element, after that review. An edit that changes behaviour is
 # not allowed while a record depends on the element: a seal listed in
 # HISTORY accepts every later file, so it would rebind the record to logic
 # it never ran.
@@ -566,8 +568,9 @@ def held_refusal(name):
     return (
         "%s: this record lacks the file and so depends on the held seal "
         "%s (task30_dispose.ADDED); an edit that is non-behavioural (the "
-        "moved functions keep the normalised hash that test_task30_dispose"
-        ".py pins) replaces the held seal in ADDED, after review; any other "
+        "moved functions and the rest of the file both keep the normalised "
+        "hash that test_task30_dispose.py pins) replaces the held seal in "
+        "ADDED, after review; any other "
         "edit is not allowed while a record depends on the held seal, and "
         "no HISTORY entry may be added for it (PROTOCOL.md, \"Seal "
         "histories\")" % (name, json.dumps(ADDED[name][2], sort_keys=True)))
@@ -594,11 +597,11 @@ def check_code(recorded, here=None):
         lines = []
         for name in changed:
             if name not in older:
-                lines.append("%s: add %s" % (name, " and, where records "
-                                             "were made by the old file, "
-                                             "".join(
+                joined = " and, where records were made by the old " \
+                         "file, ".join(
                     "to %s the entry %s" % found
-                    for found in entries(name, recorded[name]))))
+                    for found in entries(name, recorded[name]))
+                lines.append("%s: add %s" % (name, joined))
         text = "changed TASK30 disposition: %d file(s) changed since it " \
                "was recorded" % len(changed)
         if lines:

@@ -1702,14 +1702,19 @@ table of its own on the shared engine, with the following additions to it.
     file. The held seal names the version of the added file reviewed as
     holding exactly the code the older records ran: its moved functions are
     AST-equal to the host's, apart from message strings: docstrings,
-    `"..." % (...)` messages, returned string constants, the message
-    argument of `a.require`, and two reviewed strings that are not messages
-    (the `prefix=` of `tempfile.TemporaryDirectory` and the `what` of
-    `want, what = ...`). A test pins the hash of the functions with exactly
-    those blanked; every other string (event names, statuses, keys, option
-    and file names) is in the hash, so a changed literal of the logic
-    changes it. An edit of the added file that keeps that
-    property replaces the held seal, after that review. A behavioural edit
+    `"..." % (...)` messages that are not the value of an assignment,
+    returned string constants, the message argument of `a.require`, and two
+    reviewed strings that are not messages (the `prefix=` of
+    `tempfile.TemporaryDirectory` and the `what` of `want, what = ...`). A
+    test pins the hash of the functions with exactly those blanked; every
+    other string (event names, statuses, keys, option and file names) is in
+    the hash, so a changed literal of the logic changes it, and so does a
+    changed operand of a `%` assigned to a name. A second pinned hash
+    covers the rest of the added file (imports, constants, other functions
+    and module statements, without the module docstring), normalised by the
+    same rules. An edit of the added file is non-behavioural when both
+    hashes are unchanged; it then replaces the held seal, after that
+    review. A behavioural edit
     is not allowed while a record depends on the held seal: a seal in
     `HISTORY[file]` accepts every later file, so it would bind the record to
     logic it never ran. Where a record lacks the file, `check_code`'s

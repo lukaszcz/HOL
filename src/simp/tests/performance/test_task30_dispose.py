@@ -1181,18 +1181,27 @@ class Seals(Toy):
     # `normalised`), join with "\n" and take the SHA-256. It is the same for
     # the host's three functions and for the held version of
     # void_attempts.py. Every other string (event names, statuses, keys,
-    # option and file names) stays in the dump.
+    # option and file names) stays in the dump. A `"..." % (...)` that is
+    # the value of an assignment is not blanked.
     MOVED = ("runner_failure", "void_failure", "attempts_of")
-    MOVED_HASH = ("97b15e53087876ee374b0a7236731b2e9a0cc65a453abfc37f3e4f2"
-                  "532385ee1")
+    MOVED_HASH = ("110356114fd57b31fda1ff5318634235897125e8edbfbcb79b7106"
+                  "44a8c5e2e0")
+    # The second pinned hash: the rest of the held version of
+    # void_attempts.py, the module body without its docstring and the
+    # three moved functions (imports, constants, other functions and
+    # module statements), dumped with the same rules and hashed. Only the
+    # held version has it; the host's module level is another file's.
+    REST_HASH = ("ebe927409873e78a1a464ed17cd68dd1599c895b3ff749f71c0bd9"
+                 "6e356490d7")
 
     @classmethod
-    def normalised(cls, source):
-        """The dump of the moved functions with exactly these strings
-        blanked: (1) docstrings; (2) `"..." % (...)` messages; (3) a
-        string that is the whole value of a `return` (the functions return
-        a message or None); (4) the message, the second argument, of
-        `a.require`; (5) the two reviewed strings that are not messages
+    def normalised_tree(cls, node):
+        """The dump of a tree with exactly these strings blanked:
+        (1) docstrings; (2) `"..." % (...)` messages, except one that is
+        the value of an assignment (a label, whose operands are kept);
+        (3) a string that is the whole value of a `return` (the functions
+        return a message or None); (4) the message, the second argument,
+        of `a.require`; (5) the two reviewed strings that are not messages
         and differ from the host's: the `prefix=` of
         `tempfile.TemporaryDirectory`, and the `what` of `want, what =
         ..., "..."`, which feeds only a message."""
@@ -1235,26 +1244,61 @@ class Seals(Toy):
 
             def visit_Assign(self, node):  # (5)
                 target, value = node.targets[0], node.value
+                if isinstance(value, ast.BinOp) and isinstance(
+                        value.op, ast.Mod) and is_str(value.left):
+                    return node  # a value, not a message: kept whole
                 if isinstance(target, ast.Tuple) and [
                         getattr(e, "id", None) for e in target.elts
                         ] == ["want", "what"] and isinstance(
                         value, ast.Tuple) and is_str(value.elts[1]):
                     value.elts[1] = ast.Constant("")
                 return self.generic_visit(node)
+        return ast.dump(Blank().visit(node))
+
+    @classmethod
+    def normalised(cls, source):
+        """The dump of the moved functions, normalised."""
+        import ast
         tree = ast.parse(source)
-        found = {n.name: ast.dump(Blank().visit(n)) for n in tree.body
+        found = {n.name: cls.normalised_tree(n) for n in tree.body
                  if isinstance(n, ast.FunctionDef) and n.name in cls.MOVED}
         return "\n".join(found[name] for name in cls.MOVED)
 
-    def moved_hash(self, source):
+    @classmethod
+    def rest(cls, source):
+        """The dump of the module level code outside the moved functions:
+        every statement of the module body except the module docstring
+        and the three functions, normalised by the same rules."""
+        import ast
+        tree = ast.parse(source)
+        body = [n for n in tree.body if not (
+            isinstance(n, ast.FunctionDef) and n.name in cls.MOVED)]
+        if body and isinstance(body[0], ast.Expr) and isinstance(
+                body[0].value, ast.Constant) and isinstance(
+                body[0].value.value, str):
+            body = body[1:]
+        module = ast.Module(body=body, type_ignores=[])
+        return cls.normalised_tree(module)
+
+    @staticmethod
+    def digest(text):
         import hashlib
-        return hashlib.sha256(self.normalised(source).encode()).hexdigest()
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def moved_hash(self, source):
+        return self.digest(self.normalised(source))
+
+    def rest_hash(self, source):
+        return self.digest(self.rest(source))
 
     def test_the_held_file_holds_the_code_the_older_records_ran(self):
         text = (a.HERE / "void_attempts.py").read_text()
         self.assertEqual(self.moved_hash(text), self.MOVED_HASH)
+        self.assertEqual(self.rest_hash(text), self.REST_HASH)
         # A change of the logic, a literal of it included, is another hash.
         for old, new in (
+                ('name = "%s-%d" % (r["case"], r["size"])',
+                 'name = "%s-%d" % (r["cases"], r["size"])'),
                 ('if row["resumed"]:', "if False:"),
                 ('("open", "resume", "close")',
                  '("open", "resume", "closed")'),
@@ -1266,16 +1310,41 @@ class Seals(Toy):
                 self.assertNotEqual(changed, text)
                 self.assertNotEqual(self.moved_hash(changed),
                                     self.MOVED_HASH)
+        # ... and so is a change of the module level code.
+        for new in ("sorted = lambda items: []\n",
+                    "import os\n", "LIMIT = 3\n"):
+            with self.subTest(new):
+                changed = text.replace(
+                    "sys.dont_write_bytecode = True\n",
+                    "sys.dont_write_bytecode = True\n" + new, 1)
+                self.assertNotEqual(changed, text)
+                self.assertEqual(self.moved_hash(changed), self.MOVED_HASH)
+                self.assertNotEqual(self.rest_hash(changed), self.REST_HASH)
         # ... and a reworded message (of each blanked kind) is the same.
         for old, new in (
                 ("it was resumed", "it was resumed again"),
                 ("no attempts ledger", "there is no attempts ledger"),
                 ("None when the unpacked", "Nothing when the unpacked"),
-                ('prefix="void-attempt-"', 'prefix="other-"')):
+                ('prefix="void-attempt-"', 'prefix="other-"'),
+                ("the table measures", "the table did measure")):
             with self.subTest(old):
                 reworded = text.replace(old, new)
                 self.assertNotEqual(reworded, text)
                 self.assertEqual(self.moved_hash(reworded), self.MOVED_HASH)
+                self.assertEqual(self.rest_hash(reworded), self.REST_HASH)
+
+    def test_a_plain_string_require_message_is_not_in_the_hash(self):
+        # Rule (4): neither file has one (all their messages are `%`
+        # expressions), so a synthetic snippet stands for it.
+        def snippet(message, check="ok"):
+            return ("def runner_failure(f, n):\n"
+                    "    a.require(%s, %r)\n"
+                    "def void_failure(r):\n    return None\n"
+                    "def attempts_of(g):\n    return []\n"
+                    % (check, message))
+        same = self.moved_hash(snippet("first wording"))
+        self.assertEqual(self.moved_hash(snippet("second wording")), same)
+        self.assertNotEqual(self.moved_hash(snippet("x", "other")), same)
 
     def test_the_resumed_attempt_mutant_is_refused_for_the_old_record(self):
         # The logic of the resumed-attempt rule is held for the record that
