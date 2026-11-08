@@ -856,7 +856,9 @@ def live_report(records):
     sizeAllocation) / 8, the heap sizes being bytes and sizeAllocation the
     allocation area, which sizeHeap includes.  Per image and kind: the
     sorted distinct readings of each variant, the allocation-area sizes
-    seen, and the differences of the smallest and of the largest readings."""
+    seen, `comparable` (false when more than one allocation-area size is
+    seen among all runs of both variants of the cell), the run counts and
+    the differences of the smallest and of the largest readings."""
     cells = {}
     for r in records:
         if r.get("live"):
@@ -1205,7 +1207,8 @@ def render(report, header):
               "sizeHeapFreeLastFullGC - sizeAllocation) / 8, the sizes "
               "being bytes; live words are data of the local heap and "
               "exclude compiled code, which is in code spaces; comparable "
-              "is false where the allocation-area sizes differ):", ""]
+              "is false where more than one allocation-area size is seen "
+              "in the cell):", ""]
     for kind, per in sorted(report.get("live", {}).items()):
         for image, row in sorted(per.items()):
             lines.append("- %s %s: %s" % (kind, image, json.dumps(

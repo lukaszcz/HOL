@@ -2323,8 +2323,8 @@ that the collections leave, not a surviving allocation space.
 `(sizeHeap - sizeHeapFreeLastFullGC - sizeAllocation) / 8` of each variant
 and the candidate-minus-baseline difference of the smallest and of the
 largest reading, with the allocation-area sizes seen and `comparable`
-(false when those sizes differ between the variants of a cell; the
-difference is then not comparable). Live words are live data of the local
+(false when more than one allocation-area size is seen in the cell,
+in either variant or across the two; the difference is then not comparable). Live words are live data of the local
 heap. Compiled code lives in code spaces, outside `sizeHeap`, so it is not
 in the figure: the standalone `note_rewrite` code object is not counted, and
 a near-zero live difference says nothing about whether it is retained. The
@@ -2348,7 +2348,12 @@ assumptions are checked, each exiting 2 with a message when it fails: `all`
 links `selftest.exe` (read from an unconditional `all:` rule) in every
 non-`!` directory whose selftest reaches simpLib; no theory script of
 src/simp/src reaches simpLib; no directory after src/boss runs over
-`hol.state0`. The allowlist `NOT_MODULES` (basis and qualified names that
+`hol.state0`. The `selftest.exe` links of the `!` directories are counted
+without the `all:` check: every `selftest.sml` there that reaches simpLib
+counts as a link. That holds today because both such directories link it
+(src/simp/tests/native-extension directly, cv_compute/soundness_check through
+its `.log` target); a new `!` directory that does not link it would be
+over-counted. The allowlist `NOT_MODULES` (basis and qualified names that
 are no module) is minimal, and a name on it that is also a module of the
 directory is refused. `congLib_plain` and `congLib_tflag` split the congLib
 payers by build mode.

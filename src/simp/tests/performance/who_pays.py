@@ -21,8 +21,13 @@ checked (exit 2 with a message when one fails): `all` links selftest.exe in
 every non-`!` directory whose selftest reaches simpLib (read from an
 unconditional `all:` rule of the Holmakefile); the theory scripts of
 src/simp/src do not reach simpLib; no directory after src/boss runs over
-hol.state0.  Usage: who_pays.py HOLDIR [SEQUENCE]; one JSON line per
-directory, then `SUMMARY` lines, on stdout."""
+hol.state0.  The `selftest.exe` links of the `!` directories are counted
+without the `all:` check: every `selftest.sml` there that reaches simpLib
+counts as a link.  That holds today because both such directories link it
+(src/simp/tests/native-extension directly, cv_compute/soundness_check
+through its `.log` target, which the unconditional-rule check would refuse);
+a new `!` directory that does not link it would be over-counted.
+Usage: who_pays.py HOLDIR [SEQUENCE]; one JSON line per directory, then `SUMMARY` lines, on stdout."""
 import json
 import os
 from pathlib import Path

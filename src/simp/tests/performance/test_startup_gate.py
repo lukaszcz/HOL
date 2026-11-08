@@ -108,6 +108,10 @@ class LiveReadingTest(unittest.TestCase):
         self.assertEqual(got["s1"]["alloc_area"], [1048576, 2097152])
         self.assertFalse(got["s1"]["comparable"])
         self.assertEqual(got["s1"]["delta_min"], 90)
+        one = g.live_report([rec("b1", "base", 1000),
+                             rec("b1", "base", 1000, 2097152),
+                             rec("b1", "candidate", 1100)])["load-simpLib"]
+        self.assertFalse(one["b1"]["comparable"])   # one variant, two sizes
         self.assertEqual(g.live_report([dict(kind="hol-startup")]), {})
 
     def test_results_show_the_figure_and_its_units(self):
