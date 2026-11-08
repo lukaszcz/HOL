@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import acceptance as a
+import import_closure as ic
 import task31_cases as c
 import task31_dispose as d
 import task31_followup as follow
@@ -327,114 +328,184 @@ class Pins(unittest.TestCase):
 
 class Modules(unittest.TestCase):
     """Every local module that a decision imports, to the transitive closure
-    (function-level imports included), is in the seal list of that
-    decision, or is exempt here for a stated reason."""
+    (function-level imports included; this directory, allocator-counter/ and
+    ../compatibility/), is sealed for that side or reached only by an
+    exempt import edge with a stated reason. "Sealed" is: in a seal list
+    that a record of the side carries (and its replay checks), or, for the
+    modules of timing_grid.REPLAY_CODE, re-derived by the replay of a
+    first-stage record: only a follow-up's counts carry their seals
+    (`replaces.code`)."""
 
-    # Reasons shared by the exemptions below.
+    # The reasons of the exempt edges.
+    TOOLCHAIN = (
+        "private_runtime builds and checks the runtime (loading, "
+        "prepare_patch, check_patch, path_schema); the replays call its "
+        "harness_identity and tree_outside_performance, which use none of "
+        "them")
+    CONTRACTS = (
+        "run_paired.main imports it under --prior-contracts, "
+        "--staging-contracts or --public-contracts, which no TASK31 command "
+        "passes (the paired runner is run for --performance-pairs); "
+        "run_paired.py itself is sealed")
     TASK30_TABLE = (
-        "the TASK30 table (cases and pins feed its own table only; its "
-        "driver is imported for constants): closed, sealed by "
-        "task30_dispose.CODE where TASK31's disposition reads it, and the "
-        "TASK31 table seals the files it takes from it by name")
-    ALLOCATION = (
-        "the allocation matrix and its modules, reached by a function-level "
-        "import of task30_grid.harness_match: the allocation grid is "
-        "replayed and sealed by the disposition (CODE), and no identity or "
-        "timing decision is taken from it")
-    EXEMPT = {
-        "identity": {
-            "task30_grid.py": TASK30_TABLE,
-            "task30_cases.py": TASK30_TABLE,
-            "task30_pins.py": TASK30_TABLE,
-            "allocation_matrix.py": ALLOCATION,
-            "allocation_analysis.py": ALLOCATION,
-            "allocation_schema.py": ALLOCATION,
-            "allocation_boundary.py": ALLOCATION,
-            "path_schema.py": ALLOCATION,
-            "loading.py": ALLOCATION},
-        "timing": {
-            "task30_grid.py": TASK30_TABLE,
-            "task30_cases.py": TASK30_TABLE,
-            "task30_pins.py": TASK30_TABLE,
-            "allocation_matrix.py": ALLOCATION,
-            "allocation_analysis.py": ALLOCATION,
-            "allocation_schema.py": ALLOCATION,
-            "allocation_boundary.py": ALLOCATION,
-            "path_schema.py": ALLOCATION,
-            "loading.py": ALLOCATION},
-        "disposition": {
-            "task30_cases.py": TASK30_TABLE,
-            "task30_pins.py": TASK30_TABLE,
-            "loading.py": (
-                "the allocation matrix's toolchain building, which the "
-                "disposition's replay of an allocation grid does not do "
-                "(test_timing_followup.py, ALLOCATION_BUILD)")}}
+        "task30_grid builds TASK30's own table (its cases and pins) when "
+        "imported; the disposition's replay reads neither, and task30_grid "
+        "itself is sealed by task31_dispose.CODE")
+    TASK30_IDENTITY = (
+        "task31_grid takes the constants PAIRED, INSTALLED and SEALED[1:5] "
+        "from task30_grid for the timing table and calls no function of "
+        "it; no identity code reads those constants or task30_grid, and no "
+        "identity seal covers task30_grid.py")
+    TASK30_CONSTANTS = (
+        "task31_grid takes the constants PAIRED, INSTALLED and SEALED[1:5] "
+        "from task30_grid and no function. No seal list of a timing grid "
+        "has task30_grid.py: what binds the constants is the table's "
+        "SEALED, whose names the check compares as a set with the record's "
+        "and whose files it compares by seal, so a changed constant "
+        "refuses a recorded grid")
+    ALLOCATION_BUILD = (
+        "the allocation matrix's toolchain building (loading, "
+        "prepare_patch, bootstrap_probe), which the disposition's replay of "
+        "an allocation grid does not do")
+    ALLOCATION_CASES = (
+        "allocation_matrix builds its task30 case list from it; the "
+        "allocation grid binds it as a harness input to the blob of the "
+        "commit it ran at (allocation_matrix.harness_files)")
 
     @staticmethod
-    def local_imports(name):
-        import ast
-        tree = ast.parse((a.HERE / name).read_text())
-        found = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                modules = [n.name for n in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                modules = [node.module] if node.module else []
-            else:
-                continue
-            for module in modules:
-                if (a.HERE / (module + ".py")).is_file():
-                    found.add(module + ".py")
+    def edges(reason, *edges):
+        return {edge: reason for edge in edges}
+
+    @classmethod
+    def runtime_edges(cls, *modules):
+        found = cls.edges(cls.CONTRACTS, *(
+            ("run_paired", m, "main") for m in (
+                "prior_contracts", "staging_contracts", "public_contracts")))
+        found.update(cls.edges(cls.TOOLCHAIN, *(
+            ("private_runtime", m, None) for m in modules)))
         return found
 
-    def closure(self, roots):
-        seen, todo = set(), list(roots)
-        while todo:
-            name = todo.pop()
-            if name not in seen:
-                seen.add(name)
-                todo.extend(sorted(self.local_imports(name)))
-        return seen
+    @classmethod
+    def exempt(cls, side):
+        if side == "identity":
+            found = cls.runtime_edges(
+                "loading", "path_schema", "prepare_patch", "check_patch")
+            found.update(cls.edges(
+                cls.TASK30_IDENTITY, ("task31_grid", "task30_grid", None)))
+        elif side == "timing":
+            found = cls.runtime_edges(
+                "loading", "path_schema", "prepare_patch", "check_patch")
+            found.update(cls.edges(
+                cls.TASK30_CONSTANTS, ("task31_grid", "task30_grid", None)))
+        else:
+            found = cls.runtime_edges(
+                "loading", "prepare_patch", "check_patch")
+            found.update(cls.edges(
+                cls.TASK30_TABLE, ("task30_grid", "task30_cases", None),
+                ("task30_grid", "task30_pins", None)))
+            found.update(cls.edges(
+                cls.ALLOCATION_BUILD,
+                ("allocation_matrix", "loading", None),
+                ("allocation_matrix", "prepare_patch", None),
+                ("allocation_matrix", "bootstrap_probe", "toolchain")))
+            found.update(cls.edges(
+                cls.ALLOCATION_CASES,
+                ("allocation_matrix", "task30_cases", None)))
+        return found
 
-    def covered(self, side, roots, sealed):
-        missing = self.closure(roots) - set(sealed)
-        exempt = self.EXEMPT[side]
+    @staticmethod
+    def stems(names):
+        return {Path(n).stem for n in names}
+
+    def covered(self, side, roots, sealed, sources=None):
+        sources = sources or ic.sources()
+        exempt = self.exempt(side)
+        sealed = self.stems(sealed)
+        found, used = ic.closure(sources, roots, exempt)
         self.assertEqual(
-            sorted(missing - set(exempt)), [],
-            "%s: imported (transitively) and neither sealed nor reviewed "
-            "as exempt" % side)
-        # An exemption is for a module that is not sealed.
-        self.assertEqual(sorted(set(exempt) & set(sealed)), [])
-        # ... and is still imported: no stale entry.
-        self.assertEqual(sorted(set(exempt) - missing), [])
+            sorted(found - sealed), [],
+            "%s: imported (transitively) and neither sealed nor reached "
+            "only by an exempt edge" % side)
+        # Every exempt edge is made by a module of the closure, and what it
+        # leaves out is not sealed (else it needs no exemption).
+        self.assertEqual(sorted(set(exempt) - used, key=str), [])
+        self.assertEqual(
+            sorted(e for e in exempt if e[1] in sealed), [])
+        return found
+
+    IDENTITY_ROOTS = ("task31_identity_grid", "task31_identity",
+                      "task31_attribution", "task31_snapshot")
+
+    def identity(self, sources=None):
+        import task31_identity_grid as idgrid
+        return self.covered("identity", self.IDENTITY_ROOTS,
+                            idgrid.IDENTITY_CODE, sources)
+
+    def timing_sealed(self):
+        return (*timing.SEALED, "task31_grid.py", "task31_followup.py",
+                *tg.REPLAY_CODE)
 
     def test_the_identity_modules_import_only_sealed_code(self):
         import task31_identity_grid as idgrid
-        self.covered("identity", (
-            "task31_identity_grid.py", "task31_identity.py",
-            "task31_attribution.py", "task31_snapshot.py"),
-            idgrid.IDENTITY_CODE)
+        found = self.identity()
+        self.assertIn("private_runtime", found)
+        self.assertIn("private_runtime", self.stems(idgrid.IDENTITY_CODE))
+        self.assertIn("allocator-counter/private_runtime.py",
+                      idgrid.IDENTITY_CODE)
         self.assertIn("task31_pins.py", idgrid.IDENTITY_CODE)
 
     def test_the_timing_modules_import_only_sealed_code(self):
-        sealed = {Path(n).name for n in (
-            *timing.SEALED, "task31_grid.py", "task31_followup.py",
-            *tg.REPLAY_CODE)}
-        self.covered("timing", ("task31_grid.py", "task31_followup.py"),
-                     sealed)
+        found = self.covered("timing", ("task31_grid", "task31_followup"),
+                             self.timing_sealed())
+        self.assertIn("private_runtime", found)
 
     def test_the_disposition_imports_only_sealed_code(self):
         import task31_identity_grid as idgrid
         # The disposition replays the identity grid (IDENTITY_CODE), the
         # timing grid (the timing seals) and the allocation grid.
-        sealed = {Path(n).name for n in (
-            *d.CODE, *idgrid.IDENTITY_CODE, *timing.SEALED,
-            *tg.REPLAY_CODE)}
-        self.covered("disposition", ("task31_dispose.py",), sealed)
+        sealed = (*d.CODE, *idgrid.IDENTITY_CODE, *timing.SEALED,
+                  *tg.REPLAY_CODE)
+        self.covered("disposition", ("task31_dispose",), sealed)
         # The harness the disposition compares the allocation grid with.
         self.assertIn("task30_grid.py", d.CODE)
         self.assertIn("task31_pins.py", d.CODE)
         self.assertIs(d.base30, __import__("task30_grid"))
+
+    def test_every_exempt_edge_is_made_only_where_it_is_said_to_be(self):
+        sources = ic.sources()
+        for side in ("identity", "timing", "disposition"):
+            for edge in self.exempt(side):
+                with self.subTest(side=side, edge=edge):
+                    self.assertIn(edge, ic.edges(sources, edge[0]))
+
+    def test_a_new_import_of_identity_code_is_found(self):
+        sources = ic.sources()
+        self.identity(sources)
+        for label, name, line in (
+                ("private_runtime", "private_runtime",
+                 "import control_schema"),
+                ("allocation_matrix, directly", "task31_identity",
+                 "import allocation_matrix"),
+                ("loading, directly", "task31_identity", "import loading"),
+                ("task30_grid, directly", "task31_identity",
+                 "import task30_grid"),
+                ("a contracts module, by the timing import",
+                 "timing_grid", "import prior_contracts")):
+            with self.subTest(label):
+                changed = dict(sources)
+                changed[name] += "\n" + line + "\n"
+                with self.assertRaises(AssertionError):
+                    self.identity(changed)
+
+    def test_a_dropped_identity_seal_is_found(self):
+        import task31_identity_grid as idgrid
+        sources = ic.sources()
+        for name in ("allocator-counter/private_runtime.py",
+                     "task31_pins.py"):
+            with self.subTest(name), self.assertRaises(AssertionError):
+                self.covered(
+                    "identity", self.IDENTITY_ROOTS,
+                    [n for n in idgrid.IDENTITY_CODE if n != name], sources)
 
 
 if __name__ == "__main__":

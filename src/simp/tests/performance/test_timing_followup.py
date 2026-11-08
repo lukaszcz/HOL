@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import patch
 
 import acceptance as a
+import import_closure as ic
 import test_timing_grid as ttg
 import timing_grid as tg
 
@@ -1766,52 +1767,14 @@ class ReplacedOpenings(Rig):
              "task30_grid")
 
     def replay_files(self):
-        """The source of every module of the directory, of
-        allocator-counter/ (the directory `timing_grid` adds to its path)
-        and of ../compatibility (which `loading` and `runtime_metrics` add),
-        by module name; no stem is in two of them."""
-        here = Path(__file__).resolve().parent
-        found, where = {}, {}
-        for d in (here, here / "allocator-counter",
-                  here.parent / "compatibility"):
-            for p in d.glob("*.py"):
-                self.assertNotIn(p.stem, found, "module %s is in both %s "
-                                 "and %s" % (p.stem, where.get(p.stem), p))
-                found[p.stem], where[p.stem] = p.read_text(), p
-        return found
+        """The source of every module of the harness by name (see
+        import_closure.py)."""
+        return ic.sources()
 
     def closure(self, sources):
         """The modules of `sources` that the replay path imports, wherever
         in a module the import is, but for the edges of `LEFT_OUT`."""
-        import ast
-
-        def imports(name):
-            found = set()
-
-            def walk(node, function):
-                for child in ast.iter_child_nodes(node):
-                    here = child.name if isinstance(
-                        child, (ast.FunctionDef, ast.AsyncFunctionDef)
-                    ) and function is None else function
-                    if isinstance(child, ast.Import):
-                        found.update((x.name.split(".")[0], function)
-                                     for x in child.names)
-                    elif isinstance(child, ast.ImportFrom) and \
-                            child.level == 0:
-                        found.add((child.module.split(".")[0], function))
-                        found.update((x.name, function) for x in child.names)
-                    walk(child, here)
-            walk(ast.parse(sources[name]), None)
-            return {m for m, function in found
-                    if m in sources and
-                    (name, m, function) not in self.LEFT_OUT}
-        closure, todo = set(), list(self.ROOTS)
-        while todo:
-            name = todo.pop()
-            if name not in closure:
-                closure.add(name)
-                todo += imports(name)
-        return closure
+        return ic.closure(sources, self.ROOTS, self.LEFT_OUT)[0]
 
     def covered(self):
         import task30_followup as t30

@@ -61,7 +61,8 @@ IDENTITY_TABLE = "task31-identity"
 # is timed for a decision; the process loads, runs the fixture and is audited.
 ID_PAIRS, ID_SAMPLES, ID_SECONDS = 1, 3, 0.1
 # (a test pins that every local module the identity modules import, to the
-# transitive closure, is here or is on its short list of reviewed exemptions)
+# transitive closure, is here or is reached only by an import edge on its
+# short list of reviewed exemptions)
 IDENTITY_CODE = ("task31_identity_grid.py", "task31_grid.py",
                  "task31_identity.py",
                  "task31_snapshot.py", "task31_cases.py",
@@ -70,6 +71,7 @@ IDENTITY_CODE = ("task31_identity_grid.py", "task31_grid.py",
                  "evidence_bundle.py", "client_dependencies.py",
                  "timing_grid.py", "matrix_schema.py", "summarize.py",
                  "runtime_metrics.py", "task29_gate.py",
+                 "allocator-counter/private_runtime.py",
                  "../compatibility/run_paired.py")
 # Per file of IDENTITY_CODE, the seals it had when an identity grid was
 # recorded, once it has changed since (a reviewed change that alters no
