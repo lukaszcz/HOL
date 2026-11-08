@@ -1140,17 +1140,17 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None,
         # nor the nondeterminism list reads a work row.
         out["work"] = work
         out["work_status"] = work["status"]
+    out["complete"] = complete
     out["acceptance_pairs"] = bool(pairs) and min(pairs) >= PAIRS
     # Only the pinned develop commit is the baseline of an acceptance.
     out["acceptance_baseline"] = baseline == a.BASE
     if task.rows:
         # A smoke or a grid against another baseline is never complete.
-        complete = complete and out["acceptance_pairs"] and \
+        out["complete"] = complete and out["acceptance_pairs"] and \
             out["acceptance_baseline"]
         out["candidate"], out["baseline"] = candidate, baseline
         out["rows"] = cell_rows(task, out)
         out["infeasible"] = sorted(name_of(*k) for k in task.infeasible)
-    out["complete"] = complete
     # A definite failure is reported as such even when the grid is
     # incomplete or a smoke; a pass needs a complete, deterministic grid.
     out["status"] = an.status(every)
