@@ -56,7 +56,7 @@ import private_runtime as pr
 import run_paired as rp
 from prepare_patch import DEFAULT_SOURCE
 
-SCHEMA = "task31-startup-gate-v3"
+SCHEMA = "task31-startup-gate-v4"
 LINEAGE_SCHEMA = "task31-startup-toolchain-v1"
 MKTOOL = ("src/portableML/rawtheory/mktool.ML",
           'useB "theorystats";', 'useB "theoryfiles";\nuseB "theorystats";')
@@ -381,10 +381,15 @@ def parse_process(stdout, kind, holdir, library, aliases):
         elif event == "foreign":
             require(payload == sc.FOREIGN, "foreign-thread entries")
         elif event == "live":
-            size, free, area = numbers(payload, 3)
+            size, free, area, area_free = numbers(payload, 4)
             live = size - free - area
+            # The formula is exact only if the allocation area is the
+            # fresh one: no allocation space survived the collections (a
+            # survivor is counted at its free size in both `free` and
+            # `area`), so the area is all free.
             require(name == "heap" and live >= 0 and live % sc.WORD_BYTES == 0
-                    and area > 0, "live heap reading: " + payload)
+                    and area > 0 and area_free == area,
+                    "live heap reading: " + payload)
             record["live"] = dict(size_heap=size, free_last_gc=free,
                                   alloc_area=area, words=live // sc.WORD_BYTES)
         elif event == "holdir":
@@ -863,8 +868,9 @@ def live_report(records):
     for (kind, image), c in sorted(cells.items()):
         row = dict(base=sorted(set(c["base"])),
                    candidate=sorted(set(c["candidate"])),
-                   alloc_area=sorted(c["area"]), runs=[len(c["base"]),
-                                                       len(c["candidate"])])
+                   alloc_area=sorted(c["area"]),
+                   comparable=len(c["area"]) == 1,
+                   runs=[len(c["base"]), len(c["candidate"])])
         if c["base"] and c["candidate"]:
             row["delta_min"] = min(c["candidate"]) - min(c["base"])
             row["delta_max"] = max(c["candidate"]) - max(c["base"])
@@ -1197,7 +1203,9 @@ def render(report, header):
     lines += ["", "Live words after full collections at the end of the load "
               "kinds (measured, not a decision input; words = (sizeHeap - "
               "sizeHeapFreeLastFullGC - sizeAllocation) / 8, the sizes "
-              "being bytes):", ""]
+              "being bytes; live words are data of the local heap and "
+              "exclude compiled code, which is in code spaces; comparable "
+              "is false where the allocation-area sizes differ):", ""]
     for kind, per in sorted(report.get("live", {}).items()):
         for image, row in sorted(per.items()):
             lines.append("- %s %s: %s" % (kind, image, json.dumps(

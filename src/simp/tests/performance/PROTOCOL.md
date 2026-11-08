@@ -2306,7 +2306,8 @@ and TMPDIR lengths, the lineage sha256, the runtime and shim seals, the
 controls receipt, the harness blobs, the declaration text and sha256, the
 exchanged blobs, the not-client-visible record sha256), `decisions.json`,
 `RESULTS.md` and `receipt.json` (the sha256 of each). The header carries a
-schema version; `replay` refuses an archive of another version, naming it.
+schema version (v4); `replay` refuses an archive of another version,
+naming it.
 `replay --output DIR` checks the receipt and the declaration seal and
 recomputes `decisions.json` and `RESULTS.md` from the records alone. An
 archive sealed to a not-client-visible record is replayed only with
@@ -2314,12 +2315,20 @@ archive sealed to a not-client-visible record is replayed only with
 
 The `load-*` kinds end with one unbracketed reading of the heap after three
 full collections (`sizeHeap`, `sizeHeapFreeLastFullGC`, `sizeAllocation`,
-all in bytes; `sizeHeap` includes the allocation area). `RESULTS.md` and
-`decisions.json` give, per image and kind, the live words
+`sizeAllocationFree`, all in bytes; `sizeHeap` includes the allocation area).
+The reading is refused unless `sizeAllocationFree` equals `sizeAllocation`:
+the formula below is exact only when the allocation area is the fresh one
+that the collections leave, not a surviving allocation space.
+`RESULTS.md` and `decisions.json` give, per image and kind, the live words
 `(sizeHeap - sizeHeapFreeLastFullGC - sizeAllocation) / 8` of each variant
 and the candidate-minus-baseline difference of the smallest and of the
-largest reading, with the allocation-area sizes seen. It is measured and
-sealed in the archive, and is no decision input.
+largest reading, with the allocation-area sizes seen and `comparable`
+(false when those sizes differ between the variants of a cell; the
+difference is then not comparable). Live words are live data of the local
+heap. Compiled code lives in code spaces, outside `sizeHeap`, so it is not
+in the figure: the standalone `note_rewrite` code object is not counted, and
+a near-zero live difference says nothing about whether it is retained. The
+reading is measured and sealed in the archive, and is no decision input.
 
 `cell` repeats the TASK29B startup bracket of two revisions under chosen
 path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
@@ -2334,7 +2343,15 @@ sequence that run over `hol.state0` and whose real dependency closure holds
 simpLib: for a plain build (scripts, the `selftest.exe` that `all` links,
 src/simp/src's own selftest, numheap builds) and what `-t` adds (the `!`
 directories). It exits 2 listing any module it cannot resolve, any dangling
-`sigobj` link and any payer whose heap is not pinned.
+`sigobj` link and any payer whose heap is not pinned. Its structural
+assumptions are checked, each exiting 2 with a message when it fails: `all`
+links `selftest.exe` (read from an unconditional `all:` rule) in every
+non-`!` directory whose selftest reaches simpLib; no theory script of
+src/simp/src reaches simpLib; no directory after src/boss runs over
+`hol.state0`. The allowlist `NOT_MODULES` (basis and qualified names that
+are no module) is minimal, and a name on it that is also a module of the
+directory is refused. `congLib_plain` and `congLib_tflag` split the congLib
+payers by build mode.
 
 ## Matrix boundaries and final evidence
 

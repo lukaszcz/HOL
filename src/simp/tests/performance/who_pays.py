@@ -16,7 +16,12 @@ then the `.uo` dependency lists in sigobj, and for modules that live in
 the directory itself (not in sigobj) `holdeptool` on their source.  A
 module that cannot be resolved, or a `.uo` that is not readable (a
 dangling link), is an error: the exit status is 2 and the modules are
-listed on stderr.  Usage: who_pays.py HOLDIR [SEQUENCE]; one JSON line per
+listed on stderr.  The count rests on three structural assumptions, each
+checked (exit 2 with a message when one fails): `all` links selftest.exe in
+every non-`!` directory whose selftest reaches simpLib (read from an
+unconditional `all:` rule of the Holmakefile); the theory scripts of
+src/simp/src do not reach simpLib; no directory after src/boss runs over
+hol.state0.  Usage: who_pays.py HOLDIR [SEQUENCE]; one JSON line per
 directory, then `SUMMARY` lines, on stdout."""
 import json
 import os
@@ -31,13 +36,15 @@ LAST = "src/boss"
 
 
 # Names that `holdeptool` reports but that are no module of sigobj: the
-# Standard ML basis and compiler structures, and qualified names that are
-# not build products (found by running the analysis on a built tree; every
-# other unknown name is an error).
+# Standard ML basis and compiler structures, qualified substructure names
+# (Process of OS.Process, Unicode, UChar, PP, Definition, CompilerSpecific)
+# and a local alias (mg in src/boss/selftest.sml).  Exactly the names the
+# analysis of a built tree needs; every other unknown name is an error.  A
+# name is skipped only if it is neither in sigobj nor a module of the
+# directory, so the list cannot mask a module.
 NOT_MODULES = frozenset("""
     Array Bool Char CharVector CompilerSpecific Definition General Int List
     ListPair OS Option PP Process String StringCvt TextIO UChar Unicode mg
-    Word Word8 Vector Real Substring Time Timer Date IO Text
     """.split())
 
 
@@ -81,7 +88,6 @@ def heap_of(d):
 class Closure:
     def __init__(self, hol):
         self.hol = hol
-        self.cache = {}
         self.problems = []
 
     def holdep(self, d, fname):
@@ -119,15 +125,26 @@ class Closure:
 
     def of(self, d, fname):
         """The set of module names a source file depends on."""
-        seen, stack = set(), self.holdep(d, fname)
+        seen = set()
+        try:
+            stack = self.holdep(d, fname)
+        except Unresolved as e:
+            self.problems.append(str(e))
+            return seen
         while stack:
             m = stack.pop()
             if m in seen:
                 continue
             seen.add(m)
-            if m in NOT_MODULES and self.sigobj_deps(m) is None:
-                continue
             try:
+                if m in NOT_MODULES and self.sigobj_deps(m) is None:
+                    if self.local_source(d, m) is not None:
+                        raise Unresolved(
+                            "%s/%s: the name %s is allowlisted in "
+                            "NOT_MODULES but is also a module of the "
+                            "directory (%s)" % (d, fname, m,
+                                                self.local_source(d, m)))
+                    continue
                 deps = self.sigobj_deps(m)
                 if deps is None:
                     src = self.local_source(d, m)
@@ -142,11 +159,40 @@ class Closure:
         return seen
 
 
+def links_selftest(makefile):
+    """Whether an unconditional `all:` rule of a Holmakefile lists
+    selftest.exe.  Lines under `ifdef POLY` count (the poly build is the
+    one analysed); lines under any other conditional, or in its `else`
+    branch, do not."""
+    if not makefile.exists():
+        return False
+    text = makefile.read_text().replace("\\\n", " ")
+    active = [True]
+    for line in text.splitlines():
+        words = line.split()
+        if not words:
+            continue
+        head = words[0]
+        if head.startswith(("ifdef", "ifndef", "ifeq", "ifneq")):
+            active.append(active[-1] and line.split("#")[0].split() ==
+                          ["ifdef", "POLY"])
+        elif head == "else":
+            active[-1] = False
+        elif head == "endif" and len(active) > 1:
+            active.pop()
+        elif active[-1]:
+            m = re.match(r"all\s*:(?!=)(.*)", line)
+            if m and any(w in ("selftest.exe", "./selftest.exe")
+                         for w in m.group(1).split("#")[0].split()):
+                return True
+    return False
+
+
 def analyse(hol, sequence="upto-parallel"):
     """(per-directory entries, summary, problems)."""
     hol = Path(hol)
     closure = Closure(hol)
-    entries, started = [], False
+    entries, started, after = [], False, False
     for rel, bang in directories(hol, sequence):
         if rel == FIRST:
             started = True
@@ -154,6 +200,12 @@ def analyse(hol, sequence="upto-parallel"):
             continue
         d = hol / rel
         heap = heap_of(d)
+        if after:
+            if heap is not None and heap.endswith("hol.state0"):
+                closure.problems.append(
+                    "%s comes after %s and runs over hol.state0: the "
+                    "analysis stops at %s" % (rel, LAST, LAST))
+            continue
         hm = d / "Holmakefile"
         ent = dict(dir=rel, bang=bang, heap=heap,
                    builds_heap=hm.exists() and "buildheap" in hm.read_text(),
@@ -161,8 +213,6 @@ def analyse(hol, sequence="upto-parallel"):
                    simpLib=[], congLib=[])
         files = sorted(d.glob("*Script.sml")) + sorted(
             d.glob("selftest.sml"))
-        if rel == FIRST:
-            files = [f for f in files if f.name == "selftest.sml"]
         for f in files:
             name = f.name[:-4]
             mods = closure.of(d, f.name)
@@ -173,9 +223,18 @@ def analyse(hol, sequence="upto-parallel"):
             for w in WATCHED:
                 if w in mods:
                     ent[w].append(name)
+            if name != "selftest" and rel == FIRST and "simpLib" in mods:
+                closure.problems.append(
+                    "%s/%s reaches simpLib: the scripts of %s are not "
+                    "counted as payers" % (rel, f.name, FIRST))
+            if (name == "selftest" and not bang and "simpLib" in mods and
+                    not links_selftest(hm)):
+                closure.problems.append(
+                    "%s: selftest.sml reaches simpLib but no unconditional "
+                    "`all:` rule of the Holmakefile lists selftest.exe; "
+                    "the count assumes `all` links it" % rel)
         entries.append(ent)
-        if rel == LAST:
-            break
+        after = rel == LAST
     return entries, summary(entries), sorted(set(closure.problems))
 
 
@@ -183,7 +242,8 @@ def summary(entries):
     """Counts of processes over hol.state0 whose closure holds simpLib."""
     s = dict(plain_scripts=0, plain_selftest_links=0, simp_src_selftest=0,
              numheap_builds=0, tflag_scripts=0, tflag_selftest_links=0,
-             congLib_payers=0, unpinned_payers=[])
+             congLib_payers=0, congLib_plain=0, congLib_tflag=0,
+             unpinned_payers=[])
     for e in entries:
         if e["heap"] == "numheap" and e["builds_heap"]:
             s["numheap_builds"] += 1
@@ -196,6 +256,8 @@ def summary(entries):
         link = "selftest" in e["simpLib"]
         if e["congLib"]:
             s["congLib_payers"] += len(e["congLib"])
+            s["congLib_tflag" if e["bang"] else "congLib_plain"] += len(
+                e["congLib"])
         if e["dir"] == FIRST:
             s["simp_src_selftest"] += int(link)
         elif e["bang"]:
@@ -222,7 +284,7 @@ def main(argv):
     print("SUMMARY\tnote\tnumheap builds are counted, not traced; the "
           "candidate's own test executables in src/simp/src are not counted")
     for p in problems:
-        print("UNRESOLVED " + p, file=sys.stderr)
+        print("PROBLEM " + p, file=sys.stderr)
     return 2 if problems or s["unpinned_payers"] else 0
 
 

@@ -49,7 +49,8 @@ def stdout(kind="hol-startup", brackets=None, loaded=MODULES, files=FILES,
             ("structures", "count", str(len(structs))),
             ("structures", "names", ",".join(structs))]
     if live == "auto":
-        live = "3145728,2071000,1048576" if kind.startswith("load-") else None
+        live = ("3145728,2071000,1048576,1048576"
+                if kind.startswith("load-") else None)
     if live:
         rows.append(("live", "heap", live))
     for event, name, payload in rows:
@@ -77,11 +78,20 @@ class LiveReadingTest(unittest.TestCase):
         with self.assertRaisesRegex(sc.InvalidAllocation, "live heap"):
             parse(kind="load-simpLib", live=None)
         with self.assertRaisesRegex(sc.InvalidAllocation, "live heap"):
-            parse(kind="hol-startup", live="3145728,2071000,1048576")
-        for bad in ("3145728,2071000,1048577", "100,2071000,1048576",
-                    "3145728,2071000,0"):
+            parse(kind="hol-startup", live="3145728,2071000,1048576,1048576")
+        for bad in ("3145728,2071000,1048577,1048577",
+                    "100,2071000,1048576,1048576",
+                    "3145728,2071000,0,0",
+                    # a surviving allocation space: its free part is
+                    # smaller than the whole
+                    "3145728,2071000,1048576,524288",
+                    "3145728,2071000,1048576,2097152"):
             with self.assertRaisesRegex(sc.InvalidAllocation, "live heap"):
                 parse(kind="load-simpLib", live=bad)
+
+    def test_a_reading_without_the_free_allocation_figure_is_refused(self):
+        with self.assertRaisesRegex(sc.InvalidAllocation, "malformed"):
+            parse(kind="load-simpLib", live="3145728,2071000,1048576")
 
     def test_report_is_candidate_minus_baseline_per_image(self):
         def rec(image, variant, words, area=1048576):
@@ -94,8 +104,9 @@ class LiveReadingTest(unittest.TestCase):
         got = g.live_report(records)["load-simpLib"]
         self.assertEqual(got["b1"], dict(
             base=[1000, 1010], candidate=[1100], alloc_area=[1048576],
-            runs=[2, 2], delta_min=100, delta_max=90))
+            comparable=True, runs=[2, 2], delta_min=100, delta_max=90))
         self.assertEqual(got["s1"]["alloc_area"], [1048576, 2097152])
+        self.assertFalse(got["s1"]["comparable"])
         self.assertEqual(got["s1"]["delta_min"], 90)
         self.assertEqual(g.live_report([dict(kind="hol-startup")]), {})
 
@@ -107,6 +118,7 @@ class LiveReadingTest(unittest.TestCase):
         self.assertIn("load-simpLib b1", text)
         self.assertIn("/ 8", text)
         self.assertIn("bytes", text)
+        self.assertIn("exclude compiled code", text)
 
 
 class ParseTest(unittest.TestCase):
@@ -1123,6 +1135,17 @@ class ArchiveTest(unittest.TestCase):
             self.reseal(root)
             with self.assertRaisesRegex(sc.InvalidAllocation,
                                         "schema.*task31-startup-gate-v2"):
+                g.replay(mock.Mock(output=root, record=None))
+
+    def test_replay_refuses_schema_v3_cleanly(self):
+        records, _ = attributed_world()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.archive(root, records)
+            self.assertEqual(g.SCHEMA, "task31-startup-gate-v4")
+            self.reseal(root, schema="task31-startup-gate-v3")
+            with self.assertRaisesRegex(sc.InvalidAllocation,
+                                        "schema.*task31-startup-gate-v3"):
                 g.replay(mock.Mock(output=root, record=None))
 
     def reseal(self, root, **fields):

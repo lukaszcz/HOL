@@ -97,12 +97,13 @@ val _ = if kind = "hol-startup" then ()
   else raise Fail ("unknown GATE_KIND " ^ kind)
 
 (* The load kinds end with one unbracketed reading of the heap after full
-   collections (bytes; the allocation area is part of sizeHeap). *)
+   collections (bytes; the allocation area is part of sizeHeap; the last
+   figure is its free part, which must equal it). *)
 val live = if String.isPrefix "load-" kind
   then (PolyML.fullGC (); PolyML.fullGC (); PolyML.fullGC ();
         let val st = PolyML.Statistics.getLocalStats ()
         in SOME [#sizeHeap st, #sizeHeapFreeLastFullGC st,
-                 #sizeAllocation st] end)
+                 #sizeAllocation st, #sizeAllocationFree st] end)
   else NONE
 
 (* Everything below is outside every bracket. *)
