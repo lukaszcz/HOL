@@ -913,7 +913,7 @@ struct
   (* Prove a nonlinear arithmetic goal using NLArith/SOSLib.
      Type-dispatches: real → REAL_NLA then REAL_SOS, int → INT_SOS,
      num → NUM_SOS_RULE.  Avoids trying wrong-type provers. *)
-  fun nla_prove tm =
+  fun nla_prove_raw tm =
     if term_contains_real_ty tm then
       NLArith.REAL_NLA tm
       handle Feedback.HOL_ERR _ =>
@@ -924,6 +924,52 @@ struct
       wrap_csdp_missing SOSLib.INT_SOS tm
       handle Feedback.HOL_ERR _ =>
       wrap_csdp_missing SOSLib.NUM_SOS_RULE tm
+
+  (* Opposing bounds can fix an arithmetic atom to a numeral.  Eliminate
+     it by antisymmetry before asking SOS to search a degenerate region. *)
+  fun nla_prove tm =
+    let
+      exception NoTightBounds
+      fun substitute_bounds (asl, goal) =
+        let
+          fun equality bound =
+            case Lib.total intSyntax.dest_leq bound of
+              NONE => NONE
+            | SOME (atom, numeral) =>
+                if not (intSyntax.is_int_literal numeral) then NONE
+                else
+                  let val opposite = intSyntax.mk_leq (numeral, atom) in
+                    if List.exists (Term.aconv opposite) asl then
+                      SOME (Thm.EQ_MP
+                        (Drule.SPECL [atom, numeral]
+                          integerTheory.INT_LE_ANTISYM)
+                        (Thm.CONJ (Thm.ASSUME bound)
+                          (Thm.ASSUME opposite)))
+                    else NONE
+                  end
+          val equalities = List.mapPartial equality asl
+        in
+          if List.null equalities then raise NoTightBounds
+          else
+            Tactical.THEN
+              (simpLib.FULL_SIMP_TAC
+                (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                equalities,
+               Tactical.POP_ASSUM_LIST (fn thms =>
+                 Tactical.THEN
+                   (Tactical.MAP_EVERY Tactic.MP_TAC thms,
+                    fn (gl as (_, remaining)) =>
+                      Tactic.ACCEPT_TAC (nla_prove_raw remaining) gl)))
+              (asl, goal)
+        end
+    in
+      Tactical.TAC_PROOF (([], tm),
+        Tactical.THEN
+          (Rewrite.PURE_REWRITE_TAC [integerTheory.INT_GE],
+           Tactical.THEN
+             (Tactical.REPEAT Tactic.STRIP_TAC, substitute_bounds)))
+      handle NoTightBounds => nla_prove_raw tm
+    end
 
   (* Polynomial arithmetic should treat conditional branches as opaque atoms;
      splitting them first is both unnecessary and potentially exponential. *)

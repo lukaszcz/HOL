@@ -23295,6 +23295,50 @@ in
     "difference-directed extension changed non-equality canonicalization")
 end
 
+fun nonlinear_tight_integer_bounds_success () =
+let
+  val goals = [
+    ``(x:int) >= 4 ==> x <= 4 ==>
+        ~(37 * x + -6 * (x * x) >= -37) ==> F``,
+    ``(if p then x else -x:int) >= 4 ==>
+        (if p then x else -x) <= 4 ==>
+        ~(37 * (if p then x else -x) +
+          -6 * ((if p then x else -x) * (if p then x else -x)) >= -37)
+        ==> F``]
+  fun check goal =
+    let val theorem = Library.nla_prove goal in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "tight integer bound replay changed the goal or retained assumptions");
+      check_oracle_tags "tight integer bound replay" theorem
+    end
+  val false_goal = ``(x:int) >= 4 ==> x <= 4 ==> x * x < 16``
+  val rejected =
+    (Library.nla_prove false_goal; false)
+    handle Feedback.HOL_ERR _ => true
+in
+  List.app check goals;
+  assert (rejected, "tight integer bounds proved a false quadratic clause")
+end
+
+fun cpc_arith_max_geq2_success () =
+let
+  fun check (sort, expected) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x " ^ sort ^ ") (declare-const y " ^ sort ^
+         ") (step @p1 :rule arith-max-geq2 :args (x y)))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+        "arith-max-geq2 returned the wrong theorem or retained assumptions");
+      check_oracle_tags "arith-max-geq2" theorem
+    end
+in
+  List.app check
+    [("Int", ``((if (x:int) >= y then x else y) >= y) = T``),
+     ("Real", ``((if (x:real) >= y then x else y) >= y) = T``)]
+end
+
 fun symbolic_power_nonpolynomial_detection_success () =
 let
   val cases = [
@@ -29045,6 +29089,9 @@ let
       nonlinear_power_detection_success),
     ("symbolic_power_nonpolynomial_detection_success",
       symbolic_power_nonpolynomial_detection_success),
+    ("nonlinear_tight_integer_bounds_success",
+      nonlinear_tight_integer_bounds_success),
+    ("cpc_arith_max_geq2_success", cpc_arith_max_geq2_success),
     ("symbolic_power_avoids_nla_route_success",
       symbolic_power_avoids_nla_route_success),
     ("cpc_arith_mult_relation_replay_success",

@@ -6975,6 +6975,19 @@ local
         end
     | _ => raise ERR "arith-max-geq1" "expected two arithmetic arguments"
 
+  fun replay_arith_max_geq2 args =
+    case args of
+      [left, right] =>
+        let
+          val maximum = boolSyntax.mk_cond
+            (arith_geq (left, right), left, right)
+          val target = boolSyntax.mk_eq
+            (arith_geq (maximum, right), boolSyntax.T)
+        in
+          arith_prove target
+        end
+    | _ => raise ERR "arith-max-geq2" "expected two arithmetic arguments"
+
   fun replay_arith_min_lt2 args =
     case args of
       [left, right] =>
@@ -19238,6 +19251,7 @@ local
                  val (theorem, provenance) = replay_arith_reduction args
                in exact_result provenance theorem end
            | "arith_max_geq1" => opaque ( replay_arith_max_geq1 args)
+           | "arith_max_geq2" => opaque ( replay_arith_max_geq2 args)
            | "arith_min_lt2" => opaque ( replay_arith_min_lt2 args)
            | "int_tight_lb" => opaque ( replay_int_tight_lb prems)
            | "int_tight_ub" => opaque ( replay_int_tight_ub prems)

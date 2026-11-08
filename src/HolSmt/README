@@ -653,6 +653,10 @@ Z3 th-lemma replay coverage:
               Z3 version; observed fpa2bv     checked SmtFpProve ladder;
               ground/atom/bit shapes          no occurrence is claimed
 
+Nonlinear integer replay substitutes numeral equalities proved from opposing
+bounds before SOS certificate search. CPC arithmetic rewrites include both
+maximum lower bounds, arith-max-geq1 and arith-max-geq2.
+
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.
 
