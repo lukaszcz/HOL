@@ -74,7 +74,7 @@ KINDS = {
 # Modules and caches that exist only in the extension, and so must be absent
 # from every ordinary process (patterns on Meta.loaded module names).
 EXTENSION_SUFFIX = "Ext"
-EXTENSION_NAMES = ("simpExtLib", "congExtLib", "SimpTracking",
+EXTENSION_NAMES = ("simpExtLib", "congExtLib",
                    "TraverseExt", "Cond_rewrExt", "OpeningExt",
                    "TravrulesExt", "boolSimpsExt", "combinSimpsExt",
                    "pureSimpsExt", "splitLib", "splitPersistLib",

@@ -1,11 +1,19 @@
-# TASK28 acceptance machinery
+# Simplifier performance acceptance protocol
 
-This is measurement infrastructure, **not final acceptance or independent-build
-performance evidence**. Do not label shared `hol.state0` comparisons independent.
-TASK29–33 and TASK37 own numerical gates and remaining prerequisites. Finite
-measurements also need the corresponding source/layout/callback work audit.
+This document states the rules of the measurement and gate machinery under
+`src/simp/tests/performance/`. It is measurement infrastructure, **not final
+acceptance or independent-build performance evidence**. Do not label shared
+`hol.state0` comparisons independent. Finite measurements also need the
+corresponding source/layout/callback work audit.
 
-## Isolated-source front end
+## Harness
+
+The front end `acceptance.py`, the paired runner, the matrix fixtures and the
+archives they write. The sections below state the protocol of one experiment
+(counts, schedules, records, locks); the statistics and decisions follow in
+"Statistics and policy", the grids built on them after that.
+
+### Isolated-source front end
 
 From the repository root. The host is shared and no exclusive window is
 required; a checkout's own builds and measurements stay serial, under its lock.
@@ -15,8 +23,8 @@ harness (`run_paired.execute`, `loading.execute`, `acceptance.run_logged`,
 `verify_builds`, `api-audit/run.py`) gets `/dev/null` as standard input, and
 the compiler version is queried with `poly -v` (Poly/ML has no `--version`: it
 enters the top level and reads stdin, which hung on an inherited open pipe;
-archived records of the earlier command stay valid). The exceptions, with the
-reasons, are in "Standard input and the version query" at the end:
+archived records of the earlier command stay valid). The details are in
+"Standard input and the version query":
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -97,7 +105,7 @@ analysis cannot silently admit fixed-mode evidence. No timing, GC, control,
 confidence-interval or pass/fail threshold changes with this mode. In particular,
 equal counts cannot turn uncertain B/B controls or zero/zero GC into passes.
 
-#### The `warmup` schedule
+### The `warmup` schedule
 
 The doubling history costs 20-26% of a process of the TASK30 grid. Add
 `--batch-schedule warmup` (with `--batch-iterations N`; the environment
@@ -132,20 +140,19 @@ selections of every experiment get the same N and schedule.
   check that a schedule needs `--batch-iterations`, which `ramp` needs
   like `warmup`.
 - **The count rule** (`timing_grid.warmup_count`, used by a table of this
-  schedule): `N = max over the develop-only pilot processes of
-  ceil(HEADROOM * seconds * n / wall)`, where `n` iterations and `wall`
-  seconds are the final calibration batch of one process and `seconds` the
-  cell's batch seconds, computed in exact arithmetic on the recorded decimals.
-  New tables use `HEADROOM` 1, so that a batch lasts about the target: N is
-  the count that takes `seconds` in the process of the pilot that was fastest
-  per iteration at its final batch, so a batch of any pilot process would
-  last at least the target at that speed, and a batch is shorter than half of
-  it only if a process (a candidate included) runs more than twice as fast
-  per iteration as that fastest pilot process. TASK_30 candidate ratios lie
-  in 0.79-1.06, far from 2, and a slower process only lengthens its batches.
-  A cell where it does happen fails closed, and the revision path below
-  multiplies its count by 4 (reason "fixed batch too short" for this
-  schedule). The counts file records the schedule, the rule and the headroom;
+  schedule): `N = max over the develop-only pilot processes of ceil(HEADROOM *
+  seconds * n / wall)`, where `n` iterations and `wall` seconds are the final
+  calibration batch of one process and `seconds` the cell's batch seconds,
+  computed in exact arithmetic on the recorded decimals. New tables use
+  `HEADROOM` 1, so that a batch lasts about the target: N is the count that
+  takes `seconds` in the process of the pilot that was fastest per iteration at
+  its final batch, so a batch of any pilot process would last at least the
+  target at that speed, and a batch is shorter than half of it only if a
+  process (a candidate included) runs more than twice as fast per iteration as
+  that fastest pilot process. A slower process only lengthens its batches. A
+  cell where it does happen fails closed, and the revision path below
+  multiplies its count by 4 (reason "fixed batch too short" for this schedule).
+  The counts file records the schedule, the rule and the headroom;
   `verify-counts` and every replay derive them again from the pilot.
 - **What the count rule assumes.** (1) Time is linear in the iterations of a
   batch: N is extrapolated down from the final batch of the pilot, and with
@@ -159,47 +166,36 @@ selections of every experiment get the same N and schedule.
   target is refused, never used) and the revision by 4 recovers, so the cost
   is a rerun. Load on the host during the pilot can only lengthen a pilot
   batch, so only raise N: the maximum over processes takes the fastest, least
-  loaded one. The validation recorded, per cell, the least of (warm-up or
-  sample wall) / `seconds`, so that the margin to 0.5 is measured and not
-  only argued (below).
+  loaded one.
 - **New tables use `warmup`.** `timing_grid.Table` defaults to `schedule=
-  "warmup"` with headroom 1, on the TASK30A validation (2026-11-03, a shared
-  host): develop/develop experiments of 12 TASK30 cells, 20 pairs and 5
-  samples each, `ramp` with its TASK30 count against `warmup` with the count
-  of this rule from the TASK30 pilot. The median over the cells of the ratio
-  of the B/B 95% interval widths, warmup over ramp, was 1.005 for CPU and
-  1.004 for wall (`R` 1.005; per cell 0.41-3.52, the median being the
-  predeclared statistic) and the warmup experiments took 0.383 of the time of
-  the ramp ones (3056 s against 7972 s). Decision, by the predeclared rule:
-  `R <= 1.10`, adopt `warmup` with unchanged pairs (20 in the first stage,
-  the 20 of the second-stage formula). The least warm-up (under `ramp`: final
-  calibration) or sample wall over its target was 0.87-1.05 per cell under
-  `warmup` (0.866 for `exclude_batch-10000`) and 1.71-3.5 under `ramp`, so
-  the half-target check holds with room. The warmup schedule needs fixed
-  seconds, so a table without them names `schedule="ramp"` (it is refused
-  otherwise: a default never depends on another argument).
-- **The TASK30 table keeps `ramp`**, its counts file, pilot, grid and ledger,
-  as does the TASK29A grid; both tables say `schedule="ramp"` themselves, and
-  their archives replay unchanged at this code (the seals of the files this
-  schedule changed are in the table's history). The history seals are
+  "warmup"` with headroom 1, with unchanged pairs (20 in the first stage, the
+  20 of the second-stage formula). `warmup` is the default because on a
+  validation (develop/develop experiments of 12 TASK30 cells, 20 pairs and 5
+  samples each) the median over the cells of the ratio of the B/B 95%
+  interval widths, warmup over `ramp`, was at most the predeclared 1.10, in
+  a fraction of the time. The least warm-up (under `ramp`: final calibration)
+  or sample wall over its target stays above one half with room, so the
+  half-target check holds. The warmup schedule needs fixed seconds, so a
+  table without them names `schedule="ramp"` (it is refused otherwise: a
+  default never depends on another argument).
+- **The TASK30 and TASK29A tables keep `ramp`**, with their counts files,
+  pilots, grids and ledgers; both tables say `schedule="ramp"` themselves,
+  and their archives replay unchanged at this code. The history seals are
   compared per field, as for TASK29A (each field of the code may be the
   current one or one of its history, so a record may pass with a combination
   of fields that no one commit held), and the only code added to what is
   accepted is the exact blobs of the six files at 63ac28189 (`task30_grid.py`,
   `timing_grid.py`, `acceptance.py`, `MatrixPerformance.sml`,
-  `performance_schema.py`, `run_paired.py`). No TASK29A run was recorded
-  by the `task29a_grid.py` of 63ac28189, so its history gains nothing.
+  `performance_schema.py`, `run_paired.py`).
 
 ### Precompiled experiment driver
 
-Both matrix fixtures now compile calibration AND sampling inside `experiment`
+Both matrix fixtures compile calibration AND sampling inside `experiment`
 before either executes. The calibrated count is a runtime local, not a global
 constant available when the compiler subsequently builds `sample`. This also
 removes intervening sample-compilation allocations. The workload, complete
-calibration history, result checks, timers and decision policy are unchanged.
-Earlier fixture receipts remain historical observations, not acceptance for
-this changed driver; all affected numerical gates require fresh experiments.
-This repair is not a causal explanation or closure of their failures.
+calibration history, result checks, timers and decision policy are unchanged
+by it.
 
 `Holmake check` executes `driver-staging-control` before semantic smokes. The
 Holmake-built `driver-staging/selftest.sml` compiles the exact live driver
@@ -213,7 +209,7 @@ above the suffix that refuses an environment (`PERF_SCHEDULE` other than
 unset or `warmup`, `warmup` without `PERF_ITERATIONS`, a count out of bounds
 or, for the ramp, not a power of two) is executed too, with accepted and
 refused environments. Reinstating the old top-level count must trigger the
-serial guard for BOTH fixtures. These 78 assertions are scheduling tests, not
+serial guard for BOTH fixtures. These assertions are scheduling tests, not
 HOL timing or allocation measurements. Run separately from the repository root:
 
 ```sh
@@ -221,7 +217,7 @@ W bin/Holmake --no-project --no-cache --no_prereqs \
   -C src/simp/tests/performance -j1 driver-staging-control
 ```
 
-## Runtime, graph and release records
+### Runtime, graph and release records
 
 Both matrix fixtures load sealed `RuntimeMetrics.sml`. Every calibration and
 sample has exactly one `@@MATRIX_RUNTIME` record matched in order to its stage
@@ -273,7 +269,131 @@ It needs a configured tree and a new sibling `.log` path. Run alone; unlike
 `acceptance.py`/`loading.py`, smoke drivers do not take the host-wide serial lock.
 They clean private trees automatically, retaining compact source-tied receipts.
 
-## Statistics and decisions
+### Acceptance record, admission and exit codes
+
+`acceptance.json` records the policy, source-tied raw experiment input hashes,
+runner commands/log hashes/exits, controls and per-metric decisions. Archived
+results are revalidated through the existing schema and source-binding auditor,
+plus ordered heap/search/use/completion/loaded inventories and fixture/options
+checks. A precomputed summary is not sufficient evidence.
+
+Matrix manifests require `shared_inputs`: an inventory keyed by canonical
+absolute logical source path, with physical path, SHA256, byte count and the
+complete related `.uo`/`.ui`/`.dat` product fingerprints. The online runner
+checks these against live files and across all accepted processes before
+sealing the manifest. Offline admission binds every shared receipt entry to
+that inventory, including all related products, and rejects non-normalized or
+escaping paths without resolving deleted roots. Private sources and products
+remain bound to their selected inventories. Matrix archives predating this
+inventory are historical diagnostics only; do not reconstruct a supposedly
+independent inventory from the receipts being validated.
+
+Admission also requires exact runtime options (one GC thread and the recorded
+repo's `hol.state0`), runtime/heaps/Holmake/configuration fingerprints, a sealed
+successful Poly/ML version command, sealed successful dynamic-library discovery
+and fingerprints for its libraries. Selected builds must have succeeded, and
+each launcher's text, options and product hash must agree. These are local
+provenance-consistency checks, not authentication of a malicious producer or
+independent-build evidence. Non-matrix historical diagnostic audits retain
+their original weaker contract.
+
+CLI exit codes: 0 = all reported candidate metrics/slopes pass; 1 = any fails;
+2 = uncertainty, invalid evidence or a blocked prerequisite. `success=true`
+means the experiment completed and validated, **not that its metrics passed**.
+No overall performance acceptance decision substitutes for per-metric decisions.
+
+### Serialization
+
+`run` and `controls` hold nonblocking `flock` locks for their entire experiment:
+
+- `.agent-files/hol4-performance-UID.lock` in the repository (one per
+  user; ignored, and out of reach of shared `/tmp` cleaners);
+- the repository gitdir inode (compatible with existing exclusions/tactics
+  runners), and common gitdir inode (across worktrees).
+
+Descriptors are inherited by the paired runner so it cannot continue unlocked
+if its parent exits. A busy lock blocks the invocation. Never unlink a lockfile:
+that permits two different inodes to be locked concurrently. Do not relock these
+inherited locks in child runners. All invocations of this front end serialize;
+the existing gitdir lock also conflicts with older same-worktree runners.
+Locks are advisory: they cannot stop unrelated manual `bin/build`, direct older
+runners in other worktrees, or other users. Authorization confirms those are
+quiescent. Do not use `--authorize-measurements` as permission for concurrent work.
+Unit tests acquire the same lock for actual timing controls; other tests create
+only tiny temporary synthetic git repositories and remove them immediately.
+
+### Standard input and the version query
+
+Every child process of the harness gets `/dev/null` as standard input:
+`run_paired.execute`, `loading.execute`, `acceptance.run_logged`,
+`verify_builds` and `api-audit/run.py`. The compiler is queried with `poly
+-v`: `poly --version` is no option, Poly/ML enters the top level and reads
+stdin, which hangs on an inherited open pipe. A hang there would make a cell
+a protocol failure, never a measurement.
+
+- **Version comparison.** `acceptance.poly_version_matches`: a recorded
+  version that contains `RTS version` (a `poly -v` record) must equal the
+  live `poly -v` output in full once stripped; a legacy record (banner
+  alone, made by `poly --version`) is compared with the banner of the live
+  output, as is a legacy record against a new probe.
+- **`api-audit/run.py`** queries `poly -v` and runs `selftest.exe` with
+  `/dev/null` as stdin and timeouts (30 s, 1800 s). No retained receipt or
+  manifest seals it other than the receipts' own `sources` entry, which
+  `loading.semantic_gate` compares with the api-audit files of the checkout
+  being measured, so a receipt made by another version of those files is
+  refused and the eight-process receipt a gate needs is made by the current
+  `run.py`.
+- **Other audits** (`check_task27_docs.py`, `run_task22_negative.py`,
+  `audit_task27.py`, `compatibility/interfaces/check_design.py` and
+  `native-extension/check.py`) take `stdin=/dev/null`, with a timeout. They
+  start Holmake, HOL-compiled executables or a dependency tool, no Poly/ML
+  top level. Git calls are left alone.
+- **Seal histories.** A changed file whose seal a record carries gets an
+  entry in the commit that changes it. The histories hold, for the records
+  already made, the seals of the files before the changes below:
+  - `task30_grid.SEALED_HISTORY` and `task30_followup.SEALED_HISTORY` hold
+    `matrix.json` and `matrix_schema.py` as they were before the command
+    paths, the audit output and the loading counts of the external gates
+    were updated for TASK31; `task30_grid.SEALED_HISTORY` also holds the
+    `task29_gate.py` seal from before the "exclusive window" wording was
+    dropped;
+  - the histories of `task30_followup.py` (`DRIVERS`, `ENGINES`,
+    `ACCEPTANCE`, `SEALED_HISTORY`) and `task30_dispose.py` (`HISTORY`) hold
+    the seals of the files at `40e176538f`, the code that made the
+    follow-up and disposition records.
+  Later edits of the same files that no record carries (usage text, style)
+  need no entry.
+
+### Negative controls
+
+```sh
+python3 -B src/simp/tests/performance/acceptance.py controls \
+  --output NEW_CONTROL_JSON
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s src/simp/tests/performance -p test_acceptance.py -v
+```
+
+Controls are separate real Python subprocesses, never production-source edits:
+
+- slowdown: candidate performs a longer measured CPU loop;
+- allocation: candidate retains a larger bytearray, measured by `tracemalloc`;
+- failed process: emits a result but exits 7; rejection must be the exit guard;
+- missing result: exits 0 without output; rejection must be the missing guard.
+
+The positive baseline worker verifies the allocated bytes and consumed work.
+Slowdown/allocation controls use ten paired fresh subprocess observations in
+AB/BA order and must produce strict CI failures. The tests execute these real
+perturbations, not just construct invented ratios or assert an arbitrary error.
+Synthetic statistics and tampered archived/build receipts additionally exercise
+thresholds, undefined GC, completeness, provenance and stale-build guards.
+`tracemalloc` is **only a Python harness allocation control**, never a measurement
+of HOL/PolyML allocation. Bootstrap confidence is not a universal hardware proof.
+
+## Statistics and policy
+
+The rules by which one experiment, and then a grid of them, is decided.
+
+### Statistics and decisions
 
 Fixed before candidate results are observed:
 
@@ -296,12 +416,11 @@ Fixed before candidate results are observed:
 Rule 5 is `POLICY` (version 1). It tests whether the candidate is *faster*:
 a candidate with no real difference passes one metric about 3% of the time,
 and its B/B control must pass the same way, so a performance-neutral change
-cannot pass a grid. Every archive before TASK29A's rerun used it and still
-replays under it.
+cannot pass a grid. Archives made under it replay under it.
 
-### Equivalence policy (version 2, TASK29A policy-owner disposition)
+### Equivalence policy (version 2)
 
-Decided by the policy owner on 2026-10-26; `acceptance.EQUIVALENCE_POLICY`.
+Decided by the policy owner; `acceptance.EQUIVALENCE_POLICY`.
 `acceptance.py run` and `task29a_grid.py` record it in every new report, and
 offline replay uses the policy a report recorded. Rules 1–4 and 6 are unchanged.
 
@@ -319,15 +438,14 @@ offline replay uses the policy a report recorded. Rules 1–4 and 6 are unchange
   are run options (minimum ten and three), fixed before the run and recorded
   in its inventory.
 
-#### Code-layout randomization and second stage (TASK29A)
+### Code-layout randomization and second stage (TASK29A)
 
-Every fresh process compiles its selected sources at startup, so the address
-of all later code depends on everything compiled before it. On the measured
-host (Linux/aarch64, Neoverse-V2, Poly/ML 5.9.2) this alone moves the
-per-operation cost of the large fragment cells by up to ±10%. Develop
-processes with the same code-area size run alike, and both B/B sides share
-one layout. A source change elsewhere that moves the layout therefore looks
-like a slowdown or speedup at a fixed layout.
+Every fresh process compiles its selected sources at startup, so the address of
+all later code depends on everything compiled before it. This alone moves the
+per-operation cost of the large fragment cells. Develop processes with the same
+code-area size run alike, and both B/B sides share one layout. A source change
+elsewhere that moves the layout therefore looks like a slowdown or speedup at a
+fixed layout.
 
 - `--layout-seed S` (`run_paired.py`, `acceptance.py run`,
   `task29a_grid.py run`) sets `PERF_LAYOUT` for every matrix process to
@@ -352,7 +470,7 @@ like a slowdown or speedup at a fixed layout.
   Recorded cells are replayed and kept; an unrecorded cell is measured
   again from scratch.
 - **Disposition** (`task29a_grid.py dispose --output STAGE2`, decided by
-  the policy owner on 2026-10-30). It replays both stages and leaves every
+  the policy owner). It replays both stages and leaves every
   measured decision unchanged. It then classifies each final cell:
   - pass;
   - *unresolvable*: every open metric is inconclusive only because its
@@ -365,7 +483,35 @@ like a slowdown or speedup at a fixed layout.
   inconclusive cell blocks. `--record` writes `disposition.json`, and
   later runs check it.
 
-#### Shared timing grid and the TASK30 table
+## Seals and seal histories
+
+A record carries the seals (content hashes) of the code that made it, and a
+replay accepts it only when each seal is the current one or one that the
+history of that file lists. So a change to a file whose seal a record
+carries appends the old seal to its history in the same commit, and the test
+that pins the history constant is edited with it:
+
+- the TASK30 table (`task30_grid.py`): `DRIVERS`, `ACCEPTANCE` and
+  `SEALED_HISTORY`, and `task30_pins.PIN_HISTORY` for the pins;
+- the follow-up (`task30_followup.py`): `DRIVERS`, `ENGINES`, `ACCEPTANCE`
+  and `SEALED_HISTORY`;
+- the TASK30 disposition (`task30_dispose.py`): `HISTORY`, and `ADDED` for a
+  file added to its `CODE` after records were made;
+- the TASK31 attribution table (`task31_attributed.json`, `history`), its
+  pins (`pin_history`) and the TASK31 disposition (`task31_dispose.HISTORY`).
+
+A file whose seal no record carries needs no entry. The cascade, with a
+worked example, is in the bullet "Seal histories" of "TASK30 follow-up"; a
+check that fails names every changed file and the entry to paste. "Standard
+input and the version query" names the histories that hold the seals of
+`40e176538f`.
+
+## Timing grids, replay and resume
+
+`timing_grid.py` is the engine: pilot, predeclared counts, run, second stage,
+`--resume`, replay and close. The tables built on it follow.
+
+### Shared timing grid and the TASK30 table
 
 `timing_grid.py` is the TASK29A grid with the task-specific parts removed.
 A task supplies a `Table` (cases, batch seconds, predeclared counts file,
@@ -374,6 +520,8 @@ second stage, the archives, `--resume` and `replay` are the ones above and do
 not change. `task29a_grid.py` is its TASK29A table plus the TASK29A
 disposition; `task30_grid.py` is the TASK30 table (24 cases, 144 cells); its
 disposition, with that of its follow-up, is `task30_dispose.py` (below).
+
+#### Cells and predeclared counts
 
 - **Cells.** The sizes of a case come from the matrix ledger. A cell is
   `case-size`.
@@ -463,14 +611,16 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   only the table's default; the seconds of a cell are those in
   `iterations.seconds`. Every replay checks the header against the counts
   file and the table.
+#### Attempts ledger
+
 - **What the commit claim is.** Git proves the order of the counts file
   relative to the *candidate commit* (the file is in the candidate's history
   and one commit made it), and, with the rule above, that no free count is
   left: the counts are a function of the pilot and the table. It does not
   prove the order relative to any *observation*: the candidate's code can
-  have been measured under an earlier commit (TASK28 and TASK29 observed the
-  same code). The attempts ledger is what makes a retry visible, as a
-  discipline and not as a proof.
+  have been measured under an earlier commit (the same code can be observed
+  under an earlier commit). The attempts ledger is what makes a retry
+  visible, as a discipline and not as a proof.
 - **Attempts ledger.** Each table with fixed seconds has one ledger, at
   `.agent-files/evidence/<table name>/attempts.jsonl` below the root of the
   checkout (`.agent-files/evidence/task30/attempts.jsonl`); `run`, `extend`,
@@ -484,63 +634,60 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
 
   (a tracked `.gitignore` is not changed for it). `git clean -x` reaches the
   ignored directory and deletes the ledger, the build stamp and the logs with
-  it: never run it in a checkout that holds them. Before the
-  first cell `run` and `extend` append a JSON line with the event (`open`, or
-  `resume` after an interruption), the stage (`first`, `second`), an attempt
-  id (a second stage has its own, and a retry of it another), the candidate,
-  the counts file and its seal, the layout seed, the output path, the
-  absolute path of the checkout and the UTC time, and at the end a `close`
-  line with the status (`pass`, `fail`,
-  `inconclusive`, ...; `partial` for a diagnostic subset, `interrupted` when
-  it stopped, and `checkout-changed`; see *when the checkout is judged*
-  below, for what an `interrupted` line does not say). A close that cannot
-  be written is reported on standard error
-  (`ATTEMPT-NOT-CLOSED`, with what the close would have added), leaves the
-  attempt open in the ledger, which shows it as interrupted, and does not
-  replace the outcome of the run.
-  The lines form a hash chain: each carries `prev`, the SHA-256 of the line
-  before it (64 zeros for the first), so a line removed or changed in the
-  middle is refused (`attempts ledger chain broken at line N`), as is a
-  malformed line. A crash, a full disk above all, may leave lines at the end
-  that are no record: one cut line, or several when the acknowledging append
-  was cut too. Any run of them at the very end, however each is ended, is
-  tolerated and reported (`LEDGER-TORN-LINE`, once for each); the next append
-  ends the last one and writes a `torn` record naming the hash of each, so
-  none is lost or silent. The same lines followed by a line that is no
-  record of the chain, or in the middle of the file, are refused. A complete
-  record without its newline is kept (`LEDGER-UNTERMINATED-LAST-LINE`). A
-  resumption (`run --resume`, `extend --resume`) checks that the ledger holds
-  its opening before it measures. `replay` needs the ledger and the grid's
-  opening line in it, verifies the chain, and prints every attempt of the
-  table with its stage, time, resumptions, every status it closed with (in
-  order, comma separated; `interrupted` for a stop with no close), candidate
-  and the checkouts of its lines, marking the one of the grid replayed and
-  those of its candidate (`ATTEMPT id first opened T resumed N status S
-  candidate C checkout P (this grid)`), with the counts (`ATTEMPTS of TOY: N
-  in the ledger, M of this candidate C`), so a reader of a replay sees each
-  retry and each close of it, also of another candidate. `close` replays the
-  timing grid, so it prints the same lines, and repeats the counts in its
-  line. A rerun under the same
-  settings, after a pass or
-  a non-pass alike, is a new draw: a new attempt in the same ledger, its
-  predecessors stay in it, and the handoff publishes the whole ledger, not
-  the line of the grid that passed. **One checkout.** The ledger is of a
-  checkout, so a grid and every retry of it, the second stage included, are
-  made in the one checkout: a draw made in a second clone is in that clone's
-  ledger and the first would not show it. Each line records the absolute path
-  of its checkout, so a ledger that holds lines of two paths, in the opening
-  of an attempt or in a resumption or close of it, says so
-  (`LEDGER-CHECKOUTS: N different checkouts` in a replay), and a clone made
-  from the first, with its ledger copied, shows as lines of a path that is not
-  the clone's. `replay` and `close` alone take `--ledger FILE`, read-only, to
-  replay in another checkout against the ledger of the one that measured
-  (a copy of it); `run` and `extend` never take it, and a measurement
-  appends only to the ledger of the checkout it runs in. **The ledger is a
-  discipline, not a
+  it: never run it in a checkout that holds them. Before the first cell `run`
+  and `extend` append a JSON line with the event (`open`, or `resume` after an
+  interruption), the stage (`first`, `second`), an attempt id (a second stage
+  has its own, and a retry of it another), the candidate, the counts file and
+  its seal, the layout seed, the output path, the absolute path of the checkout
+  and the UTC time, and at the end a `close` line with the status (`pass`,
+  `fail`, `inconclusive`, ...; `partial` for a diagnostic subset, `interrupted`
+  when it stopped, and `checkout-changed`; see *when the checkout is judged*
+  below, for what an `interrupted` line does not say). A close that cannot be
+  written is reported on standard error (`ATTEMPT-NOT-CLOSED`, with what the
+  close would have added), leaves the attempt open in the ledger, which shows
+  it as interrupted, and does not replace the outcome of the run. The lines
+  form a hash chain: each carries `prev`, the SHA-256 of the line before it (64
+  zeros for the first), so a line removed or changed in the middle is refused
+  (`attempts ledger chain broken at line N`), as is a malformed line. A crash,
+  a full disk above all, may leave lines at the end that are no record: one cut
+  line, or several when the acknowledging append was cut too. Any run of them
+  at the very end, however each is ended, is tolerated and reported
+  (`LEDGER-TORN-LINE`, once for each); the next append ends the last one and
+  writes a `torn` record naming the hash of each, so none is lost or silent.
+  The same lines followed by a line that is no record of the chain, or in the
+  middle of the file, are refused. A complete record without its newline is
+  kept (`LEDGER-UNTERMINATED-LAST-LINE`). A resumption (`run --resume`, `extend
+  --resume`) checks that the ledger holds its opening before it measures.
+  `replay` needs the ledger and the grid's opening line in it, verifies the
+  chain, and prints every attempt of the table with its stage, time,
+  resumptions, every status it closed with (in order, comma separated;
+  `interrupted` for a stop with no close), candidate and the checkouts of its
+  lines, marking the one of the grid replayed and those of its candidate
+  (`ATTEMPT id first opened T resumed N status S candidate C checkout P (this
+  grid)`), with the counts (`ATTEMPTS of TOY: N in the ledger, M of this
+  candidate C`), so a reader of a replay sees each retry and each close of it,
+  also of another candidate. `close` replays the timing grid, so it prints the
+  same lines, and repeats the counts in its line. A rerun under the same
+  settings, after a pass or a non-pass alike, is a new draw: a new attempt in
+  the same ledger, its predecessors stay in it, and the report of the result
+  publishes the whole ledger, not the line of the grid that passed. **One
+  checkout.** The ledger is of a checkout, so a grid and every retry of it, the
+  second stage included, are made in the one checkout: a draw made in a second
+  clone is in that clone's ledger and the first would not show it. Each line
+  records the absolute path of its checkout, so a ledger that holds lines of
+  two paths, in the opening of an attempt or in a resumption or close of it,
+  says so (`LEDGER-CHECKOUTS: N different checkouts` in a replay), and a clone
+  made from the first, with its ledger copied, shows as lines of a path that is
+  not the clone's. `replay` and `close` alone take `--ledger FILE`, read-only,
+  to replay in another checkout against the ledger of the one that measured (a
+  copy of it); `run` and `extend` never take it, and a measurement appends only
+  to the ledger of the checkout it runs in. **The ledger is a discipline, not a
   proof:** the chain shows that no line was removed from or changed in the
   middle, not that lines after the last one, or the whole file, were not
   removed. That deletion is undetectable here, and what covers it is that the
   handoff names the ledger and that a reviewer asks for it.
+#### Revisions and the route after a regression
+
 - **Revisions.** A counts file is never edited: a changed file is a new file
   at a new path (`task30_iterations_2.json`, ...), listed in order in the
   table's `revisions` (paths absolute or built from `a.HERE`, as the first
@@ -571,78 +718,74 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   replay, and `test_task30_grid.py` makes no assertion about the number of
   revisions or drivers. The rescaling route is for cells the first grid
   rejected as "fixed calibration too short" (see below).
-- **The route after a regression.** The task asks for a diagnosis, a fix and a
-  rerun. A production fix in a pinned file changes the candidate's blob of
+- **The route after a regression.** The task asks for a diagnosis, a fix and
+  a rerun. A production fix in a pinned file changes the candidate's blob of
   that file, so the pin is stale and `run` refuses (below). The route, in
   order: fix the production code; compute the new blobs and write the new pins
   into `task30_pins.py`, adding the seal of the previous version of that file
   and the pins it held to `PIN_HISTORY`, a dictionary in `task30_pins.py`
-  itself (so the grids it judged still replay, and the driver, which every
-  grid seals, does not change for it); commit the result as a new candidate
-  commit, and run `prepare` at it, for the production fix is a source outside
-  the performance area (the
-  counts file is already in its history, and the pilot, the counts and the
-  sealed files are untouched, because the pins file is not among them); run a
-  new complete grid under the same counts file, then the second stage and the
-  allocation gate as for any candidate. Every attempt, the regressed grid
-  included, is in the ledger, and the handoff publishes the ledger. If the fix
-  changes what is measured (a fixture or a sealed file), the counts must be
-  derived again: a `--repilot` revision.
+  itself (so the grids it judged still replay, and the driver, which every grid
+  seals, does not change for it); commit the result as a new candidate commit,
+  and run `prepare` at it, for the production fix is a source outside the
+  performance area (the counts file is already in its history, and the pilot,
+  the counts and the sealed files are untouched, because the pins file is not
+  among them); run a new complete grid under the same counts file, then the
+  second stage and the allocation gate as for any candidate. Every attempt, the
+  regressed grid included, is in the ledger, and the report of the result
+  publishes the ledger. If the fix changes what is measured (a fixture or a
+  sealed file), the counts must be derived again: a `--repilot` revision.
 - **Batch seconds.** A table gives all cells one calibration target and may
   name a longer one for cases whose single operation is tiny, so that a
   batch stands clear of the per-batch overhead (the ten direct deletions of
   TASK30 use 1 s, the others 0.3 s). The seconds are part of the counts
   file, checked by `run`, and used again by `replay`.
-- **Source identity.** The operations of TASK30 run through source files
-  that the candidate may have changed: `task30_cases.SOURCES` lists them,
-  each `.sml` with its `.sig`: the simplifier (`simpLib`, `Ho_Net`,
+#### Source identity, pins and theory hooks
+
+- **Source identity.** The operations of TASK30 run through source files that
+  the candidate may have changed: `task30_cases.SOURCES` lists them, each
+  `.sml` with its `.sig`: the simplifier (`simpLib`, `Ho_Net`,
   `BoundedRewrites`, `Traverse`, `Travrules`, `Opening`, `Cond_rewr`,
-  `SimpTracking`, `Trace`), the marker library (`markerLib`,
-  `markerSyntax`) and the modules the cases call through them (`liteLib`,
-  `Theory`, `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records
-  the git blob of each file at the baseline and at the candidate in the
-  inventory and prints every file that differs (`SOURCE-DIFFERS path`).
-  Such a grid is never a pass: its decisions name the files in
-  `source_identity` and a status that would be `pass` becomes
-  `inconclusive`, whatever the cells say. `replay` and the second stage
-  re-verify the record against git. This is the evidence for "no extra
-  source scan": neither gate sees a scan that allocates nothing and
-  costs a few percent, so the identity of the code on the path, not a
-  measurement, shows that no scan was added there. The boundary: what is not
-  listed stays outside the identity (the kernel, the parser, `ThmAttribute`,
-  `Lib`, `testutils` and the build files among it: every operation and the
-  harness itself go through them, so a change there moves both gates and is
-  for review, not for a list of this size), and the identity of a file says
-  nothing of the data it works on, such as the size of the theory graph; the
-  fixtures fix that. The inventory therefore records, besides the listed
-  files, the sorted name-status list of every file under `src/` that differs
-  between the baseline and the candidate (`source_tree`; `replay` derives it
-  again from git), so everything that differs, listed or not, is published:
-  for the present candidate that includes `ThmAttribute` (additive
-  accessors), the `rawtheory` tool `mktool.ML` and build files, none of them
-  a listed source. A reviewed difference may be pinned: `task30_pins.PINNED`
-  maps a path of the list to the exact candidate blob and the reason. A file
-  that differs is accepted only when its candidate blob is the pinned one;
-  it is then published under `source_identity.reviewed` with its reason,
-  prints no `SOURCE-DIFFERS` and does not change the status. Any other blob
-  of it, and any other file, behaves as above; a pin on a file identical to
-  the baseline or outside the list is an error. A file the candidate adds
-  (absent at the baseline) is recorded with no baseline blob and is accepted
-  only with such a pin; unpinned, or absent at both commits, it is refused.
-  `replay` and the second stage re-derive all of it, so the record is not
-  trusted. The pins are in a file of their own, whose seal every grid
-  records (`pins`) beside the sealed files; a grid replays by the pins it
-  was judged by, the current ones or those kept in `PIN_HISTORY` (in
-  `task30_pins.py`) under the seal of that earlier version (otherwise
+  `SimpTracking`, `Trace`), the marker library (`markerLib`, `markerSyntax`)
+  and the modules the cases call through them (`liteLib`, `Theory`, `Context`,
+  `Uref`, `Drule`, `Conv`, `Tactical`). `run` records the git blob of each file
+  at the baseline and at the candidate in the inventory and prints every file
+  that differs (`SOURCE-DIFFERS path`). Such a grid is never a pass: its
+  decisions name the files in `source_identity` and a status that would be
+  `pass` becomes `inconclusive`, whatever the cells say. `replay` and the
+  second stage re-verify the record against git. This is the evidence for "no
+  extra source scan": neither gate sees a scan that allocates nothing and costs
+  a few percent, so the identity of the code on the path, not a measurement,
+  shows that no scan was added there. The boundary: what is not listed stays
+  outside the identity (the kernel, the parser, `ThmAttribute`, `Lib`,
+  `testutils` and the build files among it: every operation and the harness
+  itself go through them, so a change there moves both gates and is for review,
+  not for a list of this size), and the identity of a file says nothing of the
+  data it works on, such as the size of the theory graph; the fixtures fix
+  that. The inventory therefore records, besides the listed files, the sorted
+  name-status list of every file under `src/` that differs between the baseline
+  and the candidate (`source_tree`; `replay` derives it again from git), so
+  everything that differs, listed or not, is published. A reviewed difference
+  may be pinned: `task30_pins.PINNED` maps a path of the list to the exact
+  candidate blob and the reason. A file that differs is accepted only when its
+  candidate blob is the pinned one; it is then published under
+  `source_identity.reviewed` with its reason, prints no `SOURCE-DIFFERS` and
+  does not change the status. Any other blob of it, and any other file, behaves
+  as above; a pin on a file identical to the baseline or outside the list is an
+  error. A file the candidate adds (absent at the baseline) is recorded with no
+  baseline blob and is accepted only with such a pin; unpinned, or absent at
+  both commits, it is refused. `replay` and the second stage re-derive all of
+  it, so the record is not trusted. The pins are in a file of their own, whose
+  seal every grid records (`pins`) beside the sealed files; a grid replays by
+  the pins it was judged by, the current ones or those kept in `PIN_HISTORY`
+  (in `task30_pins.py`) under the seal of that earlier version (otherwise
   `changed pins`). `run` refuses, before any measurement, a candidate with a
-  source that differs without a current pin (a stale pin is one), because
-  that grid could never pass: it prints `SOURCE-DIFFERS` and stops. `--only`
-  still measures a diagnostic subset, marked `diagnostic` in its inventory,
-  which has no decisions, can never complete a grid, and cannot be resumed
-  without `--only`. The reviewed difference is the one `note_rewrite` spec
-  added to `Cond_rewr.sig` (see the next item). The pin tests compute the
-  blob of each file in the checkout and compare it with the pin, and with
-  the baseline's.
+  source that differs without a current pin (a stale pin is one), because that
+  grid could never pass: it prints `SOURCE-DIFFERS` and stops. `--only` still
+  measures a diagnostic subset, marked `diagnostic` in its inventory, which has
+  no decisions, can never complete a grid, and cannot be resumed without
+  `--only`. The reviewed difference is the one `note_rewrite` spec added to
+  `Cond_rewr.sig` (see the next item). The pin tests compute the blob of each
+  file in the checkout and compare it with the pin, and with the baseline's.
 - **Pins and the sealed source list.** `task30_pins.PINNED` holds only
   `Cond_rewr.sig` (one added spec, `note_rewrite`); `Cond_rewr.sml` is
   develop's and has no pin, since a pin on a file identical to the baseline
@@ -652,36 +795,23 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   by the current ones. `task30_cases.SOURCES` is sealed and still lists
   `SimpTracking.sml`/`.sig`, which exist at neither commit, so a new TASK30
   run refuses with `source file absent at the baseline and not pinned:
-  src/simp/src/SimpTracking.sml` until its owner revises that list.
+  src/simp/src/SimpTracking.sml`.
 - **Theory hooks.** `Theory.register_hook` is the way a module adds work to
-  a theory transition. Audit of its callers: the baseline has nine sites in
-  seven files (`TexTokenMap`, `markerLib`, `OpenTheoryMap`, `Parse` twice,
-  `DB` twice, `ThyDataSexp`, `pred_setScript`), all unchanged in the
-  candidate. The candidate adds one ordinary site, `SplitData.ensure_listener`
-  (`SplitData.sml:98`), reached through `splitLib.enable_split_attribute`:
-  the explicit opt-in of the split tests, and
-  `src/simp/src/splitPersistLib.sml` (line 6), a compiled public module that
-  calls it when it is loaded. Neither
-  is in the ordinary heap (`src/boss/tests/tracked-defaults/ordinary.sml`
-  checks that an ordinary load does not hold `SplitData`, `splitLib` or
-  `splitPersistLib`), and neither fixture loads them, so the site is not on
-  the path of the cases. Test-only registrations are
-  `src/simp/tests/split-lifecycle/repair.sml:33` and
-  `src/simp/tests/split-registration/selftest.sml:392,413`. A search for the
-  text `register_hook` is not enough: `ThyDataSexp.sml:357` registers a hook
-  for each data type made by `ThyDataSexp.new`, so a new user of
-  `ThmSetData`, `AncestryData` or `ThyDataSexp.new` adds one too. The audit
-  therefore covers those names as well, over the ordinary sources and the
-  lines changed in them (`git diff BASELINE CANDIDATE -- src` outside the
-  tests, and `git grep` of each name at both commits). For the present
-  candidate it finds no ordinary file that gains a use of any of the four:
-  `SplitData.sml` queries `ThmSetData` (`data_exportfns`, `all_set_types`,
-  `toKName`) and names `AncestryData` in a comment, and `splitLib.sig` in a
-  comment; the other new users are tests (`split-registration/selftest.sml`
-  among them, which also calls `ThyDataSexp.new`). A candidate that
-  registered a hook on an ordinary path would not be visible to the source
-  identity of the listed files alone; this audit, repeated for a new
-  candidate, is what covers it.
+  a theory transition. A candidate that registered a hook on an ordinary path
+  would not be visible to the source identity of the listed files alone, so
+  the candidate is audited: every caller of `register_hook` in the baseline
+  and the candidate, ordinary or test-only, is listed, and each caller the
+  candidate adds is shown not to be on the path of the cases (for example
+  because the module is not in the ordinary heap and no fixture loads it).
+  A search for the text `register_hook` is not enough:
+  `ThyDataSexp.sml` registers a hook for each data type made by
+  `ThyDataSexp.new`, so a new user of `ThmSetData`, `AncestryData` or
+  `ThyDataSexp.new` adds one too. The audit therefore covers those names as
+  well, over the ordinary sources and the lines changed in them (`git diff
+  BASELINE CANDIDATE -- src` outside the tests, and `git grep` of each name
+  at both commits). This audit is repeated for a new candidate.
+#### Decisions and whole operations
+
 - **Decisions.** `run` prints, and the exit status reflects, five separate
   lists: pass; *fail*; *inconclusive*; *control-limited* (every open metric
   is inconclusive only because its B/B control is outside the window);
@@ -699,28 +829,26 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   `decisions.json` and `replay` prints them again. No cell is excused: a task
   that accepts a non-passing cell does so in a separate, reviewed table (as
   TASK29A did), outside the engine.
-- **Whole operations.** The timed operation is the fixture's complete
-  `run`, and its result is verified in the same process, so work cannot move
-  into unmeasured preprocessing: a batch contains the construction or call
-  being gated and whatever it needs (the setup of a case, such as the theory
+- **Whole operations.** The timed operation is the fixture's complete `run`,
+  and its result is verified in the same process, so work cannot move into
+  unmeasured preprocessing: a batch contains the construction or call being
+  gated and whatever it needs (the setup of a case, such as the theory
   transition of `history_theory_change` below, is outside the batch). The
   fixtures assert the callback counts of the maker and collector cases
   (`history_collectors`, `history_makers`) exactly and check the resulting
   simpset of every deletion; `exclude_dproc` and `exclude_mixed` assert that
   the deletion calls no maker and no collector (zero of each: `-*` runs
   neither). Their simpsets are built with the maker and the dprocs first and
-  the data after them, so that a rebuild of the history would, by the
-  reading of `++` and `build_from_history` in `simpLib.sml`, prime the dprocs
-  (`++` passes the rewrites of each later fragment to `Traverse.addctxt`)
-  and, where data follows (`exclude_mixed`), run the maker, so the zero
-  counts would fail; `exclude_dproc` has no data, so there only the
-  collectors would be primed. They are zero because the deletion replays
-  nothing. That reading has not been run in HOL, and
-  the counts of a rebuild are not asserted. The fixtures do not count scans,
-  and production records none. The allocation matrix
-  (`allocation_matrix.py --task task30`) brackets setup, first and steady
-  operation and verification of all 24 cases and compares exact allocation
-  words and their size slopes between the sides.
+  the data after them, so that a rebuild of the history would, by the reading
+  of `++` and `build_from_history` in `simpLib.sml`, prime the dprocs (`++`
+  passes the rewrites of each later fragment to `Traverse.addctxt`) and, where
+  data follows (`exclude_mixed`), run the maker, so the zero counts would fail;
+  `exclude_dproc` has no data, so there only the collectors would be primed.
+  They are zero because the deletion replays nothing. The counts of a rebuild
+  are not asserted. The fixtures do not count scans, and production records
+  none. The allocation matrix (`allocation_matrix.py --task task30`) brackets
+  setup, first and steady operation and verification of all 24 cases and
+  compares exact allocation words and their size slopes between the sides.
 - **`history_theory_change`.** Neither gate times the theory transition
   (`new_theory`, and with it the export of the theory) or counts its words.
   In both fixtures the transition is part of the case's setup, before any
@@ -742,6 +870,8 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   simplifier work and is out of TASK_30's scope, so it has no timed batch
   and none is wanted; the reparse is in scope and is gated by both gates, as
   above.
+#### Checkout, resume and replay
+
 - **The checkout a measurement runs in.** `prepare` configures and builds,
   `pilot`, `run` and `extend` measure, and each of them refuses to go on
   unless the checkout is the one the measurement names. `prepare` is the one
@@ -761,9 +891,7 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   `/dev/null` as its standard input, both into one log. Configure writes
   only files that git ignores (`tools/Holmake/Systeml.sml`, `bin`, `sigobj`,
   the generated editor files, and the tools it compiles) and `Systeml.sig` it
-  only reads, so the checkout stays clean; measured on a checkout whose
-  products were up to date, configure and this build took under five minutes
-  together (from nothing the build takes the better part of an hour). The
+  only reads, so the checkout stays clean. The
   real configure script runs under a handler that swallows an exception and
   lets `poly` exit 0, so after configure `prepare` requires the line
   `Finished configuration!` in what this configure wrote (not in an earlier
@@ -823,9 +951,9 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   first, the products included; a resumed `run`, `extend` or `pilot` finds
   the checkout its inventory recorded. **Every `prepare` makes a new
   products digest**: configure relinks `bin/hol` and `bin/Holmake` and the
-  build makes the heap again, and three real `prepare` runs at one commit
-  gave the same head and tree and three different digests (2499 files
-  each). The digest is not made stable. So **a grid that is stopped, or
+  build makes the heap again, and repeated `prepare` runs at one commit
+  give the same head and tree and different digests. The digest is not
+  made stable. So **a grid that is stopped, or
   whose attempt ended `checkout-changed`, must not be prepared**: a
   `prepare` between a stop and its `--resume` is refused (`resume with
   different settings`, or `not at the commit measured` where that applies),
@@ -915,7 +1043,7 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   of every unjudged end stays in the pilot's `unjudged_ends`, which the
   resume comparison ignores.
   *Nothing found.* An attempt that stops early and finds nothing closes
-  `interrupted`, as before.
+  `interrupted`.
   *A difference found and not marked.* The end of an attempt that stops
   early finds the checkout known to differ, and the mark cannot be written
   (a full disk, a second interrupt in the writing). The original exception
@@ -1014,6 +1142,8 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   Without the commits `replay` fails with "unknown revision";
   without the pilot, the counts are underived; without the ledger, no replay
   passes.
+#### Method for a new table
+
 - **Pilot method for a new task.**
 
       python3 -B task30_grid.py pilot --output OUT/pilot \
@@ -1096,19 +1226,18 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
      `task30_dispose.py --record`, then once more without `--record`, which
      is the final verdict of TASK30 (below).
 - **A cell that is too short.** A cell rejected as "fixed calibration too
-  short" is a non-pass and blocks the grid. The only route is a counts
-  revision (above) that multiplies that cell's count by 4 for baseline and
-  candidate alike, committed with a new candidate commit, and a complete new
-  grid (a cell cannot be merged into another grid, and `--only` decides
-  nothing); the first grid stays published and replays against its own
-  file (the other link, a fresh pilot, is for a change of what is
-  measured). The revision is a reaction to a candidate observation, so it is
-  a new draw like any rerun, recorded in the ledger, and the handoff states
-  it. The code does not check that the previous grid rejected the cell; the
-  reviewer does. No code changes for it: the ordinary exclusion path
-  (`simpLib`) is identical to develop (see source identity), so a candidate
-  that runs twice as fast as the baseline is not expected, and a count that
-  proves too short is a property of the pilot.
+  short" is a non-pass and blocks the grid. The only route is a counts revision
+  (above) that multiplies that cell's count by 4 for baseline and candidate
+  alike, committed with a new candidate commit, and a complete new grid (a cell
+  cannot be merged into another grid, and `--only` decides nothing); the first
+  grid stays published and replays against its own file (the other link, a
+  fresh pilot, is for a change of what is measured). The revision is a reaction
+  to a candidate observation, so it is a new draw like any rerun, recorded in
+  the ledger, and the report of the result states it. The code does not check
+  that the previous grid rejected the cell; the reviewer does. No code changes
+  for it: the ordinary exclusion path (`simpLib`) is identical to develop (see
+  source identity), so a candidate that runs twice as fast as the baseline is
+  not expected, and a count that proves too short is a property of the pilot.
 - **Allocation gate prerequisite.** A TASK30 allocation run
   (`allocation_matrix.py run --task task30`) needs, in this order: the pilot
   at X; `predeclare`; the counts committed as the candidate Y; the HOL and
@@ -1127,27 +1256,419 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   candidate to that of the timing grid; `close` does. TASK30 has two
   harness pairs, each timing grid with the allocation grid of its own
   harness, each compared exactly (`harness_match`: head and tree outside the
-  performance area, a clean checkout): stages 1 and 2 at Y with `alloc/`
-  (`close`, and the disposition), and the follow-up at Z with `alloc-z/`, a
-  full `allocation_matrix.py run --task task30` at Z with its own toolchain
-  and controls receipt (the disposition only). The two are never relaxed
-  into one: a Y timing grid with `alloc-z/`, or the follow-up with `alloc/`,
-  is refused.
+  performance area, a clean checkout): stages 1 and 2 at Y with the
+  allocation grid made at Y (`close`, and the disposition), and the
+  follow-up at Z with a full `allocation_matrix.py run --task task30` at Z,
+  with its own toolchain and controls receipt (the disposition only). The
+  two are never relaxed into one: a Y timing grid with the Z allocation
+  grid, or the follow-up with the Y one, is refused.
 - **Cost.** The grid is 144 cells at 20 pairs and two slots per pair, each
   slot a fresh process with its batch (0.3 s, or 1.0 s for the ten direct
-  deletions at every size, including 10000): about two to three days for
-  the first stage, plus a second stage for the cells the
-  control leaves open.
-- **Other tables.** `task29a_grid.py` gains `pilot`, `verify-counts` and the
-  class report with the engine; its recorded runs and the TASK29B allocation
-  schema names (`task29b-*`, kept by the TASK30 gate) are unaffected. The
-  TASK29A table is closed: its grid was disposed of by the policy owner, no
-  new TASK29A run is made, and so its table keeps `engine=False` (a run of
-  it would not seal `timing_grid.py`; the recorded ones predate the engine).
-  Its counts take no ledger, pilot or revision: those belong to tables with
-  fixed seconds.
+  deletions at every size, including 10000): plus a second stage for the cells
+  the control leaves open.
+- **Other tables.** The TASK29A table is closed: its grid was disposed of
+  by the policy owner, no new TASK29A run is made, and so its table keeps
+  `engine=False` (a run of it would not seal `timing_grid.py`). Its counts
+  take no ledger, pilot or revision: those belong to tables with fixed
+  seconds. The TASK29B allocation schema names (`task29b-*`) are kept by the
+  TASK30 gate.
 
-#### Structural evidence (allocation work phase)
+### TASK30 follow-up
+
+A follow-up measures the cells that a grid leaves inconclusive after its second
+stage. For the TASK30 grid these are `exclude_partial-1` and
+`exclude_tactic_reuse-0`, which get one targeted, decision-grade follow-up
+under the `warmup` schedule, with a pilot of those two cells alone. It is the
+table `task30_followup.py` (name `task30f`, label `TASK30-FOLLOWUP`), a
+complete table of its own on the shared engine, with the following additions to
+it.
+
+- **Cells.** `Table(cells=...)` restricts a table to the named cells of its
+  cases; `keys()`, the pilot, `predeclare`, `run`, the extension plan and the
+  summary then work on that subset and nothing else, and its decision is
+  complete for it. The cells of the follow-up are the two above, with the
+  seconds of the TASK30 table for their cases (1.0 for `exclude_partial`, 0.3
+  for `exclude_tactic_reuse`), 5 samples, the baseline, source list, pins and
+  tree of the TASK30 table, its sealed files (and `task30_grid.py`, below),
+  the layout seed `task30-followup-1`, and the counts file
+  `task30_followup_iterations.json`. `--only` is a diagnostic subset of a
+  follow-up as of any table (no decision).
+- **Evidence family.** `Table(family=...)` names the directory under
+  `.agent-files/evidence/` that holds the ledger, the build stamp and the
+  prepare log, and the name in the keep refs (`refs/performance/<family>/
+  <sha>`); the follow-up is of the family `task30`, so its attempts go into
+  `.agent-files/evidence/task30/attempts.jsonl`, the one hash chain, and
+  `replay` lists the attempts of each table. Schemas keep the table's own
+  name (`task30f-iterations-v1`, ...).
+  - *Lines name their table.* A new line of the ledger carries `table` (the
+    table's name). A line without it, as every line written before the field
+    existed, is the table that names the family (TASK30). A line is hashed as
+    its text, so the lines already written verify byte for byte and nothing
+    is rewritten. The attempt report (`ATTEMPTS of TASK30: N ...`), the
+    counts of `close` ("attempts N in the ledger, M of the candidate") and the
+    search for the opening of a grid read only their own table's lines, so N
+    of TASK30 is not raised by a follow-up attempt, and the report of the
+    follow-up lists its own. The line ends "(R records of TABLE, F records
+    in the family ledger, chain intact)": R the records of that table, F
+    those of the whole chain.
+  - *Stamp and log per table.* The family shares the directory, so the table
+    that names the family keeps `build-stamp.json` and `prepare.log` (the
+    TASK30 records replay as before), and any other table of it keeps
+    `build-stamp-NAME.json` and `prepare-NAME.log` (`build-stamp-task30f.json`,
+    `prepare-task30f.log`). `prepare` of the follow-up neither deletes nor
+    overwrites TASK30's stamp or log, and TASK30's does not touch the
+    follow-up's. Both stamps describe the one checkout, so a `prepare` of
+    either changes its products and each measuring command compares with its
+    own stamp: a TASK30 resumption after the follow-up's `prepare` is still
+    refused by TASK30's own comparison with its stamp (the tree
+    outside the performance area differs from Y's, `run_paired.py` among
+    it); the follow-up's tree rule (below) is another thing.
+- **What it replaces.** `Table(replaces=Replaces(ENGINE))` makes the table a
+  follow-up of the grid that the engine `ENGINE` (the table that measured it
+  with the hooks its module gave it) measured: the cells it takes over are
+  those whose class (`classify_row`) is `inconclusive` in that grid's final
+  decision. `GRID` is the grid's *last* stage: its second stage where it has
+  one, and a first stage only when it has no remeasurement plan; a first stage
+  whose second stage is still to come is refused (`the replaced grid is not
+  final`), for the follow-up replaces the final stage. A Replaces helper
+  called before the grid is bound is a refusal naming that, not an
+  `AttributeError`. There are two bindings.
+  - *Full* (`predeclare`, and the follow-up's own `replay`, always; both need
+    `--replaces-pilot DIR`; `verify-counts`, `run` and `extend` too, when the
+    code changed since `predeclare`, see below): the grid is replayed in
+    full, with the engine of the table that measured it (stage 2 replays
+    stage 1), and the pilot of its counts, and these are refused: a grid that
+    does not replay; follow-up cells other than the open cells (`follow-up
+    cells differ from the open cells`); a baseline or second-stage limits other
+    than the grid's, or pairs that are not twice its first stage's.
+    `predeclare` records in the counts file a `replaces` block: the path of the
+    grid relative to the follow-up's pilot, the SHA-256 seals of every file of
+    the replaced grid that the binding reads (the inventory and decisions of
+    both stages), and the open cells; and the pairs of each cell
+    (`pairs_by_cell`, below).
+  - *By seals* (`verify-counts`, `run`, `extend`, while the code of the
+    replay is that of `predeclare`): no full replay. Every file
+    of the replaced grid that the binding reads is checked against the seals
+    of the counts (`replaced grid changed since predeclare: FILE`), the open
+    cells are taken from the sealed decision rows by `classify_row` and must
+    be the table's and those the counts record, and the pairs are derived
+    again by replaying (archive seals and analyses) only the follow-up cells'
+    first-stage archives, their develop/develop control; a mismatch with the
+    counts is a refusal. This costs two cells instead of the 144 of each of
+    two stages. `predeclare` also records, in `replaces.code`,
+    the SHA-256 seals of the code it replayed with beyond what the table
+    seals itself (`timing_grid.REPLAY_CODE`: `timing_grid.py`,
+    `acceptance.py`, `summarize.py`, `audit_evidence.py`,
+    `runtime_metrics.py`, `allocator-counter/private_runtime.py` (its
+    checkout identity), and the pin file and counts file of the replaced
+    table, `task30_pins.py` and `task30_iterations.json`). That block is a
+    record of what `predeclare` replayed with: it is never derived again
+    from the current code, but it is not trusted either. `verify-counts`,
+    `run`, `extend` and `replay` (and `dispose`, through them) require it to
+    be well formed and to equal the seals of the same files as they are in
+    the git commit that holds the counts file (the commit that introduced
+    it, in the history of the candidate; of `HEAD` for `verify-counts`),
+    read with git, and that commit must change the counts file alone; a
+    counts file not committed yet (the first `verify-counts` after
+    `predeclare`), or one outside the repository (`verify-counts` only), is
+    compared with the files as they are in the working tree. Otherwise
+    they refuse: `the record of the code differs from the commit of the
+    counts: FILES; predeclare again at the pilot's code, or commit the code
+    change after the counts` (for uncommitted counts: `differs from the
+    files as they are in the working tree: FILES; predeclare again at the
+    pilot's code`). So the record is bound to the
+    commit discipline: the counts are committed with the code `predeclare` ran
+    with, and alone. The same commands also require every file of the
+    record to be, in the follow-up pilot's recorded checkout head (the
+    pilot inventory's `checkout.head`), what the record says, for counts
+    not yet committed too (the files at that head are compared); the
+    pilot's inventory is first required to be the one the counts seal
+    (`--pilot` of another pilot is refused as such, and a pilot head
+    the repository lacks as `the pilot head H is not in this
+    repository: the pilot must be made at a commit in the candidate's
+    history`). Otherwise they refuse `the code changed between the
+    follow-up pilot (HEAD) and the counts commit: FILES; pilot again, or
+    predeclare at the pilot head's code and commit the code change after
+    the counts` (for uncommitted counts: `and the counts`; a file absent at
+    the pilot head is marked `(absent)` in FILES). The recorded head is
+    itself checked against the pilot, by `check_pilot_cell` (every
+    `fixed_seconds` pilot, TASK30's own included; TASK29A's is not): the
+    manifest of every control archived in the pilot must carry a `head`
+    equal to the inventory's `checkout.head`, and an inventory with no
+    checkout head is refused. `predeclare` runs it, and so do
+    `verify-counts`, `run`, `extend` and `replay` where they derive the
+    counts again (through `check_provenance`), so a head edited in the
+    inventory alone, or a manifest without one, is refused. What this does not
+    prevent is a forgery that rewrites the pilot (inventory, archived control
+    manifests and archive seals) and derives the counts again: the
+    guarantee is consistency of the pilot's evidence with the record,
+    not authentication of it. The seal binding is valid only while the
+    current seals of those files equal it. When they differ, `verify-counts`,
+    `run` and `extend` do not refuse: they print one line (`code changed
+    since predeclare (FILES): the replaced grid is replayed in full`) and
+    bind the grid by the full replay, as `predeclare` and `replay` do,
+    which reads the replaced grid's pilot (`--replaces-pilot`; without it
+    they refuse, naming the changed files). So a later change to shared
+    code costs the full replay, and never makes a finished
+    follow-up unreplayable (a later change to `summarize.py`,
+    `audit_evidence.py`, `runtime_metrics.py` or
+    `allocator-counter/private_runtime.py` needs no history entry, as no
+    record carries their seals; one to `timing_grid.py` needs the old
+    seal appended to `ENGINES`, one to `acceptance.py` to `ACCEPTANCE`, and one
+    to `task30_pins.py` to `PIN_HISTORY`, because every record of the follow-up
+    carries those seals and `replay` refuses "changed engine", "changed
+    acceptance" or the pins without them; `task30_iterations.json` is never
+    changed). While the code is unchanged the sealed commands run
+    the cheap header, sources, commit and checkout checks of the full
+    replay on both inventories of the replaced grid, through the hooks of
+    the replaced engine. What they leave to the full replay (`replay`, and
+    the disposition step) is: the provenance of the TASK30 pilot
+    (`task30_iterations.json` re-derived from `E/pilot`; its replay also
+    requires each control manifest's `head` to equal the pilot
+    inventory's `checkout.head`), the re-derivation
+    of the extension plan, and the deterministic re-analysis of the
+    archives of the other cells of both stages; a refusal there after the
+    attempt is recorded would spend it. (`run` and `extend` do make the
+    ledger checks of the replaced attempts, `refuse_found` included, below.)
+    The code list is a hand list, kept complete by a test that computes the
+    static import closure of the replay path, over this directory and
+    `allocator-counter/`; the few import edges that are made by code the
+    replay does not run are named in the test, each by importer, module and
+    function, so that any other new import of a module the list lacks fails
+    it.
+  Both refuse before an attempt opens, besides: a layout seed that the grid
+  drew or its second stage drew (a table refuses the same at its
+  construction, for the seed of the table it replaces); candidate sources
+  that differ from the grid's source record (`candidate sources differ from
+  the replaced grid's`); a candidate that differs from the replaced one
+  below the table's tree anywhere but the performance area and the sealed
+  files; counts bound to other sealed files; counts of another schedule than
+  the table's; counts whose pairs differ from the derivation below; and
+  (`run`, `extend`) a ledger that lacks the opening of any attempt of the
+  replaced grid, or no ledger at all (below). The
+  replaced grid's table, schedule and counts may differ from the follow-up's:
+  its own are replayed as they were made (the TASK30 grid is `ramp`; the
+  follow-up is `warmup`). `predeclare` and `verify-counts` take `--ledger
+  FILE`, like `replay` and `close` (read-only, the ledger of the checkout the
+  replaced grid was made in; only the full binding reads it).
+  - *One ledger, one checkout.* A follow-up extends the one chain of the
+    family and never starts a chain of its own. Before an attempt opens
+    (`run`, `extend`, and so `--resume`), the ledger it will be appended to
+    (`<--repo>/.agent-files/evidence/task30/attempts.jsonl`) must exist and
+    hold the openings of every attempt of the replaced grid (both stages
+    through the replaced engine's `check_attempt`, as the full replay does,
+    and `refuse_found` on those attempts), recorded from this checkout (a
+    copy of the ledger in another checkout is refused); the follow-up table
+    must name the family and the ledger of the table it replaces, so that
+    this is the file `run` and `extend` append to; otherwise the command
+    refuses, naming the ledger path and the missing attempt, before anything
+    is measured. So `pilot`, `run` and `extend` of the follow-up are made in
+    the checkout that holds the TASK30 ledger (the one the TASK30 grid was
+    measured in), and so is `replay`, which reads that one ledger for both
+    grids (`--ledger` names it read-only for `predeclare`, `verify-counts`,
+    `replay` and `close` elsewhere).
+  - *The evidence layout.* The counts record the replaced grid by its path
+    relative to the follow-up's pilot (`../stage2`), compared exactly, so
+    the follow-up pilot and the replaced grid must stay siblings in the
+    evidence layout (`E/followup-pilot`, `E/stage2`, as `stage2/../grid`
+    already must be); a copy where they are not is refused ("the counts
+    record the replaced grid at ... must stay siblings"), never accepted.
+  - *The inventory's record.* An inventory of the follow-up records the
+    grid under `replaces` with the replaced grid's fields named as its own
+    (`replaced_inventory`, `replaced_decisions`, `replaced_seed`,
+    `replaced_counts`: the seals of its inventory and decisions, the layout
+    seed and counts seal of its first stage) and the follow-up's beside them
+    (`followup_seed`, `followup_counts`), with the grid's path relative to the
+    output. `replay` finds the grid there again.
+  - *The tree rule.* The candidate may differ from the replaced candidate
+    below `src` in any file under `src/simp/tests/performance/` and in any
+    sealed file or driver wherever it lies (`run_paired.py` is one). That is
+    wider than "only the files the table seals and its driver", on purpose:
+    the harness changes between the two commits (tests, documents,
+    `MatrixAllocation`, the allocation modules, the engine), and the code that
+    measures is covered by the engine, driver, acceptance and sealed seals
+    and by the sources record, not by this rule. Any other change under `src`
+    refuses the follow-up: a document or test under `src/simp/tests/
+    compatibility/`, another task's commit merged between the replaced
+    candidate Y and Z. The names of the sealed files are the code's
+    repository's (`Table.root`), the same whatever checkout `--repo` names,
+    and a sealed file outside that repository is refused.
+- **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
+  `ACCEPTANCE` and `SEALED_HISTORY`, each with the seals of
+  `40e176538f` (see "Standard input and the version query"), passed to
+  its table as TASK30's are to its own: `check_code` accepts a record whose
+  driver, engine or acceptance seal is the current one or one listed, and a
+  sealed file's seal is the current one or one of its history. They are read
+  by `replay` only; `run` compares the counts' `sealed` with the current
+  seals exactly. So:
+  - A change to any sealed file, `task30_grid.py` included, between the
+    follow-up's pilot and its `run` is not absorbed by a `SEALED_HISTORY`
+    entry: `run` refuses ("the counts are bound to other sealed files") and
+    only a fresh pilot (a new counts file) helps. Land the disposition code
+    before the pilot, or outside the sealed files: it lives in a module
+    of its own, `task30_dispose.py`, in neither table's seals, so that
+    `task30_grid.py` stays byte-identical from Z0 on.
+  - After follow-up records exist (from its pilot on), a change that must
+    not invalidate them appends, in the same commit, the seal the records
+    were made by: that of the old `timing_grid.py` to `ENGINES`, of
+    `acceptance.py` to `ACCEPTANCE`, of `task30_followup.py` to `DRIVERS`,
+    and (a reviewed change that alters nothing measured, only after `run`)
+    of `task30_grid.py` to `SEALED_HISTORY["task30_grid.py"]`. The test that
+    pins them (`test_task30_grid.py`) is edited with them.
+  - `task30_grid.py` is a *sealed file* of the follow-up, not a driver: the
+    follow-up imports its constants (`SECONDS`, `PAIRS`, `SAMPLES`, `SEALED`)
+    and replays the TASK30 grid through its table, which are inputs of the
+    counts, as `task30_cases.py` is. TASK30 treats the same file as its own
+    driver, with `DRIVERS`; a change to it needs no TASK30 entry unless a
+    new TASK30 record is made.
+  - `task30_dispose.py` has `HISTORY` (per file of its `CODE`, the seals
+    the disposition was recorded with) and the cascade is longer than the
+    others. Worked example: one later edit of `timing_grid.py`, after the
+    follow-up's records and the disposition exist, appends in its commit
+    (1) the old `timing_grid.py` seal to `task30_followup.ENGINES`; that
+    edits `task30_followup.py`, so (2) its old seal goes to
+    `task30_followup.DRIVERS`; and (3) both old seals go to
+    `task30_dispose.HISTORY` (`"timing_grid.py"` and
+    `"task30_followup.py"`); that edits `task30_dispose.py`, which (4) needs
+    its own old seal in `HISTORY["task30_dispose.py"]` (the entry is the
+    recorded seal, so appending it does not chase the file it edits). An
+    edit of `acceptance.py` is the same with `ACCEPTANCE`. The recorded
+    seals are in `disposition.json` (`code`), and the check of
+    `task30_dispose.py` names every changed file in one refusal with the
+    entry to paste into each constant (the literal element of that
+    constant, each in backticks: `"timing_grid.py": (SEAL,),` for `HISTORY`,
+    `"task30_grid.py": (SEAL,),` for `SEALED_HISTORY` (the same form: a dict
+    keyed by file), `SEAL,` for `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and
+    the tests that pin those
+    constants (`test_task30_dispose.py` for `HISTORY`,
+    `test_task30_grid.py` for the follow-up's), which the same commit edits;
+    nothing is looked up by hand.
+  - A file added to `task30_dispose.CODE` (`void_attempts.py`, the attempt
+    rule moved out of `task30_dispose.py`) is absent from the records made
+    before it existed. `task30_dispose.ADDED` names, per such file, the file
+    that held its code, that file's seals in those records, and the held
+    seal; a record may lack the file only when its seal of the host is one
+    of the listed, and is then treated as recording the held seal for the
+    file. The held seal names the version of the added file reviewed as
+    holding exactly the code the older records ran: its moved functions are
+    AST-equal to the host's, apart from message strings: docstrings,
+    `"..." % (...)` messages that are not the value of an assignment,
+    returned string constants, the message argument of `a.require`, and two
+    reviewed strings that are not messages (the `prefix=` of
+    `tempfile.TemporaryDirectory` and the `what` of `want, what = ...`). A
+    test pins the hash of the functions with exactly those blanked; every
+    other string (event names, statuses, keys, option and file names) is in
+    the hash, so a changed literal of the logic changes it, and so does a
+    changed operand of a `%` assigned to a name. A second pinned hash
+    covers the rest of the added file (imports, constants, other functions
+    and module statements, without the module docstring), normalised by the
+    same rules. An edit of the added file is non-behavioural when both
+    hashes are unchanged; it then replaces the held seal, after that
+    review. A behavioural edit
+    is not allowed while a record depends on the held seal: a seal in
+    `HISTORY[file]` accepts every later file, so it would bind the record to
+    logic it never ran. Where a record lacks the file, `check_code`'s
+    refusal of an edit states this rule and names no `HISTORY` entry. A
+    record made by the current code carries the file.
+  - TASK30's *set* of sealed names is frozen by its Y records: adding a file
+    to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
+    follow-up's `SEALED`) makes every Y replay refuse "changed sealed
+    files".
+  The disposition code, which changes the engine, is landed before the
+  follow-up's pilot, so that Z is the pilot's commit plus the counts file.
+- **Pairs.** A follow-up has no pairs of its own to declare: the pairs of a
+  cell are what the second-stage rule gives for the develop/develop control of
+  the replaced grid's *first* stage,
+  `min(120, max(2*P, 10*ceil(P*(w/0.015)^2/10)))`, with `P` the pairs of that
+  stage (20) and `w` the larger half log-width of the CPU and wall control
+  intervals (`Grid.followup_pairs`, from the functions
+  `control_half_width` and `second_stage_pairs` that the second stage uses
+  too). The floor `2*P`, 40, is the table's `pairs`. `predeclare` records the
+  pairs in the counts file as `pairs_by_cell`; `verify-counts`, `run`,
+  `extend` and `replay` derive them and the `replaces` block again (from the
+  replaced grid, by the seals or in full as above) and refuse a file that
+  differs. A run measures each cell with its own pairs, a row records them
+  when they are not the table's, and a replay refuses a row whose pairs
+  differ from the counts'. The second stage of the follow-up (`extend`, seed
+  `SEED-ext`) takes each cell's own pairs as the base of its rule.
+- **Decisions.** The follow-up's `decisions.json` is that of its own cells
+  (class report `TASK30-FOLLOWUP grid: ...`). A follow-up outcome other than
+  pass blocks: a fail is final, and an inconclusive or control-limited cell
+  after the follow-up's own second stage blocks too. No further timing retry
+  and no automatic attribution follows without a new policy decision. An
+  attempt that admitted no measurement (every cell a protocol failure, no
+  `protocol` run in its inventory) is void: it is no outcome, took no sample
+  and selects nothing, and it is rerun with the same settings as a new attempt
+  (a rerun is a new draw; `--resume` cannot redo recorded protocol cells). Both
+  stay in the ledger, and `task30_dispose.py` checks and records them
+  (`followup_attempts`). The judged attempts are the `attempt` ids in the
+  inventory of `--followup` and, where that is a second stage, of its first
+  stage, each from the output of that stage (an attempt id is of one output:
+  every output its open, resume and close lines name is collected, and more
+  than one is refused). Every other attempt of the follow-up's table must be
+  shown void from its own output: the directory exists, its `inventory.json` is
+  of that attempt id, it has a row for every cell it measures (the follow-up's,
+  or for a second stage its own plan's), every row has `protocol` present and
+  false, every row's archive exists and is the sealed one (`seal`),
+  acceptance's own `success` in it is false, each command acceptance recorded
+  did not time out and left a runner manifest in the folder of its `--output`
+  (one runner manifest per runner command), and no runner `manifest.json` in an
+  archive records an admitted run (`runs` empty and `success` false); and the
+  ledger closes the attempt `inconclusive` with exactly one close line and no
+  resume line (a resumed attempt may have drawn samples in a cell it cleared),
+  which is the status of a grid whose every cell is a protocol failure (no cell
+  passes or fails). A second stage closes with the combined status of both
+  stages, so a void second stage is accepted only when its first stage has no
+  fail; a fail in the first stage is final and the follow-up blocks anyway.
+  Anything else is refused (exit 3), naming the attempt, its status, its output
+  and the failed condition: an interrupted or resumed attempt, one closed more
+  than once, one with missing cells or with no close line, and a runner killed
+  while measuring (no manifest) are refused too, as they may have measured.
+  This rule is `void_attempts.py`, shared with the TASK31 disposition; both
+  seal it in their `CODE`. The follow-up writes no `final.json`: the TASK30
+  decision with these two cells in place of the replaced ones is the
+  disposition step's (`task30_dispose.py`), which owns `final.json` and builds
+  it from the replayed reports of both grids.
+- **Sequence.** At the commit Z0 (code and documents; no counts): `prepare`,
+  then `task30_followup.py pilot --output OUT/followup-pilot`, `predeclare
+  --grid OUT/followup-pilot --output FILE --replaces OUT/stage2
+  --replaces-pilot OUT/pilot`, where `FILE` is the table's counts path,
+  `src/simp/tests/performance/task30_followup_iterations.json`
+  (`task30_followup.py` reads no other), `verify-counts` with `--replaces`; the
+  counts file is committed as Z (the candidate), so that Y..Z holds only the
+  performance area and sealed files: any other change under `src` refuses the
+  follow-up. `verify-counts` again at Z (the counts file as committed, by the
+  seals while the code is that of `predeclare`; after a code change it replays
+  in full and needs `--replaces-pilot OUT/pilot`). The counts file is committed
+  alone: no code change in that commit, and none between `predeclare` and it (a
+  replay-code change after `predeclare` is committed after Z, or `predeclare`
+  is made again at the pilot head's code, with no replay-code change between
+  the pilot and `predeclare`); the pilot is made at a commit of Z's history (a
+  pilot head the repository lacks is refused). The engine refuses a commit of
+  the counts that touches another file, and a record of the code that differs
+  from the pilot's head (pilot again, or predeclare at the pilot head's code),
+  at the first `verify-counts` already. Every command that appends is made in
+  the checkout that holds the TASK30 ledger (see "One ledger, one checkout").
+  `run --candidate Z --pilot OUT/followup-pilot --replaces OUT/stage2 --output
+  OUT/followup --authorize-measurements`, `extend --grid OUT/followup --pilot
+  OUT/followup-pilot` only if its control left a cell open, `replay` of each
+  stage (with `--replaces-pilot OUT/pilot`, which replays the replaced grid in
+  full). The checkout, its stamp and its ledger are those of the pilot, as for
+  any table, and the measurements run serially under the lock. The follow-up
+  pairs with its own allocation grid at Z (`OUT/ALLOC_FOLLOWUP`, a full
+  `allocation_matrix.py run --task task30` at Z); neither `close` nor the
+  follow-up checks that pairing, the disposition step does (head and tree
+  outside the performance area, exactly). The last step is `task30_dispose.py
+  --record`, reviewed, and then the same command without `--record` (below).
+  `--followup` is the follow-up's final judged stage directory (its second
+  stage, where it has one), as `--replaces` is.
+
+## Allocation evidence and disposition
+
+The allocation gate counts exact words with the TASK29B counter; the
+disposition combines the gates into a final decision.
+
+### Structural evidence (allocation work phase)
 
 The allocation fixture has an untimed `work` phase after the `apply` bracket
 (`MatrixAllocation.sml`; the code is `MatrixSupport.workPhase`). Nothing of it
@@ -1247,28 +1768,23 @@ with the function that raised it and its message. The fixture emits
 `work.first`, `work.second`, `work.use` and `result.digest` after
 `alloc.foreign`; the parser hashes the fingerprint with SHA-256.
 
-**What changes outside the work phase.** The timed closures and the `verify`
-closures are textually unchanged, so the operation and apply words of a case
-are those of the fixture before the work phase. The setup bracket is not:
-building a workload now also sets the hooks of `MatrixSupport` (the
-fingerprint, the use, the maker count, and `ruleList := rs`, which shares the
-list the workload builds anyway), so the setup words gain the closures of a
-few assignments, a small constant that does not grow with the number of rules
-and is equal on both sides of a grid. The fixture dprocs share one closure
-(`dprocApply`), so the counter adds no words per dproc: a per-reducer closure
-over it added about 3 words per reducer to the setup of `exclude_dproc` and
-`exclude_mixed` (`PolyML.objSize` of the built workload: 20, 290 and 2990
-words more at 10, 100 and 1000 reducers for `exclude_dproc`), which the shared
-closure removes; the n reducers cost what they did before the counter. The
-setup words of a new grid (`alloc-z/`) therefore do not equal those of an
-older one (`alloc/`) at any size, and a comparison across grids (`alloc/` at
-Y against `alloc-z/` at Z) uses only the operation rows (`operation_first`,
-`operation_steady`, `apply`), never the setup row.
+**Outside the work phase.** The timed closures and the `verify` closures do not
+contain the work phase, so the operation and apply words of a case do not
+depend on it. The setup bracket does: building a workload also sets the hooks
+of `MatrixSupport` (the fingerprint, the use, the maker count, and `ruleList :=
+rs`, which shares the list the workload builds anyway), so the setup words
+include the closures of a few assignments, a small constant that does not grow
+with the number of rules and is equal on both sides of a grid. The fixture
+dprocs share one closure (`dprocApply`), so the counter adds no words per
+dproc. The setup words of grids made with different setup fixtures therefore do
+not equal at any size, and a comparison across such grids uses only the
+operation rows (`operation_first`, `operation_steady`, `apply`), never the
+setup row.
 
 **Gating by header.** A grid whose header says `structure: "v1"` (every new
 run) requires the four records in every process, and a header without the key
-forbids them, so every earlier archive (TASK29B, the TASK30 `alloc/` made at
-63ac28189) parses and replays to the same decisions and results byte for byte.
+forbids them, so every archive made without them parses and replays to the
+same decisions and results byte for byte.
 The key enters `grid_digest` and the cell binding only when present.
 
 **Rows.** `allocation_analysis.cell` adds `work` to a cell: one row, named as
@@ -1287,7 +1803,7 @@ section (per cell status; rows that are not reproducible; the cells without
 work rows and the unresolved cells) and `work_status` (`equal`, `differs`,
 `inconclusive`), only when the archives have work records; `RESULTS.md` gets a
 Structural evidence paragraph and table. The words-only `status` and its
-`nondeterminism` list are the ones of before.
+`nondeterminism` list do not depend on the work rows.
 
 **Keys that can grow.** A `trace.L.TEXT:message` key carries the message,
 and a message may name a rule (`USER_CONV` writes the conversion name), so a
@@ -1388,8 +1904,7 @@ marker theorem and save only that construction, not the deletion.
   candidates a successful match hides;
 - live heap and retention: equal allocated words do not mean an equal live
   graph; a result that keeps the old net reachable costs GC time at equal
-  words. The candidate's startup heap is about 1.01M words larger in every
-  cell, which no work row shows;
+  words;
 - work outside `Trace.trace` and the kernel's primitive-rule counter
   (`Term.match`, `aconv`, `Ho_Net.match`, `Binaryset` and `Binarymap`
   operations, Feedback traces), and any dproc that does not call the
@@ -1402,8 +1917,8 @@ marker theorem and save only that construction, not the deletion.
 
 The case for the 13 cells therefore rests on the source identity of the timed
 code (the sources of the listed path are identical between develop and the
-candidate except the pinned `Cond_rewr` and `SimpTracking`, a move of
-`note_rewrite` and `with_tracking`) and on the exact operation words; the
+candidate except the pinned `Cond_rewr.sig`, one added spec,
+`note_rewrite`) and on the exact operation words; the
 work rows show the same deterministic behaviour and result, not equal CPU.
 Equal rows with develop say that the candidate fired the same counted events
 for the operation and for the use of its result and returned the same result,
@@ -1427,417 +1942,15 @@ derives it again and compares it with the stored summary at PATH (exit 1 and
 a `DIFFERS summary` line on a difference); `--write-summary PATH` writes it.
 The retained smoke evidence is such a manifest and summary.
 
-#### TASK30 follow-up (policy decision 2026-11-05)
+### Structural evidence and the TASK30 disposition
 
-The TASK30 grid ended with two cells inconclusive after its second stage,
-`exclude_partial-1` and `exclude_tactic_reuse-0`. The policy owner decided
-that these two get one targeted, decision-grade follow-up under the `warmup`
-schedule, with a pilot of those two cells alone. It is the table
-`task30_followup.py` (name `task30f`, label `TASK30-FOLLOWUP`), a complete
-table of its own on the shared engine, with the following additions to it.
-
-- **Cells.** `Table(cells=...)` restricts a table to the named cells of its
-  cases; `keys()`, the pilot, `predeclare`, `run`, the extension plan and the
-  summary then work on that subset and nothing else, and its decision is
-  complete for it. The cells of the follow-up are the two above, with the
-  seconds of the TASK30 table for their cases (1.0 for `exclude_partial`, 0.3
-  for `exclude_tactic_reuse`), 5 samples, the baseline, source list, pins and
-  tree of the TASK30 table, its sealed files (and `task30_grid.py`, below),
-  the layout seed `task30-followup-1`, and the counts file
-  `task30_followup_iterations.json`. `--only` is a diagnostic subset of a
-  follow-up as of any table (no decision).
-- **Evidence family.** `Table(family=...)` names the directory under
-  `.agent-files/evidence/` that holds the ledger, the build stamp and the
-  prepare log, and the name in the keep refs (`refs/performance/<family>/
-  <sha>`); the follow-up is of the family `task30`, so its attempts go into
-  `.agent-files/evidence/task30/attempts.jsonl`, the one hash chain, and
-  `replay` lists the attempts of each table. Schemas keep the table's own
-  name (`task30f-iterations-v1`, ...).
-  - *Lines name their table.* A new line of the ledger carries `table` (the
-    table's name). A line without it, as every line written before the field
-    existed, is the table that names the family (TASK30). A line is hashed as
-    its text, so the lines already written verify byte for byte and nothing
-    is rewritten. The attempt report (`ATTEMPTS of TASK30: N ...`), the
-    counts of `close` ("attempts N in the ledger, M of the candidate") and the
-    search for the opening of a grid read only their own table's lines, so N
-    of TASK30 is not raised by a follow-up attempt, and the report of the
-    follow-up lists its own. The line ends "(R records of TABLE, F records
-    in the family ledger, chain intact)": R the records of that table, F
-    those of the whole chain.
-  - *Stamp and log per table.* The family shares the directory, so the table
-    that names the family keeps `build-stamp.json` and `prepare.log` (the
-    TASK30 records replay as before), and any other table of it keeps
-    `build-stamp-NAME.json` and `prepare-NAME.log` (`build-stamp-task30f.json`,
-    `prepare-task30f.log`). `prepare` of the follow-up neither deletes nor
-    overwrites TASK30's stamp or log, and TASK30's does not touch the
-    follow-up's. Both stamps describe the one checkout, so a `prepare` of
-    either changes its products and each measuring command compares with its
-    own stamp: a TASK30 resumption after the follow-up's `prepare` is still
-    refused, as before, by TASK30's own comparison with its stamp (the tree
-    outside the performance area differs from Y's, `run_paired.py` among
-    it); the follow-up's tree rule (below) is another thing.
-- **What it replaces.** `Table(replaces=Replaces(ENGINE))` makes the table a
-  follow-up of the grid that the engine `ENGINE` (the table that measured it
-  with the hooks its module gave it) measured: the cells it takes over are
-  those whose class (`classify_row`) is `inconclusive` in that grid's final
-  decision. `GRID` is the grid's *last* stage: its second stage where it has
-  one, and a first stage only when it has no remeasurement plan; a first stage
-  whose second stage is still to come is refused (`the replaced grid is not
-  final`), for the follow-up replaces the final stage. A Replaces helper
-  called before the grid is bound is a refusal naming that, not an
-  `AttributeError`. There are two bindings.
-  - *Full* (`predeclare`, and the follow-up's own `replay`, always; both need
-    `--replaces-pilot DIR`; `verify-counts`, `run` and `extend` too, when the
-    code changed since `predeclare`, see below): the grid is replayed in
-    full, with the engine of the table that measured it (stage 2 replays
-    stage 1), and the pilot of its counts, and these are refused: a grid that
-    does not replay; follow-up cells other than the open cells (`follow-up
-    cells differ from the open cells`); a baseline or second-stage limits other
-    than the grid's, or pairs that are not twice its first stage's.
-    `predeclare` records in the counts file a `replaces` block: the path of the
-    grid relative to the follow-up's pilot, the SHA-256 seals of every file of
-    the replaced grid that the binding reads (the inventory and decisions of
-    both stages), and the open cells; and the pairs of each cell
-    (`pairs_by_cell`, below).
-  - *By seals* (`verify-counts`, `run`, `extend`, while the code of the
-    replay is that of `predeclare`): no full replay. Every file
-    of the replaced grid that the binding reads is checked against the seals
-    of the counts (`replaced grid changed since predeclare: FILE`), the open
-    cells are taken from the sealed decision rows by `classify_row` and must
-    be the table's and those the counts record, and the pairs are derived
-    again by replaying (archive seals and analyses) only the follow-up cells'
-    first-stage archives, their develop/develop control; a mismatch with the
-    counts is a refusal. This costs two cells instead of the 144 of each of
-    two stages, for the full replay of the replaced grid costs the better
-    part of an hour each time. `predeclare` also records, in `replaces.code`,
-    the SHA-256 seals of the code it replayed with beyond what the table
-    seals itself (`timing_grid.REPLAY_CODE`: `timing_grid.py`,
-    `acceptance.py`, `summarize.py`, `audit_evidence.py`,
-    `runtime_metrics.py`, `allocator-counter/private_runtime.py` (its
-    checkout identity), and the pin file and counts file of the replaced
-    table, `task30_pins.py` and `task30_iterations.json`). That block is a
-    record of what `predeclare` replayed with: it is never derived again
-    from the current code, but it is not trusted either. `verify-counts`,
-    `run`, `extend` and `replay` (and `dispose`, through them) require it to
-    be well formed and to equal the seals of the same files as they are in
-    the git commit that holds the counts file (the commit that introduced
-    it, in the history of the candidate; of `HEAD` for `verify-counts`),
-    read with git, and that commit must change the counts file alone; a
-    counts file not committed yet (the first `verify-counts` after
-    `predeclare`), or one outside the repository (`verify-counts` only), is
-    compared with the files as they are in the working tree. Otherwise
-    they refuse: `the record of the code differs from the commit of the
-    counts: FILES; predeclare again at the pilot's code, or commit the code
-    change after the counts` (for uncommitted counts: `differs from the
-    files as they are in the working tree: FILES; predeclare again at the
-    pilot's code`). So the record is bound to the
-    commit discipline: the counts are committed with the code `predeclare` ran
-    with, and alone. The same commands also require every file of the
-    record to be, in the follow-up pilot's recorded checkout head (the
-    pilot inventory's `checkout.head`), what the record says, for counts
-    not yet committed too (the files at that head are compared); the
-    pilot's inventory is first required to be the one the counts seal
-    (`--pilot` of another pilot is refused as such, and a pilot head
-    the repository lacks as `the pilot head H is not in this
-    repository: the pilot must be made at a commit in the candidate's
-    history`). Otherwise they refuse `the code changed between the
-    follow-up pilot (HEAD) and the counts commit: FILES; pilot again, or
-    predeclare at the pilot head's code and commit the code change after
-    the counts` (for uncommitted counts: `and the counts`; a file absent at
-    the pilot head is marked `(absent)` in FILES). The recorded head is
-    itself checked against the pilot, by `check_pilot_cell` (every
-    `fixed_seconds` pilot, TASK30's own included; TASK29A's is not): the
-    manifest of every control archived in the pilot must carry a `head`
-    equal to the inventory's `checkout.head`, and an inventory with no
-    checkout head is refused. `predeclare` runs it, and so do
-    `verify-counts`, `run`, `extend` and `replay` where they derive the
-    counts again (through `check_provenance`), so a head edited in the
-    inventory alone, or a manifest without one, is refused. What this does not
-    prevent is a forgery that rewrites the pilot (inventory, archived control
-    manifests and archive seals) and derives the counts again: the
-    guarantee is consistency of the pilot's evidence with the record,
-    not authentication of it. The seal binding is valid only while the
-    current seals of those files equal it. When they differ, `verify-counts`,
-    `run` and `extend` do not refuse: they print one line (`code changed
-    since predeclare (FILES): the replaced grid is replayed in full`) and
-    bind the grid by the full replay, as `predeclare` and `replay` do,
-    which reads the replaced grid's pilot (`--replaces-pilot`; without it
-    they refuse, naming the changed files). So a later change to shared
-    code costs the hour of the full replay, and never makes a finished
-    follow-up unreplayable (a later change to `summarize.py`,
-    `audit_evidence.py`, `runtime_metrics.py` or
-    `allocator-counter/private_runtime.py` needs no history entry, as no
-    record carries their seals; one to `timing_grid.py` needs the old
-    seal appended to `ENGINES`, one to `acceptance.py` to `ACCEPTANCE`, and one
-    to `task30_pins.py` to `PIN_HISTORY`, because every record of the follow-up
-    carries those seals and `replay` refuses "changed engine", "changed
-    acceptance" or the pins without them; `task30_iterations.json` is never
-    changed). While the code is unchanged the sealed commands run
-    the cheap header, sources, commit and checkout checks of the full
-    replay on both inventories of the replaced grid, through the hooks of
-    the replaced engine. What they leave to the full replay (`replay`, and
-    the disposition step) is: the provenance of the TASK30 pilot
-    (`task30_iterations.json` re-derived from `E/pilot`; its replay also
-    requires each control manifest's `head` to equal the pilot
-    inventory's `checkout.head`), the re-derivation
-    of the extension plan, and the deterministic re-analysis of the
-    archives of the other cells of both stages; a refusal there after the
-    attempt is recorded would spend it. (`run` and `extend` do make the
-    ledger checks of the replaced attempts, `refuse_found` included, below.)
-    The code list is a hand list, kept complete by a test that computes the
-    static import closure of the replay path, over this directory and
-    `allocator-counter/`; the few import edges that are made by code the
-    replay does not run are named in the test, each by importer, module and
-    function, so that any other new import of a module the list lacks fails
-    it.
-  Both refuse before an attempt opens, besides: a layout seed that the grid
-  drew or its second stage drew (a table refuses the same at its
-  construction, for the seed of the table it replaces); candidate sources
-  that differ from the grid's source record (`candidate sources differ from
-  the replaced grid's`); a candidate that differs from the replaced one
-  below the table's tree anywhere but the performance area and the sealed
-  files; counts bound to other sealed files; counts of another schedule than
-  the table's; counts whose pairs differ from the derivation below; and
-  (`run`, `extend`) a ledger that lacks the opening of any attempt of the
-  replaced grid, or no ledger at all (below). The
-  replaced grid's table, schedule and counts may differ from the follow-up's:
-  its own are replayed as they were made (the TASK30 grid is `ramp`; the
-  follow-up is `warmup`). `predeclare` and `verify-counts` take `--ledger
-  FILE`, like `replay` and `close` (read-only, the ledger of the checkout the
-  replaced grid was made in; only the full binding reads it).
-  - *One ledger, one checkout.* A follow-up extends the one chain of the
-    family and never starts a chain of its own. Before an attempt opens
-    (`run`, `extend`, and so `--resume`), the ledger it will be appended to
-    (`<--repo>/.agent-files/evidence/task30/attempts.jsonl`) must exist and
-    hold the openings of every attempt of the replaced grid (both stages
-    through the replaced engine's `check_attempt`, as the full replay does,
-    and `refuse_found` on those attempts), recorded from this checkout (a
-    copy of the ledger in another checkout is refused); the follow-up table
-    must name the family and the ledger of the table it replaces, so that
-    this is the file `run` and `extend` append to; otherwise the command
-    refuses, naming the ledger path and the missing attempt, before anything
-    is measured. So `pilot`, `run` and `extend` of the follow-up are made in
-    the checkout that holds the TASK30 ledger (the one the TASK30 grid was
-    measured in), and so is `replay`, which reads that one ledger for both
-    grids (`--ledger` names it read-only for `predeclare`, `verify-counts`,
-    `replay` and `close` elsewhere).
-  - *The evidence layout.* The counts record the replaced grid by its path
-    relative to the follow-up's pilot (`../stage2`), compared exactly, so
-    the follow-up pilot and the replaced grid must stay siblings in the
-    evidence layout (`E/followup-pilot`, `E/stage2`, as `stage2/../grid`
-    already must be); a copy where they are not is refused ("the counts
-    record the replaced grid at ... must stay siblings"), never accepted.
-  - *The inventory's record.* An inventory of the follow-up records the
-    grid under `replaces` with the replaced grid's fields named as its own
-    (`replaced_inventory`, `replaced_decisions`, `replaced_seed`,
-    `replaced_counts`: the seals of its inventory and decisions, the layout
-    seed and counts seal of its first stage) and the follow-up's beside them
-    (`followup_seed`, `followup_counts`), with the grid's path relative to the
-    output. `replay` finds the grid there again.
-  - *The tree rule.* The candidate may differ from the replaced candidate
-    below `src` in any file under `src/simp/tests/performance/` and in any
-    sealed file or driver wherever it lies (`run_paired.py` is one). That is
-    wider than "only the files the table seals and its driver", on purpose:
-    the harness changes between the two commits (tests, documents,
-    `MatrixAllocation`, the allocation modules, the engine), and the code that
-    measures is covered by the engine, driver, acceptance and sealed seals
-    and by the sources record, not by this rule. Any other change under `src`
-    refuses the follow-up: a handoff or test under `src/simp/tests/
-    compatibility/`, another task's commit merged between the replaced
-    candidate Y and Z. The names of the sealed files are the code's
-    repository's (`Table.root`), the same whatever checkout `--repo` names,
-    and a sealed file outside that repository is refused.
-- **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
-  `ACCEPTANCE` and `SEALED_HISTORY`, each with the seals of
-  `40e176538f` (see "Standard input and the version query"), passed to
-  its table as TASK30's are to its own: `check_code` accepts a record whose
-  driver, engine or acceptance seal is the current one or one listed, and a
-  sealed file's seal is the current one or one of its history. They are read
-  by `replay` only; `run` compares the counts' `sealed` with the current
-  seals exactly. So:
-  - A change to any sealed file, `task30_grid.py` included, between the
-    follow-up's pilot and its `run` is not absorbed by a `SEALED_HISTORY`
-    entry: `run` refuses ("the counts are bound to other sealed files") and
-    only a fresh pilot (a new counts file) helps. Land the disposition code
-    before the pilot, or outside the sealed files: it will live in a module
-    of its own, `task30_dispose.py`, in neither table's seals, so that
-    `task30_grid.py` stays byte-identical from Z0 on.
-  - After follow-up records exist (from its pilot on), a change that must
-    not invalidate them appends, in the same commit, the seal the records
-    were made by: that of the old `timing_grid.py` to `ENGINES`, of
-    `acceptance.py` to `ACCEPTANCE`, of `task30_followup.py` to `DRIVERS`,
-    and (a reviewed change that alters nothing measured, only after `run`)
-    of `task30_grid.py` to `SEALED_HISTORY["task30_grid.py"]`. The test that
-    pins them (`test_task30_grid.py`) is edited with them.
-  - `task30_grid.py` is a *sealed file* of the follow-up, not a driver: the
-    follow-up imports its constants (`SECONDS`, `PAIRS`, `SAMPLES`, `SEALED`)
-    and replays the TASK30 grid through its table, which are inputs of the
-    counts, as `task30_cases.py` is. TASK30 treats the same file as its own
-    driver, with `DRIVERS`; a change to it needs no TASK30 entry unless a
-    new TASK30 record is made.
-  - `task30_dispose.py` has `HISTORY` (per file of its `CODE`, the seals
-    the disposition was recorded with) and the cascade is longer than the
-    others. Worked example: one later edit of `timing_grid.py`, after the
-    follow-up's records and the disposition exist, appends in its commit
-    (1) the old `timing_grid.py` seal to `task30_followup.ENGINES`; that
-    edits `task30_followup.py`, so (2) its old seal goes to
-    `task30_followup.DRIVERS`; and (3) both old seals go to
-    `task30_dispose.HISTORY` (`"timing_grid.py"` and
-    `"task30_followup.py"`); that edits `task30_dispose.py`, which (4) needs
-    its own old seal in `HISTORY["task30_dispose.py"]` (the entry is the
-    recorded seal, so appending it does not chase the file it edits). An
-    edit of `acceptance.py` is the same with `ACCEPTANCE`. The recorded
-    seals are in `disposition.json` (`code`), and the check of
-    `task30_dispose.py` names every changed file in one refusal with the
-    entry to paste into each constant (the literal element of that
-    constant, each in backticks: `"timing_grid.py": (SEAL,),` for `HISTORY`,
-    `"task30_grid.py": (SEAL,),` for `SEALED_HISTORY` (the same form: a dict
-    keyed by file), `SEAL,` for `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and
-    the tests that pin those
-    constants (`test_task30_dispose.py` for `HISTORY`,
-    `test_task30_grid.py` for the follow-up's), which the same commit edits;
-    nothing is looked up by hand.
-  - A file added to `task30_dispose.CODE` (`void_attempts.py`, the attempt
-    rule moved out of `task30_dispose.py`) is absent from the records made
-    before it existed. `task30_dispose.ADDED` names, per such file, the file
-    that held its code, that file's seals in those records, and the held
-    seal; a record may lack the file only when its seal of the host is one
-    of the listed, and is then treated as recording the held seal for the
-    file. The held seal names the version of the added file reviewed as
-    holding exactly the code the older records ran: its moved functions are
-    AST-equal to the host's, apart from message strings: docstrings,
-    `"..." % (...)` messages that are not the value of an assignment,
-    returned string constants, the message argument of `a.require`, and two
-    reviewed strings that are not messages (the `prefix=` of
-    `tempfile.TemporaryDirectory` and the `what` of `want, what = ...`). A
-    test pins the hash of the functions with exactly those blanked; every
-    other string (event names, statuses, keys, option and file names) is in
-    the hash, so a changed literal of the logic changes it, and so does a
-    changed operand of a `%` assigned to a name. A second pinned hash
-    covers the rest of the added file (imports, constants, other functions
-    and module statements, without the module docstring), normalised by the
-    same rules. An edit of the added file is non-behavioural when both
-    hashes are unchanged; it then replaces the held seal, after that
-    review. A behavioural edit
-    is not allowed while a record depends on the held seal: a seal in
-    `HISTORY[file]` accepts every later file, so it would bind the record to
-    logic it never ran. Where a record lacks the file, `check_code`'s
-    refusal of an edit states this rule and names no `HISTORY` entry. A
-    record made by the current code carries the file.
-  - TASK30's *set* of sealed names is frozen by its Y records: adding a file
-    to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
-    follow-up's `SEALED`) makes every Y replay refuse "changed sealed
-    files".
-  The disposition code, which changes the engine, is landed before the
-  follow-up's pilot, so that Z is the pilot's commit plus the counts file.
-- **Pairs.** A follow-up has no pairs of its own to declare: the pairs of a
-  cell are what the second-stage rule gives for the develop/develop control of
-  the replaced grid's *first* stage,
-  `min(120, max(2*P, 10*ceil(P*(w/0.015)^2/10)))`, with `P` the pairs of that
-  stage (20) and `w` the larger half log-width of the CPU and wall control
-  intervals (`Grid.followup_pairs`, from the functions
-  `control_half_width` and `second_stage_pairs` that the second stage uses
-  too). The floor `2*P`, 40, is the table's `pairs`. `predeclare` records the
-  pairs in the counts file as `pairs_by_cell`; `verify-counts`, `run`,
-  `extend` and `replay` derive them and the `replaces` block again (from the
-  replaced grid, by the seals or in full as above) and refuse a file that
-  differs. A run measures each cell with its own pairs, a row records them
-  when they are not the table's, and a replay refuses a row whose pairs
-  differ from the counts'. The second stage of the follow-up (`extend`, seed
-  `SEED-ext`) takes each cell's own pairs as the base of its rule. For the
-  two cells of the TASK30 grid both controls were valid, so each has 40
-  pairs.
-- **Decisions.** The follow-up's `decisions.json` is that of its own cells
-  (class report `TASK30-FOLLOWUP grid: ...`). A follow-up outcome other than
-  pass blocks: a fail is final, and an inconclusive or control-limited cell
-  after the follow-up's own second stage blocks too. No further timing retry
-  and no automatic attribution follows without a new policy decision. An
-  attempt that admitted no measurement (every cell a protocol failure, no
-  `protocol` run in its inventory, as when `poly --version` hung on an
-  inherited stdin) is void: it is no outcome, took no sample and selects
-  nothing, and it is rerun with the same settings as a new attempt (a rerun
-  is a new draw; `--resume` cannot redo recorded protocol cells). Both stay
-  in the ledger, and `task30_dispose.py` checks and records them
-  (`followup_attempts`). The judged attempts are the `attempt` ids in the
-  inventory of `--followup` and, where that is a second stage, of its first
-  stage, each from the output of that stage (an attempt id is of one output:
-  every output its open, resume and close lines name is collected, and more
-  than one is refused). Every other attempt of the follow-up's table must
-  be shown void from its own output: the directory exists, its
-  `inventory.json` is of that attempt id, it has a row for every cell it
-  measures (the follow-up's, or for a second stage its own plan's), every
-  row has `protocol` present and false, every row's archive exists and is
-  the sealed one (`seal`), acceptance's own `success` in it is false, each
-  command acceptance recorded did not time out and left a runner manifest
-  in the folder of its `--output` (one runner manifest per runner command),
-  and no runner `manifest.json` in an archive records an admitted run
-  (`runs` empty and `success` false); and the ledger closes the attempt
-  `inconclusive` with exactly one close line and no resume line (a
-  resumed attempt may have drawn samples in a cell it cleared), which is
-  the status of a grid whose every cell is a protocol failure (no cell
-  passes or fails). A second stage closes with the combined status of both
-  stages, so a void second stage is accepted only when its first stage has
-  no fail; a fail in the first stage is final and the follow-up blocks
-  anyway. Anything else is refused (exit 3), naming the attempt, its
-  status, its output and the failed condition: an interrupted or resumed
-  attempt, one closed more than once, one with missing cells or with no
-  close line, and a runner killed while measuring (no manifest) are
-  refused too, as they may have measured. This rule is `void_attempts.py`,
-  shared with the TASK31 disposition; both seal it in their `CODE`. The
-  follow-up writes no
-  `final.json`: the TASK30 decision with
-  these two cells in place of the replaced ones is the disposition step's
-  (`task30_dispose.py`), which owns `final.json` and builds it from the
-  replayed reports of both grids.
-- **Sequence.** At the commit Z0 (code and documents; no counts): `prepare`,
-  then
-  `task30_followup.py pilot --output OUT/followup-pilot`, `predeclare --grid
-  OUT/followup-pilot --output FILE --replaces OUT/stage2 --replaces-pilot
-  OUT/pilot`, where `FILE` is the table's counts path,
-  `src/simp/tests/performance/task30_followup_iterations.json`
-  (`task30_followup.py` reads no other), `verify-counts` with `--replaces`;
-  the counts file is committed as Z (the candidate), so that Y..Z holds
-  only the performance area and sealed files: any other change under `src`
-  refuses the follow-up. `verify-counts` again at Z (the counts file as
-  committed, by the seals while the code is that of `predeclare`; after a
-  code change it replays in full and needs `--replaces-pilot OUT/pilot`).
-  The counts file is committed alone: no code change in that commit, and
-  none between `predeclare` and it (a replay-code change after
-  `predeclare` is committed after Z, or `predeclare` is made again at the
-  pilot head's code, with no replay-code change between the pilot and
-  `predeclare`); the pilot is made at a commit of Z's history (a pilot
-  head the repository lacks is refused). The engine refuses a commit of
-  the counts that touches another file, and a record of the code that
-  differs from the pilot's head (pilot again, or predeclare at the pilot
-  head's code), at the first `verify-counts` already.
-  Every command that
-  appends is made in the checkout that holds the TASK30 ledger (see "One
-  ledger, one checkout"). `run --candidate Z --pilot OUT/followup-pilot
-  --replaces OUT/stage2 --output OUT/followup --authorize-measurements`,
-  `extend --grid OUT/followup --pilot OUT/followup-pilot` only if its control
-  left a cell open, `replay` of each stage (with `--replaces-pilot
-  OUT/pilot`, which replays the replaced grid in full). The checkout, its
-  stamp and its ledger are those of the pilot, as for any table, and the
-  measurements run serially under the lock. The follow-up pairs with its own
-  allocation grid at Z (`OUT/alloc-z`, a full `allocation_matrix.py run --task
-  task30` at Z); neither `close` nor the follow-up checks that pairing, the
-  disposition step does (head and tree outside the performance area, exactly).
-  The last step is `task30_dispose.py --record`, reviewed, and then the same
-  command without `--record` (below). `--followup` is the follow-up's final
-  judged stage directory (its second stage, where it has one), as
-  `--replaces` is; for the real TASK30 follow-up it was a rerun,
-  `followup-r2`, as the first attempt in `followup` was void.
-
-#### Structural evidence and the TASK30 disposition
-
-The policy owner's decision of 2026-11-05: the 13 cells the TASK30 grid left
+Policy decision: the 13 cells the TASK30 grid left
 control-limited are settled by deterministic structural evidence against
 develop, each recorded as *attributed* with a note, and re-derived from the
 replayed records every time. Every other class is as the engine has it: a
 pass, a fail (final), and a blocking cell. The code is `timing_grid.dispose`
-(the generic engine function; `task29a_grid.dispose` is untouched) and
-`task30_dispose.py` (`DISPOSITION`, the evidence and the command); the
-timing-grid tables, `task30_grid.py` among them, are unchanged by it.
+(the generic engine function) and `task30_dispose.py` (`DISPOSITION`, the
+evidence and the command).
 
 **Classes** (`timing_grid.dispose(final, attributed, evidence)`, by
 `classify_row`):
@@ -1884,9 +1997,7 @@ wall CI upper bound exceeds 1 + the policy's margin
 applies (`residual`). The sentence says that the candidate CI upper bound
 exceeds the 3% margin; structural equality shows identical work, not
 identical timing; the candidate's startup heap is larger, GC reported and not
-gated, the attribution in TASK_31. On the stage-2 records that is
-`exclude_literal_exact-10000` and `exclude_dproc-10000`, and no other of the
-13 cells.
+gated, the attribution in TASK_31.
 
 **Evidence** (`task30_dispose.Evidence.holds(cell)`: four items, `EVIDENCE`;
 the first failure is named with the row, the file or the cell that
@@ -1921,20 +2032,20 @@ never an exception, and the counts and the digest recorded for the cell keep
 every value. A record that lacks a phase
 or a metric the comparison needs is named too.
 
-**The allocation grids are gated too.** The disposition is a pass only if
-both `alloc/` and `alloc-z/` pass: each is replayed and its status (the
-status code of `allocation_matrix.replay`) is read. An allocation `fail`
-makes the disposition `fail` (exit 1); any other status but pass
-(inconclusive, too few pairs, a baseline other than the pinned one,
-non-reproducible rows) makes it `blocked` (exit 2). The grid and the
-reason are printed (`ALLOCATION-FAIL`, `ALLOCATION-BLOCKED`), recorded
-under `allocation` in `disposition.json`, and the outcomes are in the final
-line. An incomplete allocation grid has only `decisions-partial.json` and is
-refused before any replay ("is not a complete grid"). A grid with a
-`decisions-partial.json` beside a complete `decisions.json` is refused too:
-the partial file is stale (an earlier `--only` run left it; a complete write
-by `allocation_matrix.py` now removes it) and may be removed by hand; the
-disposition never deletes it.
+**The allocation grids are gated too.** The disposition is a pass only if both
+`alloc/` (the `--allocation` grid, made at Y) and `alloc-z/` (the
+`--followup-allocation` grid, made at Z) pass: each is replayed and its status
+(the status code of `allocation_matrix.replay`) is read. An allocation `fail`
+makes the disposition `fail` (exit 1); any other status but pass (inconclusive,
+too few pairs, a baseline other than the pinned one, non-reproducible rows)
+makes it `blocked` (exit 2). The grid and the reason are printed
+(`ALLOCATION-FAIL`, `ALLOCATION-BLOCKED`), recorded under `allocation` in
+`disposition.json`, and the outcomes are in the final line. An incomplete
+allocation grid has only `decisions-partial.json` and is refused before any
+replay ("is not a complete grid"). A grid with a `decisions-partial.json`
+beside a complete `decisions.json` is refused too: the partial file is stale
+(an earlier `--only` run left it; a complete write by `allocation_matrix.py`
+removes it) and may be removed by hand; the disposition never deletes it.
 
 What no row can show is the list under "What no row can show" above (CPU
 that neither allocates nor traces, net node visits and hidden candidates,
@@ -2026,38 +2137,7 @@ nothing of `task30_grid.py` or `task30_followup.py` (a test keeps it out of
 the import closure of the replay, and every module it imports beyond that
 sealed by `CODE` or named as the allocation matrix's toolchain building).
 
-`acceptance.json` records the policy, source-tied raw experiment input hashes,
-runner commands/log hashes/exits, controls and per-metric decisions. Archived
-results are revalidated through the existing schema and source-binding auditor,
-plus ordered heap/search/use/completion/loaded inventories and fixture/options
-checks. A precomputed summary is not sufficient evidence.
-
-Matrix manifests require `shared_inputs`: an inventory keyed by canonical
-absolute logical source path, with physical path, SHA256, byte count and the
-complete related `.uo`/`.ui`/`.dat` product fingerprints. The online runner
-checks these against live files and across all accepted processes before
-sealing the manifest. Offline admission binds every shared receipt entry to
-that inventory, including all related products, and rejects non-normalized or
-escaping paths without resolving deleted roots. Private sources and products
-remain bound to their selected inventories. Matrix archives predating this
-inventory are historical diagnostics only; do not reconstruct a supposedly
-independent inventory from the receipts being validated.
-
-Admission also requires exact runtime options (one GC thread and the recorded
-repo's `hol.state0`), runtime/heaps/Holmake/configuration fingerprints, a sealed
-successful Poly/ML version command, sealed successful dynamic-library discovery
-and fingerprints for its libraries. Selected builds must have succeeded, and
-each launcher's text, options and product hash must agree. These are local
-provenance-consistency checks, not authentication of a malicious producer or
-independent-build evidence. Non-matrix historical diagnostic audits retain
-their original weaker contract.
-
-CLI exit codes: 0 = all reported candidate metrics/slopes pass; 1 = any fails;
-2 = uncertainty, invalid evidence or a blocked prerequisite. `success=true`
-means the experiment completed and validated, **not that its metrics passed**.
-No overall performance acceptance decision substitutes for per-metric decisions.
-
-#### TASK31 allocation gate (gate 2)
+### TASK31 allocation gate (gate 2)
 
 `allocation_matrix.py run --task task31` counts the allocation of the
 ClientPerformance cells of TASK31 with the TASK29B counter, under the
@@ -2128,53 +2208,11 @@ results have none of these keys.
 (`task30_dispose.CODE`): changing it adds the previous seal to
 `task30_dispose.HISTORY`, pinned by `test_task30_dispose.py`.
 
-## Negative controls
+## Independent builds and fresh loading
 
-```sh
-python3 -B src/simp/tests/performance/acceptance.py controls \
-  --output NEW_CONTROL_JSON
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
-  -s src/simp/tests/performance -p test_acceptance.py -v
-```
+Admission of externally produced builds and the runnable fresh-import gate.
 
-Controls are separate real Python subprocesses, never production-source edits:
-
-- slowdown: candidate performs a longer measured CPU loop;
-- allocation: candidate retains a larger bytearray, measured by `tracemalloc`;
-- failed process: emits a result but exits 7; rejection must be the exit guard;
-- missing result: exits 0 without output; rejection must be the missing guard.
-
-The positive baseline worker verifies the allocated bytes and consumed work.
-Slowdown/allocation controls use ten paired fresh subprocess observations in
-AB/BA order and must produce strict CI failures. The tests execute these real
-perturbations, not just construct invented ratios or assert an arbitrary error.
-Synthetic statistics and tampered archived/build receipts additionally exercise
-thresholds, undefined GC, completeness, provenance and stale-build guards.
-`tracemalloc` is **only a Python harness allocation control**, never a measurement
-of HOL/PolyML allocation. Bootstrap confidence is not a universal hardware proof.
-
-## Serialization
-
-`run` and `controls` hold nonblocking `flock` locks for their entire experiment:
-
-- `.agent-files/hol4-performance-UID.lock` in the repository (one per
-  user; ignored, and out of reach of shared `/tmp` cleaners, one of which
-  deleted the earlier `/tmp` lock during the TASK29A grid);
-- the repository gitdir inode (compatible with existing exclusions/tactics
-  runners), and common gitdir inode (across worktrees).
-
-Descriptors are inherited by the paired runner so it cannot continue unlocked
-if its parent exits. A busy lock blocks the invocation. Never unlink a lockfile:
-that permits two different inodes to be locked concurrently. Do not relock these
-inherited locks in child runners. All invocations of this front end serialize;
-the existing gitdir lock also conflicts with older same-worktree runners.
-Locks are advisory: they cannot stop unrelated manual `bin/build`, direct older
-runners in other worktrees, or other users. Authorization confirms those are
-quiescent. Do not use `--authorize-measurements` as permission for concurrent work.
-Unit tests acquire the same lock for actual timing controls; other tests create
-only tiny temporary synthetic git repositories and remove them immediately.
-
-## Independent-build admission: fail closed
+### Independent-build admission: fail closed
 
 `verify-builds` audits a separately produced clean-build receipt against **live**
 roots and logs. It does not build, run proof workloads, or approve performance:
@@ -2189,8 +2227,7 @@ python3 -B src/simp/tests/performance/acceptance.py verify-builds BUILD_JSON \
 admission and then explicitly reports the independent measurement prerequisite
 blocked. It **never runs `run_paired.py` and labels that independent**. Fresh
 independent launchers, loaded-path inventories and consumed proof/storage pairs
-must be supplied by TASK32/33. No actual independent HOL builds were performed
-or claimed while implementing this machinery.
+must be supplied separately.
 
 The external receipt producer must run serially under the same locks, in two
 new disjoint clean worktrees at the requested pins. Refuse an existing product,
@@ -2212,7 +2249,7 @@ path/hash, actual exit and timeout status. Hash tools and products while
 unchanged; roots must still be at the exact pins with no tracked/untracked
 changes during admission (ignored generated products are allowed after building).
 
-### Independent manifest v1
+#### Independent manifest v1
 
 Required top-level fields:
 
@@ -2260,9 +2297,9 @@ reviewed manifest schema supports them; do not weaken this verifier to admit an
 old heap. A local receipt is a provenance record, not a cryptographic attestation
 against a malicious producer. Preserve actual pristine-state evidence too.
 
-## Fresh loading: runnable external gate
+### Fresh loading: runnable external gate
 
-`loading.py` now times actual first imports in fresh shared-heap processes,
+`loading.py` times actual first imports in fresh shared-heap processes,
 with one pilot per revision, 40 AB/BA pairs of 5 fresh imports per side,
 baseline/baseline controls and raw CPU/wall/GC. It requires **both** exact
 commit options (the baseline is the develop pin `acceptance.BASE`) and a
@@ -2281,8 +2318,7 @@ Repeat for `--module congLib` in a different output directory; this includes
 its simpLib dependency, not marginal congLib cost. Pilots/empty brackets check
 resolution, not a cached same-process import loop. Source paths, completions,
 actual successful exits and exact kernel proofs are checked. See
-[`PROTOCOL_LOADING.md`](PROTOCOL_LOADING.md). Listing this executable external
-gate does not claim a fresh run or independent loading acceptance.
+[`PROTOCOL_LOADING.md`](PROTOCOL_LOADING.md).
 
 ## Ordinary startup allocation gate (TASK31)
 
@@ -2478,99 +2514,6 @@ over-counted. The allowlist `NOT_MODULES` (basis and qualified names that
 are no module) is minimal, and a name on it that is also a module of the
 directory is refused. `congLib_plain` and `congLib_tflag` split the congLib
 payers by build mode.
-
-## Matrix boundaries and final evidence
-
-[`MATRIX.md`](MATRIX.md) and the frozen schema cover **69 requirements and 107
-case bindings**. Runnable does not mean measured or passed. All named stages
-and declared sizes remain distinct; a smoke cannot cover the full matrix.
-Graph parsing, batch GC counts, RSS snapshots and controlled-ref release are
-integrated, not missing instrumentation. Seven stronger prerequisites remain:
-unsupported cumulative allocation counter; unestablished exact temporary-peak
-domain; unsupported opaque-object lifetime API; missing independent integer
-and real dependencies; independent routine and full clean snapshots/results.
-
-The main ten-pair source-isolation experiment validates end-to-end machinery,
-not matrix-wide performance approval. Only current fixture/source-tied manifests
-and raw observations count; unused temporary validation or earlier fixture
-versions cannot be relabeled final. Independent manifest admission validates
-build prerequisites only and `run --mode independent` still blocks pending
-fresh independent launchers, path inventories and consumed proof/storage pairs.
-No shared `hol.state0` result becomes independent by changing a report label.
-
-Ordinary arithmetic/reduce/boss fixtures are runnable with shared dependencies;
-independent downstream proof/build acceptance and migrated-consumer costs remain
-separate. Keep normal ordinary/extension suites enabled. Passing Python tests,
-smokes or controls establishes machinery behavior, not numerical parity or the
-final release gate. See [`README.md`](README.md) for maintained check targets.
-
-## Standard input and the version query
-
-The change after `40e176538f` touched every child of the harness. It gave
-`run_paired.execute`, `loading.execute`, `acceptance.run_logged` and
-`verify_builds` `/dev/null` as standard input, queried the compiler with
-`poly -v`, and dropped "exclusive window" from live code. `poly --version` is
-no option: Poly/ML enters the top level and reads stdin, which hangs on an
-inherited open pipe. The seal histories below hold the seals of the files at
-`40e176538f`. In detail:
-
-- **Runners sealed by a checksum manifest keep `poly --version`** and their
-  text as it was: `fragments/assembly/run_assembly.py`
-  (`fragments/assembly/SHA256SUMS`), `tactics/performance/run_tactics.py`,
-  `tactics/performance/README.md` (`FOLLOWUP_SHA256SUMS`) and
-  `exclusions/performance/{gc_run,gc_trace,run_exclusions}.py`, `HANDOFF.md`,
-  `README.md`, `assembly/README.md` (`evidence/SHA256SUMS`). They reach
-  poly only through `run_paired.execute`, which now uses `/dev/null`, so
-  `poly --version` reads end of file and prints exactly
-  `Poly/ML 5.9.2 Release` (exit 0): safe, and the old checks of that text
-  (`run_assembly.py` requires the exact line) still hold. Every manifest
-  checks exactly as at `40e176538f`, from the directories their handoffs
-  name: `compatibility/SHA256SUMS`, `fragments/assembly/SHA256SUMS`,
-  `tactics/performance/evidence/{SHA256SUMS,FOLLOWUP_SHA256SUMS}` pass fully;
-  `exclusions/performance/evidence/SHA256SUMS` (140 of 146) and `GC_SHA256SUMS`
-  (35 of 37) fail only on logs that were never committed
-  (`evidence/{cleanup-checks,final-tests,gc-checks-wrong-cwd,gc-checks,
-  offline-tests,recheck}.log`).
-  Unsealed runners use `-v`; no check compares raw `-v` output with a fixed
-  `--version` string.
-- **Version comparison.** `acceptance.poly_version_matches`: a recorded
-  version that contains `RTS version` (a `poly -v` record) must equal the
-  live `poly -v` output in full once stripped; a legacy record (banner
-  alone) is compared with the banner of the live output, as is a legacy
-  record against a new probe.
-- **`api-audit/run.py`** queries `poly -v` and runs `selftest.exe` with
-  `/dev/null` as stdin and timeouts (30 s, 1800 s). No retained receipt or
-  manifest seals it other than the receipts' own `sources` entry, which
-  `loading.semantic_gate` compares with the api-audit files of the checkout
-  being measured, so receipts made before this change are refused; the fresh
-  eight-process receipt TASK31 needs is made by the new `run.py`.
-- **Older audits** `check_task27_docs.py`, `run_task22_negative.py`,
-  `audit_task27.py`, `compatibility/interfaces/check_design.py` and
-  `native-extension/check.py` got `stdin=/dev/null` (and a timeout where one
-  was missing). They start Holmake, HOL-compiled executables or a dependency
-  tool, no Poly/ML top level. `performance/review-20261021/reproduce.py`
-  keeps inheriting stdin: `compatibility/SHA256SUMS` seals it, and it starts
-  no top level either. Git calls everywhere are left alone.
-- **Seal histories.** Changed files whose seals records carry get an entry
-  in the commit that changes them. TASK30's own table gets one, the
-  `task29_gate.py` of the Y records, because the harness dropped its
-  "exclusive window" wording. The earlier entries for TASK30's driver,
-  engine, acceptance and run_paired were removed: no TASK30 record (pilot,
-  grid, stage 2) carries those seals. The follow-up's tables hold the seals
-  its records carry (`DRIVERS` 6360, `ENGINES` 190317, `ACCEPTANCE` 39557,
-  `SEALED_HISTORY` `task30_grid.py` 11833, `run_paired.py` 49616,
-  `task29_gate.py` 9766, and `matrix.json` 23994 and `matrix_schema.py`
-  23517 from before the TASK31 command paths), and
-  `task30_dispose.HISTORY` those of `followup-r2/disposition.json`; all are the blobs of `40e176538f`. Later
-  edits of the same files after that commit (usage text, style) need no entry:
-  no record carries their new seals.
-- **Nothing measured changes.** TASK30's follow-up pilot, its
-  resume and the void attempt `49242d4e` ran with the caller's stdin (only
-  `followup-r2` was launched with `</dev/null`). The change alters nothing
-  measured: a child that completed never read stdin, and only the
-  `poly --version` query blocked, which made a cell a protocol failure,
-  never a measurement. Giving it `/dev/null` turns that hang into end of
-  file.
 
 ## TASK31
 
@@ -2877,3 +2820,30 @@ Tests: `test_task31_cases.py`, `test_task31_attribution.py`,
 `test_task31_identity.py`, `test_task31_identity_grid.py`,
 `test_task31_grid.py`, `test_task31_followup.py`,
 `test_task31_attempts.py`, `test_task31_dispose.py`.
+
+## Matrix boundaries and final evidence
+
+[`MATRIX.md`](MATRIX.md) and the frozen schema define the requirements and
+case bindings. Runnable does not mean measured or passed. All named stages
+and declared sizes remain distinct; a smoke cannot cover the full matrix.
+Graph parsing, batch GC counts, RSS snapshots and controlled-ref release are
+integrated instrumentation. These stronger prerequisites remain blocked:
+a cumulative allocation counter; an exact temporary-peak domain; an
+opaque-object lifetime API; independent integer and real dependencies;
+independent routine and full clean snapshots/results.
+
+The ten-pair source-isolation experiment validates end-to-end machinery,
+not matrix-wide performance approval. Only current fixture/source-tied
+manifests and raw observations count; unused temporary validation or earlier
+fixture versions cannot be relabeled final. Independent manifest admission
+validates build prerequisites only and `run --mode independent` still blocks
+pending fresh independent launchers, path inventories and consumed
+proof/storage pairs. No shared `hol.state0` result becomes independent by
+changing a report label.
+
+Ordinary arithmetic/reduce/boss fixtures are runnable with shared
+dependencies; independent downstream proof/build acceptance and
+migrated-consumer costs remain separate. Keep normal ordinary/extension
+suites enabled. Passing Python tests, smokes or controls establishes
+machinery behavior, not numerical parity or the final release gate. See
+[`README.md`](README.md) for maintained check targets.
