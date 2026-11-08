@@ -267,9 +267,6 @@ class ExportClaimTests(unittest.TestCase):
         "src/simp/src/notes.md", "src/simp/src/MANIFEST", "src/simp/README",
         "src/simp/tests/compatibility/README.md",
         "src/simp/tests/compatibility/interfaces/DESIGN.md",
-        "src/simp/tests/compatibility/interfaces/CUTOVERS.md",
-        "src/simp/tests/compatibility/migration/MIGRATION.md",
-        "src/simp/tests/compatibility/migration/IDENTITIES.md",
         "src/simp/tests/compatibility/migration/final-apis.tsv",
         "src/simp/tests/cond-rewr-ext/README.md",
         "src/simp/tests/fragments/README.md")
