@@ -2193,14 +2193,15 @@ the same image and sources.
 
 `startup_gate.py build` repeats the `bootstrap_probe.build_native_hol`
 procedure: one native Poly/ML, the private runtime and shim, and then one
-fresh `git clone --shared` per tree (`label=rev[+patch]`):
+fresh `git clone --shared` per tree (`label=rev[+mktool]`):
 `poly-includes.ML`, `smart-configure`, then `bin/build --no-cache -jN
 --seq=tools/sequences/upto-parallel` with an `env -i`-style environment
 (PATH, HOME=/nonexistent, TERM=dumb, LC_ALL=C, TZ=UTC, CONFIG_SITE=/dev/null,
 CC, CXX, HOLDIR). Everything is recorded in `lineage.json`. The develop
-`mktool` fix is applied to a baseline that lacks it as the recorded patch
-`startup_gate_mktool.patch` (`useB "theoryfiles"` in
-`src/portableML/rawtheory/mktool.ML`), build tooling that no client loads.
+`mktool` fix is applied to a baseline that lacks it (`+mktool`) as one
+counted text replacement in a private tree (`useB "theoryfiles"` before
+`useB "theorystats"` in `src/portableML/rawtheory/mktool.ML`), build tooling
+that no client loads; the lineage records the seal of the resulting diff.
 
 Independent clean builds are separate images: the exported `hol.state0` and
 `hol.state` of two builds of one revision are not byte-identical, so an

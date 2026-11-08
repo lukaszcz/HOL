@@ -819,12 +819,7 @@ class RecipeTest(unittest.TestCase):
             git("add", ".")
             git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
                 "-qm", "x")
-            patch = t / "p.patch"
-            (repo / "f.txt").write_text("two\n")
-            patch.write_bytes(subprocess.run(
-                ["git", "diff"], cwd=repo, check=True,
-                capture_output=True).stdout)
-            git("checkout", "-q", "f.txt")
+            mk = ("f.txt", "one\n", "two\n")
             seen = []
 
             def run(cmd, cwd=None, runtime_env=None):
@@ -843,29 +838,33 @@ class RecipeTest(unittest.TestCase):
             report = {}
             with mock.patch.dict(os.environ):
                 os.environ.pop("GATE_BUILD_DETERMINISTIC", None)
-                g.build_hol(repo, "HEAD", hol, prefix, env, run, report,
-                            patch)
+                with mock.patch.object(g, "MKTOOL", mk):
+                    g.build_hol(repo, "HEAD", hol, prefix, env, run, report,
+                                "mktool")
             self.assertIs(report["hol_build_deterministic"], False)
             self.assertEqual((hol / "f.txt").read_text(), "two\n")
             commands = [c for c, _ in seen]
             self.assertEqual(commands[0][:4],
                              ["git", "clone", "--shared", "--no-checkout"])
-            self.assertEqual(commands[2][:3], ["git", "apply", "--check"])
-            self.assertEqual(commands[3][:2], ["git", "apply"])
-            self.assertEqual(commands[4], [
+            self.assertEqual(commands[1][:2], ["git", "checkout"])
+            self.assertEqual(commands[2], [
                 str(prefix / "bin/poly"), "--error-exit", "--use",
                 "tools/smart-configure.sml"])
-            self.assertEqual(commands[5], [
+            self.assertEqual(commands[3], [
                 str(hol / "bin/build"), "--no-cache", "-j2",
                 "--seq=tools/sequences/upto-parallel"])
-            for _, command_env in seen[4:]:
+            for _, command_env in seen[2:]:
                 self.assertEqual(command_env["HOLDIR"], str(hol))
                 self.assertEqual(command_env["HOME"], "/nonexistent")
             self.assertEqual((hol / "tools-poly/poly-includes.ML").read_text(),
                              'val poly = "%s";\nval polymllibdir = "%s";\n'
                              % (prefix / "bin/poly", prefix / "lib"))
             self.assertEqual(report["hol_snapshot"], report["hol_snapshot"])
-            self.assertIsNotNone(report["hol_patch"])
+            self.assertEqual(report["hol_patch"]["name"], "mktool")
+            self.assertEqual(report["hol_patch"]["bytes"],
+                             len(subprocess.run(
+                                 ["git", "diff"], cwd=hol, check=True,
+                                 capture_output=True).stdout))
 
     def test_determinism_edits_touch_image_creation_only(self):
         with tempfile.TemporaryDirectory() as t:
@@ -887,25 +886,30 @@ class RecipeTest(unittest.TestCase):
                 ["src/boss/Holmakefile", "src/num/termination/Holmakefile",
                  "src/proofman/Holmakefile", "tools-poly/hol.ML"])
 
-    def test_mktool_patch_is_build_tooling_only(self):
-        text = (HERE / "startup_gate_mktool.patch").read_text()
-        files = [l.split()[-1] for l in text.splitlines()
-                 if l.startswith("+++ ")]
-        self.assertEqual(files, ["b/src/portableML/rawtheory/mktool.ML"])
+    def test_mktool_replacement_is_counted(self):
+        with tempfile.TemporaryDirectory() as t:
+            hol = Path(t)
+            subprocess.run(["git", "init", "-q", str(hol)], check=True)
+            name, old, _ = g.MKTOOL
+            path = hol / name
+            path.parent.mkdir(parents=True)
+            for text in (old + old, "x\n"):
+                path.write_text(text)
+                with self.assertRaises(g.sc.InvalidAllocation):
+                    g.apply_mktool(hol)
+            self.assertEqual(name, "src/portableML/rawtheory/mktool.ML")
 
 
 class StyleTest(unittest.TestCase):
     def test_files(self):
         for name in ("startup_gate.py", "test_startup_gate.py",
-                     "StartupGate.sml", "StartupGateUse.sml",
-                     "startup_gate_mktool.patch"):
+                     "StartupGate.sml", "StartupGateUse.sml"):
             for number, line in enumerate(
                     (HERE / name).read_text().split("\n"), 1):
                 where = "%s:%d" % (name, number)
                 self.assertNotIn("\t", line, where)
-                if not name.endswith(".patch"):  # a context line is " "
-                    self.assertEqual(line, line.rstrip(), where)
-                    self.assertLess(len(line), 80, where)
+                self.assertEqual(line, line.rstrip(), where)
+                self.assertLess(len(line), 80, where)
 
 
 if __name__ == "__main__":

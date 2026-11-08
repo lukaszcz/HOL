@@ -41,6 +41,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import subprocess
 import sys
 import time
 
@@ -57,7 +58,8 @@ from prepare_patch import DEFAULT_SOURCE
 
 SCHEMA = "task31-startup-gate-v2"
 LINEAGE_SCHEMA = "task31-startup-toolchain-v1"
-MKTOOL_PATCH = HERE / "startup_gate_mktool.patch"
+MKTOOL = ("src/portableML/rawtheory/mktool.ML",
+          'useB "theorystats";', 'useB "theoryfiles";\nuseB "theorystats";')
 CLIENT = HERE / "StartupGate.sml"
 SNAPSHOT_ABI = 1  # first field of the counter snapshot
 PAIRS = 10  # acceptance minimum; fewer pairs is a smoke only
@@ -176,17 +178,35 @@ def deterministic_polyc(prefix, det):
     return poly, a.seal(det / "polyc")
 
 
+def apply_mktool(hol):
+    """The develop `mktool` fix on a baseline that lacks it: one counted
+    text replacement in a private tree (build tooling no client loads).
+    Returns the seal of the resulting `git diff`."""
+    name, old, new = MKTOOL
+    path = hol / name
+    text = path.read_text()
+    require(text.count(old) == 1 and 'useB "theoryfiles"' not in text,
+            "mktool: the replacement does not apply once")
+    path.write_text(text.replace(old, new))
+    diff = subprocess.run(["git", "diff"], cwd=hol, check=True,
+                          capture_output=True).stdout
+    require(diff.count(b"\n+++ ") == 1, "mktool: more than one file")
+    return {"sha256": hashlib.sha256(diff).hexdigest(),
+            "bytes": len(diff), "name": "mktool"}
+
+
 def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
-    """A fresh HOL tree: shared clone at rev (plus a recorded patch file),
+    """A fresh HOL tree: shared clone at rev (plus the mktool fix when
+    `patch` is set),
     the configuration override, smart-configure and a no-cache build
     (the commands of build_native_hol; HOME, include override included)."""
     head = a.git(repo, "rev-parse", rev + "^{commit}")
     run(["git", "clone", "--shared", "--no-checkout", str(repo), str(hol)],
         repo)
     run(["git", "checkout", "--detach", head], hol)
+    patch_seal = None
     if patch is not None:
-        run(["git", "apply", "--check", str(patch)], hol)
-        run(["git", "apply", str(patch)], hol)
+        patch_seal = apply_mktool(hol)
     require(not (hol / "bin/hol.state0").exists(), "prebuilt HOL image")
     deterministic = os.environ.get("GATE_BUILD_DETERMINISTIC", "0") == "1"
     if deterministic:
@@ -194,7 +214,7 @@ def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
     report["hol_build_deterministic"] = deterministic
     env = dict(env, HOLDIR=str(hol))
     report.update(hol_snapshot=head,
-                  hol_patch=None if patch is None else a.seal(patch),
+                  hol_patch=patch_seal,
                   hol_tree=a.git(hol, "rev-parse", "HEAD^{tree}"))
     overrides = hol / "tools-poly/poly-includes.ML"
     tool_poly = prefix / "bin/poly"
@@ -220,11 +240,12 @@ def build_hol(repo, rev, hol, prefix, env, run, report, patch=None):
 
 
 def split_tree(spec):
-    """label=rev[+patchfile] -> (label, rev, patch or None)."""
+    """label=rev[+mktool] -> (label, rev, patch or None)."""
     label, _, rest = spec.partition("=")
     rev, _, patch = rest.partition("+")
     require(label.isalnum() and rev, "bad tree spec: " + spec)
-    return label, rev, (Path(patch).resolve(strict=True) if patch else None)
+    require(patch in ("", "mktool"), "bad tree spec: " + spec)
+    return label, rev, patch or None
 
 
 def build(args):
@@ -882,7 +903,7 @@ def harness_state(root):
     identity = pr.harness_identity(root, head)
     files = sorted(set(pr.harness_inputs()) | {
         HERE / n for n in ("startup_gate.py", "StartupGate.sml",
-                           "StartupGateUse.sml", "startup_gate_mktool.patch",
+                           "StartupGateUse.sml",
                            "startup_gate_declared.json",
                            "allocation_matrix.py")})
     blobs = {}
@@ -1204,7 +1225,7 @@ def main(argv=None):
                    help="existing toolchain: build only the trees")
     b.add_argument("--timeout", type=int, default=3600)
     b.add_argument("--tree", action="append", default=[],
-                   help="label=rev[+patch]; one clean build each")
+                   help="label=rev[+mktool]; one clean build each")
     m = sub.add_parser("gate")
     m.add_argument("--toolchain", type=Path, required=True)
     m.add_argument("--repo", type=Path, default=HERE.parents[3])
