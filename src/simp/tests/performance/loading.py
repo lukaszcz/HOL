@@ -3,6 +3,7 @@
 import argparse
 import functools
 import gzip
+import hashlib
 import importlib.util
 import itertools
 import json
@@ -748,14 +749,45 @@ def ledger_path(repo):
             "attempts.jsonl")
 
 
-def source_tree(repo, revision):
-    """The id of the git tree the sources of `revision` are extracted from:
-    the same for every commit with those sources, whatever its message."""
+def extracted_files(repo, revision):
+    """The sorted (git_path, git_blob) pairs of the sources that
+    `rp.extract` takes from `revision` (sources and signatures of
+    TREE_PATH, but no selftest.sml and nothing of mosml/): what is built and
+    measured of a candidate. The filter is that of `rp.extract`, which the
+    tests compare it with."""
     try:
-        return rp.git(repo, "rev-parse", "%s:%s" % (revision, TREE_PATH)
-                      ).decode().strip()
+        listing = rp.git(repo, "ls-tree", "-r", revision, TREE_PATH
+                         ).decode().splitlines()
     except subprocess.SubprocessError as error:
         raise ValueError("no %s in %s: %s" % (TREE_PATH, revision, error))
+    files = []
+    for line in listing:
+        meta, path = line.split("\t", 1)
+        p = Path(path)
+        if p.suffix not in (".sml", ".sig") or p.name == "selftest.sml" or \
+                p.parent.name == "mosml":
+            continue
+        files.append((path, meta.split()[2]))
+    require(files, "no %s sources in %s" % (TREE_PATH, revision))
+    return sorted(files)
+
+
+def key_of(pairs):
+    """The digest of sorted (git_path, git_blob) pairs: the identity of a
+    measured inventory, whatever the commit, its message or the files that
+    are not extracted."""
+    return hashlib.sha256(json.dumps(
+        sorted([list(p) for p in pairs]), separators=(",", ":")
+    ).encode()).hexdigest()
+
+
+def source_key(repo, revision):
+    return key_of(extracted_files(repo, revision))
+
+
+def inventory_key(inventory):
+    """The key of the sources a run extracted (its report's `sources`)."""
+    return key_of([(s["git_path"], s["git_blob"]) for s in inventory])
 
 
 def table_attempts(state):
@@ -765,61 +797,130 @@ def table_attempts(state):
     found = {}
     for record in state.records:
         if record.get("table") == TABLE and \
-                record["event"] in ("open", "close"):
+                record["event"] in ("open", "close", "decision"):
             row = found.setdefault((record["attempt"], record["stage"]),
-                                   dict(opens=[], closes=[]))
+                                   dict(opens=[], closes=[], decisions=[]))
             row[record["event"] + "s"].append(record)
     for (attempt, stage), row in found.items():
-        require(len(row["opens"]) == 1 and len(row["closes"]) <= 1,
+        require(len(row["opens"]) == 1 and len(row["closes"]) <= 1 and
+                len(row["decisions"]) <= 1,
                 "corrupt attempts ledger: attempt %s (%s stage) has %d "
-                "opening and %d close lines" % (
-                    attempt, stage, len(row["opens"]), len(row["closes"])))
+                "opening, %d close and %d decision lines" % (
+                    attempt, stage, len(row["opens"]), len(row["closes"]),
+                    len(row["decisions"])))
     return found
 
 
-def is_void(attempt, stage, row):
-    """An attempt that measured and decided nothing, shown from its own
-    output: exactly one close, with status `failed`, whose output holds a
-    `loading.json` of that seal, of this attempt, with `success` false and
-    no control or candidate process admitted. Every other attempt, closed
-    or not, is judged."""
-    if len(row["closes"]) != 1 or row["closes"][0]["status"] != FAILED:
-        return False
+PROCESS_PHASES = ("control", "candidate")
+
+
+def judged_because(attempt, stage, row):
+    """None when the attempt is void: it measured and decided nothing, shown
+    from its own output. Otherwise the reason it counts as the draw. Void
+    means exactly one close, with status `failed`, whose output holds a
+    `loading.json` of that seal, of this attempt, with `success` false and no
+    `blocked`, and whose archived control and candidate receipts are exactly
+    the ones the report lists, each sealed and not admitted. Every other
+    attempt, closed or not, is judged."""
+    if len(row["closes"]) != 1:
+        return "no close line" if not row["closes"] else "several closes"
     close = row["closes"][0]
+    if close["status"] != FAILED:
+        return "closed " + close["status"]
+    folder = Path(close["output"])
+    if close["output"] != row["opens"][0]["output"]:
+        return "its close names another output"
     try:
-        path = Path(close["output"]) / "loading.json"
-        if close["output"] != row["opens"][0]["output"] or \
-                a.seal(path)["sha256"] != close["seal"]:
-            return False
+        path = folder / "loading.json"
+        if not path.is_file():
+            return "its output is missing: " + str(path)
+        if a.seal(path)["sha256"] != close["seal"]:
+            return "its loading.json differs from the sealed one: " + \
+                str(path)
         report = a.load(path)
-        return (report["attempt"] == attempt and report["stage"] == stage and
-                report["success"] is False and
-                not any(r["accepted"] for r in report["runs"]
-                        if r["phase"] in ("control", "candidate")))
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return False
+        if report["attempt"] != attempt or report["stage"] != stage:
+            return "its loading.json is of another attempt"
+        if report["success"] is not False or "blocked" in report:
+            return "its report is a success or a blocked one"
+        listed = {r["receipt"]: r for r in report["runs"]
+                  if r["phase"] in PROCESS_PHASES}
+        present = {q.name for q in folder.iterdir() if re.fullmatch(
+            r"(control|candidate)-\d{3}-(baseline|candidate)-\d+\.json\.gz",
+            q.name)}
+        if present != set(listed):
+            return "its control and candidate receipts are not those the " \
+                "report lists"
+        for name, entry in listed.items():
+            receipt = a.safe_child(folder, name)
+            if a.seal(receipt) != entry["seal"]:
+                return "a process receipt differs from its seal: " + name
+            if entry["accepted"] is not False or \
+                    a.load(receipt)["accepted"] is not False:
+                return "a control or candidate process was admitted: " + name
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        return "its output cannot be read: %s" % e
+    return None
 
 
-def gate_attempts(found, candidate, tree, module, stage):
+def released(row):
+    """The decision line that frees the gate of an attempt that decided
+    nothing, or None. A decided attempt (pass, fail or inconclusive) stays
+    final whatever the ledger says; a decision needs a decider and a reason."""
+    if len(row["decisions"]) != 1 or any(
+            c["status"] in DECISIONS.values() for c in row["closes"]):
+        return None
+    line = row["decisions"][0]
+    if all(isinstance(line.get(k), str) and line[k].strip()
+           for k in ("decider", "reason")):
+        return line
+    return None
+
+
+def is_void(attempt, stage, row):
+    return judged_because(attempt, stage, row) is None
+
+
+def gate_attempts(found, candidate, key, module, stage):
     """attempt id -> its lines, for the table's attempts at `stage` of this
-    module and of this candidate commit or this source tree."""
+    module and of this candidate commit or this extracted-source key."""
     return {i: row for (i, st), row in found.items()
             if st == stage and row["opens"][0]["module"] == module and
             (row["opens"][0]["candidate"] == candidate or
-             (tree is not None and
-              row["opens"][0].get("source_tree") == tree))}
+             (key is not None and
+              row["opens"][0].get("source_key") == key))}
 
 
 def judged(rows):
-    """The attempts that count as the draw: all but the void ones."""
+    """The attempts that count as the draw: all but the void ones and those
+    a policy decision released."""
     return sorted(i for i, row in rows.items()
-                  if not is_void(i, row["opens"][0]["stage"], row))
+                  if released(row) is None and
+                  not is_void(i, row["opens"][0]["stage"], row))
 
 
-def refuse_second_draw(path, args, stage):
+def attempts_table(found):
+    """Every attempt of the table, other candidates' included: what the
+    handoff publishes, and what a blocked gate is diagnosed from."""
+    table = []
+    for (i, st), r in found.items():
+        line = released(r)
+        table.append(dict(
+            attempt=i, stage=st, candidate=r["opens"][0]["candidate"],
+            source_key=r["opens"][0].get("source_key"),
+            module=r["opens"][0]["module"],
+            statuses=[c["status"] for c in r["closes"]] or ["unclosed"],
+            void=is_void(i, st, r), judged_because=judged_because(i, st, r),
+            released=None if line is None else dict(
+                decider=line["decider"], reason=line["reason"]),
+            output=r["opens"][0]["output"],
+            checkout=r["opens"][0]["checkout"]))
+    return table
+
+
+def refuse_second_draw(path, args, stage, key):
     """Under the serial lock, before anything is created: the gate (this
-    module, and this candidate commit or source tree) has no judged attempt
-    at this stage yet."""
+    module, and this candidate commit or extracted-source key) has no judged
+    attempt at this stage yet."""
     import timing_grid as tg
     inside = path.resolve().is_relative_to(Path(args.repo).resolve())
     if inside:
@@ -831,18 +932,18 @@ def refuse_second_draw(path, args, stage):
                 "`git rev-parse --git-path info/exclude` names: %s" % path)
     if not path.exists():
         return
-    tree = source_tree(args.repo, args.candidate)
     found = judged(gate_attempts(table_attempts(tg.Ledger(path)),
-                                 args.candidate, tree, args.module, stage))
-    require(not found, "the %s stage of this candidate (or source tree) and "
-            "module has a judged attempt already (%s): only a run that "
-            "decided nothing and admitted no measurement is void, and any "
-            "other new draw needs a policy decision%s" % (
+                                 args.candidate, key, args.module, stage))
+    require(not found, "the %s stage of this candidate (or extracted-source "
+            "key) and module has a judged attempt already (%s): only a run "
+            "that decided nothing and admitted no measurement is void, and "
+            "any other new draw needs a recorded policy decision (--release,"
+            " see --ledger-status)%s" % (
                 stage, ", ".join(found), "" if stage == "first" else
                 "; at most one --extend per first stage"))
 
 
-def open_attempt(path, args, report, first, output, repo):
+def open_attempt(path, args, report, first, output, repo, keys):
     """Append the opening of this run; the attempt id goes into the report."""
     import timing_grid as tg
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -851,11 +952,51 @@ def open_attempt(path, args, report, first, output, repo):
         path, event="open", stage=report["stage"], table=TABLE,
         attempt=attempt, candidate=args.candidate, module=args.module,
         baseline=args.baseline, seed=args.layout_seed,
-        source_tree=source_tree(repo, args.candidate),
-        baseline_tree=source_tree(repo, args.baseline),
+        source_key=keys["candidate"], baseline_key=keys["baseline"],
         first_attempt=None if first is None else first["report"]["attempt"],
         output=str(output), checkout=str(repo))
     report["attempt"] = attempt
+
+
+def release_attempt(args):
+    """Record the policy decision that frees the gate of one judged attempt
+    that decided nothing: a `decision` line naming the attempt, the decider
+    and the reason. A decided attempt cannot be released."""
+    import timing_grid as tg
+    repo = Path(args.repo).resolve(strict=True)
+    path = args.ledger or ledger_path(repo)
+    require(path.is_file(), "no attempts ledger: %s" % path)
+    require(args.decider and args.decider.strip() and
+            args.reason and args.reason.strip(),
+            "--release needs --decider and --reason")
+    with a.serial_lock(repo):
+        found = table_attempts(tg.Ledger(path))
+        rows = [(i, st) for (i, st) in found if i == args.release]
+        require(len(rows) == 1, "no such attempt in the ledger: " +
+                args.release)
+        row = found[rows[0]]
+        require(not row["decisions"], "this attempt was released already")
+        why = judged_because(rows[0][0], rows[0][1], row)
+        require(why is not None, "a void attempt needs no decision")
+        require(not any(c["status"] in DECISIONS.values()
+                        for c in row["closes"]),
+                "a decided attempt is final: it cannot be released")
+        tg.ledger_append(path, event="decision", table=TABLE,
+                         stage=rows[0][1], attempt=args.release,
+                         decider=args.decider, reason=args.reason)
+    return dict(released=args.release, decider=args.decider,
+                reason=args.reason, was_judged_because=why)
+
+
+def ledger_status(args):
+    """The attempts of the table (those of `--module` when given), for a
+    gate that is blocked, failed or unclosed: no run is replayed."""
+    import timing_grid as tg
+    path = args.ledger or ledger_path(Path(args.repo).resolve(strict=True))
+    require(path.is_file(), "no attempts ledger: %s" % path)
+    table = attempts_table(table_attempts(tg.Ledger(path)))
+    return dict(ledger=str(path), table=[
+        r for r in table if args.module in (None, r["module"])])
 
 
 def close_attempt(path, report, output):
@@ -893,38 +1034,36 @@ def check_ledger(path, report, seal, status, first_attempt):
             "the attempts ledger has no opening of this run")
     row = found[attempt, stage]
     opened = row["opens"][0]
-    tree = report["selections"]["candidate"].get("tree")
-    want = (report["selections"]["candidate"]["revision"], report["module"],
+    chosen = report["selections"]["candidate"]
+    key = inventory_key(chosen["sources"])
+    require(chosen.get("source_key") == key and
+            report["selections"]["baseline"].get("source_key") ==
+            inventory_key(report["selections"]["baseline"]["sources"]),
+            "the report's source key is not that of its sources")
+    want = (chosen["revision"], report["module"],
             report["selections"]["baseline"]["revision"],
-            report["layout_seed"], first_attempt, tree)
-    require(tree is not None and (
-        opened["candidate"], opened["module"], opened["baseline"],
-        opened["seed"], opened["first_attempt"],
-        opened.get("source_tree")) == want,
+            report["layout_seed"], first_attempt, key)
+    require((opened["candidate"], opened["module"], opened["baseline"],
+             opened["seed"], opened["first_attempt"],
+             opened.get("source_key")) == want,
             "the ledger's opening disagrees with this run")
     closes = row["closes"]
     require(len(closes) == 1 and closes[0]["seal"] == seal["sha256"] and
             closes[0]["status"] == status,
             "the ledger's close does not name this loading.json and decision")
-    rows = gate_attempts(found, want[0], tree, want[1], stage)
-    require(judged(rows) == [attempt],
-            "another judged attempt exists for this candidate (or source "
-            "tree), module and stage: " +
-            ", ".join(i for i in judged(rows) if i != attempt))
+    rows = gate_attempts(found, want[0], key, want[1], stage)
+    others = [i for i in judged(rows) if i != attempt]
+    require(not others and attempt in judged(rows),
+            "another judged attempt exists for this candidate (or "
+            "extracted-source key), module and stage; every attempt's "
+            "output must stay at its recorded path, void ones included: " +
+            "; ".join("%s (%s)" % (i, judged_because(
+                i, stage, rows[i]) or "void") for i in others))
     counts = {}
     for st in ("first", "second"):
-        got = gate_attempts(found, want[0], tree, want[1], st)
+        got = gate_attempts(found, want[0], key, want[1], st)
         counts[st] = dict(attempts=len(got), judged=len(judged(got)))
-    # Every attempt of the table, other candidates' included, as the grid's
-    # replay lists them, so that a retry made anywhere in this ledger shows.
-    counts["table"] = [
-        dict(attempt=i, stage=st, candidate=r["opens"][0]["candidate"],
-             source_tree=r["opens"][0].get("source_tree"),
-             module=r["opens"][0]["module"],
-             statuses=[c["status"] for c in r["closes"]] or ["unclosed"],
-             void=is_void(i, st, r), output=r["opens"][0]["output"],
-             checkout=r["opens"][0]["checkout"])
-        for (i, st), r in found.items()]
+    counts["table"] = attempts_table(found)
     places = sorted({r["checkout"] for r in counts["table"]})
     if len(places) > 1:
         counts["checkouts"] = places
@@ -948,10 +1087,13 @@ def run(args, first=None):
             "candidate eight-process --api-audit receipt required")
     repo, output = args.repo.resolve(strict=True), args.output.resolve()
     ledger = None if light else ledger_path(repo)
+    # Before anything is created: a revision without sources is refused here.
+    keys = {side: source_key(repo, getattr(args, side))
+            for side in ("baseline", "candidate")}
     with a.serial_lock(repo) as fds:
         if ledger is not None:
             refuse_second_draw(ledger, args, "first" if first is None
-                               else "second")
+                               else "second", keys["candidate"])
         output.mkdir(parents=True, exist_ok=False)
         report = {"schema": SCHEMA, "success": False,
                   "mode": "smoke" if args.smoke else
@@ -966,7 +1108,7 @@ def run(args, first=None):
                   "timeout": args.timeout, "selections": {}, "runs": [],
                   "argv": sys.argv, "inputs": {}, "tools": {}}
         if ledger is not None:
-            open_attempt(ledger, args, report, first, output, repo)
+            open_attempt(ledger, args, report, first, output, repo, keys)
         try:
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("HOL", "POLY", "ML", "PAIR_",
@@ -1022,6 +1164,9 @@ def run(args, first=None):
                     require(rp.git(repo, "rev-parse", pin + "^{commit}")
                             .decode().strip() == pin, "nonexact revision")
                     inventory = rp.extract(repo, pin, dst)
+                    require(inventory_key(inventory) == keys[side],
+                            "the extracted sources are not those of the "
+                            "source key")
                     sources.update(extracted_seals(inventory, dst))
                     install(dst, args.module)
                     check_seals(sources)
@@ -1030,7 +1175,7 @@ def run(args, first=None):
                         if path.is_file() and str(path) not in sources:
                             sources[str(path)] = a.seal(path)
                     selected = {"revision": pin, "private": str(dst),
-                                "tree": source_tree(repo, pin),
+                                "source_key": keys[side],
                                 "sources": inventory}
                     report["selections"][side] = selected
                     names.update(Path(s["git_path"]).stem for s in inventory)
@@ -1433,8 +1578,18 @@ def main(argv=None):
     parser.add_argument("--first-stage", type=Path, metavar="RUN_DIR",
                         help="with --replay: where the first stage now is")
     parser.add_argument("--ledger", type=Path, metavar="FILE",
-                        help="with --replay: the attempts ledger of the "
-                        "checkout that measured (a copy of it)")
+                        help="with --replay, --ledger-status or --release: "
+                        "the attempts ledger of the checkout that measured "
+                        "(a copy of it, for --replay and --ledger-status)")
+    parser.add_argument("--ledger-status", action="store_true",
+                        help="print the ledger's attempts (of --module "
+                        "when given), void or why judged, without a replay")
+    parser.add_argument("--release", metavar="ATTEMPT",
+                        help="record the policy decision that frees the "
+                        "gate of a judged attempt that decided nothing "
+                        "(needs --decider and --reason)")
+    parser.add_argument("--decider", help="with --release: who decided")
+    parser.add_argument("--reason", help="with --release: why")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--api-audit", type=Path)
     parser.add_argument("--timeout", type=float)
@@ -1455,9 +1610,25 @@ def main(argv=None):
                           args.ledger)
             print(json.dumps(info))
             return 0
-        require(not (given & {"expect_seal", "first_stage", "ledger"}),
+        require(not (args.ledger_status and args.release),
+                "--ledger-status and --release are exclusive")
+        if args.ledger_status or args.release:
+            allowed = {"repo", "ledger", "ledger_status"}
+            allowed |= {"module"} if args.ledger_status else \
+                {"release", "decider", "reason"}
+            others = given - allowed
+            require(not others, "--ledger-status takes only --repo, "
+                    "--ledger and --module; --release only --repo, "
+                    "--ledger, --decider and --reason, not: " +
+                    ", ".join(sorted(others)))
+            args.repo = args.repo or HERE.parents[3]
+            print(json.dumps(ledger_status(args) if args.ledger_status
+                             else release_attempt(args)))
+            return 0
+        require(not (given & {"expect_seal", "first_stage", "ledger",
+                              "decider", "reason"}),
                 "--expect-seal, --first-stage and --ledger belong to "
-                "--replay")
+                "--replay; --decider and --reason to --release")
         args.repo = args.repo or HERE.parents[3]
         args.timeout = args.timeout or 1800
         first = None

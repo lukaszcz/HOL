@@ -582,20 +582,22 @@ class ExtensionAbsenceTests(LoadingProtocol):
 
 class ImportTests(unittest.TestCase):
     CODE = (
-        "import sys\n"
-        "opened = []\n"
+        "import json, os, sys\n"
+        "opened, spawned = [], []\n"
         "def hook(event, args):\n"
-        "    if event == 'open':\n"
-        "        opened.append(str(args[0]))\n"
+        "    if event == 'open' and isinstance(args[0], (str, bytes)):\n"
+        "        opened.append(os.fsdecode(args[0]))\n"
+        "    elif event in ('subprocess.Popen', 'os.posix_spawn',\n"
+        "                   'os.exec', 'os.spawn', 'os.system', 'os.fork',\n"
+        "                   'os.forkpty'):\n"
+        "        spawned.append(event)\n"
         "sys.addaudithook(hook)\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "import loading\n"
-        "print('timing_grid' in sys.modules,\n"
-        "      loading.extension_names.cache_info().currsize)\n"
-        "other = [p for p in opened\n"
-        "         if not p.endswith(('.py', '.pyc'))]\n"
-        "for p in other:\n"
-        "    print(p)\n")
+        "print(json.dumps(dict(\n"
+        "    grid='timing_grid' in sys.modules,\n"
+        "    names=loading.extension_names.cache_info().currsize,\n"
+        "    opened=opened, spawned=spawned)))\n")
 
     def test_importing_loading_runs_no_grid_and_reads_no_audit_file(self):
         # The allocation harness imports this module and lists neither
@@ -604,11 +606,22 @@ class ImportTests(unittest.TestCase):
             [sys.executable, "-I", "-B", "-c", self.CODE, str(HERE)],
             stdin=subprocess.DEVNULL, capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
-        lines = done.stdout.splitlines()
-        self.assertEqual(lines[0].split(), ["False", "0"])
-        # Python sources (and their cached bytecode) are all that importing
-        # opens: no data file, and in particular none of the audit's.
-        self.assertEqual(lines[1:], [])
+        seen = json.loads(done.stdout)
+        self.assertEqual((seen["grid"], seen["names"]), (False, 0))
+        self.assertEqual(seen["spawned"], [])
+        roots = [Path(p).resolve() for p in {
+            sys.prefix, sys.base_prefix, sys.exec_prefix, str(HERE),
+            str(HERE.parent / "compatibility")}]
+        audit = Path(l.AUDIT).resolve()
+        self.assertTrue(seen["opened"])
+        for raw in seen["opened"]:
+            path = Path(raw).resolve()
+            # Only module files of the standard library and the harness: no
+            # data file, and nothing of the audit (audit_constants.py,
+            # run.py, selftest.sml).
+            self.assertIn(path.suffix, (".py", ".pyc"), raw)
+            self.assertFalse(path.is_relative_to(audit), raw)
+            self.assertTrue(any(path.is_relative_to(r) for r in roots), raw)
 
 
 class SemanticGateTests(unittest.TestCase):
