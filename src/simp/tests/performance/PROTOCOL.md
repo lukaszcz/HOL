@@ -2418,8 +2418,8 @@ manifest, tool script or project file of a loaded directory, or a file
 of a name Holmake reads beside its build directories, see "The tree");
 `gate` says what measures the difference. A `candidate_blob` of `null` is
 a placeholder that `identity` refuses (it names the blob git has, to be
-filled at integration); the filled entries that are sources of the timing table are its pins (an
-entry of kind `heap` or `build` is no source of the table and pins nothing).
+filled at integration); the filled entries that are sources of the timing
+table are its pins (an entry of kind `heap` or `build` is no source of the table and pins nothing).
 The file is outside the seals of the counts; every record carries its sha256
 and the entries it was judged by, and `history` maps the sha256 of an
 earlier file to its entries, so that an old grid still replays. A full
