@@ -2474,6 +2474,30 @@ in
     "num assumption transfer did not retain integer bounds:\n" ^ text)
 end
 
+fun num_transfer_duplicate_assumptions_success () =
+let
+  val bound = ``(n:num) <= 1``
+  fun check (assumptions, conclusion) tac =
+  let
+    val thm = Tactical.TAC_PROOF ((assumptions, conclusion),
+      tac THEN intLib.ARITH_TAC)
+  in
+    assert (aconv (concl thm) conclusion,
+      "num transfer with duplicates changed the conclusion");
+    assert (List.all (fn h => op_mem aconv h assumptions) (hyp thm),
+      "num transfer with duplicates introduced an assumption");
+    check_oracle_tags "num transfer with duplicates" thm
+  end
+in
+  List.app (fn assumptions =>
+    check (assumptions, ``(n:num) <= 2``) SmtLib.NUM_TO_INT_TAC)
+    [[T, T, bound], [bound, bound]];
+  List.app
+    (check ([``(n:num) < 256``, ``(n:num) < 2 ** 8``], ``(n:num) <= 256``))
+    [SmtLib.Z3_SIMP_TAC true, SmtLib.Z3_SIMP_TAC false,
+     SmtLib.CVC_SIMP_TAC true, SmtLib.CVC_SIMP_TAC false]
+end
+
 fun num_bridge_axioms_retired_success () =
 let
   val text = transferred_smtlib_text ``(1:int) + 2 = 3``
@@ -28326,6 +28350,8 @@ let
       num_transfer_guarded_num_success),
     ("num_transfer_assumption_free_var_success",
       num_transfer_assumption_free_var_success),
+    ("num_transfer_duplicate_assumptions_success",
+      num_transfer_duplicate_assumptions_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
     ("ceiling_builtin_encoding_success", ceiling_builtin_encoding_success),
