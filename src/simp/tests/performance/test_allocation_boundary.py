@@ -423,10 +423,12 @@ class HarnessFiles(unittest.TestCase):
         self.assertLessEqual(set(fixtures), set(inputs))
 
     def test_every_module_the_driver_imports_is_listed(self):
+        listed = {"allocation_matrix.py"}
+        for task in m.TASKS.values():
+            listed |= {p.name for p in m.harness_files(task)[0]}
         inputs, _ = m.harness_files()
+        self.assertLessEqual(self.imported(), listed)
         listed = {p.name for p in inputs}
-        self.assertLessEqual(self.imported(), listed | {
-            "allocation_matrix.py"})
         for name in ("allocation_boundary.py", "allocation_boundary.json",
                      "allocation_iterations.json", "path_schema.py",
                      "MatrixAllocation.sml", "MatrixSupport.sml",
