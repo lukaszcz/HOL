@@ -59,14 +59,23 @@ Other modes:
 - `--ledger-status`: list the attempts of the ledger (see Attempts
   ledger).
 
-Exit status: 0 for a smoke or calibration run that succeeds, and for a
-decision run only if every gated metric passes. 2 for an inconclusive or
-blocked decision result, and for any run that did not succeed
-(`"success": false`); its reason is printed on stderr. 1 if any gated
-metric fails, and also for a refused run (an argument, ledger or output
-check that stops the run before a report exists). The two cases of 1 differ
-in the output: a measured failure prints the report line on stdout, a
-refusal prints nothing on stdout and its message on stderr.
+Exit status of a run (smoke, calibration, decision or `--extend`): 0 for
+a smoke or calibration run that succeeds, and for a decision run only if
+every gated metric passes. 2 for an inconclusive or blocked decision result,
+and for any run that did not succeed (`"success": false`); its reason is
+printed on stderr. 1 if any gated metric fails. A measured failure prints
+the report line on stdout.
+
+Other exits. A command line that argparse rejects (an unknown option, a bad
+value) exits 2 with its usage message on stderr and nothing on stdout.
+`--replay` and `--ledger-status` exit 0 when they succeed, even if the
+replayed decision is a fail: the decision is the `exit` field of the JSON
+they print. They exit 1 on a refusal or a replay mismatch. A run that exits
+1 with nothing on stdout stopped without a report line. That covers a
+refusal before any report (an argument, ledger or output check), an
+uncaught exception (a traceback), and a failure to save `loading.json` at
+the end of the run. In the last case the decision attempt stays open and
+counts as judged, so no second draw is allowed.
 
 ## Timed boundary and proof check
 

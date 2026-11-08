@@ -2,8 +2,8 @@
 """Non-timing loading protocol regressions; synthetic logs are NOT evidence."""
 import copy
 import gzip
-import io
 import importlib.util
+import io
 import json
 import math
 from pathlib import Path
@@ -810,6 +810,35 @@ class ExitTests(unittest.TestCase):
             self.assertEqual(l.main(argv), 1)
         self.assertEqual(out.getvalue(), "")
         self.assertIn("refused", err.getvalue())
+
+    def test_cli_exits_2_for_a_usage_error_with_empty_stdout(self):
+        for argv in (["--nonsense"], ["--pairs", "x"],
+                     ["--module", "bogus"]):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(argv=argv), patch("sys.stdout", out), \
+                    patch("sys.stderr", err), \
+                    self.assertRaises(SystemExit) as caught:
+                l.main(argv)
+            self.assertEqual(caught.exception.code, 2)
+            self.assertEqual(out.getvalue(), "")
+            self.assertNotEqual(err.getvalue(), "")
+
+    def test_replay_and_ledger_status_exit_0_whatever_the_decision(self):
+        for mode in ("--replay", "--ledger-status"):
+            for info in ({"exit": 1}, {"exit": 2}):
+                out = io.StringIO()
+                name = mode[2:].replace("-", "_")
+                with self.subTest(mode=mode, info=info), \
+                        patch.object(l, name, return_value=info), \
+                        patch("sys.stdout", out):
+                    argv = [mode] + (["/unused"] if mode == "--replay"
+                                     else [])
+                    self.assertEqual(l.main(argv), 0)
+                    self.assertEqual(json.loads(out.getvalue()), info)
+        with patch.object(l, "replay", side_effect=ValueError("no")), \
+                patch("sys.stdout", io.StringIO()), \
+                patch("sys.stderr", io.StringIO()):
+            self.assertEqual(l.main(["--replay", "/unused"]), 1)
 
     def test_cli_requires_inputs_except_for_replay(self):
         self.assertEqual(l.main(["--module", "simpLib"]), 1)

@@ -1231,7 +1231,7 @@ class BuildBinding(unittest.TestCase):
         self.mutation = "discovery-failure"
         report = self.run_protocol()
         self.assertFalse(report["success"])
-        self.assertRegex(report["failure"], r"^[A-Za-z]+: ")
+        self.assertRegex(report["failure"], r"^InvalidRun: ")
 
     def test_a_smoke_never_saves_into_a_directory_it_did_not_make(self):
         foreign = self.repo / "foreign"
