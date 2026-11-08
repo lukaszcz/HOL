@@ -85,7 +85,7 @@ python3 -B src/simp/tests/performance/matrix_schema.py --json
 bin/Holmake --no-project --no-cache --no_prereqs \
   --holstate="$PWD/bin/hol.state0" -C src/simp/tests/performance -j1 \
   PERFORMANCE_CANDIDATE=CANDIDATE_FULL_40_HEX_COMMIT \
-  PERFORMANCE_CHECK_OUTPUT=/absolute/path/to/new-task28-check check
+  PERFORMANCE_CHECK_OUTPUT=/absolute/path/to/new-check-output check
 ```
 
 `python-tests` discovers all performance tests (real HOL tests are skipped
@@ -94,8 +94,10 @@ serially runs discovery, matrix completeness, real Python subprocess controls,
 then `smoke_matrix.py` and `smoke_clients.py --scope small`. It does **not** run
 performance acceptance,
 loading measurements, runtime smoke or expensive full-grid cases implicitly.
-Plain Holmake retains the Python-test default; `diagnostic` retains its original
-six-pair TASK03 settings and separate `PERFORMANCE_OUTPUT` paths.
+Plain Holmake runs the Python tests; `diagnostic` uses six pairs and separate
+`PERFORMANCE_OUTPUT` paths.  The targets that write output depend on a guard
+that refuses an unset, relative or in-repository output directory before
+anything else runs, at any `-j`.
 
 Other explicit targets in `src/simp/tests/performance/Holmakefile`:
 
@@ -157,7 +159,7 @@ From the repository root, with **no other build or benchmark running**:
 bin/Holmake --no-project --no-cache --no_prereqs \
   --holstate="$PWD/bin/hol.state0" \
   -C src/simp/tests/performance -j1 \
-  PERFORMANCE_OUTPUT=/tmp/task03-fresh diagnostic
+  PERFORMANCE_OUTPUT=/tmp/diagnostic-output diagnostic
 ```
 
 The output directory must not exist from an earlier run. This now executes
@@ -312,18 +314,18 @@ python3 -B src/simp/tests/compatibility/run_paired.py \
   --baseline "$BASELINE" --candidate "$BASELINE" \
   --candidate-signature pass --candidate-behavior baseline \
   --traversal-performance --performance-pairs 10 --samples 5 \
-  --batch-seconds 0.25 --timeout 1800 --output /tmp/task11-traverse-control
+  --batch-seconds 0.25 --timeout 1800 --output /tmp/traverse-control
 python3 -B src/simp/tests/compatibility/run_paired.py \
   --baseline "$BASELINE" --candidate "$CANDIDATE" \
   --candidate-signature pass --candidate-behavior baseline \
   --traversal-performance --performance-pairs 10 --samples 5 \
-  --batch-seconds 0.25 --timeout 1800 --output /tmp/task11-traverse-candidate
+  --batch-seconds 0.25 --timeout 1800 --output /tmp/traverse-candidate
 for name in control candidate; do
   python3 -B src/simp/tests/performance/summarize.py \
-    /tmp/task11-traverse-$name --output /tmp/task11-traverse-$name-summary.json
+    /tmp/traverse-$name --output /tmp/traverse-$name-summary.json
 done
 python3 -B src/simp/tests/performance/audit_evidence.py \
-  /tmp/task11-traverse-control /tmp/task11-traverse-candidate
+  /tmp/traverse-control /tmp/traverse-candidate
 ```
 
 This isolates ordinary traversal from the existing `raw_reuse_1000` mixture

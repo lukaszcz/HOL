@@ -1,7 +1,7 @@
 # Machinery/diagnostic isolation only. No final acceptance is implied.
 # Output locations have no default: PERFORMANCE_OUTPUT (diagnostic) and
-# PERFORMANCE_CHECK_OUTPUT (the other targets) must name new directories
-# outside the repository.
+# PERFORMANCE_CHECK_OUTPUT (the other targets) must name a directory outside
+# the repository.
 REQUIRE_OUTPUT = python3 -B ../compatibility/tools/require_output.py
 ifndef PERFORMANCE_BASELINE
 PERFORMANCE_BASELINE = cccaa27d7099cbadc886983020cbe745db7793f3
@@ -12,22 +12,34 @@ endif
 ifndef MATRIX_SMOKE_SCOPE
 MATRIX_SMOKE_SCOPE = small
 endif
-.PHONY: need-check-out need-out python-tests diagnostic check
+.PHONY: need-check-out need-out python-tests check-tests diagnostic-tests
+.PHONY: diagnostic check
 .PHONY: matrix-completeness controls smoke
 .PHONY: runtime-smoke client-smoke profiler-loss-control driver-staging-control
-# These run first: they refuse an unset, empty, relative or in-repository
-# output directory before any test or measurement starts.
+PY_TESTS = PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s . -p 'test*.py' && \
+  PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
+  -s ../compatibility -p test_runner.py
+
+# A bare Holmake runs the Python tests.
+python-tests:
+	$(PY_TESTS)
+
+# Every target that writes output depends on a guard that refuses an unset,
+# empty, relative or in-repository output directory, so the guard runs before
+# any test or measurement at any -j.  check and diagnostic run the tests only
+# after their guard.
 need-check-out:
 	$(REQUIRE_OUTPUT) "$(PERFORMANCE_CHECK_OUTPUT)" PERFORMANCE_CHECK_OUTPUT
 
 need-out:
 	$(REQUIRE_OUTPUT) "$(PERFORMANCE_OUTPUT)" PERFORMANCE_OUTPUT
 
-python-tests:
-	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
-	  -s . -p 'test*.py'
-	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
-	  -s ../compatibility -p test_runner.py
+check-tests: need-check-out
+	$(PY_TESTS)
+
+diagnostic-tests: need-out
+	$(PY_TESTS)
 
 matrix-completeness:
 	python3 -B matrix_schema.py
@@ -70,7 +82,7 @@ profiler-loss-control: need-check-out
 
 # Keep real controls before smoke even with a parallel caller. No acceptance
 # run, loading experiment or costly full-grid/10000 AC pass is implicit.
-check: need-check-out python-tests
+check: check-tests
 	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs \
 	  -C . -j1 driver-staging-control
 	python3 -B matrix_schema.py
@@ -86,16 +98,16 @@ check: need-check-out python-tests
 
 # One recipe keeps baseline variability before reviewed observations even
 # when invoked by a parallel caller. Never benchmark alongside other builds.
-diagnostic: need-out python-tests
+diagnostic: diagnostic-tests
 	python3 -B ../compatibility/run_paired.py \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
 	  --candidate-signature pass --candidate-behavior baseline \
 	  --negative-controls --performance-pairs 6 --samples 5 \
-	  --batch-seconds 0.25 --output $(PERFORMANCE_OUTPUT)/baseline-control
-	python3 -B summarize.py $(PERFORMANCE_OUTPUT)/baseline-control \
-	  --output $(PERFORMANCE_OUTPUT)/baseline-summary.json
+	  --batch-seconds 0.25 --output "$(PERFORMANCE_OUTPUT)"/baseline-control
+	python3 -B summarize.py "$(PERFORMANCE_OUTPUT)"/baseline-control \
+	  --output "$(PERFORMANCE_OUTPUT)"/baseline-summary.json
 	python3 -B ../compatibility/run_paired.py --negative-controls \
 	  --performance-pairs 6 --samples 5 --batch-seconds 0.25 \
-	  --output $(PERFORMANCE_OUTPUT)/reviewed
-	python3 -B summarize.py $(PERFORMANCE_OUTPUT)/reviewed \
-	  --output $(PERFORMANCE_OUTPUT)/reviewed-summary.json
+	  --output "$(PERFORMANCE_OUTPUT)"/reviewed
+	python3 -B summarize.py "$(PERFORMANCE_OUTPUT)"/reviewed \
+	  --output "$(PERFORMANCE_OUTPUT)"/reviewed-summary.json
