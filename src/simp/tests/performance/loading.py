@@ -23,7 +23,19 @@ sys.path.insert(0, str(HERE.parent / "compatibility"))
 import acceptance as a
 import performance_schema as ps
 import run_paired as rp
-import timing_grid as tg
+
+
+class _Grid:
+    """`timing_grid`, imported on first use: `allocation_matrix` imports this
+    module, and the allocation harness does not list timing_grid.py among
+    its inputs, so it must not become a module-level import here."""
+
+    def __getattr__(self, name):
+        import timing_grid
+        return getattr(timing_grid, name)
+
+
+tg = _Grid()
 
 
 def require(ok, message):
