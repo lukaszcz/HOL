@@ -195,23 +195,41 @@ and the draws are recorded in the timing grid's attempts ledger
 below the root of the checkout, which git must ignore (the run refuses
 otherwise). The run appends an `open` line before its first process, with
 the stage (`first`, `second`), a fresh attempt id, the candidate, module,
-baseline and layout seed (for a second stage, the attempt id of its first
-stage), and after the run a `close` line with the seal of its
+baseline and layout seed, `source_tree` (the id of the candidate's
+`src/simp/src` tree), `baseline_tree` and, for a second stage, the attempt id
+of its first stage; and after the run a `close` line with the seal of its
 `loading.json` (the value `--expect-seal` takes) and its status: `pass`,
-`fail` or `inconclusive`, or `failed` for a run that decided nothing
-(`success` false). The rules:
+`fail` or `inconclusive` for a decision; `blocked` for a run stopped by a
+finding about the candidate (an extension or a new stem loaded by one of its
+processes); `failed` for any other run with `success` false. The rules:
 
-- for one candidate and module, a first stage is refused when the ledger
-  holds a judged first-stage attempt, and an `--extend` when it holds a
+- for one module, a first stage is refused when the ledger holds a judged
+  first-stage attempt of the same candidate commit or of the same
+  `source_tree` (whatever the commit), and an `--extend` when it holds a
   judged second-stage attempt, so there is at most one `--extend` per first
   stage;
-- a judged attempt is any but a `failed` one; an attempt that was opened
-  and never closed (a crash, a kill) is judged;
-- a `failed` run may be rerun, and stays in the ledger;
+- an attempt is void only when all of these hold: it has exactly one close
+  line; the `loading.json` in its output exists and has the seal of that
+  close line, the attempt's id and stage, and `success` false; the close
+  status is `failed`; and no control or candidate process was admitted
+  (accepted) in it. Every other attempt, closed or not, is judged: a pass,
+  fail, inconclusive or `blocked` close, a `failed` close that admitted a
+  measured process or whose output is missing or differs from its seal, and
+  an attempt opened and never closed (a crash, a kill);
+- a void attempt may be redrawn, and stays in the ledger;
+- a judged attempt that has no decision (killed, interrupted, failed after
+  measuring, blocked) leaves the gate blocked for that candidate, source
+  tree and module: a new draw needs a policy decision;
+- an attempt with more than one close line, or without exactly one opening,
+  is a corrupt ledger, refused both for a new run and in replay;
 - `--extend` replays its first stage against the ledger before it runs;
-- the ledger is a discipline and not a proof: a deleted ledger cannot be
-  detected, so the handoff publishes the whole ledger, `failed` attempts
-  included.
+- `--replay` checks the run against the ledger and prints every attempt of
+  the table (id, stage, candidate, source tree, module, statuses, void or
+  judged, output and checkout), and the checkouts when there are several;
+- the ledger is a discipline and not a proof: a deleted ledger, or a ledger
+  of another checkout, cannot be detected, so the handoff publishes the
+  whole ledger, `failed` attempts included, and any earlier judged line for
+  the same tree blocks a redraw.
 
 ## Extension absence
 

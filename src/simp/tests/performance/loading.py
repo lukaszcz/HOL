@@ -284,9 +284,9 @@ def validate(receipt, *, side, dst, repo, names, sources, module,
     events = rp.parse_events(receipt["stdout"])
     obs, measurement = observations(events, module)
     measurement["extension_absence_enforced"] = bool(enforce_absence)
-    require(not (enforce_absence and measurement["extensions_loaded"]),
-            "extension module loaded by an ordinary import: " +
-            ",".join(measurement["extensions_loaded"]))
+    if enforce_absence and measurement["extensions_loaded"]:
+        raise Blocked("extension module loaded by an ordinary import: " +
+                      ",".join(measurement["extensions_loaded"]))
     contract = {"target": "selftest", "modules": list(MODULES)
                 if module == "congLib" else ["simpLib"],
                 "signatures": [], "observations": obs, "red": False,
@@ -582,6 +582,8 @@ def check_seed(seed):
     """A seed that every process of a run can use: `layout_units` appends
     the longest suffix, "-pilot", before the schema's length limit."""
     require(isinstance(seed, str), "layout seed must be a string")
+    require(len(seed) <= 58, "layout seed: at most 58 characters (the "
+            "longest suffix, \"-pilot\", is appended to it)")
     ps.layout_seed(seed + "-pilot")
 
 
@@ -602,12 +604,18 @@ def expected_runs(pairs, reps, calibrate):
     return order
 
 
+class Blocked(ValueError):
+    """A finding about the candidate: an extension or a new stem was loaded
+    by one of its processes. The attempt closes `blocked`."""
+
+
 def check_stems(stems, base):
     """What a candidate process loads, minus what the baseline processes
     load, is empty or reviewed: the name-independent extension rule."""
     extra = set(stems) - base - STEM_ALLOWANCE
-    require(not extra, "candidate loaded what no baseline process loaded: " +
-            ",".join(sorted(extra)))
+    if extra:
+        raise Blocked("candidate loaded what no baseline process loaded: " +
+                      ",".join(sorted(extra)))
 
 
 def check_new_stems(rows):
@@ -727,8 +735,10 @@ def check_settings(args, first):
 # the first process and close it with the seal of their `loading.json` and
 # the decision.
 TABLE = "task31-loading"
-FAILED = "failed"  # the status of a run that decided nothing (success false)
+FAILED = "failed"  # a run that decided nothing (success false)
+BLOCKED = "blocked"  # a finding about the candidate: judged, never void
 DECISIONS = {0: "pass", 1: "fail", 2: "inconclusive"}
+TREE_PATH = "src/simp/src"  # the tree that `rp.extract` takes the sources of
 
 
 def ledger_path(repo):
@@ -738,26 +748,78 @@ def ledger_path(repo):
             "attempts.jsonl")
 
 
-def gate_attempts(state, candidate, module, stage):
-    """attempt id -> its ledger row, for the table's attempts of this
-    candidate and module at `stage`."""
-    rows = state.attempts(TABLE)
-    return {r["attempt"]: rows[r["attempt"], stage] for r in state.records
-            if r["event"] == "open" and r.get("table") == TABLE and
-            (r["candidate"], r["module"], r["stage"]) ==
-            (candidate, module, stage)}
+def source_tree(repo, revision):
+    """The id of the git tree the sources of `revision` are extracted from:
+    the same for every commit with those sources, whatever its message."""
+    try:
+        return rp.git(repo, "rev-parse", "%s:%s" % (revision, TREE_PATH)
+                      ).decode().strip()
+    except subprocess.SubprocessError as error:
+        raise ValueError("no %s in %s: %s" % (TREE_PATH, revision, error))
+
+
+def table_attempts(state):
+    """(attempt, stage) -> its `open` and `close` lines, for every attempt of
+    the table. An attempt has exactly one opening and at most one close;
+    anything else is a corrupt ledger."""
+    found = {}
+    for record in state.records:
+        if record.get("table") == TABLE and \
+                record["event"] in ("open", "close"):
+            row = found.setdefault((record["attempt"], record["stage"]),
+                                   dict(opens=[], closes=[]))
+            row[record["event"] + "s"].append(record)
+    for (attempt, stage), row in found.items():
+        require(len(row["opens"]) == 1 and len(row["closes"]) <= 1,
+                "corrupt attempts ledger: attempt %s (%s stage) has %d "
+                "opening and %d close lines" % (
+                    attempt, stage, len(row["opens"]), len(row["closes"])))
+    return found
+
+
+def is_void(attempt, stage, row):
+    """An attempt that measured and decided nothing, shown from its own
+    output: exactly one close, with status `failed`, whose output holds a
+    `loading.json` of that seal, of this attempt, with `success` false and
+    no control or candidate process admitted. Every other attempt, closed
+    or not, is judged."""
+    if len(row["closes"]) != 1 or row["closes"][0]["status"] != FAILED:
+        return False
+    close = row["closes"][0]
+    try:
+        path = Path(close["output"]) / "loading.json"
+        if close["output"] != row["opens"][0]["output"] or \
+                a.seal(path)["sha256"] != close["seal"]:
+            return False
+        report = a.load(path)
+        return (report["attempt"] == attempt and report["stage"] == stage and
+                report["success"] is False and
+                not any(r["accepted"] for r in report["runs"]
+                        if r["phase"] in ("control", "candidate")))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def gate_attempts(found, candidate, tree, module, stage):
+    """attempt id -> its lines, for the table's attempts at `stage` of this
+    module and of this candidate commit or this source tree."""
+    return {i: row for (i, st), row in found.items()
+            if st == stage and row["opens"][0]["module"] == module and
+            (row["opens"][0]["candidate"] == candidate or
+             (tree is not None and
+              row["opens"][0].get("source_tree") == tree))}
 
 
 def judged(rows):
-    """The attempts that count as the draw: all but the runs that decided
-    nothing. An attempt with no close (a crash, a kill) counts."""
+    """The attempts that count as the draw: all but the void ones."""
     return sorted(i for i, row in rows.items()
-                  if row["statuses"][-1] != FAILED)
+                  if not is_void(i, row["opens"][0]["stage"], row))
 
 
 def refuse_second_draw(path, args, stage):
     """Under the serial lock, before anything is created: the gate (this
-    candidate and module) has no judged attempt at this stage yet."""
+    module, and this candidate commit or source tree) has no judged attempt
+    at this stage yet."""
     import timing_grid as tg
     inside = path.resolve().is_relative_to(Path(args.repo).resolve())
     if inside:
@@ -769,11 +831,13 @@ def refuse_second_draw(path, args, stage):
                 "`git rev-parse --git-path info/exclude` names: %s" % path)
     if not path.exists():
         return
-    found = judged(gate_attempts(tg.Ledger(path), args.candidate, args.module,
-                                 stage))
-    require(not found, "the %s stage of this candidate and module has a "
-            "judged attempt already (%s): a rerun is allowed only after a "
-            "run that decided nothing%s" % (
+    tree = source_tree(args.repo, args.candidate)
+    found = judged(gate_attempts(table_attempts(tg.Ledger(path)),
+                                 args.candidate, tree, args.module, stage))
+    require(not found, "the %s stage of this candidate (or source tree) and "
+            "module has a judged attempt already (%s): only a run that "
+            "decided nothing and admitted no measurement is void, and any "
+            "other new draw needs a policy decision%s" % (
                 stage, ", ".join(found), "" if stage == "first" else
                 "; at most one --extend per first stage"))
 
@@ -787,6 +851,8 @@ def open_attempt(path, args, report, first, output, repo):
         path, event="open", stage=report["stage"], table=TABLE,
         attempt=attempt, candidate=args.candidate, module=args.module,
         baseline=args.baseline, seed=args.layout_seed,
+        source_tree=source_tree(repo, args.candidate),
+        baseline_tree=source_tree(repo, args.baseline),
         first_attempt=None if first is None else first["report"]["attempt"],
         output=str(output), checkout=str(repo))
     report["attempt"] = attempt
@@ -798,7 +864,7 @@ def close_attempt(path, report, output):
     import timing_grid as tg
     try:
         seal = a.seal(output / "loading.json")
-        status = FAILED
+        status = BLOCKED if report.get("blocked") else FAILED
         if report["success"]:
             status = DECISIONS[exit_status(
                 report["results"]["candidate"]["metrics"])]
@@ -815,38 +881,53 @@ def close_attempt(path, report, output):
 def check_ledger(path, report, seal, status, first_attempt):
     """Replay: this run is the recorded attempt of its stage, closed with
     this seal and decision, and no other judged attempt exists for the same
-    gate. Returns the counts of the gate's attempts."""
+    gate. Returns the counts of the gate's attempts and every attempt of the
+    table."""
     import timing_grid as tg
     path = Path(path)
     require(path.is_file(), "no attempts ledger: %s" % path)
     state = tg.Ledger(path)
+    found = table_attempts(state)
     attempt, stage = report.get("attempt"), report["stage"]
-    opened = [r for r in state.records if r["event"] == "open" and
-              r.get("table") == TABLE and r["attempt"] == attempt and
-              r["stage"] == stage]
-    require(len(opened) == 1,
+    require((attempt, stage) in found,
             "the attempts ledger has no opening of this run")
+    row = found[attempt, stage]
+    opened = row["opens"][0]
+    tree = report["selections"]["candidate"].get("tree")
     want = (report["selections"]["candidate"]["revision"], report["module"],
             report["selections"]["baseline"]["revision"],
-            report["layout_seed"], first_attempt)
-    require((opened[0]["candidate"], opened[0]["module"],
-             opened[0]["baseline"], opened[0]["seed"],
-             opened[0]["first_attempt"]) == want,
+            report["layout_seed"], first_attempt, tree)
+    require(tree is not None and (
+        opened["candidate"], opened["module"], opened["baseline"],
+        opened["seed"], opened["first_attempt"],
+        opened.get("source_tree")) == want,
             "the ledger's opening disagrees with this run")
-    closes = [r for r in state.records if r["event"] == "close" and
-              r.get("table") == TABLE and r["attempt"] == attempt and
-              r["stage"] == stage]
-    require(closes and closes[-1]["seal"] == seal["sha256"] and
-            closes[-1]["status"] == status,
+    closes = row["closes"]
+    require(len(closes) == 1 and closes[0]["seal"] == seal["sha256"] and
+            closes[0]["status"] == status,
             "the ledger's close does not name this loading.json and decision")
-    rows = gate_attempts(state, want[0], want[1], stage)
+    rows = gate_attempts(found, want[0], tree, want[1], stage)
     require(judged(rows) == [attempt],
-            "another judged attempt exists for this candidate, module and "
-            "stage: " + ", ".join(i for i in judged(rows) if i != attempt))
+            "another judged attempt exists for this candidate (or source "
+            "tree), module and stage: " +
+            ", ".join(i for i in judged(rows) if i != attempt))
     counts = {}
     for st in ("first", "second"):
-        found = gate_attempts(state, want[0], want[1], st)
-        counts[st] = dict(attempts=len(found), judged=len(judged(found)))
+        got = gate_attempts(found, want[0], tree, want[1], st)
+        counts[st] = dict(attempts=len(got), judged=len(judged(got)))
+    # Every attempt of the table, other candidates' included, as the grid's
+    # replay lists them, so that a retry made anywhere in this ledger shows.
+    counts["table"] = [
+        dict(attempt=i, stage=st, candidate=r["opens"][0]["candidate"],
+             source_tree=r["opens"][0].get("source_tree"),
+             module=r["opens"][0]["module"],
+             statuses=[c["status"] for c in r["closes"]] or ["unclosed"],
+             void=is_void(i, st, r), output=r["opens"][0]["output"],
+             checkout=r["opens"][0]["checkout"])
+        for (i, st), r in found.items()]
+    places = sorted({r["checkout"] for r in counts["table"]})
+    if len(places) > 1:
+        counts["checkouts"] = places
     return counts
 
 
@@ -949,6 +1030,7 @@ def run(args, first=None):
                         if path.is_file() and str(path) not in sources:
                             sources[str(path)] = a.seal(path)
                     selected = {"revision": pin, "private": str(dst),
+                                "tree": source_tree(repo, pin),
                                 "sources": inventory}
                     report["selections"][side] = selected
                     names.update(Path(s["git_path"]).stem for s in inventory)
@@ -1041,6 +1123,9 @@ def run(args, first=None):
                                         base_stems)
                     except (ValueError, OSError) as error:
                         receipt["rejection"] = str(error)
+                        if isinstance(error, Blocked):
+                            report["blocked"] = str(error)
+                            receipt["accepted"] = False
                     label = "%s-%03d-%s-%02d" % (phase, pair, side, rep)
                     evidence = archive(output, label, receipt)
                     report["runs"].append(dict(evidence, phase=phase,
@@ -1101,6 +1186,8 @@ def run(args, first=None):
         except (ValueError, OSError, KeyError, IndexError, TypeError,
                 subprocess.SubprocessError) as error:
             report["failure"] = str(error)
+            if isinstance(error, Blocked):
+                report["blocked"] = str(error)
         finally:
             a.save(output / "loading.json", report)
         if ledger is not None:

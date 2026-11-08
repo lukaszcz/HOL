@@ -583,10 +583,19 @@ class ExtensionAbsenceTests(LoadingProtocol):
 class ImportTests(unittest.TestCase):
     CODE = (
         "import sys\n"
+        "opened = []\n"
+        "def hook(event, args):\n"
+        "    if event == 'open':\n"
+        "        opened.append(str(args[0]))\n"
+        "sys.addaudithook(hook)\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "import loading\n"
         "print('timing_grid' in sys.modules,\n"
-        "      loading.extension_names.cache_info().currsize)\n")
+        "      loading.extension_names.cache_info().currsize)\n"
+        "other = [p for p in opened\n"
+        "         if not p.endswith(('.py', '.pyc'))]\n"
+        "for p in other:\n"
+        "    print(p)\n")
 
     def test_importing_loading_runs_no_grid_and_reads_no_audit_file(self):
         # The allocation harness imports this module and lists neither
@@ -595,7 +604,11 @@ class ImportTests(unittest.TestCase):
             [sys.executable, "-I", "-B", "-c", self.CODE, str(HERE)],
             stdin=subprocess.DEVNULL, capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.split(), ["False", "0"])
+        lines = done.stdout.splitlines()
+        self.assertEqual(lines[0].split(), ["False", "0"])
+        # Python sources (and their cached bytecode) are all that importing
+        # opens: no data file, and in particular none of the audit's.
+        self.assertEqual(lines[1:], [])
 
 
 class SemanticGateTests(unittest.TestCase):
@@ -675,6 +688,34 @@ class SemanticGateTests(unittest.TestCase):
             case["checks"] -= 6
         with self.assertRaisesRegex(ValueError, "failed semantic process"):
             self.check()
+
+    def test_two_trees_constants_stay_distinct_in_one_process(self):
+        text = (l.AUDIT / "audit_constants.py").read_text()
+        changed = text.replace('"SimpTracking", ', "")
+        self.assertNotEqual(changed, text)
+        before = (list(sys.path), set(sys.modules))
+        runs = []
+        for number, constants in enumerate((text, changed)):
+            audit = self.root / ("tree%d/src/simp/tests/api-audit" % number)
+            audit.mkdir(parents=True)
+            (audit / "audit_constants.py").write_text(constants)
+            shutil.copyfile(l.AUDIT / "run.py", audit / "run.py")
+            spec = importlib.util.spec_from_file_location(
+                "audit_run_tree%d" % number, audit / "run.py")
+            run = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(run)
+            runs.append(run)
+        self.assertIn("SimpTracking", runs[0].NATIVE_MODULES)
+        self.assertNotIn("SimpTracking", runs[1].NATIVE_MODULES)
+        self.assertEqual(runs[1].NATIVE_MODULES,
+                         l.audit_constants(
+                             self.root / "tree1/src/simp/tests/api-audit"
+                         ).NATIVE_MODULES)
+        # No path or bare-name module entry is left behind.
+        self.assertEqual(sys.path, before[0])
+        self.assertNotIn("audit_constants", sys.modules)
+        self.assertEqual({n for n in set(sys.modules) - before[1]
+                          if "audit_run_tree" not in n}, set())
 
     def test_audit_run_py_validates_with_the_same_constants(self):
         spec = importlib.util.spec_from_file_location(

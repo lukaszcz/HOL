@@ -3,6 +3,7 @@
 import datetime
 import gzip
 import hashlib
+import importlib.util
 import itertools
 import json
 import os
@@ -14,10 +15,15 @@ import sys
 import uuid
 
 HERE = Path(__file__).resolve().parent
-# The constants module sits beside this file: importable however this file
-# is loaded (by path, as the tests do, or run as a script).
-sys.path.insert(0, str(HERE))
-from audit_constants import CASE_CHECKS, NATIVE_MODULES, SOURCES
+# The constants module sits beside this file. It is loaded by path under a
+# private name, so that this file works however it is loaded and leaves no
+# sys.path or sys.modules entry behind.
+_spec = importlib.util.spec_from_file_location(
+    "api_audit_constants", HERE / "audit_constants.py")
+_constants = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_constants)
+CASE_CHECKS, NATIVE_MODULES, SOURCES = (
+    _constants.CASE_CHECKS, _constants.NATIVE_MODULES, _constants.SOURCES)
 
 ROOT = HERE.parents[3]
 # Children never read the caller's standard input (an open pipe that is
