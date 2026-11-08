@@ -2227,8 +2227,6 @@ local
         (fn (theorem, accumulated) =>
           collect (Thm.concl theorem) accumulated)
         (collect target []) prems
-      val _ = List.null atoms andalso
-        raise ERR "prove_from_prems_abstracting" "no selected atoms"
       val replacements = List.map
         (fn atom => (Term.genvar (Term.type_of atom), atom)) atoms
       val abstraction = List.map
