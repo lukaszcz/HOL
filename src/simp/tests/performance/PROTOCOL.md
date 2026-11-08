@@ -2184,6 +2184,201 @@ actual successful exits and exact kernel proofs are checked. See
 [`PROTOCOL_LOADING.md`](PROTOCOL_LOADING.md). Listing this executable external
 gate does not claim a fresh run or independent loading acceptance.
 
+## Ordinary startup allocation gate (TASK31)
+
+`startup_gate.py` (client `StartupGate.sml`, `StartupGateUse.sml`, unit
+tests `test_startup_gate.py`) measures, in exact words of the TASK29B private
+runtime counter (all fields: total, native, rts, interpreter, code, and
+heap = total - code), what an ordinary process pays before and when it first
+uses the simplifier. One fresh process measures one kind:
+
+  - `hol-startup`: `hol` on `hol.state`, the absolute counter at the first
+    user code (a minimal prologue: FFI setup and one snapshot);
+  - `hol-first-use`: the first and second `SIMP_CONV` / `SIMP_TAC` call
+    (`pure_ss`, `AND_CLAUSES`) on `hol.state`;
+  - `load-simpLib`, `load-congLib`: from `hol.state0`, a fresh
+    `load "simpLib"` (then `load "pureSimps"`, then the same calls) and a
+    fresh `load "congLib"`;
+  - `files-simpLib`, `files-congLib`: the same loads with a bracket around
+    every `use` the loader makes (`Meta.loadPlan`), for attribution to
+    files. They take part in the decision (R2, R3).
+
+Every bracket is the TASK29B one (counter read from C storage after the
+bracket; nothing is decoded or printed inside it). An `empty` bracket is
+recorded in every process. The words of a load that no file bracket covers
+are the loader gap: the load brackets minus the sum of the file brackets of
+the same image and sources.
+
+### Trees and images
+
+`startup_gate.py build` repeats the `bootstrap_probe.build_native_hol`
+procedure: one native Poly/ML, the private runtime and shim, and then one
+fresh `git clone --shared` per tree (`label=rev[+mktool]`):
+`poly-includes.ML`, `smart-configure`, then `bin/build --no-cache -jN
+--seq=tools/sequences/upto-parallel` with an `env -i`-style environment
+(PATH, HOME=/nonexistent, TERM=dumb, LC_ALL=C, TZ=UTC, CONFIG_SITE=/dev/null,
+CC, CXX, HOLDIR). Everything is recorded in `lineage.json`. The develop
+`mktool` fix is applied to a baseline that lacks it (`+mktool`) as one
+counted text replacement in a private tree (`useB "theoryfiles"` before
+`useB "theorystats"` in `src/portableML/rawtheory/mktool.ML`), build tooling
+that no client loads; the lineage records the seal of the resulting diff.
+
+Independent clean builds are separate images: the exported `hol.state0` and
+`hol.state` of two builds of one revision are not byte-identical, so an
+image is a unit of the experiment. The optional edits of a private tree that
+aim at identical exports (`GATE_BUILD_DETERMINISTIC=1`: one GC thread for
+`buildheap`, full collections before the export, `setarch -R`) are off
+unless set; they touch the private tree only and are recorded in the lineage
+(`hol_build_deterministic`, `hol_determinism_diff`, `hol_polyc_seal`).
+
+### Source exchange over a fixed image
+
+`Overlay` writes, before each process, the files of `src/simp/src` (sources
+and `.ui`/`.uo` load plans) in which the first baseline image and the first
+candidate image differ into the tree that the process uses, so that baseline
+and candidate simplifier sources are compiled over the same image and the
+same `HOLDIR`. Every image must hold the sources of its own side first; the
+trees are restored at the end. A file that only one side has is written for
+that side and removed for the other, so its bracket is measured: R2 takes
+its whole bracket as its delta (negative for a baseline-only file), and it
+needs a declaration like any other. The blobs of every exchanged file and of
+every file the declaration names are recorded in `header.json`.
+
+The source-compiling kinds (`load-*`, `files-*`) first reset the four
+readings of `Globals.hol_clock`, the CPU timer that every image stores,
+to constants, after the `startup` record and outside every bracket: the
+words that compiling `Trace.sml` costs depend on those stored readings,
+which differ from image to image. The `hol-*` kinds leave the image as it
+is. The absolute figures of the source-compiling kinds are therefore under
+that reset and are not client figures (only their deltas are); `gate`
+refuses to run, and `replay` refuses an archive, when an exchanged or
+declared file mentions `hol_clock` or `checkCPUTimer`, since a reset could
+hide a difference that goes through the timer.
+
+### Decision
+
+`startup_gate.py gate --base L1 L2 ... --candidate M1 M2 ...` runs, per
+kind, `--pairs` (10) rounds in AB/BA order over every image and both source
+variants. With at least two images per side and ten pairs:
+
+  - R1 (image content). `hol-startup`, `hol-first-use` and the `startup` /
+    `empty` brackets of every `hol.state0` process are identical on every
+    image of both sides, in every field.
+  - R2 (sources, image fixed). On every image, candidate sources minus
+    baseline sources: the bracket of every file that is not declared is
+    exactly 0; each declared file's delta is exact and the same on every
+    image; the per-file deltas plus the loader gap equal the load delta,
+    with the loader gap exactly 0; every other bracket (the post-load
+    `SIMP_*` calls) is exactly 0. A declared entry that measures 0 fails.
+    This holds for `load-simpLib` and `load-congLib` alike.
+  - R3 (image content, sources fixed). With the baseline sources, every
+    bracket is identical across all images of both sides except the files of
+    the declared noise set. Such a file must be byte-identical between the
+    sides, must have an R2 delta of exactly 0 and must name a mechanism;
+    a noise file without a mechanism makes the decision `blocked`.
+  - Every process of a cell gives the same record; the foreign-thread
+    counters read 0,0; the simplifier results are correct.
+  - A module, structure or registered file that the candidate images or
+    sources load and the baseline never does fails, unless `candidate_only`
+    declares it. Names ending in `Ext` and the extension modules are only a
+    label.
+  - A file that only the candidate compiles needs both declarations: an
+    `entries` item (null baseline blob) pays for its words in R2, and
+    `candidate_only` entries (`module X`, `file X`) allow it in the
+    extension rule. Neither implies the other.
+
+Decisions: `pass` (all rules hold, nothing declared carries words),
+`attributed` (all rules hold and the declared files carry exact words; it
+needs the sha256 of the not-client-visible record, `--record`), `blocked`
+(a noise file has no mechanism), `smoke` (fewer than two images per side or
+fewer than ten pairs; never a pass) and `fail` (with every reason). There is
+no tolerance, subtraction, envelope or outlier removal. `--null` runs the
+same rules for two sets of baseline images (the sides must have the same
+revision and patch); declared entries are ignored there.
+
+`gate` refuses a setup with repeated image labels, HOLDIR lengths that
+differ, more than one revision or patch on a side, or different build flags
+between images.
+
+### Declaration
+
+`startup_gate_declared.json` (reviewed data, never the command line, copied
+into `header.json` with its sha256) holds:
+
+  - `entries`: a repository path, the exact baseline and candidate blob
+    (`null` for the side that lacks the file), the load kinds the file may
+    affect, a reason and a mechanism. A different
+    blob makes the file undeclared. An entry whose source is byte-identical
+    on both sides is allowed only because R2 measures a non-zero exact delta
+    on it, and its mechanism says why (signature matching, `open`);
+  - `noise`: a path, its blob, a reason and a mechanism or `null`;
+  - `candidate_only`: `module X` / `structure X` / `file X` names that the
+    candidate alone may load.
+
+A `mechanism` may be a list of lines, joined with spaces. It states the
+cause only; measured figures belong to the sealed record and the archive.
+
+### Archive and replay
+
+`gate` writes `records.json.gz` (one record per process), `header.json`
+(images and their seals, revisions, patch seals, determinism flags, HOLDIR
+and TMPDIR lengths, the lineage sha256, the runtime and shim seals, the
+controls receipt, the harness blobs, the declaration text and sha256, the
+exchanged blobs, the not-client-visible record sha256), `decisions.json`,
+`RESULTS.md` and `receipt.json` (the sha256 of each). The header carries a
+schema version (v4); `replay` refuses an archive of another version,
+naming it.
+`replay --output DIR` checks the receipt and the declaration seal and
+recomputes `decisions.json` and `RESULTS.md` from the records alone. An
+archive sealed to a not-client-visible record is replayed only with
+`--record` of that record.
+
+The `load-*` kinds end with one unbracketed reading of the heap after three
+full collections (`sizeHeap`, `sizeHeapFreeLastFullGC`, `sizeAllocation`,
+`sizeAllocationFree`, all in bytes; `sizeHeap` includes the allocation area).
+The reading is refused unless `sizeAllocationFree` equals `sizeAllocation`:
+the formula below is exact only when the allocation area is the fresh one
+that the collections leave, not a surviving allocation space.
+`RESULTS.md` and `decisions.json` give, per image and kind, the live words
+`(sizeHeap - sizeHeapFreeLastFullGC - sizeAllocation) / 8` of each variant
+and the candidate-minus-baseline difference of the smallest and of the
+largest reading, with the allocation-area sizes seen and `comparable`
+(false when more than one allocation-area size is seen in the cell,
+in either variant or across the two; the difference is then not
+comparable).  Live words are live data of the local heap.  Compiled code
+lives in code spaces, outside `sizeHeap`, so it is not in the figure: the
+standalone `note_rewrite` code object is not counted, and a near-zero live
+difference says nothing about whether it is retained.  The reading is
+measured and sealed in the archive, and is no decision input.
+
+`cell` repeats the TASK29B startup bracket of two revisions under chosen
+path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
+TASK29B startup delta depends on the image and on path lengths. Every line
+names its tree; `--fixtures-rev` takes the paired and matrix fixtures from a
+past revision, which a past run carried (that revision's own
+`run_paired.py` installs them). `--tmpdir-length N` pads `--tmpdir`, resolved,
+with `x` to exactly N characters; the private directories live under it.
+
+`who_pays.py HOLDIR` counts, on a built tree, the executables of the build
+sequence that run over `hol.state0` and whose real dependency closure holds
+simpLib: for a plain build (scripts, the `selftest.exe` that `all` links,
+src/simp/src's own selftest, numheap builds) and what `-t` adds (the `!`
+directories). It exits 2 listing any module it cannot resolve, any dangling
+`sigobj` link and any payer whose heap is not pinned. Its structural
+assumptions are checked, each exiting 2 with a message when it fails: `all`
+links `selftest.exe` (read from an unconditional `all:` rule) in every
+non-`!` directory whose selftest reaches simpLib; no theory script of
+src/simp/src reaches simpLib; no directory after src/boss runs over
+`hol.state0`. The `selftest.exe` links of the `!` directories are counted
+without the `all:` check: every `selftest.sml` there that reaches simpLib
+counts as a link. That holds today because both such directories link it
+(src/simp/tests/native-extension directly, cv_compute/soundness_check through
+its `.log` target); a new `!` directory that does not link it would be
+over-counted. The allowlist `NOT_MODULES` (basis and qualified names that
+are no module) is minimal, and a name on it that is also a module of the
+directory is refused. `congLib_plain` and `congLib_tflag` split the congLib
+payers by build mode.
+
 ## Matrix boundaries and final evidence
 
 [`MATRIX.md`](MATRIX.md) and the frozen schema cover **69 requirements and 107
