@@ -320,6 +320,12 @@ in
   val tests = [
 
     (* propositional logic *)
+    (``!w:word16. w && 0xFFF8w = word_lsl (word_lsr w 3) 3``,
+      [thm_CVCp_arith]),
+    (``!w:word16. word_1comp w = 0w ==> w = -1w``,
+      [thm_CVCp_arith]),
+    (``LENGTH (xs:word8 list) <= 19 ==> 4 * LENGTH xs < 65536``,
+      [thm_CVCp_arith]),
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* Seq/Set/Bag checked-replay smoke tests.  `bool` has finite carrier,

@@ -19554,6 +19554,168 @@ in
   check_oracle_tags "integer negative zero polynomial normal form" zero_thm
 end
 
+fun cpc_shared_bitblast_equality_success () =
+let
+  fun stream prefix =
+    let
+      fun bit (i, (previous, bits)) =
+        let
+          fun stage (j, carry) =
+            let
+              val name = prefix ^ Int.toString i ^ "_" ^ Int.toString j
+              val input = Term.mk_var (name, Type.bool)
+              val pair = boolSyntax.mk_conj (carry, input)
+            in boolSyntax.mk_neg (boolSyntax.mk_eq (carry, pair)) end
+          val next = List.foldl stage previous (List.tabulate (8, Lib.I))
+        in (next, next :: bits) end
+      val (_, bits) = List.foldl bit
+        (Term.mk_var (prefix ^ "seed", Type.bool), [])
+        (List.tabulate (125, Lib.I))
+    in boolSyntax.F :: boolSyntax.F :: boolSyntax.F :: bits end
+  val left = stream "left"
+  val right = stream "right"
+  val words = boolSyntax.mk_eq
+    (SmtLib_Theories.mk_bbterm left, SmtLib_Theories.mk_bbterm right)
+  val bits = boolSyntax.list_mk_conj
+    (ListPair.mapEq boolSyntax.mk_eq (left, right))
+  val target = boolSyntax.mk_eq (words, bits)
+  val limit = SmtResource.max_skeleton_replay_dag_nodes
+  val _ = assert (SmtResource.dag_nodes_up_to (limit + 1) target > limit,
+    "shared bitblast regression no longer exceeds the circuit input budget")
+  val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "schematic bitblast replay changed the circuit equation");
+  check_oracle_tags "shared bitblast equality" theorem
+end
+
+fun cpc_word_aci_literal_identity_success () =
+let
+  val bits = String.implode (List.tabulate (128, fn _ => #"1"))
+  val proof = parse_cpc_proof_string
+    ("((declare-const x (_ BitVec 128)) " ^
+     "(define @sum () (bvadd x x)) " ^
+     "(step @out :rule aci_norm :args ((= (bvand #b" ^ bits ^
+     " @sum) @sum))))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val mask = wordsSyntax.mk_word
+    (Arbnum.- (Arbnum.pow (Arbnum.fromInt 2, Arbnum.fromInt 128),
+       Arbnum.one), Arbnum.fromInt 128)
+  val expected = ``^mask && ((x:word128) + x) = x + x``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "word identity changed the schematic arithmetic operand");
+  check_oracle_tags "word literal identity" theorem;
+  let
+    val commutation = parse_cpc_proof_string
+      ("((declare-const x (_ BitVec 128)) " ^
+       "(define @sum () (bvadd x x)) " ^
+       "(step @out :rule aci_norm :args ((= (bvand #b" ^ bits ^
+       " @sum) (bvand @sum #b" ^ bits ^ ")))))")
+    val result = CPC_ProofReplay.replay_root_for_test commutation
+    val expected = ``^mask && ((x:word128) + x) = (x + x) && ^mask``
+  in
+    assert (Thm.concl result ~~ expected andalso null (Thm.hyp result),
+      "word AC conversion changed its equality endpoint");
+    check_oracle_tags "word literal commutation" result
+  end
+end
+
+fun cpc_quantified_imp_disj_trans_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x (_ BitVec 128)) \
+    \(declare-const p Bool) (declare-const q Bool) \
+    \(define @vars () (@list x)) \
+    \(assume @a (= p (forall @vars (=> (= x (_ bv0 128)) \
+    \                                (= x (_ bv1 128)))))) \
+    \(assume @b (= (forall @vars (or (not (= x (_ bv0 128))) \
+    \                                (= x (_ bv1 128)))) q)) \
+    \(step @out :rule trans :premises (@a @b)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``(p:bool) = q`` andalso
+      List.length (Thm.hyp theorem) = 2,
+    "quantified implication transitivity changed its endpoints");
+  check_oracle_tags "quantified implication transitivity" theorem
+end
+
+fun cpc_word_rewrite_rules_success () =
+let
+  val cases =
+    [("bv-extract-whole", "x 7",
+      ``((7 >< 0) (x:word8):word8) = x``),
+     ("bv-extract-concat-1", "x @bv_empty #b1010 1 6",
+      ``((6 >< 1) (((0xAw:word4) @@ (x:word8)):word12):word6) =
+        ((6 >< 1) x:word6)``),
+     ("bv-shl-by-const-1", "x 2 8 5",
+      ``word_lsl_bv (x:word8) 2w = ((5 >< 0) x:word6) @@ (0w:word2)``),
+     ("bv-lshr-by-const-1", "x 2 8 7",
+      ``word_lsr_bv (x:word8) 2w = (0w:word2) @@ ((7 >< 2) x:word6)``),
+     ("bv-bitwise-slicing",
+      "(= (bvand x #b11110000) " ^
+      "(concat (bvand (extract 7 4 x) #b1111) " ^
+      "(bvand (extract 3 0 x) #b0000)))",
+      ``(x:word8) && 0xF0w =
+        ((((7 >< 4) x:word4) && 0xFw) @@
+         (((3 >< 0) x:word4) && 0w))``)]
+  fun check (name, args, expected) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x (_ BitVec 8)) " ^
+         "(step @out :rule " ^ name ^ " :args (" ^ args ^ ")))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+        name ^ " changed its extraction/shift endpoints: " ^
+          Hol_pp.thm_to_string theorem ^ " expected " ^
+          Hol_pp.term_to_string expected);
+      check_oracle_tags name theorem
+    end
+in List.app check cases end
+
+fun cpc_word_rewrite_rejects_bad_endpoint () =
+  expect_hol_error_contains "constant shift rejects wrong endpoint"
+    "incorrect constant-shift extraction endpoint"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x (_ BitVec 8)) \
+        \(step @out :rule bv-shl-by-const-1 :args (x 2 8 6)))")))
+
+fun cpc_word_involution_trust_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x (_ BitVec 4)) (define @vars () (@list x)) \
+    \(step @out :rule trust :args \
+    \((= (forall @vars (or (not (= (bvnot x) #b0011)) (= x #b0101))) \
+    \(or (not (= (bvnot (bvnot #b0011)) #b0011)) \
+    \(= (bvnot #b0011) #b0101))))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected =
+    ``(!x:word4. word_1comp x <> 3w \/ x = 5w) =
+      (word_1comp (word_1comp (3w:word4)) <> 3w \/
+       word_1comp (3w:word4) = 5w)``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "word involution elimination changed the quantified equation");
+  check_oracle_tags "word involution trust" theorem
+end
+
+fun cpc_arith_leq_length_norm_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const s (Seq (_ BitVec 8))) \
+    \(step @out :rule arith-leq-norm :args ((seq.len s) 17)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected =
+    ``(&(LENGTH (s:word8 list)):int) <= 17 <=>
+      ~((&(LENGTH s):int) >= 17 + 1)``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "integer length normalization changed its exact bounds");
+  check_oracle_tags "integer length normalization" theorem
+end
+
 fun cpc_shared_integer_relation_alias_success () =
 let
   fun level index = "@t" ^ Int.toString index
@@ -29105,6 +29267,20 @@ let
       cpc_emitted_definition_identity_table_success),
     ("replay_polynomial_normal_form_success",
       replay_polynomial_normal_form_success),
+    ("cpc_shared_bitblast_equality_success",
+      cpc_shared_bitblast_equality_success),
+    ("cpc_word_aci_literal_identity_success",
+      cpc_word_aci_literal_identity_success),
+    ("cpc_quantified_imp_disj_trans_success",
+      cpc_quantified_imp_disj_trans_success),
+    ("cpc_word_rewrite_rules_success",
+      cpc_word_rewrite_rules_success),
+    ("cpc_word_rewrite_rejects_bad_endpoint",
+      cpc_word_rewrite_rejects_bad_endpoint),
+    ("cpc_word_involution_trust_success",
+      cpc_word_involution_trust_success),
+    ("cpc_arith_leq_length_norm_success",
+      cpc_arith_leq_length_norm_success),
     ("cpc_shared_integer_relation_alias_success",
       cpc_shared_integer_relation_alias_success),
     ("cpc_shared_modus_ponens_alias_success",

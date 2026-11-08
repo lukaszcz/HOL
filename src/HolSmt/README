@@ -269,6 +269,10 @@ Definitions for translator-emitted operators are selected from the exact
 `EncodedSymbol` records of the current translation, never from constant
 names.  In particular, `bvcomp` replay unfolds its recorded definition and
 then uses the general word decision procedures.
+CPC word replay also checks whole extraction, extraction through a binary
+concatenation, constant logical shifts, and bitwise slicing. Slicing and
+identity-mask steps keep arithmetic operands schematic. Quantified word
+complement elimination is re-proved from complement involution.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
