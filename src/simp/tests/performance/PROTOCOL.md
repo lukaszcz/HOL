@@ -1697,6 +1697,33 @@ table of its own on the shared engine, with the following additions to it.
     constants (`test_task30_dispose.py` for `HISTORY`,
     `test_task30_grid.py` for the follow-up's), which the same commit edits;
     nothing is looked up by hand.
+  - A file added to `task30_dispose.CODE` (`void_attempts.py`, the attempt
+    rule moved out of `task30_dispose.py`) is absent from the records made
+    before it existed. `task30_dispose.ADDED` names, per such file, the file
+    that held its code, that file's seals in those records, and the held
+    seal; a record may lack the file only when its seal of the host is one
+    of the listed, and is then treated as recording the held seal for the
+    file. The held seal names the version of the added file reviewed as
+    holding exactly the code the older records ran: its moved functions are
+    AST-equal to the host's, apart from message strings: docstrings,
+    `"..." % (...)` messages that are not the value of an assignment,
+    returned string constants, the message argument of `a.require`, and two
+    reviewed strings that are not messages (the `prefix=` of
+    `tempfile.TemporaryDirectory` and the `what` of `want, what = ...`). A
+    test pins the hash of the functions with exactly those blanked; every
+    other string (event names, statuses, keys, option and file names) is in
+    the hash, so a changed literal of the logic changes it, and so does a
+    changed operand of a `%` assigned to a name. A second pinned hash
+    covers the rest of the added file (imports, constants, other functions
+    and module statements, without the module docstring), normalised by the
+    same rules. An edit of the added file is non-behavioural when both
+    hashes are unchanged; it then replaces the held seal, after that
+    review. A behavioural edit
+    is not allowed while a record depends on the held seal: a seal in
+    `HISTORY[file]` accepts every later file, so it would bind the record to
+    logic it never ran. Where a record lacks the file, `check_code`'s
+    refusal of an edit states this rule and names no `HISTORY` entry. A
+    record made by the current code carries the file.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
@@ -1755,7 +1782,9 @@ table of its own on the shared engine, with the following additions to it.
   status, its output and the failed condition: an interrupted or resumed
   attempt, one closed more than once, one with missing cells or with no
   close line, and a runner killed while measuring (no manifest) are
-  refused too, as they may have measured. The follow-up writes no
+  refused too, as they may have measured. This rule is `void_attempts.py`,
+  shared with the TASK31 disposition; both seal it in their `CODE`. The
+  follow-up writes no
   `final.json`: the TASK30 decision with
   these two cells in place of the replaced ones is the disposition step's
   (`task30_dispose.py`), which owns `final.json` and builds it from the
@@ -2027,6 +2056,77 @@ CLI exit codes: 0 = all reported candidate metrics/slopes pass; 1 = any fails;
 2 = uncertainty, invalid evidence or a blocked prerequisite. `success=true`
 means the experiment completed and validated, **not that its metrics passed**.
 No overall performance acceptance decision substitutes for per-metric decisions.
+
+#### TASK31 allocation gate (gate 2)
+
+`allocation_matrix.py run --task task31` counts the allocation of the
+ClientPerformance cells of TASK31 with the TASK29B counter, under the
+TASK29B/TASK30 decision rule unchanged: exact equality of every field of the
+steady, first-operation and structural records, GC reported and not gated, the
+baseline/baseline control identical, the candidate equal to the baseline
+(`pass`), different (`fail`) or not decidable (`inconclusive`).
+
+**One mechanism, the fixture chosen by the case.** The `fixture` a case has in
+`matrix.json` selects a family (`allocation_matrix.FAMILIES`): the
+`MatrixPerformance.sml` cases keep `MatrixAllocation.sml`; the
+`ClientPerformance.sml` cases use `ClientAllocation.sml`. A task whose cases
+span two families is refused. Both are installed in the private directory as
+`Performance.sml` with `MatrixSupport.sml`, so the protocol checks, the
+brackets and the work phase are the same.
+
+**ClientAllocation.sml** has the workloads of `ClientPerformance.sml` verbatim
+(`conversion`, `traversal`, `tacticWork`, `dependencyWork`, `choose`, without
+the downstream cases) inside the driver of `MatrixAllocation.sml` word for
+word; `test_allocation_client.py` pins both. The only additions are the lines
+that end in a comment saying `alloc`: each workload keeps its result and
+fingerprints it (`MatrixSupport.thmText`, with the residual goals for tactics),
+and the use phase re-applies the conversion or tactic. The structural work row
+(`work.first`, `work.second`, `work.use`, `result.digest`) is therefore the
+same kind of evidence as for the matrix cells, and is `equal`, `differs` or
+`inconclusive` beside the words, never in place of them.
+
+**No shared closure.** A process of either family loads the selected
+simplifier sources, the installed fixtures and the shared heap, so no closure
+of shared modules is recompiled in the private directories. A module that the
+fixture would load outside those is refused as a shared input.
+
+**Cells.** The `traversal_*` and `tactic_*` cells of the table: every size up
+to 1000 (the depth cases 0, 1, 10 and 100, the singletons 0), and 10000 only
+for the supplied, installed and asm families. The 33 heavy tactic cells at
+10000 are `task31_cases.INFEASIBLE`: not run, listed as such, never a pass.
+The same cases, in the order of the matrix ledger, are those of the identity
+and timing gates (`task31_cases.py`); the matrix takes the infeasible cells
+as `(case, size)` pairs (`INFEASIBLE_CELLS`).
+
+**Iterations** are predeclared in `allocation_iterations_task31.json`, written
+by `task31_iterations.py`: the TASK30 rule (32 steady iterations to size 100,
+16 at 1000 and 8 at 10000), with the reuse and complete stages of the
+families in `CUT_8` halved to 8 and those of `CUT_4` to 4 at 1000
+assumptions, to fit the process timeout. The file is bound by digest like the
+others.
+
+**decisions.json** has, for the TASK31 disposition, the top-level fields of
+TASK29B (`status`, `complete`, `acceptance_pairs`, `acceptance_baseline`)
+and
+
+    {"candidate": REV, "baseline": REV, "infeasible": [NAME, ...],
+     "rows": [{"case": CASE, "size": N, "pairs": P,
+               "decision": "pass" | "fail" | "inconclusive",
+               "work": "equal" | "differs" | "inconclusive" | null}, ...]}
+
+`candidate` and `baseline` are those of the grid's inventory. A row is `pass`
+only when every gated phase and metric of its cell passes, the cell has at
+least 10 pairs, the baseline is the pinned develop commit and no row of the
+cell is nondeterministic; `fail` when one fails; `inconclusive` otherwise,
+so a smoke or a grid against another baseline has no passable row, and its
+`complete` is false (it is written to `decisions-partial.json`). `rows` lists
+the cells that were measured or tried, in the order of the cases and sizes;
+`infeasible` is the sorted names of the cells not run. TASK29B and TASK30
+results have none of these keys.
+
+**Sealed code.** `allocation_matrix.py` is in the TASK30 seal
+(`task30_dispose.CODE`): changing it adds the previous seal to
+`task30_dispose.HISTORY`, pinned by `test_task30_dispose.py`.
 
 ## Negative controls
 
@@ -2470,3 +2570,304 @@ inherited open pipe. The seal histories below hold the seals of the files at
   `poly --version` query blocked, which made a cell a protocol failure,
   never a measurement. Giving it `/dev/null` turns that hang into end of
   file.
+
+## TASK31
+
+TASK31 gates the traversal and tactic cases of the matrix (11 `traversal_*`
+cases and 42 `tactic_*` cases, 278 cells; `downstream_*` belongs to later
+tasks). The case ledger has six singleton traversal cases (size 0) and five
+depth cases; the code follows the ledger, whose order (`task31_cases.CASES`)
+is the canonical order of every gate. Gate 1 is `task31_identity_grid.py`
+and gate 3 `task31_grid.py` (the timing driver; the identity module imports
+it, not the reverse), the decision per cell in `task31_dispose.py`; the
+cases, the sample, the infeasible set and the list of sources are data in
+`task31_cases.py`, which holds no measured number. The reviewed differences
+of the candidate are the data of `task31_attributed.json`
+(read by `task31_pins.py`, which the timing grid seals; the accounting is
+`task31_attribution.py`).
+
+### Gate 1: source identity, every cell
+
+`task31_identity_grid.py identity --output DIR --candidate COMMIT
+--authorize-measurements` runs, for each feasible cell, the real paired
+runner (`run_paired.py --matrix-performance`) once: one fresh process for
+the baseline and one for the candidate, the runner's own loaded-source audit,
+one pair of three samples, free ramp calibration of 0.1 s batches (nothing is
+timed for a decision). The runner is started through `task31_snapshot.py`,
+which runs it unchanged (`runpy`, the same arguments and exit status) and,
+just before the runner deletes its private trees, records every file of
+them as `private-snapshot.json`: its size, its sha256, its sha256 with the
+directory of the side replaced by `<PRIVATE>`, and for a file of at most
+256 KiB its text. A loader product (`.uo`, `.ui`) names the directory of its
+side, so the raw hashes of two sides always differ; the normalized ones
+differ only if the compiled content does. The row derivation checks the
+snapshot against the runner's own hashes and derives the normalized digest
+again from the stored text. The files of `.hol/locks/` (named after process
+ids) are never part of a closure.
+
+`task31_identity.py` derives the row of a cell from the archived folder:
+
+- the closure: every source the process elaborated (`use`), private (the
+  simplifier sources and the relocated shared modules) or shared, with its
+  sha256 and, for a private source, the normalized digests of its products;
+  the elaboration order; the files of the initial heap (the `heapfile`
+  events). A source or product that one side lacks or that differs, a
+  different order (the first position where they part is named), or a
+  different heap list is a difference, listed by file;
+- the work: the ordered checks of the fixture (each proof is compared inside
+  the process with an independently built expected theorem), the keys of the
+  observations, the expected test count, the outcome, the samples, schedule
+  and result consumption of each timed workload, and the storage rows.
+  Counts that depend on the host (the calibration batches and their times)
+  are not part of it. This is a check of the protocol shape: the matrix
+  schema fixes every one of these fields for an accepted process, so two
+  accepted processes of a cell always agree. The behavioural evidence of the
+  work (stages, counts and the result digest) is the work row of the
+  allocation gate, which the disposition requires;
+- the tracked file behind each private file (a generated theory file maps to
+  its script); a private file that maps to none is refused;
+- the head and dirty state of the checkout, the inputs and the tools.
+
+A cell is `identical` when both lists of differences are empty. It is
+`attributed` when every difference is of a `source` entry of the reviewed
+table whose two git blobs are exactly the cell's, the elaboration order is
+equal and the shape of the work is equal; the entry records the sha256 of
+the file on each side. Any other difference makes it `different`: it is not
+passed by identity.
+
+Reviewed table. `task31_attributed.json` holds `{"schema", "entries",
+"history"}`. An entry is `{path, kind, baseline_blob, candidate_blob,
+reason, gate}`, `kind` being `source` (a simplifier source whose private
+copy differs), `heap` (a file of the shared heap) or `build` (a Holmakefile,
+manifest, tool script or project file of a loaded directory, or a file
+of a name Holmake reads beside its build directories, see "The tree");
+`gate` says what measures the difference. A `candidate_blob` of `null` is
+a placeholder that `identity` refuses (it names the blob git has, to be
+filled at integration); the filled entries that are sources of the timing
+table are its pins (an entry of kind `heap` or `build` is no source of the
+table and pins nothing).
+The file is outside the seals of the counts; every record carries its sha256
+and the entries it was judged by, and `history` maps the sha256 of an
+earlier file to its entries, so that an old grid still replays. A full
+identity grid and the disposition use the committed file only;
+`--attributed PATH` names another file in a diagnostic (`--only`) and is
+refused otherwise. The disposition binds the gates to the committed file
+through the pins, not through the whole table:
+
+- the identity grid's recorded table has the sha256 of the committed
+  `task31_attributed.json` (an identity grid made by an earlier file is run
+  again), and its seal is recorded as the `attribution` input;
+- the pins of the timing grid and of the follow-up (its inventory, each
+  resumption and, for an extension, the first stage and its resumptions)
+  are the committed table's projection onto the sources the grid measures
+  (`task31_pins.pins` over `task31_cases.SOURCES`, the function the driver
+  uses), by the pins the seal of the file stands for (the file itself, or
+  its `history`); they are recorded as the `pins` input. So adding an entry
+  of kind `heap` or `build`, or for a file that is no measured source (with
+  the sha256 of the file it replaces in `history`), voids no timing grid,
+  and any change to the entry of a measured source does.
+
+The tree. The runner takes only `src/simp/src` from each commit; the shared
+sources, the heap, the build tools, the fixtures and the launcher come from
+the one checkout, so differences there are invisible to the closure
+comparison. The grid therefore lists every tracked file that differs between
+the commits (`src/`, `tools/`, `tools-poly/`, `bin/` and the rest of the
+repository) and classifies each one from the git blobs and from the files
+the receipts show were loaded (elaborated, found loaded, or in the initial
+heap, over all measured cells and both sides):
+
+- `attributed`: an entry names exactly its two blobs;
+- `mismatch`: an entry names other blobs;
+- `unattributed`: loaded, no entry;
+- `unattributed-build`: a file of the build tools, their prelude or the
+  build sequences (`tools/`, `tools-poly/`, `bin/`, which the receipts do
+  not record), a build file of a directory that a loaded file comes from,
+  or a file of a name Holmake reads beside the directories it builds in
+  (`task31_attribution.UPWARD`: `holproject.toml`,
+  `holproject.local.toml`, `.holpath`, `.hol_preexec`) anywhere in the
+  repository that is not `EXCLUDED`, no entry. The last rule is general and
+  conservative on purpose: Holmake looks for these files in the ancestors
+  of every directory it visits, and it also follows `INCLUDES`,
+  `PRE_INCLUDES` and the external directories of a project, so the loaded
+  directories and their ancestors are not the whole set. No include closure
+  is computed; a file that cannot matter is attributed with its reason;
+- `excluded`: on the reviewed list `task31_attribution.EXCLUDED` of paths
+  that are no part of any build a cell measures, each with its reason (the
+  measuring harness and paired runner, installed from the checkout; `help/`,
+  read only by the help-database step of the build, which runs after the
+  sources are built and makes nothing a cell loads; `CLAUDE.md`,
+  documentation), and not loaded;
+- `unloaded`: no receipt shows it loaded on either side and it is no build
+  file.
+
+The first, fifth and sixth pass; the others make the grid `different`, with
+the file and the reason in the decisions and the report. A grid whose loaded
+closure is not the same in every measured cell, whose cells ran in different
+checkouts, or that has an uncovered or unused source is `inconclusive`. A
+cell, and the grid, are `attributed` when a reviewed difference is present,
+else `identical`.
+
+Infeasible cells. The 33 cells of the eleven heavy families at 10000
+assumptions (`task31_cases.INFEASIBLE`) do not fit the process timeout of
+the grid (1800 s). They still get a row, whose route says so: the worst
+identity of the measured cells of the same case, valid only if the loaded
+closure is the same in every measured cell of the grid (it is built from one
+fixture text; the closure digest is one per side over all measured cells,
+else the row is `unresolved`). The work is recorded as "not run:
+infeasible".
+
+Checks beside the cells: `uncovered` lists the tracked files the baseline
+elaborated that `SOURCES` lacks; `candidate_only` the files only the
+candidate elaborates; `unused_sources` the files of `task31_cases.SOURCES`
+that no cell elaborated; `git_differing` the files whose git blobs differ.
+`task31_identity_grid.py sources --output DIR [--heap]` prints the files the
+cells elaborated (with the heap files) from a grid; `task31_cases.SOURCES`
+is the sorted union of the elaborated files.
+
+Records. `DIR/inventory.json` (baseline, candidate, the cell list, the seals
+of the identity code, the attribution table and its seal, the git blobs of
+the sources, of the entries and of every file that differs, the checkout
+record, one run per cell with the archive and its seal) and
+`decisions.json`; each cell's folder is packed to `NAME.json.xz`. The
+attempts ledger of the checkout records the opening and the close of each
+identity grid (table `task31-identity`, stage `identity`).
+`identity-replay --output DIR` verifies the seals of the code (the grid's
+modules, the timing engine and the runner), the checkout, the attribution
+table, the source blobs and the tree, unpacks every archive, derives every
+row and every decision again from the bytes, and requires them equal to the
+records; `--ledger FILE` also requires the opening in a ledger. The grid is
+made in the checkout of the candidate (`prepare` as for the timing tables;
+the stamp and `recheck` bind the head, the tree and the products, and the
+grid is dead if the checkout changes); `--only CELL ...` is a diagnostic, in
+any checkout, never a grid decision. The exit status is 0 when the grid is
+identical or attributed, 1 when it is different, 2 when it is not
+conclusive, 3 when refused.
+
+### Gate 3: the stratified timing table
+
+`task31_grid.TABLE` (`task31`) is a `timing_grid.Table` over the 28 cells of
+`task31_cases.SAMPLE`: the six singleton traversal cases at size 0, the five
+depth cases at depth 100, the `complete` stage of each of the 14 tactic
+families at 100 assumptions, and `tactic_supplied_complete-1000`,
+`tactic_asm_complete-1000` and `tactic_installed_reuse-1000`. Schedule
+`warmup`, headroom 1, 20 pairs of 5 samples per cell in the first stage,
+batch seconds 0.3 (1.0 for the six singleton traversal cases, whose
+operations are sub-microsecond), layout seed `task31-layout-1`, and
+TASK30's equivalence policy and second stage (3% margin on inclusive CPU and
+wall, GC reported, no outlier removal, the pair counts of the second stage
+from the develop/develop control).
+
+The table names `sources` (the elaborated sources) and pins the blobs of
+the filled entries of the reviewed table that are among them, with the
+reason of each and the sha256 of `task31_attributed.json`: a source that
+differs without a current pin never passes, and `run` refuses to measure
+it. The code that computes the pins is `task31_pins.py`, one of the sealed
+files of the table. Adding an entry for another file changes that sha256 and
+no pin; the grid replays by the pins of the file it was made with
+(`pin_history`). The driver has its own history (`DRIVERS` and the others,
+as TASK30's), empty until a grid is recorded; a change to the identity
+module, to `task31_identity.py` or to `task31_attribution.py` alters no
+seal of a timing grid. Every timing record carries the pins, the projection
+of the reviewed table onto the measured sources: a change to the entry of a
+measured source voids the grid, and adding or changing a heap or build
+entry does not. The identity module offers
+the identity commands only (`prepare`, `identity`, `identity-replay`,
+`sources`). The difference below `src` is published by `tree`. The counts file
+`task31_iterations.json` does not exist until `pilot` and `predeclare` make
+it; the commands are the engine's:
+
+    task31_grid.py prepare
+    task31_grid.py pilot --output DIR --authorize-measurements
+    task31_grid.py predeclare --grid DIR --output task31_iterations.json
+    task31_grid.py verify-counts --grid DIR
+    task31_grid.py run --output DIR --candidate COMMIT --pilot PILOT \
+        --authorize-measurements
+    task31_grid.py extend --grid DIR --output DIR2 --pilot PILOT \
+        --authorize-measurements
+    task31_grid.py replay --output DIR --pilot PILOT
+
+A batch must last at least half its seconds (`performance_schema.validate`)
+and a warmup count is ceil(seconds * n / wall) of the calibration, never
+below one.
+
+Follow-up. `task31_followup.py` is the table of the cells that the first
+grid and its second stage left open (`CELLS`, empty until a decision names
+cells; with none it refuses every command). It takes the policy, the batch
+seconds, the samples, the baseline, the sources and the pins of the TASK31
+table, twice its pairs, its own layout seed and counts file; the first grid
+is replayed in full by its own table before the counts are derived. Its
+commands are the engine's, and its attempts go into the TASK31 ledger.
+
+### The decision per cell
+
+`task31_dispose.py --identity DIR --grid DIR --pilot PILOT --allocation DIR
+--survey PATH` replays the identity grid (with its opening line in the
+ledger) and the timing grid in full (and a
+follow-up with `--followup DIR --followup-pilot PILOT`, whose cells replace
+the first grid's) and decides every cell:
+
+- **pass** iff its identity is `identical` or `attributed`, AND its
+  allocation row has the decision `pass` and the work row `equal` where the
+  allocation gate measures it (every cell but the infeasible ones), AND the
+  timing class is `pass` where the cell is sampled (and a cell outside the
+  sample has no timing row);
+- an infeasible cell passes by identity alone and is recorded as "untimed,
+  unallocated: infeasible". When its identity is `attributed`, the record
+  names the attribution and the cells of its family that measured it
+  (allocation cells of at most 1000 assumptions that passed with equal work
+  and an attributed identity, and the family's passing cells of the timing
+  sample);
+  with none of either it is `incomplete`;
+- a gate that decided against a cell makes it `fail` (allocation words
+  that fail, or a work row that `differs`); a gate with no decision for a
+  cell it must decide leaves it `incomplete`, which includes an allocation
+  row that is `inconclusive` or whose work row is `inconclusive` or missing,
+  a timing class that is not a decision (`inconclusive`, `control_limited`,
+  `protocol`) and an identity grid that is inconclusive; a file below `src/`
+  that the grid could not account for fails the whole.
+
+The cost survey is an input of the command, not of the repository: `--survey`
+is a JSON file `{"schema": "task31-cost-survey-v1", "process_timeout": N,
+"cells": {CELL: {op1000, setup1000, check1000, op10000, setup10000,
+check10000}}}` with one entry per infeasible cell. Its numbers and its
+sha256 are recorded, and `--check` reads it again.
+
+The allocation gate is replayed, not trusted: the command requires the
+directory of a complete (not partial) allocation grid of task `task31`, with
+the candidate and baseline of the other two gates and the harness of the
+timing grid, replays it with `allocation_matrix.py` (every archive, every
+decision) and then reads its `decisions.json` (see "TASK31 allocation gate"
+above): `candidate` and `baseline` equal to the grids', `complete` true,
+`infeasible` the infeasible set, and exactly one row for every other cell,
+none repeated, a row with the decision `pass` having at least 10 pairs (an
+unresolved row may have `"pairs": null`). A row of any other shape is
+refused.
+
+One rule for every judged TASK31 timing table, the first stage's `task31`
+and the follow-up's `task31f` alike: at most one attempt that is not void
+per table and stage. Every attempt of either table in the ledger that the
+command does not judge (the final stage named by `--grid` or `--followup`,
+and the first stage of an extension) must be void, as in the TASK30
+disposition (`void_attempts.py`, sealed into both `CODE`s): no cell of it
+admitted a measurement, it has no resume line and one close line,
+`inconclusive`. A void attempt may be redrawn; an attempt that measured, may
+have (left open, resumed, closed more than once) or ran in more than one
+output is refused. The attempts are recorded (`timing_attempts`,
+`followup_attempts`) and printed.
+
+The record carries the seals of the code (`task31_dispose.CODE`, every
+module the decision takes from, `task30_grid.py` for the harness match and
+`task31_pins.py` included, with `HISTORY` for earlier versions) and of every
+input it read, and the attempts
+the ledger holds for the timing table and for identity (all, and the
+candidate's). The command prints one line per cell that did not pass and
+every infeasible cell, then the verdict line (status, counts, the identity
+status and attributed files, allocation, timing, the infeasible count,
+candidate, harness, attempts), and exits 0, 1, 2 (3: refused).
+`--record FILE` writes the disposition, `--check FILE` requires that it
+derives again.
+
+Tests: `test_task31_cases.py`, `test_task31_attribution.py`,
+`test_task31_identity.py`, `test_task31_identity_grid.py`,
+`test_task31_grid.py`, `test_task31_followup.py`,
+`test_task31_attempts.py`, `test_task31_dispose.py`.

@@ -1,0 +1,102 @@
+{
+  "entries": [
+    {
+      "baseline_blob": "f37f2ad358c72c6121f15479a0b7fd9f5a622342",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "holproject.toml",
+      "reason": "The project file Holmake reads from the build directory and every directory above it: adds two [[h4pedant.dir]] stanzas, which are read by tools/h4pedant only; Holmake lists h4pedant among its recognised keys and never reads inside the table (HMProject.sml), so the project's holmake keys, includes and pre-execs are unchanged."
+    },
+    {
+      "baseline_blob": "1556c516004b961b4dcd39db4e8fac66eda400d2",
+      "candidate_blob": null,
+      "gate": "gate 5 startup gate; TASK_32/33 independent builds",
+      "kind": "heap",
+      "path": "src/1/ThmAttribute.sig",
+      "reason": "in hol.state0; measured exactly by the startup gate (gate 5) hol-startup/first-use kinds, and by TASK_32/33 independent builds"
+    },
+    {
+      "baseline_blob": "be41858048997588112d5ae19a8dcb273fd01a3b",
+      "candidate_blob": null,
+      "gate": "gate 5 startup gate; TASK_32/33 independent builds",
+      "kind": "heap",
+      "path": "src/1/ThmAttribute.sml",
+      "reason": "in hol.state0; measured exactly by the startup gate (gate 5) hol-startup/first-use kinds, and by TASK_32/33 independent builds"
+    },
+    {
+      "baseline_blob": "864481910a9132b29ae00457ca5bbabcd08538a7",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/boss/Holmakefile",
+      "reason": "Build rules of a directory whose modules a cell loads: adds the opt-in tracked-defaults target and its cleanups."
+    },
+    {
+      "baseline_blob": "e8b95d22686bbe65ec9a95da37d8ca3d9068493c",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/list/src/Holmakefile",
+      "reason": "Build rules of a directory whose modules a cell loads: adds the tracked-recipes target and its cleanups."
+    },
+    {
+      "baseline_blob": "b234a726f2a235875d24363ebb183277d33c8412",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/num/arith/src/Holmakefile",
+      "reason": "Build rules of a directory whose modules a cell loads: adds the tracked-recipes target and its cleanups."
+    },
+    {
+      "baseline_blob": "fda2123ece34d00d5130c5c47154f160056e2ad3",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/portableML/rawtheory/mktool.ML",
+      "reason": "Build tool script of a directory whose modules the heap holds: loads the theory file reader."
+    },
+    {
+      "baseline_blob": "3cbce5f39bda7e7394bf599d366846b3c155ec22",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/pred_set/src/Holmakefile",
+      "reason": "Build rules of a directory whose modules a cell loads: adds the tracked-recipes target and its cleanups."
+    },
+    {
+      "baseline_blob": "7d79866a5b57a97a2a898d9645b3aa62a6acf43e",
+      "candidate_blob": null,
+      "gate": "gate 2 exact allocation at every cell it covers; gate 3 timing sample; gate 5 per-file startup attribution",
+      "kind": "source",
+      "path": "src/simp/src/Cond_rewr.sig",
+      "reason": "Adds the spec `val note_rewrite : thm -> unit`, which the byte-identical Cond_rewr.sml already defines, so that Cond_rewrExt reports into the one rewrite-tracking extent that Cond_rewr owns."
+    },
+    {
+      "baseline_blob": "767b38be8f8dd543abff99fc54d3e02f3f072142",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/simp/src/Holmakefile",
+      "reason": "Build rules of the simplifier directory: adds the targets and cleanups of the extension modules and their selftests."
+    },
+    {
+      "baseline_blob": "9bbbe487df5ce726aa860eafd48d3cd0bed468c6",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "src/simp/src/MANIFEST",
+      "reason": "Directory manifest of the simplifier: describes the extension modules; read by no build step."
+    },
+    {
+      "baseline_blob": "1a80da5d362f42fb2fa97f64baf4dbe8d02e4763",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the sequence",
+      "kind": "build",
+      "path": "tools/sequences/base-hol",
+      "reason": "The build sequence: adds src/simp/tests/native-extension as a selftest-only directory (marked !), built only with selftests; the shared tree the cells load is built without them."
+    }
+  ],
+  "history": {},
+  "schema": "task31-attributed-v1"
+}

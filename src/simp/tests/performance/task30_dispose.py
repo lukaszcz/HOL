@@ -74,7 +74,6 @@ import argparse
 import json
 from pathlib import Path
 import sys
-import tempfile
 
 sys.dont_write_bytecode = True
 import acceptance as a
@@ -83,6 +82,7 @@ import allocation_matrix as am
 import task30_followup as follow
 import task30_grid as base
 import timing_grid as tg
+from void_attempts import attempts_of
 
 # What the evidence for a cell is made of; recorded in the disposition.
 EVIDENCE = ("sources", "allocation", "work", "result")
@@ -110,11 +110,41 @@ OPERATION_PHASES = ("operation_first", "operation_steady", "apply")
 CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
         "timing_grid.py", "acceptance.py", "allocation_matrix.py",
         "allocation_analysis.py", "allocation_schema.py",
-        "allocation_boundary.py", "path_schema.py")
+        "allocation_boundary.py", "path_schema.py", "void_attempts.py")
+# Files of CODE that a record made before they existed does not carry:
+# {file: (the file whose code held theirs, its seals in those records, the
+# seal of the file that holds that code)}. The rule for the attempts of the
+# follow-up's table was part of this module and is now void_attempts.py,
+# shared with TASK31's disposition. A record may lack the file only if its
+# seal of the host is one of those listed (the one
+# `followup-r2/disposition.json` carries), and is then treated as recording
+# the third element for the file, so that it is checked like the rest of
+# CODE: a later edit of the file is refused unless the commit that makes it
+# replaces the third element, as below. A record made by code that has the
+# file carries it. The third element is the version of the file reviewed as
+# holding exactly the code the older records ran: the moved functions
+# (runner_failure, void_failure, attempts_of) are AST-equal to the host's
+# inline ones apart from message strings: docstrings, `"..." % (...)`,
+# returned strings, the message of `a.require` and two reviewed
+# non-message strings (test_task30_dispose.py `normalised` names them and
+# pins the hash); and the rest of the file (imports, constants, other
+# functions, module statements) is pinned by a second hash under the same
+# rules. An edit of the file that keeps both hashes replaces the third
+# element, after that review. An edit that changes behaviour is
+# not allowed while a record depends on the element: a seal listed in
+# HISTORY accepts every later file, so it would rebind the record to logic
+# it never ran.
+ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
+    bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
+                   "8e864bf5d9298ce73366c88a069cef59"),), dict(
+    bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe9e89120d4a162723"
+                   "b6385cae8ea1216b"))}
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
-# wording (and each file's own entries for the histories below).
+# wording, except allocation_matrix.py's, which is the version before the
+# TASK31 task and the client fixture family (and each file's own entries for
+# the histories below).
 HISTORY = {
     "task30_dispose.py": (dict(
         bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
@@ -130,7 +160,10 @@ HISTORY = {
                        "62729a15f7cb7d6c28434f1a4ee06ac3"),),
     "acceptance.py": (dict(
         bytes=39557, sha256="1076ad0d8f984a9081eaa2408554a483"
-                       "2a0f3c092f6c5be25820537fa3c1a8e6"),)}
+                       "2a0f3c092f6c5be25820537fa3c1a8e6"),),
+    "allocation_matrix.py": (dict(
+        bytes=67973, sha256="45d1fc4045f4b2dc57ce77f9ffd71211"
+                       "6561ec3bd652aa5ebfd37b96a818221f"),)}
 
 TAIL = (
     "Not shown by any row: CPU that neither allocates nor traces, net node "
@@ -529,35 +562,61 @@ def entries(name, seal):
     return found
 
 
+def held_refusal(name):
+    """The refusal text for a file of ADDED that the record lacks: its
+    rule is not a HISTORY entry."""
+    return (
+        "%s: this record lacks the file and so depends on the held seal "
+        "%s (task30_dispose.ADDED); an edit that is non-behavioural (the "
+        "moved functions and the rest of the file both keep the normalised "
+        "hash that test_task30_dispose.py pins) replaces the held seal in "
+        "ADDED, after review; any other "
+        "edit is not allowed while a record depends on the held seal, and "
+        "no HISTORY entry may be added for it (PROTOCOL.md, \"Seal "
+        "histories\")" % (name, json.dumps(ADDED[name][2], sort_keys=True)))
+
+
 def check_code(recorded, here=None):
     """The seals a disposition records are those of the code now or of
     the earlier code HISTORY names. Every file that is not is named in one
     refusal, with the entries the commit pastes into the constants (each
     the literal element of its constant) and the tests that pin them."""
     now = seals(here)
-    a.require(isinstance(recorded, dict) and set(recorded) == set(CODE),
+    older = {name: held for name, (host, before, held) in ADDED.items()
+             if isinstance(recorded, dict) and recorded.get(host) in before}
+    names = [name for name in CODE if name not in older]
+    a.require(isinstance(recorded, dict) and set(recorded) == set(names),
               "changed TASK30 disposition: the recorded code is not %s"
-              % ", ".join(CODE))
+              % ", ".join(names))
+    recorded = dict(recorded, **older)
     changed = [name for name in CODE
                if recorded[name] != now[name] and
                recorded[name] not in HISTORY.get(name, ())]
     if changed:
+        held = [held_refusal(n) for n in changed if n in older]
         lines = []
         for name in changed:
-            lines.append("%s: add %s" % (name, " and, where records were "
-                                         "made by the old file, ".join(
-                "to %s the entry %s" % found
-                for found in entries(name, recorded[name]))))
-        raise ValueError(
-            "changed TASK30 disposition: %d file(s) changed since it was "
-            "recorded; in the same commit add each entry below to its "
-            "constant and update the tests that pin those constants "
-            "(task30_dispose.HISTORY: test_task30_dispose.py; "
-            "task30_followup.ENGINES, ACCEPTANCE, DRIVERS and "
-            "SEALED_HISTORY: test_task30_grid.py); a change to a history "
-            "constant changes its file, which then needs its own entry "
-            "(PROTOCOL.md, \"Seal histories\"): %s"
-            % (len(changed), "; ".join(lines)))
+            if name not in older:
+                joined = " and, where records were made by the old " \
+                         "file, ".join(
+                    "to %s the entry %s" % found
+                    for found in entries(name, recorded[name]))
+                lines.append("%s: add %s" % (name, joined))
+        text = "changed TASK30 disposition: %d file(s) changed since it " \
+               "was recorded" % len(changed)
+        if lines:
+            text += (
+                "; in the same commit add each entry below to its "
+                "constant and update the tests that pin those constants "
+                "(task30_dispose.HISTORY: test_task30_dispose.py; "
+                "task30_followup.ENGINES, ACCEPTANCE, DRIVERS and "
+                "SEALED_HISTORY: test_task30_grid.py); a change to a "
+                "history constant changes its file, which then needs its "
+                "own entry (PROTOCOL.md, \"Seal histories\"): %s"
+                % "; ".join(lines))
+        if held:
+            text += "; " + "; ".join(held)
+        raise ValueError(text)
 
 
 def pair(timing, counted, label):
@@ -638,187 +697,6 @@ def cheap(args, old, new):
             "attempt"]] = first
     return dict(grid=grid, followup=followup, allocation=allocation,
                 allocz=allocz, attempts=attempts_of(args, new, judged))
-
-
-def runner_failure(folder, name):
-    """None when the unpacked archive `folder` of the cell `name` shows no
-    measurement, else the text of the condition it fails: acceptance's own
-    `success` is false; no command it recorded timed out, and each left a
-    runner manifest in the folder of its `--output` (one killed while
-    measuring leaves none, but receipts); and no runner manifest, of a
-    command or not, records an admitted run (`runs` empty, `success`
-    false)."""
-    report = a.load(folder / "acceptance.json")
-    if report.get("success") is not False:
-        return "the acceptance of %s did not fail (success %r)" % (
-            name, report.get("success"))
-    commands = report.get("commands")
-    if not isinstance(commands, list):
-        return "the acceptance of %s records no list of commands" % name
-    for command in commands:
-        if not isinstance(command, dict) or \
-                command.get("timed_out") is not False:
-            return ("a command of %s timed out, or its receipt does not "
-                    "say it did not: its runner may have measured" % name)
-        argv = command.get("argv")
-        if not isinstance(argv, list) or "--output" not in argv[:-1]:
-            return "a command of %s names no --output" % name
-        where = Path(argv[argv.index("--output") + 1]).name
-        if not (folder / where / "manifest.json").is_file():
-            return ("the archive of %s has no runner manifest in %s (a "
-                    "runner killed while measuring leaves none)" % (
-                        name, where))
-    for manifest in sorted(folder.rglob("manifest.json")):
-        found = a.load(manifest)
-        if found.get("runs") != [] or found.get("success") is not False:
-            return ("the archive of %s holds a runner manifest that "
-                    "records an admitted run (%s)" % (
-                        name, manifest.relative_to(folder)))
-    return None
-
-
-def void_failure(new, key, output, row=None):
-    """None when the attempt `key` (id, stage), whose ledger output is `output`
-    and whose ledger row (`Ledger.attempts`) is `row`, is void, else the
-    text of the condition it fails. Void: the output directory exists and
-    holds the inventory of that attempt, which has a row for every cell it
-    measures (those of the follow-up for a first stage, those of its own
-    plan for a second); every row is a protocol failure (`protocol` present
-    and false) whose archive exists and is the sealed one and shows no
-    measurement (`runner_failure`); and the ledger has no resume line for
-    the attempt (a resumed attempt may have drawn samples in a cell it
-    cleared) and exactly one close line, whose status is `inconclusive`,
-    the status of a grid in which every cell is a protocol failure
-    (`timing_grid` summary: no cell passes or fails). A second stage closes
-    with the combined status of both stages, so a void second stage is
-    accepted only when its first stage has no fail; a fail there is final
-    and the follow-up blocks anyway. An attempt left open, resumed, closed
-    more than once or closed otherwise may have measured."""
-    if output is None or not Path(output).is_dir():
-        return "its output directory is missing"
-    output = Path(output)
-    if not (output / "inventory.json").is_file():
-        return "its output has no inventory.json"
-    inventory = a.load(output / "inventory.json")
-    if inventory.get("attempt") != key[0]:
-        return "the output holds attempt %s" % inventory.get("attempt")
-    runs = inventory.get("runs")
-    if not isinstance(runs, list) or not all(
-            isinstance(r, dict) for r in runs):
-        return "its inventory has no list of runs"
-    cells = [(r.get("case"), r.get("size")) for r in runs]
-    if key[1] == "second":
-        plan = inventory.get("plan")
-        if not isinstance(plan, list) or not all(
-                isinstance(p, list) and len(p) > 1 for p in plan):
-            return "its inventory has no plan"
-        want, what = {(p[0], p[1]) for p in plan}, "its plan names"
-    else:
-        want, what = set(new.t.keys()), "the follow-up measures"
-    if set(cells) != want or len(cells) != len(want):
-        return ("its inventory has rows for %d cell(s), not each of the "
-                "%d %s" % (len(set(cells)), len(want), what))
-    for r in runs:
-        if r.get("protocol") is not False:
-            return ("the row of %s-%d is not a protocol failure (protocol "
-                    "%r)" % (r["case"], r["size"], r.get("protocol")))
-    for r in runs:
-        name = "%s-%d" % (r["case"], r["size"])
-        try:
-            archive = a.safe_child(output, r.get("archive"))
-        except (ValueError, OSError):
-            return "the archive of %s is missing" % name
-        if a.seal(archive) != r.get("seal"):
-            return "the archive of %s is not the sealed one" % name
-        with tempfile.TemporaryDirectory(prefix="t30-void-") as scratch:
-            folder = Path(scratch) / "unpacked"
-            tg.bundle.unpack(archive, folder)
-            failed = runner_failure(folder, name)
-            if failed is not None:
-                return failed
-    status = row["status"] if row else None
-    if status is None or status == "interrupted":
-        return "its ledger has no close (it was left open)"
-    if row["resumed"]:
-        return ("it was resumed: a resumed attempt may have drawn samples "
-                "in the cell it cleared")
-    if row["statuses"] != ["inconclusive"]:
-        if len(row["statuses"]) > 1:
-            return ("it closed more than once, as %s: a repeated "
-                    "attempt may have measured" % ", ".join(
-                        row["statuses"]))
-        if status == "fail" and key[1] == "second":
-            return ("its ledger closes it fail: a second stage closes "
-                    "with the combined status of both stages, so a fail "
-                    "in its first stage is final and blocks the "
-                    "follow-up, whatever this stage measured")
-        return ("its ledger closes it %s, not inconclusive, the status of "
-                "a grid whose every cell is a protocol failure" % status)
-    return None
-
-
-def attempts_of(args, new, judged):
-    """Every attempt of the follow-up's table in the ledger: the judged ones
-    (`judged`: {attempt id: output directory} of the follow-up's final
-    stage and, where it is a second stage, of its first) and the others,
-    which must be void (`void_failure`): no cell of them admitted a
-    measurement, so they are no outcome and the settings may be run again as
-    a new attempt. An attempt id is of one output (every output its open,
-    resume and close lines name), and a judged one is of the output named
-    for it. A void attempt has no resume line and one close line,
-    `inconclusive`; a second stage closes with the combined status of both
-    stages, so a void one is accepted only when its first stage has no
-    fail (a fail there blocks the follow-up anyway). Any other attempt, an
-    interrupted or resumed one included, may have measured, and is
-    refused: it needs a new policy decision, or `--followup`
-    names the wrong stage (name the final one). [{attempt, status, output,
-    judged, void}], in the order the ledger names them."""
-    path = new.attempts_file(args, False)
-    a.require(path is not None and Path(path).is_file(),
-              "no attempts ledger: %s" % path)
-    state = tg.Ledger(path)
-    table, family = new.t.name, new.t.family
-    where = {}
-    for record in state.records:
-        key = (record.get("attempt"), record.get("stage"))
-        if record["event"] in ("open", "resume", "close") and \
-                record.get("table", family) == table:
-            outputs = where.setdefault(key, [])
-            if record.get("output") not in outputs:
-                outputs.append(record.get("output"))
-    found = []
-    for key, row in state.attempts(table, family).items():
-        outputs = where.get(key, [])
-        a.require(len(outputs) == 1,
-                  "follow-up attempt %s ran in %s output: %s; one attempt "
-                  "is of one output, and a copy of a grid resumed is a "
-                  "second draw beside it" % (
-                      key[0], "more than one" if outputs else "no",
-                      ", ".join(map(str, outputs))))
-        output = outputs[0]
-        entry = dict(attempt=key[0], status=row["status"], output=output,
-                     judged=key[0] in judged, void=False)
-        if entry["judged"]:
-            a.require(output is not None and
-                      Path(output).resolve() == judged[key[0]],
-                      "follow-up attempt %s is judged, from %s, but the "
-                      "ledger has it in %s" % (
-                          key[0], judged[key[0]], output))
-        else:
-            failed = void_failure(new, key, output, row)
-            a.require(
-                failed is None,
-                "follow-up attempt %s (status %s, output %s) is not void: "
-                "%s; only a void attempt (no admitted measurement in any "
-                "cell) may stand beside the judged one; anything else "
-                "needs a new policy decision, or --followup does not name "
-                "the follow-up's final stage (name the final stage; a "
-                "first stage named while its second stage exists leaves "
-                "the second unjudged)" % (
-                    key[0], row["status"], output, failed))
-            entry["void"] = True
-        found.append(entry)
-    return found
 
 
 def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):

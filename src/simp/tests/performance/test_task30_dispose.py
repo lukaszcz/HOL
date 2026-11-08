@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -283,7 +284,10 @@ class Spec(unittest.TestCase):
                                "62729a15f7cb7d6c28434f1a4ee06ac3"),),
             "acceptance.py": (dict(
                 bytes=39557, sha256="1076ad0d8f984a9081eaa2408554a483"
-                               "2a0f3c092f6c5be25820537fa3c1a8e6"),)})
+                               "2a0f3c092f6c5be25820537fa3c1a8e6"),),
+            "allocation_matrix.py": (dict(
+                bytes=67973, sha256="45d1fc4045f4b2dc57ce77f9ffd71211"
+                               "6561ec3bd652aa5ebfd37b96a818221f"),)})
         self.assertEqual(set(td.seals()), set(td.CODE))
         for name in td.CODE:
             self.assertTrue((a.HERE / name).is_file(), name)
@@ -1091,6 +1095,285 @@ class Seals(Toy):
             with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
                 td.check_code(recorded)
 
+    def test_a_record_made_before_the_shared_rule_is_still_checked(self):
+        self.assertEqual(td.ADDED, {"void_attempts.py": (
+            "task30_dispose.py", (dict(
+                bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
+                               "8e864bf5d9298ce73366c88a069cef59"),), dict(
+                bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe"
+                               "9e89120d4a162723b6385cae8ea1216b"))})
+        self.assertIn("void_attempts.py", td.CODE)
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        self.assertIn("void_attempts.py", recorded)
+        td.check_code(recorded)
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        # A record made by the module as it was has no such file ...
+        td.check_code(dict(old, **{host: before[0]}))
+        # ... and one made by the module as it is must carry it, and a
+        # record of the old module must not.
+        with self.assertRaisesRegex(ValueError, "the recorded code is not"):
+            td.check_code(old)
+        with self.assertRaisesRegex(ValueError, "the recorded code is not"):
+            td.check_code(dict(recorded, **{host: before[0]}))
+        # The file itself is checked when the record has it.
+        other = dict(recorded, **{"void_attempts.py": dict(
+            bytes=1, sha256="a" * 64)})
+        with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
+            td.check_code(other)
+
+    def test_the_moved_rule_stays_sealed_for_the_record_that_lacks_it(self):
+        # followup-r2/disposition.json predates void_attempts.py: it is
+        # treated as recording the seal of the file that holds the moved
+        # code, so a later edit of the rule is refused for it.
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        old[host] = before[0]
+        td.check_code(old)
+        real, patcher = self.changed("void_attempts.py")
+        with patcher:
+            with self.assertRaises(ValueError) as caught:
+                td.check_code(old)
+            text = str(caught.exception)
+            self.assertIn("1 file(s) changed", text)
+            # The rule, not a HISTORY entry to paste.
+            self.assertIn(
+                "void_attempts.py: this record lacks the file and so "
+                "depends on the held seal %s (task30_dispose.ADDED); an "
+                "edit that is non-behavioural" % json.dumps(
+                    held, sort_keys=True), text)
+            self.assertIn("replaces the held seal in ADDED, after review; "
+                          "any other edit is not allowed while a record "
+                          "depends on the held seal", text)
+            self.assertNotIn("add to", text)
+            self.assertNotIn("the entry", text)
+            self.assertNotIn("HISTORY the", text)
+
+    def test_the_held_and_an_ordinary_file_get_their_own_messages(self):
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        old[host] = before[0]
+        real, patcher = self.changed("void_attempts.py", "acceptance.py")
+        with patcher:
+            with self.assertRaises(ValueError) as caught:
+                td.check_code(old)
+        text = str(caught.exception)
+        self.assertIn("2 file(s) changed", text)
+        # The ordinary file: the HISTORY entry to paste.
+        self.assertIn('acceptance.py: add to task30_dispose.HISTORY the '
+                      'entry `"acceptance.py": (%s,),`' % json.dumps(
+                          recorded["acceptance.py"], sort_keys=True), text)
+        # The held file: the rule, with no entry for it.
+        self.assertIn("void_attempts.py: this record lacks the file", text)
+        self.assertNotIn('"void_attempts.py": (', text)
+        self.assertNotIn("void_attempts.py: add", text)
+
+    # The moved functions of void_attempts.py, as the tree of
+    # 40e176538f's task30_dispose.py (the host the older records ran) has
+    # them, with the message strings blanked. Derived: ast.parse the file,
+    # take the module level FunctionDefs runner_failure, void_failure and
+    # attempts_of in order, ast.dump each of the normalised nodes (see
+    # `normalised`), join with "\n" and take the SHA-256. It is the same for
+    # the host's three functions and for the held version of
+    # void_attempts.py. Every other string (event names, statuses, keys,
+    # option and file names) stays in the dump. A `"..." % (...)` that is
+    # the value of an assignment is not blanked.
+    MOVED = ("runner_failure", "void_failure", "attempts_of")
+    MOVED_HASH = ("110356114fd57b31fda1ff5318634235897125e8edbfbcb79b7106"
+                  "44a8c5e2e0")
+    # The second pinned hash: the rest of the held version of
+    # void_attempts.py, the module body without its docstring and the
+    # three moved functions (imports, constants, other functions and
+    # module statements), dumped with the same rules and hashed. Only the
+    # held version has it; the host's module level is another file's.
+    REST_HASH = ("ebe927409873e78a1a464ed17cd68dd1599c895b3ff749f71c0bd9"
+                 "6e356490d7")
+
+    @classmethod
+    def normalised_tree(cls, node):
+        """The dump of a tree with exactly these strings blanked:
+        (1) docstrings; (2) `"..." % (...)` messages, except one that is
+        the value of an assignment (a label, whose operands are kept);
+        (3) a string that is the whole value of a `return` (the functions
+        return a message or None); (4) the message, the second argument,
+        of `a.require`; (5) the two reviewed strings that are not messages
+        and differ from the host's: the `prefix=` of
+        `tempfile.TemporaryDirectory`, and the `what` of `want, what =
+        ..., "..."`, which feeds only a message."""
+        import ast
+
+        def is_str(node):
+            return isinstance(node, ast.Constant) and isinstance(
+                node.value, str)
+
+        class Blank(ast.NodeTransformer):
+            def visit_FunctionDef(self, node):  # (1)
+                first = node.body[0]
+                if isinstance(first, ast.Expr) and is_str(first.value):
+                    first.value = ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_BinOp(self, node):  # (2)
+                if isinstance(node.op, ast.Mod) and is_str(node.left):
+                    return ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_Return(self, node):  # (3)
+                if is_str(node.value):
+                    node.value = ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_Call(self, node):
+                func = node.func
+                if isinstance(func, ast.Attribute):
+                    if func.attr == "require" and isinstance(
+                            func.value, ast.Name) and func.value.id == "a" \
+                            and len(node.args) > 1 and is_str(node.args[1]):
+                        node.args[1] = ast.Constant("")  # (4)
+                    if func.attr == "TemporaryDirectory":  # (5)
+                        for keyword in node.keywords:
+                            if keyword.arg == "prefix" and is_str(
+                                    keyword.value):
+                                keyword.value = ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_Assign(self, node):  # (5)
+                target, value = node.targets[0], node.value
+                if isinstance(value, ast.BinOp) and isinstance(
+                        value.op, ast.Mod) and is_str(value.left):
+                    return node  # a value, not a message: kept whole
+                if isinstance(target, ast.Tuple) and [
+                        getattr(e, "id", None) for e in target.elts
+                        ] == ["want", "what"] and isinstance(
+                        value, ast.Tuple) and is_str(value.elts[1]):
+                    value.elts[1] = ast.Constant("")
+                return self.generic_visit(node)
+        return ast.dump(Blank().visit(node))
+
+    @classmethod
+    def normalised(cls, source):
+        """The dump of the moved functions, normalised."""
+        import ast
+        tree = ast.parse(source)
+        found = {n.name: cls.normalised_tree(n) for n in tree.body
+                 if isinstance(n, ast.FunctionDef) and n.name in cls.MOVED}
+        return "\n".join(found[name] for name in cls.MOVED)
+
+    @classmethod
+    def rest(cls, source):
+        """The dump of the module level code outside the moved functions:
+        every statement of the module body except the module docstring
+        and the three functions, normalised by the same rules."""
+        import ast
+        tree = ast.parse(source)
+        body = [n for n in tree.body if not (
+            isinstance(n, ast.FunctionDef) and n.name in cls.MOVED)]
+        if body and isinstance(body[0], ast.Expr) and isinstance(
+                body[0].value, ast.Constant) and isinstance(
+                body[0].value.value, str):
+            body = body[1:]
+        module = ast.Module(body=body, type_ignores=[])
+        return cls.normalised_tree(module)
+
+    @staticmethod
+    def digest(text):
+        import hashlib
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def moved_hash(self, source):
+        return self.digest(self.normalised(source))
+
+    def rest_hash(self, source):
+        return self.digest(self.rest(source))
+
+    def test_the_held_file_holds_the_code_the_older_records_ran(self):
+        text = (a.HERE / "void_attempts.py").read_text()
+        self.assertEqual(self.moved_hash(text), self.MOVED_HASH)
+        self.assertEqual(self.rest_hash(text), self.REST_HASH)
+        # A change of the logic, a literal of it included, is another hash.
+        for old, new in (
+                ('name = "%s-%d" % (r["case"], r["size"])',
+                 'name = "%s-%d" % (r["cases"], r["size"])'),
+                ('if row["resumed"]:', "if False:"),
+                ('("open", "resume", "close")',
+                 '("open", "resume", "closed")'),
+                ('row["statuses"] != ["inconclusive"]',
+                 'row["statuses"] != ["pass"]'),
+                ('"--output" not in argv', '"--out" not in argv')):
+            with self.subTest(old):
+                changed = text.replace(old, new)
+                self.assertNotEqual(changed, text)
+                self.assertNotEqual(self.moved_hash(changed),
+                                    self.MOVED_HASH)
+        # ... and so is a change of the module level code.
+        for new in ("sorted = lambda items: []\n",
+                    "import os\n", "LIMIT = 3\n"):
+            with self.subTest(new):
+                changed = text.replace(
+                    "sys.dont_write_bytecode = True\n",
+                    "sys.dont_write_bytecode = True\n" + new, 1)
+                self.assertNotEqual(changed, text)
+                self.assertEqual(self.moved_hash(changed), self.MOVED_HASH)
+                self.assertNotEqual(self.rest_hash(changed), self.REST_HASH)
+        # ... and a reworded message (of each blanked kind) is the same.
+        for old, new in (
+                ("it was resumed", "it was resumed again"),
+                ("no attempts ledger", "there is no attempts ledger"),
+                ("None when the unpacked", "Nothing when the unpacked"),
+                ('prefix="void-attempt-"', 'prefix="other-"'),
+                ("the table measures", "the table did measure")):
+            with self.subTest(old):
+                reworded = text.replace(old, new)
+                self.assertNotEqual(reworded, text)
+                self.assertEqual(self.moved_hash(reworded), self.MOVED_HASH)
+                self.assertEqual(self.rest_hash(reworded), self.REST_HASH)
+
+    def test_a_plain_string_require_message_is_not_in_the_hash(self):
+        # Rule (4): neither file has one (all their messages are `%`
+        # expressions), so a synthetic snippet stands for it.
+        def snippet(message, check="ok"):
+            return ("def runner_failure(f, n):\n"
+                    "    a.require(%s, %r)\n"
+                    "def void_failure(r):\n    return None\n"
+                    "def attempts_of(g):\n    return []\n"
+                    % (check, message))
+        same = self.moved_hash(snippet("first wording"))
+        self.assertEqual(self.moved_hash(snippet("second wording")), same)
+        self.assertNotEqual(self.moved_hash(snippet("x", "other")), same)
+
+    def test_the_resumed_attempt_mutant_is_refused_for_the_old_record(self):
+        # The logic of the resumed-attempt rule is held for the record that
+        # lacks the file: `if row["resumed"]:` made `if False:` changes the
+        # file, which check_code refuses for that record.
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        old[host] = before[0]
+        td.check_code(old)
+        # A copy of the code with the mutant in place of the file.
+        with tempfile.TemporaryDirectory(prefix="mutant-") as scratch:
+            for name in td.CODE:
+                (Path(scratch) / name).write_bytes(
+                    (a.HERE / name).read_bytes())
+            mutant = Path(scratch) / "void_attempts.py"
+            text = mutant.read_text()
+            self.assertIn('if row["resumed"]:', text)
+            mutant.write_text(text.replace('if row["resumed"]:',
+                                           "if False:"))
+            with self.assertRaisesRegex(
+                    ValueError, "void_attempts.py: this record lacks the "
+                    "file and so depends on the held seal"):
+                td.check_code(old, here=scratch)
+            # The same copy without the mutant checks.
+            mutant.write_text(text)
+            td.check_code(old, here=scratch)
+
     def test_the_printed_entries_are_literals_of_their_constant(self):
         import ast
         seal = dict(bytes=7, sha256="f" * 64)
@@ -1457,12 +1740,14 @@ class Attempts(Toy):
             self.dispose(record=not check, **kw)
 
     def reasons(self, attempt, status, output, why):
-        return ("follow-up attempt %s \\(status %s, output %s\\) is not "
-                "void: %s; only a void attempt .no admitted measurement in "
-                "any cell. may stand beside the judged one; anything else "
-                "needs a new policy decision, or --followup does not name "
-                "the follow-up's final stage .name the final stage" % (
-                    attempt, status, re.escape(str(output)), why))
+        return ("attempt %s of table %s \\(status %s, output %s\\) is "
+                "not void: %s; only a void attempt .no admitted measurement "
+                "in any cell. may stand beside the judged one; anything else "
+                "needs a new policy decision, or the option that names the "
+                "grid does not name the table's final stage .name the "
+                "final stage" % (
+                    attempt, self.fgrid.t.name, status,
+                    re.escape(str(output)), why))
 
     def edit(self, out, change):
         """Change the inventory of an output; returns the first attempt's
@@ -1539,13 +1824,13 @@ class Attempts(Toy):
     @after_void
     def test_an_inventory_without_runs_is_refused(self):
         self.refused_void(r"its inventory has rows for 0 cell\(s\), not "
-                          r"each of the 2 the follow-up measures",
+                          r"each of the 2 the table measures",
                           lambda found: found.update(runs=[]))
 
     @after_void
     def test_an_inventory_without_a_row_for_a_cell_is_refused(self):
         self.refused_void(r"its inventory has rows for 1 cell\(s\), not "
-                          r"each of the 2 the follow-up measures",
+                          r"each of the 2 the table measures",
                           lambda found: found["runs"].pop())
 
     @after_void
@@ -1678,7 +1963,7 @@ class Attempts(Toy):
         self.refuses(self.reasons(
             "open-attempt", "interrupted", out,
             r"its inventory has rows for 0 cell\(s\), not each of the 2 "
-            r"the follow-up measures"), **given)
+            r"the table measures"), **given)
         # ... also with no output directory at all.
         shutil.rmtree(out)
         self.refuses(self.reasons("open-attempt", "interrupted", out,
@@ -1781,18 +2066,31 @@ class Attempts(Toy):
         given = self.rerun()
         first = self.load(self.out / "inventory.json")["attempt"]
         self.fork(first, self.root / "fork", "inconclusive")
-        self.refuses("follow-up attempt %s ran in more than one output: "
-                     "%s, %s" % (first, re.escape(str(self.out)),
-                                 re.escape(str(self.root / "fork"))),
+        self.refuses("attempt %s of table %s ran in more than one "
+                     "output: %s, %s" % (
+                         first, self.fgrid.t.name,
+                         re.escape(str(self.out)),
+                         re.escape(str(self.root / "fork"))),
                      **given)
+
+    @after_void
+    def test_an_output_named_only_by_a_close_line_is_an_output(self):
+        given = self.rerun()
+        attempt, out = self.open_void_copy()
+        other = self.root / "close-only"
+        self.append_lines(other, attempt, ("close", "inconclusive"))
+        self.refuses("attempt %s of table %s ran in more than one "
+                     "output: %s, %s" % (
+                         attempt, self.fgrid.t.name, re.escape(str(out)),
+                         re.escape(str(other))), **given)
 
     @after_void
     def test_a_judged_attempt_with_a_second_output_is_refused(self):
         given = self.rerun()
         second = self.load(given["followup"] / "inventory.json")["attempt"]
         self.fork(second, self.root / "fork", "pass")
-        self.refuses("follow-up attempt %s ran in more than one output"
-                     % second, **given)
+        self.refuses("attempt %s of table %s ran in more than one output"
+                     % (second, self.fgrid.t.name), **given)
 
     @after_void
     def test_a_judged_attempt_at_another_output_is_refused(self):
@@ -1803,9 +2101,10 @@ class Attempts(Toy):
         copy = self.root / "copy"
         shutil.copytree(given["followup"], copy)
         self.refuses(
-            "follow-up attempt %s is judged, from %s, but the ledger has "
-            "it in %s" % (second, re.escape(str(copy)),
-                          re.escape(str(given["followup"]))),
+            "attempt %s of table %s is judged, from %s, but the ledger "
+            "has it in %s" % (second, self.fgrid.t.name,
+                              re.escape(str(copy)),
+                              re.escape(str(given["followup"]))),
             followup=copy, followup_allocation=self.allocation(
                 "alloc-z-copy", copy, self.work["z"]))
 
@@ -1915,7 +2214,7 @@ class Attempts(Toy):
     def test_the_refusal_comes_before_any_replay_in_check_mode(self):
         given = self.rerun()
         first = self.load(self.out / "inventory.json")["attempt"]
-        self.refuses("follow-up attempt %s .*is not void" % first,
+        self.refuses("attempt %s of table .*is not void" % first,
                      check=True, **given)
 
     @after_void

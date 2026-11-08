@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import patch
 
 import acceptance as a
+import import_closure as ic
 import test_timing_grid as ttg
 import timing_grid as tg
 
@@ -1766,52 +1767,14 @@ class ReplacedOpenings(Rig):
              "task30_grid")
 
     def replay_files(self):
-        """The source of every module of the directory, of
-        allocator-counter/ (the directory `timing_grid` adds to its path)
-        and of ../compatibility (which `loading` and `runtime_metrics` add),
-        by module name; no stem is in two of them."""
-        here = Path(__file__).resolve().parent
-        found, where = {}, {}
-        for d in (here, here / "allocator-counter",
-                  here.parent / "compatibility"):
-            for p in d.glob("*.py"):
-                self.assertNotIn(p.stem, found, "module %s is in both %s "
-                                 "and %s" % (p.stem, where.get(p.stem), p))
-                found[p.stem], where[p.stem] = p.read_text(), p
-        return found
+        """The source of every module of the harness by name (see
+        import_closure.py)."""
+        return ic.sources()
 
     def closure(self, sources):
         """The modules of `sources` that the replay path imports, wherever
         in a module the import is, but for the edges of `LEFT_OUT`."""
-        import ast
-
-        def imports(name):
-            found = set()
-
-            def walk(node, function):
-                for child in ast.iter_child_nodes(node):
-                    here = child.name if isinstance(
-                        child, (ast.FunctionDef, ast.AsyncFunctionDef)
-                    ) and function is None else function
-                    if isinstance(child, ast.Import):
-                        found.update((x.name.split(".")[0], function)
-                                     for x in child.names)
-                    elif isinstance(child, ast.ImportFrom) and \
-                            child.level == 0:
-                        found.add((child.module.split(".")[0], function))
-                        found.update((x.name, function) for x in child.names)
-                    walk(child, here)
-            walk(ast.parse(sources[name]), None)
-            return {m for m, function in found
-                    if m in sources and
-                    (name, m, function) not in self.LEFT_OUT}
-        closure, todo = set(), list(self.ROOTS)
-        while todo:
-            name = todo.pop()
-            if name not in closure:
-                closure.add(name)
-                todo += imports(name)
-        return closure
+        return ic.closure(sources, self.ROOTS, self.LEFT_OUT)[0]
 
     def covered(self):
         import task30_followup as t30
@@ -1841,6 +1804,10 @@ class ReplacedOpenings(Rig):
     # running of a toolchain, which its replay of an allocation grid does
     # not do.
     ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe"}
+    # `allocation_matrix.task31` imports the TASK31 case list when that
+    # task is asked for, which no TASK29B or TASK30 process, replay or
+    # disposition does: the edge is left out of the disposition's closure.
+    TASK31_EDGE = ("allocation_matrix", "task31_cases", "task31")
 
     def test_the_disposition_is_downstream_of_the_replay(self):
         # The disposition consumes the replays and is in neither table's
@@ -1856,9 +1823,13 @@ class ReplacedOpenings(Rig):
         self.assertNotIn("task30_dispose", self.covered())
         self.ROOTS = ("task30_dispose",)
         try:
+            self.LEFT_OUT = self.LEFT_OUT | {self.TASK31_EDGE}
             own = self.closure(sources)
+            self.LEFT_OUT = type(self).LEFT_OUT
+            self.assertIn("task31_cases", self.closure(sources))
         finally:
             del self.ROOTS
+            del self.LEFT_OUT
         sealed = {Path(n).stem for n in dispose.CODE}
         self.assertEqual(
             sorted(own - replayed - sealed - self.ALLOCATION_BUILD), [])

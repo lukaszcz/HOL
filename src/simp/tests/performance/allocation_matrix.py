@@ -11,6 +11,8 @@ no thresholds, outlier removal or subtraction. Output goes only below
 --output; nothing here names a path inside the repository.
 """
 import argparse
+from collections import Counter
+import collections.abc
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 import gzip
 import hashlib
@@ -36,6 +38,7 @@ import allocation_boundary as bd
 import allocation_schema as sc
 import evidence_bundle as bundle
 import loading
+import matrix_schema as ms
 import path_schema
 import private_runtime as pr
 import run_paired as rp
@@ -59,6 +62,9 @@ SIDES = {"baseline": "sel-b0", "control": "sel-b1", "candidate": "sel-c0"}
 EXPERIMENTS = {"candidate": ("baseline", "candidate"),
                "control": ("baseline", "control")}
 FIXTURES = ("MatrixAllocation.sml", "MatrixSupport.sml")
+# Every family installs the same two names in a private directory: the
+# fixture as Performance.sml and the work-phase support as MatrixSupport.sml.
+INSTALLED = ("Performance.sml", "MatrixSupport.sml")
 # Selected modules every process elaborates privately (run_paired.validate
 # demands the same of the performance fixture).
 DIRECT_MODULES = ("Traverse", "simpLib")
@@ -95,20 +101,107 @@ PATH_LAUNCHERS = (
     ("failure_path", "failure", "failure-path-controls.exe"))
 
 
+class Family:
+    """The allocation fixture of the cases that one timing fixture of
+    matrix.json (`fixture`) runs: the files installed in every private
+    directory as (file here, name there). A process loads only the selected
+    simplifier sources, the installed files and the shared heap, so no
+    family installs a shared closure."""
+
+    def __init__(self, files):
+        self.files = files
+
+    @property
+    def sources(self):
+        return tuple(source for source, _ in self.files)
+
+
+# One mechanism for every case: matrix.json's `fixture` of the case picks
+# the allocation fixture; both bracket and count alike (MatrixAllocation.sml
+# and ClientAllocation.sml share their driver text).
+FAMILIES = {
+    "MatrixPerformance.sml": Family(
+        (("MatrixAllocation.sml", "Performance.sml"),
+         ("MatrixSupport.sml", "MatrixSupport.sml"))),
+    "ClientPerformance.sml": Family(
+        (("ClientAllocation.sml", "Performance.sml"),
+         ("MatrixSupport.sml", "MatrixSupport.sml")))}
+
+
 class Task:
     """Which cases a grid measures and where its steady counts stand. The
-    default task is TASK29B's; a header names another only by `task`."""
+    default task is TASK29B's; a header names another only by `task`.
 
-    def __init__(self, name, label, cases, iterations):
+    A case's sizes are those of its size set in matrix.json, without the
+    `infeasible` (case, size) cells, which no gate can run. With `rows`
+    the decisions also hold one pass/fail row per cell (see assemble)."""
+
+    def __init__(self, name, label, cases, iterations, infeasible=(),
+                 rows=False):
         self.name, self.label = name, label
         self.cases, self.iterations = tuple(cases), iterations
+        self.infeasible, self.rows = frozenset(infeasible), rows
+        fixtures = {ms.EXPECTED_CASES[c]["fixture"] for c in self.cases}
+        sc.require(len(fixtures) == 1 and fixtures <= set(FAMILIES),
+                   "a task runs the cases of one fixture family")
+        self.family = FAMILIES[fixtures.pop()]
+        sc.require(self.infeasible <= {(c, n) for c in self.cases
+                                       for n in self.every_size(c)},
+                   "infeasible cells that are no cell of the task")
+
+    @staticmethod
+    def every_size(case):
+        return tuple(ms.SIZE_SETS[ms.EXPECTED_CASES[case]["sizes"]])
+
+    def sizes(self, case):
+        return tuple(n for n in self.every_size(case)
+                     if (case, n) not in self.infeasible)
 
 
 DEFAULT_TASK = "task29b"
-TASKS = {
+
+
+def task31():
+    """The TASK31 task. Its case list is read only when a process asks for
+    this task: the other tasks' processes, their replays and the TASK30
+    disposition never load task31_cases.py."""
+    import task31_cases
+    return Task("task31", "TASK31", task31_cases.CASES,
+                HERE / "allocation_iterations_task31.json",
+                task31_cases.INFEASIBLE_CELLS, rows=True)
+
+
+class Tasks(collections.abc.Mapping):
+    """The tasks by name. A task of `lazy` is built on its first lookup
+    (and then kept), so that its module is imported by no other task's
+    process; naming, iterating and testing membership build nothing."""
+
+    def __init__(self, eager, lazy):
+        self.made, self.lazy = dict(eager), dict(lazy)
+
+    def __getitem__(self, name):
+        if name not in self.made:
+            if name not in self.lazy:
+                raise KeyError(name)
+            self.made[name] = self.lazy[name]()
+        return self.made[name]
+
+    def __contains__(self, name):
+        return name in self.made or name in self.lazy
+
+    def __iter__(self):
+        return iter([*self.made, *(n for n in self.lazy
+                                   if n not in self.made)])
+
+    def __len__(self):
+        return len(set(self.made) | set(self.lazy))
+
+
+TASKS = Tasks({
     DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
     "task30": Task("task30", "TASK30", task30_cases.CASES,
-                   HERE / "allocation_iterations_task30.json")}
+                   HERE / "allocation_iterations_task30.json")},
+    {"task31": task31})
 
 
 def task_named(name):
@@ -122,8 +215,8 @@ def task_of(header):
 
 
 def keys(task=None):
-    return [(case, size) for case in (task or TASKS[DEFAULT_TASK]).cases
-            for size in SIZES]
+    task = task or TASKS[DEFAULT_TASK]
+    return [(case, size) for case in task.cases for size in task.sizes(case)]
 
 
 def name_of(case, size):
@@ -363,9 +456,9 @@ def harness_files(task=None):
         "allocation_matrix.py", "allocation_schema.py",
         "allocation_analysis.py", "allocation_boundary.py",
         "allocation_boundary.json", task.iterations.name,
-        "MatrixAllocation.sml", "MatrixSupport.sml", "acceptance.py",
+        *task.family.sources, "acceptance.py",
         "evidence_bundle.py", "loading.py", "task29_gate.py",
-        "task30_cases.py",
+        "task30_cases.py", *(("task31_cases.py",) if task.rows else ()),
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
         "audit_evidence.py", "summarize.py")]
     inputs += [HERE / "allocator-counter" / n for n in (
@@ -374,7 +467,7 @@ def harness_files(task=None):
         "managed-allocation.patch.gz", "check_patch.py",
         "prepare_patch.py")]
     inputs += [HERE.parent / "compatibility" / "run_paired.py"] + paired
-    fixtures = [HERE / n for n in FIXTURES] + [
+    fixtures = [HERE / n for n in task.family.sources] + [
         p for p in paired if p.suffix == ".sml"]
     return inputs, fixtures
 
@@ -413,6 +506,8 @@ class Job:
 
 class Grid:
     """Locked, sealed environment: toolchain, private runtime, shim."""
+
+    task = TASKS[DEFAULT_TASK]
 
     def __init__(self, args):
         self.args = args
@@ -502,10 +597,11 @@ class Grid:
         self.inputs = {Path(p).resolve(strict=True).relative_to(
             ROOT).as_posix(): a.seal(p) for p in inputs}
         # Selected fixtures as installed in every private directory.
-        self.fixtures = {"Performance.sml": a.seal(HERE / FIXTURES[0]),
-                         FIXTURES[1]: a.seal(HERE / FIXTURES[1])}
+        family = self.task.family
+        self.fixtures = {target: a.seal(HERE / source)
+                         for source, target in family.files}
         self.fixtures.update({p.name: a.seal(p) for p in fixtures
-                              if p.name not in FIXTURES})
+                              if p.name not in family.sources})
         # Same files the timing runs seal: heap, project file, compiler and
         # every library of the process; libraries are added after binding.
         self.tools = dict(products, **native)
@@ -544,6 +640,15 @@ class Grid:
         report["shim"] = a.seal(shim)
         self.header = self.make_header(lineage["head"], products)
         self.ready = True
+
+    def install_private(self, directory):
+        """The fixtures of the task in a private directory of one side (the
+        selected sources already checked out)."""
+        rp.install_fixtures(directory)
+        for source, target in self.task.family.files:
+            shutil.copyfile(HERE / source, directory / target)
+        with (directory / "Holmakefile").open("a") as out:
+            out.write("\npaired.exe: Performance.uo\n")
 
     def check_toolchain_sources(self, built):
         """The tracked HOL sources (as the build left them) and sigobj, as
@@ -615,12 +720,7 @@ class Grid:
             sc.require(rev == self.revisions[side] and
                        source_map(sources) == self.sources[side],
                        "checkout differs from the grid's sources")
-            rp.install_fixtures(directory)
-            for name in FIXTURES:
-                target = "Performance.sml" if name == FIXTURES[0] else name
-                shutil.copyfile(HERE / name, directory / target)
-            with (directory / "Holmakefile").open("a") as out:
-                out.write("\npaired.exe: Performance.uo\n")
+            self.install_private(directory)
             job.inventory[side] = sources
         job.names = {Path(s["git_path"]).stem for v in job.inventory.values()
                      for s in v}
@@ -833,8 +933,7 @@ def check_protocol(receipt, meta, events):
                len(loaded) and set(loaded) == set(heaps + completed) and
                set(receipt["paths"]) == set(used + loaded),
                "incomplete archived source inventory")
-    for name in FIXTURES:
-        target = "Performance.sml" if name == FIXTURES[0] else name
+    for target in INSTALLED:
         sc.require(str(Path(private) / target) in completed,
                    "fixture never completed: " + target)
     for name in DIRECT_MODULES:
@@ -1015,14 +1114,19 @@ def work_section(cases, unresolved=()):
     return section
 
 
-def assemble(cells, records, observed, baseline=a.BASE, task=None):
-    """decisions.json content from analyzed cells (all or a subset)."""
-    cases = (task or TASKS[DEFAULT_TASK]).cases
+def assemble(cells, records, observed, baseline=a.BASE, task=None,
+             candidate=None):
+    """decisions.json content from analyzed cells (all or a subset). A task
+    with `rows` also binds them to the `candidate` and `baseline` revisions
+    (see cell_rows)."""
+    task = task or TASKS[DEFAULT_TASK]
+    cases = task.cases
     out = dict(schema="task29b-decisions-v1", cases={}, nondeterminism=[],
                published_varying=[], code_visible=[], unresolved=[])
     every = []
     for case in cases:
-        sizes = [n for n in SIZES if (case, n) in cells]
+        every_size = task.sizes(case)
+        sizes = [n for n in every_size if (case, n) in cells]
         if not sizes:
             continue
         record = dict(cells={}, slopes=None, constants=None)
@@ -1051,9 +1155,10 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
                     if any(k != "0" for k in (*m["baseline"], *m["candidate"])
                            ) and metric == "code":
                         out["code_visible"].append([case, size, phase])
-        if len(record["cells"]) == len(SIZES):
-            data = {n: observed[case, n] for n in SIZES}
-            record["slopes"] = an.slopes(record["cells"], list(SIZES), data)
+        if len(record["cells"]) == len(every_size):
+            data = {n: observed[case, n] for n in every_size}
+            record["slopes"] = an.slopes(record["cells"], list(every_size),
+                                         data)
             record["constants"] = an.constants(record["cells"])
             every += an.case_decisions(record)
         else:
@@ -1075,6 +1180,13 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
     out["acceptance_pairs"] = bool(pairs) and min(pairs) >= PAIRS
     # Only the pinned develop commit is the baseline of an acceptance.
     out["acceptance_baseline"] = baseline == a.BASE
+    if task.rows:
+        # A smoke or a grid against another baseline is never complete.
+        out["complete"] = complete and out["acceptance_pairs"] and \
+            out["acceptance_baseline"]
+        out["candidate"], out["baseline"] = candidate, baseline
+        out["rows"] = cell_rows(task, out)
+        out["infeasible"] = sorted(name_of(*k) for k in task.infeasible)
     # A definite failure is reported as such even when the grid is
     # incomplete or a smoke; a pass needs a complete, deterministic grid.
     out["status"] = an.status(every)
@@ -1083,6 +1195,47 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
             or not out["acceptance_baseline"] or out["nondeterminism"]):
         out["status"] = "inconclusive"
     return out
+
+
+def cell_rows(task, decisions):
+    """The disposition's rows of a task with `rows`: a list with one row per
+    cell that was measured or tried, in the order of the cases and sizes:
+
+        {case, size, pairs, decision, work}
+
+    `decision` is the allocation words' decision for the cell: `pass` only
+    when every gated phase and metric of the cell passes, the cell has at
+    least PAIRS pairs, the baseline is the pinned one and none of its rows
+    is nondeterministic; `fail` when one fails; `inconclusive` otherwise
+    (also for a cell without an analysis). `work` is the structural work
+    row beside the words (`equal`, `differs`, `inconclusive`, or None
+    without work rows); the disposition requires it equal for a pass. The
+    slopes of a case are differences of the cells', so they are not in a
+    row."""
+    varying = {name_of(case, size)
+               for case, size, *_ in decisions["nondeterminism"]}
+    rows = {}
+    for case, record in decisions["cases"].items():
+        for size, cell in record["cells"].items():
+            name = name_of(case, size)
+            status = cell_status(cell)
+            if status == "pass" and not (
+                    cell["pairs"] >= PAIRS and name not in varying and
+                    decisions["acceptance_baseline"]):
+                status = "inconclusive"
+            rows[name] = dict(
+                case=case, size=size, pairs=cell["pairs"],
+                decision=status if status in ("pass", "fail")
+                else "inconclusive",
+                work=an.work_status(r["decision"] for r in
+                                    cell["work"].values())
+                if cell.get("work") is not None else None)
+    for name in decisions["unresolved"]:
+        case, size = name.rsplit("-", 1)
+        rows[name] = dict(case=case, size=int(size), pairs=None,
+                          decision="inconclusive", work=None)
+    return [rows[name_of(*key)] for key in keys(task)
+            if name_of(*key) in rows]
 
 
 def counts_text(counts):
@@ -1145,6 +1298,12 @@ def results_markdown(decisions, label="TASK29B"):
             for size in record["cells"]:
                 lines.append("| %s | %s | %s |" % (
                     case, size, work["cells"].get(name_of(case, size), "-")))
+    if "rows" in decisions:
+        found = Counter(r["decision"] for r in decisions["rows"])
+        lines += ["", "Cell rows (`rows` of decisions.json): %s; %d cells "
+                  "infeasible and not run (`infeasible`)." % (
+                      counts_text(dict(sorted(found.items()))) or "none",
+                      len(decisions["infeasible"]))]
     lines += ["", "Nondeterministic gated rows: %d. Varying published "
               "rows: %d. Nonzero code-space rows: %d. Unresolved cells: %d."
               % (len(decisions["nondeterminism"]),
@@ -1187,7 +1346,7 @@ def finish(root, inventory):
                     for r in inventory["runs"]}) <= 1,
                "cells measured at scratch paths of different lengths")
     return assemble(set(cells), records, observed, inventory["baseline"],
-                    task)
+                    task, inventory.get("candidate"))
 
 
 PARTIAL_FILES = ("decisions-partial.json", "RESULTS-partial.md")
