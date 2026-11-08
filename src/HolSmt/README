@@ -656,6 +656,12 @@ Z3 th-lemma replay coverage:
 Nonlinear integer replay substitutes numeral equalities proved from opposing
 bounds before SOS certificate search. CPC arithmetic rewrites include both
 maximum lower bounds, arith-max-geq1 and arith-max-geq2.
+Integer polynomial normalization removes negative zero introduced by
+subtraction aliases; transitivity normalizes integer relation spellings
+before searching for an equality bridge. Shared antecedents use the same
+DAG normalization for modus ponens. Numeric conditionals remain opaque
+through linear and nonlinear arithmetic before branch expansion; congruence
+preserves immediate child positions, including reflexive premises.
 
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.

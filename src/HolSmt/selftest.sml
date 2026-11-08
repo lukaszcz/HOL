@@ -268,6 +268,10 @@ fun mk_CVCp expect_fun =
     "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
 val thm_CVCp = mk_CVCp (expect_thm true)
+
+val thm_CVCp_arith =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (arithmetic proofs)" HolSmtLib.CVC_TAC
 val sat_CVCp = mk_CVCp expect_sat
 
 (*****************************************************************************)
@@ -464,9 +468,9 @@ in
     (``(x:num) - y - z = x - (y + z)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) <= y ==> (x - y = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
     (``((x:num) - y = 0) \/ (y - x = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
 
     (``(x:num) * 0 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),

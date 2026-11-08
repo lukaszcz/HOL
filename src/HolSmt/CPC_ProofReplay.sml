@@ -2109,9 +2109,71 @@ local
                      (remove_index index remaining)
                  end)
 
+      fun positional_cong () =
+        let
+          val (operator, arguments) = boolSyntax.strip_comb (#term source)
+          val (children, rebuild) =
+            case #provenance source of
+              EqualityProvenance (left, right) =>
+                ([left, right], fn [left', right'] =>
+                    EqualityProvenance (left', right')
+                  | _ => raise ERR "cong_provenance"
+                      "positional equality has wrong arity")
+            | ApplicationProvenance (head, operands) =>
+                (operands, fn children => ApplicationProvenance
+                  (head, children))
+            | _ => ([], fn _ => #provenance source)
+          val aligned = not (List.null children) andalso
+            List.length arguments = List.length children andalso
+            List.length arguments = List.length premise_steps
+          fun orient (argument, provenance, premise_step) =
+            let
+              val theorem = step_theorem (expose_step premise_step)
+              val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+              val (left_provenance, right_provenance) =
+                case step_provenance (expose_step premise_step) of
+                  EqualityProvenance pair => pair
+                | _ => raise ERR "cong_provenance"
+                    "positional premise lacks equality endpoints"
+              fun matches term endpoint = Term.aconv argument term andalso
+                provenance_topology_compatible provenance endpoint
+            in
+              if matches left left_provenance then
+                (SmtSkeletonProve.anchor_left argument theorem,
+                 right_provenance)
+              else if matches right right_provenance then
+                (SmtSkeletonProve.anchor_left argument (Thm.SYM theorem),
+                 left_provenance)
+              else raise ERR "cong_provenance"
+                "positional premise does not rewrite its immediate child"
+            end
+          fun pairs [] [] [] = []
+            | pairs (argument :: arguments) (child :: children)
+                (premise :: premises) =
+                orient (argument, child, premise) ::
+                  pairs arguments children premises
+            | pairs _ _ _ = raise ERR "cong_provenance"
+                "positional congruence has wrong arity"
+        in
+          if not aligned then NONE
+          else
+            let
+              val rewritten = pairs arguments children premise_steps
+              val theorem = List.foldl
+                (fn ((child, _), theorem) => Thm.MK_COMB (theorem, child))
+                (Thm.REFL operator) rewritten
+              val result = {term = boolSyntax.rhs (Thm.concl theorem),
+                provenance = rebuild (List.map #2 rewritten)}
+            in SOME (result, theorem) end
+            handle Feedback.HOL_ERR _ => NONE
+        end
+
       val indexed_steps = ListPair.zip
         (List.tabulate (List.length rewrite_steps, Lib.I), rewrite_steps)
       val (result, theorem) =
+        case positional_cong () of
+          SOME result => result
+        | NONE =>
         (structural_fold source (Thm.REFL (#term source)) indexed_steps
          handle Feedback.HOL_ERR structural_error =>
            (List.foldl compose
@@ -2580,6 +2642,23 @@ local
       else Thm.ALPHA root canonical
     end
 
+  (* Apply only unconditional equations nodewise.  Conditional division
+     rewrites remain in the existing context-sensitive canonicalizer. *)
+  val cpc_dag_spelling_conv = SmtReplayCanon.dag_rewrite_conv
+    (Conv.FIRST_CONV (List.map Conv.REWR_CONV
+      (List.filter (boolSyntax.is_eq o Thm.concl)
+        (List.concat (List.map (Drule.CONJUNCTS o Drule.SPEC_ALL)
+          (SmtReplayCanon.cpc_alias_rewrites @
+           [Conv.GSYM integerTheory.INT_NEG_LMUL,
+            integerTheory.INT_MUL_LID, integerTheory.INT_LT_LE1,
+            integerTheory.INT_ADD_LID,
+            integerTheory.EDIV_DEF, integerTheory.EMOD_DEF]))))))
+  val cpc_dag_orientation_conv = SmtReplayCanon.dag_orientation_conv
+    SmtReplayCanon.reorient_equality_conv
+  val cpc_dag_normal_form_conv = compose_normal_form_conv
+    cpc_dag_spelling_conv (compose_normal_form_conv cpc_dag_orientation_conv
+      canonical_term_conv)
+
   fun replay_trans prems =
     case prems of
       [] => raise ERR "trans" "expected CPC equality premises"
@@ -2733,15 +2812,7 @@ local
                                 (Thm.SYM next))) of
                              SOME result => result
                            | NONE =>
-                               if bounded_propositional_tautology
-                                    accumulated then
-                                 (retain_support next accumulated,
-                                  next_provenance)
-                               else if bounded_propositional_tautology next
-                               then
-                                 (retain_support accumulated next,
-                                  accumulated_provenance)
-                               else raise ERR "trans"
+                               raise ERR "trans"
                                  "equality premises do not compose")))
         end
     in
@@ -2869,7 +2940,13 @@ local
                unchanged. *)
             profile
               "CPC(rung:canonical_trans/provenance-canonical)"
-              canonical_orientations ()
+              (fn () => canonical_orientations ()
+                handle Feedback.HOL_ERR error =>
+                  if bounded_propositional_tautology accumulated then
+                    (retain_support next accumulated, next_provenance)
+                  else if bounded_propositional_tautology next then
+                    (retain_support accumulated next, accumulated_provenance)
+                  else raise Feedback.HOL_ERR error) ()
         end
     in
       case premise_steps of
@@ -5915,7 +5992,17 @@ local
                (SOME accumulated_pair, SOME next_pair) =>
                  SOME (select (accumulated_pair, next_pair))
              | _ => NONE)
-          fun canonical_pair left right =
+          val normal_forms = ref ([] : (Term.term * Thm.thm) list)
+          fun normal_form term =
+            case List.find (fn (saved, _) =>
+                Portable.pointer_eq (saved, term)) (!normal_forms) of
+              SOME (_, theorem) => theorem
+            | NONE =>
+                let
+                  val theorem = cpc_dag_normal_form_conv term
+                  val _ = normal_forms := (term, theorem) :: !normal_forms
+                in theorem end
+          fun canonical_pair allow_bridge left right =
             if same left right then
               (shared_phase "nodewise" (fn () =>
                  SmtSkeletonProve.bounded_nodewise_equality
@@ -5924,9 +6011,9 @@ local
             else
             let
               val left_theorem = shared_phase "canonical_term"
-                (fn () => canonical_term_conv left)
+                (fn () => normal_form left)
               val right_theorem = shared_phase "canonical_term"
-                (fn () => canonical_term_conv right)
+                (fn () => normal_form right)
               val left_canonical = boolSyntax.rhs (Thm.concl left_theorem)
               val right_canonical = boolSyntax.rhs (Thm.concl right_theorem)
               val canonical_same =
@@ -5934,6 +6021,8 @@ local
                 same left_canonical right_canonical
               val (left_theorem, right_theorem) =
                 if canonical_same then (left_theorem, right_theorem)
+                else if not allow_bridge then
+                  raise ERR "trans" "DAG equality normal forms differ"
                 else
                   let
                     val bridge_target = boolSyntax.mk_eq
@@ -5971,34 +6060,34 @@ local
                     (Thm.TRANS left_theorem bridge, right_theorem)
                   end
             in (left_theorem, right_theorem) end
-          fun right_left () =
+          fun right_left allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_right next_left
+                canonical_pair allow_bridge accumulated_right next_left
               val accumulated = Thm.TRANS accumulated left_anchor
               val next = Thm.TRANS (Thm.SYM right_anchor) next
             in result (Thm.TRANS accumulated next)
               (fn ((left, _), (_, right)) => (left, right)) end
-          fun right_right () =
+          fun right_right allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_right next_right
+                canonical_pair allow_bridge accumulated_right next_right
               val accumulated = Thm.TRANS accumulated left_anchor
               val next = Thm.TRANS (Thm.SYM right_anchor) (Thm.SYM next)
             in result (Thm.TRANS accumulated next)
               (fn ((left, _), (right, _)) => (left, right)) end
-          fun left_left () =
+          fun left_left allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_left next_left
+                canonical_pair allow_bridge accumulated_left next_left
               val accumulated = Thm.TRANS (Thm.SYM accumulated) left_anchor
               val next = Thm.TRANS (Thm.SYM right_anchor) next
             in result (Thm.TRANS accumulated next)
               (fn ((_, right), (_, next_right)) => (right, next_right)) end
-          fun left_right () =
+          fun left_right allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_left next_right
+                canonical_pair allow_bridge accumulated_left next_right
               val accumulated = Thm.TRANS (Thm.SYM accumulated) left_anchor
               val next = Thm.TRANS
                 (Thm.SYM right_anchor) (Thm.SYM next)
@@ -6009,27 +6098,39 @@ local
             result (Thm.TRANS accumulated next)
               (fn ((left, _), (_, right)) => (left, right))
           else if same accumulated_right next_left then
-            right_left ()
+            right_left false
           else if Portable.pointer_eq (accumulated_right, next_right) then
             result (Thm.TRANS accumulated (Thm.SYM next))
               (fn ((left, _), (right, _)) => (left, right))
           else if same accumulated_right next_right then
-            right_right ()
+            right_right false
           else if Portable.pointer_eq (accumulated_left, next_left) then
             result (Thm.TRANS (Thm.SYM accumulated) next)
               (fn ((_, right), (_, next_right)) => (right, next_right))
           else if same accumulated_left next_left then
-            left_left ()
+            left_left false
           else if Portable.pointer_eq (accumulated_left, next_right) then
             result (Thm.TRANS (Thm.SYM accumulated) (Thm.SYM next))
               (fn ((_, right), (next_left, _)) => (right, next_left))
           else if same accumulated_left next_right then
-            left_right ()
+            left_right false
           else
-            (right_left ()
-             handle Feedback.HOL_ERR _ => right_right ()
-             handle Feedback.HOL_ERR _ => left_left ()
-             handle Feedback.HOL_ERR _ => left_right ())
+            ((right_left false
+              handle Feedback.HOL_ERR _ => right_right false
+              handle Feedback.HOL_ERR _ => left_left false
+              handle Feedback.HOL_ERR _ => left_right false)
+             handle Feedback.HOL_ERR _ =>
+               if bounded_propositional_tautology accumulated then
+                 result (retain_support next accumulated)
+                   (fn (_, pair) => pair)
+               else if bounded_propositional_tautology next then
+                 result (retain_support accumulated next)
+                   (fn (pair, _) => pair)
+               else
+                 (right_left true
+                  handle Feedback.HOL_ERR _ => right_right true
+                  handle Feedback.HOL_ERR _ => left_left true
+                  handle Feedback.HOL_ERR _ => left_right true))
         end
       val (theorem, provenance) =
         case premise_steps of
@@ -10641,7 +10742,9 @@ local
     in
       case prems of
         [left, right] =>
-          (oriented SmtReplayCanon.cpc_operand_canon_conv left right
+          (oriented cpc_dag_normal_form_conv left right
+           handle Feedback.HOL_ERR _ =>
+             oriented SmtReplayCanon.cpc_operand_canon_conv left right
            handle Feedback.HOL_ERR _ =>
              oriented strong_canon left right)
       | _ => raise ERR "modus_ponens" "expected two CPC premises"
@@ -18430,8 +18533,18 @@ local
             (canonical_cong ())
         | NONE =>
             let
+              (* Premises correspond to immediate children in source order.
+                 Canonicalizing the parent may swap an equality's children. *)
+              fun source_canon term =
+                let val (operator, operands) = boolSyntax.strip_comb term in
+                  if List.length operands <> List.length prems then canon term
+                  else List.foldl
+                    (fn (operand, theorem) =>
+                      Thm.MK_COMB (theorem, canon operand))
+                    (Thm.REFL operator) operands
+                end
               fun normalized_term term =
-                boolSyntax.rhs (Thm.concl (canon term))
+                boolSyntax.rhs (Thm.concl (source_canon term))
               val normalized_args = List.map normalized_term args
               val normalized_prems =
                 List.map (Conv.CONV_RULE canon) prems
@@ -18439,7 +18552,7 @@ local
               case (located_args, normalized_args) of
                 ([source], [normalized_source]) =>
                   let
-                    val source_normalization = canon (#term source)
+                    val source_normalization = source_canon (#term source)
                     val normalized_located = {
                       term = normalized_source,
                       provenance = align_canonical_provenance
@@ -18934,7 +19047,7 @@ local
                                not (has_binder_shell (#provenance source)) then
                          raw_unavailable_result
                            "congruence checked operandwise"
-                           (replay_direct_nary_cong (#term source) prems)
+                           (replay_nary_cong (#term source) prems)
                        else
                          (replay_exact_cong_result NONE source premise_steps
                           handle Feedback.HOL_ERR holerr =>
@@ -18944,15 +19057,13 @@ local
                             if #name rule = "nary_cong" then
                               raw_unavailable_result
                                 "n-Cong n-ary congruence checked directly"
-                                (replay_direct_nary_cong
-                                  (#term source) prems)
+                                (replay_direct_nary_cong (#term source) prems)
                             else if #name rule = "cong" andalso
                                     not (has_binder_shell
                                       (#provenance source)) then
                               raw_unavailable_result
                                 "congruence exact provenance unavailable"
-                                (replay_direct_nary_cong
-                                  (#term source) prems)
+                                (replay_nary_cong (#term source) prems)
                             else raise ERR "cong"
                               "exact congruence reconstruction failed")
                      end

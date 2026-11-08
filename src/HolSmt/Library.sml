@@ -953,7 +953,7 @@ struct
           else
             Tactical.THEN
               (simpLib.FULL_SIMP_TAC
-                (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                (simpLib.++ (boolSimps.bool_ss, intSimps.INT_REDUCE_ss))
                 equalities,
                Tactical.POP_ASSUM_LIST (fn thms =>
                  Tactical.THEN
@@ -971,17 +971,6 @@ struct
       handle NoTightBounds => nla_prove_raw tm
     end
 
-  (* Polynomial arithmetic should treat conditional branches as opaque atoms;
-     splitting them first is both unnecessary and potentially exponential. *)
-  fun arith_prove_raw tm =
-    Tactical.TAC_PROOF (([], tm), intLib.INT_RING_TAC)
-    handle Feedback.HOL_ERR _ =>
-    intLib.ARITH_PROVE tm
-    handle Feedback.HOL_ERR _ =>
-    RealField.REAL_ARITH tm
-    handle Feedback.HOL_ERR _ =>
-    raise Feedback.mk_HOL_ERR "Library" "arith_prove_raw"
-      ("failed: " ^ term_to_string tm)
 
   fun contains_conditional tm =
     List.exists (Lib.can boolSyntax.dest_cond) (subterms tm)
@@ -1028,6 +1017,73 @@ struct
               List.exists search arguments
             end
     in search tm end
+
+  (* Polynomial arithmetic should treat conditional branches as opaque atoms;
+     splitting them first is both unnecessary and potentially exponential. *)
+  fun arith_prove_raw tm =
+    let
+      fun raw target =
+        Tactical.TAC_PROOF (([], target), intLib.INT_RING_TAC)
+        handle Feedback.HOL_ERR _ => intLib.ARITH_PROVE target
+        handle Feedback.HOL_ERR _ => RealField.REAL_ARITH target
+      val atoms = ref ([] : Term.term list)
+      fun arithmetic term = List.exists
+        (fn ty => Type.compare (Term.type_of term, ty) = EQUAL)
+        [numSyntax.num, intSyntax.int_ty, realSyntax.real_ty]
+      fun collect bound =
+        let
+          val seen = Array.array (2039, [] : Term.term list)
+          fun visit term =
+            let
+              val bucket = Term.pointer_bucket 4 2039 term
+              val prior = Array.sub (seen, bucket)
+              val fresh = not (List.exists
+                (fn old => Portable.pointer_eq (term, old)) prior)
+            in
+              if not fresh then ()
+              else
+                (Array.update (seen, bucket, term :: prior);
+                 if arithmetic term andalso boolSyntax.is_cond term andalso
+                    not (List.exists
+                      (fn variable => HOLset.member
+                        (Term.FVL_dag [term] (HOLset.empty Term.compare), variable)) bound)
+                 then
+                   if List.exists (Term.aconv term) (!atoms) then ()
+                   else atoms := term :: !atoms
+                 else
+                   case Lib.total Term.dest_abs term of
+                     SOME (variable, body) => collect (variable :: bound) body
+                   | NONE =>
+                       (case Lib.total Term.dest_comb term of
+                          SOME (operator, operand) =>
+                            (visit operator; visit operand)
+                        | NONE => ()))
+            end
+        in visit end
+      val _ = collect [] tm
+      val replacements = List.map
+        (fn atom => (Term.genvar (Term.type_of atom), atom)) (!atoms)
+      val abstraction = List.map
+        (fn (variable, atom) => {redex = atom, residue = variable}) replacements
+      fun abstract_proof () = Thm.INST
+        (List.map (fn (variable, atom) => {redex = variable, residue = atom})
+          replacements)
+        (let val abstract = Term.subst abstraction tm in
+           raw abstract
+           handle Feedback.HOL_ERR error =>
+             if is_nonlinear abstract andalso
+                not (contains_nonpolynomial_arithmetic abstract)
+             then nla_prove abstract
+             else raise Feedback.HOL_ERR error
+         end)
+    in
+      if List.null replacements then raw tm
+      else
+        (abstract_proof ()
+         handle Feedback.HOL_ERR error =>
+           if Option.isSome (Term.term_size_bounded 256 tm) then raw tm
+           else raise Feedback.HOL_ERR error)
+    end
 
   (* cvc5 and Z3 may lower MIN/MAX or natural subtraction to conditionals.
      Normalize just that shape before arithmetic, rather than broadening the
