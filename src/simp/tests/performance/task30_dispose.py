@@ -74,7 +74,6 @@ import argparse
 import json
 from pathlib import Path
 import sys
-import tempfile
 
 sys.dont_write_bytecode = True
 import acceptance as a
@@ -83,6 +82,7 @@ import allocation_matrix as am
 import task30_followup as follow
 import task30_grid as base
 import timing_grid as tg
+from void_attempts import attempts_of
 
 # What the evidence for a cell is made of; recorded in the disposition.
 EVIDENCE = ("sources", "allocation", "work", "result")
@@ -110,7 +110,17 @@ OPERATION_PHASES = ("operation_first", "operation_steady", "apply")
 CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
         "timing_grid.py", "acceptance.py", "allocation_matrix.py",
         "allocation_analysis.py", "allocation_schema.py",
-        "allocation_boundary.py", "path_schema.py")
+        "allocation_boundary.py", "path_schema.py", "void_attempts.py")
+# Files of CODE that a record made before they existed does not carry:
+# {file: (the file whose code held theirs, its seals in those records)}. The
+# rule for the attempts of the follow-up's table was part of this module and
+# is now void_attempts.py, shared with TASK31's disposition. A record may
+# lack the file only if its seal of the host is one of those listed (the
+# one `followup-r2/disposition.json` carries); a record made by code that
+# has the file carries it.
+ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
+    bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
+                   "8e864bf5d9298ce73366c88a069cef59"),))}
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
@@ -540,10 +550,13 @@ def check_code(recorded, here=None):
     refusal, with the entries the commit pastes into the constants (each
     the literal element of its constant) and the tests that pin them."""
     now = seals(here)
-    a.require(isinstance(recorded, dict) and set(recorded) == set(CODE),
+    older = {name for name, (host, before) in ADDED.items()
+             if isinstance(recorded, dict) and recorded.get(host) in before}
+    names = [name for name in CODE if name not in older]
+    a.require(isinstance(recorded, dict) and set(recorded) == set(names),
               "changed TASK30 disposition: the recorded code is not %s"
-              % ", ".join(CODE))
-    changed = [name for name in CODE
+              % ", ".join(names))
+    changed = [name for name in names
                if recorded[name] != now[name] and
                recorded[name] not in HISTORY.get(name, ())]
     if changed:
@@ -643,187 +656,6 @@ def cheap(args, old, new):
             "attempt"]] = first
     return dict(grid=grid, followup=followup, allocation=allocation,
                 allocz=allocz, attempts=attempts_of(args, new, judged))
-
-
-def runner_failure(folder, name):
-    """None when the unpacked archive `folder` of the cell `name` shows no
-    measurement, else the text of the condition it fails: acceptance's own
-    `success` is false; no command it recorded timed out, and each left a
-    runner manifest in the folder of its `--output` (one killed while
-    measuring leaves none, but receipts); and no runner manifest, of a
-    command or not, records an admitted run (`runs` empty, `success`
-    false)."""
-    report = a.load(folder / "acceptance.json")
-    if report.get("success") is not False:
-        return "the acceptance of %s did not fail (success %r)" % (
-            name, report.get("success"))
-    commands = report.get("commands")
-    if not isinstance(commands, list):
-        return "the acceptance of %s records no list of commands" % name
-    for command in commands:
-        if not isinstance(command, dict) or \
-                command.get("timed_out") is not False:
-            return ("a command of %s timed out, or its receipt does not "
-                    "say it did not: its runner may have measured" % name)
-        argv = command.get("argv")
-        if not isinstance(argv, list) or "--output" not in argv[:-1]:
-            return "a command of %s names no --output" % name
-        where = Path(argv[argv.index("--output") + 1]).name
-        if not (folder / where / "manifest.json").is_file():
-            return ("the archive of %s has no runner manifest in %s (a "
-                    "runner killed while measuring leaves none)" % (
-                        name, where))
-    for manifest in sorted(folder.rglob("manifest.json")):
-        found = a.load(manifest)
-        if found.get("runs") != [] or found.get("success") is not False:
-            return ("the archive of %s holds a runner manifest that "
-                    "records an admitted run (%s)" % (
-                        name, manifest.relative_to(folder)))
-    return None
-
-
-def void_failure(new, key, output, row=None):
-    """None when the attempt `key` (id, stage), whose ledger output is `output`
-    and whose ledger row (`Ledger.attempts`) is `row`, is void, else the
-    text of the condition it fails. Void: the output directory exists and
-    holds the inventory of that attempt, which has a row for every cell it
-    measures (those of the follow-up for a first stage, those of its own
-    plan for a second); every row is a protocol failure (`protocol` present
-    and false) whose archive exists and is the sealed one and shows no
-    measurement (`runner_failure`); and the ledger has no resume line for
-    the attempt (a resumed attempt may have drawn samples in a cell it
-    cleared) and exactly one close line, whose status is `inconclusive`,
-    the status of a grid in which every cell is a protocol failure
-    (`timing_grid` summary: no cell passes or fails). A second stage closes
-    with the combined status of both stages, so a void second stage is
-    accepted only when its first stage has no fail; a fail there is final
-    and the follow-up blocks anyway. An attempt left open, resumed, closed
-    more than once or closed otherwise may have measured."""
-    if output is None or not Path(output).is_dir():
-        return "its output directory is missing"
-    output = Path(output)
-    if not (output / "inventory.json").is_file():
-        return "its output has no inventory.json"
-    inventory = a.load(output / "inventory.json")
-    if inventory.get("attempt") != key[0]:
-        return "the output holds attempt %s" % inventory.get("attempt")
-    runs = inventory.get("runs")
-    if not isinstance(runs, list) or not all(
-            isinstance(r, dict) for r in runs):
-        return "its inventory has no list of runs"
-    cells = [(r.get("case"), r.get("size")) for r in runs]
-    if key[1] == "second":
-        plan = inventory.get("plan")
-        if not isinstance(plan, list) or not all(
-                isinstance(p, list) and len(p) > 1 for p in plan):
-            return "its inventory has no plan"
-        want, what = {(p[0], p[1]) for p in plan}, "its plan names"
-    else:
-        want, what = set(new.t.keys()), "the follow-up measures"
-    if set(cells) != want or len(cells) != len(want):
-        return ("its inventory has rows for %d cell(s), not each of the "
-                "%d %s" % (len(set(cells)), len(want), what))
-    for r in runs:
-        if r.get("protocol") is not False:
-            return ("the row of %s-%d is not a protocol failure (protocol "
-                    "%r)" % (r["case"], r["size"], r.get("protocol")))
-    for r in runs:
-        name = "%s-%d" % (r["case"], r["size"])
-        try:
-            archive = a.safe_child(output, r.get("archive"))
-        except (ValueError, OSError):
-            return "the archive of %s is missing" % name
-        if a.seal(archive) != r.get("seal"):
-            return "the archive of %s is not the sealed one" % name
-        with tempfile.TemporaryDirectory(prefix="t30-void-") as scratch:
-            folder = Path(scratch) / "unpacked"
-            tg.bundle.unpack(archive, folder)
-            failed = runner_failure(folder, name)
-            if failed is not None:
-                return failed
-    status = row["status"] if row else None
-    if status is None or status == "interrupted":
-        return "its ledger has no close (it was left open)"
-    if row["resumed"]:
-        return ("it was resumed: a resumed attempt may have drawn samples "
-                "in the cell it cleared")
-    if row["statuses"] != ["inconclusive"]:
-        if len(row["statuses"]) > 1:
-            return ("it closed more than once, as %s: a repeated "
-                    "attempt may have measured" % ", ".join(
-                        row["statuses"]))
-        if status == "fail" and key[1] == "second":
-            return ("its ledger closes it fail: a second stage closes "
-                    "with the combined status of both stages, so a fail "
-                    "in its first stage is final and blocks the "
-                    "follow-up, whatever this stage measured")
-        return ("its ledger closes it %s, not inconclusive, the status of "
-                "a grid whose every cell is a protocol failure" % status)
-    return None
-
-
-def attempts_of(args, new, judged):
-    """Every attempt of the follow-up's table in the ledger: the judged ones
-    (`judged`: {attempt id: output directory} of the follow-up's final
-    stage and, where it is a second stage, of its first) and the others,
-    which must be void (`void_failure`): no cell of them admitted a
-    measurement, so they are no outcome and the settings may be run again as
-    a new attempt. An attempt id is of one output (every output its open,
-    resume and close lines name), and a judged one is of the output named
-    for it. A void attempt has no resume line and one close line,
-    `inconclusive`; a second stage closes with the combined status of both
-    stages, so a void one is accepted only when its first stage has no
-    fail (a fail there blocks the follow-up anyway). Any other attempt, an
-    interrupted or resumed one included, may have measured, and is
-    refused: it needs a new policy decision, or `--followup`
-    names the wrong stage (name the final one). [{attempt, status, output,
-    judged, void}], in the order the ledger names them."""
-    path = new.attempts_file(args, False)
-    a.require(path is not None and Path(path).is_file(),
-              "no attempts ledger: %s" % path)
-    state = tg.Ledger(path)
-    table, family = new.t.name, new.t.family
-    where = {}
-    for record in state.records:
-        key = (record.get("attempt"), record.get("stage"))
-        if record["event"] in ("open", "resume", "close") and \
-                record.get("table", family) == table:
-            outputs = where.setdefault(key, [])
-            if record.get("output") not in outputs:
-                outputs.append(record.get("output"))
-    found = []
-    for key, row in state.attempts(table, family).items():
-        outputs = where.get(key, [])
-        a.require(len(outputs) == 1,
-                  "follow-up attempt %s ran in %s output: %s; one attempt "
-                  "is of one output, and a copy of a grid resumed is a "
-                  "second draw beside it" % (
-                      key[0], "more than one" if outputs else "no",
-                      ", ".join(map(str, outputs))))
-        output = outputs[0]
-        entry = dict(attempt=key[0], status=row["status"], output=output,
-                     judged=key[0] in judged, void=False)
-        if entry["judged"]:
-            a.require(output is not None and
-                      Path(output).resolve() == judged[key[0]],
-                      "follow-up attempt %s is judged, from %s, but the "
-                      "ledger has it in %s" % (
-                          key[0], judged[key[0]], output))
-        else:
-            failed = void_failure(new, key, output, row)
-            a.require(
-                failed is None,
-                "follow-up attempt %s (status %s, output %s) is not void: "
-                "%s; only a void attempt (no admitted measurement in any "
-                "cell) may stand beside the judged one; anything else "
-                "needs a new policy decision, or --followup does not name "
-                "the follow-up's final stage (name the final stage; a "
-                "first stage named while its second stage exists leaves "
-                "the second unjudged)" % (
-                    key[0], row["status"], output, failed))
-            entry["void"] = True
-        found.append(entry)
-    return found
 
 
 def derive(args, old=base.ENGINE, new=follow.ENGINE, spec=DISPOSITION):

@@ -1094,6 +1094,33 @@ class Seals(Toy):
             with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
                 td.check_code(recorded)
 
+    def test_a_record_made_before_the_shared_rule_is_still_checked(self):
+        self.assertEqual(td.ADDED, {"void_attempts.py": (
+            "task30_dispose.py", (dict(
+                bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
+                               "8e864bf5d9298ce73366c88a069cef59"),))})
+        self.assertIn("void_attempts.py", td.CODE)
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        self.assertIn("void_attempts.py", recorded)
+        td.check_code(recorded)
+        host, before = td.ADDED["void_attempts.py"][0], \
+            td.ADDED["void_attempts.py"][1]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        # A record made by the module as it was has no such file ...
+        td.check_code(dict(old, **{host: before[0]}))
+        # ... and one made by the module as it is must carry it, and a
+        # record of the old module must not.
+        with self.assertRaisesRegex(ValueError, "the recorded code is not"):
+            td.check_code(old)
+        with self.assertRaisesRegex(ValueError, "the recorded code is not"):
+            td.check_code(dict(recorded, **{host: before[0]}))
+        # The file itself is checked when the record has it.
+        other = dict(recorded, **{"void_attempts.py": dict(
+            bytes=1, sha256="a" * 64)})
+        with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
+            td.check_code(other)
+
     def test_the_printed_entries_are_literals_of_their_constant(self):
         import ast
         seal = dict(bytes=7, sha256="f" * 64)

@@ -1693,6 +1693,12 @@ table of its own on the shared engine, with the following additions to it.
     constants (`test_task30_dispose.py` for `HISTORY`,
     `test_task30_grid.py` for the follow-up's), which the same commit edits;
     nothing is looked up by hand.
+  - A file added to `task30_dispose.CODE` (`void_attempts.py`, the attempt
+    rule moved out of `task30_dispose.py`) is absent from the records made
+    before it existed. `task30_dispose.ADDED` names, per such file, the file
+    that held its code and that file's seals in those records; a record may
+    lack the file only when its seal of the host is one of them, and a
+    record made by the current code carries it.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
@@ -1751,7 +1757,9 @@ table of its own on the shared engine, with the following additions to it.
   status, its output and the failed condition: an interrupted or resumed
   attempt, one closed more than once, one with missing cells or with no
   close line, and a runner killed while measuring (no manifest) are
-  refused too, as they may have measured. The follow-up writes no
+  refused too, as they may have measured. This rule is `void_attempts.py`,
+  shared with the TASK31 disposition; both seal it in their `CODE`. The
+  follow-up writes no
   `final.json`: the TASK30 decision with
   these two cells in place of the replaced ones is the disposition step's
   (`task30_dispose.py`), which owns `final.json` and builds it from the
