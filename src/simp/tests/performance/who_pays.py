@@ -27,7 +27,8 @@ counts as a link.  That holds today because both such directories link it
 (src/simp/tests/native-extension directly, cv_compute/soundness_check
 through its `.log` target, which the unconditional-rule check would refuse);
 a new `!` directory that does not link it would be over-counted.
-Usage: who_pays.py HOLDIR [SEQUENCE]; one JSON line per directory, then `SUMMARY` lines, on stdout."""
+Usage: who_pays.py HOLDIR [SEQUENCE]; one JSON line per
+directory, then `SUMMARY` lines, on stdout."""
 import json
 import os
 from pathlib import Path
