@@ -91,13 +91,16 @@ class CallerCodegenTests(unittest.TestCase):
             c.extents(duplicate, Path("/private"))
 
     def test_missing_representation_and_bad_native_encoding(self):
-        for text in (BODY.split("Fixture.run(1):")[0],
-                     BODY[BODY.index("Fixture.run(1):"):],
-                     BODY[BODY.index("Fixture.run(1)\n"):],
-                     BODY.replace("000004", "000008"),
-                     BODY.replace("D65F03C0", "BADWORD!")):
+        missing = "compiler did not emit every requested representation"
+        for text, message in (
+                (BODY.split("Fixture.run(1):")[0], missing),
+                (BODY[BODY.index("Fixture.run(1):"):], missing),
+                (BODY[BODY.index("Fixture.run(1)\n"):], missing),
+                (BODY.replace("000004", "000008"), "noncontiguous body"),
+                (BODY.replace("D65F03C0", "BADWORD!"),
+                 "unrecognized compiler listing entry")):
             with self.subTest(text=text):
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, message):
                     c.records(dict(text=text, stdout_start_line=1))
 
     def test_no_literal_or_inventory_parity_shortcut(self):

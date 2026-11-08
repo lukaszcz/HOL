@@ -14,6 +14,9 @@ import timing_grid as tg
 
 REPO = a.HERE.parents[3]
 B, C = "1" * 40, "2" * 40
+# The commit whose tree the reviewed candidate blobs come from.  A refill
+# of the table must update it.
+FILLED_AGAINST = "54ab71cd90aa67417016d8649034f5061962243f"
 
 
 def entry(path="src/simp/src/A.sig", kind="source", old=B, new=C):
@@ -42,7 +45,10 @@ class Shipped(unittest.TestCase):
     def test_the_candidate_blobs_are_filled_and_pin_the_sources(self):
         document = attr.load()
         self.assertEqual(attr.unfilled(document["entries"]), [])
+        attr.check_blobs(REPO, a.BASE, FILLED_AGAINST, document["entries"])
         for e in document["entries"]:
+            self.assertNotEqual(e["candidate_blob"], e["baseline_blob"],
+                                e["path"])
             found = subprocess.run(
                 ["git", "log", "-1", "-m", "--format=%H",
                  "--find-object=" + e["candidate_blob"], "HEAD", "--",
