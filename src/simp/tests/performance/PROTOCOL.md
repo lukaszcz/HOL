@@ -2221,6 +2221,13 @@ same `HOLDIR`. Every image must hold the sources of its own side first; the
 trees are restored at the end. The blobs of every exchanged file and of
 every file the declaration names are recorded in `header.json`.
 
+The source-compiling kinds (`load-*`, `files-*`) first reset the four
+readings of `Globals.hol_clock`, the CPU timer that every image stores,
+to constants, after the `startup` record and outside every bracket: the
+words that compiling `Trace.sml` costs depend on those stored readings,
+which differ from image to image. The `hol-*` kinds leave the image as it
+is.
+
 ### Decision
 
 `startup_gate.py gate --base L1 L2 ... --candidate M1 M2 ...` runs, per

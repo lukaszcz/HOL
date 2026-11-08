@@ -30,6 +30,15 @@ val _ = (startCall (); endCall ())
 val startupWords = List.tabulate (8, getCall)
 
 val kind = valOf (OS.Process.getEnv "GATE_KIND")
+(* The image holds Globals.hol_clock, a CPU timer started while the image
+   was built; compiling Trace.sml's use of it costs a few words that depend
+   on its stored readings. The source-compiling kinds reset the readings to
+   constants (after the startup record, outside every bracket) so that one
+   source costs the same on every image. *)
+val _ = if String.isPrefix "hol-" kind then () else
+  List.app (fn i => RunCall.storeWord (Globals.hol_clock, Word.fromInt i,
+                                       RunCall.unsafeCast (1000 * (i + 1))))
+           [0, 1, 2, 3]
 val runtimePath = Foreign.buildCall0
   (symbol "task29_alloc_runtime", (), Foreign.cString)
 val abiCheck = Foreign.buildCall0
