@@ -62,6 +62,9 @@ SAMPLE_CASES = tuple(dict.fromkeys(cell.rsplit("-", 1)[0]
 INFEASIBLE = tuple(
     "tactic_%s_%s-10000" % (family, stage)
     for family in HEAVY_FAMILIES for stage in STAGES)
+# The same cells as (case, size) pairs, as the allocation matrix names them.
+INFEASIBLE_CELLS = tuple((cell.rsplit("-", 1)[0], int(cell.rsplit("-", 1)[1]))
+                         for cell in INFEASIBLE)
 # The timeout of an infeasible cell's process, in seconds.
 PROCESS_TIMEOUT = 1800
 

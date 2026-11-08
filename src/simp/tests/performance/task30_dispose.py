@@ -130,7 +130,10 @@ HISTORY = {
                        "62729a15f7cb7d6c28434f1a4ee06ac3"),),
     "acceptance.py": (dict(
         bytes=39557, sha256="1076ad0d8f984a9081eaa2408554a483"
-                       "2a0f3c092f6c5be25820537fa3c1a8e6"),)}
+                       "2a0f3c092f6c5be25820537fa3c1a8e6"),),
+    "allocation_matrix.py": (dict(
+        bytes=67973, sha256="45d1fc4045f4b2dc57ce77f9ffd71211"
+                       "6561ec3bd652aa5ebfd37b96a818221f"),)}
 
 TAIL = (
     "Not shown by any row: CPU that neither allocates nor traces, net node "

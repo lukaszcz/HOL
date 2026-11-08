@@ -11,6 +11,7 @@ no thresholds, outlier removal or subtraction. Output goes only below
 --output; nothing here names a path inside the repository.
 """
 import argparse
+from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 import gzip
 import hashlib
@@ -34,13 +35,16 @@ import acceptance as a
 import allocation_analysis as an
 import allocation_boundary as bd
 import allocation_schema as sc
+import client_dependencies as deps
 import evidence_bundle as bundle
 import loading
+import matrix_schema as ms
 import path_schema
 import private_runtime as pr
 import run_paired as rp
 import task29_gate as gate
 import task30_cases
+import task31_cases
 from prepare_patch import DEFAULT_SOURCE
 
 ITERATIONS = HERE / "allocation_iterations.json"
@@ -59,6 +63,9 @@ SIDES = {"baseline": "sel-b0", "control": "sel-b1", "candidate": "sel-c0"}
 EXPERIMENTS = {"candidate": ("baseline", "candidate"),
                "control": ("baseline", "control")}
 FIXTURES = ("MatrixAllocation.sml", "MatrixSupport.sml")
+# Every family installs the same two names in a private directory: the
+# fixture as Performance.sml and the work-phase support as MatrixSupport.sml.
+INSTALLED = ("Performance.sml", "MatrixSupport.sml")
 # Selected modules every process elaborates privately (run_paired.validate
 # demands the same of the performance fixture).
 DIRECT_MODULES = ("Traverse", "simpLib")
@@ -95,20 +102,70 @@ PATH_LAUNCHERS = (
     ("failure_path", "failure", "failure-path-controls.exe"))
 
 
+class Family:
+    """The allocation fixture of the cases that one timing fixture of
+    matrix.json (`fixture`) runs: the files installed in every private
+    directory as (file here, name there), and whether the process needs the
+    shared client closure recompiled privately (client_dependencies.py)."""
+
+    def __init__(self, files, dependencies):
+        self.files, self.dependencies = files, dependencies
+
+    @property
+    def sources(self):
+        return tuple(source for source, _ in self.files)
+
+
+# One mechanism for every case: matrix.json's `fixture` of the case picks
+# the allocation fixture; both bracket and count alike (MatrixAllocation.sml
+# and ClientAllocation.sml share their driver text).
+FAMILIES = {
+    "MatrixPerformance.sml": Family(
+        (("MatrixAllocation.sml", "Performance.sml"),
+         ("MatrixSupport.sml", "MatrixSupport.sml")), False),
+    "ClientPerformance.sml": Family(
+        (("ClientAllocation.sml", "Performance.sml"),
+         ("MatrixSupport.sml", "MatrixSupport.sml")), True)}
+
+
 class Task:
     """Which cases a grid measures and where its steady counts stand. The
-    default task is TASK29B's; a header names another only by `task`."""
+    default task is TASK29B's; a header names another only by `task`.
 
-    def __init__(self, name, label, cases, iterations):
+    A case's sizes are those of its size set in matrix.json, without the
+    `infeasible` (case, size) cells, which no gate can run. With `rows`
+    the decisions also hold one pass/fail row per cell (see assemble)."""
+
+    def __init__(self, name, label, cases, iterations, infeasible=(),
+                 rows=False):
         self.name, self.label = name, label
         self.cases, self.iterations = tuple(cases), iterations
+        self.infeasible, self.rows = frozenset(infeasible), rows
+        fixtures = {ms.EXPECTED_CASES[c]["fixture"] for c in self.cases}
+        sc.require(len(fixtures) == 1 and fixtures <= set(FAMILIES),
+                   "a task runs the cases of one fixture family")
+        self.family = FAMILIES[fixtures.pop()]
+        sc.require(self.infeasible <= {(c, n) for c in self.cases
+                                       for n in self.every_size(c)},
+                   "infeasible cells that are no cell of the task")
+
+    @staticmethod
+    def every_size(case):
+        return tuple(ms.SIZE_SETS[ms.EXPECTED_CASES[case]["sizes"]])
+
+    def sizes(self, case):
+        return tuple(n for n in self.every_size(case)
+                     if (case, n) not in self.infeasible)
 
 
 DEFAULT_TASK = "task29b"
 TASKS = {
     DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
     "task30": Task("task30", "TASK30", task30_cases.CASES,
-                   HERE / "allocation_iterations_task30.json")}
+                   HERE / "allocation_iterations_task30.json"),
+    "task31": Task("task31", "TASK31", task31_cases.CASES,
+                   HERE / "allocation_iterations_task31.json",
+                   task31_cases.INFEASIBLE_CELLS, rows=True)}
 
 
 def task_named(name):
@@ -122,8 +179,8 @@ def task_of(header):
 
 
 def keys(task=None):
-    return [(case, size) for case in (task or TASKS[DEFAULT_TASK]).cases
-            for size in SIZES]
+    task = task or TASKS[DEFAULT_TASK]
+    return [(case, size) for case in task.cases for size in task.sizes(case)]
 
 
 def name_of(case, size):
@@ -180,8 +237,45 @@ def grid_digest(header):
         shared["task"] = header["task"]  # TASK29B digests are unchanged
     if "structure" in header:  # so are those of grids without structure
         shared["structure"] = header["structure"]
+    if "dependencies" in header:  # and those of grids without client closure
+        shared["dependencies"] = header["dependencies"]
     data = json.dumps(shared, sort_keys=True, allow_nan=False).encode()
     return hashlib.sha256(data).hexdigest()
+
+
+PRIVATE = "@PRIVATE@"
+
+
+def dependency_products(installed, directory):
+    """The files of a private directory that client_dependencies installed,
+    by file name (theories sit below .hol/objs): sha256 and bytes. The
+    loader descriptors name the directory they were installed in; those are
+    sealed as a template (the directory replaced by PRIVATE, kept as text)
+    so that every job, in its own directory, installs the same product."""
+    found, here = {}, str(Path(directory).resolve())
+    for path in installed["products"]:
+        if path == "Holmakefile":  # the rules, not a source
+            continue
+        name = Path(path).name
+        sc.require(name not in found, "ambiguous installed file: " + name)
+        data = (Path(directory) / path).read_bytes()
+        if here.encode() in data:
+            data = data.replace(here.encode(), PRIVATE.encode())
+            found[name] = dict(sha256=hashlib.sha256(data).hexdigest(),
+                               bytes=len(data), template=data.decode())
+        else:
+            found[name] = dict(sha256=hashlib.sha256(data).hexdigest(),
+                               bytes=len(data))
+    return found
+
+
+def dependency_seal(want, private):
+    """What the installed file of a dependency entry must seal as in the
+    given private directory."""
+    if "template" not in want:
+        return {k: want[k] for k in ("sha256", "bytes")}
+    data = want["template"].replace(PRIVATE, str(private)).encode()
+    return dict(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
 
 
 def places(header):
@@ -196,6 +290,8 @@ def binding(header, case, size, where=None):
     name = name_of(case, size)
     named = {"structure": header["structure"]} if "structure" in header \
         else {}
+    if "dependencies" in header:
+        named["dependencies"] = header["dependencies"]
     return dict(
         named,
         case=case, size=size, steady=header["iterations"]["steady"][name],
@@ -229,7 +325,8 @@ def changed_settings(old, new):
              if old.get(k) != new[k]] +
             [k for k in ("task",) if old.get(k, DEFAULT_TASK) !=
              new.get(k, DEFAULT_TASK)] +
-            [k for k in ("structure",) if old.get(k) != new.get(k)] +
+            [k for k in ("structure", "dependencies")
+             if old.get(k) != new.get(k)] +
             [k + "-length" for k in LENGTH_KEYS
              if place_lengths(old).get(k) != place_lengths(new)[k]])
 
@@ -363,9 +460,9 @@ def harness_files(task=None):
         "allocation_matrix.py", "allocation_schema.py",
         "allocation_analysis.py", "allocation_boundary.py",
         "allocation_boundary.json", task.iterations.name,
-        "MatrixAllocation.sml", "MatrixSupport.sml", "acceptance.py",
+        *task.family.sources, "acceptance.py",
         "evidence_bundle.py", "loading.py", "task29_gate.py",
-        "task30_cases.py",
+        "task30_cases.py", "task31_cases.py", "client_dependencies.py",
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
         "audit_evidence.py", "summarize.py")]
     inputs += [HERE / "allocator-counter" / n for n in (
@@ -374,7 +471,7 @@ def harness_files(task=None):
         "managed-allocation.patch.gz", "check_patch.py",
         "prepare_patch.py")]
     inputs += [HERE.parent / "compatibility" / "run_paired.py"] + paired
-    fixtures = [HERE / n for n in FIXTURES] + [
+    fixtures = [HERE / n for n in task.family.sources] + [
         p for p in paired if p.suffix == ".sml"]
     return inputs, fixtures
 
@@ -413,6 +510,9 @@ class Job:
 
 class Grid:
     """Locked, sealed environment: toolchain, private runtime, shim."""
+
+    task = TASKS[DEFAULT_TASK]
+    dependencies = None  # {side: installed shared files}: client family only
 
     def __init__(self, args):
         self.args = args
@@ -502,10 +602,11 @@ class Grid:
         self.inputs = {Path(p).resolve(strict=True).relative_to(
             ROOT).as_posix(): a.seal(p) for p in inputs}
         # Selected fixtures as installed in every private directory.
-        self.fixtures = {"Performance.sml": a.seal(HERE / FIXTURES[0]),
-                         FIXTURES[1]: a.seal(HERE / FIXTURES[1])}
+        family = self.task.family
+        self.fixtures = {target: a.seal(HERE / source)
+                         for source, target in family.files}
         self.fixtures.update({p.name: a.seal(p) for p in fixtures
-                              if p.name not in FIXTURES})
+                              if p.name not in family.sources})
         # Same files the timing runs seal: heap, project file, compiler and
         # every library of the process; libraries are added after binding.
         self.tools = dict(products, **native)
@@ -523,6 +624,7 @@ class Grid:
                 side, self.scratch / ("probe-" + side))
             self.sources[side] = source_map(inventory)
         self.check_sides()
+        self.dependencies = self.probe_dependencies()
         lib, _, self.source_seals = pr.build_runtime(
             args.source, self.scratch, self.run, report, patched)
         self.lib = lib.resolve(strict=True)
@@ -544,6 +646,40 @@ class Grid:
         report["shim"] = a.seal(shim)
         self.header = self.make_header(lineage["head"], products)
         self.ready = True
+
+    def install_private(self, directory, inventory):
+        """The fixtures of the task in a private directory of one side (the
+        selected sources already checked out) and, for the client family,
+        the shared closure that can load a private simplifier, recompiled
+        there (client_dependencies.install); None for the others."""
+        rp.install_fixtures(directory)
+        for source, target in self.task.family.files:
+            shutil.copyfile(HERE / source, directory / target)
+        with (directory / "Holmakefile").open("a") as out:
+            out.write("\npaired.exe: Performance.uo\n")
+        if not self.task.family.dependencies:
+            return None
+        return deps.install(self.hol, directory, {
+            Path(s["git_path"]).stem for s in inventory})
+
+    def probe_dependencies(self):
+        """What the shared closure installs in the private directory of each
+        side: {side: {file name: seal}}, with the shared inputs that the
+        installation read added to the sealed tools. None without one. The
+        control's is the baseline's, as its sources are."""
+        if not self.task.family.dependencies:
+            return None
+        found, shared = {}, {}
+        for side in SIDES:
+            directory = self.scratch / ("probe-" + side)
+            inventory = [dict(git_path=n) for n in self.sources[side]]
+            installed = self.install_private(directory, inventory)
+            found[side] = dependency_products(installed, directory)
+            shared.update(installed["inputs"])
+        sc.require(found["control"] == found["baseline"],
+                   "control dependencies differ from the baseline's")
+        self.tools.update(shared)
+        return found
 
     def check_toolchain_sources(self, built):
         """The tracked HOL sources (as the build left them) and sigobj, as
@@ -589,6 +725,8 @@ class Grid:
         named = {} if self.task.name == DEFAULT_TASK else dict(
             task=self.task.name)
         named["structure"] = sc.STRUCTURE
+        if self.dependencies is not None:
+            named["dependencies"] = self.dependencies
         return dict(
             named, schema=SCHEMA, baseline=args.baseline,
             candidate=args.candidate,
@@ -615,12 +753,13 @@ class Grid:
             sc.require(rev == self.revisions[side] and
                        source_map(sources) == self.sources[side],
                        "checkout differs from the grid's sources")
-            rp.install_fixtures(directory)
-            for name in FIXTURES:
-                target = "Performance.sml" if name == FIXTURES[0] else name
-                shutil.copyfile(HERE / name, directory / target)
-            with (directory / "Holmakefile").open("a") as out:
-                out.write("\npaired.exe: Performance.uo\n")
+            installed = self.install_private(directory, sources)
+            if installed is not None:
+                sc.require(dependency_products(installed, directory) ==
+                           self.dependencies[side] and all(
+                               self.tools.get(k) == v for k, v in
+                               installed["inputs"].items()),
+                           "shared closure differs from the grid's")
             job.inventory[side] = sources
         job.names = {Path(s["git_path"]).stem for v in job.inventory.values()
                      for s in v}
@@ -833,8 +972,7 @@ def check_protocol(receipt, meta, events):
                len(loaded) and set(loaded) == set(heaps + completed) and
                set(receipt["paths"]) == set(used + loaded),
                "incomplete archived source inventory")
-    for name in FIXTURES:
-        target = "Performance.sml" if name == FIXTURES[0] else name
+    for target in INSTALLED:
         sc.require(str(Path(private) / target) in completed,
                    "fixture never completed: " + target)
     for name in DIRECT_MODULES:
@@ -892,10 +1030,19 @@ def check_receipt(receipt, meta, experiment):
         physical = Path(info["physical"])
         seal = {k: info[k] for k in ("sha256", "bytes")}
         if physical.is_relative_to(private):
-            want = source.get(physical.name) or meta["fixtures"].get(
-                physical.name)
-            sc.require(want is not None and
-                       seal == {k: want[k] for k in ("sha256", "bytes")},
+            want = (source.get(physical.name) or
+                    meta["fixtures"].get(physical.name))
+            wanted = None if want is None else {
+                k: want[k] for k in ("sha256", "bytes")}
+            if want is None:
+                made = meta.get("dependencies", {}).get(side, {}).get(
+                    physical.name)
+                if made is not None:  # the directory may be a symlink's
+                    wanted = dependency_seal(made, private)
+                    if seal != wanted:
+                        wanted = dependency_seal(
+                            made, Path(private).resolve())
+            sc.require(wanted is not None and seal == wanted,
                        "wrong selected source: " + physical.name)
         else:
             sc.require(physical.is_relative_to(repo) and not
@@ -1017,12 +1164,14 @@ def work_section(cases, unresolved=()):
 
 def assemble(cells, records, observed, baseline=a.BASE, task=None):
     """decisions.json content from analyzed cells (all or a subset)."""
-    cases = (task or TASKS[DEFAULT_TASK]).cases
+    task = task or TASKS[DEFAULT_TASK]
+    cases = task.cases
     out = dict(schema="task29b-decisions-v1", cases={}, nondeterminism=[],
                published_varying=[], code_visible=[], unresolved=[])
     every = []
     for case in cases:
-        sizes = [n for n in SIZES if (case, n) in cells]
+        every_size = task.sizes(case)
+        sizes = [n for n in every_size if (case, n) in cells]
         if not sizes:
             continue
         record = dict(cells={}, slopes=None, constants=None)
@@ -1051,9 +1200,10 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
                     if any(k != "0" for k in (*m["baseline"], *m["candidate"])
                            ) and metric == "code":
                         out["code_visible"].append([case, size, phase])
-        if len(record["cells"]) == len(SIZES):
-            data = {n: observed[case, n] for n in SIZES}
-            record["slopes"] = an.slopes(record["cells"], list(SIZES), data)
+        if len(record["cells"]) == len(every_size):
+            data = {n: observed[case, n] for n in every_size}
+            record["slopes"] = an.slopes(record["cells"], list(every_size),
+                                         data)
             record["constants"] = an.constants(record["cells"])
             every += an.case_decisions(record)
         else:
@@ -1071,6 +1221,9 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
         # nor the nondeterminism list reads a work row.
         out["work"] = work
         out["work_status"] = work["status"]
+    if task.rows:
+        out["rows"] = cell_rows(out["cases"], out["unresolved"])
+        out["infeasible"] = sorted(name_of(*k) for k in task.infeasible)
     out["complete"] = complete
     out["acceptance_pairs"] = bool(pairs) and min(pairs) >= PAIRS
     # Only the pinned develop commit is the baseline of an acceptance.
@@ -1083,6 +1236,31 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
             or not out["acceptance_baseline"] or out["nondeterminism"]):
         out["status"] = "inconclusive"
     return out
+
+
+def cell_rows(cases, unresolved=()):
+    """The disposition's rows of a task with `rows`: one per cell that was
+    measured or tried, keyed `case-size` (name_of), in the order of the
+    cases and sizes: the case and size, `status` of the allocation words
+    (pass when every gated phase and metric of the cell passes, fail when
+    one fails, inconclusive otherwise; `unresolved` for a cell without an
+    analysis), `work` (equal, differs, inconclusive; None without work rows)
+    and the number of `pairs`. The slopes of a case are not in a row: they
+    are differences of the cells'. A cell is passed by allocation when its
+    status is pass; whether the work is equal is the identity gate's."""
+    rows = {}
+    for case, record in cases.items():
+        for size, cell in record["cells"].items():
+            rows[name_of(case, size)] = dict(
+                case=case, size=size, pairs=cell["pairs"],
+                status=cell_status(cell), work=an.work_status(
+                    r["decision"] for r in cell["work"].values())
+                if cell.get("work") is not None else None)
+    for name in unresolved:
+        case, size = name.rsplit("-", 1)
+        rows[name] = dict(case=case, size=int(size), pairs=None,
+                          status="unresolved", work=None)
+    return rows
 
 
 def counts_text(counts):
@@ -1145,6 +1323,12 @@ def results_markdown(decisions, label="TASK29B"):
             for size in record["cells"]:
                 lines.append("| %s | %s | %s |" % (
                     case, size, work["cells"].get(name_of(case, size), "-")))
+    if "rows" in decisions:
+        found = Counter(r["status"] for r in decisions["rows"].values())
+        lines += ["", "Cell rows (`rows` of decisions.json): %s; %d cells "
+                  "infeasible and not run (`infeasible`)." % (
+                      counts_text(dict(sorted(found.items()))) or "none",
+                      len(decisions["infeasible"]))]
     lines += ["", "Nondeterministic gated rows: %d. Varying published "
               "rows: %d. Nonzero code-space rows: %d. Unresolved cells: %d."
               % (len(decisions["nondeterminism"]),

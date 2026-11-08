@@ -61,7 +61,7 @@ class Selection(unittest.TestCase):
 
     def test_unknown_tasks_are_refused(self):
         with self.assertRaisesRegex(sc.InvalidAllocation, "unknown task"):
-            m.task_named("task31")
+            m.task_named("task99")
         with self.assertRaisesRegex(sc.InvalidAllocation, "unknown task"):
             m.task_of(dict(task="nope"))
         self.assertIs(m.task_of({}), m.TASKS["task29b"])
@@ -320,7 +320,7 @@ class Run(grid_tests.Bed):
             self.assertEqual(m.main(argv + ["--task", "task30"]), "task30")
             with contextlib.redirect_stderr(io.StringIO()), \
                     self.assertRaises(SystemExit):
-                m.main(argv + ["--task", "task31"])
+                m.main(argv + ["--task", "task99"])
 
 
 class Fixture(unittest.TestCase):
