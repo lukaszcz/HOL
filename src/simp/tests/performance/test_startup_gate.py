@@ -886,6 +886,24 @@ class RecipeTest(unittest.TestCase):
                 ["src/boss/Holmakefile", "src/num/termination/Holmakefile",
                  "src/proofman/Holmakefile", "tools-poly/hol.ML"])
 
+    def test_polyc_copy_leaves_the_install_alone(self):
+        with tempfile.TemporaryDirectory() as t:
+            prefix, root = Path(t) / "install", Path(t) / "tree"
+            (prefix / "bin").mkdir(parents=True)
+            root.mkdir()
+            original = ('"${COMPILER}" -q --error-exit\n'
+                        'PolyML.export(x)\n')
+            (prefix / "bin/polyc").write_text(original)
+            (prefix / "bin/poly").write_text("poly")
+            before = sorted(p.name for p in prefix.rglob("*"))
+            poly, seal = g.deterministic_polyc(prefix, root / "detbin")
+            self.assertEqual(sorted(p.name for p in prefix.rglob("*")),
+                             before)
+            self.assertEqual((prefix / "bin/polyc").read_text(), original)
+            self.assertEqual(root / "detbin", poly.parent)
+            self.assertIn("--gcthreads=1",
+                          (root / "detbin/polyc").read_text())
+
     def test_mktool_replacement_is_counted(self):
         with tempfile.TemporaryDirectory() as t:
             hol = Path(t)
