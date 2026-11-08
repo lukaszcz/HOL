@@ -22,17 +22,16 @@ class RuntimeReceiptControls(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('api_audit_run', path)
         cls.runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.runner)
+        cls.count = cls.runner.CASE_CHECKS['attribute', 'before']
         cls.text = ''.join('OBS used.path=' + str(
             audit.ROOT / 'src/simp/src' / (name + suffix)) + '\n'
-            for name in ('simpLib', 'congLib', 'Traverse', 'Cond_rewr',
-                         'Trace', 'simpExtLib', 'TraverseExt',
-                         'Cond_rewrExt', 'congExtLib')
-            for suffix in ('.sig', '.sml')) + ' ... OK\n' * 178 + (
+            for name in cls.runner.NATIVE_MODULES
+            for suffix in ('.sig', '.sml')) + ' ... OK\n' * cls.count + (
                 'OBS result=pass\n')
 
     def test_complete_receipt(self):
         self.assertEqual(self.runner.validate_output(
-            self.text, 0, 'attribute', 'before'), 178)
+            self.text, 0, 'attribute', 'before'), self.count)
 
     def test_incomplete_failed_and_wrong_count(self):
         for text, exitcode in ((self.text, 1), (self.text[:-1], 0),
