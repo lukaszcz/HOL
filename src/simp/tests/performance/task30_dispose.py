@@ -112,15 +112,21 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
         "allocation_analysis.py", "allocation_schema.py",
         "allocation_boundary.py", "path_schema.py", "void_attempts.py")
 # Files of CODE that a record made before they existed does not carry:
-# {file: (the file whose code held theirs, its seals in those records)}. The
-# rule for the attempts of the follow-up's table was part of this module and
-# is now void_attempts.py, shared with TASK31's disposition. A record may
-# lack the file only if its seal of the host is one of those listed (the
-# one `followup-r2/disposition.json` carries); a record made by code that
-# has the file carries it.
+# {file: (the file whose code held theirs, its seals in those records, the
+# seal of the file that holds that code)}. The rule for the attempts of the
+# follow-up's table was part of this module and is now void_attempts.py,
+# shared with TASK31's disposition. A record may lack the file only if its
+# seal of the host is one of those listed (the one
+# `followup-r2/disposition.json` carries), and is then treated as recording
+# the third element for the file, so that the normal rules of HISTORY apply
+# to it: a later edit of the file is refused until the commit that makes it
+# adds that seal to HISTORY. A record made by code that has the file
+# carries it.
 ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
     bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
-                   "8e864bf5d9298ce73366c88a069cef59"),))}
+                   "8e864bf5d9298ce73366c88a069cef59"),), dict(
+    bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
+                   "3b59ed6de96df8bd2ef59625f24376de"))}
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
@@ -550,13 +556,14 @@ def check_code(recorded, here=None):
     refusal, with the entries the commit pastes into the constants (each
     the literal element of its constant) and the tests that pin them."""
     now = seals(here)
-    older = {name for name, (host, before) in ADDED.items()
+    older = {name: held for name, (host, before, held) in ADDED.items()
              if isinstance(recorded, dict) and recorded.get(host) in before}
     names = [name for name in CODE if name not in older]
     a.require(isinstance(recorded, dict) and set(recorded) == set(names),
               "changed TASK30 disposition: the recorded code is not %s"
               % ", ".join(names))
-    changed = [name for name in names
+    recorded = dict(recorded, **older)
+    changed = [name for name in CODE
                if recorded[name] != now[name] and
                recorded[name] not in HISTORY.get(name, ())]
     if changed:

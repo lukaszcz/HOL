@@ -1,8 +1,8 @@
-"""The no-redraw rule for the attempts of a follow-up table, shared by the
-TASK30 and TASK31 dispositions.
+"""The no-redraw rule for the attempts of a judged timing table, shared by
+the TASK30 and TASK31 dispositions.
 
-A follow-up is measured once: every attempt of its table in the ledger is
-either judged (the `attempt` of the output a disposition is given, or of that
+A table is measured once: every attempt of it in the ledger is either
+judged (the `attempt` of the output a disposition is given, or of that
 stage's first stage) or void, and a void attempt admitted no measurement in
 any cell. An attempt that measured, or may have (left open, resumed, closed
 more than once or otherwise), is refused: it needs a new policy decision, and
@@ -110,7 +110,7 @@ def void_failure(new, key, output, row=None):
             return "the archive of %s is missing" % name
         if a.seal(archive) != r.get("seal"):
             return "the archive of %s is not the sealed one" % name
-        with tempfile.TemporaryDirectory(prefix="t30-void-") as scratch:
+        with tempfile.TemporaryDirectory(prefix="void-attempt-") as scratch:
             folder = Path(scratch) / "unpacked"
             tg.bundle.unpack(archive, folder)
             failed = runner_failure(folder, name)

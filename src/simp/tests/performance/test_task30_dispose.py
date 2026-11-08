@@ -1098,14 +1098,15 @@ class Seals(Toy):
         self.assertEqual(td.ADDED, {"void_attempts.py": (
             "task30_dispose.py", (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
-                               "8e864bf5d9298ce73366c88a069cef59"),))})
+                               "8e864bf5d9298ce73366c88a069cef59"),), dict(
+                bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
+                               "3b59ed6de96df8bd2ef59625f24376de"))})
         self.assertIn("void_attempts.py", td.CODE)
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
         self.assertIn("void_attempts.py", recorded)
         td.check_code(recorded)
-        host, before = td.ADDED["void_attempts.py"][0], \
-            td.ADDED["void_attempts.py"][1]
+        host, before, held = td.ADDED["void_attempts.py"]
         old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
         # A record made by the module as it was has no such file ...
         td.check_code(dict(old, **{host: before[0]}))
@@ -1120,6 +1121,30 @@ class Seals(Toy):
             bytes=1, sha256="a" * 64)})
         with self.assertRaisesRegex(ValueError, "1 file.s. changed"):
             td.check_code(other)
+
+    def test_the_moved_rule_stays_sealed_for_the_record_that_lacks_it(self):
+        # followup-r2/disposition.json predates void_attempts.py: it is
+        # treated as recording the seal of the file that holds the moved
+        # code, so a later edit of the rule is refused for it.
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        old[host] = before[0]
+        td.check_code(old)
+        real, patcher = self.changed("void_attempts.py")
+        with patcher:
+            with self.assertRaises(ValueError) as caught:
+                td.check_code(old)
+            text = str(caught.exception)
+            self.assertIn("1 file(s) changed", text)
+            self.assertIn("void_attempts.py: add to task30_dispose.HISTORY "
+                          "the entry `\"void_attempts.py\": (%s,),`" %
+                          json.dumps(held, sort_keys=True), text)
+            # Once the commit that edits the rule names the seal it was
+            # held at, the record checks again.
+            with patch.dict(td.HISTORY, {"void_attempts.py": (held,)}):
+                td.check_code(old)
 
     def test_the_printed_entries_are_literals_of_their_constant(self):
         import ast
