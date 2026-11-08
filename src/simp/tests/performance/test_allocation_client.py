@@ -374,6 +374,24 @@ class Decisions(unittest.TestCase):
         self.assertEqual(out["status"], "pass")
         self.assertEqual(out["work_status"], "differs")
 
+    def test_a_difference_in_a_stage_a_count_or_the_digest_is_seen(self):
+        key = ("tactic_full_reuse", 100)
+        other = tb.WORK_TEXT.replace("=1", "=2", 1)
+        for label, changed in (
+                ("first stage", dict(first=other)),
+                ("second stage", dict(second=other)),
+                ("use stage", dict(use=other)),
+                ("result digest", dict(digest="names=-,+other;dprocs=;")),
+                ("a count", dict(second=tb.WORK_TEXT.replace(
+                    "REWRITING=3", "REWRITING=4")))):
+            with self.subTest(label):
+                out = assembled(*grid_of(TASK31, lambda k: (
+                    {"setup": 10}, {"setup": 10}, tb.structural() if
+                    k != key else (tb.structural(),
+                                   tb.structural(**changed)))))
+                self.assertEqual(rows_of(out)[m.name_of(*key)]["work"],
+                                 "differs")
+
     def test_a_partial_run_has_rows_for_its_cells_only(self):
         cells, records, observed = grid_of(TASK31)
         keep = {("traversal_deep", 0), ("tactic_asm_complete", 10000)}

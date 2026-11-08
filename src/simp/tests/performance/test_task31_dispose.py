@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 import acceptance as a
+import allocation_matrix as am
 import task31_cases as c
 import task31_dispose as d
 import task31_grid as g
@@ -37,9 +38,15 @@ def identity(**status):
                 unaccounted=[], attributed=[], attribution_table="t" * 64)
 
 
-def allocation(**decision):
-    return {n: decision.get(n, "pass") for n in NAMES
-            if n not in c.INFEASIBLE}
+def row(decision="pass", work="equal", pairs=10):
+    return dict(decision=decision, work=work, pairs=pairs)
+
+
+def allocation(work=None, **decision):
+    """The allocation rows: a decision per cell (default pass), and the
+    work row of the cells named in `work` (default equal)."""
+    return {n: row(decision.get(n, "pass"), (work or {}).get(n, "equal"))
+            for n in NAMES if n not in c.INFEASIBLE}
 
 
 def timing(**decision):
@@ -90,6 +97,50 @@ class Rule(unittest.TestCase):
             self.assertEqual((r["status"], r["cells"][sampled]["status"]),
                              ("incomplete", "incomplete"), kind)
             self.assertEqual(r["cells"][sampled]["failed"], [], kind)
+
+    def test_the_work_row_must_be_equal_for_a_pass(self):
+        name = c.SAMPLE[0]
+        r = d.dispose(identity(), allocation(work={name: "differs"}),
+                      timing(), SURVEY)
+        found = r["cells"][name]
+        self.assertEqual((r["status"], found["status"]), ("fail", "fail"))
+        self.assertEqual(found["failed"],
+                         ["allocation: the work row differs"])
+        for work in ("inconclusive", None):
+            r = d.dispose(identity(), allocation(work={name: work}),
+                          timing(), SURVEY)
+            found = r["cells"][name]
+            self.assertEqual((r["status"], found["status"]),
+                             ("incomplete", "incomplete"), work)
+            self.assertTrue(found["missing"][0].startswith(
+                "allocation: the work row is"), work)
+
+    def test_a_differing_work_row_fails_even_when_the_words_do_not_decide(
+            self):
+        name = c.SAMPLE[0]
+        r = d.dispose(identity(), dict(allocation(), **{
+            name: row("inconclusive", "differs")}), timing(), SURVEY)
+        self.assertEqual(r["cells"][name]["status"], "fail")
+
+    def test_an_inconclusive_allocation_row_is_incomplete(self):
+        name = c.SAMPLE[0]
+        r = d.dispose(identity(), allocation(**{name: "inconclusive"}),
+                      timing(), SURVEY)
+        self.assertEqual(r["cells"][name]["status"], "incomplete")
+        self.assertEqual(r["cells"][name]["failed"], [])
+        self.assertEqual(r["status"], "incomplete")
+
+    def test_a_cell_attributed_by_the_allocation_needs_equal_work(self):
+        name = "tactic_full_complete-10000"
+        sib = {n: "attributed" for n in NAMES
+               if d.family_of(n) == "full" and n not in c.INFEASIBLE}
+        flipped = {n: "differs" for n in sib
+                   if d.size_of(n) <= d.ALLOCATION_LIMIT}
+        r = d.dispose(identity(**sib, **{name: "attributed"}),
+                      allocation(work=flipped), timing(),
+                      SURVEY)["cells"][name]
+        self.assertEqual(r["status"], "incomplete")
+        self.assertEqual(r["measured_by"]["allocation"], [])
 
     def test_an_attributed_infeasible_cell_names_what_measured_it(self):
         name = "tactic_full_complete-10000"
@@ -170,7 +221,8 @@ class Rule(unittest.TestCase):
         found = identity()
         found.update(status="attributed", attributed=["src/x/Y.sig"])
         r = d.dispose(found, allocation(), timing(), SURVEY)
-        r.update(timing_status="pass", candidate=CAND, harness="h" * 40,
+        r.update(timing_status="pass", allocation_status="pass",
+                 candidate=CAND, harness="h" * 40,
                  attempts=dict(timing=[2, 1], identity=[3, 1]))
         text = d.verdict(r)
         for part in ("[src/x/Y.sig]", "timing 2 in the ledger, 1 of the "
@@ -179,34 +231,93 @@ class Rule(unittest.TestCase):
             self.assertIn(part, text)
 
 
+BASE = a.BASE
+
+
+def file_rows(*extra, **top):
+    rows = [dict(case=n.rsplit("-", 1)[0], size=int(n.rsplit("-", 1)[1]),
+                 pairs=10, decision="pass", work="equal")
+            for n in NAMES if n not in c.INFEASIBLE] + list(extra)
+    return dict(dict(candidate=CAND, baseline=BASE, complete=True,
+                     status="pass", infeasible=sorted(c.INFEASIBLE),
+                     rows=rows), **top)
+
+
 class Allocation(unittest.TestCase):
-    def rows(self, *extra):
-        return dict(rows=[dict(case=n.rsplit("-", 1)[0],
-                               size=int(n.rsplit("-", 1)[1]),
-                               decision="pass") for n in NAMES
-                          if n not in c.INFEASIBLE] + list(extra))
+    def read(self, found):
+        return d.allocation_rows(found, CAND, BASE)
 
-    def test_the_contract_reads_one_decision_per_cell(self):
-        found = d.allocation_rows(self.rows(), CAND)
-        self.assertEqual(found, allocation())
+    def test_the_contract_reads_one_row_per_cell(self):
+        self.assertEqual(self.read(file_rows()), allocation())
 
-    def test_the_candidate_is_checked_when_the_file_names_one(self):
-        d.allocation_rows(dict(self.rows(), candidate=CAND), CAND)
+    def test_the_candidate_and_the_baseline_are_required(self):
+        for key, value in (("candidate", "d" * 40), ("baseline", "e" * 40),
+                           ("candidate", None), ("baseline", None)):
+            with self.assertRaises(ValueError, msg=(key, value)):
+                self.read(file_rows(**{key: value}))
+        found = file_rows()
+        del found["candidate"]
         with self.assertRaises(ValueError):
-            d.allocation_rows(dict(self.rows(), candidate="d" * 40), CAND)
+            self.read(found)
+
+    def test_an_incomplete_grid_or_other_infeasible_set_is_refused(self):
+        for bad in (dict(complete=False), dict(infeasible=[]),
+                    dict(infeasible=sorted(c.INFEASIBLE)[1:])):
+            with self.assertRaises(ValueError, msg=bad):
+                self.read(file_rows(**bad))
+
+    def test_inconclusive_and_work_rows_are_read_not_refused(self):
+        found = file_rows()
+        found["rows"][0] = dict(found["rows"][0], decision="inconclusive",
+                                work=None)
+        self.assertEqual(self.read(found)[NAMES[0]],
+                         row("inconclusive", None))
+
+    def test_a_missing_cell_is_refused(self):
+        found = file_rows()
+        found["rows"].pop()
+        with self.assertRaises(ValueError):
+            self.read(found)
+
+    def test_a_passing_row_of_fewer_than_ten_pairs_is_refused(self):
+        found = file_rows()
+        found["rows"][0] = dict(found["rows"][0], pairs=2)
+        with self.assertRaises(ValueError):
+            self.read(found)
 
     def test_malformed_unknown_repeated_and_infeasible_rows_are_refused(self):
+        good = dict(pairs=10, decision="pass", work="equal")
         for bad in (
-                dict(case="traversal_construct", size=0, decision="maybe"),
+                dict(good, case="traversal_construct", size=0,
+                     decision="maybe"),
+                dict(good, case="traversal_construct", size=0, work="x"),
                 dict(case="traversal_construct", size=0),
-                dict(case="nonsense", size=0, decision="pass"),
-                dict(case="tactic_full_complete", size=10000,
-                     decision="pass"),
-                dict(case="tactic_asm_complete", size=10, decision="pass")):
+                dict(good, case="nonsense", size=0),
+                dict(good, case="tactic_full_complete", size=10000),
+                dict(good, case="tactic_asm_complete", size=10)):
             with self.assertRaises(ValueError, msg=bad):
-                d.allocation_rows(self.rows(bad), CAND)
+                self.read(file_rows(bad))
         with self.assertRaises(ValueError):
-            d.allocation_rows(dict(rows="no"), CAND)
+            self.read(dict(rows="no"))
+        with self.assertRaises(ValueError):
+            self.read(dict(file_rows(), rows={"a": 1}))
+
+    def test_the_allocation_matrix_output_is_accepted(self):
+        # The producer's own decisions, not a stand-in: a grid of identical
+        # sides in every cell of the task is read row by row.
+        import allocation_matrix as m
+        import test_allocation_client as t
+        cells, records, observed = t.grid_of(m.TASKS["task31"])
+        out = json.loads(json.dumps(m.assemble(
+            cells, records, observed, BASE, m.TASKS["task31"], CAND)))
+        self.assertEqual(self.read(out), allocation(work={
+            n: None for n in allocation()}))
+        # A smoke of the same cells has no passable row and is partial.
+        smoke = json.loads(json.dumps(m.assemble(
+            *t.grid_of(m.TASKS["task31"], pairs=2), BASE,
+            m.TASKS["task31"], CAND)))
+        with self.assertRaises(ValueError):
+            self.read(smoke)
 
 
 class Command(unittest.TestCase):
@@ -218,20 +329,16 @@ class Command(unittest.TestCase):
             (self.root / name).mkdir()
         a.save(self.root / "identity/decisions.json", dict(
             identity(), counts={}))
+        self.checkout = dict(head="h" * 40, tree_outside_performance="t" * 40)
         a.save(self.root / "identity/inventory.json", dict(
-            candidate=CAND, baseline=a.BASE))
-        a.save(self.root / "grid/inventory.json", dict(
-            candidate=CAND, baseline=a.BASE))
+            candidate=CAND, baseline=a.BASE, checkout=self.checkout))
+        self.write_grid(CAND)
+        self.write_alloc()
         self.survey = self.root / "survey.json"
         self.survey.write_text(json.dumps(dict(
             schema=d.SURVEY_SCHEMA, process_timeout=1800, cells=SURVEY)))
         self.timing = dict(status="pass", workloads=[], retained_scaling=None)
         self.classes = {"pass": list(c.SAMPLE)}
-        a.save(self.root / "alloc/decisions.json", dict(
-            candidate=CAND, rows=[dict(
-                case=n.rsplit("-", 1)[0], size=int(n.rsplit("-", 1)[1]),
-                decision="pass") for n in NAMES
-                if n not in c.INFEASIBLE]))
         self.ledger = self.root / "attempts.jsonl"
         tg.ledger_append(self.ledger, event="open", stage="identity",
                          table=g.IDENTITY_TABLE, attempt="x",
@@ -242,12 +349,34 @@ class Command(unittest.TestCase):
                               lambda args, appending, create=True:
                               self.ledger),
             mock.patch.object(d.grid.ENGINE, "replay", self.replay),
+            mock.patch.object(am, "replay", self.alloc_replay),
             mock.patch.object(d.tg, "classify", lambda decisions: dict(
                 {k: [] for k in tg.CLASSES}, **self.classes))]
         for patch in self.patches:
             patch.start()
             self.addCleanup(patch.stop)
         self.write_timing()
+
+    def write_grid(self, candidate):
+        path = self.root / "grid/inventory.json"
+        path.unlink(missing_ok=True)
+        a.save(path, dict(candidate=candidate, baseline=a.BASE,
+                          checkout=self.checkout))
+
+    def write_alloc(self, inventory=None, **top):
+        inventory = dict(dict(
+            task="task31", candidate=CAND, baseline=a.BASE,
+            harness=dict(head="h" * 40, dirty=False,
+                         tree_outside_performance="t" * 40)),
+            **(inventory or {}))
+        for name, value in (("inventory.json", inventory),
+                            ("decisions.json", file_rows(**top))):
+            (self.root / "alloc" / name).unlink(missing_ok=True)
+            a.save(self.root / "alloc" / name, value)
+
+    def alloc_replay(self, args):
+        self.alloc_replayed = args
+        return 0
 
     def write_timing(self):
         path = self.root / "grid/decisions.json"
@@ -294,13 +423,9 @@ class Command(unittest.TestCase):
                          tg.REFUSED)
 
     def test_the_timing_grid_must_be_of_the_candidate_and_the_sample(self):
-        (self.root / "grid/inventory.json").unlink()
-        a.save(self.root / "grid/inventory.json", dict(
-            candidate="e" * 40, baseline=a.BASE))
+        self.write_grid("e" * 40)
         self.assertEqual(self.run_main()[0], tg.REFUSED)
-        (self.root / "grid/inventory.json").unlink()
-        a.save(self.root / "grid/inventory.json", dict(
-            candidate=CAND, baseline=a.BASE))
+        self.write_grid(CAND)
         self.classes = {"pass": list(c.SAMPLE[1:])}
         self.assertEqual(self.run_main()[0], tg.REFUSED)
 
@@ -331,6 +456,47 @@ class Command(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()):
             d.main(["--identity", "i", "--grid", "g", "--pilot", "p",
                     "--allocation", "a"])
+
+    def test_the_allocation_grid_is_replayed_and_bound(self):
+        code, text = self.run_main()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.alloc_replayed.output,
+                         (self.root / "alloc").resolve())
+        for label, inventory, top in (
+                ("another task", dict(task="task30"), {}),
+                ("another candidate", dict(candidate="e" * 40), {}),
+                ("another baseline", dict(baseline="e" * 40), {}),
+                ("another harness", dict(harness=dict(
+                    head="x" * 40, dirty=False,
+                    tree_outside_performance="t" * 40)), {}),
+                ("a dirty harness", dict(harness=dict(
+                    head="h" * 40, dirty=True,
+                    tree_outside_performance="t" * 40)), {}),
+                ("another candidate in the decisions", {},
+                 dict(candidate="e" * 40)),
+                ("an incomplete grid", {}, dict(complete=False))):
+            with self.subTest(label):
+                self.write_alloc(inventory, **top)
+                self.assertEqual(self.run_main()[0], tg.REFUSED)
+        self.write_alloc()
+        (self.root / "alloc/decisions.json").unlink()
+        self.assertEqual(self.run_main()[0], tg.REFUSED)
+
+    def test_a_work_row_that_differs_fails_the_disposition(self):
+        found = file_rows()
+        found["rows"][0] = dict(found["rows"][0], work="differs")
+        (self.root / "alloc/decisions.json").unlink()
+        a.save(self.root / "alloc/decisions.json", found)
+        code, text = self.run_main()
+        self.assertEqual(code, 1, text)
+        self.assertIn("the work row differs", text)
+
+    def test_an_allocation_grid_of_inconclusive_rows_is_incomplete(self):
+        found = file_rows()
+        found["rows"][0] = dict(found["rows"][0], decision="inconclusive")
+        (self.root / "alloc/decisions.json").unlink()
+        a.save(self.root / "alloc/decisions.json", found)
+        self.assertEqual(self.run_main()[0], 2)
 
     def test_a_follow_up_needs_a_declared_table(self):
         code, _ = self.run_main("--followup", str(self.root / "f"),

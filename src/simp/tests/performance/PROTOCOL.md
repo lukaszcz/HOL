@@ -2379,7 +2379,11 @@ ids) are never part of a closure.
   observations, the expected test count, the outcome, the samples, schedule
   and result consumption of each timed workload, and the storage rows.
   Counts that depend on the host (the calibration batches and their times)
-  are not part of it;
+  are not part of it. This is a check of the protocol shape: the matrix
+  schema fixes every one of these fields for an accepted process, so two
+  accepted processes of a cell always agree. The behavioural evidence of the
+  work (stages, counts and the result digest) is the work row of the
+  allocation gate, which the disposition requires;
 - the tracked file behind each private file (a generated theory file maps to
   its script); a private file that maps to none is refused;
 - the head and dirty state of the checkout, the inputs and the tools.
@@ -2387,7 +2391,7 @@ ids) are never part of a closure.
 A cell is `identical` when both lists of differences are empty. It is
 `attributed` when every difference is of a `source` entry of the reviewed
 table whose two git blobs are exactly the cell's, the elaboration order is
-equal and the work is equal; the entry records the sha256 of the file on each
+equal and the shape of the work is equal; the entry records the sha256 of the file on each
 side. Any other difference makes it `different`: it is not passed by identity.
 
 Reviewed table. `task31_attributed.json` holds `{"schema", "entries",
@@ -2514,17 +2518,21 @@ follow-up with `--followup DIR --followup-pilot PILOT`, whose cells replace
 the first grid's) and decides every cell:
 
 - **pass** iff its identity is `identical` or `attributed`, AND its
-  allocation decision is `pass` where the allocation gate measures it (every
-  cell but the infeasible ones), AND the timing class is `pass` where the
-  cell is sampled (and a cell outside the sample has no timing row);
+  allocation row has the decision `pass` and the work row `equal` where the
+  allocation gate measures it (every cell but the infeasible ones), AND the
+  timing class is `pass` where the cell is sampled (and a cell outside the
+  sample has no timing row);
 - an infeasible cell passes by identity alone and is recorded as "untimed,
   unallocated: infeasible". When its identity is `attributed`, the record
   names the attribution and the cells of its family that measured it
-  (allocation cells of at most 1000 assumptions that passed with an
-  attributed identity, and the family's passing cells of the timing sample);
+  (allocation cells of at most 1000 assumptions that passed with equal work
+  and an attributed identity, and the family's passing cells of the timing
+  sample);
   with none of either it is `incomplete`;
-- a gate that decided against a cell makes it `fail`; a gate with no
-  decision for a cell it must decide leaves it `incomplete`, which includes
+- a gate that decided against a cell makes it `fail` (allocation words
+  that fail, or a work row that `differs`); a gate with no decision for a
+  cell it must decide leaves it `incomplete`, which includes an allocation
+  row that is `inconclusive` or whose work row is `inconclusive` or missing,
   a timing class that is not a decision (`inconclusive`, `control_limited`,
   `protocol`) and an identity grid that is inconclusive; a file below `src/`
   that the grid could not account for fails the whole.
@@ -2535,16 +2543,15 @@ is a JSON file `{"schema": "task31-cost-survey-v1", "process_timeout": N,
 check10000}}}` with one entry per infeasible cell. Its numbers and its
 sha256 are recorded, and `--check` reads it again.
 
-The allocation interface is a directory whose `decisions.json` is
-
-    {"candidate": COMMIT,
-     "rows": [{"case": CASE, "size": N, "decision": "pass" | "fail"}, ...]}
-
-`candidate` is optional and checked when present. One row per cell the
-allocation gate measures, none for an infeasible cell, none repeated, only
-cells of the task; a row of any other decision or shape is refused. Nothing
-else of the allocation grid is read here: it is run and replayed by its own
-tool, whose verdict is the caller's to read.
+The allocation gate is replayed, not trusted: the command requires the
+directory of a complete (not partial) allocation grid of task `task31`, with
+the candidate and baseline of the other two gates and the harness of the
+timing grid, replays it with `allocation_matrix.py` (every archive, every
+decision) and then reads its `decisions.json` (see "TASK31 allocation gate"
+above): `candidate` and `baseline` equal to the grids', `complete` true,
+`infeasible` the infeasible set, and exactly one row for every other cell,
+none repeated, a row with the decision `pass` having at least 10 pairs. A
+row of any other shape is refused.
 
 The record carries the seals of the code (`task31_dispose.CODE`, with
 `HISTORY` for earlier versions) and of every input it read, and the attempts

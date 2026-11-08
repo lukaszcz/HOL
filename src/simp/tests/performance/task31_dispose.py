@@ -5,16 +5,18 @@ A cell passes if and only if
 
 - gate 1: its identity row is `identical` or `attributed`
   (task31_grid.py `identity`; `different` fails);
-- gate 2: the allocation grid measured it and decided `pass`, where that
-  gate measures it (every cell but the infeasible ones);
+- gate 2: the allocation grid measured it and decided `pass`, and its
+  structural work row is `equal`, where that gate measures it (every cell but
+  the infeasible ones);
 - gate 3: the timing table decided `pass`, where the cell is sampled
   (task31_cases.SAMPLE).
 
-A gate that decided against a cell makes it `fail`. A gate with no decision
-for a cell it must decide leaves it `incomplete`: that is also a timing
-class that is not a decision (`inconclusive`, `control_limited`,
-`protocol`), named in the cell's record, and an identity grid that is
-inconclusive. Nothing is excused here.
+A gate that decided against a cell makes it `fail`: allocation words that
+fail, or a work row that `differs`. A gate with no decision for a cell it
+must decide leaves it `incomplete`: an allocation row that is `inconclusive`
+or whose work row is `inconclusive` or missing, a timing class that is not a
+decision (`inconclusive`, `control_limited`, `protocol`), named in the cell's
+record, and an identity grid that is inconclusive. Nothing is excused here.
 
 The 33 infeasible cells (task31_cases.INFEASIBLE) pass by identity alone and
 are recorded as "untimed, unallocated: infeasible", with the numbers of the
@@ -27,19 +29,22 @@ the timing sample that passed); an infeasible attributed cell with none of
 either is `incomplete`.
 
 The command replays what it reads: the identity grid (every archive, every
-decision), and the timing grid (`task31_grid.py replay`, in full, with its
-pilot). A follow-up (`--followup`, `--followup-pilot`: task31_followup.py)
-replaces the cells of the first grid that it measured again. The allocation
-grid is read through its `decisions.json`, whose contract is the following
-and nothing more (PROTOCOL.md, "TASK31"):
+decision), the timing grid (`task31_grid.py replay`, in full, with its
+pilot) and the allocation grid (`allocation_matrix.replay`, which derives the
+decisions again from the archives). A follow-up (`--followup`,
+`--followup-pilot`: task31_followup.py) replaces the cells of the first grid
+that it measured again. The allocation grid must be a complete, non-partial
+grid of task `task31`, of the same candidate, baseline and harness as the
+other two; its `decisions.json` is then read (PROTOCOL.md, "TASK31"):
 
-    {"candidate": COMMIT,                 # optional: checked when present
-     "rows": [{"case": CASE, "size": N, "decision": "pass" | "fail"}, ...]}
+    {"candidate": REV, "baseline": REV, "complete": true,
+     "infeasible": [NAME, ...],
+     "rows": [{"case": CASE, "size": N, "pairs": P,
+               "decision": "pass" | "fail" | "inconclusive",
+               "work": "equal" | "differs" | "inconclusive" | null}, ...]}
 
-One row per cell, no repeated cell, and each cell one the allocation gate
-measures; any other decision is refused. The gate's own replay (and the
-grid's other fields) are not this module's: the allocation gate is run and
-replayed by allocation_matrix.py, whose verdict the caller reads.
+`infeasible` is the infeasible set and `rows` has exactly one row for every
+other cell, none repeated; a row of any other shape is refused.
 
 The record carries the seals of the code (`CODE`, with `HISTORY` for earlier
 versions a record was made by) and of every input it read. The exit status
@@ -74,7 +79,8 @@ ALLOCATION_LIMIT = 1000
 # recorded.
 CODE = ("task31_dispose.py", "task31_grid.py", "task31_followup.py",
         "task31_identity.py", "task31_attribution.py", "task31_cases.py",
-        "timing_grid.py", "acceptance.py")
+        "timing_grid.py", "acceptance.py", "allocation_matrix.py",
+        "allocation_analysis.py", "allocation_schema.py")
 # Per file of CODE, the seals it had when a disposition was recorded, once it
 # has changed since.
 HISTORY = {}
@@ -121,22 +127,37 @@ def load_survey(path):
                 seal=a.seal(Path(path)))
 
 
-def allocation_rows(decisions, candidate):
-    """The allocation decisions as {cell name: "pass" | "fail"}, refusing a
-    malformed file."""
+WORK = ("equal", "differs", "inconclusive", None)
+DECISIONS = ("pass", "fail", "inconclusive")
+
+
+def allocation_rows(decisions, candidate, baseline):
+    """The allocation decisions as {cell name: {decision, work, pairs}},
+    refusing a malformed file, one of another candidate or baseline, an
+    incomplete one, or one whose infeasible set or cells are not the
+    task's."""
+    import allocation_matrix as am
     a.require(isinstance(decisions, dict) and
               isinstance(decisions.get("rows"), list),
               "the allocation decisions have no rows")
-    a.require("candidate" not in decisions or
-              decisions["candidate"] == candidate,
-              "the allocation grid is of another candidate (%s, not %s)"
-              % (decisions.get("candidate"), candidate))
+    a.require(decisions.get("candidate") == candidate and
+              decisions.get("baseline") == baseline,
+              "the allocation grid is of another candidate or baseline "
+              "(%s against %s, not %s against %s)" % (
+                  decisions.get("candidate"), decisions.get("baseline"),
+                  candidate, baseline))
+    a.require(decisions.get("complete") is True,
+              "the allocation grid is not complete")
+    a.require(decisions.get("infeasible") == sorted(cases.INFEASIBLE),
+              "the allocation grid's infeasible cells are not the task's")
     known = {grid.name_of(*k) for k in grid.every()}
     found = {}
     for row in decisions["rows"]:
         a.require(isinstance(row, dict) and isinstance(row.get("case"), str)
                   and isinstance(row.get("size"), int) and
-                  row.get("decision") in ("pass", "fail"),
+                  isinstance(row.get("pairs"), int) and
+                  row.get("decision") in DECISIONS and
+                  row.get("work") in WORK,
                   "malformed allocation row: %r" % (row,))
         name = grid.name_of(row["case"], row["size"])
         a.require(name in known, "allocation row of an unknown cell: "
@@ -144,8 +165,22 @@ def allocation_rows(decisions, candidate):
         a.require(name not in cases.INFEASIBLE,
                   "allocation row of an infeasible cell: " + name)
         a.require(name not in found, "repeated allocation row: " + name)
-        found[name] = row["decision"]
+        a.require(row["decision"] != "pass" or row["pairs"] >= am.PAIRS,
+                  "a passing allocation row of fewer than %d pairs: %s"
+                  % (am.PAIRS, name))
+        found[name] = dict(decision=row["decision"], work=row["work"],
+                           pairs=row["pairs"])
+    missing = sorted(known - set(cases.INFEASIBLE) - set(found))
+    a.require(not missing, "the allocation grid has no row for: "
+              + ", ".join(missing[:5]))
     return found
+
+
+def allocation_passed(row):
+    """Whether an allocation row passes its cell: the words pass and the
+    work row is equal."""
+    return row is not None and row["decision"] == "pass" and \
+        row["work"] == "equal"
 
 
 def timing_rows(decisions):
@@ -186,7 +221,7 @@ def measured_by(name, identity, allocated, timed):
     return dict(
         allocation=sorted(
             n for n in cells if size_of(n) <= ALLOCATION_LIMIT and
-            allocated.get(n) == "pass" and
+            allocation_passed(allocated.get(n)) and
             identity[n]["status"] == "attributed"),
         timing=sorted(n for n in cells if n in cases.SAMPLE and
                       timed.get(n) == "pass"))
@@ -194,14 +229,17 @@ def measured_by(name, identity, allocated, timed):
 
 def judge(name, identity, allocated, timed, survey, groups):
     """One cell: its record. `identity` is the cell's identity decision,
-    `allocated` the allocation decision or None, `timed` the timing class or
+    `allocated` the allocation row or None, `timed` the timing class or
     None, `survey` the numbers of the cost survey, `groups` what measured
     the attribution (see `measured_by`). A gate with no decision for a cell
     it must decide leaves the cell `incomplete`; a gate that decided
     against it makes it `fail`."""
     infeasible = name in cases.INFEASIBLE
-    found = dict(identity=identity["status"], allocation=allocated,
-                 timing=timed)
+    found = dict(identity=identity["status"],
+                 allocation=None if allocated is None
+                 else allocated["decision"],
+                 allocation_work=None if allocated is None
+                 else allocated["work"], timing=timed)
     failed, missing = [], []
     if identity["status"] == "different":
         failed.append("identity: the loaded closure or the work differs")
@@ -225,8 +263,17 @@ def judge(name, identity, allocated, timed, survey, groups):
     else:
         if allocated is None:
             missing.append("allocation: no decision")
-        elif allocated != "pass":
-            failed.append("allocation: " + allocated)
+        else:
+            if allocated["decision"] == "fail":
+                failed.append("allocation: fail")
+            if allocated["work"] == "differs":
+                failed.append("allocation: the work row differs")
+            if allocated["decision"] == "inconclusive":
+                missing.append("allocation: inconclusive")
+            elif allocated["decision"] == "pass" and \
+                    allocated["work"] not in ("equal", "differs"):
+                missing.append("allocation: the work row is %s" % (
+                    allocated["work"] or "missing"))
     if name in cases.SAMPLE:
         if timed is None:
             missing.append("timing: no decision")
@@ -299,6 +346,23 @@ def seal_of(path):
     return a.seal(Path(path))
 
 
+def allocation_inventory(root, identity, timing):
+    """The inventory of the allocation grid, which must be a complete grid
+    of this task, of the candidate and baseline of the other two gates, made
+    in the harness of the timing grid; the checks come before any replay."""
+    a.require((root / "decisions.json").exists(),
+              "the allocation grid is partial: it has no decisions")
+    counted = a.load(root / "inventory.json")
+    a.require(counted.get("task") == "task31",
+              "the allocation grid is not a TASK31 grid")
+    a.require(counted["candidate"] == identity["candidate"] and
+              counted["baseline"] == identity["baseline"],
+              "the allocation grid has another candidate or baseline than "
+              "the identity grid")
+    grid.base30.harness_match(timing, counted)
+    return counted
+
+
 def derive(args):
     repo = args.repo
     survey = load_survey(args.survey)
@@ -317,15 +381,22 @@ def derive(args):
               "the identity grid and the timing grid ran in different "
               "checkouts (head, tree outside the performance area, "
               "products)")
+    counted = allocation_inventory(args.allocation.resolve(), inventory,
+                                   timing)
     tg_code = grid.ENGINE.replay(argparse.Namespace(
         output=args.grid.resolve(), partial=False, repo=repo,
         pilot=args.pilot.resolve(), ledger=args.ledger))
     timed_decisions = a.load(args.grid.resolve() / "decisions.json")
+    import allocation_matrix as am
+    with contextlib.redirect_stdout(io.StringIO()):
+        alloc_code = am.replay(argparse.Namespace(
+            output=args.allocation.resolve()))
     inputs = dict(
         identity_inventory=seal_of(args.identity / "inventory.json"),
         identity_decisions=seal_of(args.identity / "decisions.json"),
         timing_inventory=seal_of(args.grid / "inventory.json"),
         timing_decisions=seal_of(args.grid / "decisions.json"),
+        allocation_inventory=seal_of(args.allocation / "inventory.json"),
         allocation_decisions=seal_of(args.allocation / "decisions.json"),
         survey=survey["seal"])
     followup = None
@@ -354,7 +425,7 @@ def derive(args):
               "the timing grid is not the sample")
     allocated = allocation_rows(
         a.load(args.allocation.resolve() / "decisions.json"),
-        inventory["candidate"])
+        inventory["candidate"], inventory["baseline"])
     record = dispose(identity, allocated, rows, survey["cells"])
     path = grid.ENGINE.h.attempts_file(argparse.Namespace(
         repo=repo, ledger=args.ledger), False)
@@ -364,6 +435,9 @@ def derive(args):
         candidate=inventory["candidate"], baseline=inventory["baseline"],
         harness=(inventory.get("checkout") or {}).get("head"),
         timing_status=timed_decisions["status"], timing_replay_exit=tg_code,
+        allocation_status=a.load(args.allocation.resolve() /
+                                 "decisions.json")["status"],
+        allocation_replay_exit=alloc_code,
         followup=followup, inputs=inputs, code=seals(),
         survey=dict(seal=survey["seal"],
                     process_timeout=survey["process_timeout"]),
@@ -379,14 +453,16 @@ def verdict(record):
     the attributions, the candidate and the harness, and the attempts of the
     ledger (against cherry-picking)."""
     paths = record["attributed"]
-    return ("TASK31 disposition: %s %s (identity %s%s; allocation %d pass "
-            "of %d cells; timing %s; infeasible %d by identity; candidate "
-            "%s; harness %s; attempts: timing %d in the ledger, %d of the "
-            "candidate; identity %d, %d of the candidate)" % (
+    return ("TASK31 disposition: %s %s (identity %s%s; allocation %s, %d "
+            "pass of %d cells; timing %s; infeasible %d by identity; "
+            "candidate %s; harness %s; attempts: timing %d in the ledger, "
+            "%d of the candidate; identity %d, %d of the candidate)" % (
                 record["status"], json.dumps(record["counts"]),
                 record["identity_status"],
                 " [%s]" % ", ".join(paths) if paths else "",
-                sum(c["allocation"] == "pass"
+                record["allocation_status"],
+                sum(c["allocation"] == "pass" and
+                    c["allocation_work"] == "equal"
                     for c in record["cells"].values()),
                 sum(n not in cases.INFEASIBLE for n in record["cells"]),
                 record["timing_status"], record["infeasible"],

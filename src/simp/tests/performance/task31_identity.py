@@ -12,12 +12,15 @@ the record of the private trees) and returns the cell's identity row:
   sides differ in that alone. A source or product that one side holds and
   the other does not, differs in its bytes, or an elaboration order that
   differs, is listed;
-- the work: the ordered checks of the fixture (each proof is compared in the
-  process with the independently built expected theorem, and residual goals
-  and hypotheses are checked, so a wrong result stops the process), the keys
-  and number of the timed observations, the result consumption of an
-  iteration and the number of samples. Counts that depend on the host (the
-  calibration batches and their times) are not part of it.
+- the work shape: the ordered checks of the fixture (each proof is compared
+  in the process with the independently built expected theorem, and
+  residual goals and hypotheses are checked, so a wrong result stops the
+  process), the keys and number of the timed observations, the result
+  consumption of an iteration and the number of samples. The matrix schema
+  fixes these for an accepted process, so this is a protocol-shape check;
+  the behavioural work row (stages, counts, result digest) is the
+  allocation gate's. Counts that depend on the host (the calibration
+  batches and their times) are not part of it.
 
 The row is `identical` when both lists of differences are empty,
 `attributed` when every difference of the closure is of a file of the
