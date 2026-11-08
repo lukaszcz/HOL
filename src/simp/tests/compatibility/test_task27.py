@@ -240,6 +240,82 @@ class LiveSourceGate(unittest.TestCase):
                     audit.check_var_perm_copy(
                         {**self.sources, path: source.replace(old, new)})
 
+    def test_lexer_strips_comments_and_reads_literals_exactly(self):
+        lex = audit.strip_comments
+        for text, want in (
+                ('a (* x (* y *) z *) b', 'a   b'),
+                ('a "q\\"(*" b (* c *) d', 'a "q\\"(*" b   d'),
+                ('a "q\\\\" (* c *) d', 'a "q\\\\"   d'),
+                ('a "x\\  \\y(*" (* c *) d', 'a "x\\  \\y(*"   d'),
+                ('a "x\\ \\" (* c *) d "(*" e',
+                 'a "x\\ \\"   d "(*" e'),
+                ('a "x\\ \\\\\\" (* c *) d', 'a "x\\ \\\\\\"   d'),
+                ('a (*) b *) c', 'a   c'),
+                ('a #"(" (* c *) d #"\\"" e', 'a #"("   d #"\\"" e'),
+                ('a (* "q *) b', 'a   b')):
+            with self.subTest(text=text):
+                self.assertEqual(lex(text), want)
+        for text, message in (('a (* b (* c *) d', 'unterminated comment'),
+                              ('a (* b', 'unterminated comment'),
+                              ('a "b (* c *)', 'unterminated string'),
+                              ('a "b\\ c', 'string gap'),
+                              ('a "b\\ ', 'string gap'),
+                              ('a \u2018x\u2019', 'quotation'),
+                              ('a \u201cx\u201d', 'quotation'),
+                              ('a `x`', 'quotation')):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(AssertionError, message):
+                    lex(text)
+        self.assertEqual(lex('a (* `x` \u2018 *) b'), 'a   b')
+
+    def test_var_perm_copy_accepts_what_the_compiler_reads_the_same(self):
+        path = audit.SRC + 'Cond_rewrExt.sml'
+        source = self.sources[path]
+        for old, new in (
+                (b'andalso vperm(snd t1,snd t2)',
+                 b'andalso (* a (* nested *) b *) vperm(snd t1,snd t2)'),
+                (b'vperm(snd t1, snd t2)',
+                 b'vperm(snd t1, (* "unmatched *) snd t2)'),
+                (b'fun vperm', b'val _ = "(*"\nval _ = "x\\ \\"\n'
+                 b'val _ = "(*"\nfun vperm')):
+            with self.subTest(new=new):
+                self.assertEqual(source.count(old), 1)
+                audit.check_var_perm_copy(
+                    {**self.sources, path: source.replace(old, new)})
+
+    def test_var_perm_copy_fails_closed(self):
+        path = audit.SRC + 'Cond_rewrExt.sml'
+        source = self.sources[path]
+        tail = b'FVL [tm2] empty_tmset)\n'
+        quote = '\nval q = \u2018x\u2019\n'.encode()
+        gap = (b'val _ = "\\ \\"\nval _ = "(*"\n'
+               b'fun vperm(tm1,tm2) = true\n'
+               b'fun is_var_perm(tm1,tm2) = true\nval _ = "*)"\n'
+               b'(*\n' + source[source.index(b'fun vperm'):
+                                 source.index(b'type config')] +
+               b'val _ = " *)\n')
+        for old, new, message in (
+                (b'fun vperm', gap + b'fun vperm', 'not bound exactly'),
+                (tail, tail + b'(* andalso false\n', 'unterminated comment'),
+                (tail, tail + b'"x\n', 'unterminated string'),
+                (tail, tail + quote, 'quotation'),
+                (b'type config',
+                 b'fun is_var_perm _ = false\ntype config',
+                 'not bound exactly'),
+                (b'fun vperm',
+                 b'fun aconv _ _ = true\nfun vperm', 'rebound: aconv'),
+                (b'fun vperm',
+                 b'val (a, FVL) = (1, 2)\nfun vperm', 'rebound: FVL'),
+                (b'fun vperm',
+                 b'datatype t = VAR | Q\nfun vperm', 'rebound: VAR'),
+                (b'fun vperm',
+                 b'exception empty_tmset\nfun vperm', 'rebound: empty')):
+            with self.subTest(new=new[:40]):
+                self.assertEqual(source.count(old), 1)
+                with self.assertRaisesRegex(AssertionError, message):
+                    audit.check_var_perm_copy(
+                        {**self.sources, path: source.replace(old, new)})
+
     def test_task31_overlay_is_applied_to_the_sealed_task16_manifest(self):
         sealed = audit.prior.read_manifest()
         self.assertIn('SimpTracking', sealed['modules'])

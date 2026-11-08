@@ -275,44 +275,130 @@ DECLARATION = re.compile(
     re.M)
 
 
-def strip_comments(text):
-    """`text` without its SML comments (nested ones included), each
-    replaced by a space; a string literal containing `(*` is kept."""
+QUOTATION = re.compile('[‘’“”`]')
+SML_KEYWORDS = frozenset("""
+    abstype and andalso as case datatype do else end eqtype exception fn
+    fun functor handle if in include infix infixr let local nonfix of op
+    open orelse raise rec sharing sig signature struct structure then
+    type val where while with withtype""".split())
+WORD = re.compile(r"[A-Za-z_][\w']*(?:\.[A-Za-z_][\w']*)*")
+
+
+def lex(text, keep_strings=True):
+    r"""A small, exact SML lexer for what the var_perm audit needs: `text`
+    without its comments (nested; `(*)` opens one), each replaced by a
+    space.  String literals (every escape, and the `\<whitespace>\` gap,
+    which is read explicitly) and `#"c"` literals are kept, or replaced
+    by `""` when `keep_strings` is false.  Anything it cannot classify
+    exactly is refused: an unterminated comment, string or gap, and a
+    HOL quotation character outside a comment (a quotation is not lexed
+    as SML, so a `"` or `(*` inside one would desynchronise this scanner
+    from the compiler; neither Cond_rewr.sml nor Cond_rewrExt.sml has one
+    outside a comment)."""
     out, i, depth, n = [], 0, 0, len(text)
     while i < n:
-        two = text[i:i + 2]
-        if depth == 0 and text[i] == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == '\\' else 1
-            out.append(text[i:j + 1])
-            i = j + 1
-        elif two == '(*':
+        c, two = text[i], text[i:i + 2]
+        if two == '(*':
             if depth == 0:
                 out.append(' ')
             depth += 1
             i += 2
-        elif depth and two == '*)':
-            depth -= 1
-            i += 2
+        elif depth:
+            if two == '*)':
+                depth -= 1
+                i += 2
+            else:
+                i += 1
+        elif c == '"':
+            j = i + 1
+            while True:
+                require(j < n, 'unterminated string literal')
+                if text[j] == '"':
+                    break
+                if text[j] != '\\':
+                    j += 1
+                elif text[j + 1:j + 2].isspace():
+                    k = j + 1
+                    while k < n and text[k].isspace():
+                        k += 1
+                    require(k < n and text[k] == '\\',
+                            'unterminated or malformed string gap')
+                    j = k + 1
+                else:
+                    j += 2
+            out.append(text[i:j + 1] if keep_strings else '""')
+            i = j + 1
         else:
-            if depth == 0:
-                out.append(text[i])
+            require(not QUOTATION.match(c), 'quotation outside a comment')
+            out.append(c)
             i += 1
+    require(depth == 0, 'unterminated comment')
     return ''.join(out)
+
+
+def strip_comments(text):
+    return lex(text)
+
+
+def binder_heads(text):
+    """(position, names) for each val/fun/and/exception/datatype/structure
+    declaration of comment-free `text`: the names in its head (up to the
+    first `=`, or to the next declaration at the start of a line; a
+    datatype, or an `and` joined to one, always runs to that, to take in
+    its constructors)."""
+    heads, mode = [], None
+    for m in re.finditer(r'\b(val|fun|and|exception|datatype|structure)\b',
+                         text):
+        kw = m.group(1)
+        mode = mode if kw == 'and' else kw
+        nxt = DECLARATION.search(text, m.end())
+        end = len(text) if nxt is None else nxt.start()
+        if mode != 'datatype':
+            eq = text.find('=', m.end(), end)
+            end = end if eq < 0 else eq
+        heads.append((m.start(), WORD.findall(text[m.end():end])))
+    return heads
+
+
+def block_span(text):
+    start = text.find('fun vperm')
+    perm = text.find('fun is_var_perm', start)
+    require(start >= 0 and perm > start, 'vperm/is_var_perm block not found')
+    after = DECLARATION.search(text, perm + len('fun is_var_perm'))
+    return start, len(text) if after is None else after.start()
 
 
 def vperm_block(text):
     """The tokens of `fun vperm` and `fun is_var_perm`, comments removed,
     up to the next declaration keyword at the start of a line, so that
     nothing after the last parenthesis of is_var_perm escapes the
-    comparison."""
-    text = strip_comments(text)
-    start = text.find('fun vperm')
-    perm = text.find('fun is_var_perm', start)
-    require(start >= 0 and perm > start, 'vperm/is_var_perm block not found')
-    after = DECLARATION.search(text, perm + len('fun is_var_perm'))
-    end = len(text) if after is None else after.start()
+    comparison.  Fails closed (see `lex`) on what it cannot classify, and
+    on shadowing: `vperm` and `is_var_perm` must each be bound exactly
+    once in the file, and no free name of the block (its identifiers,
+    less keywords and the names its own patterns bind) may be bound by
+    val, fun, and, exception, datatype (constructors included) or
+    structure anywhere else in the file.  What `open` brings in is not
+    seen here: the REVIEWED_31 blob seal and the cond-rewr-ext selftest
+    cover it."""
+    text = lex(text)
+    start, end = block_span(text)
+    code = lex(text, keep_strings=False)
+    cstart, cend = block_span(code)
+    block = code[cstart:cend]
+    heads = binder_heads(code)
+    for name in ('vperm', 'is_var_perm'):
+        require(sum(name in names for _, names in heads) == 1,
+                name + ' is not bound exactly once')
+    patterns = re.findall(r'\b(?:fun|of)\b(.*?)=|\|(.*?)=>', block, re.S)
+    bound = {w for pair in patterns for part in pair
+             for w in WORD.findall(part) if w[0].islower()}
+    free = {w.split('.')[0] for w in WORD.findall(block)} \
+        - SML_KEYWORDS - bound
+    for pos, names in heads:
+        if not cstart <= pos < cend:
+            clash = free & set(names)
+            require(not clash,
+                    'block name rebound: ' + ', '.join(sorted(clash)))
     return re.findall(r'\w+|\S', text[start:end])
 
 

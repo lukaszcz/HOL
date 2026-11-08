@@ -599,16 +599,16 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   each `.sml` with its `.sig`: the simplifier (`simpLib`, `Ho_Net`,
   `BoundedRewrites`, `Traverse`, `Travrules`, `Opening`, `Cond_rewr`,
   `SimpTracking`, `Trace`), the marker library (`markerLib`,
-  `markerSyntax`)
-  and the modules the cases call through them (`liteLib`, `Theory`,
-  `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records the git
-  blob of each file at the baseline and at the candidate in the inventory
-  and prints every file that differs (`SOURCE-DIFFERS path`). Such a grid is
-  never a pass: its decisions name the files in `source_identity` and a
-  status that would be `pass` becomes `inconclusive`, whatever the cells
-  say. `replay` and the second stage re-verify the record against git. This
-  is the evidence for "no extra source scan": neither gate sees a scan that
-  allocates nothing and costs a few percent, so the identity of the code on
+  `markerSyntax`) and the modules the cases call through them (`liteLib`,
+  `Theory`, `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records
+  the git blob of each file at the baseline and at the candidate in the
+  inventory and prints every file that differs (`SOURCE-DIFFERS path`).
+  Such a grid is never a pass: its decisions name the files in
+  `source_identity` and a status that would be `pass` becomes
+  `inconclusive`, whatever the cells say. `replay` and the second stage
+  re-verify the record against git. This is the evidence for "no extra
+  source scan": neither gate sees a scan that allocates nothing and
+  costs a few percent, so the identity of the code on
   the path, not a measurement, shows that no scan was added there. The
   boundary: what is not listed stays outside the identity (the kernel, the
   parser, `ThmAttribute`, `Lib`, `testutils` and the build files among it:

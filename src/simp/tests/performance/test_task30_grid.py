@@ -611,9 +611,8 @@ class Whole(ttg.Rig):
 
     def setUp(self):
         super().setUp()
-        # The candidate adds no file here: every pinned file exists at the
-        # baseline, so nothing is absent.
-        self.absent = set()
+        # The rig gives every `SOURCES` file, `SimpTracking` included, a
+        # blob at both commits, so nothing is absent (the Rig default).
 
     def fake_blob(self, repo, rev, path):
         """As the rig's, but the candidate holds each pinned file at its
