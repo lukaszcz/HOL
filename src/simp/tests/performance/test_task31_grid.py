@@ -364,6 +364,31 @@ class Commands(unittest.TestCase):
                                 "--repo", str(self.repo)])
         self.assertEqual(code, 0, text)
 
+    def test_the_whole_grid_is_bound_to_the_checkout_and_replayed(self):
+        checkout = dict(head=CAND, tree_outside_performance="t" * 40)
+        calls = []
+        with mock.patch.object(g.ENGINE.h, "bind_checkout", lambda *a_: (
+                calls.append("bind") or dict(checkout))), \
+                mock.patch.object(g.ENGINE.h, "recheck", lambda *a_: (
+                    calls.append("recheck"))), \
+                mock.patch.object(g.ENGINE.h, "judge_end", lambda *a_: (
+                    calls.append("judge"))), \
+                mock.patch.object(g.ENGINE.h, "check_checkout", lambda *a_:
+                                  calls.append("check")):
+            argv, out = self.args()
+            code, text = self.main(argv)
+            self.assertEqual(code, 0, text)
+            decisions = a.load(out / "decisions.json")
+            self.assertEqual(sum(decisions["counts"].values()), 278)
+            self.assertEqual(decisions["counts"]["unresolved"], 0)
+            self.assertEqual(a.load(out / "inventory.json")["checkout"],
+                             checkout)
+            self.assertEqual(calls, ["bind", "recheck", "judge"])
+            code, text = self.main(["identity-replay", "--output",
+                                    str(out), "--repo", str(self.repo)])
+            self.assertEqual(code, 0, text)
+            self.assertEqual(calls[-1], "check")
+
     def test_a_different_cell_gives_status_1_and_replays_as_such(self):
         self.status["traversal_construct-0"] = "different"
         argv, out = self.args("traversal_construct-0")
