@@ -254,8 +254,8 @@ class IntegratedTests(unittest.TestCase):
                       len(installed["modules"]), "shared modules rebuilt;",
                       len(audit["paths"]), "loaded sources", flush=True)
             # Common shared sources and graph metadata have identical seals.
-            # A module selected only by one revision (currently SimpTracking)
-            # may instead be a copied baseline dependency on the other side.
+            # A module selected only by one revision may instead be a copied
+            # baseline dependency on the other side.
             left, right = input_seals
             for path in left.keys() & right.keys():
                 self.assertEqual(left[path], right[path], path)

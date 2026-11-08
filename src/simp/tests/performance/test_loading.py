@@ -287,7 +287,7 @@ class SemanticGateTests(unittest.TestCase):
         native = self.root / "src/simp/src"
         self.selected, actual = [], {}
         modules = ("simpLib", "congLib", "Traverse", "Cond_rewr", "Trace",
-                   "SimpTracking", "simpExtLib", "TraverseExt",
+                   "simpExtLib", "TraverseExt",
                    "Cond_rewrExt", "congExtLib")
         for module in modules:
             for suffix in (".sig", ".sml"):
@@ -314,10 +314,10 @@ class SemanticGateTests(unittest.TestCase):
         for order, kind, owner in l.itertools.product(
                 ("simp-first", "cong-first"), ("attribute", "exporter"),
                 ("before", "after")):
-            count = {("attribute", "before"): 172,
-                     ("attribute", "after"): 168,
-                     ("exporter", "before"): 176,
-                     ("exporter", "after"): 171}[kind, owner]
+            count = {("attribute", "before"): 178,
+                     ("attribute", "after"): 174,
+                     ("exporter", "before"): 182,
+                     ("exporter", "after"): 177}[kind, owner]
             text = "OK\n" * count + "OBS result=pass\n" + "".join(
                 "OBS used.path=" + raw + "\n" for raw in actual)
             path = self.audit / (order + kind + owner + ".gz")

@@ -196,7 +196,7 @@ def main(argv=None):
                     report["products"] = {str(p): a.seal(p) for p in products}
                     report["libraries"] = loading.library_inputs(
                         run(["ldd", str(source / ".libs/poly")], source))
-                    run([str(source / "poly"), "--version"], source)
+                    run([str(source / "poly"), "-v"], source)
                     # Source inputs, including the portable bytecode seed,
                     # must survive configuration and all seven stages.
                     manifest = json.loads(

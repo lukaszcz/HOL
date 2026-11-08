@@ -17,9 +17,11 @@ and bossLib are additional byte-exact ordinary registry/default sentinels,
 not a claim to have closed the entire boss dependency graph.
 """
 from functools import lru_cache
+import copy
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -28,6 +30,30 @@ import audit_task16 as prior
 HERE, ROOT, SRC = prior.HERE, prior.ROOT, prior.SRC
 BASE, START = prior.BASE, prior.START
 REVIEW = 'c707baca802d7e0d22e7e8045a0dc5d3567bd7a9'
+# TASK31: one rewrite-tracking extent, owned by develop's Cond_rewr and
+# shared by both engines through the one added Cond_rewr.note_rewrite spec;
+# Cond_rewr.sml itself is pinned develop again, and Cond_rewrExt keeps its own
+# is_var_perm.  The files below are sealed by content (git blob id), not by
+# the id of a commit, so the seal survives rebases and squashes.  A change to
+# one of them needs a new blob and a new reason here.
+REVIEWED_31 = {
+    SRC + 'Cond_rewr.sig': dict(
+        blob='7ab7bafd0ea45756b6f4ac2a35447e7da33fe085',
+        reason='develop plus the note_rewrite spec and its comment; the '
+               'signature is otherwise unchanged'),
+    SRC + 'Cond_rewrExt.sml': dict(
+        blob='378b9bbe6dd5c3a2404a5ec7571f7d61a422bac1',
+        reason='TASK31 own pure is_var_perm (audited token-equal to '
+               'develop) and reporting through Cond_rewr.note_rewrite'),
+    SRC + 'simpExtLib.sml': dict(
+        blob='c146d65ff7b1d7014f71bcfb46fe4ed4c88e9d05',
+        reason='TASK17-24 tracked installation, policy/quota and explicit '
+               'recipes; TASK31 track is Cond_rewr.with_tracking'),
+    SRC + 'simpExtLib.sig': dict(
+        blob='247f6a892c57f90a74035b2186fbab6bac174aea',
+        reason='TASK17-24 explicit tracked API; TASK31 documents the one '
+               'tracking extent shared with simpLib.track'),
+}
 TOOL = ROOT / 'bin/holdeptool.exe'
 ORDINARY_SENTINELS = tuple(directory + name + suffix
                            for directory, name in (
@@ -42,36 +68,30 @@ EXTENSIONS = tuple(sorted(set(prior.EXTENSIONS) | {
         'splitPersistLib.sml')} | {
             'src/boss/trackedSimpDefaults' + s for s in ('.sml', '.sig')}))
 
-# Exactly six shared-identity inputs differ from pinned develop. TASK16 sealed
-# them at START; everything else in the ordinary closure is exactly BASE.
+# Exactly three shared-identity inputs differ from pinned develop. TASK16
+# sealed the first two at START; Cond_rewr.sig is sealed by REVIEWED_31 (TASK31
+# adds one spec). Everything else in the ordinary closure is exactly BASE,
+# Cond_rewr.sml included.
 SHARED_DELTAS = {
     'src/1/ThmAttribute.sig':
         'read-only exact installed attrfuns lookup API; no second registry',
     'src/1/ThmAttribute.sml':
         'two read-only lookup functions over the original Context registry',
-    SRC + 'Cond_rewr.sig':
-        'expose existing permutation predicate; document live depth control',
-    SRC + 'Cond_rewr.sml':
-        'extract reporter to SimpTracking; alias the single shared extent',
-    SRC + 'SimpTracking.sig':
-        'new internal shared reporter/bracketing interface',
-    SRC + 'SimpTracking.sml':
-        'new sole thread-local reporter slot extracted from Cond_rewr',
+    SRC + 'Cond_rewr.sig': REVIEWED_31[SRC + 'Cond_rewr.sig']['reason'],
 }
-SHARED_ADDED = frozenset(SRC + 'SimpTracking' + s
-                         for s in ('.sml', '.sig'))
+SHARED_ADDED = frozenset()
 
 # Reviewed extension deltas, NOT permission to accept HEAD generally.
-# Each must equal its immutable REVIEW blob; report both old/new hashes.
+# Each must equal its immutable REVIEW blob (or, for the REVIEWED_31 files,
+# the blob recorded above); report both old/new hashes.
 DELTAS = {
-    SRC + 'simpExtLib.sml':
-        'TASK17-24 tracked installation, policy/quota and explicit recipes',
-    SRC + 'simpExtLib.sig':
-        'TASK17-24 explicit tracked API; no ordinary promotion adapter',
+    SRC + 'simpExtLib.sml': REVIEWED_31[SRC + 'simpExtLib.sml']['reason'],
+    SRC + 'simpExtLib.sig': REVIEWED_31[SRC + 'simpExtLib.sig']['reason'],
     SRC + 'TraverseExt.sml':
         'TASK17-22 child-first staging, aborts and configured traversal',
     SRC + 'TraverseExt.sig':
         'TASK17-22 configured traversal and policy callback contract',
+    SRC + 'Cond_rewrExt.sml': REVIEWED_31[SRC + 'Cond_rewrExt.sml']['reason'],
     SRC + 'simpMarkerLib.sml':
         'TASK20 qualified directives and lossless nested actual bounds',
     SRC + 'simpMarkerLib.sig':
@@ -89,8 +109,7 @@ DELTAS = {
     'src/boss/trackedSimpDefaults.sig':
         'TASK24 new explicit typed recipe/provider boundary',
 }
-ADDED = frozenset({SRC + 'combinSimpsExt' + s
-                   for s in ('.sml', '.sig')} |
+ADDED = frozenset({SRC + 'combinSimpsExt' + s for s in ('.sml', '.sig')} |
                   {'src/boss/trackedSimpDefaults' + s
                    for s in ('.sml', '.sig')})
 
@@ -124,7 +143,7 @@ LOCAL_NAMES = {
 # references. This prevents an empty/stale/replaced analyzer passing merely
 # because it produces the same wrong answer on both snapshots.
 ANALYSIS_SHA256 = (
-    '57c7c9aa9e9da63327f55fd3a445b65223b17f27888cc7f414b61742aa7b9692')
+    'd01da425ad91723363c9cec0284636af6bd88a21cfc56d07743fdcbcf8b781c1')
 
 require, seal, git_source = prior.require, prior.seal, prior.git_source
 
@@ -134,8 +153,50 @@ def digest(value):
         value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def blob_id(data):
+    # The git blob id: stable across rebases, squashes and cherry-picks.
+    return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest()
+
+
 def forbidden_module(name):
-    return (prior.forbidden_module(name) or name == 'trackedSimpDefaults')
+    return (prior.forbidden_module(name) or
+            name in ('trackedSimpDefaults', 'SimpTracking'))
+
+
+# TASK31 overlay on the sealed TASK16 manifest (which describes the closure
+# at START, where Cond_rewr imported the extracted SimpTracking).  Cond_rewr
+# is develop's again: it imports ThreadLocal directly and SimpTracking is
+# gone.  The overlay asserts the exact TASK16 shape it edits.
+OVERLAY31_REMOVED = {
+    'SimpTracking': dict(
+        sources=['src/simp/src/SimpTracking.sig',
+                 'src/simp/src/SimpTracking.sml'],
+        imports=['HolKernel', 'Overlay', 'Thm', 'ThreadLocal'],
+        basis_or_local_names=['List'])}
+OVERLAY31_CONDREWR_OLD = 'SimpTracking'
+OVERLAY31_CONDREWR_NEW = 'ThreadLocal'
+
+
+def overlay31(manifest):
+    manifest = copy.deepcopy(manifest)
+    nodes = manifest['modules']
+    for name, node in OVERLAY31_REMOVED.items():
+        require(nodes.get(name) == node,
+                'TASK16 manifest differs from the TASK31 overlay base: ' +
+                name)
+        del nodes[name]
+    imports = nodes['Cond_rewr']['imports']
+    require(OVERLAY31_CONDREWR_OLD in imports and
+            OVERLAY31_CONDREWR_NEW not in imports,
+            'TASK16 Cond_rewr node differs from the TASK31 overlay base')
+    imports.remove(OVERLAY31_CONDREWR_OLD)
+    imports.append(OVERLAY31_CONDREWR_NEW)
+    imports.sort()
+    return manifest
+
+
+def read_manifest():
+    return overlay31(prior.read_manifest())
 
 
 def validate_manifest(manifest):
@@ -161,10 +222,12 @@ def source_paths(manifest):
 
 def read_sources():
     return {p: (ROOT / p).read_bytes()
-            for p in sorted(source_paths(prior.read_manifest()))}
+            for p in sorted(source_paths(read_manifest()))}
 
 
 def reference_revision(path):
+    if path in REVIEWED_31:
+        return 'blob:' + REVIEWED_31[path]['blob']
     if path in EXTENSIONS:
         return REVIEW if path in DELTAS else START
     return START if path in SHARED_DELTAS else BASE
@@ -176,8 +239,19 @@ def baseline_source(path):
     return git_source(START if path in EXTENSIONS else BASE, path)
 
 
-def reference_sources(paths):
-    return {p: git_source(reference_revision(p), p) for p in sorted(paths)}
+def reference_source(path, live):
+    """Immutable reference bytes; a REVIEWED_31 file is its own reference
+    once its content matches the recorded blob id."""
+    if path in REVIEWED_31:
+        require(blob_id(live) == REVIEWED_31[path]['blob'],
+                'TASK31 reviewed extension/control source bytes changed: ' +
+                path)
+        return live
+    return git_source(reference_revision(path), path)
+
+
+def reference_sources(sources):
+    return {p: reference_source(p, sources[p]) for p in sorted(sources)}
 
 
 @lru_cache(maxsize=None)
@@ -186,7 +260,7 @@ def delta_records():
     for path, reason in sorted({**SHARED_DELTAS, **DELTAS}.items()):
         before = baseline_source(path)
         revision = reference_revision(path)
-        after = git_source(revision, path)
+        after = reference_source(path, (ROOT / path).read_bytes())
         require(before != after, 'vacuous reviewed delta: ' + path)
         records[path] = dict(
             reason=reason,
@@ -194,6 +268,245 @@ def delta_records():
             baseline=None if before is None else seal(before),
             reviewed_revision=revision, reviewed=seal(after))
     return records
+
+
+DECLARATION = re.compile(
+    r'^[ \t]*(?:fun|val|type|datatype|structure|local|open|exception|end)\b',
+    re.M)
+
+
+# HOL's quotation filter (HOLSource.ToSML, from tools/parsing) is applied
+# to every .sml file before the compiler reads it.  Under Poly/ML the build
+# applies it in-process when it loads the module (QUse.use, through
+# HOLSource.ToSML.mkPullTranslator); only Moscow ML's Holmake runs it as
+# `bin/unquote file1 file2`.  The two give the same output, and the file
+# name affects only what #(FILE) expands to.  Its declaration forms
+# (`Quote x = f:`, `Theorem`, ...) open quotations with no quotation
+# character, and a quotation body is not SML, so a scanner that read the
+# unfiltered text could be desynchronised from the compiler, or miss a
+# binding.  The var_perm audit therefore reads the filter's output, the
+# text the compiler sees, in which a quotation is an ordinary string or
+# QUOTE list.
+UNQUOTE = ROOT / 'bin/unquote'
+
+
+def quote_filter(source):
+    """`source` (bytes) as HOL's quotation filter writes it for the
+    compiler (two-file, non-interactive mode, as in a build).  Fails closed
+    when the filter is missing or fails, or writes nothing or diagnostics."""
+    require(UNQUOTE.is_file(), 'quotation filter missing (build HOL): ' +
+            str(UNQUOTE))
+    with tempfile.TemporaryDirectory(prefix='task27-unquote-') as directory:
+        infile, outfile = Path(directory) / 'in.sml', Path(directory) / 'out'
+        infile.write_bytes(source)
+        try:
+            completed = subprocess.run(
+                [str(UNQUOTE), str(infile), str(outfile)],
+                capture_output=True, timeout=60,
+                stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise AssertionError('quotation filter did not run: ' +
+                                 str(error))
+        require(completed.returncode == 0 and not completed.stderr,
+                'quotation filter failed: ' +
+                completed.stderr.decode(errors='replace'))
+        require(outfile.is_file(), 'quotation filter wrote no output')
+        filtered = outfile.read_bytes().decode()
+    require(filtered.strip(), 'quotation filter wrote empty output')
+    return filtered
+
+
+# A cheap pre-check that stays: after filtering, no quotation character can
+# remain outside a string, so one that does means the filter and this
+# scanner disagree, and the text is refused.
+QUOTATION = re.compile('[‘’“”`]')
+SML_KEYWORDS = frozenset("""
+    abstype and andalso as case datatype do else end eqtype exception fn
+    fun functor handle if in include infix infixr let local nonfix of op
+    open orelse raise rec sharing sig signature struct structure then
+    type val where while with withtype""".split())
+WORD = re.compile(r"[A-Za-z_][\w']*(?:\.[A-Za-z_][\w']*)*")
+
+
+def lex(text):
+    r"""A small, exact SML lexer for what the var_perm audit needs, for
+    text already passed through the quotation filter (`quote_filter`).
+    Returns `(kept, blanked)`: `text` without its comments (nested; `(*)`
+    opens one), each replaced by a space, with string literals (every
+    escape, and the `\<whitespace>\` gap, which is read explicitly) and
+    `#"c"` literals kept, or blanked to spaces between their quotes.  The
+    two have the same length, so an offset in one is the same text in the
+    other.  Anything it cannot classify exactly is refused: an
+    unterminated comment, string or gap, and a quotation character outside
+    a comment or string."""
+    kept, blank, i, depth, n = [], [], 0, 0, len(text)
+    while i < n:
+        c, two = text[i], text[i:i + 2]
+        if two == '(*':
+            if depth == 0:
+                kept.append(' ')
+                blank.append(' ')
+            depth += 1
+            i += 2
+        elif depth:
+            if two == '*)':
+                depth -= 1
+                i += 2
+            else:
+                i += 1
+        elif c == '"':
+            j = i + 1
+            while True:
+                require(j < n, 'unterminated string literal')
+                if text[j] == '"':
+                    break
+                if text[j] != '\\':
+                    j += 1
+                elif text[j + 1:j + 2].isspace():
+                    k = j + 1
+                    while k < n and text[k].isspace():
+                        k += 1
+                    require(k < n and text[k] == '\\',
+                            'unterminated or malformed string gap')
+                    j = k + 1
+                else:
+                    j += 2
+            kept.append(text[i:j + 1])
+            blank.append('"' + ' ' * (j - i - 1) + '"')
+            i = j + 1
+        else:
+            require(not QUOTATION.match(c), 'quotation outside a comment')
+            kept.append(c)
+            blank.append(c)
+            i += 1
+    require(depth == 0, 'unterminated comment')
+    return ''.join(kept), ''.join(blank)
+
+
+def strip_comments(text):
+    return lex(text)[0]
+
+
+SYMBOLIC = frozenset('!%&$#+-/:<=>?@\\~`^|*')
+
+
+def binding_equals(text, start, end):
+    """The position of the first `=` token of text[start:end] at bracket
+    depth 0, or `end` if there is none.  An `=` inside a symbolic
+    identifier (`<=>`) is not a token of its own."""
+    depth = 0
+    for i in range(start, end):
+        c = text[i]
+        if c in '([{':
+            depth += 1
+        elif c in ')]}':
+            depth -= 1
+        elif (c == '=' and depth <= 0 and text[i - 1] not in SYMBOLIC
+              and text[i + 1:i + 2] not in SYMBOLIC):
+            return i
+    return end
+
+
+def binder_heads(text):
+    """(position, names) for each val/fun/and/exception/datatype/structure
+    declaration of comment-free `text`: the names in its head (up to the
+    first `=` token at bracket depth 0 of (), [] and {}, so that the names
+    in a record or tuple pattern, `val {a = x} = ...`, are in it (a label
+    is counted as a name too, conservatively); or to the next declaration at
+    the start of a line; a datatype, or an `and` joined to one, always
+    runs to that, to take in its constructors)."""
+    heads, mode = [], None
+    for m in re.finditer(r'\b(val|fun|and|exception|datatype|structure)\b',
+                         text):
+        kw = m.group(1)
+        mode = mode if kw == 'and' else kw
+        nxt = DECLARATION.search(text, m.end())
+        end = len(text) if nxt is None else nxt.start()
+        if mode != 'datatype':
+            end = binding_equals(text, m.end(), end)
+        heads.append((m.start(), WORD.findall(text[m.end():end])))
+    return heads
+
+
+def fixity_names(text):
+    """The tokens named by each infix/infixr/nonfix declaration of
+    comment-free `text`, up to `;` or the next declaration at the start of
+    a line."""
+    names = set()
+    for m in re.finditer(r'\b(?:infix|infixr|nonfix)\b', text):
+        nxt = DECLARATION.search(text, m.end())
+        end = len(text) if nxt is None else nxt.start()
+        semi = text.find(';', m.end(), end)
+        end = end if semi < 0 else semi
+        names.update(text[m.end():end].split())
+    return names
+
+
+def block_span(text):
+    start = text.find('fun vperm')
+    perm = text.find('fun is_var_perm', start)
+    require(start >= 0 and perm > start, 'vperm/is_var_perm block not found')
+    after = DECLARATION.search(text, perm + len('fun is_var_perm'))
+    return start, len(text) if after is None else after.start()
+
+
+def vperm_block(source):
+    """The tokens of `fun vperm` and `fun is_var_perm` in `source` (bytes),
+    as the quotation filter writes it and with comments removed, up to the
+    next declaration keyword at the start of a line, so that nothing after
+    the last parenthesis of is_var_perm escapes the comparison.  Fails
+    closed (see `quote_filter` and `lex`) on what it cannot classify, on
+    `functor` and `abstype` outside comments and strings (a functor
+    parameter, or an abstype's constructors, bind names with none of the
+    scanned keywords), and on shadowing: `vperm` and `is_var_perm` must
+    each be bound exactly once in the file, and no free name of the block
+    (its identifiers, less keywords and the names its own patterns bind)
+    may be bound by val, fun, and, exception, datatype (constructors
+    included) or structure anywhere else in the file, or be named, with
+    `=`, by an infix, infixr or nonfix declaration.  A local
+    structure's bindings are seen through its own `val` heads; only what
+    an `open` brings in from outside the file is not seen here, also
+    through an alias (`structure T = Term open T`); nor is what a
+    pattern in `fn`, `case` or `handle` binds, which can rebind
+    is_var_perm only for code in its scope; nor are the block's
+    callers.  Those are left deliberately to the REVIEWED_31 blob seal
+    (any byte change fails the audit until re-reviewed) and to the
+    cond-rewr-ext selftest (both engines must accept and refuse the
+    same permutative rewrites).  The compared
+    tokens and the shadowing analysis are taken from the one filtered
+    text, at the same offsets."""
+    kept, code = lex(quote_filter(source))
+    require(not re.search(r'\b(?:functor|abstype)\b', code),
+            'functor or abstype outside a comment or string')
+    start, end = block_span(code)
+    block = code[start:end]
+    heads = binder_heads(code)
+    for name in ('vperm', 'is_var_perm'):
+        require(sum(name in names for _, names in heads) == 1,
+                name + ' is not bound exactly once')
+    patterns = re.findall(r'\b(?:fun|of)\b(.*?)=|\|(.*?)=>', block, re.S)
+    bound = {w for pair in patterns for part in pair
+             for w in WORD.findall(part) if w[0].islower()}
+    free = {w.split('.')[0] for w in WORD.findall(block)} \
+        - SML_KEYWORDS - bound
+    for pos, names in heads:
+        if not start <= pos < end:
+            clash = free & set(names)
+            require(not clash,
+                    'block name rebound: ' + ', '.join(sorted(clash)))
+    clash = (free | {'='}) & fixity_names(code)
+    require(not clash, 'block name given fixity: ' +
+            ', '.join(sorted(clash)))
+    return re.findall(r'\w+|\S', kept[start:end])
+
+
+def check_var_perm_copy(sources):
+    """Cond_rewrExt.is_var_perm must be develop's (unexported) block,
+    token for token; only layout may differ."""
+    develop = vperm_block(git_source(BASE, SRC + 'Cond_rewr.sml'))
+    copy_ = vperm_block(sources[SRC + 'Cond_rewrExt.sml'])
+    require(len(develop) > 40 and develop == copy_,
+            'Cond_rewrExt.is_var_perm differs from develop Cond_rewr')
 
 
 def analyze_sources(sources):
@@ -211,7 +524,7 @@ def analyze_sources(sources):
             target.write_bytes(data)
             completed = subprocess.run(
                 [str(TOOL), str(target)], capture_output=True, timeout=30,
-                check=True)
+                stdin=subprocess.DEVNULL, check=True)
             require(not completed.stderr,
                     'dependency analyzer diagnostics for ' + path + ': ' +
                     completed.stderr.decode(errors='replace'))
@@ -258,9 +571,13 @@ def check_analysis(manifest, observations, baseline):
             additional_defining_input_names=sorted(extras))
     require(mapped == MAPPED_INPUTS.keys(),
             'reviewed defining-input mappings changed')
-    # Crucial source-discovered edge: old .uo metadata could omit this.
-    require('SimpTracking' in graph['Cond_rewr']['defining_source_imports'] and
-            'ThreadLocal' in graph['SimpTracking']['defining_source_imports'],
+    # Source-discovered edge: rewrite tracking is one extent, owned by
+    # Cond_rewr; Cond_rewrExt reports through Cond_rewr.note_rewrite.
+    require('SimpTracking' not in graph and
+            'SimpTracking' not in observations[SRC + 'Cond_rewr.sml'] and
+            'SimpTracking' not in observations[SRC + 'Cond_rewrExt.sml'] and
+            'ThreadLocal' in observations[SRC + 'Cond_rewr.sml'] and
+            'Cond_rewr' in observations[SRC + 'Cond_rewrExt.sml'],
             'fresh dependency graph lost the shared tracking path')
     return graph
 
@@ -270,14 +587,11 @@ def check_analysis(manifest, observations, baseline):
 # registry miss branches). Counts are deliberately explicit for shared users.
 IDENTITIES = {
     'tracking_slot': (
-        (SRC + 'SimpTracking.sml', b'ThreadLocal.new ()', 1),
-        (SRC + 'Cond_rewr.sml',
-         b'val note_rewrite = SimpTracking.note_rewrite', 1),
-        (SRC + 'Cond_rewr.sml',
-         b'val with_tracking = SimpTracking.with_tracking', 1),
-        (SRC + 'Cond_rewrExt.sml', b'SimpTracking.note_rewrite th', 2),
+        (SRC + 'Cond_rewr.sml', b'ThreadLocal.new ()', 1),
+        (SRC + 'Cond_rewr.sig', b'val note_rewrite : thm -> unit', 1),
+        (SRC + 'Cond_rewrExt.sml', b'Cond_rewr.note_rewrite th', 2),
         (SRC + 'simpLib.sml', b'val track = with_tracking', 1),
-        (SRC + 'simpExtLib.sml', b'val track = with_tracking', 1)),
+        (SRC + 'simpExtLib.sml', b'val track = Cond_rewr.with_tracking', 1)),
     'conditional_depth': (
         (SRC + 'Cond_rewr.sml', b'val stack_limit = ref 4', 1),
         (SRC + 'Cond_rewrExt.sml', b'!Cond_rewr.stack_limit', 2),
@@ -338,14 +652,14 @@ def check_identities(sources):
 def audit(sources=None):
     # Read live inputs on every invocation. No historical snapshot default,
     # baseline substitution, token/comment normalization or catch-and-skip.
-    manifest = prior.read_manifest()
+    manifest = read_manifest()
     paths = source_paths(manifest)
     if sources is None:
         sources = read_sources()
     require(paths == sources.keys(), 'missing/unexpected live audited sources')
     require(all(isinstance(data, bytes) for data in sources.values()),
             'live source audit requires bytes')
-    references = reference_sources(paths)
+    references = reference_sources(sources)
     for path in sorted(paths):
         category = ('baseline ordinary' if path in prior.ORDINARY or
                     path in ORDINARY_SENTINELS else
@@ -358,6 +672,7 @@ def audit(sources=None):
             'shared identity delta outside ordinary closure')
     require(set(DELTAS) <= set(EXTENSIONS), 'non-extension source delta')
     identities = check_identities(sources)
+    check_var_perm_copy(sources)
     # Do not replace the live analysis with cached reference observations.
     baseline = analyze_sources(references)
     observations = analyze_sources(sources)
@@ -368,6 +683,8 @@ def audit(sources=None):
             ['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
         baseline=BASE, manifest_snapshot=START,
         reviewed_extension_revision=REVIEW,
+        reviewed_31={p: dict(blob=v['blob'], reason=v['reason'])
+                     for p, v in sorted(REVIEWED_31.items())},
         source_manifest=prior.MANIFEST_SHA256,
         ordinary_roots=list(prior.ROOTS), transitive_modules=len(graph),
         transitive_sources=len(validate_manifest(manifest)),

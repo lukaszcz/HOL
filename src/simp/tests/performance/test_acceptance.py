@@ -163,8 +163,15 @@ class BuildManifestTests(unittest.TestCase):
         self.path = self.folder / "manifest.json"
         self.pins, self.roots = {}, {}
         self.poly = self.folder / "poly"
-        self.poly.write_text("#!/bin/sh\nprintf 'Poly/ML synthetic TASK28\\n'\n")
+        # Like poly: -v prints the banner and the RTS version, and anything
+        # else is no option (the real `poly --version` would read stdin).
+        self.banner = "Poly/ML synthetic TASK28"
+        self.poly.write_text(
+            "#!/bin/sh\n[ \"$1\" = -v ] && [ $# = 1 ] || exit 2\n"
+            "printf '%s    RTS version: %s\\n' '" + self.banner +
+            "' \"$(cat \"$(dirname \"$0\")/rts\")\"\n")
         self.poly.chmod(0o755)
+        self.write_poly("Synthetic-5.9.2")
         self.doc = dict(schema="task28-independent-build-v1",
                         mode="independent", success=True,
                         runtime_options=["--gcthreads=1"],
@@ -333,6 +340,44 @@ class BuildManifestTests(unittest.TestCase):
         self.doc["toolchain"]["poly"]["version"] = "Poly/ML wrong version"
         with self.assertRaisesRegex(ValueError, "version changed"):
             self.verify()
+
+    def write_poly(self, rts):
+        # The RTS text is a file beside poly, so that poly itself (whose
+        # hash the build steps record) stays as it is.
+        (self.folder / "rts").write_text(rts + "\n")
+
+    def test_legacy_record_matches_by_banner(self):
+        # The setUp record is a `poly --version` one: the banner alone.
+        self.assertNotIn("RTS version", self.doc["toolchain"]["poly"]
+                         ["version"])
+        self.verify()
+
+    def test_legacy_record_with_another_banner_is_refused(self):
+        self.doc["toolchain"]["poly"]["version"] = "Poly/ML 5.9.1 Release"
+        with self.assertRaisesRegex(ValueError, "version changed"):
+            self.verify()
+
+    def test_new_record_matches_in_full(self):
+        self.doc["toolchain"]["poly"]["version"] = (
+            self.banner + "    RTS version: Synthetic-5.9.2\n")
+        self.verify()
+
+    def test_new_record_with_another_rts_is_refused(self):
+        self.doc["toolchain"]["poly"]["version"] = (
+            self.banner + "    RTS version: Other-5.9.2\n")
+        with self.assertRaisesRegex(ValueError, "version changed"):
+            self.verify()
+        # The same banner with the RTS of the record restored is accepted.
+        self.write_poly("Other-5.9.2")
+        self.verify()
+
+    def test_the_version_is_queried_with_v(self):
+        # The fake poly exits 2 for any other option, so verify() only
+        # passes if the live query is exactly `poly -v`.
+        self.verify()
+        self.assertEqual(subprocess.run(
+            [str(self.poly), "--version"], stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL).returncode, 2)
 
     def test_changed_configure_input(self):
         path = self.roots["baseline"] / "tools/smart-configure.sml"
@@ -576,6 +621,26 @@ class OrchestrationTests(unittest.TestCase):
         for name in ("../outside", str(self.folder / "outside"), "link", ""):
             with self.assertRaises(ValueError):
                 a.safe_child(path, name)
+
+
+class PolyVersionMatches(unittest.TestCase):
+    banner = "Poly/ML 5.9.2 Release"
+    new = banner + "    RTS version: Arm64-5.9.2\n"
+
+    def test_the_rule(self):
+        m = a.poly_version_matches
+        # legacy record against a legacy probe or a new one: the banner
+        self.assertTrue(m(self.banner + "\n", self.banner + "\n"))
+        self.assertTrue(m(self.banner + "\n", self.new))
+        self.assertFalse(m("Poly/ML 5.9.1 Release\n", self.new))
+        # new record: the whole text, so the RTS counts
+        self.assertTrue(m(self.new, self.new))
+        self.assertTrue(m(self.new.strip(), self.new))
+        self.assertFalse(m(self.new, self.banner + "\n"))
+        self.assertFalse(m(self.new, self.banner +
+                           "    RTS version: X86_64-5.9.2\n"))
+        self.assertFalse(m(self.new, self.banner +
+                           "    RTS version: Portable-5.9.2\n"))
 
 
 class ArchivedAcceptanceTests(unittest.TestCase):

@@ -209,10 +209,10 @@ def semantic_gate(path, repo, selected):
         key = (case["order"], case["foreign_kind"], case["foreign_owner"])
         require(key in wanted, "duplicate/unknown semantic case")
         wanted.remove(key)
-        count = {("attribute", "before"): 172,
-                 ("attribute", "after"): 168,
-                 ("exporter", "before"): 176,
-                 ("exporter", "after"): 171}[key[1:]]
+        count = {("attribute", "before"): 178,
+                 ("attribute", "after"): 174,
+                 ("exporter", "before"): 182,
+                 ("exporter", "after"): 177}[key[1:]]
         require(case["pass"] is True and case["returncode"] == 0 and
                 case["validation_error"] is None and case["checks"] == count,
                 "failed semantic process")
@@ -235,7 +235,7 @@ def semantic_gate(path, repo, selected):
         used = {line.split("=", 1)[1] for line in text.splitlines()
                 if line.startswith("OBS used.path=")}
         for module in ("simpLib", "congLib", "Traverse", "Cond_rewr",
-                       "Trace", "SimpTracking", "simpExtLib", "TraverseExt",
+                       "Trace", "simpExtLib", "TraverseExt",
                        "Cond_rewrExt", "congExtLib"):
             for suffix in (".sig", ".sml"):
                 require(str(native / (module + suffix)) in used,
@@ -256,6 +256,7 @@ def execute(command, cwd, env, timeout, fds):
     """Like rp.execute, but preserve serial locks in child processes."""
     started = time.perf_counter()
     proc = subprocess.Popen(command, cwd=cwd, env=env, text=True,
+                            stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             start_new_session=True, pass_fds=fds)
     expired = False
@@ -361,7 +362,7 @@ def run(args):
             "acceptance requires >=10 pairs (or explicit --smoke)")
     require(args.timeout > 0, "invalid timeout")
     require(args.authorize_measurements,
-            "exclusive build/measurement window authorization required")
+            "measurement authorization required")
     a.exact_pin(args.baseline)
     a.exact_pin(args.candidate)
     require(args.smoke or args.api_audit,
@@ -401,8 +402,7 @@ def run(args):
             paths += [Path(poly), Path(sys.executable)]
             inputs = {str(p.resolve()): a.seal(p) for p in paths}
             report["inputs"] = inputs
-            version = execute([poly, "--version"], repo, env, args.timeout,
-                              fds)
+            version = execute([poly, "-v"], repo, env, args.timeout, fds)
             report["poly_version"] = archive(output, "poly-version", version)
             require(version["exit"] == 0 and not version["timed_out"] and
                     version["stdout"].strip(), "Poly/ML version query failed")

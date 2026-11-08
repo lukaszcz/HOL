@@ -102,10 +102,11 @@ def audit_manifest(manifest):
     version = manifest["poly_version"]
     command = version["command"]
     require(isinstance(command, list) and len(command) == 2 and
-            command[1] == "--version", "wrong compiler version command")
+            command[1] in ("-v", "--version"),
+            "wrong compiler version command")
     poly = str(archived_path(command[0]))
     require(poly in tools, "missing compiler fingerprint")
-    command_record(version, [poly, "--version"], repo)
+    command_record(version, [poly, command[1]], repo)
     require(re.fullmatch(r"Poly/ML \d+\.\d+(?:\.\d+)?[^\n]*\n?",
                          version["stdout"]) is not None,
             "invalid Poly/ML compiler version")

@@ -50,12 +50,12 @@ one REFUSED line on the standard error (after a traceback, if the error is not
 a refusal) and exits 3.
 
   prepare     configure, build and stamp the checkout    (takes the lock)
-  pilot       develop-only cells for the counts          (needs a window)
+  pilot       develop-only cells for the counts          (authorized)
   predeclare  counts file from a pilot, or a revision of the last file
               (--revises PREVIOUS --rescale CELL [CELL ...], or
               --revises PREVIOUS --repilot REASON)
   verify-counts  the counts file against its pilot
-  run         first stage (--pilot)                      (needs a window)
+  run         first stage (--pilot)                      (authorized)
   extend      second stage for the cells the control left open (--pilot)
   replay      recompute every archived decision offline (--pilot)
   close       replay the timing grid and the allocation grid, require one
@@ -101,6 +101,11 @@ SEALED = ("task30_cases.py", "task29_gate.py", "matrix_schema.py",
 # changed, which an inventory recorded then still names. The table declares
 # the ramp schedule (the default of a new table is warmup), so its counts,
 # grid and ledger replay as they did.
+# The task29_gate.py entry of SEALED_HISTORY is the seal of the file before
+# the harness dropped the "exclusive window" wording (40e176538f): the Y
+# records carry it. Nothing else of that change enters these tables, for no
+# TASK30 record carries the later seals of this file, timing_grid.py,
+# acceptance.py or run_paired.py.
 DRIVERS = (dict(bytes=9634,
                 sha256="b958adae97df21cbcd5b1b72b5d47fa5"
                        "455854aec6f45c133f042fb0e883586f"),)
@@ -122,7 +127,10 @@ SEALED_HISTORY = {
                             "c12b9289bd8c7761bbd8bf322eb11516"),),
     "../compatibility/run_paired.py": (dict(
         bytes=48705, sha256="81baeb647f95850f267e3f72b333cc2a"
-                            "4921e342070c92a951a1e34583738dac"),)}
+                            "4921e342070c92a951a1e34583738dac"),),
+    "task29_gate.py": (dict(
+        bytes=9766, sha256="2e7a4f8db0bb4bc98a37b4500b88b209"
+                           "6c979c495bcd3cab4a63d184f332d16e"),)}
 TABLE = tg.Table(
     "task30", "TASK30", cases.CASES, __file__, COUNTS, seconds=SECONDS,
     seconds_by_case={c: LONG_SECONDS for c in cases.DELETIONS},

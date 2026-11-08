@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Loading provenance controls; synthetic builds/processes are NOT timings."""
 from contextlib import nullcontext
+import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -18,6 +22,37 @@ def receipt(text="", code=0, timeout=False):
     return dict(exit=code, timed_out=timeout, stdout=text,
                 stdout_sha256=l.rp.digest(text.encode()),
                 stdout_bytes=len(text.encode()), process_wall=0.001)
+
+
+class ChildStdin(unittest.TestCase):
+    # `cat` waits for EOF on the inherited descriptor; an open pipe that is
+    # never closed hung the Poly/ML version query the same way. The pipe is
+    # the stdin of a separate Python process, so that this process's own
+    # descriptors (fd 0 may be closed) are not touched.
+    CODE = (
+        "import json, os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from pathlib import Path\n"
+        "import loading as l\n"
+        "got = l.execute(['cat'], Path.cwd(), dict(os.environ), 20, ())\n"
+        "logged = l.a.run_logged(['cat'], Path(sys.argv[2]) / 'log', (), 20)\n"
+        "print(json.dumps([[got['exit'], got['timed_out']],\n"
+        "                  [logged['exit'], logged['timed_out']]]))\n")
+
+    def test_children_never_inherit_an_open_stdin(self):
+        temp = tempfile.TemporaryDirectory(prefix="stdin-")
+        self.addCleanup(temp.cleanup)
+        child = subprocess.Popen(
+            [sys.executable, "-B", "-c", self.CODE,
+             str(Path(__file__).parent), temp.name],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.stdin.close)
+        self.addCleanup(child.kill)
+        self.addCleanup(child.stdout.close)
+        out = child.stdout.read()
+        child.wait(timeout=90)
+        self.assertEqual(child.returncode, 0)
+        self.assertEqual(json.loads(out), [[0, False], [0, False]])
 
 
 class LibraryDiscovery(unittest.TestCase):
@@ -88,7 +123,7 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(env["LC_ALL"], "C")
         self.assertEqual(timeout, 30)
         text = ""
-        if command == [str(self.repo / "bin/poly"), "--version"]:
+        if command == [str(self.repo / "bin/poly"), "-v"]:
             text = "Poly/ML synthetic\n"
         elif command == ["ldd", str(self.repo / "bin/hol")]:
             self.discovery += 1

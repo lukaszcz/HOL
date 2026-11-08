@@ -35,7 +35,7 @@ def main():
         "inputs": {str(p.relative_to(repo)): fingerprint(p) for p in inputs},
         "tools": {p: fingerprint(repo / p) for p in
                   ("bin/Holmake", "bin/hol", "bin/hol.state0")},
-        "poly_version": execute(["poly", "--version"], repo, env, 30),
+        "poly_version": execute(["poly", "-v"], repo, env, 30),
         "runs": [], "success": False}
     make = [str(repo / "bin/Holmake"), "--no-project", "--no-cache",
             "--holstate=" + str(repo / "bin/hol.state0"), "-j1"]

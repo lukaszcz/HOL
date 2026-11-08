@@ -9,8 +9,11 @@ val _ = List.app (fn name =>
   then raise Fail ("ordinary module imported extension " ^ name)
   else ())
   ["TraverseExt","Cond_rewrExt","OpeningExt","TravrulesExt",
-   "simpExtLib","congExtLib","simpMarkerTheory","simpMarkerLib",
-   "splitLib","SplitData","splitPersistLib"]
+   "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
+   "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
+   "intReduceExt","integer_wordLibExt","realSimpsExt","SimpTracking",
+   "simpMarkerTheory","simpMarkerLib","splitLib","SplitData",
+   "splitPersistLib"]
 val _ = new_theory "compiled_core_behavior"
 fun same (a,b) = aconv (concl a) (concl b) andalso
   HOLset.equal (hypset a,hypset b)

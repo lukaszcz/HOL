@@ -207,14 +207,14 @@ The final core ordering is:
 
 ```
 ThreadLocal/BoundedRewrites/Context/markerLib/ThmAttribute/ThmSetData
-  SimpTracking, Trace
+  Trace
   Cond_rewr, Opening
   Travrules
   Traverse
   simpLib -> pureSimps -> boolSimps/combinSimps -> BasicProvers
   congLib -> simpLib
 
-Cond_rewrExt -> Cond_rewr, SimpTracking, Trace
+Cond_rewrExt -> Cond_rewr, Trace
 OpeningExt -> Opening, Trace
 TravrulesExt -> Travrules, OpeningExt
 TraverseExt -> Traverse, Cond_rewr, Travrules, Trace
@@ -236,7 +236,7 @@ simp build must not depend on later libraries to get an extension bool_ss.
 | --- | --- |
 | Condition depth | Existing `Cond_rewr.stack_limit` ref; both engines reference it directly, not a copied/re-exported ref value; 09/12 |
 | Trace | Existing `Trace.action`, level ref, hook/listener/registered controls; both use same structure; 09/12/13 |
-| Rewrite tracking | New **internal `SimpTracking`** below Cond_rewr owns the existing single ThreadLocal slot, `note_rewrite : thm -> unit` and polymorphic `with_tracking`. Move current Cond_rewr.sml:24–47 unchanged there; `Cond_rewr.with_tracking = SimpTracking.with_tracking`, both compilers report via same helper. No reporter added to frozen legacy signature. Preserve nested/exception restoration and top-level-only reports; 12 |
+| Rewrite tracking | The one extent stays in `Cond_rewr` (its `.sml` is develop's, unchanged): its ThreadLocal slot, `note_rewrite` and polymorphic `with_tracking`. The only signature change is the spec `val note_rewrite : thm -> unit`, so `Cond_rewrExt` reports into the same extent; `simpLib.track` and `simpExtLib.track` are both `Cond_rewr.with_tracking` and see both engines' rewrites in firing order. No second slot or module. Preserve nested/exception restoration and top-level-only reports; 12 |
 | Bounds | Existing `BoundedRewrites.control` datatype and actual refs; declared allowance extension-side only; 12/14 |
 | Origins | One source serial/slot allocator owned by simpExtLib; ordinary allocators removed 15/16; no duplicate allocator in recipe modules |
 | Structural congruence types | Existing Opening and Travrules types/constructors, shared aliases in prototypes; 13 |
@@ -250,10 +250,10 @@ Relocation alone must not change existing diagnostic origin/function labels,
 callback exception payloads or handler scopes, even when a new implementation
 module has a different name.
 
-SimpTracking extraction adds no per-rule inventory or new ordinary dispatch. Its
-extra helper call/source correspondence still needs final cost audit (12/34);
-sharing identity is not itself a performance waiver. Do not move stack_limit to
-the extension, duplicate tracking/Trace modules, or copy split persistence.
+The tracking spec adds no per-rule inventory or new ordinary dispatch. Its
+signature line is costed by the startup gate; sharing identity is not itself a
+performance waiver. Do not move stack_limit to the extension, duplicate
+tracking/Trace modules, or copy split persistence.
 
 ## 6. Standard recipes and the default-provider boundary
 

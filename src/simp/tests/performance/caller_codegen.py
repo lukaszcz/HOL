@@ -415,7 +415,7 @@ def main(argv=None):
                                     args.repo.resolve())
             print(json.dumps({label: summary}, sort_keys=True))
         return
-    require(args.authorize_diagnostic, "exclusive diagnostic window required")
+    require(args.authorize_diagnostic, "diagnostic authorization required")
     require(args.timeout > 0, "timeout must be positive")
     if args.batch_iterations is not None:
         from performance_schema import batch_iterations

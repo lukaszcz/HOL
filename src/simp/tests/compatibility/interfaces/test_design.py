@@ -51,7 +51,7 @@ class DesignTests(unittest.TestCase):
     def test_final_graph_and_all_cutovers(self):
         order = design.validate_graph(self.graph)
         self.assertEqual(len(order), len(self.graph["nodes"]))
-        self.assertLess(order.index("SimpTracking"),
+        self.assertLess(order.index("Cond_rewr"),
                         order.index("Cond_rewrExt"))
         self.assertLess(order.index("simpExtLib"), order.index("boolSimpsExt"))
 

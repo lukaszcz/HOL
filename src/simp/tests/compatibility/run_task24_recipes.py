@@ -91,7 +91,7 @@ def main():
         poly = shutil.which("poly")
         require(poly is not None, "missing Poly/ML")
         manifest["poly"] = fingerprint(Path(poly).resolve())
-        run("runtime", [poly, "--version"], "Poly/ML 5.9.2")
+        run("runtime", [poly, "-v"], "Poly/ML 5.9.2")
         # All unchanged ordinary recipes and the restored core retain the
         # exact pinned bodies, not wrappers with extension dispatch.
         ordinary = ["src/basicProof/BasicProvers.sml"]

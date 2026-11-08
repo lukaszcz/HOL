@@ -24,6 +24,7 @@ def validate(text):
 
 def main():
     completed = subprocess.run([str(HERE / "selftest.exe")], cwd=HERE,
+                               stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True,
                                timeout=300)

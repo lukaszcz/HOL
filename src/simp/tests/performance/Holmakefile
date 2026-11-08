@@ -31,7 +31,8 @@ controls:
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/controls.json"
 
 # Exclusive-created JSON + sibling .log; never overwrite earlier evidence.
-# These shared-heap smokes need a configured tree and an exclusive window.
+# These shared-heap smokes need a configured tree and measurement
+# authorization.
 smoke:
 	python3 -B smoke_matrix.py --baseline $(PERFORMANCE_BASELINE) \
 	  --candidate $(PERFORMANCE_CANDIDATE) --scope $(MATRIX_SMOKE_SCOPE) \

@@ -35,7 +35,7 @@ line naming its table; the build stamp and the prepare log are this table's
 own (`build-stamp-task30f.json`, `prepare-task30f.log`).
 
   prepare     configure, build and stamp the checkout    (takes the lock)
-  pilot       develop-only cells for the counts          (needs a window)
+  pilot       develop-only cells for the counts          (authorized)
   predeclare  counts file from the pilot (--replaces GRID --replaces-pilot
               DIR: the grid replaced and its pilot)   (replays that grid)
   verify-counts  the counts file against its pilot and the replaced grid
@@ -61,12 +61,14 @@ LAYOUT_SEED = "task30-followup-1"
 COUNTS = a.HERE / "task30_followup_iterations.json"
 # Seals of the code that earlier records of this table were made by, as
 # TASK30's (task30_grid.py): empty until a change is made after this table's
-# first record (its pilot). Then, in the same commit, append the seal the
+# first record (its pilot); the entries of 40e176538f below are the files
+# before the harness gave its children /dev/null for stdin and dropped the
+# "exclusive window" wording. Then, in the same commit, append the seal the
 # records were made by: the old timing_grid.py to ENGINES, acceptance.py to
 # ACCEPTANCE, this file to DRIVERS, and (a reviewed change that alters
 # nothing measured, only after `run`) the old task30_grid.py to
-# SEALED_HISTORY["task30_grid.py"]; edit test_task30_grid.py, which pins them
-# empty, too. Per file a later change needs: timing_grid.py the ENGINES entry,
+# SEALED_HISTORY["task30_grid.py"]; edit test_task30_grid.py, which pins them,
+# too. Per file a later change needs: timing_grid.py the ENGINES entry,
 # acceptance.py the ACCEPTANCE entry, task30_followup.py the DRIVERS entry
 # (every record of this table carries those seals), task30_pins.py a
 # PIN_HISTORY entry; summarize.py, audit_evidence.py, runtime_metrics.py and
@@ -79,7 +81,15 @@ COUNTS = a.HERE / "task30_followup_iterations.json"
 # (task30_dispose.py) in neither table's seals, so task30_grid.py stays as
 # it is from Z0 on. TASK30's own set of sealed names is frozen by its Y
 # records: do not add a file to task30_grid.INSTALLED or SEALED.
-DRIVERS, ENGINES, ACCEPTANCE = (), (), ()
+DRIVERS = (dict(bytes=6360,
+                sha256="287a3140d4bd12567ca4fcf8510d2c6a"
+                       "111b96116db8ebff9461905920fe8ebd"),)
+ENGINES = (dict(bytes=190317,
+                sha256="6fbc62fac47439a5a7ad13dd1f2edf61"
+                       "62729a15f7cb7d6c28434f1a4ee06ac3"),)
+ACCEPTANCE = (dict(bytes=39557,
+                   sha256="1076ad0d8f984a9081eaa2408554a483"
+                          "2a0f3c092f6c5be25820537fa3c1a8e6"),)
 # task30_grid.py is sealed like the helpers of the cases: this table takes
 # its constants (SECONDS, PAIRS, SAMPLES, SEALED) and replays the TASK30
 # grid through its table, so a change to it alters what is measured or
@@ -87,7 +97,16 @@ DRIVERS, ENGINES, ACCEPTANCE = (), (), ()
 # of SEALED_HISTORY). TASK30 treats its own file as its driver and lists the
 # earlier ones in DRIVERS; here it is another table's driver.
 SEALED = base.SEALED + ("task30_grid.py",)
-SEALED_HISTORY = {}
+SEALED_HISTORY = {
+    "task30_grid.py": (dict(
+        bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
+                       "ca43853d5b5cccf4e0dc34cd38dc9978"),),
+    "../compatibility/run_paired.py": (dict(
+        bytes=49616, sha256="52622f55fa6399bd2df1557faeb0d881"
+                       "8358e6c46695487fd70e036f3c1fa4c7"),),
+    "task29_gate.py": (dict(
+        bytes=9766, sha256="2e7a4f8db0bb4bc98a37b4500b88b209"
+                       "6c979c495bcd3cab4a63d184f332d16e"),)}
 # The seconds of a case are those of the TASK30 table, the ten direct
 # deletions' being longer. The first-stage pairs (the floor of the pairs of a
 # cell) are twice the TASK30 table's.

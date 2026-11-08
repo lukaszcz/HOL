@@ -60,7 +60,8 @@ explicitly **not timing acceptance** or TASK29A closure: measurement-boundary,
 executed-target/causal attribution, passing full-grid gates and explicit
 policy/exclusive-environment prerequisites remain open. The read-only
 environment diagnostic cannot certify exclusivity and observes concurrent
-work on this host.
+work on this host. (Amendment 2026-11-05: the exclusive-environment
+requirement was waived by the policy owner; the host is shared.)
 
 ## Maintained TASK28 integration
 

@@ -511,7 +511,7 @@ class FirstStage(Rig):
 
     def test_measurements_need_authorization_and_exact_pins(self):
         argv = self.argv("run", self.root / "x", "--candidate", CANDIDATE)
-        with self.assertRaisesRegex(ValueError, "exclusive window"):
+        with self.assertRaisesRegex(ValueError, "measurement authorization"):
             self.go(argv)
         with self.assertRaisesRegex(ValueError, "exact full git pin"):
             self.go(self.argv("run", self.root / "y", "--candidate",
@@ -1117,7 +1117,7 @@ class SecondStage(Rig):
         self.control = self.wide_unless_long
         grid, _, _ = self.first()
         self.runs.clear()
-        with self.assertRaisesRegex(ValueError, "exclusive window"):
+        with self.assertRaisesRegex(ValueError, "measurement authorization"):
             self.go(self.argv("extend", self.root / "ext", "--grid",
                               str(grid)))
         self.assertEqual(self.runs, [])
@@ -1483,7 +1483,7 @@ class Pilot(Rig):
             self.pilot(extra=("--samples", "2"))
         with self.assertRaisesRegex(ValueError, "exact full git pin"):
             self.pilot(extra=("--baseline", "develop"))
-        with self.assertRaisesRegex(ValueError, "exclusive window"):
+        with self.assertRaisesRegex(ValueError, "measurement authorization"):
             self.go(self.argv("pilot", self.root / "p"))
         self.assertEqual(self.launched, [])
 
@@ -3209,6 +3209,30 @@ class PinFile(Rig):
         self.table.pin_history = {}
         with self.assertRaisesRegex(ValueError, "changed pins"):
             self.go(self.replay_argv(out))
+
+    def test_a_record_replays_by_the_pins_that_admitted_its_added_file(
+            self):
+        self.absent, self.differ = {"src/two.sml"}, {"src/two.sml"}
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        header = self.inventory(out)
+        self.assertEqual(header["sources"]["src/two.sml"],
+                         dict(baseline=None, candidate="f" * 40))
+        # The pin file changes and no longer pins the file the baseline
+        # lacks; the table keeps the version the record was judged by.
+        self.bump({}, history=True)
+        repo = self.repo
+        self.grid.check_sources(header, repo)
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        # A new run is judged by the current pins and refuses the file.
+        with self.assertRaisesRegex(ValueError, "absent at the baseline "
+                                    "and not pinned: src/two.sml"):
+            self.grid.h.source_record(repo, a.BASE, CANDIDATE)
+        # A record sealed with the current pins is judged by them too.
+        current = dict(header, pins=a.seal(self.sealed_dir / "pins.py"))
+        with self.assertRaisesRegex(ValueError, "absent at the baseline "
+                                    "and not pinned: src/two.sml"):
+            self.grid.check_sources(current, repo)
 
     def test_a_pin_history_belongs_to_a_table_with_a_pin_file(self):
         with self.assertRaisesRegex(ValueError, "belongs to a table"):
@@ -6270,7 +6294,7 @@ class Refusals(Rig):
                          CANDIDATE)
         code, out, err = self.main(argv)
         self.assertEqual((code, out), (tg.REFUSED, ""))
-        self.assertEqual(err, "REFUSED: exclusive window required\n")
+        self.assertEqual(err, "REFUSED: measurement authorization required\n")
         self.assertFalse((self.root / "grid").exists())
 
     def test_a_held_lock_and_a_changed_checkout_are_refusals_too(self):
@@ -6379,9 +6403,11 @@ class Logged(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 a.run_logged(["/bin/true"], log, [], 60)
 
-    def test_the_default_is_the_inherited_standard_input(self):
-        self.assertIsNone(
-            inspect.signature(a.run_logged).parameters["stdin"].default)
+    def test_the_default_is_no_standard_input(self):
+        # Never the caller's: a Poly/ML top level would wait on an open one.
+        self.assertIs(
+            inspect.signature(a.run_logged).parameters["stdin"].default,
+            subprocess.DEVNULL)
 
 
 class Options(Rig):

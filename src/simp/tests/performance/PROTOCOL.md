@@ -8,7 +8,15 @@ measurements also need the corresponding source/layout/callback work audit.
 ## Isolated-source front end
 
 From the repository root. The host is shared and no exclusive window is
-required; a checkout's own builds and measurements stay serial, under its lock:
+required; a checkout's own builds and measurements stay serial, under its lock.
+`--authorize-measurements` is the explicit authorization to build and measure,
+not a claim of exclusive access. Every child process of the measurement
+harness (`run_paired.execute`, `loading.execute`, `acceptance.run_logged`,
+`verify_builds`, `api-audit/run.py`) gets `/dev/null` as standard input, and
+the compiler version is queried with `poly -v` (Poly/ML has no `--version`: it
+enters the top level and reads stdin, which hung on an inherited open pipe;
+archived records of the earlier command stay valid). The exceptions, with the
+reasons, are in "Standard input and the version query" at the end:
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -590,57 +598,62 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   that the candidate may have changed: `task30_cases.SOURCES` lists them,
   each `.sml` with its `.sig`: the simplifier (`simpLib`, `Ho_Net`,
   `BoundedRewrites`, `Traverse`, `Travrules`, `Opening`, `Cond_rewr`,
-  `SimpTracking`, `Trace`), the marker library (`markerLib`, `markerSyntax`)
-  and the modules the cases call through them (`liteLib`, `Theory`,
-  `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records the git
-  blob of each file at the baseline and at the candidate in the inventory
-  and prints every file that differs (`SOURCE-DIFFERS path`). Such a grid is
-  never a pass: its decisions name the files in `source_identity` and a
-  status that would be `pass` becomes `inconclusive`, whatever the cells
-  say. `replay` and the second stage re-verify the record against git. This
-  is the evidence for "no extra source scan": neither gate sees a scan that
-  allocates nothing and costs a few percent, so the identity of the code on
-  the path, not a measurement, shows that no scan was added there. The
-  boundary: what is not listed stays outside the identity (the kernel, the
-  parser, `ThmAttribute`, `Lib`, `testutils` and the build files among it:
-  every operation and the harness itself go through them, so a change there
-  moves both gates and is for review, not for a list of this size), and the
-  identity of a file says nothing of the data it works on, such as the size
-  of the theory graph; the fixtures fix that. The inventory therefore
-  records, besides the listed files, the sorted name-status list of every
-  file under `src/` that differs between the baseline and the candidate
-  (`source_tree`; `replay` derives it again from git), so everything that
-  differs, listed or not, is published: for the present candidate that
-  includes `ThmAttribute` (additive accessors), the `rawtheory` tool
-  `mktool.ML` and build files, none of them a listed source.
-  A reviewed difference may be pinned: `task30_pins.PINNED` maps a path
-  of the list to the exact candidate blob and the reason. A file that
-  differs is accepted only when its candidate blob is the pinned one; it is
-  then published under `source_identity.reviewed` with its reason, prints no
-  `SOURCE-DIFFERS` and does not change the status. Any other blob of it, and
-  any other file, behaves as above; a pin on a file identical to the
-  baseline or outside the list is an error. A file the candidate adds
+  `SimpTracking`, `Trace`), the marker library (`markerLib`,
+  `markerSyntax`) and the modules the cases call through them (`liteLib`,
+  `Theory`, `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records
+  the git blob of each file at the baseline and at the candidate in the
+  inventory and prints every file that differs (`SOURCE-DIFFERS path`).
+  Such a grid is never a pass: its decisions name the files in
+  `source_identity` and a status that would be `pass` becomes
+  `inconclusive`, whatever the cells say. `replay` and the second stage
+  re-verify the record against git. This is the evidence for "no extra
+  source scan": neither gate sees a scan that allocates nothing and
+  costs a few percent, so the identity of the code on the path, not a
+  measurement, shows that no scan was added there. The boundary: what is not
+  listed stays outside the identity (the kernel, the parser, `ThmAttribute`,
+  `Lib`, `testutils` and the build files among it: every operation and the
+  harness itself go through them, so a change there moves both gates and is
+  for review, not for a list of this size), and the identity of a file says
+  nothing of the data it works on, such as the size of the theory graph; the
+  fixtures fix that. The inventory therefore records, besides the listed
+  files, the sorted name-status list of every file under `src/` that differs
+  between the baseline and the candidate (`source_tree`; `replay` derives it
+  again from git), so everything that differs, listed or not, is published:
+  for the present candidate that includes `ThmAttribute` (additive
+  accessors), the `rawtheory` tool `mktool.ML` and build files, none of them
+  a listed source. A reviewed difference may be pinned: `task30_pins.PINNED`
+  maps a path of the list to the exact candidate blob and the reason. A file
+  that differs is accepted only when its candidate blob is the pinned one;
+  it is then published under `source_identity.reviewed` with its reason,
+  prints no `SOURCE-DIFFERS` and does not change the status. Any other blob
+  of it, and any other file, behaves as above; a pin on a file identical to
+  the baseline or outside the list is an error. A file the candidate adds
   (absent at the baseline) is recorded with no baseline blob and is accepted
   only with such a pin; unpinned, or absent at both commits, it is refused.
   `replay` and the second stage re-derive all of it, so the record is not
   trusted. The pins are in a file of their own, whose seal every grid
-  records (`pins`) beside the sealed files; a grid replays by the pins it was
-  judged by, the current ones or those kept in `PIN_HISTORY` (in
+  records (`pins`) beside the sealed files; a grid replays by the pins it
+  was judged by, the current ones or those kept in `PIN_HISTORY` (in
   `task30_pins.py`) under the seal of that earlier version (otherwise
-  `changed pins`). `run` refuses, before any
-  measurement, a candidate with a source that differs without a current pin
-  (a stale pin is one), because that grid could never pass: it prints
-  `SOURCE-DIFFERS` and stops. `--only` still measures a diagnostic subset,
-  marked `diagnostic` in its inventory, which has no decisions, can never
-  complete a grid, and cannot be resumed without `--only`. The reviewed
-  differences are `Cond_rewr.sml`/`.sig` (the
-  rewrite-tracking helper moves to the new `SimpTracking`, aliased as
-  `note_rewrite` and `with_tracking`, which call through its opaque
-  signature, and `is_var_perm` is exported; `mk_cond_rewrs` and
-  `COND_REWR_CONV` are textually unchanged and no loop is added) and the new
-  `SimpTracking.sml`/`.sig` themselves. The pin tests compute the blob of
-  each file in the checkout and compare it with the pin, and with the
-  baseline's.
+  `changed pins`). `run` refuses, before any measurement, a candidate with a
+  source that differs without a current pin (a stale pin is one), because
+  that grid could never pass: it prints `SOURCE-DIFFERS` and stops. `--only`
+  still measures a diagnostic subset, marked `diagnostic` in its inventory,
+  which has no decisions, can never complete a grid, and cannot be resumed
+  without `--only`. The reviewed difference is the one `note_rewrite` spec
+  added to `Cond_rewr.sig` (see the next item). The pin tests compute the
+  blob of each file in the checkout and compare it with the pin, and with
+  the baseline's.
+- **Pins and the sealed source list.** `task30_pins.PINNED` holds only
+  `Cond_rewr.sig` (one added spec, `note_rewrite`); `Cond_rewr.sml` is
+  develop's and has no pin, since a pin on a file identical to the baseline
+  is an error. The earlier pin sets are in `PIN_HISTORY`, and a replay
+  judges a record by the pins its pins seal names (`pins_for`), also for a
+  file the baseline lacks (`source_record(..., pins)`); a new run is judged
+  by the current ones. `task30_cases.SOURCES` is sealed and still lists
+  `SimpTracking.sml`/`.sig`, which exist at neither commit, so a new TASK30
+  run refuses with `source file absent at the baseline and not pinned:
+  src/simp/src/SimpTracking.sml` until its owner revises that list.
 - **Theory hooks.** `Theory.register_hook` is the way a module adds work to
   a theory transition. Audit of its callers: the baseline has nine sites in
   seven files (`TexTokenMap`, `markerLib`, `OpenTheoryMap`, `Parse` twice,
@@ -1636,8 +1649,9 @@ table of its own on the shared engine, with the following additions to it.
     repository's (`Table.root`), the same whatever checkout `--repo` names,
     and a sealed file outside that repository is refused.
 - **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
-  `ACCEPTANCE` (empty tuples) and `SEALED_HISTORY` (empty), passed to its
-  table as TASK30's are to its own: `check_code` accepts a record whose
+  `ACCEPTANCE` and `SEALED_HISTORY`, each with the seals of
+  `40e176538f` (see "Standard input and the version query"), passed to
+  its table as TASK30's are to its own: `check_code` accepts a record whose
   driver, engine or acceptance seal is the current one or one listed, and a
   sealed file's seal is the current one or one of its history. They are read
   by `replay` only; `run` compares the counts' `sealed` with the current
@@ -1655,7 +1669,7 @@ table of its own on the shared engine, with the following additions to it.
     `acceptance.py` to `ACCEPTANCE`, of `task30_followup.py` to `DRIVERS`,
     and (a reviewed change that alters nothing measured, only after `run`)
     of `task30_grid.py` to `SEALED_HISTORY["task30_grid.py"]`. The test that
-    pins these empty (`test_task30_grid.py`) is edited with them.
+    pins them (`test_task30_grid.py`) is edited with them.
   - `task30_grid.py` is a *sealed file* of the follow-up, not a driver: the
     follow-up imports its constants (`SECONDS`, `PAIRS`, `SAMPLES`, `SEALED`)
     and replays the TASK30 grid through its table, which are inputs of the
@@ -1681,7 +1695,7 @@ table of its own on the shared engine, with the following additions to it.
     `"task30_grid.py": (SEAL,),` for `SEALED_HISTORY` (the same form: a dict
     keyed by file), `SEAL,` for `ENGINES`, `ACCEPTANCE` and `DRIVERS`) and
     the tests that pin those
-    constants empty (`test_task30_dispose.py` for `HISTORY`,
+    constants (`test_task30_dispose.py` for `HISTORY`,
     `test_task30_grid.py` for the follow-up's), which the same commit edits;
     nothing is looked up by hand.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
@@ -2108,8 +2122,13 @@ Required top-level fields:
 - `runtime_options`: `["--gcthreads=1"]`;
 - `toolchain`: map including `poly` with absolute `path`, nonempty `version`, and
   `fingerprint: {sha256: HEX, bytes: INTEGER}`. Admission executes
-  `poly --version` and requires its successful Poly/ML output to match `version`
-  exactly. Include other external tools too;
+  `poly -v` (stdin is /dev/null) and requires its successful Poly/ML output to
+  match `version`. A `version` that contains `RTS version` (made by
+  `poly -v`) must equal the output in full once stripped, so another RTS
+  build (architecture, interpreter) is refused. A legacy `version` (made by
+  `poly --version`, the banner alone) is compared with the banner of the
+  output, the text before `RTS version`; that is also how a legacy record
+  meets a new probe. Include other external tools too;
 - `selections`: exactly `baseline` and `candidate`.
 
 Each selection contains:
@@ -2188,3 +2207,74 @@ independent downstream proof/build acceptance and migrated-consumer costs remain
 separate. Keep normal ordinary/extension suites enabled. Passing Python tests,
 smokes or controls establishes machinery behavior, not numerical parity or the
 final release gate. See [`README.md`](README.md) for maintained check targets.
+
+## Standard input and the version query
+
+The change after `40e176538f` touched every child of the harness. It gave
+`run_paired.execute`, `loading.execute`, `acceptance.run_logged` and
+`verify_builds` `/dev/null` as standard input, queried the compiler with
+`poly -v`, and dropped "exclusive window" from live code. `poly --version` is
+no option: Poly/ML enters the top level and reads stdin, which hangs on an
+inherited open pipe. The seal histories below hold the seals of the files at
+`40e176538f`. In detail:
+
+- **Runners sealed by a checksum manifest keep `poly --version`** and their
+  text as it was: `fragments/assembly/run_assembly.py`
+  (`fragments/assembly/SHA256SUMS`), `tactics/performance/run_tactics.py`,
+  `tactics/performance/README.md` (`FOLLOWUP_SHA256SUMS`) and
+  `exclusions/performance/{gc_run,gc_trace,run_exclusions}.py`, `HANDOFF.md`,
+  `README.md`, `assembly/README.md` (`evidence/SHA256SUMS`). They reach
+  poly only through `run_paired.execute`, which now uses `/dev/null`, so
+  `poly --version` reads end of file and prints exactly
+  `Poly/ML 5.9.2 Release` (exit 0): safe, and the old checks of that text
+  (`run_assembly.py` requires the exact line) still hold. Every manifest
+  checks exactly as at `40e176538f`, from the directories their handoffs
+  name: `compatibility/SHA256SUMS`, `fragments/assembly/SHA256SUMS`,
+  `tactics/performance/evidence/{SHA256SUMS,FOLLOWUP_SHA256SUMS}` pass fully;
+  `exclusions/performance/evidence/SHA256SUMS` (140 of 146) and `GC_SHA256SUMS`
+  (35 of 37) fail only on logs that were never committed
+  (`evidence/{cleanup-checks,final-tests,gc-checks-wrong-cwd,gc-checks,
+  offline-tests,recheck}.log`).
+  Unsealed runners use `-v`; no check compares raw `-v` output with a fixed
+  `--version` string.
+- **Version comparison.** `acceptance.poly_version_matches`: a recorded
+  version that contains `RTS version` (a `poly -v` record) must equal the
+  live `poly -v` output in full once stripped; a legacy record (banner
+  alone) is compared with the banner of the live output, as is a legacy
+  record against a new probe.
+- **`api-audit/run.py`** queries `poly -v` and runs `selftest.exe` with
+  `/dev/null` as stdin and timeouts (30 s, 1800 s). No retained receipt or
+  manifest seals it other than the receipts' own `sources` entry, which
+  `loading.semantic_gate` compares with the api-audit files of the checkout
+  being measured, so receipts made before this change are refused; the fresh
+  eight-process receipt TASK31 needs is made by the new `run.py`.
+- **Older audits** `check_task27_docs.py`, `run_task22_negative.py`,
+  `audit_task27.py`, `compatibility/interfaces/check_design.py` and
+  `native-extension/check.py` got `stdin=/dev/null` (and a timeout where one
+  was missing). They start Holmake, HOL-compiled executables or a dependency
+  tool, no Poly/ML top level. `performance/review-20261021/reproduce.py`
+  keeps inheriting stdin: `compatibility/SHA256SUMS` seals it, and it starts
+  no top level either. Git calls everywhere are left alone.
+- **Seal histories.** Changed files whose seals records carry get an entry
+  in the commit that changes them. TASK30's own table gets one, the
+  `task29_gate.py` of the Y records, because the harness dropped its
+  "exclusive window" wording. The earlier entries for TASK30's driver,
+  engine, acceptance and run_paired were removed: no TASK30 record (pilot,
+  grid, stage 2) carries those seals. The follow-up's tables hold the seals
+  its records carry (`DRIVERS` 6360, `ENGINES` 190317, `ACCEPTANCE` 39557,
+  `SEALED_HISTORY` `task30_grid.py` 11833, `run_paired.py` 49616,
+  `task29_gate.py` 9766), and `task30_dispose.HISTORY` those of
+  `followup-r2/disposition.json`; all are the blobs of `40e176538f`. Later
+  edits of the same files after that commit (usage text, style) need no entry:
+  no record carries their new seals.
+- **Nothing measured changes.** TASK30's follow-up pilot, its
+  resume and the void attempt `49242d4e` ran with the caller's stdin (only
+  `followup-r2` was launched with `</dev/null`). The change alters nothing
+  measured: a child that completed never read stdin, and only the
+  `poly --version` query blocked, which made a cell a protocol failure,
+  never a measurement. Giving it `/dev/null` turns that hang into end of
+  file.
+- Wording: a past measurement keeps saying it ran in an exclusive window;
+  the requirement lists of TASK29A, `RUNTIME_POOLS.md`, `README.md` and
+  `TASK_28_HANDOFF.md` carry a dated amendment (2026-11-05: waived by the
+  policy owner; the host is shared) instead of a rewrite.

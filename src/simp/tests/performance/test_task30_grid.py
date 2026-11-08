@@ -105,6 +105,31 @@ class Table(unittest.TestCase):
         for value in counts["iterations"].values():
             self.assertEqual(value & (value - 1), 0)
 
+    def test_the_seal_histories_hold_only_seals_that_records_carry(self):
+        # Every TASK30 record (pilot, grid, stage 2) carries these seals of
+        # the driver, the engine, acceptance.py and run_paired.py. The only
+        # later entry is task29_gate.py (the Y records), the file before the
+        # "exclusive window" wording was dropped; the follow-up's own table
+        # (task30_followup.py) holds the seals its records carry.
+        def seals(entries):
+            return [(d["bytes"], d["sha256"]) for d in entries]
+        self.assertEqual(seals(t30.DRIVERS), [(
+            9634, "b958adae97df21cbcd5b1b72b5d47fa5455854aec6f45c133f"
+            "042fb0e883586f")])
+        self.assertEqual(seals(t30.ENGINES), [(
+            131311, "b32f98ecee9fd2dbbebf5c21ca2ca0537442b3ba1b070861fe"
+            "00a68910cd7d49")])
+        self.assertEqual(seals(t30.ACCEPTANCE), [(
+            38678, "108a0d0827ec6848a0c1e2e6987f9f8002591ac24498c7119c"
+            "f5f58f14725b83")])
+        history = t30.SEALED_HISTORY
+        self.assertEqual(seals(history["../compatibility/run_paired.py"]), [(
+            48705, "81baeb647f95850f267e3f72b333cc2a4921e342070c92a951"
+            "a1e34583738dac")])
+        self.assertEqual(seals(history["task29_gate.py"]), [(
+            9766, "2e7a4f8db0bb4bc98a37b4500b88b2096c979c495bcd3cab4a"
+            "63d184f332d16e")])
+
     def test_the_baseline_sources_and_sealed_files_are_named(self):
         table = t30.TABLE
         self.assertEqual(table.baseline, a.BASE)
@@ -204,9 +229,9 @@ class Table(unittest.TestCase):
     def test_the_pins_are_the_reviewed_simplifier_files(self):
         table = t30.TABLE
         self.assertEqual(table.pinned, pins.PINNED)
-        self.assertEqual(sorted(pins.PINNED), [
-            "src/simp/src/Cond_rewr.sig", "src/simp/src/Cond_rewr.sml",
-            "src/simp/src/SimpTracking.sig", "src/simp/src/SimpTracking.sml"])
+        # Cond_rewr.sml is develop's again (TASK31); the one reviewed
+        # difference is the added note_rewrite spec of its signature.
+        self.assertEqual(sorted(pins.PINNED), ["src/simp/src/Cond_rewr.sig"])
         for path, pin in pins.PINNED.items():
             self.assertIn(path, cases.SOURCES)
             self.assertRegex(pin["blob"], "^[0-9a-f]{40}$")
@@ -226,11 +251,20 @@ class Table(unittest.TestCase):
 
     def test_the_files_added_by_the_candidate_are_pinned(self):
         self.checkout()
+        gone = []
         for path in cases.SOURCES:
             if base_blob(path) is None:
-                self.assertIn(path, pins.PINNED, path)
-                self.assertTrue((REPO / path).is_file(), path)
-        self.assertIsNone(base_blob("src/simp/src/SimpTracking.sml"))
+                if (REPO / path).is_file():
+                    self.assertIn(path, pins.PINNED, path)
+                else:
+                    gone.append(path)
+        # TASK31 deleted SimpTracking; the sealed list still names it, so
+        # the table refuses a new run ("absent at the baseline and not
+        # pinned") until its owner revises that list.
+        self.assertEqual(gone, ["src/simp/src/SimpTracking.sml",
+                                "src/simp/src/SimpTracking.sig"])
+        for path in gone:
+            self.assertNotIn(path, pins.PINNED)
 
     def test_every_unpinned_source_is_the_baseline_file_here(self):
         self.checkout()
@@ -366,16 +400,36 @@ class Followup(unittest.TestCase):
         self.assertEqual(mine["driver"], a.seal(f.__file__))
 
     def test_its_seal_histories_are_those_the_module_names(self):
-        # Empty until a change is made to the code after the table's first
-        # record (PROTOCOL.md): the mechanism is TASK30's.
+        # Appended when the code changes after the table's first record
+        # (PROTOCOL.md): the mechanism is TASK30's. 40e176538f is the code
+        # before the harness gave its children /dev/null for stdin.
         import task30_followup as f
         table = f.TABLE
-        self.assertEqual((f.DRIVERS, f.ENGINES, f.ACCEPTANCE,
-                          f.SEALED_HISTORY), ((), (), (), {}))
+        self.assertEqual(
+            (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, f.SEALED_HISTORY),
+            ((dict(bytes=6360,
+                   sha256="287a3140d4bd12567ca4fcf8510d2c6a"
+                          "111b96116db8ebff9461905920fe8ebd"),),
+             (dict(bytes=190317,
+                   sha256="6fbc62fac47439a5a7ad13dd1f2edf61"
+                          "62729a15f7cb7d6c28434f1a4ee06ac3"),),
+             (dict(bytes=39557,
+                   sha256="1076ad0d8f984a9081eaa2408554a483"
+                          "2a0f3c092f6c5be25820537fa3c1a8e6"),),
+             {"task30_grid.py": (dict(
+                 bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
+                                "ca43853d5b5cccf4e0dc34cd38dc9978"),),
+              "../compatibility/run_paired.py": (dict(
+                  bytes=49616, sha256="52622f55fa6399bd2df1557faeb0d881"
+                                 "8358e6c46695487fd70e036f3c1fa4c7"),),
+              "task29_gate.py": (dict(
+                  bytes=9766, sha256="2e7a4f8db0bb4bc98a37b4500b88b209"
+                                 "6c979c495bcd3cab4a63d184f332d16e"),)}))
         self.assertEqual((table.drivers, table.engines,
                           table.layout_acceptance, table.acceptance,
                           table.sealed_history),
-                         (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, (), {}))
+                         (f.DRIVERS, f.ENGINES, f.ACCEPTANCE, (),
+                          f.SEALED_HISTORY))
         # An older seal of a listed file is accepted by check_code, the
         # mechanism the history appends to.
         code = dict(f.ENGINE.code_now(),
@@ -486,7 +540,7 @@ class Followup(unittest.TestCase):
                                          "--candidate", "c" * 40]),
                                  tg.REFUSED)
             self.assertEqual(err.getvalue(),
-                             "REFUSED: exclusive window required\n")
+                             "REFUSED: measurement authorization required\n")
 
 
 class Harness(unittest.TestCase):
@@ -546,7 +600,10 @@ class Harness(unittest.TestCase):
 
 
 class Whole(ttg.Rig):
-    """The TASK30 table, run end to end on the stand-ins."""
+    """The TASK30 table, run end to end on the stand-ins.
+
+    The rig gives every `SOURCES` file, `SimpTracking` included, a blob at
+    both commits, so nothing is absent (the Rig default)."""
     pairs, samples = 20, 5
 
     def make_table(self, **kw):
@@ -554,12 +611,6 @@ class Whole(ttg.Rig):
         table.driver, table.counts = self.driver, self.counts
         table.ledger = self.attempts
         return table
-
-    def setUp(self):
-        super().setUp()
-        # The files the candidate adds are absent at the baseline.
-        self.absent = {p for p in pins.PINNED if p.endswith(
-            ("SimpTracking.sml", "SimpTracking.sig"))}
 
     def fake_blob(self, repo, rev, path):
         """As the rig's, but the candidate holds each pinned file at its
@@ -618,8 +669,9 @@ class Whole(ttg.Rig):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err):
                     self.assertEqual(t30.main(argv), tg.REFUSED)
-                self.assertEqual(err.getvalue(),
-                                 "REFUSED: exclusive window required\n")
+                self.assertEqual(
+                    err.getvalue(),
+                    "REFUSED: measurement authorization required\n")
 
 
 class Closing(unittest.TestCase):
@@ -871,6 +923,14 @@ class RealChain(ttg.ChainRig):
             self.pilot_revision = a.BASE
         table = copy.copy(t30.TABLE)
         table.counts, table.ledger = self.counts, None
+        # TASK31 deleted SimpTracking, which the sealed list still names, so
+        # the real table refuses a new run (see
+        # test_the_files_added_by_the_candidate_are_pinned). The chain
+        # runs on the files of the list that exist at HEAD or the baseline.
+        table.sources = tuple(
+            p for p in cases.SOURCES if base_blob(p) is not None or git(
+                "rev-parse", "--verify", "-q",
+                "%s:%s" % (self.head, p)) is not None)
         return table
 
     def allocation_at(self, y):

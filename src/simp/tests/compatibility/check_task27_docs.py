@@ -379,7 +379,8 @@ def execute_examples(root, output, timeout=300):
                 "--chdir", canonical(str(cwd)), "--", *command]
         with (output / logname).open("w") as log:
             proc = subprocess.run(command, cwd=cwd, env=env,
-                                  stdout=log, stderr=subprocess.STDOUT,
+                                  stdin=subprocess.DEVNULL, stdout=log,
+                                  stderr=subprocess.STDOUT,
                                   timeout=timeout, check=False)
         return {"command": command, "cwd": str(cwd),
                 "exit": proc.returncode, "log": logname}

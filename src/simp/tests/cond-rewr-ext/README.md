@@ -55,12 +55,18 @@ separate target rather than an import of ordinary `../../src/selftest.sml`.
   proofs and event order for success, solver failure, loop/depth cuts, misses
   and AC rejection. Listener installation is exception-safe and removed after
   each capture. No trace output/timestamps are scraped.
-- `Cond_rewr.with_tracking` sees ordinary and both extension runners in the
-  same cell. Nested extents isolate their lists, exceptional extents restore
+- `Cond_rewr.with_tracking` is the one tracking extent: the extension
+  runners report into it through `Cond_rewr.note_rewrite`, so it sees
+  ordinary and extension rewrites in the same cell, in firing order. Nested
+  extents isolate their lists, exceptional extents restore
   the enclosing accumulator and original exception, and nested candidates
   and failed candidates leave no phantom entries. The outer tracking action's
   private exception retains its original payload identity; it is raised
   outside the conditional engine and is not subject to its wrapper.
+- `Cond_rewrExt.is_var_perm` is its own copy of Cond_rewr's unexported
+  predicate (audited token-equal to develop's by `audit_task27.py`);
+  permutative rewrites are accepted and refused identically by
+  `Cond_rewr.COND_REWR_CONV` and both extension runners.
 
 Every successful rewrite assertion compares both conclusion and hypothesis
 set; the fixtures use kernel rules and explicit assumptions, not an oracle.

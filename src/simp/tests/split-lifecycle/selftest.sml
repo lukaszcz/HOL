@@ -9,6 +9,8 @@ fun absent names = List.app (fn name =>
 val extensions =
   ["TraverseExt","Cond_rewrExt","OpeningExt","TravrulesExt",
    "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
+   "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
+   "intReduceExt","integer_wordLibExt","realSimpsExt","SimpTracking",
    "simpMarkerTheory","simpMarkerLib","splitLib","SplitData",
    "splitPersistLib"]
 val mode = env "SPLIT_LIFECYCLE_MODE"

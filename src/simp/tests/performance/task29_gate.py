@@ -192,7 +192,8 @@ def main():
     parser.add_argument("--authorize-measurements", action="store_true")
     args = parser.parse_args()
     if args.action == "run":
-        a.require(args.authorize_measurements, "exclusive window required")
+        a.require(args.authorize_measurements,
+                  "measurement authorization required")
         a.exact_pin(args.baseline)
         a.exact_pin(args.candidate)
         run(args)

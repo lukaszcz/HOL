@@ -13,6 +13,9 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[4]
+# The Holmake check builds and runs the design gate; one hour bounds it, and
+# its children read /dev/null, not the caller's standard input.
+TIMEOUT = 3600
 MIGRATION = HERE.parent / "migration"
 TABLE = MIGRATION / "final-apis.tsv"
 FIELDS = ["group", "old_api", "replacement", "domain", "construction",
@@ -176,7 +179,7 @@ def validate_graph(graph):
     expected_introductions = {
         "TraverseExt": 9, "simpExtLib": 10,
         "pureSimpsExt": 10, "boolSimpsExt": 10, "congExtLib": 11,
-        "SimpTracking": 12, "Cond_rewrExt": 12,
+        "Cond_rewrExt": 12,
         "OpeningExt": 13, "TravrulesExt": 13,
         "combinSimpsExt": 24, "trackedSimpDefaults": 24}
     if introduced != expected_introductions:
@@ -225,7 +228,8 @@ def execute(negative_controls):
     command = [str(ROOT / "bin/Holmake"),
                "--holstate=" + str(ROOT / "bin/hol.state0"),
                "--no-project", "--no-cache", "-C", str(HERE), "-j1", "check"]
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                            stdin=subprocess.DEVNULL, timeout=TIMEOUT)
     output = result.stdout + result.stderr
     validate_output(result.returncode, output)
     receipts = [{"argv": command, "exit": result.returncode}]
@@ -243,7 +247,8 @@ def execute(negative_controls):
                 control = subprocess.run(
                     [str(HERE / "selftest.exe")], cwd=HERE,
                     env={**os.environ, "TASK08_NEGATIVE_DIR": temp},
-                    capture_output=True, text=True)
+                    capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL, timeout=TIMEOUT)
                 text = control.stdout + control.stderr
                 if control.returncode == 0 or "TASK08_COMPLETE" in text:
                     raise ValueError(

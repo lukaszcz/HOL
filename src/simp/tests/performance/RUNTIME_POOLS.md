@@ -122,3 +122,7 @@ grid with admissible controls, and explicit zero-GC/B/B policy-owner
 disposition. None is replaced by supplying static pool slots. Historical and
 repaired-driver timing failures/uncertainty remain unchanged; TASK29B remains
 separate. No host-noise hypothesis, waiver or completion is claimed.
+
+Amendment (2026-11-05): the exclusivity requirement was waived by the
+policy owner; the host is shared. "An exclusive stable measurement
+environment" above is no longer required.
