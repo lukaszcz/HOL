@@ -2,6 +2,7 @@
 """Loading provenance controls; synthetic builds/processes are NOT timings."""
 from contextlib import nullcontext
 import gzip
+import io
 import json
 import os
 from pathlib import Path
@@ -1173,6 +1174,7 @@ class BuildBinding(unittest.TestCase):
                 self.processes = 0
                 with self.assertRaisesRegex(ValueError, error):
                     self.decide("retry")
+                self.assertEqual(self.processes, 0)
                 with self.assertRaisesRegex(ValueError, error):
                     self.extend(plan, args)
                 with self.assertRaisesRegex(ValueError, error):
@@ -1206,6 +1208,24 @@ class BuildBinding(unittest.TestCase):
         status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
         smokes = l.ledger_status(status)["smokes"]
         self.assertEqual([r["unfinished"] for r in smokes], [False])
+
+    def test_the_cli_reports_why_a_smoke_output_cannot_be_created(self):
+        blocker = self.repo / "blocker"
+        blocker.write_text("a file\n")
+        argv = ["--smoke", "--baseline", self.pin, "--candidate", self.pin,
+                "--module", "congLib", "--repo", str(self.repo),
+                "--timeout", "30",
+                "--output", str(blocker / "smoke"),
+                "--authorize-measurements"]
+        err = io.StringIO()
+        with patch.object(l, "execute", self.execute), \
+                patch.object(l.shutil, "which", return_value=str(
+                    self.repo / "bin/poly")), \
+                patch.object(l.a, "serial_lock", lambda _: nullcontext(())), \
+                patch("sys.stderr", err), patch("sys.stdout"):
+            self.assertEqual(l.main(argv), 2)
+        self.assertIn("Not a directory", err.getvalue())
+        self.assertIn("blocker", err.getvalue())
 
     def test_a_smoke_never_saves_into_a_directory_it_did_not_make(self):
         foreign = self.repo / "foreign"

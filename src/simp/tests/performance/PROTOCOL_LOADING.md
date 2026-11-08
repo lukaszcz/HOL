@@ -405,6 +405,9 @@ timeout, nonzero exit, wrong path, mutated source or incomplete output
 cannot count as a successful sample. Private build trees are automatically
 removed after their final use. Failed runs retain compact diagnostic
 receipts and a failure report, never a success inferred from .uo creation.
+Every unsuccessful run prints its failure reason on stderr. A smoke whose
+output cannot be created saves nothing: its `smoke-end` line records success
+false with a null seal, and the reason is on stderr only.
 
 This harness uses one existing shared heap and dependency tree, with
 isolated selected simplifier sources. It does **not** satisfy a separate

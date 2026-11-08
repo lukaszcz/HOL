@@ -1794,6 +1794,7 @@ def main(argv=None):
         print(json.dumps({k: report[k] for k in
                           ("success", "mode", "module", "stage")}))
         if not report["success"]:
+            print(report.get("failure"), file=sys.stderr)
             return 2
         if args.smoke or args.calibrate:
             return 0
