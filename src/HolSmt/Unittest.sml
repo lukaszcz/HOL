@@ -14787,6 +14787,63 @@ in
     "arith_mult_abs_comparison strict replay produced the wrong conclusion")
 end
 
+fun cpc_arith_reduction_conditional_operands_success () =
+let
+  val a = ``if p then (x:int) + 11 else x * 17``
+  val b = ``if q then (y:int) else 0``
+  val nested = SmtLib_Theories.mk_int_ediv
+    (intSyntax.mk_mult (a, a), b)
+  val integer_operands =
+    [(a, ``(7:int)``), (``(11:int)``, b), (nested, b),
+     (a, ``(0:int)``)]
+  val smt_ediv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+  fun app (operator, a, b) = Term.list_mk_comb (operator, [a, b])
+  fun check (label, term, expected) =
+    let
+      val theorem =
+        CPC_ProofReplay.replay_arith_reduction_for_test [term]
+    in
+      assert_concl_alpha (label, theorem, expected);
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  fun check_integer (label, make, total) (a, b) =
+    let
+      val term = make (a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, intSyntax.zero_tm),
+          make (a, intSyntax.zero_tm), app (total, a, b)))
+    in check (label, term, expected) end
+  fun check_real (a, b) =
+    let
+      val term = app (smt_rdiv, a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, realSyntax.zero_tm),
+          app (smt_rdiv, a, realSyntax.zero_tm),
+          realSyntax.mk_div (a, b)))
+    in check ("real division conditional operands", term, expected) end
+  val real_a = ``if p then (r:real) + 11 else r * 17``
+  val real_b = ``if q then (s:real) else 0``
+  val abs_term = intSyntax.mk_absval a
+  val abs_expected = boolSyntax.mk_eq (abs_term,
+    boolSyntax.mk_cond (intSyntax.mk_less (a, intSyntax.zero_tm),
+      intSyntax.mk_negated a, a))
+in
+  List.app (check_integer ("ediv conditional operands",
+    SmtLib_Theories.mk_int_ediv, smt_ediv)) integer_operands;
+  List.app (check_integer ("emod conditional operands",
+    SmtLib_Theories.mk_int_emod, smt_emod)) integer_operands;
+  List.app check_real [(real_a, ``(7:real)``), (``(11:real)``, real_b),
+    (app (smt_rdiv, real_a, real_b), real_b),
+    (real_a, realSyntax.zero_tm)];
+  check ("absolute value conditional operand", abs_term, abs_expected)
+end
+
 fun cpc_arith_mult_abs_nary_success () =
 let
   fun int_abs term = intSyntax.mk_absval term
@@ -29059,6 +29116,8 @@ let
     ("cpc_totalized_outbound_exclusions_success",
       cpc_totalized_outbound_exclusions_success),
     ("cpc_totalized_replay_success", cpc_totalized_replay_success),
+    ("cpc_arith_reduction_conditional_operands_success",
+      cpc_arith_reduction_conditional_operands_success),
     ("cpc_arith_mult_abs_nary_success",
       cpc_arith_mult_abs_nary_success),
     ("cpc_proof_parser_singleton_premise_success",
