@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import task31_attribution as attr
 import task31_identity as idt
 import task31_snapshot as snap
 
@@ -255,7 +256,7 @@ class Cell(unittest.TestCase):
         self.assertEqual((one["baseline_sha256"], one["candidate_sha256"]),
                          ("s1", "s2"))
         self.assertEqual(row["attribution_table"],
-                         idt.digest([ENTRY]))
+                         attr.digest([ENTRY]))
 
     def test_an_unreviewed_difference_is_different(self):
         row = self.cell(entries=(), candidate=dict(source="s2"))

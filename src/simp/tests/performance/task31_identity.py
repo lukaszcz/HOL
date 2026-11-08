@@ -35,6 +35,7 @@ from pathlib import Path
 import acceptance as a
 import audit_evidence as ae
 from performance_schema import require
+import task31_attribution as attr
 import task31_snapshot as snap
 
 SIDES = ("baseline", "candidate")
@@ -327,7 +328,7 @@ def cell(folder, case, size, baseline, candidate, samples=3, entries=()):
         closure_differences=different, unattributed_differences=rest,
         work_differences=unequal,
         attributed=sorted(attributed.values(), key=lambda r: r["path"]),
-        attribution_table=digest(list(entries)),
+        attribution_table=attr.digest(list(entries)),
         closure={side: dict(
             digest=digest([closures[side]["entries"],
                            closures[side]["order"],
