@@ -2559,8 +2559,9 @@ inherited open pipe. The seal histories below hold the seals of the files at
   grid, stage 2) carries those seals. The follow-up's tables hold the seals
   its records carry (`DRIVERS` 6360, `ENGINES` 190317, `ACCEPTANCE` 39557,
   `SEALED_HISTORY` `task30_grid.py` 11833, `run_paired.py` 49616,
-  `task29_gate.py` 9766), and `task30_dispose.HISTORY` those of
-  `followup-r2/disposition.json`; all are the blobs of `40e176538f`. Later
+  `task29_gate.py` 9766, and `matrix.json` 23994 and `matrix_schema.py`
+  23517 from before the TASK31 command paths), and
+  `task30_dispose.HISTORY` those of `followup-r2/disposition.json`; all are the blobs of `40e176538f`. Later
   edits of the same files after that commit (usage text, style) need no entry:
   no record carries their new seals.
 - **Nothing measured changes.** TASK30's follow-up pilot, its

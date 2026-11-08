@@ -176,18 +176,19 @@ REQUIRED_REQUIREMENTS = frozenset(
 EXTERNAL_COMMANDS = {
     "loading_timing": [
         "python3 src/simp/tests/performance/loading.py --baseline " + BASELINE +
-        " --candidate CANDIDATE --module simpLib --pairs 10 --api-audit API_AUDIT_RECEIPT "
+        " --candidate CANDIDATE --module simpLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT "
         "--authorize-measurements --output FRESH_SIMP_LOADING",
         "python3 src/simp/tests/performance/loading.py --baseline " + BASELINE +
-        " --candidate CANDIDATE --module congLib --pairs 10 --api-audit API_AUDIT_RECEIPT "
+        " --candidate CANDIDATE --module congLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT "
         "--authorize-measurements --output FRESH_CONG_LOADING"],
     "loading_audit": [
-        "sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh "
+        "env API_AUDIT_OUTPUT=FRESH_API_AUDIT_OUTPUT "
+        "sh src/simp/tests/compatibility/tools/root-wrapper.sh "
         "bin/Holmake -C src/simp/tests/api-audit check"],
     "extension_consumer": [
         "python3 src/simp/tests/compatibility/run_task25_consumer.py "
         "--consumer-patch "
-        "src/simp/tests/compatibility/evidence/task25/consumer.patch "
+        "src/simp/tests/compatibility/consumer/consumer.patch "
         "--simplifier-revision CANDIDATE --output FRESH_CONSUMER_OUTPUT"],
     "independent_build_mode": [
         "python3 src/simp/tests/performance/acceptance.py verify-builds "
@@ -369,7 +370,7 @@ def _gate_records(records, ids, status, where):
             except ValueError as error:
                 raise ValueError(location + ": malformed command") from error
             require(words and words[0] in {
-                "python3", "poly", "sh", "bin/Holmake", "bin/build",
+                "python3", "poly", "sh", "env", "bin/Holmake", "bin/build",
                 "BASELINE/bin/Holmake", "CANDIDATE/bin/Holmake",
                 "BASELINE/bin/build", "CANDIDATE/bin/build", "/usr/bin/time"},
                 location + ": not a prerequisite command")

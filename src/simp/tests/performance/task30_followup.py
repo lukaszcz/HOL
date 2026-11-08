@@ -98,6 +98,12 @@ ACCEPTANCE = (dict(bytes=39557,
 # earlier ones in DRIVERS; here it is another table's driver.
 SEALED = base.SEALED + ("task30_grid.py",)
 SEALED_HISTORY = {
+    "matrix.json": (dict(
+        bytes=23994, sha256="a7c87b2bfc7fb8e94efeee70672bae20"
+                            "fa00a83b8e95dabc2ad045b669bdc91b"),),
+    "matrix_schema.py": (dict(
+        bytes=23517, sha256="3941a6fffd42d8f4b0fce40b2fc8d4ab"
+                            "977659595998ae5f9cd27aff818e076c"),),
     "task30_grid.py": (dict(
         bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
                        "ca43853d5b5cccf4e0dc34cd38dc9978"),),

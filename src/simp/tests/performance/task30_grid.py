@@ -106,6 +106,9 @@ SEALED = ("task30_cases.py", "task29_gate.py", "matrix_schema.py",
 # records carry it. Nothing else of that change enters these tables, for no
 # TASK30 record carries the later seals of this file, timing_grid.py,
 # acceptance.py or run_paired.py.
+# The matrix.json and matrix_schema.py entries are the seals before the
+# command paths, the audit output and the loading counts of the external
+# gates were updated (TASK31): the Y records carry them.
 DRIVERS = (dict(bytes=9634,
                 sha256="b958adae97df21cbcd5b1b72b5d47fa5"
                        "455854aec6f45c133f042fb0e883586f"),)
@@ -116,6 +119,12 @@ ACCEPTANCE = (dict(bytes=38678,
                    sha256="108a0d0827ec6848a0c1e2e6987f9f80"
                           "02591ac24498c7119cf5f58f14725b83"),)
 SEALED_HISTORY = {
+    "matrix.json": (dict(
+        bytes=23994, sha256="a7c87b2bfc7fb8e94efeee70672bae20"
+                            "fa00a83b8e95dabc2ad045b669bdc91b"),),
+    "matrix_schema.py": (dict(
+        bytes=23517, sha256="3941a6fffd42d8f4b0fce40b2fc8d4ab"
+                            "977659595998ae5f9cd27aff818e076c"),),
     "MatrixSupport.sml": (dict(
         bytes=23596, sha256="92cf0445453cb60a4497ddb419740b47"
                             "548c8d5cef0cd6e68aacfb129fcc1502"),),

@@ -129,6 +129,14 @@ class Table(unittest.TestCase):
         self.assertEqual(seals(history["task29_gate.py"]), [(
             9766, "2e7a4f8db0bb4bc98a37b4500b88b2096c979c495bcd3cab4a"
             "63d184f332d16e")])
+        # matrix.json and matrix_schema.py as the Y records carry them,
+        # before the command paths and the loading counts were updated.
+        self.assertEqual(seals(history["matrix.json"]), [(
+            23994, "a7c87b2bfc7fb8e94efeee70672bae20fa00a83b8e95dabc2a"
+            "d045b669bdc91b")])
+        self.assertEqual(seals(history["matrix_schema.py"]), [(
+            23517, "3941a6fffd42d8f4b0fce40b2fc8d4ab977659595998ae5f9c"
+            "d27aff818e076c")])
 
     def test_the_baseline_sources_and_sealed_files_are_named(self):
         table = t30.TABLE
@@ -416,7 +424,13 @@ class Followup(unittest.TestCase):
              (dict(bytes=39557,
                    sha256="1076ad0d8f984a9081eaa2408554a483"
                           "2a0f3c092f6c5be25820537fa3c1a8e6"),),
-             {"task30_grid.py": (dict(
+             {"matrix.json": (dict(
+                 bytes=23994, sha256="a7c87b2bfc7fb8e94efeee70672bae20"
+                                "fa00a83b8e95dabc2ad045b669bdc91b"),),
+              "matrix_schema.py": (dict(
+                  bytes=23517, sha256="3941a6fffd42d8f4b0fce40b2fc8d4ab"
+                                 "977659595998ae5f9cd27aff818e076c"),),
+              "task30_grid.py": (dict(
                  bytes=11833, sha256="1022124dc9a7f051da45166f1ad254eb"
                                 "ca43853d5b5cccf4e0dc34cd38dc9978"),),
               "../compatibility/run_paired.py": (dict(

@@ -202,18 +202,18 @@
   "externals": {
     "loading_timing": {
       "status": "runnable_external", "gate_owner": "TASK28, TASK31, TASK33",
-      "reason": "Fresh first-import loading.py measures each ordinary library with raw CPU/wall/GC, two calibration pilots and at least ten AB/BA pairs, baseline controls and candidate semantic audit binding. Isolated-source timing is not independent loading acceptance; the latter requires clean snapshots.",
-      "commands": ["python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module simpLib --pairs 10 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_SIMP_LOADING", "python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module congLib --pairs 10 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_CONG_LOADING"]
+      "reason": "Fresh first-import loading.py measures each ordinary library with raw CPU/wall/GC, two calibration pilots and 40 AB/BA pairs of 5 fresh imports, baseline controls and candidate semantic audit binding. Isolated-source timing is not independent loading acceptance; the latter requires clean snapshots.",
+      "commands": ["python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module simpLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_SIMP_LOADING", "python3 src/simp/tests/performance/loading.py --baseline cccaa27d7099cbadc886983020cbe745db7793f3 --candidate CANDIDATE --module congLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT --authorize-measurements --output FRESH_CONG_LOADING"]
     },
     "loading_audit": {
       "status": "runnable_external", "gate_owner": "TASK28, TASK31, TASK33",
       "reason": "TASK27 already supplies eight fresh-process ordinary load/order scenarios, actual requested/used/loaded paths, callback and exact extension-absence assertions. Rerun it against current sources; a missing fresh receipt is not a missing fixture. This is semantic loading coverage, NOT per-import startup timing or an independent performance acceptance receipt.",
-      "commands": ["sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh bin/Holmake -C src/simp/tests/api-audit check"]
+      "commands": ["env API_AUDIT_OUTPUT=FRESH_API_AUDIT_OUTPUT sh src/simp/tests/compatibility/tools/root-wrapper.sh bin/Holmake -C src/simp/tests/api-audit check"]
     },
     "extension_consumer": {
       "status": "runnable_external", "gate_owner": "TASK28, TASK32",
       "reason": "The isolated TASK25 driver and sealed migration patch exist and can validate the final candidate without editing the caller-owned worktree. A new run is required, not a new fixture. This semantic consumer check does not itself supply paired independent-build proof-performance acceptance.",
-      "commands": ["python3 src/simp/tests/compatibility/run_task25_consumer.py --consumer-patch src/simp/tests/compatibility/evidence/task25/consumer.patch --simplifier-revision CANDIDATE --output FRESH_CONSUMER_OUTPUT"]
+      "commands": ["python3 src/simp/tests/compatibility/run_task25_consumer.py --consumer-patch src/simp/tests/compatibility/consumer/consumer.patch --simplifier-revision CANDIDATE --output FRESH_CONSUMER_OUTPUT"]
     },
     "independent_build_mode": {
       "status": "runnable_external", "gate_owner": "TASK28, TASK32, TASK33",
