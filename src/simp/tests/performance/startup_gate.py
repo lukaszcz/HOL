@@ -1210,6 +1210,16 @@ def install_cell_fixtures(repo, rev, dst, am):
         (dst / target).write_bytes(subprocess.run(
             ["git", "show", rev + ":src/simp/tests/performance/" + fx],
             cwd=repo, check=True, capture_output=True).stdout)
+    # The signature fixture of run_paired.install_fixtures, from the
+    # revision's own probe.
+    abi = subprocess.run(
+        ["git", "show", rev + ":src/simp/tests/performance/"
+         "review-20261021/abicheck.sml"], cwd=repo, check=True,
+        capture_output=True, text=True).stdout
+    ending = "val _ = OS.Process.exit OS.Process.success\n"
+    require(abi.endswith(ending), "unexpected immutable signature fixture")
+    (dst / "SignatureCheck.sml").write_text(
+        abi[:-len(ending)] + 'val _ = Paired.check "legacy signature" true\n')
 
 
 def cell_startup(args):

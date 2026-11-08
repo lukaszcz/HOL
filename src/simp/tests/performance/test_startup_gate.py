@@ -844,6 +844,9 @@ class CellFixtureTest(unittest.TestCase):
             (paired / "runner.sml").write_text("runner\n")
             (paired / "Holmakefile").write_text("hm\n")
             (paired / "note.txt").write_text("skip\n")
+            (perf / "review-20261021").mkdir()
+            (perf / "review-20261021/abicheck.sml").write_text(
+                "val x = 1\nval _ = OS.Process.exit OS.Process.success\n")
 
             def git(*args):
                 subprocess.run(("git", "-c", "user.name=t", "-c",
@@ -860,6 +863,9 @@ class CellFixtureTest(unittest.TestCase):
             self.assertEqual((dst / "runner.sml").read_text(), "runner\n")
             self.assertEqual((dst / "Holmakefile").read_text(), "hm\n")
             self.assertFalse((dst / "note.txt").exists())
+            self.assertEqual((dst / "SignatureCheck.sml").read_text(),
+                             'val x = 1\nval _ = Paired.check '
+                             '"legacy signature" true\n')
 
 
 class PlanTest(unittest.TestCase):
