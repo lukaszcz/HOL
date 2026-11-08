@@ -114,7 +114,9 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
-# wording (and each file's own entries for the histories below).
+# wording, except allocation_matrix.py's, which is the version before the
+# TASK31 task and the client fixture family (and each file's own entries for
+# the histories below).
 HISTORY = {
     "task30_dispose.py": (dict(
         bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"

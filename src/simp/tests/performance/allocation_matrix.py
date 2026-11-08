@@ -1078,8 +1078,11 @@ def work_section(cases, unresolved=()):
     return section
 
 
-def assemble(cells, records, observed, baseline=a.BASE, task=None):
-    """decisions.json content from analyzed cells (all or a subset)."""
+def assemble(cells, records, observed, baseline=a.BASE, task=None,
+             candidate=None):
+    """decisions.json content from analyzed cells (all or a subset). A task
+    with `rows` also binds them to the `candidate` and `baseline` revisions
+    (see cell_rows)."""
     task = task or TASKS[DEFAULT_TASK]
     cases = task.cases
     out = dict(schema="task29b-decisions-v1", cases={}, nondeterminism=[],
@@ -1137,13 +1140,17 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
         # nor the nondeterminism list reads a work row.
         out["work"] = work
         out["work_status"] = work["status"]
-    if task.rows:
-        out["rows"] = cell_rows(out["cases"], out["unresolved"])
-        out["infeasible"] = sorted(name_of(*k) for k in task.infeasible)
-    out["complete"] = complete
     out["acceptance_pairs"] = bool(pairs) and min(pairs) >= PAIRS
     # Only the pinned develop commit is the baseline of an acceptance.
     out["acceptance_baseline"] = baseline == a.BASE
+    if task.rows:
+        # A smoke or a grid against another baseline is never complete.
+        complete = complete and out["acceptance_pairs"] and \
+            out["acceptance_baseline"]
+        out["candidate"], out["baseline"] = candidate, baseline
+        out["rows"] = cell_rows(task, out)
+        out["infeasible"] = sorted(name_of(*k) for k in task.infeasible)
+    out["complete"] = complete
     # A definite failure is reported as such even when the grid is
     # incomplete or a smoke; a pass needs a complete, deterministic grid.
     out["status"] = an.status(every)
@@ -1154,29 +1161,45 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None):
     return out
 
 
-def cell_rows(cases, unresolved=()):
-    """The disposition's rows of a task with `rows`: one per cell that was
-    measured or tried, keyed `case-size` (name_of), in the order of the
-    cases and sizes: the case and size, `status` of the allocation words
-    (pass when every gated phase and metric of the cell passes, fail when
-    one fails, inconclusive otherwise; `unresolved` for a cell without an
-    analysis), `work` (equal, differs, inconclusive; None without work rows)
-    and the number of `pairs`. The slopes of a case are not in a row: they
-    are differences of the cells'. A cell is passed by allocation when its
-    status is pass; whether the work is equal is the identity gate's."""
+def cell_rows(task, decisions):
+    """The disposition's rows of a task with `rows`: a list with one row per
+    cell that was measured or tried, in the order of the cases and sizes:
+
+        {case, size, pairs, decision, work}
+
+    `decision` is the allocation words' decision for the cell: `pass` only
+    when every gated phase and metric of the cell passes, the cell has at
+    least PAIRS pairs, the baseline is the pinned one and none of its rows
+    is nondeterministic; `fail` when one fails; `inconclusive` otherwise
+    (also for a cell without an analysis). `work` is the structural work
+    row beside the words (`equal`, `differs`, `inconclusive`, or None
+    without work rows); the disposition requires it equal for a pass. The
+    slopes of a case are differences of the cells', so they are not in a
+    row."""
+    varying = {name_of(case, size)
+               for case, size, *_ in decisions["nondeterminism"]}
     rows = {}
-    for case, record in cases.items():
+    for case, record in decisions["cases"].items():
         for size, cell in record["cells"].items():
-            rows[name_of(case, size)] = dict(
+            name = name_of(case, size)
+            status = cell_status(cell)
+            if status == "pass" and not (
+                    cell["pairs"] >= PAIRS and name not in varying and
+                    decisions["acceptance_baseline"]):
+                status = "inconclusive"
+            rows[name] = dict(
                 case=case, size=size, pairs=cell["pairs"],
-                status=cell_status(cell), work=an.work_status(
-                    r["decision"] for r in cell["work"].values())
+                decision=status if status in ("pass", "fail")
+                else "inconclusive",
+                work=an.work_status(r["decision"] for r in
+                                    cell["work"].values())
                 if cell.get("work") is not None else None)
-    for name in unresolved:
+    for name in decisions["unresolved"]:
         case, size = name.rsplit("-", 1)
         rows[name] = dict(case=case, size=int(size), pairs=None,
-                          status="unresolved", work=None)
-    return rows
+                          decision="inconclusive", work=None)
+    return [rows[name_of(*key)] for key in keys(task)
+            if name_of(*key) in rows]
 
 
 def counts_text(counts):
@@ -1240,7 +1263,7 @@ def results_markdown(decisions, label="TASK29B"):
                 lines.append("| %s | %s | %s |" % (
                     case, size, work["cells"].get(name_of(case, size), "-")))
     if "rows" in decisions:
-        found = Counter(r["status"] for r in decisions["rows"].values())
+        found = Counter(r["decision"] for r in decisions["rows"])
         lines += ["", "Cell rows (`rows` of decisions.json): %s; %d cells "
                   "infeasible and not run (`infeasible`)." % (
                       counts_text(dict(sorted(found.items()))) or "none",
@@ -1287,7 +1310,7 @@ def finish(root, inventory):
                     for r in inventory["runs"]}) <= 1,
                "cells measured at scratch paths of different lengths")
     return assemble(set(cells), records, observed, inventory["baseline"],
-                    task)
+                    task, inventory.get("candidate"))
 
 
 PARTIAL_FILES = ("decisions-partial.json", "RESULTS-partial.md")

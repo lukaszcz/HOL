@@ -2060,20 +2060,36 @@ fixture would load outside those is refused as a shared input.
 **Cells.** The `traversal_*` and `tactic_*` cells of the table: every size up
 to 1000 (the depth cases 0, 1, 10 and 100, the singletons 0), and 10000 only
 for the supplied, installed and asm families. The 33 heavy tactic cells at
-10000 are `task31_cases.INFEASIBLE`: not run, listed as such, never a pass. The
-case lists are plain tuples in `task31_cases.py`.
+10000 are `task31_cases.INFEASIBLE`: not run, listed as such, never a pass.
+The same cases, in the order of the matrix ledger, are those of the identity
+and timing gates (`task31_cases.py`); the matrix takes the infeasible cells
+as `(case, size)` pairs (`INFEASIBLE_CELLS`).
 
 **Iterations** are predeclared in `allocation_iterations_task31.json`, written
-by `task31_iterations.py` (`--estimate` prints the projection): the TASK30
-rule (32 steady iterations to size 100, 16 at 1000 and 8 at 10000), cut to 8
-and to 4 for the cells whose measured per-operation cost would exceed the
-budget of a process (100 s over the steady repeats). The file is bound by
-digest like the others.
+by `task31_iterations.py`: the TASK30 rule (32 steady iterations to size 100,
+16 at 1000 and 8 at 10000), with the reuse and complete stages of the
+families in `CUT_8` halved to 8 and those of `CUT_4` to 4 at 1000
+assumptions, to fit the process timeout. The file is bound by digest like the
+others.
 
-**decisions.json** has, for the TASK31 disposition, `rows` keyed `case-size`
-(`case`, `size`, `pairs`, `status` = pass, fail, inconclusive or unresolved,
-`work` = equal, differs, inconclusive or null) and `infeasible`, the sorted
-names of the cells not run. TASK29B and TASK30 results have neither key.
+**decisions.json** has, for the TASK31 disposition, the top-level fields of
+TASK29B (`status`, `complete`, `acceptance_pairs`, `acceptance_baseline`)
+and
+
+    {"candidate": REV, "baseline": REV, "infeasible": [NAME, ...],
+     "rows": [{"case": CASE, "size": N, "pairs": P,
+               "decision": "pass" | "fail" | "inconclusive",
+               "work": "equal" | "differs" | "inconclusive" | null}, ...]}
+
+`candidate` and `baseline` are those of the grid's inventory. A row is `pass`
+only when every gated phase and metric of its cell passes, the cell has at
+least 10 pairs, the baseline is the pinned develop commit and no row of the
+cell is nondeterministic; `fail` when one fails; `inconclusive` otherwise,
+so a smoke or a grid against another baseline has no passable row, and its
+`complete` is false (it is written to `decisions-partial.json`). `rows` lists
+the cells that were measured or tried, in the order of the cases and sizes;
+`infeasible` is the sorted names of the cells not run. TASK29B and TASK30
+results have none of these keys.
 
 **Sealed code.** `allocation_matrix.py` is in the TASK30 seal
 (`task30_dispose.CODE`): changing it adds the previous seal to

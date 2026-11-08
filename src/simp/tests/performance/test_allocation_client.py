@@ -226,28 +226,32 @@ class Counts(unittest.TestCase):
         self.assertEqual(counts["schema"], "task29b-iterations-v1")
         self.assertEqual(TASK31.iterations, it.OUTPUT)
 
-    def test_the_rule_cuts_only_the_costly_cells_at_1000(self):
+    def test_the_rule_cuts_only_the_declared_cells_at_1000(self):
         steady = m.load_iterations(task=TASK31)["steady"]
-        small = {k: v for k, v in steady.items() if v == 4}
-        self.assertEqual(sorted(small), sorted(
-            "tactic_%s_%s-1000" % (f, s)
-            for f in ("global", "req0", "reqd", "req0_reqd", "reqd_req0")
-            for s in ("reuse", "complete")))
+        small = {k: v for k, v in steady.items() if v in (4, 8) and
+                 k.endswith("-1000")}
+        want = {}
+        for f in it.CUT_8:
+            for stage in ("reuse", "complete"):
+                want["tactic_%s_%s-1000" % (f, stage)] = 8
+        for f in it.CUT_4:
+            for stage in ("reuse", "complete"):
+                want["tactic_%s_%s-1000" % (f, stage)] = 4
+        self.assertEqual(len(want), 22)
+        self.assertEqual({k: v for k, v in small.items() if k in want},
+                         want)
         for key, value in steady.items():
             size = int(key.rsplit("-", 1)[1])
-            if size <= 100:
-                self.assertEqual(value, 32, key)
-            elif value != 4:
-                self.assertIn(value, (8, 16), key)
+            if key in want:
+                continue
+            self.assertEqual(
+                value, 32 if size <= 100 else 16 if size == 1000 else 8,
+                key)
 
-    def test_every_cell_stays_inside_the_budget_of_a_process(self):
-        for (case, size) in m.keys(TASK31):
-            count = it.steady(case, size)
-            self.assertGreaterEqual(count, it.MINIMUM)
-            if case.endswith(("_reuse", "_complete")):
-                self.assertLessEqual(
-                    count * it.REPEATS * it.apply_cost(case, size),
-                    it.BUDGET, (case, size))
+    def test_the_cut_families_are_heavy_ones(self):
+        self.assertEqual(set(it.CUT_8) | set(it.CUT_4),
+                         set(cases.HEAVY_FAMILIES))
+        self.assertFalse(set(it.CUT_8) & set(it.CUT_4))
 
     def test_the_task_has_its_own_counts_and_they_are_not_the_others(self):
         self.assertFalse(set(m.load_iterations(task=TASK31)["steady"]) &
@@ -257,11 +261,6 @@ class Counts(unittest.TestCase):
             m.load_iterations(TASK31.iterations)
         with self.assertRaisesRegex(sc.InvalidAllocation, "incomplete"):
             m.load_iterations(m.TASKS["task30"].iterations, TASK31)
-
-    def test_the_full_run_is_projected_at_about_ten_hours(self):
-        hours = it.estimate(m.keys(TASK31))
-        self.assertGreater(hours, 8)
-        self.assertLess(hours, 14)
 
     def test_the_generator_writes_the_committed_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -288,26 +287,41 @@ def grid_of(task, change=None, pairs=10):
     return cells, records, observed
 
 
+CAND = "c" * 40
+
+
+def assembled(cells, records, observed, **more):
+    return m.assemble(cells, records, observed, task=TASK31,
+                      candidate=CAND, **more)
+
+
+def rows_of(out):
+    return {m.name_of(r["case"], r["size"]): r for r in out["rows"]}
+
+
 class Decisions(unittest.TestCase):
     def test_the_whole_grid_of_identical_sides_passes_row_by_row(self):
-        out = m.assemble(*grid_of(TASK31), task=TASK31)
+        out = assembled(*grid_of(TASK31))
         self.assertEqual((out["status"], out["complete"],
                           out["acceptance_pairs"]), ("pass", True, True))
+        self.assertEqual((out["candidate"], out["baseline"]),
+                         (CAND, a.BASE))
         self.assertEqual(m.status_code(out), 0)
-        self.assertEqual(list(out["rows"]),
+        self.assertIsInstance(out["rows"], list)
+        self.assertEqual([m.name_of(r["case"], r["size"])
+                          for r in out["rows"]],
                          [m.name_of(*k) for k in m.keys(TASK31)])
-        for name, row in out["rows"].items():
-            case, size = name.rsplit("-", 1)
-            self.assertEqual(row, dict(case=case, size=int(size), pairs=10,
-                                       status="pass", work=None), name)
+        for row in out["rows"]:
+            self.assertEqual(row, dict(
+                case=row["case"], size=row["size"], pairs=10,
+                decision="pass", work=None), row)
         self.assertEqual(len(out["cases"]), 53)
         self.assertEqual(out["unresolved"], [])
-        self.assertEqual(out["infeasible"], sorted(
-            m.name_of(*k) for k in cases.INFEASIBLE_CELLS))
+        self.assertEqual(out["infeasible"], sorted(cases.INFEASIBLE))
         self.assertEqual(len(out["infeasible"]), 33)
 
     def test_the_slopes_follow_the_sizes_of_each_case(self):
-        out = m.assemble(*grid_of(TASK31), task=TASK31)
+        out = assembled(*grid_of(TASK31))
         for case, record in out["cases"].items():
             sizes = TASK31.sizes(case)
             self.assertEqual(sorted(map(int, record["cells"])),
@@ -322,15 +336,14 @@ class Decisions(unittest.TestCase):
 
     def test_a_failing_cell_is_a_failing_row_and_fails_the_grid(self):
         bad = ("tactic_asm_complete", 1000)
-        out = m.assemble(*grid_of(TASK31, lambda k: (
-            {"setup": 10}, {"setup": 11}, None) if k == bad else None),
-            task=TASK31)
+        out = assembled(*grid_of(TASK31, lambda k: (
+            {"setup": 10}, {"setup": 11}, None) if k == bad else None))
         self.assertEqual(out["status"], "fail")
         self.assertEqual(m.status_code(out), 1)
-        self.assertEqual(out["rows"][m.name_of(*bad)]["status"], "fail")
-        others = [r["status"] for n, r in out["rows"].items()
-                  if n != m.name_of(*bad)]
-        self.assertEqual(set(others), {"pass"})
+        rows = rows_of(out)
+        self.assertEqual(rows[m.name_of(*bad)]["decision"], "fail")
+        self.assertEqual({r["decision"] for n, r in rows.items()
+                          if n != m.name_of(*bad)}, {"pass"})
 
     def test_a_cell_whose_control_varies_is_inconclusive(self):
         base, cand = {"setup": 10}, {"setup": 10}
@@ -340,21 +353,22 @@ class Decisions(unittest.TestCase):
         cells, records, observed = grid_of(TASK31)
         records[key] = dict(an.cell(*data, tb.STEADY), steady=tb.STEADY,
                             pairs=10)
-        out = m.assemble(cells, records, observed, task=TASK31)
-        self.assertEqual(out["rows"][m.name_of(*key)]["status"],
+        out = assembled(cells, records, observed)
+        self.assertEqual(rows_of(out)[m.name_of(*key)]["decision"],
                          "inconclusive")
         self.assertEqual(out["status"], "inconclusive")
+        self.assertFalse(out["complete"] and out["status"] == "pass")
 
     def test_the_work_row_is_beside_the_words(self):
         work, other = tb.structural(), tb.structural(
             first=tb.WORK_TEXT.replace("=1", "=2", 1))
         key = ("tactic_full_reuse", 100)
-        out = m.assemble(*grid_of(TASK31, lambda k: (
+        out = assembled(*grid_of(TASK31, lambda k: (
             {"setup": 10}, {"setup": 10}, work if k != key else (
-                work, other))), task=TASK31)
-        rows = out["rows"]
+                work, other))))
+        rows = rows_of(out)
         self.assertEqual(rows[m.name_of(*key)]["work"], "differs")
-        self.assertEqual(rows[m.name_of(*key)]["status"], "pass")
+        self.assertEqual(rows[m.name_of(*key)]["decision"], "pass")
         self.assertEqual({r["work"] for n, r in rows.items()
                           if n != m.name_of(*key)}, {"equal"})
         self.assertEqual(out["status"], "pass")
@@ -363,46 +377,69 @@ class Decisions(unittest.TestCase):
     def test_a_partial_run_has_rows_for_its_cells_only(self):
         cells, records, observed = grid_of(TASK31)
         keep = {("traversal_deep", 0), ("tactic_asm_complete", 10000)}
-        out = m.assemble(keep, {k: records[k] for k in keep},
-                         {k: observed[k] for k in keep}, task=TASK31)
-        self.assertEqual(sorted(out["rows"]), sorted(
+        out = assembled(keep, {k: records[k] for k in keep},
+                        {k: observed[k] for k in keep})
+        self.assertEqual(sorted(rows_of(out)), sorted(
             m.name_of(*k) for k in keep))
         self.assertFalse(out["complete"])
         self.assertEqual(out["status"], "inconclusive")
         self.assertEqual(len(out["infeasible"]), 33)
 
-    def test_a_cell_without_an_analysis_is_an_unresolved_row(self):
+    def test_a_cell_without_an_analysis_is_an_inconclusive_row(self):
         keep = {("traversal_deep", 0), ("traversal_deep", 1)}
         cells, records, observed = grid_of(TASK31)
-        out = m.assemble(keep, {("traversal_deep", 0):
-                                records["traversal_deep", 0]}, {},
-                         task=TASK31)
+        out = assembled(keep, {("traversal_deep", 0):
+                               records["traversal_deep", 0]}, {})
         self.assertEqual(out["unresolved"], ["traversal_deep-1"])
-        self.assertEqual(out["rows"]["traversal_deep-1"], dict(
+        rows = rows_of(out)
+        self.assertEqual(rows["traversal_deep-1"], dict(
             case="traversal_deep", size=1, pairs=None,
-            status="unresolved", work=None))
-        self.assertEqual(out["rows"]["traversal_deep-0"]["status"], "pass")
+            decision="inconclusive", work=None))
+        self.assertEqual(rows["traversal_deep-0"]["decision"], "pass")
 
-    def test_a_smoke_never_passes_but_its_rows_say_what_they_are(self):
-        out = m.assemble(*grid_of(TASK31, pairs=2), task=TASK31)
+    def test_a_smoke_is_never_complete_and_has_no_passable_row(self):
+        out = assembled(*grid_of(TASK31, pairs=2))
         self.assertFalse(out["acceptance_pairs"])
+        self.assertFalse(out["complete"])
         self.assertEqual(out["status"], "inconclusive")
-        self.assertEqual({r["pairs"] for r in out["rows"].values()}, {2})
-        self.assertEqual({r["status"] for r in out["rows"].values()},
-                         {"pass"})
+        self.assertEqual({r["pairs"] for r in out["rows"]}, {2})
+        self.assertEqual({r["decision"] for r in out["rows"]},
+                         {"inconclusive"})
+
+    def test_a_row_of_ten_pairs_passes_and_of_fewer_does_not(self):
+        key = ("traversal_deep", 100)
+        short, data = record({"setup": 10}, {"setup": 10}, None, pairs=8)
+        rows = rows_of(assembled({key}, {key: short}, {key: data}))
+        self.assertEqual(rows[m.name_of(*key)]["decision"], "inconclusive")
+        self.assertEqual(rows[m.name_of(*key)]["pairs"], 8)
+
+    def test_a_grid_against_another_baseline_is_not_complete(self):
+        out = assembled(*grid_of(TASK31), baseline="d" * 40)
+        self.assertEqual(out["baseline"], "d" * 40)
+        self.assertFalse(out["acceptance_baseline"])
+        self.assertFalse(out["complete"])
+        self.assertEqual({r["decision"] for r in out["rows"]},
+                         {"inconclusive"})
+
+    def test_a_failure_stays_a_failure_in_a_smoke(self):
+        bad = ("tactic_asm_complete", 1000)
+        out = assembled(*grid_of(TASK31, lambda k: (
+            {"setup": 10}, {"setup": 11}, None) if k == bad else None,
+            pairs=2))
+        self.assertEqual(rows_of(out)[m.name_of(*bad)]["decision"], "fail")
 
     def test_the_other_tasks_have_no_rows(self):
         cell = ("exclude_empty", 0)
         data = record({"setup": 10}, {"setup": 10})
         out = m.assemble({cell}, {cell: data[0]}, {},
                          task=m.TASKS["task30"])
-        self.assertNotIn("rows", out)
-        self.assertNotIn("infeasible", out)
+        for key in ("rows", "infeasible", "candidate", "baseline"):
+            self.assertNotIn(key, out)
         self.assertNotIn("rows", m.assemble({("frag_create", 0)}, {
             ("frag_create", 0): data[0]}, {}))
 
     def test_the_results_name_the_rows_and_the_cells_not_run(self):
-        out = m.assemble(*grid_of(TASK31), task=TASK31)
+        out = assembled(*grid_of(TASK31))
         text = m.results_markdown(out, "TASK31")
         self.assertTrue(text.startswith("# TASK31 allocation matrix"))
         self.assertIn("pass x245", text)

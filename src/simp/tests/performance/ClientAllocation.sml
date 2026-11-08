@@ -1,7 +1,7 @@
 (* TASK31 cumulative-allocation fixture for the ClientPerformance cases,
    installed as Performance.sml in the place of MatrixAllocation.sml; the
    driver below is MatrixAllocation.sml's from its "Build every foreign
-   closure" comment on, word for word (test_allocation_task.py compares
+   closure" comment on, word for word (test_allocation_client.py compares
    them), and MatrixSupport.sml supplies the work phase. One case and one
    size per fresh process; needs the private patched runtime and
    TASK29_ALLOC_SHIM like MatrixAllocation.sml.
