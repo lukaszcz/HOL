@@ -19,12 +19,8 @@ From the repository root. The host is shared and no exclusive window is
 required; a checkout's own builds and measurements stay serial, under its lock.
 `--authorize-measurements` is the explicit authorization to build and measure,
 not a claim of exclusive access. Every child process of the measurement
-harness (`run_paired.execute`, `loading.execute`, `acceptance.run_logged`,
-`verify_builds`, `api-audit/run.py`) gets `/dev/null` as standard input, and
-the compiler version is queried with `poly -v` (Poly/ML has no `--version`: it
-enters the top level and reads stdin, which hung on an inherited open pipe;
-archived records of the earlier command stay valid). The details are in
-"Standard input and the version query":
+harness gets `/dev/null` as standard input and the compiler version is
+queried with `poly -v`: see "Standard input and the version query". Run:
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -190,9 +186,8 @@ selections of every experiment get the same N and schedule.
   compared per field, as for TASK29A (each field of the code may be the
   current one or one of its history, so a record may pass with a combination
   of fields that no one commit held), and the only code added to what is
-  accepted is the exact blobs of the six files at 63ac28189 (`task30_grid.py`,
-  `timing_grid.py`, `acceptance.py`, `MatrixPerformance.sml`,
-  `performance_schema.py`, `run_paired.py`).
+  accepted is the sealed blobs that the histories list (`DRIVERS`, `ENGINES`,
+  `ACCEPTANCE` and `SEALED_HISTORY` of `task30_grid.py`).
 
 ### Precompiled experiment driver
 
@@ -334,12 +329,21 @@ them immediately.
 
 ### Standard input and the version query
 
-Every child process of the harness gets `/dev/null` as standard input:
-`run_paired.execute`, `loading.execute`, `acceptance.run_logged`,
-`verify_builds` and `api-audit/run.py`. The compiler is queried with `poly
--v`: `poly --version` is no option, Poly/ML enters the top level and reads
-stdin, which hangs on an inherited open pipe. A hang there would make a cell
-a protocol failure, never a measurement.
+Poly/ML enters its top level and reads standard input, so every child that
+can start Poly/ML or HOL gets `/dev/null` (`run_paired.execute`,
+`loading.execute`, `acceptance.run_logged`, `verify_builds`,
+`api-audit/run.py`). The exceptions are the configure step, whose input is
+the file `tools/smart-configure.sml` (`run_logged(..., stdin=path)`), and git
+calls (`acceptance.git`, `run_paired.git`), which inherit it. The compiler is
+queried with `poly -v`; `poly --version` enters the top level.
+
+The runners `fragments/assembly/run_assembly.py`,
+`tactics/performance/run_tactics.py` and
+`exclusions/performance/{run_exclusions,gc_run,gc_trace}.py` still call
+`poly --version`, through `run_paired.execute`. That is safe because
+`execute` gives `/dev/null`: the command reads end of file and prints the
+banner `Poly/ML 5.9.2 Release` alone, which `run_assembly.py` checks exactly.
+With `-v` the output would carry the RTS line and that check would fail.
 
 - **Version comparison.** `acceptance.poly_version_matches`: a recorded
   version that contains `RTS version` (a `poly -v` record) must equal the
@@ -358,21 +362,6 @@ a protocol failure, never a measurement.
   `native-extension/check.py`) take `stdin=/dev/null`, with a timeout. They
   start Holmake, HOL-compiled executables or a dependency tool, no Poly/ML
   top level. Git calls are left alone.
-- **Seal histories.** A changed file whose seal a record carries gets an
-  entry in the commit that changes it. The histories hold, for the records
-  already made, the seals of the files before the changes below:
-  - `task30_grid.SEALED_HISTORY` and `task30_followup.SEALED_HISTORY` hold
-    `matrix.json` and `matrix_schema.py` as they were before the command
-    paths, the audit output and the loading counts of the external gates
-    were updated for TASK31; `task30_grid.SEALED_HISTORY` also holds the
-    `task29_gate.py` seal from before the "exclusive window" wording was
-    dropped;
-  - the histories of `task30_followup.py` (`DRIVERS`, `ENGINES`,
-    `ACCEPTANCE`, `SEALED_HISTORY`) and `task30_dispose.py` (`HISTORY`) hold
-    the seals of the files at `40e176538f`, the code that made the
-    follow-up and disposition records.
-  Later edits of the same files that no record carries (usage text, style)
-  need no entry.
 
 ### Negative controls
 
@@ -503,20 +492,24 @@ history of that file lists. So a change to a file whose seal a record
 carries appends the old seal to its history in the same commit, and the test
 that pins the history constant is edited with it:
 
-- the TASK30 table (`task30_grid.py`): `DRIVERS`, `ACCEPTANCE` and
-  `SEALED_HISTORY`, and `task30_pins.PIN_HISTORY` for the pins;
+- the TASK30 table (`task30_grid.py`): `DRIVERS`, `ENGINES`, `ACCEPTANCE`
+  and `SEALED_HISTORY`, and `task30_pins.PIN_HISTORY` for the pins;
 - the follow-up (`task30_followup.py`): `DRIVERS`, `ENGINES`, `ACCEPTANCE`
   and `SEALED_HISTORY`;
 - the TASK30 disposition (`task30_dispose.py`): `HISTORY`, and `ADDED` for a
   file added to its `CODE` after records were made;
-- the TASK31 attribution table (`task31_attributed.json`, `history`), its
-  pins (`pin_history`) and the TASK31 disposition (`task31_dispose.HISTORY`).
+- the TASK31 timing table (`task31_grid.py`): its own `DRIVERS`, `ENGINES`,
+  `ACCEPTANCE` and `SEALED_HISTORY`, empty until its first record; its pins
+  are the `history` of `task31_attributed.json`, which `pin_history` reads;
+- the TASK31 disposition (`task31_dispose.HISTORY`).
 
-A file whose seal no record carries needs no entry. The cascade, with a
-worked example, is in the bullet "Seal histories" of "TASK30 follow-up"; a
-check that fails names every changed file and the entry to paste. "Standard
-input and the version query" names the histories that hold the seals of
-`40e176538f`.
+A file whose seal no record carries needs no entry (usage text, style). The
+cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
+follow-up". The disposition checks (`task30_dispose`, `task31_dispose`) name
+every changed file and the entry to paste; the grid's `check_code` says only
+"changed driver", "changed engine" or "changed acceptance". The follow-up's
+and the disposition's histories hold the seals of `40e176538f`, the code that
+made their records.
 
 ## Timing grids, replay and resume
 
@@ -697,7 +690,7 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   proof:** the chain shows that no line was removed from or changed in the
   middle, not that lines after the last one, or the whole file, were not
   removed. That deletion is undetectable here, and what covers it is that the
-  handoff names the ledger and that a reviewer asks for it.
+  report of the result names the ledger and that a reviewer asks for it.
 #### Revisions and the route after a regression
 
 - **Revisions.** A counts file is never edited: a changed file is a new file
@@ -804,7 +797,7 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   is an error. The earlier pin sets are in `PIN_HISTORY`, and a replay
   judges a record by the pins its pins seal names (`pins_for`), also for a
   file the baseline lacks (`source_record(..., pins)`); a new run is judged
-  by the current ones. `task30_cases.SOURCES` is sealed and still lists
+  by the current ones. `task30_cases.SOURCES` is sealed and lists
   `SimpTracking.sml`/`.sig`, which exist at neither commit, so a new TASK30
   run refuses with `source file absent at the baseline and not pinned:
   src/simp/src/SimpTracking.sml`.
@@ -1276,7 +1269,7 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   grid, or the follow-up with the Y one, is refused.
 - **Cost.** The grid is 144 cells at 20 pairs and two slots per pair, each
   slot a fresh process with its batch (0.3 s, or 1.0 s for the ten direct
-  deletions at every size, including 10000): plus a second stage for the cells
+  deletions at every size, including 10000). A second stage adds the cells
   the control leaves open.
 - **Other tables.** The TASK29A table is closed: its grid was disposed of
   by the policy owner, no new TASK29A run is made, and so its table keeps
@@ -1507,7 +1500,7 @@ it.
     and a sealed file outside that repository is refused.
 - **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
   `ACCEPTANCE` and `SEALED_HISTORY`, each with the seals of
-  `40e176538f` (see "Standard input and the version query"), passed to
+  `40e176538f` (see "Seals and seal histories"), passed to
   its table as TASK30's are to its own: `check_code` accepts a record whose
   driver, engine or acceptance seal is the current one or one listed, and a
   sealed file's seal is the current one or one of its history. They are read
@@ -1586,8 +1579,6 @@ it.
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
     files".
-  The disposition code, which changes the engine, is landed before the
-  follow-up's pilot, so that Z is the pilot's commit plus the counts file.
 - **Pairs.** A follow-up has no pairs of its own to declare: the pairs of a
   cell are what the second-stage rule gives for the develop/develop control of
   the replaced grid's *first* stage,
@@ -1788,10 +1779,9 @@ rs`, which shares the list the workload builds anyway), so the setup words
 include the closures of a few assignments, a small constant that does not grow
 with the number of rules and is equal on both sides of a grid. The fixture
 dprocs share one closure (`dprocApply`), so the counter adds no words per
-dproc. The setup words of grids made with different setup fixtures therefore do
-not equal at any size, and a comparison across such grids uses only the
-operation rows (`operation_first`, `operation_steady`, `apply`), never the
-setup row.
+dproc. The setup words of grids made with different setup fixtures differ, so a
+comparison across such grids uses only the operation rows
+(`operation_first`, `operation_steady`, `apply`), never the setup row.
 
 **Gating by header.** A grid whose header says `structure: "v1"` (every new
 run) requires the four records in every process, and a header without the key
@@ -1929,8 +1919,9 @@ marker theorem and save only that construction, not the deletion.
 
 The case for the 13 cells therefore rests on the source identity of the timed
 code (the sources of the listed path are identical between develop and the
-candidate except the pinned `Cond_rewr.sig`, one added spec,
-`note_rewrite`) and on the exact operation words; the
+candidate except the reviewed pins that the records carry: `Cond_rewr` and
+`SimpTracking`, a move of `note_rewrite` and `with_tracking`, as in
+`task30_pins.PIN_HISTORY`) and on the exact operation words; the
 work rows show the same deterministic behaviour and result, not equal CPU.
 Equal rows with develop say that the candidate fired the same counted events
 for the operation and for the use of its result and returned the same result,
@@ -2432,7 +2423,9 @@ variants. With at least two images per side and ten pairs:
   - A module, structure or registered file that the candidate images or
     sources load and the baseline never does fails, unless `candidate_only`
     declares it. Names ending in `Ext` and the extension modules are only a
-    label.
+    label. The absence of the extension modules from an ordinary process is
+    checked by the API audit, not here (`ordinary_only` and `forbidden_names`
+    in `api-audit/selftest.sml`).
   - A file that only the candidate compiles needs both declarations: an
     `entries` item (null baseline blob) pays for its words in R2, and
     `candidate_only` entries (`module X`, `file X`) allow it in the
@@ -2536,14 +2529,14 @@ TASK31 gates the traversal and tactic cases of the matrix (11 `traversal_*`
 cases and 42 `tactic_*` cases, 278 cells; `downstream_*` belongs to later
 tasks). The case ledger has six singleton traversal cases (size 0) and five
 depth cases; the code follows the ledger, whose order (`task31_cases.CASES`)
-is the canonical order of every gate. Gate 1 is `task31_identity_grid.py`
-and gate 3 `task31_grid.py` (the timing driver; the identity module imports
-it, not the reverse), the decision per cell in `task31_dispose.py`; the
-cases, the sample, the infeasible set and the list of sources are data in
-`task31_cases.py`, which holds no measured number. The reviewed differences
-of the candidate are the data of `task31_attributed.json`
-(read by `task31_pins.py`, which the timing grid seals; the accounting is
-`task31_attribution.py`).
+is the canonical order of every gate. Gate 1 is `task31_identity_grid.py`,
+gate 2 is described in "TASK31 allocation gate (gate 2)", and gate 3
+`task31_grid.py` (the timing driver; the identity module imports it, not the
+reverse), the decision per cell in `task31_dispose.py`; the cases, the sample,
+the infeasible set and the list of sources are data in `task31_cases.py`,
+which holds no measured number. The reviewed differences of the candidate are
+the data of `task31_attributed.json` (read by `task31_pins.py`, which the
+timing grid seals; the accounting is `task31_attribution.py`).
 
 The controls receipt seals the files of `allocator-counter/` and those named
 in `private_runtime.PERFORMANCE_INPUTS`, `loading.py` among them, so
@@ -2842,19 +2835,14 @@ Tests: `test_task31_cases.py`, `test_task31_attribution.py`,
 case bindings. Runnable does not mean measured or passed. All named stages
 and declared sizes remain distinct; a smoke cannot cover the full matrix.
 Graph parsing, batch GC counts, RSS snapshots and controlled-ref release are
-integrated instrumentation. These stronger prerequisites remain blocked:
-a cumulative allocation counter; an exact temporary-peak domain; an
-opaque-object lifetime API; independent integer and real dependencies;
-independent routine and full clean snapshots/results.
+integrated instrumentation. MATRIX.md lists the blocked prerequisites.
 
-The ten-pair source-isolation experiment validates end-to-end machinery,
-not matrix-wide performance approval. Only current fixture/source-tied
-manifests and raw observations count; unused temporary validation or earlier
-fixture versions cannot be relabeled final. Independent manifest admission
-validates build prerequisites only and `run --mode independent` still blocks
-pending fresh independent launchers, path inventories and consumed
-proof/storage pairs. No shared `hol.state0` result becomes independent by
-changing a report label.
+Only current fixture/source-tied manifests and raw observations count; unused
+temporary validation or earlier fixture versions cannot be relabeled final.
+Independent manifest admission validates build prerequisites only and `run
+--mode independent` still blocks pending fresh independent launchers, path
+inventories and consumed proof/storage pairs. No shared `hol.state0` result
+becomes independent by changing a report label.
 
 Ordinary arithmetic/reduce/boss fixtures are runnable with shared
 dependencies; independent downstream proof/build acceptance and

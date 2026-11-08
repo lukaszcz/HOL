@@ -340,7 +340,8 @@ every loaded module (`Meta.loaded`), file in the final file map, and
 structure of `#allStruct PolyML.globalNameSpace ()` that is an extension, in
 order of first occurrence (`none` if empty). Extension names are the API
 audit's `forbidden_names` (read from `api-audit/selftest.sml`, the one
-definition: `loading.EXTENSION_NAMES`) and the audit's patterns `*Ext`,
+definition: `loading.audit_forbidden_names`, used by
+`loading.extension_names`) and the audit's patterns `*Ext`,
 `*ExtLib` and `simpMarker*`. The observation may hold only extension names
 or `none` alone. The validator also scans the used, heap and loaded file
 paths for the same names. Any finding rejects the process and stops the

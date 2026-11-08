@@ -800,14 +800,6 @@ class ExtensionTest(unittest.TestCase):
                 r["result"] = "false"
         self.assertEqual(run(records)["decision"], "fail")
 
-    def test_names(self):
-        for name in ("simpExtLib", "congExtLib",
-                     "intReduceExt", "Cond_rewrExt", "numSimpsExt"):
-            self.assertTrue(g.is_extension(name), name)
-        for name in ("simpLib", "congLib", "Cond_rewr", "boolSimps", "Text"):
-            self.assertFalse(g.is_extension(name), name)
-        self.assertFalse(g.is_extension("simpExtLib", ("simpExtLib",)))
-
 
 class SetupTest(unittest.TestCase):
     def trees(self):

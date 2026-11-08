@@ -7244,8 +7244,8 @@ class Tables(unittest.TestCase):
         return tg.Table("toy", "TOY", cases, "d.py", "c.json", **kw)
 
     def test_a_new_table_is_of_the_warmup_schedule(self):
-        # The default of the TASK30A validation (PROTOCOL.md): warmup, with
-        # headroom 1; ramp, named, keeps headroom 2.
+        # The default of a new table (PROTOCOL.md, "New tables use warmup"):
+        # warmup, with headroom 1; ramp, named, keeps headroom 2.
         new = tg.Table("toy", "TOY", CASES, "d.py", "c.json",
                        fixed_seconds=True, seed="s0")
         self.assertEqual((new.schedule, new.headroom), ("warmup", 1))

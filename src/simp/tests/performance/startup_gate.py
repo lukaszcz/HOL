@@ -71,26 +71,10 @@ KINDS = {
     "load-simpLib": ("hol.state0", ("simpLib", "SIMP_CONV", "SIMP_TAC")),
     "load-congLib": ("hol.state0", ("congLib",)),
 }
-# Modules and caches that exist only in the extension, and so must be absent
-# from every ordinary process (patterns on Meta.loaded module names).
-EXTENSION_SUFFIX = "Ext"
-EXTENSION_NAMES = ("simpExtLib", "congExtLib",
-                   "TraverseExt", "Cond_rewrExt", "OpeningExt",
-                   "TravrulesExt", "boolSimpsExt", "combinSimpsExt",
-                   "pureSimpsExt", "splitLib", "splitPersistLib",
-                   "SplitData", "simpMarkerLib", "simpMarkerScript",
-                   "trackedSimpDefaults")
 
 
 def require(ok, message):
     sc.require(ok, message)
-
-
-def is_extension(module, allowed=()):
-    """A module of the extension, unless the baseline has it too."""
-    if module in allowed:
-        return False
-    return module.endswith(EXTENSION_SUFFIX) or module in EXTENSION_NAMES
 
 
 # ---------------------------------------------------------------- building
