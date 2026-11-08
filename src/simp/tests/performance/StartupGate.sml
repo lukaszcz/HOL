@@ -13,6 +13,8 @@
    The first lines are the whole prologue before the `startup` record: the
    foreign setup and one snapshot, so that startup is the words of the
    process load up to the first user code (plus compiling these lines).
+   The load kinds also report the live heap after full collections, read
+   after the last bracket and outside every bracket.
    Later brackets are the TASK29B ones: the counter is read from C storage
    after the bracket has ended, and no decoding, output or label work
    happens inside. Everything is printed at the very end, outside every
@@ -94,12 +96,22 @@ val _ = if kind = "hol-startup" then ()
   else if kind = "hol-first-use" then (prepare (); use1 (); use2 ())
   else raise Fail ("unknown GATE_KIND " ^ kind)
 
+(* The load kinds end with one unbracketed reading of the heap after full
+   collections (bytes; the allocation area is part of sizeHeap). *)
+val live = if String.isPrefix "load-" kind
+  then (PolyML.fullGC (); PolyML.fullGC (); PolyML.fullGC ();
+        let val st = PolyML.Statistics.getLocalStats ()
+        in SOME [#sizeHeap st, #sizeHeapFreeLastFullGC st,
+                 #sizeAllocation st] end)
+  else NONE
+
 (* Everything below is outside every bracket. *)
 fun fields xs = String.concatWith "," (map LargeInt.toString xs)
 fun emit event name payload =
   print (String.concatWith "\t" ["@@GATE", kind, event, name, payload] ^ "\n")
 val _ = List.app (fn (name, s, e) => emit "alloc" name
                      (fields s ^ ";" ^ fields e)) (List.rev (!log))
+val _ = case live of NONE => () | SOME xs => emit "live" "heap" (fields xs)
 val _ = emit "holdir" "path" Systeml.HOLDIR
 val _ = emit "foreign" "path"
   (LargeInt.toString (getPath (32 + 3 + 27)) ^ "," ^

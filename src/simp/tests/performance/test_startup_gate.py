@@ -9,6 +9,7 @@ import json
 import os
 from unittest import mock
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -30,7 +31,7 @@ def snap(total=100, native=90, rts=8, interp=0, code=2, abi=1, over=0):
 
 def stdout(kind="hol-startup", brackets=None, loaded=MODULES, files=FILES,
            structs=STRUCTS, holdir=HOLDIR, foreign="0,0", result="none",
-           end=True, lib=LIB):
+           end=True, lib=LIB, live="auto"):
     brackets = brackets or [("startup", snap(), snap()),
                             ("empty", snap(), snap(104, 94))]
     lines = []
@@ -47,6 +48,10 @@ def stdout(kind="hol-startup", brackets=None, loaded=MODULES, files=FILES,
             ("files", "names", ",".join(files)),
             ("structures", "count", str(len(structs))),
             ("structures", "names", ",".join(structs))]
+    if live == "auto":
+        live = "3145728,2071000,1048576" if kind.startswith("load-") else None
+    if live:
+        rows.append(("live", "heap", live))
     for event, name, payload in rows:
         lines.append("\t".join(["@@GATE", kind, event, name, payload]))
     lines.append("@@TASK29_ALLOC_RUNTIME_V1\t" + lib)
@@ -59,6 +64,49 @@ def stdout(kind="hol-startup", brackets=None, loaded=MODULES, files=FILES,
 def parse(**kw):
     kind = kw.get("kind", "hol-startup")
     return g.parse_process(stdout(**kw), kind, HOLDIR, LIB, ())
+
+
+class LiveReadingTest(unittest.TestCase):
+    def test_load_kinds_carry_the_reading_in_words(self):
+        rec = parse(kind="load-simpLib")
+        self.assertEqual(rec["live"], dict(
+            size_heap=3145728, free_last_gc=2071000, alloc_area=1048576,
+            words=(3145728 - 2071000 - 1048576) // 8))
+
+    def test_missing_unexpected_or_odd_readings_are_refused(self):
+        with self.assertRaisesRegex(sc.InvalidAllocation, "live heap"):
+            parse(kind="load-simpLib", live=None)
+        with self.assertRaisesRegex(sc.InvalidAllocation, "live heap"):
+            parse(kind="hol-startup", live="3145728,2071000,1048576")
+        for bad in ("3145728,2071000,1048577", "100,2071000,1048576",
+                    "3145728,2071000,0"):
+            with self.assertRaisesRegex(sc.InvalidAllocation, "live heap"):
+                parse(kind="load-simpLib", live=bad)
+
+    def test_report_is_candidate_minus_baseline_per_image(self):
+        def rec(image, variant, words, area=1048576):
+            return dict(kind="load-simpLib", image=image, variant=variant,
+                        live=dict(words=words, alloc_area=area))
+        records = [rec("b1", "base", 1000), rec("b1", "base", 1010),
+                   rec("b1", "candidate", 1100), rec("b1", "candidate", 1100),
+                   rec("s1", "base", 2000), rec("s1", "candidate", 2090,
+                                                2097152)]
+        got = g.live_report(records)["load-simpLib"]
+        self.assertEqual(got["b1"], dict(
+            base=[1000, 1010], candidate=[1100], alloc_area=[1048576],
+            runs=[2, 2], delta_min=100, delta_max=90))
+        self.assertEqual(got["s1"]["alloc_area"], [1048576, 2097152])
+        self.assertEqual(got["s1"]["delta_min"], 90)
+        self.assertEqual(g.live_report([dict(kind="hol-startup")]), {})
+
+    def test_results_show_the_figure_and_its_units(self):
+        records, _ = attributed_world()
+        report = run(records)
+        report["live"] = {"load-simpLib": {"b1": dict(delta_min=5)}}
+        text = g.render(report, {})
+        self.assertIn("load-simpLib b1", text)
+        self.assertIn("/ 8", text)
+        self.assertIn("bytes", text)
 
 
 class ParseTest(unittest.TestCase):
@@ -431,6 +479,9 @@ class SourceRuleTest(unittest.TestCase):
             "module New", "file $(HOLDIR)/src/simp/src/New.sml"]
         report = self.run_sources(records, declared, sources)
         self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("compiled by the candidate sources only and is "
+                            "not declared" in r for r in report["reasons"]),
+                        report["reasons"])
 
     def test_candidate_added_file_fails_cleanly_when_undeclared(self):
         records, declared, sources = self.one_sided("candidate",
@@ -459,6 +510,17 @@ class SourceRuleTest(unittest.TestCase):
             schema=g.DECLARED_SCHEMA, entries=[e], noise=[],
             candidate_only=[])))
         self.assertEqual(data["entries"][0]["mechanism"], "one two")
+        noise = dict(path="src/simp/src/N.sml", blob="a" * 40, reason="r",
+                     mechanism=["a", "b"])
+        got = g.parse_declared(json.dumps(dict(
+            schema=g.DECLARED_SCHEMA, entries=[], noise=[noise],
+            candidate_only=[])))
+        self.assertEqual(got["noise"][0]["mechanism"], "a b")
+        for bad in ([], [1], 5):
+            with self.assertRaises(sc.InvalidAllocation):
+                g.parse_declared(json.dumps(dict(
+                    schema=g.DECLARED_SCHEMA, entries=[], noise=[dict(
+                        noise, mechanism=bad)], candidate_only=[])))
         with self.assertRaises(sc.InvalidAllocation):
             g.parse_declared(json.dumps(dict(
                 schema=g.DECLARED_SCHEMA, entries=[dict(e, mechanism=[])],
@@ -893,6 +955,7 @@ class CellFixtureTest(unittest.TestCase):
             (perf / "review-20261021").mkdir()
             (perf / "review-20261021/abicheck.sml").write_text(
                 "val x = 1\nval _ = OS.Process.exit OS.Process.success\n")
+            shutil.copyfile(g.rp.__file__, paired.parent / "run_paired.py")
 
             def git(*args):
                 subprocess.run(("git", "-c", "user.name=t", "-c",
@@ -914,6 +977,44 @@ class CellFixtureTest(unittest.TestCase):
                              '"legacy signature" true\n')
 
 
+    def test_the_revisions_own_runner_installs_its_fixtures(self):
+        with tempfile.TemporaryDirectory() as raw:
+            repo, job = Path(raw) / "repo", Path(raw) / "job"
+            dst = job / "sel"
+            compat = repo / "src/simp/tests/compatibility"
+            perf = repo / "src/simp/tests/performance"
+            (compat / "paired").mkdir(parents=True)
+            (perf / "review-20261021").mkdir(parents=True)
+            dst.mkdir(parents=True)
+            (compat / "paired/runner.sml").write_text("r\n")
+            (perf / "review-20261021/abicheck.sml").write_text("x\n")
+            (perf / "F1.sml").write_text("old1\n")
+            (compat / "run_paired.py").write_text(
+                "from pathlib import Path\n"
+                "HERE = Path(__file__).resolve().parent\n"
+                "def install_fixtures(dst):\n"
+                "    (dst / 'REV-RUNNER').write_text(str(HERE.name))\n")
+
+            def git(*args):
+                subprocess.run(("git", "-c", "user.name=t", "-c",
+                                "user.email=t@t") + args, cwd=repo,
+                               check=True, capture_output=True)
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-q", "-m", "one")
+            before = g.rp.HERE
+            am = mock.Mock(FIXTURES=("F1.sml",), HERE=perf)
+            g.install_cell_fixtures(repo, "HEAD", dst, am)
+            self.assertEqual((dst / "REV-RUNNER").read_text(),
+                             "compatibility")
+            self.assertEqual((dst / "Performance.sml").read_text(), "old1\n")
+            self.assertIs(g.rp.HERE, before)
+            # The temporary tree lives beside dst, not inside it.
+            self.assertEqual(sorted(p.name for p in dst.iterdir()),
+                             ["Performance.sml", "REV-RUNNER"])
+            self.assertEqual([p.name for p in job.iterdir()], ["sel"])
+
+
 class SizedTmpdirTest(unittest.TestCase):
     def test_path_has_the_requested_length(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -922,7 +1023,20 @@ class SizedTmpdirTest(unittest.TestCase):
                 path = g.sized_tmpdir(base, n)
                 self.assertEqual(len(str(path)), n)
                 self.assertTrue(path.is_dir())
-            self.assertEqual(g.sized_tmpdir(base, None), base)
+            self.assertEqual(g.sized_tmpdir(base, None), base.resolve())
+            # A relative or symlinked base is resolved before padding.
+            link = Path(raw) / "link"
+            link.symlink_to(Path(raw))
+            padded = g.sized_tmpdir(link / "t", len(str(base)) + 4)
+            self.assertEqual(padded, padded.resolve())
+            self.assertEqual(len(str(padded)), len(str(base)) + 4)
+            cwd = os.getcwd()
+            os.chdir(raw)
+            try:
+                rel = g.sized_tmpdir(Path("t"), len(str(base)) + 6)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(len(str(rel)), len(str(base)) + 6)
             with self.assertRaises(sc.InvalidAllocation):
                 g.sized_tmpdir(base, len(str(base)) - 1)
 

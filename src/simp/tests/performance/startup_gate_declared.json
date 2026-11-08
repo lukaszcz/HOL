@@ -12,7 +12,7 @@
    "reason": "adds val note_rewrite : thm -> unit (single tracking extent)",
    "mechanism": [
     "Elaborating one more specification, val note_rewrite : thm -> unit,",
-    "in the signature (measured: a dummy int specification costs less)."
+    "in the signature."
    ]
   },
   {
@@ -26,13 +26,8 @@
    "reason": "source identical; matched against the changed signature",
    "mechanism": [
     "Unchanged text.  The exported specification makes the compiler emit a",
-    "standalone code object for note_rewrite (+102 code words, objSize 151)",
-    "in addition to the copy inlined into COND_REWR_CONV, which is",
-    "unchanged.  Tested: the code object, and that two exported int values",
-    "cost far less.  Inferred, not tested: that the 150k words are the",
-    "compilation of that one function (a words-per-code-word ratio",
-    "argument), and that its closure is built at structure initialisation",
-    "(from allocation-site sizes in mk_cond_rewrs)."
+    "standalone code object for note_rewrite, in addition to the copy",
+    "inlined into COND_REWR_CONV, which is unchanged."
    ]
   },
   {
@@ -45,13 +40,10 @@
    ],
    "reason": "source identical; opens the changed structure",
    "mechanism": [
-    "Unchanged text.  One open declaration names eight structures including",
-    "Cond_rewr; opening Cond_rewr there costs about 6000 words per exported",
-    "value (6107 for note_rewrite, 5999 and 6002 for two int values).",
-    "Tested: with Cond_rewr qualified instead of opened the delta is 0 for",
-    "every signature tried; a toy of the open declaration alone gives 6033",
-    "and 5953 of those, 74 and 46 words per export being elsewhere in the",
-    "file.  Not tested: why the multi-structure open multiplies the cost."
+    "Unchanged text.  One open declaration names several structures",
+    "including Cond_rewr; opening Cond_rewr there costs words per exported",
+    "value, and qualifying Cond_rewr instead of opening it removes the",
+    "cost."
    ]
   },
   {
@@ -63,11 +55,10 @@
    ],
    "reason": "source identical; opens the changed structure",
    "mechanism": [
-    "Unchanged text.  One open declaration names ten structures including",
-    "Cond_rewr; opening Cond_rewr there costs about 6500 words per exported",
-    "value (6614 for note_rewrite, 6506 and 6509 for two int values).",
-    "Tested: with Cond_rewr qualified the delta is 0.  The ten-structure",
-    "list was not reproduced as a toy."
+    "Unchanged text.  One open declaration names several structures",
+    "including Cond_rewr; opening Cond_rewr there costs words per exported",
+    "value, and qualifying Cond_rewr instead of opening it removes the",
+    "cost."
    ]
   }
  ],

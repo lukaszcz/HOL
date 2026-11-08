@@ -2266,8 +2266,6 @@ variants. With at least two images per side and ten pairs:
     `entries` item (null baseline blob) pays for its words in R2, and
     `candidate_only` entries (`module X`, `file X`) allow it in the
     extension rule. Neither implies the other.
-  - `gate` refuses, and `replay` refuses an archive recording, a file under
-    test (overlaid or declared) that mentions the image's CPU timer.
 
 Decisions: `pass` (all rules hold, nothing declared carries words),
 `attributed` (all rules hold and the declared files carry exact words; it
@@ -2297,6 +2295,9 @@ into `header.json` with its sha256) holds:
   - `candidate_only`: `module X` / `structure X` / `file X` names that the
     candidate alone may load.
 
+A `mechanism` may be a list of lines, joined with spaces. It states the
+cause only; measured figures belong to the sealed record and the archive.
+
 ### Archive and replay
 
 `gate` writes `records.json.gz` (one record per process), `header.json`
@@ -2306,19 +2307,34 @@ controls receipt, the harness blobs, the declaration text and sha256, the
 exchanged blobs, the not-client-visible record sha256), `decisions.json`,
 `RESULTS.md` and `receipt.json` (the sha256 of each). The header carries a
 schema version; `replay` refuses an archive of another version, naming it.
-`replay --output DIR`
-checks the receipt and the declaration seal and recomputes `decisions.json`
-and `RESULTS.md` from the records alone. An archive sealed to a
-not-client-visible record is replayed only with `--record` of that record.
+`replay --output DIR` checks the receipt and the declaration seal and
+recomputes `decisions.json` and `RESULTS.md` from the records alone. An
+archive sealed to a not-client-visible record is replayed only with
+`--record` of that record.
+
+The `load-*` kinds end with one unbracketed reading of the heap after three
+full collections (`sizeHeap`, `sizeHeapFreeLastFullGC`, `sizeAllocation`,
+all in bytes; `sizeHeap` includes the allocation area). `RESULTS.md` and
+`decisions.json` give, per image and kind, the live words
+`(sizeHeap - sizeHeapFreeLastFullGC - sizeAllocation) / 8` of each variant
+and the candidate-minus-baseline difference of the smallest and of the
+largest reading, with the allocation-area sizes seen. It is measured and
+sealed in the archive, and is no decision input.
 
 `cell` repeats the TASK29B startup bracket of two revisions under chosen
 path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
 TASK29B startup delta depends on the image and on path lengths. Every line
 names its tree; `--fixtures-rev` takes the paired and matrix fixtures from a
-past revision, which a past run carried (the runner's own installation logic
-applied to that revision's blobs). `--tmpdir-length N` pads `--tmpdir` with
-`x` to exactly N characters; the private directories live under it.
-A `mechanism` in the declaration may be a list of lines, joined with spaces.
+past revision, which a past run carried (that revision's own
+`run_paired.py` installs them). `--tmpdir-length N` pads `--tmpdir`, resolved,
+with `x` to exactly N characters; the private directories live under it.
+
+`who_pays.py HOLDIR` counts, on a built tree, the executables of the build
+sequence that run over `hol.state0` and whose real dependency closure holds
+simpLib: for a plain build (scripts, the `selftest.exe` that `all` links,
+src/simp/src's own selftest, numheap builds) and what `-t` adds (the `!`
+directories). It exits 2 listing any module it cannot resolve, any dangling
+`sigobj` link and any payer whose heap is not pinned.
 
 ## Matrix boundaries and final evidence
 

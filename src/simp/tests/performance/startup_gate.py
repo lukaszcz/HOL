@@ -380,6 +380,13 @@ def parse_process(stdout, kind, holdir, library, aliases):
                 start=numbers(start, 8), end=numbers(end, 8)))
         elif event == "foreign":
             require(payload == sc.FOREIGN, "foreign-thread entries")
+        elif event == "live":
+            size, free, area = numbers(payload, 3)
+            live = size - free - area
+            require(name == "heap" and live >= 0 and live % sc.WORD_BYTES == 0
+                    and area > 0, "live heap reading: " + payload)
+            record["live"] = dict(size_heap=size, free_last_gc=free,
+                                  alloc_area=area, words=live // sc.WORD_BYTES)
         elif event == "holdir":
             require(payload == holdir, "wrong HOLDIR: " + payload)
         elif event == "result":
@@ -396,6 +403,8 @@ def parse_process(stdout, kind, holdir, library, aliases):
             require(False, "unknown event " + event)
     for key in ("loaded", "files", "structures", "result"):
         require(record.get(key) is not None, "missing " + key)
+    require(("live" in record) == kind.startswith("load-"),
+            "live heap reading of a %s process" % kind)
     require(record["brackets"][0]["name"] == "startup" and
             record["brackets"][1]["name"] == "empty",
             "first brackets are not startup and empty")
@@ -474,7 +483,9 @@ def parse_declared(text):
         require(sorted(n) == ["blob", "mechanism", "path", "reason"] and
                 blob_ok(n["blob"]) and n["path"].startswith("src/") and
                 n["path"] not in paths and n["reason"].strip() and
-                (n["mechanism"] is None or n["mechanism"].strip()),
+                (n["mechanism"] is None or (
+                    isinstance(n["mechanism"], str) and
+                    n["mechanism"].strip())),
                 "bad noise entry: %r" % (n,))
         paths.add(n["path"])
     require(all(isinstance(c, str) and c.split(" ")[0] in (
@@ -812,6 +823,7 @@ def analyse(records, sides, declared, sources, pairs, null=False,
     if any(attributed.values()) and not record:
         reasons.append("declared words need the sha256 of the "
                        "not-client-visible record (--record)")
+    report["live"] = live_report(records)
     report["images"] = dict(sides)
     report["acceptance"] = (len(sides["base"]) >= MIN_IMAGES and
                             len(sides["candidate"]) >= MIN_IMAGES and
@@ -830,6 +842,34 @@ def analyse(records, sides, declared, sources, pairs, null=False,
     else:
         report["decision"] = "pass"
     return report
+
+
+def live_report(records):
+    """Live words after full collections at the end of the load kinds,
+    candidate minus baseline sources, per image: a measured figure, not a
+    decision input.  The reading is (sizeHeap - sizeHeapFreeLastFullGC -
+    sizeAllocation) / 8, the heap sizes being bytes and sizeAllocation the
+    allocation area, which sizeHeap includes.  Per image and kind: the
+    sorted distinct readings of each variant, the allocation-area sizes
+    seen, and the differences of the smallest and of the largest readings."""
+    cells = {}
+    for r in records:
+        if r.get("live"):
+            cell = cells.setdefault((r["kind"], r["image"]), dict(
+                base=[], candidate=[], area=set()))
+            cell[r["variant"]].append(r["live"]["words"])
+            cell["area"].add(r["live"]["alloc_area"])
+    out = {}
+    for (kind, image), c in sorted(cells.items()):
+        row = dict(base=sorted(set(c["base"])),
+                   candidate=sorted(set(c["candidate"])),
+                   alloc_area=sorted(c["area"]), runs=[len(c["base"]),
+                                                       len(c["candidate"])])
+        if c["base"] and c["candidate"]:
+            row["delta_min"] = min(c["candidate"]) - min(c["base"])
+            row["delta_max"] = max(c["candidate"]) - max(c["base"])
+        out.setdefault(kind, {})[image] = row
+    return out
 
 
 # ------------------------------------------------------------------ setup
@@ -1154,6 +1194,14 @@ def render(report, header):
     if report["declared_zero"]:
         lines += ["", "Declared entries that measure 0: " + ", ".join(
             report["declared_zero"])]
+    lines += ["", "Live words after full collections at the end of the load "
+              "kinds (measured, not a decision input; words = (sizeHeap - "
+              "sizeHeapFreeLastFullGC - sizeAllocation) / 8, the sizes "
+              "being bytes):", ""]
+    for kind, per in sorted(report.get("live", {}).items()):
+        for image, row in sorted(per.items()):
+            lines.append("- %s %s: %s" % (kind, image, json.dumps(
+                row, sort_keys=True)))
     return "\n".join(lines) + "\n"
 
 
@@ -1208,17 +1256,16 @@ def replay(args):
 
 def install_cell_fixtures(repo, rev, dst, am):
     """The fixtures of a cell directory: those of this checkout, or with
-    `rev` the committed blobs of that revision (the fixtures a past run
-    carried).  Both the paired runner files and the matrix fixtures.  For
-    a past revision the runner's own `install_fixtures` (its paired files
-    and its SignatureCheck construction) is run over a temporary tree
-    holding that revision's blobs, so today's installation logic is
-    applied to the revision's inputs: the installation is reconstructed,
-    not replayed, and the revision must have the paired files, the
-    signature probe and today's `am.FIXTURES`."""
+    `rev` those that revision's own runner installs.  Both the paired
+    runner files and the matrix fixtures.  For a past revision the
+    revision's `run_paired.py` is loaded from a temporary tree (beside its
+    `paired/` files and its signature probe, in the job directory above
+    `dst`, whose path length matters) and its own `install_fixtures` is
+    called: a replay of that revision's installation, not a
+    reconstruction.  The matrix fixtures are that revision's blobs."""
+    import importlib.util
     import shutil
     import tempfile
-    from unittest import mock
     if rev is None:
         rp.install_fixtures(dst)
         for fx in am.FIXTURES:
@@ -1230,22 +1277,28 @@ def install_cell_fixtures(repo, rev, dst, am):
         return subprocess.run(["git", "show", rev + ":" + path], cwd=repo,
                               check=True, capture_output=True).stdout
 
-    paired = "src/simp/tests/compatibility/paired/"
+    compat = "src/simp/tests/compatibility/"
     perf = "src/simp/tests/performance/"
-    with tempfile.TemporaryDirectory(prefix="fixtures-", dir=dst) as raw:
+    with tempfile.TemporaryDirectory(prefix="fixtures-",
+                                     dir=dst.parent) as raw:
         top = Path(raw)
         (top / "compatibility/paired").mkdir(parents=True)
         (top / "performance/review-20261021").mkdir(parents=True)
         for path in a.git(repo, "ls-tree", "--name-only", rev,
-                          paired).splitlines():
+                          compat + "paired/").splitlines():
             name = Path(path).name
             if name.endswith(".sml") or name == "Holmakefile":
                 (top / "compatibility/paired" / name).write_bytes(
                     blob(path))
         (top / "performance/review-20261021/abicheck.sml").write_bytes(
             blob(perf + "review-20261021/abicheck.sml"))
-        with mock.patch.object(rp, "HERE", top / "compatibility"):
-            rp.install_fixtures(dst)
+        runner = top / "compatibility/run_paired.py"
+        runner.write_bytes(blob(compat + "run_paired.py"))
+        spec = importlib.util.spec_from_file_location(
+            "run_paired_" + rev[:12], runner)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.install_fixtures(dst)
     for fx in am.FIXTURES:
         target = "Performance.sml" if fx == am.FIXTURES[0] else fx
         (dst / target).write_bytes(blob(perf + fx))
@@ -1254,8 +1307,9 @@ def install_cell_fixtures(repo, rev, dst, am):
 def sized_tmpdir(base, length):
     """A directory whose path has exactly `length` characters: `base`
     padded with "x" (created if missing); the path of `base` itself when
-    `length` is None."""
-    base = Path(base)
+    `length` is None.  The base is resolved first (as the private
+    directories are), so the length is that of the real path."""
+    base = Path(base).resolve()
     if length is None:
         return base
     text = str(base)
