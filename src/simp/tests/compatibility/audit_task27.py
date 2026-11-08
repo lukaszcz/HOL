@@ -275,9 +275,12 @@ DECLARATION = re.compile(
     re.M)
 
 
-# HOL's quotation filter (bin/unquote, built from tools/parsing/HolLex and
-# HOLSourceExpand) is what the build applies to every .sml file before
-# Poly/ML reads it.  Its declaration forms (`Quote x = f:`, `Theorem`, ...)
+# HOL's quotation filter (HOLSource.ToSML, from tools/parsing) is applied
+# to every .sml file before the compiler reads it.  Under Poly/ML the build
+# applies it in-process when it loads the module (QUse.use, through
+# HOLSource.ToSML.mkPullTranslator); only Moscow ML's Holmake runs it as
+# `bin/unquote file1 file2`.  The two give the same output, and the file
+# name affects only what #(FILE) expands to.  Its declaration forms (`Quote x = f:`, `Theorem`, ...)
 # open quotations with no quotation character, and a quotation body is not
 # SML, so a scanner that read the unfiltered text could be desynchronised
 # from the compiler, or miss a binding.  The var_perm audit therefore reads
@@ -383,12 +386,29 @@ def strip_comments(text):
     return lex(text)[0]
 
 
+def binding_equals(text, start, end):
+    """The position of the first `=` of text[start:end] at bracket depth 0,
+    or `end` if there is none."""
+    depth = 0
+    for i in range(start, end):
+        c = text[i]
+        if c in '([{':
+            depth += 1
+        elif c in ')]}':
+            depth -= 1
+        elif c == '=' and depth <= 0:
+            return i
+    return end
+
+
 def binder_heads(text):
     """(position, names) for each val/fun/and/exception/datatype/structure
     declaration of comment-free `text`: the names in its head (up to the
-    first `=`, or to the next declaration at the start of a line; a
-    datatype, or an `and` joined to one, always runs to that, to take in
-    its constructors)."""
+    first `=` at bracket depth 0 of (), [] and {}, so that the names in a
+    record or tuple pattern, `val {a = x} = ...`, are in it (a label is
+    counted as a name too, conservatively); or to the next declaration at
+    the start of a line; a datatype, or an `and` joined to one, always
+    runs to that, to take in its constructors)."""
     heads, mode = [], None
     for m in re.finditer(r'\b(val|fun|and|exception|datatype|structure)\b',
                          text):
@@ -397,8 +417,7 @@ def binder_heads(text):
         nxt = DECLARATION.search(text, m.end())
         end = len(text) if nxt is None else nxt.start()
         if mode != 'datatype':
-            eq = text.find('=', m.end(), end)
-            end = end if eq < 0 else eq
+            end = binding_equals(text, m.end(), end)
         heads.append((m.start(), WORD.findall(text[m.end():end])))
     return heads
 
@@ -439,8 +458,13 @@ def vperm_block(source):
     may be bound by val, fun, and, exception, datatype (constructors
     included) or structure anywhere else in the file, or be named, with
     `=`, by an infix, infixr or nonfix declaration.  What `open` brings in
-    is not seen here: the REVIEWED_31 blob seal and the cond-rewr-ext
-    selftest cover it.  The compared tokens and the shadowing analysis
+    is not seen here, an external `open` included, also through an alias
+    (`structure T = Term open T`); nor is what a pattern in `fn`, `case`
+    or `handle` binds, which can rebind is_var_perm only for code in its
+    scope; nor are the block's callers.  Those are left deliberately to
+    the REVIEWED_31 blob seal (any byte change fails the audit until
+    re-reviewed) and to the cond-rewr-ext selftest (both engines must
+    accept and refuse the same permutative rewrites).  The compared tokens and the shadowing analysis
     are taken from the one filtered text, at the same offsets."""
     kept, code = lex(quote_filter(source))
     require(not re.search(r'\b(?:functor|abstype)\b', code),

@@ -282,7 +282,10 @@ class LiveSourceGate(unittest.TestCase):
                 # a quotation is a string once filtered
                 (b'fun vperm',
                  'val q = \u2018"a" b\u2019\nfun vperm'.encode()),
-                (b'fun vperm', b'Quote q = Lib.I:\n  "a" b\nEnd\nfun vperm')):
+                (b'fun vperm', b'Quote q = Lib.I:\n  "a" b\nEnd\nfun vperm'),
+                # a string that holds the block's opening text
+                (b'fun vperm', b'val _ = "fun vperm"\nval _ = '
+                 b'"fun is_var_perm"\nfun vperm')):
             with self.subTest(new=new):
                 self.assertEqual(source.count(old), 1)
                 audit.check_var_perm_copy(
@@ -381,7 +384,19 @@ class LiveSourceGate(unittest.TestCase):
                  b'structure HOLset = struct open HOLset '
                  b'fun equal _ = true end\nfun vperm', 'rebound: HOLset'),
                 (b'fun vperm', b'val x = 1 and aconv = 2\nfun vperm',
-                 'rebound: aconv')):
+                 'rebound: aconv'),
+                (b'fun vperm',
+                 b'val {a = aconv} = {a = fn _ => fn _ => true}\n'
+                 b'fun vperm', 'rebound: aconv'),
+                (b'fun vperm',
+                 b'val {1 = aconv, 2 = _} = (fn _ => fn _ => true, 0)\n'
+                 b'fun vperm', 'rebound: aconv'),
+                (b'fun vperm',
+                 b'val (_, [{a = snd}]) = (0, [{a = 1}])\nfun vperm',
+                 'rebound: snd'),
+                (b'type config',
+                 b'val {a = is_var_perm} = {a = fn _ => true}\ntype config',
+                 'not bound exactly')):
             with self.subTest(new=new[:40]):
                 self.assertEqual(source.count(old), 1)
                 with self.assertRaisesRegex(AssertionError, message):
@@ -405,6 +420,16 @@ class LiveSourceGate(unittest.TestCase):
                 with patch.object(audit, 'UNQUOTE', tool):
                     with self.assertRaisesRegex(AssertionError, message):
                         audit.check_var_perm_copy(self.sources)
+
+    def test_var_perm_copy_fails_closed_on_filter_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tool = Path(directory) / 'unquote'
+            tool.write_text('#!/bin/sh\ncp "$1" "$2"\n'
+                            'echo warning >&2\nexit 0\n')
+            tool.chmod(0o755)
+            with patch.object(audit, 'UNQUOTE', tool):
+                with self.assertRaisesRegex(AssertionError, 'filter failed'):
+                    audit.check_var_perm_copy(self.sources)
 
     def test_task31_overlay_is_applied_to_the_sealed_task16_manifest(self):
         sealed = audit.prior.read_manifest()
