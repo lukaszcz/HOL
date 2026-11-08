@@ -53,6 +53,10 @@ POLICY = a.EQUIVALENCE_POLICY  # the timing grid's 3% margin, one definition
 # side) with `performance_schema.layout_units`, as the matrix runner does.
 LAYOUT_SEED = "task31-loading"
 EXTENSION_SEED = LAYOUT_SEED + "-ext"
+# A smoke run checks the harness and nothing else: at most this many pairs of
+# this many fresh imports, and never the seed of a decision run.
+SMOKE_PAIRS, SMOKE_REPS = 2, 1
+SMOKE_SEED = LAYOUT_SEED + "-smoke"
 # The first stage is sized for a per-unit log sd (the sd of the paired log
 # ratio times sqrt(R)) of at most this much: PAIRS * REPS >= required_units.
 UNIT_SD_BOUND = 0.08
@@ -708,10 +712,19 @@ def check_settings(args, first):
             "--smoke and --calibrate are exclusive")
     check_seed(args.layout_seed)
     require(args.timeout > 0, "invalid timeout")
-    if args.smoke or args.calibrate:
+    if args.smoke:
+        require(1 <= args.pairs <= SMOKE_PAIRS and
+                1 <= args.reps <= SMOKE_REPS,
+                "a smoke run is at most %d pairs of %d fresh import (it "
+                "checks the harness; it is not a look at the candidate)" %
+                (SMOKE_PAIRS, SMOKE_REPS))
+        require(args.layout_seed not in (LAYOUT_SEED, EXTENSION_SEED),
+                "a smoke run may not use the layout seed of a decision "
+                "run or of its second stage")
+        return
+    if args.calibrate:
         require(args.reps >= 1, "invalid repetitions")
-        require(args.pairs >= (1 if args.smoke else 10),
-                "calibration requires >=10 pairs (or explicit --smoke)")
+        require(args.pairs >= 10, "calibration requires >=10 pairs")
         return
     require(args.baseline == a.BASE,
             "a decision run's baseline is the develop pin " + a.BASE)
@@ -793,17 +806,43 @@ def inventory_key(inventory):
     return key_of([(s["git_path"], s["git_blob"]) for s in inventory])
 
 
-def table_attempts(state):
-    """(attempt, stage) -> its `open` and `close` lines, for every attempt of
-    the table. An attempt has exactly one opening and at most one close;
-    anything else is a corrupt ledger."""
-    found = {}
+# The keys each event of the table must have: a line without them is a
+# corrupt ledger, not a traceback.
+EVENT_KEYS = dict(
+    open=("attempt", "stage", "candidate", "module", "output", "checkout"),
+    close=("attempt", "stage", "status", "seal", "output"),
+    smoke=("attempt", "candidate", "source_key", "module", "seed", "output",
+           "seal", "checkout"))
+
+
+def table_lines(state):
+    """The lines of the table, each of a known event and with the keys of
+    that event; anything else is a corrupt ledger. Lines of the other tables
+    of the shared ledger are skipped."""
+    lines = []
     for record in state.records:
         if record.get("table") != TABLE:
             continue
-        require(record.get("event") in ("open", "close"),
+        event = record.get("event")
+        require(event in EVENT_KEYS,
                 "corrupt attempts ledger: a line of unknown event %r" %
-                (record.get("event"),))
+                (event,))
+        missing = [k for k in EVENT_KEYS[event] if k not in record]
+        require(not missing, "corrupt attempts ledger: a line of event %r "
+                "lacks %s" % (event, ", ".join(missing)))
+        lines.append(record)
+    return lines
+
+
+def table_attempts(state):
+    """(attempt, stage) -> its `open` and `close` lines, for every attempt of
+    the table. An attempt has exactly one opening and at most one close;
+    anything else is a corrupt ledger. A `smoke` line is no attempt: it
+    judges nothing and is listed apart (`table_smokes`)."""
+    found = {}
+    for record in table_lines(state):
+        if record["event"] == "smoke":
+            continue
         row = found.setdefault((record["attempt"], record["stage"]),
                                dict(opens=[], closes=[]))
         row[record["event"] + "s"].append(record)
@@ -813,6 +852,18 @@ def table_attempts(state):
                 "opening and %d close lines" % (
                     attempt, stage, len(row["opens"]), len(row["closes"])))
     return found
+
+
+def table_smokes(state, candidate=None, key=None, module=None):
+    """The smoke runs the ledger records, in order: all of them, or those of
+    this module and of this candidate commit or extracted-source key."""
+    return [{k: v for k, v in r.items() if k not in ("prev", "time",
+                                                     "event", "table")}
+            for r in table_lines(state)
+            if r["event"] == "smoke" and
+            (module is None or r["module"] == module) and
+            (candidate is None or r["candidate"] == candidate or
+             (key is not None and r["source_key"] == key))]
 
 
 PROCESS_PHASES = ("control", "candidate")
@@ -889,27 +940,48 @@ def gate_attempts(found, candidate, key, module, stage):
               row["opens"][0].get("source_key") == key))}
 
 
-def judged(rows):
-    """The attempts that count as the draw: all but the void ones."""
+def reasons(found):
+    """(attempt, stage) -> None when void, else why judged: each attempt's
+    output is read once, and everything derived from it uses this."""
+    return {k: judged_because(k[0], k[1], row) for k, row in found.items()}
+
+
+def judged(rows, why=None):
+    """The attempts that count as the draw: all but the void ones. `why` is
+    the `reasons` of the attempts, when already read."""
+    if why is None:
+        why = reasons({(i, row["opens"][0]["stage"]): row
+                       for i, row in rows.items()})
     return sorted(i for i, row in rows.items()
-                  if not is_void(i, row["opens"][0]["stage"], row))
+                  if why[i, row["opens"][0]["stage"]] is not None)
 
 
-def attempts_table(found):
+def attempts_table(found, why=None):
     """Every attempt of the table, other candidates' included: what the
     handoff publishes, and what a blocked gate is diagnosed from."""
+    why = reasons(found) if why is None else why
     table = []
     for (i, st), r in found.items():
-        why = judged_because(i, st, r)
         table.append(dict(
             attempt=i, stage=st, candidate=r["opens"][0]["candidate"],
             source_key=r["opens"][0].get("source_key"),
             module=r["opens"][0]["module"],
             statuses=[c["status"] for c in r["closes"]] or ["unclosed"],
-            void=why is None, judged_because=why,
+            void=why[i, st] is None, judged_because=why[i, st],
             output=r["opens"][0]["output"],
             checkout=r["opens"][0]["checkout"]))
     return table
+
+
+def require_ignored(path, repo):
+    """The ledger, when inside the checkout, is excluded from git."""
+    if path.resolve().is_relative_to(Path(repo).resolve()):
+        ignored = subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", "-q", str(path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        require(ignored.returncode == 0, "the attempts ledger would be "
+                "tracked by git: exclude .agent-files first, in the file "
+                "`git rev-parse --git-path info/exclude` names: %s" % path)
 
 
 def refuse_second_draw(path, args, stage, key):
@@ -917,14 +989,7 @@ def refuse_second_draw(path, args, stage, key):
     module, and this candidate commit or extracted-source key) has no judged
     attempt at this stage yet."""
     import timing_grid as tg
-    inside = path.resolve().is_relative_to(Path(args.repo).resolve())
-    if inside:
-        ignored = subprocess.run(
-            ["git", "-C", str(args.repo), "check-ignore", "-q", str(path)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        require(ignored.returncode == 0, "the attempts ledger would be "
-                "tracked by git: exclude .agent-files first, in the file "
-                "`git rev-parse --git-path info/exclude` names: %s" % path)
+    require_ignored(path, args.repo)
     if not path.exists():
         return
     found = judged(gate_attempts(table_attempts(tg.Ledger(path)),
@@ -959,9 +1024,25 @@ def ledger_status(args):
     import timing_grid as tg
     path = args.ledger or ledger_path(Path(args.repo).resolve(strict=True))
     require(path.is_file(), "no attempts ledger: %s" % path)
-    table = attempts_table(table_attempts(tg.Ledger(path)))
+    state = tg.Ledger(path)
+    table = attempts_table(table_attempts(state))
     return dict(ledger=str(path), table=[
-        r for r in table if args.module in (None, r["module"])])
+        r for r in table if args.module in (None, r["module"])],
+        smokes=table_smokes(state, module=args.module))
+
+
+def record_smoke(path, args, report, output, keys, repo):
+    """Append the line of a smoke run, whatever its outcome: information
+    only, never an attempt, never judged or void."""
+    import timing_grid as tg
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tg.ledger_append(
+        path, event="smoke", table=TABLE,
+        attempt="smoke-" + uuid.uuid4().hex[:12], candidate=args.candidate,
+        baseline=args.baseline, source_key=keys["candidate"],
+        module=args.module, seed=args.layout_seed, pairs=args.pairs,
+        reps=args.reps, success=report["success"], output=str(output),
+        seal=a.seal(output / "loading.json")["sha256"], checkout=str(repo))
 
 
 def close_attempt(path, report, output):
@@ -1016,20 +1097,21 @@ def check_ledger(path, report, seal, status, first_attempt):
     require(len(closes) == 1 and closes[0]["seal"] == seal["sha256"] and
             closes[0]["status"] == status,
             "the ledger's close does not name this loading.json and decision")
+    why = reasons(found)
     rows = gate_attempts(found, want[0], key, want[1], stage)
-    counted = judged(rows)
+    counted = judged(rows, why)
     others = [i for i in counted if i != attempt]
     require(not others and attempt in counted,
             "another judged attempt exists for this candidate (or "
             "extracted-source key), module and stage; every attempt's "
             "output must stay at its recorded path, void ones included: " +
-            "; ".join("%s (%s)" % (i, judged_because(
-                i, stage, rows[i]) or "void") for i in others))
+            "; ".join("%s (%s)" % (i, why[i, stage]) for i in others))
     counts = {}
     for st in ("first", "second"):
         got = gate_attempts(found, want[0], key, want[1], st)
-        counts[st] = dict(attempts=len(got), judged=len(judged(got)))
-    counts["table"] = attempts_table(found)
+        counts[st] = dict(attempts=len(got), judged=len(judged(got, why)))
+    counts["table"] = attempts_table(found, why)
+    counts["smokes"] = table_smokes(state, want[0], key, want[1])
     places = sorted({r["checkout"] for r in counts["table"]})
     if len(places) > 1:
         counts["checkouts"] = places
@@ -1053,10 +1135,13 @@ def run(args, first=None):
             "candidate eight-process --api-audit receipt required")
     repo, output = args.repo.resolve(strict=True), args.output.resolve()
     ledger = None if light else ledger_path(repo)
+    smoke_ledger = ledger_path(repo) if args.smoke else None
     # Before anything is created: a revision without sources is refused here.
     keys = {side: source_key(repo, getattr(args, side))
             for side in ("baseline", "candidate")}
     with a.serial_lock(repo) as fds:
+        if smoke_ledger is not None:
+            require_ignored(smoke_ledger, repo)
         if ledger is not None:
             refuse_second_draw(ledger, args, "first" if first is None
                                else "second", keys["candidate"])
@@ -1302,6 +1387,8 @@ def run(args, first=None):
                 report["blocked"] = str(error)
         finally:
             a.save(output / "loading.json", report)
+            if smoke_ledger is not None:
+                record_smoke(smoke_ledger, args, report, output, keys, repo)
         if ledger is not None:
             close_attempt(ledger, report, output)
     return report
@@ -1525,14 +1612,16 @@ def main(argv=None):
     parser.add_argument("--candidate")
     parser.add_argument("--module", choices=MODULES)
     parser.add_argument("--pairs", type=int,
-                        help="pairs of --smoke/--calibrate runs; a decision "
-                        "run is exactly %d" % PAIRS)
+                        help="pairs of --smoke (at most %d) or --calibrate "
+                        "runs; a decision run is exactly %d" %
+                        (SMOKE_PAIRS, PAIRS))
     parser.add_argument("--reps", type=int,
                         help="fresh processes per side of a pair; a "
                         "decision run is exactly %d" % REPS)
     parser.add_argument("--layout-seed",
-                        help="code-layout seed (smoke/calibration); a "
-                        "decision run uses " + LAYOUT_SEED)
+                        help="code-layout seed (smoke/calibration; not "
+                        "a decision run's); a decision run uses " +
+                        LAYOUT_SEED)
     parser.add_argument("--calibrate", action="store_true",
                         help="B/B only: measure jitter, derive the counts")
     parser.add_argument("--extend", type=Path, metavar="RUN_DIR",
@@ -1554,7 +1643,10 @@ def main(argv=None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--api-audit", type=Path)
     parser.add_argument("--timeout", type=float)
-    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke", action="store_true",
+                        help="a harness check of at most %d pairs of %d "
+                        "import, recorded in the attempts ledger" %
+                        (SMOKE_PAIRS, SMOKE_REPS))
     parser.add_argument("--authorize-measurements", action="store_true")
     args = parser.parse_args(argv)
     given = {k for k, v in vars(args).items() if v not in (None, False)}
@@ -1607,7 +1699,8 @@ def main(argv=None):
             if args.calibrate and args.candidate is None:
                 args.candidate = args.baseline
             require(args.candidate, "--candidate required")
-            args.layout_seed = args.layout_seed or LAYOUT_SEED
+            args.layout_seed = args.layout_seed or (
+                SMOKE_SEED if args.smoke else LAYOUT_SEED)
             light = args.smoke or args.calibrate
             args.pairs = args.pairs or (
                 PAIRS if not light else 1 if args.smoke else 10)

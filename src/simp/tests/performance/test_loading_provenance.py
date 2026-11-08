@@ -234,6 +234,8 @@ class BuildBinding(unittest.TestCase):
             timeout=30, layout_seed=l.LAYOUT_SEED,
             authorize_measurements=True, api_audit=None,
             output=self.repo / "output")
+        if changes.get("smoke", True):
+            options.layout_seed = l.SMOKE_SEED
         options.__dict__.update(changes)
         install = l.install
 
@@ -902,6 +904,125 @@ class BuildBinding(unittest.TestCase):
             l.ledger_status(SimpleNamespace(
                 repo=self.repo, ledger=None, module=None))
 
+    def test_a_line_of_unknown_event_or_missing_key_fails_replay_too(self):
+        self.decision_settings()
+        self.assertTrue(self.decide("good")["success"])
+        good = self.ledger.read_bytes()
+        self.assertEqual(l.main(["--replay", str(self.repo / "good")]), 0)
+        attempt = self.records()[0]["attempt"]
+        tg.ledger_append(self.ledger, event="decision", table=l.TABLE,
+                         stage="first", attempt=attempt)
+        with self.assertRaisesRegex(ValueError, "unknown event"):
+            l.replay(self.repo / "good")
+        with patch("sys.stderr"):
+            self.assertEqual(l.main(["--replay", str(self.repo / "good")]),
+                             1)
+        # A missing key is a corrupt ledger for a new run, --ledger-status
+        # and replay, never a traceback.
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        for line, missing in (
+                (dict(event="open", stage="first"), "attempt"),
+                (dict(event="open", attempt="x", stage="first"),
+                 "candidate"),
+                (dict(event="close", attempt="x", stage="first",
+                      status="fail"), "seal"),
+                (dict(event="smoke", attempt="x", candidate=self.pin),
+                 "source_key")):
+            with self.subTest(line=line):
+                self.ledger.write_bytes(good)
+                tg.ledger_append(self.ledger, table=l.TABLE, **line)
+                with self.assertRaisesRegex(ValueError,
+                                            "corrupt.*lacks.*" + missing):
+                    self.decide("retry")
+                with self.assertRaisesRegex(ValueError,
+                                            "corrupt.*lacks.*" + missing):
+                    l.ledger_status(status)
+                with self.assertRaisesRegex(ValueError,
+                                            "corrupt.*lacks.*" + missing):
+                    l.replay(self.repo / "good")
+                with patch("sys.stderr"):
+                    self.assertEqual(
+                        l.main(["--replay", str(self.repo / "good")]), 1)
+
+    def smoke_lines(self):
+        return [r for r in self.records() if r["event"] == "smoke"]
+
+    def test_a_smoke_run_is_capped_and_never_uses_a_decision_seed(self):
+        for changes in (dict(pairs=3), dict(reps=2), dict(pairs=40, reps=5),
+                        dict(layout_seed=l.LAYOUT_SEED),
+                        dict(layout_seed=l.EXTENSION_SEED)):
+            with self.subTest(changes=changes), \
+                    self.assertRaisesRegex(ValueError,
+                                           "at most 2 pairs|may not use"):
+                self.run_protocol(**changes)
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "output").exists())
+        self.assertFalse(self.ledger.exists())
+        self.assertTrue(self.run_protocol(pairs=2, reps=1)["success"])
+        cli = ["--smoke", "--baseline", self.pin, "--module", "congLib",
+               "--repo", str(self.repo), "--output", str(self.repo / "cli"),
+               "--authorize-measurements"]
+        for extra in (["--pairs", "3"], ["--reps", "2"],
+                      ["--layout-seed", l.LAYOUT_SEED]):
+            with patch("sys.stderr"):
+                self.assertEqual(l.main(cli + extra), 1)
+        self.assertFalse((self.repo / "cli").exists())
+
+    def test_a_smoke_run_is_recorded_listed_and_never_judged(self):
+        self.decision_settings()
+        report = self.run_protocol(output=self.repo / "smoke1")
+        self.assertTrue(report["success"])
+        self.assertTrue(self.run_protocol(
+            output=self.repo / "smoke2", pairs=2)["success"])
+        # A failed smoke run is recorded too.
+        self.mutation = "install"
+        self.assertFalse(self.run_protocol(
+            output=self.repo / "smoke3")["success"])
+        self.mutation = None
+        lines = self.smoke_lines()
+        self.assertEqual(len(lines), 3)
+        line = lines[0]
+        self.assertEqual(
+            (line["table"], line["candidate"], line["module"],
+             line["seed"], line["output"], line["success"]),
+            (l.TABLE, self.pin, "congLib", l.SMOKE_SEED,
+             str(self.repo / "smoke1"), True))
+        self.assertEqual(line["source_key"],
+                         l.source_key(self.repo, self.pin))
+        self.assertEqual(line["seal"], l.a.seal(
+            self.repo / "smoke1/loading.json")["sha256"])
+        self.assertFalse(lines[2]["success"])
+        # Neither judged nor void: no attempt at all, and no draw blocked.
+        self.assertEqual(l.table_attempts(tg.Ledger(self.ledger)), {})
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        listing = l.ledger_status(status)
+        self.assertEqual(listing["table"], [])
+        self.assertEqual([r["output"] for r in listing["smokes"]],
+                         [r["output"] for r in lines])
+        self.assertEqual(l.ledger_status(SimpleNamespace(
+            repo=self.repo, ledger=None, module="simpLib"))["smokes"], [])
+        self.assertEqual(l.main(["--ledger-status", "--repo",
+                                 str(self.repo)]), 0)
+        self.assertTrue(self.decide("good")["success"])
+        info = l.replay(self.repo / "good")
+        self.assertEqual(info["attempts"]["first"],
+                         dict(attempts=1, judged=1))
+        self.assertEqual([r["output"] for r in info["attempts"]["smokes"]],
+                         [r["output"] for r in lines])
+        # The smoke runs themselves replay as plain smoke replays.
+        self.ledger.unlink()
+        smoke = l.replay(self.repo / "smoke1")
+        self.assertEqual((smoke["replayed"], smoke["exit"]), (6, None))
+        self.assertNotIn("attempts", smoke)
+
+    def test_a_smoke_run_needs_an_ignored_ledger(self):
+        exclude = self.repo / ".git/info/exclude"
+        exclude.write_text(exclude.read_text().replace(".agent-files\n", ""))
+        with self.assertRaisesRegex(ValueError, "tracked by git"):
+            self.run_protocol()
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "output").exists())
+
     def test_the_receipt_names_have_one_definition(self):
         label = l.receipt_label("control", 7, "baseline", 3)
         self.assertEqual(label, "control-007-baseline-03")
@@ -1070,6 +1191,7 @@ class BuildBinding(unittest.TestCase):
         second = self.repo / "second"
         info = l.replay(second)
         table = info["attempts"].pop("table")
+        self.assertEqual(info["attempts"].pop("smokes"), [])
         self.assertEqual(info["attempts"], dict(
             first=dict(attempts=1, judged=1),
             second=dict(attempts=1, judged=1)))
@@ -1088,6 +1210,7 @@ class BuildBinding(unittest.TestCase):
             l.replay(second)
         again = l.replay(second, ledger=copy)
         again["attempts"].pop("table")
+        again["attempts"].pop("smokes")
         self.assertEqual(again, info)
         self.assertEqual(l.main(["--replay", str(second), "--ledger",
                                  str(copy)]), 0)

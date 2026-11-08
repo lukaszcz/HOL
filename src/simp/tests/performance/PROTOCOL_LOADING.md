@@ -36,13 +36,18 @@ selected implementation sources. Output directories must not already exist.
 
 Other modes:
 
-- `--smoke --pairs P --reps R`: protocol check of P >= 1 pairs. No
-  statistics; the audit receipt may be omitted. Never performance evidence.
+- `--smoke --pairs P --reps R`: protocol check of the harness, at most 2
+  pairs of 1 import (`loading.SMOKE_PAIRS`, `SMOKE_REPS`). No statistics;
+  the audit receipt may be omitted. Never performance evidence. A smoke run
+  may not use the layout seed of a decision run or of its second stage
+  (default `loading.SMOKE_SEED`). Every smoke run, whatever its outcome, is
+  recorded in the attempts ledger as a `smoke` line (see Attempts ledger).
 - `--calibrate --pairs P --reps R`: pilots and the B/B phase only
   (P >= 10). Reports the jitter quantities below. No candidate phase, no
   audit receipt, no decision.
-- `--layout-seed S`: the layout seed of a smoke or calibration run. A
-  decision run uses `loading.LAYOUT_SEED`. At most 58 characters.
+- `--layout-seed S`: the layout seed of a smoke or calibration run (a
+  smoke run: neither of the decision seeds). A decision run uses
+  `loading.LAYOUT_SEED`. At most 58 characters.
 - `--extend RUN_DIR --output DIR`: the one second stage of a first-stage
   decision run (see Counts and the second stage).
 - `--replay RUN_DIR`: recompute a finished run from its receipts (see
@@ -244,11 +249,11 @@ The rules:
   timer fields; the first control process is baseline against baseline, so
   such data can only be baseline data;
 - `blocked` is a finding about the candidate and is always judged. A
-  rejection of a baseline process, an extension (the baseline
-  is `loading.a.BASE`, which has no extensions), is not: it closes `failed`
-  and follows the void rule, so it is void when no control or candidate
-  process was admitted (the baseline pilot is process 1, and pilots are
-  exempt) and judged when one was;
+  baseline process that loads an extension (the baseline `loading.a.BASE`
+  has none, so this is a harness or environment defect) is rejected but
+  not `blocked`: the run closes `failed` and follows the void rule, so it
+  is void when no control or candidate process was admitted (the baseline
+  pilot is process 1, and pilots are exempt) and judged when one was;
 - a void attempt may be redrawn, and stays in the ledger;
 - the outputs of all attempts, void ones included, stay at their recorded
   paths and are published with the ledger: a void attempt is void only while
@@ -258,8 +263,19 @@ The rules:
   measuring, blocked) blocks the gate for that candidate, source key and
   module and stage;
 - an attempt with more than one close line or without exactly one opening,
-  and a line of the table with an event other than `open` or `close`, is a
-  corrupt ledger, refused both for a new run and in replay;
+  a line of the table with an event other than `open`, `close` or `smoke`,
+  and a line that lacks a key its event requires, is a corrupt ledger,
+  refused for a new run, in `--ledger-status` and in replay;
+- a smoke run is recorded as one `smoke` line (taken under the serial lock,
+  after the check that the ledger is excluded from git, and written when
+  the run ends, whatever its outcome): the candidate, baseline, source key,
+  module, seed, pairs, repetitions, output, checkout and the seal of its
+  `loading.json`. It is information only: it is no attempt, never judged or
+  void, and blocks no draw. `--ledger-status` and the replay of a decision
+  run list the smokes of the same module and the same candidate commit or
+  source key. A smoke archive made before the line existed replays as a
+  plain smoke replay, and a smoke replay needs no ledger. The outputs of
+  smoke runs are published with the ledger;
 - `--extend` replays its first stage against the ledger before it runs;
 - `--replay` checks the run against the ledger and prints every attempt of
   the table (id, stage, candidate, source key, module, statuses, void and,
