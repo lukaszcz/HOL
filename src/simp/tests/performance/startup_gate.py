@@ -9,7 +9,7 @@ by the procedure of `allocator-counter/bootstrap_probe` (`build_native_hol`),
 once per tree, never in place.
 
   build    one native Poly/ML, the private runtime and shim, and any number
-           of clean HOL trees (label=rev[+patch]); writes lineage.json
+           of clean HOL trees (label=rev[+mktool]); writes lineage.json
   gate     the decision (rules R1 to R3 below) over at least two baseline
            and two candidate images
   replay   recomputes the decision from the archive alone
