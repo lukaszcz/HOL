@@ -129,7 +129,7 @@ def main():
             repo, "status", "--porcelain=v1").decode()
         inputs = [HERE / name for name in (
             "selftest.sml", "run_behavior.py", "test_behavior.py", "README.md",
-            "AUDIT.md", "Holmakefile")]
+            "Holmakefile")]
         abi = paired.HERE.parent / "performance/review-20261021/abicheck.sml"
         inputs += [Path(fragments.__file__), Path(paired.__file__), abi,
                    *sorted((paired.HERE / "paired").glob("*.sml")),

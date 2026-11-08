@@ -41,17 +41,8 @@ TASK05 separately owns exact inference counts, grammar/context changes, late
 fragment/abbreviation lookup, malformed bounds, ordering quirks and global tactic
 construction. See `../compatibility/STAGING_CONTRACTS.md`. Explicit extension
 recursion and marker controls remain in `../markers/selftest.sml`/TASK20;
-ordinary reentry here never imports those modules. See `AUDIT.md` for the exact
-source boundary. No production or generic-marker body needs a further edit:
-TASK16 already restored the original implementation. Final commands, source
-seals and receipts are in `evidence/task18/validation.json`; recheck offline:
-
-```sh
-python3 -B src/simp/tests/tactics/audit_evidence.py
-python3 -B src/simp/tests/tactics/performance/evidence/recheck.py
-python3 -B src/simp/tests/tactics/performance/evidence/followup.py --archive
-```
-
-Bounded acceptance and measured uncertainties are recorded in
-`../compatibility/TASK_18_HANDOFF.md`. Numerical parity and independent clean
-builds are not inferred from identical local source/native instructions.
+ordinary reentry here never imports those modules. The ordinary
+`simpLib.{sml,sig}` pair is byte-identical to develop
+(`cccaa27d7099cbadc886983020cbe745db7793f3`), checked by
+`performance/audit_sources.py`. Numerical parity and independent clean builds
+are not inferred from identical local source/native instructions.

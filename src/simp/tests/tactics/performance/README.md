@@ -1,14 +1,8 @@
 # TASK18 ordinary tactic staging performance
 
-**Measured in the parent-authorized exclusive window.** See
-`evidence/RESULTS.md`, `evidence/ROWS.md` and `evidence/LOCAL_COSTS.md`.
-Two original final 10-pair campaigns and targeted current/control codegen
-are retained. The original seven GC family-slower rows and individual CPU
-observation are followed up in `evidence/FOLLOWUP.md`: eight focused rows,
-16× batches, 10 fresh current/control pairs each, and separate heap traces.
-No longer slower interval reproduces; unresolved is still not parity.
-No HOL process, launcher build or timing runs implicitly. `Holmake all` only
-runs offline Python controls. This subtree owns no production/shared files.
+Measurements need an exclusive window. No HOL process, launcher build or
+timing run happens implicitly. `Holmake all` only runs offline Python
+controls. This subtree owns no production/shared files.
 
 ## Offline checks
 
@@ -88,11 +82,10 @@ python3 -B "$P/summarize.py" \
   --output /tmp/task18-tactic-analysis.json
 ```
 
-`fixed-iterations.json` retains the initial schedule. `final-iterations.json`
-was derived from every initial sample on both sides: multiply each count by
+`fixed-iterations.json` is the initial schedule. `final-iterations.json`
+is derived from every initial sample on both sides: multiply each count by
 `max(1, ceil(0.12 / minimum_initial_wall_seconds))`. No candidate-specific
-schedule or discarded observation. Actual final batches including calibration
-span 0.078829–0.828066 s, versus initial sub-millisecond construction batches.
+schedule or discarded observation.
 Each fresh process records one same-count calibration plus >=3 samples per
 key. Final campaigns require >=10 alternating AB/BA fresh process pairs each,
 including baseline control. Durations are observations, not a parity gate.
@@ -117,29 +110,9 @@ zero replacement, or interpretation of uncertainty as parity. A slower
 interval remains visible; spanning one is **unresolved**, never a pass.
 An exit of zero establishes observations, not task/whole-plan acceptance.
 
-`evidence/receipts.tar.xz` losslessly packs all initial/failure/final/codegen
-receipts and full analysis, decompressing their gzip layer for cross-record
-compression. `archive-index.json.gz` seals both original and stored bytes;
-`recheck.py` recovers identical original compressed receipts in temporary
-storage, reparses all 60 timing processes and re-extracts exact native bodies.
-`sources.tar.xz` holds 90 unique input/selected-source blobs keyed by SHA256.
-No heaps, executables or copied build trees are retained.
-
-```sh
-python3 -B "$P/evidence/recheck.py"
-python3 -B "$P/evidence/report.py"  # regenerate the 66-row ROWS.md
-```
-
 Additional native inspection commands and limitations: `assembly/README.md`.
-The source/codegen result recovers local baseline staging work only; it does
-not waive unresolved total timings or the observed slower GC rows.
 
-## Focused longer follow-up
-
-`evidence/FOLLOWUP_PLAN.md` predeclares the experiment; `evidence/FOLLOWUP.md`
-reports interpretation/limits. `evidence/FOLLOWUP_ROWS.md` preserves all eight
-focused rows and all six metrics beside original results. Original all-66-row
-reports/archives/checksums are unchanged.
+## Focused row selection
 
 Explicit `--rows key1,key2,...` must use original matrix order, unique known
 keys, and a full sealed 66-key schedule. Every selected protocol/proof gate
@@ -148,22 +121,3 @@ skipped, changing adaptive heap history. Family inference stays 66 rows.
 `--gc-trace` selects separate snapshots/debug diagnostics (>=1 pair), which
 `summarize.py` rejects as timing inference. Main timing still requires >=10
 pairs. No measurements run implicitly.
-
-The authorized serial commands are retained in `evidence/run_followup.sh`
-(outputs must be new). Actual batch walls were roughly 0.93–1.40 seconds,
-including calibration. No sample discarded. Runtime diagnostics show adaptive
-nursery/GC-frequency variation, comparable rounded collected-nursery volume
-(not exact allocation equality), and a small larger candidate live heap.
-No stable added ordinary-work signal is demonstrated; universal cost parity
-and whole-plan acceptance remain unestablished.
-
-```sh
-python3 -B "$P/evidence/followup.py" --archive
-python3 -B "$P/evidence/followup_report.py"
-```
-
-`followup-receipts.tar.xz` losslessly retains all 48 new timing/diagnostic
-processes and their builds/manifests/analysis. Recovery verifies original
-compressed hashes, protocols, stage counts, inference and GC trace totals.
-`followup-sources.tar.xz` stores only new sealed blobs, reusing original
-`sources.tar.xz` for unchanged inputs. No copied heaps/build trees retained.
