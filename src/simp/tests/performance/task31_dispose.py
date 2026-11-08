@@ -21,7 +21,7 @@ record, and an identity grid that is inconclusive. Nothing is excused here.
 The 33 infeasible cells (task31_cases.INFEASIBLE) pass by identity alone and
 are recorded as "untimed, unallocated: infeasible", with the numbers of the
 cost survey the command is given (`--survey`, a file of the shape
-survey_cells below; its sha256 is recorded and `--check` reads it again).
+load_survey below; its sha256 is recorded and `--check` reads it again).
 When their identity is `attributed`, the record names the attribution and the
 cells of the same family that measured it (allocation cells of at most 1000
 assumptions that passed with an attributed identity, and the family's cells of
