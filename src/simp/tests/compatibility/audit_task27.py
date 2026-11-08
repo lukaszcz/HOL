@@ -275,6 +275,46 @@ DECLARATION = re.compile(
     re.M)
 
 
+# HOL's quotation filter (bin/unquote, built from tools/parsing/HolLex and
+# HOLSourceExpand) is what the build applies to every .sml file before
+# Poly/ML reads it.  Its declaration forms (`Quote x = f:`, `Theorem`, ...)
+# open quotations with no quotation character, and a quotation body is not
+# SML, so a scanner that read the unfiltered text could be desynchronised
+# from the compiler, or miss a binding.  The var_perm audit therefore reads
+# the filter's output, the text the compiler sees, in which a quotation is
+# an ordinary string or QUOTE list.
+UNQUOTE = ROOT / 'bin/unquote'
+
+
+def quote_filter(source):
+    """`source` (bytes) as HOL's quotation filter writes it for the
+    compiler (two-file, non-interactive mode, as in a build).  Fails closed
+    when the filter is missing or fails, or writes nothing or diagnostics."""
+    require(UNQUOTE.is_file(), 'quotation filter missing (build HOL): ' +
+            str(UNQUOTE))
+    with tempfile.TemporaryDirectory(prefix='task27-unquote-') as directory:
+        infile, outfile = Path(directory) / 'in.sml', Path(directory) / 'out'
+        infile.write_bytes(source)
+        try:
+            completed = subprocess.run(
+                [str(UNQUOTE), str(infile), str(outfile)],
+                capture_output=True, timeout=60,
+                stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise AssertionError('quotation filter did not run: ' +
+                                 str(error))
+        require(completed.returncode == 0 and not completed.stderr,
+                'quotation filter failed: ' +
+                completed.stderr.decode(errors='replace'))
+        require(outfile.is_file(), 'quotation filter wrote no output')
+        filtered = outfile.read_bytes().decode()
+    require(filtered.strip(), 'quotation filter wrote empty output')
+    return filtered
+
+
+# A cheap pre-check that stays: after filtering, no quotation character can
+# remain outside a string, so one that does means the filter and this
+# scanner disagree, and the text is refused.
 QUOTATION = re.compile('[‘’“”`]')
 SML_KEYWORDS = frozenset("""
     abstype and andalso as case datatype do else end eqtype exception fn
@@ -284,23 +324,24 @@ SML_KEYWORDS = frozenset("""
 WORD = re.compile(r"[A-Za-z_][\w']*(?:\.[A-Za-z_][\w']*)*")
 
 
-def lex(text, keep_strings=True):
-    r"""A small, exact SML lexer for what the var_perm audit needs: `text`
-    without its comments (nested; `(*)` opens one), each replaced by a
-    space.  String literals (every escape, and the `\<whitespace>\` gap,
-    which is read explicitly) and `#"c"` literals are kept, or replaced
-    by `""` when `keep_strings` is false.  Anything it cannot classify
-    exactly is refused: an unterminated comment, string or gap, and a
-    HOL quotation character outside a comment (a quotation is not lexed
-    as SML, so a `"` or `(*` inside one would desynchronise this scanner
-    from the compiler; neither Cond_rewr.sml nor Cond_rewrExt.sml has one
-    outside a comment)."""
-    out, i, depth, n = [], 0, 0, len(text)
+def lex(text):
+    r"""A small, exact SML lexer for what the var_perm audit needs, for
+    text already passed through the quotation filter (`quote_filter`).
+    Returns `(kept, blanked)`: `text` without its comments (nested; `(*)`
+    opens one), each replaced by a space, with string literals (every
+    escape, and the `\<whitespace>\` gap, which is read explicitly) and
+    `#"c"` literals kept, or blanked to spaces between their quotes.  The
+    two have the same length, so an offset in one is the same text in the
+    other.  Anything it cannot classify exactly is refused: an
+    unterminated comment, string or gap, and a quotation character outside
+    a comment or string."""
+    kept, blank, i, depth, n = [], [], 0, 0, len(text)
     while i < n:
         c, two = text[i], text[i:i + 2]
         if two == '(*':
             if depth == 0:
-                out.append(' ')
+                kept.append(' ')
+                blank.append(' ')
             depth += 1
             i += 2
         elif depth:
@@ -326,18 +367,20 @@ def lex(text, keep_strings=True):
                     j = k + 1
                 else:
                     j += 2
-            out.append(text[i:j + 1] if keep_strings else '""')
+            kept.append(text[i:j + 1])
+            blank.append('"' + ' ' * (j - i - 1) + '"')
             i = j + 1
         else:
             require(not QUOTATION.match(c), 'quotation outside a comment')
-            out.append(c)
+            kept.append(c)
+            blank.append(c)
             i += 1
     require(depth == 0, 'unterminated comment')
-    return ''.join(out)
+    return ''.join(kept), ''.join(blank)
 
 
 def strip_comments(text):
-    return lex(text)
+    return lex(text)[0]
 
 
 def binder_heads(text):
@@ -360,6 +403,20 @@ def binder_heads(text):
     return heads
 
 
+def fixity_names(text):
+    """The tokens named by each infix/infixr/nonfix declaration of
+    comment-free `text`, up to `;` or the next declaration at the start of
+    a line."""
+    names = set()
+    for m in re.finditer(r'\b(?:infix|infixr|nonfix)\b', text):
+        nxt = DECLARATION.search(text, m.end())
+        end = len(text) if nxt is None else nxt.start()
+        semi = text.find(';', m.end(), end)
+        end = end if semi < 0 else semi
+        names.update(text[m.end():end].split())
+    return names
+
+
 def block_span(text):
     start = text.find('fun vperm')
     perm = text.find('fun is_var_perm', start)
@@ -368,23 +425,28 @@ def block_span(text):
     return start, len(text) if after is None else after.start()
 
 
-def vperm_block(text):
-    """The tokens of `fun vperm` and `fun is_var_perm`, comments removed,
-    up to the next declaration keyword at the start of a line, so that
-    nothing after the last parenthesis of is_var_perm escapes the
-    comparison.  Fails closed (see `lex`) on what it cannot classify, and
-    on shadowing: `vperm` and `is_var_perm` must each be bound exactly
-    once in the file, and no free name of the block (its identifiers,
-    less keywords and the names its own patterns bind) may be bound by
-    val, fun, and, exception, datatype (constructors included) or
-    structure anywhere else in the file.  What `open` brings in is not
-    seen here: the REVIEWED_31 blob seal and the cond-rewr-ext selftest
-    cover it."""
-    text = lex(text)
-    start, end = block_span(text)
-    code = lex(text, keep_strings=False)
-    cstart, cend = block_span(code)
-    block = code[cstart:cend]
+def vperm_block(source):
+    """The tokens of `fun vperm` and `fun is_var_perm` in `source` (bytes),
+    as the quotation filter writes it and with comments removed, up to the
+    next declaration keyword at the start of a line, so that nothing after
+    the last parenthesis of is_var_perm escapes the comparison.  Fails
+    closed (see `quote_filter` and `lex`) on what it cannot classify, on
+    `functor` and `abstype` outside comments and strings (a functor
+    parameter, or an abstype's constructors, bind names with none of the
+    scanned keywords), and on shadowing: `vperm` and `is_var_perm` must
+    each be bound exactly once in the file, and no free name of the block
+    (its identifiers, less keywords and the names its own patterns bind)
+    may be bound by val, fun, and, exception, datatype (constructors
+    included) or structure anywhere else in the file, or be named, with
+    `=`, by an infix, infixr or nonfix declaration.  What `open` brings in
+    is not seen here: the REVIEWED_31 blob seal and the cond-rewr-ext
+    selftest cover it.  The compared tokens and the shadowing analysis
+    are taken from the one filtered text, at the same offsets."""
+    kept, code = lex(quote_filter(source))
+    require(not re.search(r'\b(?:functor|abstype)\b', code),
+            'functor or abstype outside a comment or string')
+    start, end = block_span(code)
+    block = code[start:end]
     heads = binder_heads(code)
     for name in ('vperm', 'is_var_perm'):
         require(sum(name in names for _, names in heads) == 1,
@@ -395,18 +457,21 @@ def vperm_block(text):
     free = {w.split('.')[0] for w in WORD.findall(block)} \
         - SML_KEYWORDS - bound
     for pos, names in heads:
-        if not cstart <= pos < cend:
+        if not start <= pos < end:
             clash = free & set(names)
             require(not clash,
                     'block name rebound: ' + ', '.join(sorted(clash)))
-    return re.findall(r'\w+|\S', text[start:end])
+    clash = (free | {'='}) & fixity_names(code)
+    require(not clash, 'block name given fixity: ' +
+            ', '.join(sorted(clash)))
+    return re.findall(r'\w+|\S', kept[start:end])
 
 
 def check_var_perm_copy(sources):
     """Cond_rewrExt.is_var_perm must be develop's (unexported) block,
     token for token; only layout may differ."""
-    develop = vperm_block(git_source(BASE, SRC + 'Cond_rewr.sml').decode())
-    copy_ = vperm_block(sources[SRC + 'Cond_rewrExt.sml'].decode())
+    develop = vperm_block(git_source(BASE, SRC + 'Cond_rewr.sml'))
+    copy_ = vperm_block(sources[SRC + 'Cond_rewrExt.sml'])
     require(len(develop) > 40 and develop == copy_,
             'Cond_rewrExt.is_var_perm differs from develop Cond_rewr')
 

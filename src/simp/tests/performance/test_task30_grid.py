@@ -600,7 +600,10 @@ class Harness(unittest.TestCase):
 
 
 class Whole(ttg.Rig):
-    """The TASK30 table, run end to end on the stand-ins."""
+    """The TASK30 table, run end to end on the stand-ins.
+
+    The rig gives every `SOURCES` file, `SimpTracking` included, a blob at
+    both commits, so nothing is absent (the Rig default)."""
     pairs, samples = 20, 5
 
     def make_table(self, **kw):
@@ -608,11 +611,6 @@ class Whole(ttg.Rig):
         table.driver, table.counts = self.driver, self.counts
         table.ledger = self.attempts
         return table
-
-    def setUp(self):
-        super().setUp()
-        # The rig gives every `SOURCES` file, `SimpTracking` included, a
-        # blob at both commits, so nothing is absent (the Rig default).
 
     def fake_blob(self, repo, rev, path):
         """As the rig's, but the candidate holds each pinned file at its

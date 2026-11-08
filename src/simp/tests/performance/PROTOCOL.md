@@ -608,43 +608,42 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   `inconclusive`, whatever the cells say. `replay` and the second stage
   re-verify the record against git. This is the evidence for "no extra
   source scan": neither gate sees a scan that allocates nothing and
-  costs a few percent, so the identity of the code on
-  the path, not a measurement, shows that no scan was added there. The
-  boundary: what is not listed stays outside the identity (the kernel, the
-  parser, `ThmAttribute`, `Lib`, `testutils` and the build files among it:
-  every operation and the harness itself go through them, so a change there
-  moves both gates and is for review, not for a list of this size), and the
-  identity of a file says nothing of the data it works on, such as the size
-  of the theory graph; the fixtures fix that. The inventory therefore
-  records, besides the listed files, the sorted name-status list of every
-  file under `src/` that differs between the baseline and the candidate
-  (`source_tree`; `replay` derives it again from git), so everything that
-  differs, listed or not, is published: for the present candidate that
-  includes `ThmAttribute` (additive accessors), the `rawtheory` tool
-  `mktool.ML` and build files, none of them a listed source.
-  A reviewed difference may be pinned: `task30_pins.PINNED` maps a path
-  of the list to the exact candidate blob and the reason. A file that
-  differs is accepted only when its candidate blob is the pinned one; it is
-  then published under `source_identity.reviewed` with its reason, prints no
-  `SOURCE-DIFFERS` and does not change the status. Any other blob of it, and
-  any other file, behaves as above; a pin on a file identical to the
-  baseline or outside the list is an error. A file the candidate adds
+  costs a few percent, so the identity of the code on the path, not a
+  measurement, shows that no scan was added there. The boundary: what is not
+  listed stays outside the identity (the kernel, the parser, `ThmAttribute`,
+  `Lib`, `testutils` and the build files among it: every operation and the
+  harness itself go through them, so a change there moves both gates and is
+  for review, not for a list of this size), and the identity of a file says
+  nothing of the data it works on, such as the size of the theory graph; the
+  fixtures fix that. The inventory therefore records, besides the listed
+  files, the sorted name-status list of every file under `src/` that differs
+  between the baseline and the candidate (`source_tree`; `replay` derives it
+  again from git), so everything that differs, listed or not, is published:
+  for the present candidate that includes `ThmAttribute` (additive
+  accessors), the `rawtheory` tool `mktool.ML` and build files, none of them
+  a listed source. A reviewed difference may be pinned: `task30_pins.PINNED`
+  maps a path of the list to the exact candidate blob and the reason. A file
+  that differs is accepted only when its candidate blob is the pinned one;
+  it is then published under `source_identity.reviewed` with its reason,
+  prints no `SOURCE-DIFFERS` and does not change the status. Any other blob
+  of it, and any other file, behaves as above; a pin on a file identical to
+  the baseline or outside the list is an error. A file the candidate adds
   (absent at the baseline) is recorded with no baseline blob and is accepted
   only with such a pin; unpinned, or absent at both commits, it is refused.
   `replay` and the second stage re-derive all of it, so the record is not
   trusted. The pins are in a file of their own, whose seal every grid
-  records (`pins`) beside the sealed files; a grid replays by the pins it was
-  judged by, the current ones or those kept in `PIN_HISTORY` (in
+  records (`pins`) beside the sealed files; a grid replays by the pins it
+  was judged by, the current ones or those kept in `PIN_HISTORY` (in
   `task30_pins.py`) under the seal of that earlier version (otherwise
-  `changed pins`). `run` refuses, before any
-  measurement, a candidate with a source that differs without a current pin
-  (a stale pin is one), because that grid could never pass: it prints
-  `SOURCE-DIFFERS` and stops. `--only` still measures a diagnostic subset,
-  marked `diagnostic` in its inventory, which has no decisions, can never
-  complete a grid, and cannot be resumed without `--only`. The reviewed
-  difference is the one `note_rewrite` spec added to `Cond_rewr.sig` (see the
-  next item). The pin tests compute the blob of each file in the checkout
-  and compare it with the pin, and with the baseline's.
+  `changed pins`). `run` refuses, before any measurement, a candidate with a
+  source that differs without a current pin (a stale pin is one), because
+  that grid could never pass: it prints `SOURCE-DIFFERS` and stops. `--only`
+  still measures a diagnostic subset, marked `diagnostic` in its inventory,
+  which has no decisions, can never complete a grid, and cannot be resumed
+  without `--only`. The reviewed difference is the one `note_rewrite` spec
+  added to `Cond_rewr.sig` (see the next item). The pin tests compute the
+  blob of each file in the checkout and compare it with the pin, and with
+  the baseline's.
 - **Pins and the sealed source list.** `task30_pins.PINNED` holds only
   `Cond_rewr.sig` (one added spec, `note_rewrite`); `Cond_rewr.sml` is
   develop's and has no pin, since a pin on a file identical to the baseline

@@ -235,8 +235,9 @@ class LiveSourceGate(unittest.TestCase):
                           b'FVL [tm2] empty_tmset))\n')):
             with self.subTest(tail=new):
                 self.assertEqual(source.count(old), 1)
-                with self.assertRaisesRegex(AssertionError,
-                                            'differs from develop'):
+                # the filter itself refuses the unbalanced parenthesis
+                with self.assertRaisesRegex(
+                        AssertionError, 'differs from develop|filter failed'):
                     audit.check_var_perm_copy(
                         {**self.sources, path: source.replace(old, new)})
 
@@ -277,7 +278,11 @@ class LiveSourceGate(unittest.TestCase):
                 (b'vperm(snd t1, snd t2)',
                  b'vperm(snd t1, (* "unmatched *) snd t2)'),
                 (b'fun vperm', b'val _ = "(*"\nval _ = "x\\ \\"\n'
-                 b'val _ = "(*"\nfun vperm')):
+                 b'val _ = "(*"\nfun vperm'),
+                # a quotation is a string once filtered
+                (b'fun vperm',
+                 'val q = \u2018"a" b\u2019\nfun vperm'.encode()),
+                (b'fun vperm', b'Quote q = Lib.I:\n  "a" b\nEnd\nfun vperm')):
             with self.subTest(new=new):
                 self.assertEqual(source.count(old), 1)
                 audit.check_var_perm_copy(
@@ -287,7 +292,6 @@ class LiveSourceGate(unittest.TestCase):
         path = audit.SRC + 'Cond_rewrExt.sml'
         source = self.sources[path]
         tail = b'FVL [tm2] empty_tmset)\n'
-        quote = '\nval q = \u2018x\u2019\n'.encode()
         gap = (b'val _ = "\\ \\"\nval _ = "(*"\n'
                b'fun vperm(tm1,tm2) = true\n'
                b'fun is_var_perm(tm1,tm2) = true\nval _ = "*)"\n'
@@ -296,9 +300,8 @@ class LiveSourceGate(unittest.TestCase):
                b'val _ = " *)\n')
         for old, new, message in (
                 (b'fun vperm', gap + b'fun vperm', 'not bound exactly'),
-                (tail, tail + b'(* andalso false\n', 'unterminated comment'),
-                (tail, tail + b'"x\n', 'unterminated string'),
-                (tail, tail + quote, 'quotation'),
+                (tail, tail + b'(* andalso false\n', 'unclosed comment'),
+                (tail, tail + b'"x\n', 'unclosed string'),
                 (b'type config',
                  b'fun is_var_perm _ = false\ntype config',
                  'not bound exactly'),
@@ -315,6 +318,93 @@ class LiveSourceGate(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, message):
                     audit.check_var_perm_copy(
                         {**self.sources, path: source.replace(old, new)})
+
+    def exploit(self, name, quote):
+        """A modified Cond_rewrExt.sml that HOL's quotation filter turns
+        into a program with a different is_var_perm, from the review of
+        the var_perm check; `quote` is the pair of string brackets."""
+        source = self.sources[audit.SRC + 'Cond_rewrExt.sml']
+        first = source.index(b'fun vperm')
+        last = source.index(b'type config')
+        block = source[first:last]
+        if name == 'E1':
+            # `Quote x = f:` is a val binding of x, with no quote character
+            return source[:first] + (
+                b'fun always _ = fn (_ : term) => fn (_ : term) => true\n'
+                b'Quote aconv = always:\n  x\nEnd\n') + source[first:]
+        if name == 'E2':
+            # a decoy that the filter makes a string, but an unfiltered
+            # scanner reads as code that opens a comment
+            opener, closer = (b.encode() for b in quote)
+            modified = block.replace(b'snd v1 = snd v2', b'true')
+            self.assertNotEqual(modified, block)
+            return (source[:first] + b'Quote ignore:\n' + block +
+                    b'val _ = ' + opener + b'(*' + closer + b'\nEnd\n' +
+                    modified + b'Quote ignore:\n' + opener + b'*)' +
+                    closer + b'\nEnd\n' + source[last:])
+        if name == 'functor':
+            # the parameter rebinds HOLset; the structure applies it
+            old = b'structure Cond_rewrExt :> Cond_rewrExt ='
+            self.assertEqual(source.count(old), 1)
+            return source.replace(
+                old, b"functor CondRewrExtF (HOLset : sig val equal : "
+                b"'a * 'a -> bool end) =") + (
+                b'\nstructure Cond_rewrExt :> Cond_rewrExt = CondRewrExtF '
+                b'(struct fun equal _ = true end)\n')
+        raise ValueError(name)
+
+    def test_var_perm_copy_reads_what_the_quotation_filter_writes(self):
+        path = audit.SRC + 'Cond_rewrExt.sml'
+        self.assertTrue(audit.UNQUOTE.is_file(), 'build HOL: no bin/unquote')
+        for name, quote, message in (
+                ('E1', None, 'rebound: aconv'),
+                ('E2', ('\u00ab', '\u00bb'), 'differs from develop'),
+                ('E2', ('\u2039', '\u203a'), 'differs from develop'),
+                ('functor', None, 'functor or abstype')):
+            with self.subTest(name=name, quote=quote):
+                changed = self.exploit(name, quote)
+                with self.assertRaisesRegex(AssertionError, message):
+                    audit.check_var_perm_copy(
+                        {**self.sources, path: changed})
+
+    def test_var_perm_copy_refuses_abstype_fixity_and_other_binders(self):
+        path = audit.SRC + 'Cond_rewrExt.sml'
+        source = self.sources[path]
+        for old, new, message in (
+                (b'fun vperm', b'abstype u = U with end\nfun vperm',
+                 'functor or abstype'),
+                (b'fun vperm', b'nonfix aconv\nfun vperm', 'fixity: aconv'),
+                (b'fun vperm', b'infix FVL\nfun vperm', 'fixity: FVL'),
+                (b'fun vperm', b'infix 3 snd\nfun vperm', 'fixity: snd'),
+                (b'fun vperm', b'infixr 0 =\nfun vperm', 'fixity: ='),
+                (b'fun vperm',
+                 b'structure HOLset = struct open HOLset '
+                 b'fun equal _ = true end\nfun vperm', 'rebound: HOLset'),
+                (b'fun vperm', b'val x = 1 and aconv = 2\nfun vperm',
+                 'rebound: aconv')):
+            with self.subTest(new=new[:40]):
+                self.assertEqual(source.count(old), 1)
+                with self.assertRaisesRegex(AssertionError, message):
+                    audit.check_var_perm_copy(
+                        {**self.sources, path: source.replace(old, new)})
+        # a fixity declaration of a name the block does not use is fine
+        audit.check_var_perm_copy({**self.sources, path: source.replace(
+            b'fun vperm', b'infix 3 unrelated\nfun vperm')})
+        # the filter itself is a parser: it refuses what it cannot read
+        for decl in (b'infix aconv', b'nonfix ='):
+            with self.assertRaisesRegex(AssertionError, 'filter failed'):
+                audit.check_var_perm_copy({**self.sources, path:
+                    source.replace(b'fun vperm', decl + b'\nfun vperm')})
+
+    def test_var_perm_copy_fails_closed_without_the_filter(self):
+        for tool, message in (
+                (audit.ROOT / 'no/such/unquote', 'filter missing'),
+                (Path('/bin/false'), 'filter failed'),
+                (Path('/bin/true'), 'wrote no output')):
+            with self.subTest(tool=str(tool)):
+                with patch.object(audit, 'UNQUOTE', tool):
+                    with self.assertRaisesRegex(AssertionError, message):
+                        audit.check_var_perm_copy(self.sources)
 
     def test_task31_overlay_is_applied_to_the_sealed_task16_manifest(self):
         sealed = audit.prior.read_manifest()
