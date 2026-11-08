@@ -1,0 +1,278 @@
+{
+  "schema": "task31-iterations-v1",
+  "source": {
+    "sha256": "d62bb568b6b398497e14468cc9335fc7b0410f9073a3395a80ce6daa3a743b94",
+    "bytes": 5121
+  },
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "headroom": 1,
+  "rule": "max over develop processes of ceil(HEADROOM * seconds * n / wall), (n, wall) the final calibration batch of a pilot process, in exact decimal arithmetic",
+  "iterations": {
+    "traversal_construct-0": 10082044,
+    "traversal_context_construct-0": 5138454,
+    "traversal_complete-0": 1708420,
+    "traversal_reuse_hit-0": 2882832,
+    "traversal_reuse_miss-0": 2712261,
+    "traversal_weakening-0": 2944008,
+    "traversal_deep-100": 3014,
+    "traversal_congruence-100": 2987,
+    "traversal_side_conditions-100": 2997,
+    "traversal_failed_candidates-100": 2953,
+    "traversal_saved-100": 3100,
+    "tactic_supplied_complete-100": 5807,
+    "tactic_supplied_complete-1000": 74,
+    "tactic_installed_reuse-1000": 76,
+    "tactic_installed_complete-100": 6353,
+    "tactic_asm_complete-100": 915,
+    "tactic_asm_complete-1000": 26,
+    "tactic_full_complete-100": 22,
+    "tactic_reverse_complete-100": 22,
+    "tactic_no_strip_full_complete-100": 22,
+    "tactic_no_strip_reverse_complete-100": 22,
+    "tactic_global_complete-100": 11,
+    "tactic_req0_complete-100": 11,
+    "tactic_reqd_complete-100": 11,
+    "tactic_req0_reqd_complete-100": 10,
+    "tactic_reqd_req0_complete-100": 10,
+    "tactic_dependency_full_complete-100": 54,
+    "tactic_dependency_reverse_complete-100": 53
+  },
+  "schedule": "warmup",
+  "seconds": {
+    "traversal_construct-0": 1.0,
+    "traversal_context_construct-0": 1.0,
+    "traversal_complete-0": 1.0,
+    "traversal_reuse_hit-0": 1.0,
+    "traversal_reuse_miss-0": 1.0,
+    "traversal_weakening-0": 1.0,
+    "traversal_deep-100": 0.3,
+    "traversal_congruence-100": 0.3,
+    "traversal_side_conditions-100": 0.3,
+    "traversal_failed_candidates-100": 0.3,
+    "traversal_saved-100": 0.3,
+    "tactic_supplied_complete-100": 0.3,
+    "tactic_supplied_complete-1000": 0.3,
+    "tactic_installed_reuse-1000": 0.3,
+    "tactic_installed_complete-100": 0.3,
+    "tactic_asm_complete-100": 0.3,
+    "tactic_asm_complete-1000": 0.3,
+    "tactic_full_complete-100": 0.3,
+    "tactic_reverse_complete-100": 0.3,
+    "tactic_no_strip_full_complete-100": 0.3,
+    "tactic_no_strip_reverse_complete-100": 0.3,
+    "tactic_global_complete-100": 0.3,
+    "tactic_req0_complete-100": 0.3,
+    "tactic_reqd_complete-100": 0.3,
+    "tactic_req0_reqd_complete-100": 0.3,
+    "tactic_reqd_req0_complete-100": 0.3,
+    "tactic_dependency_full_complete-100": 0.3,
+    "tactic_dependency_reverse_complete-100": 0.3
+  },
+  "layout_seed": "task31-layout-1",
+  "pairs": 20,
+  "samples": 5,
+  "target": 0.015,
+  "max_pairs": 120,
+  "sealed": {
+    "task31_cases.py": {
+      "sha256": "62393dfb7adf5f97c75562b42b60ae1e5840c85324f6200438dfe85ef1215083",
+      "bytes": 19339
+    },
+    "task31_pins.py": {
+      "sha256": "d48dc6410cae50fbb4156b9d1c6a7a1888dda68e16a63f88e91f24dad5df4362",
+      "bytes": 5128
+    },
+    "task29_gate.py": {
+      "sha256": "1fa432bb20521f42fa81ac5b02cfe09721585f1310a4647d37b9fa84c72c55fd",
+      "bytes": 9793
+    },
+    "matrix_schema.py": {
+      "sha256": "c138f68cfccda5fad42634de7c1d0c923e32a22fd2769be7a2a1fc0e789d5d63",
+      "bytes": 24114
+    },
+    "performance_schema.py": {
+      "sha256": "a294e485de0730238b3241e23939bc3cdda134410aa8071e90a130a259764ec9",
+      "bytes": 13055
+    },
+    "evidence_bundle.py": {
+      "sha256": "a989e8b177e6237d9cb1a5b3001aa73c1dac5bac060627fb055fd44ae3c78807",
+      "bytes": 4040
+    },
+    "MatrixSupport.sml": {
+      "sha256": "9f988050e26bb7cf50c8c59293da4bbab070bffaf62c24724da0d66a0f58278d",
+      "bytes": 35826
+    },
+    "RuntimeMetrics.sml": {
+      "sha256": "7b5ac22e6bbbe56fbe9401ae0b6a30c8f3d3d79fcc7a0eff3bbcfa09521a0dbd",
+      "bytes": 7326
+    },
+    "review-20261021/abicheck.sml": {
+      "sha256": "0326ab4522fed21de2253eaa0a511556162abf4577bc39459587bc15a6f6a75f",
+      "bytes": 5435
+    },
+    "../compatibility/run_paired.py": {
+      "sha256": "67cab147969d01db0f9887c1a6a71496b8fe631dde5a99bf75e87227bdd855ec",
+      "bytes": 49808
+    },
+    "matrix.json": {
+      "sha256": "45070ad52a09e594e5a0b8e3605bb28e1c90fa5eab7c59e449cae58d54b6e1ce",
+      "bytes": 24048
+    },
+    "../compatibility/paired/CheckSupport.sml": {
+      "sha256": "29ddc7757b9b7836f5e52730f56fec2ee7714aa7d49afdb8e5ba56fd80443ecc",
+      "bytes": 208
+    },
+    "../compatibility/paired/Deferred.sml": {
+      "sha256": "ed36fcce0415ed72169e5748730ee666740c850ad5bb936bf1eb8145aa789a42",
+      "bytes": 136
+    },
+    "../compatibility/paired/Holmakefile": {
+      "sha256": "81f45c792e78bd184e1cdef836a66cd6cadccd35d546729730b64380a38c44cf",
+      "bytes": 241
+    },
+    "../compatibility/paired/Paired.sml": {
+      "sha256": "a930932897e0728e72c048124b0fce7f038bed469e062affa8ebc23a7c8e47b7",
+      "bytes": 1043
+    },
+    "../compatibility/paired/PriorLimits.sml": {
+      "sha256": "a4063fa794aeef77bc0b752a2a28cd0aac870ce1b53348da185579749b14adc4",
+      "bytes": 2191
+    },
+    "../compatibility/paired/runner.sml": {
+      "sha256": "d680c3ff8e66ee190adaa60b8f01fcfdabb04e0f0d0f087139e70276c96fbdb6",
+      "bytes": 2974
+    },
+    "../compatibility/paired/selftest.sml": {
+      "sha256": "41583212047d466d897c4f9478b00ce20cefa7d0fb8d98b659c8ffc29a085aa5",
+      "bytes": 2125
+    },
+    "ClientPerformance.sml": {
+      "sha256": "409311f55dec2564e33ff1637a9253d5b9f22e85129b82b981a395fb47ba5e33",
+      "bytes": 16585
+    },
+    "client_dependencies.py": {
+      "sha256": "589fc81abb838dabc49d75b02de0c9c1421afb7bba6369ead54a07e1dd55a66b",
+      "bytes": 11174
+    }
+  },
+  "pilot": {
+    "inventory": {
+      "sha256": "096657ae8b928ef77b58d20ee9c6b4803e64b4dcf797de1ad92a4d4f2b71b670",
+      "bytes": 28764
+    },
+    "archives": {
+      "traversal_construct-0": {
+        "sha256": "ee30635a469718c30031a5f78e12756846f5865c03eaef662e089875773bcfbb",
+        "bytes": 402720
+      },
+      "traversal_context_construct-0": {
+        "sha256": "a3c858ff6c2d84cbfc53dc533224fa0ef94fabe9e9b360c1eb10c2b9ca84a990",
+        "bytes": 399744
+      },
+      "traversal_complete-0": {
+        "sha256": "1bde8f312626bbf313ff11d5f6b4f22eba19217c2e60d58bb65e441d239c71a5",
+        "bytes": 400964
+      },
+      "traversal_reuse_hit-0": {
+        "sha256": "3896640b156a9ed68a68b96eeeadb28e6f0741c3d5a9aad373680d22760df9ce",
+        "bytes": 400396
+      },
+      "traversal_reuse_miss-0": {
+        "sha256": "ec8345a7bb94a9d6704270b67813a6baa79567fa4a2ce62e33b5ed8357020020",
+        "bytes": 400780
+      },
+      "traversal_weakening-0": {
+        "sha256": "11dd88a8e6b90c12a835cdb3842bbd151ca72033c90e88a09ec08dd804ac8a36",
+        "bytes": 401864
+      },
+      "traversal_deep-100": {
+        "sha256": "88bf1184180ec6080975bd57909eac7030969cbef1a05a198409f881200695a8",
+        "bytes": 385752
+      },
+      "traversal_congruence-100": {
+        "sha256": "36dd27dfc4d28505bfdfa9121926ea0603fd7123b6efd6f4e7ac0b1d1b541a69",
+        "bytes": 384348
+      },
+      "traversal_side_conditions-100": {
+        "sha256": "2b7b6a33659b4cf8ecb8030497e67895359019f49e68e29a884703e3d894bb01",
+        "bytes": 382940
+      },
+      "traversal_failed_candidates-100": {
+        "sha256": "14fb23e7d15370c8c7684111246e12f5e254d8df8533472cba1c900051e8d0ca",
+        "bytes": 385236
+      },
+      "traversal_saved-100": {
+        "sha256": "3aab3cf594cd08c8716dff5e9229cd23b4bf4e02997600bdbc5aee36113c35b3",
+        "bytes": 384660
+      },
+      "tactic_supplied_complete-100": {
+        "sha256": "0099e640db00c32d6f717f7fd586bad2d4091083f68d681c708a96dd9e3f2056",
+        "bytes": 381260
+      },
+      "tactic_supplied_complete-1000": {
+        "sha256": "25f03c9533cc241e3b548281cf39d4ae9b16a360432558c71c9ef97df6fd8547",
+        "bytes": 371720
+      },
+      "tactic_installed_reuse-1000": {
+        "sha256": "4f38df8637ff77bbfac8386289d756afff0f3ae9af8bf7022e00e438bac20f7f",
+        "bytes": 372560
+      },
+      "tactic_installed_complete-100": {
+        "sha256": "64b86bfc326dec47b7de6cfc8cf4787d1c8f3222063d1966e962ad087bea8789",
+        "bytes": 380052
+      },
+      "tactic_asm_complete-100": {
+        "sha256": "7b588790a5abf5478e411feb5f3fa477626095879ab26f092fedf2dcd6386f90",
+        "bytes": 380752
+      },
+      "tactic_asm_complete-1000": {
+        "sha256": "95665bba38157b3e8ca18c3f0eed3353d42f5a292c808c2aa7c1c5cbe9f67e95",
+        "bytes": 369624
+      },
+      "tactic_full_complete-100": {
+        "sha256": "6c303cd03bf06b50b240dffa140f4e0830e2984d80c246b24dd7478d1ede1c4a",
+        "bytes": 372524
+      },
+      "tactic_reverse_complete-100": {
+        "sha256": "ae0cf5364ee5e19ff051be2be306f893595dcadcc62c7cfa66cb2cbcd6b84fc5",
+        "bytes": 371664
+      },
+      "tactic_no_strip_full_complete-100": {
+        "sha256": "ad44298c92b9f80c79a7d67b401ca46da54e6d65e12d3ef863dbd9872cfae211",
+        "bytes": 373300
+      },
+      "tactic_no_strip_reverse_complete-100": {
+        "sha256": "44895fd8cf4ae9f47486e1fd80e531d1251c51ca36e6b48be3c5397b5b701125",
+        "bytes": 372788
+      },
+      "tactic_global_complete-100": {
+        "sha256": "c000c890924427eba7f1e17dfcf2c6335cf9c62d09bac465054ce663473af03e",
+        "bytes": 370472
+      },
+      "tactic_req0_complete-100": {
+        "sha256": "69a0e7dcf419bc175f70e1fd1a54368cd76954f808537a35c4212b3a73fe4ad0",
+        "bytes": 370200
+      },
+      "tactic_reqd_complete-100": {
+        "sha256": "18c9696fb601132d0b5654e208373c5e454dc2ab8c22a18818fa61193e2a7798",
+        "bytes": 371232
+      },
+      "tactic_req0_reqd_complete-100": {
+        "sha256": "c2f5504487913b203738fd2f6a78d03adc166630d6ad0efbe91ce4bc62fbf40a",
+        "bytes": 369712
+      },
+      "tactic_reqd_req0_complete-100": {
+        "sha256": "32ea369372756ddcbeabedf61028810d6e41e67ab8cc5a41f4be1a32096c1884",
+        "bytes": 370500
+      },
+      "tactic_dependency_full_complete-100": {
+        "sha256": "abad8b3946c7ca43faf18091dc38d4ad552501d2987a3fb59d0d6e4d55bf2895",
+        "bytes": 373680
+      },
+      "tactic_dependency_reverse_complete-100": {
+        "sha256": "0efb72181457b7795dced7cf2ce56e8bfa0716fa61f1f63d2f62748d8c2ccad2",
+        "bytes": 373792
+      }
+    }
+  }
+}
