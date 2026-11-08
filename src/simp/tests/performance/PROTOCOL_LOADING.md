@@ -59,8 +59,14 @@ Other modes:
 - `--ledger-status`: list the attempts of the ledger (see Attempts
   ledger).
 
-Exit status of a decision run: 0 only if every gated metric passes, 1 if
-any gated metric fails, 2 for an inconclusive or blocked result.
+Exit status: 0 for a smoke or calibration run that succeeds, and for a
+decision run only if every gated metric passes. 2 for an inconclusive or
+blocked decision result, and for any run that did not succeed
+(`"success": false`); its reason is printed on stderr. 1 if any gated
+metric fails, and also for a refused run (an argument, ledger or output
+check that stops the run before a report exists). The two cases of 1 differ
+in the output: a measured failure prints the report line on stdout, a
+refusal prints nothing on stdout and its message on stderr.
 
 ## Timed boundary and proof check
 

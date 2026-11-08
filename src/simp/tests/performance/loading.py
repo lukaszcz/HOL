@@ -1463,7 +1463,8 @@ def run(args, first=None):
                 report["success"] = True
         except (ValueError, OSError, KeyError, IndexError, TypeError,
                 subprocess.SubprocessError) as error:
-            report["failure"] = str(error)
+            report["failure"] = (
+                "%s: %s" % (type(error).__name__, error))
             if isinstance(error, Blocked):
                 report["blocked"] = str(error)
         finally:

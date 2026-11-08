@@ -1227,6 +1227,12 @@ class BuildBinding(unittest.TestCase):
         self.assertIn("Not a directory", err.getvalue())
         self.assertIn("blocker", err.getvalue())
 
+    def test_a_failure_reason_names_the_exception_class(self):
+        self.mutation = "discovery-failure"
+        report = self.run_protocol()
+        self.assertFalse(report["success"])
+        self.assertRegex(report["failure"], r"^[A-Za-z]+: ")
+
     def test_a_smoke_never_saves_into_a_directory_it_did_not_make(self):
         foreign = self.repo / "foreign"
         open_smoke = l.open_smoke

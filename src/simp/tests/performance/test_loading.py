@@ -2,6 +2,7 @@
 """Non-timing loading protocol regressions; synthetic logs are NOT evidence."""
 import copy
 import gzip
+import io
 import importlib.util
 import json
 import math
@@ -789,6 +790,26 @@ class ExitTests(unittest.TestCase):
             with self.subTest(decision=decision), \
                     patch.object(l, "run", return_value=report):
                 self.assertEqual(l.main(argv), code)
+
+    def test_cli_tells_a_refusal_from_a_measured_failure(self):
+        argv = ["--baseline", "a" * 40, "--candidate", "b" * 40,
+                "--module", "congLib", "--output", "/unused"]
+        report = dict(success=True, mode="isolated-source",
+                      module="congLib", stage="first",
+                      results={"candidate": {"metrics": {
+                          "cpu": {"decision": "fail"}}}})
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(l, "run", return_value=report), \
+                patch("sys.stdout", out), patch("sys.stderr", err):
+            self.assertEqual(l.main(argv), 1)
+        self.assertIn('"success": true', out.getvalue())
+        self.assertEqual(err.getvalue(), "")
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(l, "run", side_effect=ValueError("refused")), \
+                patch("sys.stdout", out), patch("sys.stderr", err):
+            self.assertEqual(l.main(argv), 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("refused", err.getvalue())
 
     def test_cli_requires_inputs_except_for_replay(self):
         self.assertEqual(l.main(["--module", "simpLib"]), 1)
