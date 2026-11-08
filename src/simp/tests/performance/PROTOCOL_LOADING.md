@@ -280,10 +280,10 @@ The rules:
   directory is created or any process starts, a `smoke` line is appended:
   attempt id, candidate, baseline, both source keys, module, seed, pairs,
   repetitions, output and checkout. When the line cannot be appended,
-  nothing runs. When the run
-  ends, whatever its outcome, a `smoke-end` line names the attempt, its
-  `success` and, if its `loading.json` was saved, the seal of it. A smoke
-  with no end line (its run was killed, or the end line could not be
+  nothing runs. When the run ends, whatever its outcome, a `smoke-end` line
+  names the attempt, its `success` and, if its `loading.json` was saved, the
+  seal of it. A smoke never saves into an output directory it did not create.
+  A smoke with no end line (its run was killed, or the end line could not be
   written) is listed as `unfinished`. A smoke is information only: it is no
   attempt, never judged or void, and blocks no draw. `--ledger-status`
   lists every smoke (those of `--module` when given). The replay of a

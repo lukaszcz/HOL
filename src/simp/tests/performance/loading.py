@@ -892,7 +892,7 @@ def table_attempts(state):
 
 def read_ledger(path):
     """The ledger and the attempts of its table, wholly validated: the one
-    check every reader and every run applies, a smoke included."""
+    check every ledger read applies, a smoke's included."""
     import timing_grid as tg
     state = tg.Ledger(path)
     return state, table_attempts(state)
@@ -1212,8 +1212,7 @@ def run(args, first=None):
             # Before anything is created: the whole ledger is read, and
             # the start line is written ahead of the first process.
             require_ignored(ledger, repo)
-            if ledger.exists():
-                read_ledger(ledger)
+            read_ledger(ledger)
             require(not output.exists(), "output exists: %s" % output)
             smoke = open_smoke(ledger, args, output, keys, repo)
         elif ledger is not None:
@@ -1235,10 +1234,14 @@ def run(args, first=None):
                   "argv": sys.argv, "inputs": {}, "tools": {}}
         if ledger is not None and smoke is None:
             open_attempt(ledger, args, report, first, output, repo, keys)
-        saved = False
+        saved = made = False
         try:
             if smoke is not None:
+                # Inside the try, so that a failed mkdir still ends the
+                # smoke already recorded; a decision run creates its output
+                # before its open line, so that a failure costs no draw.
                 output.mkdir(parents=True, exist_ok=False)
+            made = True
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("HOL", "POLY", "ML", "PAIR_",
                                         "PERF_", "LOADING_", "LD_"))}
@@ -1465,8 +1468,9 @@ def run(args, first=None):
                 report["blocked"] = str(error)
         finally:
             try:
-                a.save(output / "loading.json", report)
-                saved = True
+                if made:  # never save into a directory this run did not make
+                    a.save(output / "loading.json", report)
+                    saved = True
             finally:
                 if smoke is not None:
                     end_smoke(ledger, smoke, report, output, saved)

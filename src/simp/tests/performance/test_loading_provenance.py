@@ -1158,31 +1158,45 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(self.processes, before)
         self.assertFalse((self.repo / "s2").exists())
 
-    def test_a_smoke_refuses_what_ledger_status_refuses(self):
-        self.decision_settings()
-        self.assertTrue(self.decide("good")["success"])
-        opening = [r for r in map(json.loads,
-                                  self.ledger.read_text().splitlines())
-                   if r.get("event") == "open"][0]
-        for key in ("hash", "prev", "seq", "index"):
-            opening.pop(key, None)
-        tg.ledger_append(self.ledger, **opening)
+    def test_every_reader_refuses_a_repeated_open_or_close_line(self):
+        first, plan, args = self.second_stage()
+        good = self.ledger.read_bytes()
         status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
-        with self.assertRaisesRegex(ValueError, "opening"):
-            l.ledger_status(status)
-        before, text = self.processes, self.ledger.read_bytes()
-        with self.assertRaisesRegex(ValueError, "opening"):
-            self.run_protocol(output=self.repo / "smoke")
-        self.assertEqual(self.processes, before)
-        self.assertFalse((self.repo / "smoke").exists())
-        self.assertEqual(self.ledger.read_bytes(), text)
+        for event, error in (("open", "2 opening"), ("close", "2 close")):
+            line = [r for r in self.records() if r["event"] == event][0]
+            for key in ("hash", "prev", "seq", "index"):
+                line.pop(key, None)
+            with self.subTest(event=event):
+                self.ledger.write_bytes(good)
+                tg.ledger_append(self.ledger, **line)
+                text = self.ledger.read_bytes()
+                self.processes = 0
+                with self.assertRaisesRegex(ValueError, error):
+                    self.decide("retry")
+                with self.assertRaisesRegex(ValueError, error):
+                    self.extend(plan, args)
+                with self.assertRaisesRegex(ValueError, error):
+                    l.ledger_status(status)
+                with self.assertRaisesRegex(ValueError, error):
+                    l.replay(first)
+                with self.assertRaisesRegex(ValueError, error):
+                    self.run_protocol(output=self.repo / "smoke")
+                with patch("sys.stderr"):
+                    self.assertEqual(l.main(["--replay", str(first)]), 1)
+                    self.assertEqual(l.main(
+                        ["--ledger-status", "--repo", str(self.repo)]), 1)
+                self.assertEqual(self.processes, 0)
+                for name in ("retry", "second", "smoke"):
+                    self.assertFalse((self.repo / name).exists())
+                self.assertEqual(self.ledger.read_bytes(), text)
 
     def test_a_smoke_whose_output_cannot_be_created_ends_unsuccessful(self):
         blocker = self.repo / "blocker"
         blocker.write_text("a file\n")
         before = self.processes
-        with self.assertRaises(OSError):
-            self.run_protocol(output=blocker / "smoke")
+        report = self.run_protocol(output=blocker / "smoke")
+        self.assertIs(report["success"], False)
+        self.assertIn("failure", report)
         self.assertEqual(self.processes, before)
         self.assertEqual(len(self.smoke_lines()), 1)
         ends = self.smoke_ends()
@@ -1192,6 +1206,27 @@ class BuildBinding(unittest.TestCase):
         status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
         smokes = l.ledger_status(status)["smokes"]
         self.assertEqual([r["unfinished"] for r in smokes], [False])
+
+    def test_a_smoke_never_saves_into_a_directory_it_did_not_make(self):
+        foreign = self.repo / "foreign"
+        open_smoke = l.open_smoke
+
+        def race(*args, **kwargs):
+            result = open_smoke(*args, **kwargs)
+            foreign.mkdir()  # appears between the check and the mkdir
+            return result
+
+        before = self.processes
+        with patch.object(l, "open_smoke", race):
+            report = self.run_protocol(output=foreign)
+        self.assertIs(report["success"], False)
+        self.assertIn("exists", report["failure"])
+        self.assertEqual(self.processes, before)
+        self.assertEqual(list(foreign.iterdir()), [])
+        ends = self.smoke_ends()
+        self.assertEqual(len(ends), 1)
+        self.assertIs(ends[0]["success"], False)
+        self.assertIsNone(ends[0]["seal"])
 
     def test_a_smoke_is_listed_with_the_roles_swapped(self):
         self.decision_settings()
