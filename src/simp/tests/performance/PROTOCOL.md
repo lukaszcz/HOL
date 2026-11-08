@@ -2587,6 +2587,11 @@ of the candidate are the data of `task31_attributed.json`
 (read by `task31_pins.py`, which the timing grid seals; the accounting is
 `task31_attribution.py`).
 
+The controls receipt seals the files of `allocator-counter/` and those named
+in `private_runtime.PERFORMANCE_INPUTS`, `loading.py` among them, so
+`loading.py` is a performance input: the controls receipt must be made at the
+measured candidate, after its last change.
+
 ### Gate 1: source identity, every cell
 
 `task31_identity_grid.py identity --output DIR --candidate COMMIT
