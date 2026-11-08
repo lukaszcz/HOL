@@ -1206,7 +1206,7 @@ local
 
      If 'r' is "F", 'l' must either contain "F" as a conjunct, or 'l'
      must contain both a literal and its negation. *)
-  fun rewrite_conj (l, r) =
+  fun rewrite_conj_legacy (l, r) =
     let
       val Tl = boolSyntax.mk_conj (boolSyntax.T, l)
       val Tr = boolSyntax.mk_conj (boolSyntax.T, r)
@@ -1232,7 +1232,7 @@ local
 
      If 'r' is "T", 'l' must contain "T" as a disjunct, or 'l' must contain
      both a literal and its negation. *)
-  fun rewrite_disj (l, r) =
+  fun rewrite_disj_legacy (l, r) =
     let
       val Fl = boolSyntax.mk_disj (boolSyntax.F, l)
       val Fr = boolSyntax.mk_disj (boolSyntax.F, r)
@@ -1247,6 +1247,89 @@ local
         Drule.EQT_INTRO (Library.gen_excluded_middle l)
       else
         raise ERR "rewrite_disj" ""
+
+  (* AC needs only the connective spine and equality/polarity of its atoms.
+     Native AC compares whole atoms, which can unfold shared FP/BV circuits.
+     Prove the same law on bounded Boolean names, then use the existing
+     checked root-schema boundary to insert the original operands once. *)
+  local
+    structure G = SmtReplayGraph
+    structure C = SmtReplayCanonGraph
+    exception AC_PREFIX
+  in
+  fun compact_boolean_ac legacy dest make (left,right) =
+    let
+      val maximum = SmtResource.max_skeleton_replay_dag_nodes
+      val polarities = Teq right orelse Feq right
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val order = SmtSkeletonProve.new_semantic_order ()
+      val atoms = ref (Redblackmap.mkDict order)
+      val parameters = ref []
+      val memo = Array.array (4093,[] : (Term.term * Term.term) list)
+      val entries = ref 0
+      fun atom term = case Redblackmap.peek (!atoms,term) of
+          SOME variable => variable
+        | NONE =>
+            let
+              val variable = Term.genvar Type.bool
+              val source = G.retain_source graph scope term
+              val _ = atoms := Redblackmap.insert (!atoms,term,variable)
+              val _ = parameters := (variable,#node source) :: !parameters
+            in variable end
+      fun prefix term =
+        let val bucket = SmtResource.pointer_bucket 4093 term in
+          case List.find (fn (old,_) => Portable.pointer_eq (old,term))
+              (Array.sub (memo,bucket)) of SOME (_,named) => named
+          | NONE =>
+              let
+                val _ = if !entries < maximum then entries := !entries+1
+                  else raise AC_PREFIX
+                val named = case Lib.total dest term of
+                    SOME (a,b) => make (prefix a,prefix b)
+                  | NONE =>
+                      if polarities andalso boolSyntax.is_neg term then
+                        boolSyntax.mk_neg (prefix (boolSyntax.dest_neg term))
+                      else if Teq term then boolSyntax.T
+                      else if Feq term then boolSyntax.F else atom term
+                val _ = Array.update (memo,bucket,
+                  (term,named) :: Array.sub (memo,bucket))
+              in named end
+        end
+      val named = (prefix left,prefix right)
+      val target = boolSyntax.mk_eq named
+      val _ = if Option.isSome
+          (SmtReplayImport.bounded_raw_size maximum target) then ()
+        else raise AC_PREFIX
+      val theorem = legacy named handle Feedback.HOL_ERR error =>
+        if polarities then raise AC_PREFIX else raise Feedback.HOL_ERR error
+      val pairs = List.rev (!parameters)
+      val schema = C.checked_graph_schema graph scope
+        {theorem=Drule.EQT_INTRO theorem,holes=List.map #1 pairs,
+         operands=List.map #2 pairs,template_limit=maximum}
+      val plan = C.graph_schema_leaf graph scope
+        {schema=schema,observe=fn () => ()}
+    in case C.realize_typed_root_schema graph scope maximum plan of
+        NONE => NONE
+      | SOME theorem => SOME (SmtSkeletonProve.exact_conclusion
+          (boolSyntax.mk_eq (left,right)) (Drule.EQT_ELIM theorem))
+    end handle AC_PREFIX => NONE
+      | Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then NONE
+          else raise Feedback.HOL_ERR error
+
+  fun rewrite_ac legacy dest make (left,right) =
+    if Option.isSome (SmtReplayImport.bounded_raw_size 256
+        (boolSyntax.mk_eq (left,right))) then legacy (left,right)
+    else case compact_boolean_ac legacy dest make (left,right) of
+        SOME theorem => theorem
+      | NONE => legacy (left,right)
+
+  val rewrite_conj = rewrite_ac rewrite_conj_legacy
+    boolSyntax.dest_conj boolSyntax.mk_conj
+  val rewrite_disj = rewrite_ac rewrite_disj_legacy
+    boolSyntax.dest_disj boolSyntax.mk_disj
+  end
 
   (* |- r1 /\ ... /\ rn = ~(s1 \/ ... \/ sn)
 
@@ -10528,6 +10611,8 @@ local
   end
 in
   (* For unit tests *)
+  val rewrite_conj_for_test = rewrite_conj
+  val rewrite_disj_for_test = rewrite_disj
   val hypothesis_theorem_for_test = z3_hypothesis_theorem
   val hypothesis_theorem_with_for_test = z3_hypothesis_theorem_with
   val hypothesis_has_free_variables_for_test = replay_has_free_variables

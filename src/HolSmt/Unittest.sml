@@ -21219,6 +21219,43 @@ let
   val left = shared 80
   val right = shared 80
   val order = SmtReplayCanon.new_term_order ()
+  val _ = let
+    val function = Term.mk_var ("compact_ac_atom",Type.bool --> Type.bool)
+    val p = Term.mk_comb (function,left)
+    val copy = Term.mk_comb (function,right)
+    val q = ``compact_ac_other:bool``
+    fun verify prove (left,right) =
+      let
+        val theorem = Timeout.apply (Time.fromSeconds 5) prove (left,right)
+        val (actual,expected) = boolSyntax.dest_eq (Thm.concl theorem)
+      in
+        assert (Portable.pointer_eq (actual,left) andalso
+          Portable.pointer_eq (expected,right),
+          "compact AC lost an exact operand occurrence");
+        assert_no_hyps ("compact AC",theorem);
+        check_oracle_tags "compact AC" theorem
+      end
+    val conjunction = Z3_ProofReplay.rewrite_conj_for_test
+    val disjunction = Z3_ProofReplay.rewrite_disj_for_test
+    val both = boolSyntax.mk_conj (p,q)
+    val _ = verify conjunction
+      (boolSyntax.mk_conj (p,boolSyntax.mk_conj (q,copy)),
+       boolSyntax.mk_conj (q,copy))
+    val _ = verify disjunction
+      (boolSyntax.mk_disj (p,boolSyntax.mk_disj (q,copy)),
+       boolSyntax.mk_disj (q,copy))
+    val _ = verify conjunction
+      (boolSyntax.mk_conj (both,boolSyntax.mk_neg both),boolSyntax.F)
+    val _ = verify disjunction
+      (boolSyntax.mk_disj (p,boolSyntax.mk_neg copy),boolSyntax.T)
+    fun reject prove make =
+      assert ((prove (make (p,q),copy); false)
+        handle Feedback.HOL_ERR _ => true,
+        "compact AC accepted a missing independent atom")
+  in
+    reject conjunction boolSyntax.mk_conj;
+    reject disjunction boolSyntax.mk_disj
+  end
   fun checked source conversion =
     let
       val theorem = conversion source
@@ -29980,6 +30017,23 @@ let
       rejected (fn () => ignore (P.checked block
         (Thm.REFL (Term.mk_abs (y, name))))),
     "foreign hypothesis, expanded template or binder insertion accepted")
+  val _ = let
+    val graph = G.new ()
+    val scope = G.root_scope graph
+    val nodes = List.tabulate (1024,fn index => G.variable graph scope
+      G.RigidSource (Term.mk_var ("guard_bank_" ^ Int.toString index,
+        Type.bool)))
+    val block = P.freeze graph {scope=scope,roots=nodes,sources=[],
+      template_limit=10000}
+    val names = List.map (P.name block) (List.rev nodes)
+    fun accept count = ignore (P.checked block
+      (Thm.REFL (boolSyntax.list_mk_conj (List.take (names,count)))))
+    val _ = List.app accept [1,8,9,32]
+    val _ = ignore (P.checked block boolTheory.TRUTH)
+    val foreign = Term.mk_var (#1 (Term.dest_var (hd names)),Type.alpha)
+  in assert (rejected (fn () => ignore
+      (P.checked block (Thm.REFL foreign))),
+    "compact guard confused same-spelling variables of different Types") end
   val other_block = P.freeze negative
     {scope = negative_scope, roots = [node], sources = [node],
      template_limit = 100}
