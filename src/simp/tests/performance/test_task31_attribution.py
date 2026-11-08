@@ -2,6 +2,7 @@
 """The reviewed table of TASK31 differences (task31_attribution.py)."""
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -38,12 +39,17 @@ class Shipped(unittest.TestCase):
             "independent builds")
         self.assertEqual(found["src/1/ThmAttribute.sig"]["kind"], "heap")
 
-    def test_the_placeholder_blobs_are_unfilled_and_pin_nothing(self):
+    def test_the_candidate_blobs_are_filled_and_pin_the_sources(self):
         document = attr.load()
-        self.assertEqual(attr.unfilled(document["entries"]),
-                         [e["path"] for e in document["entries"]])
-        self.assertEqual(pins.pins(document["entries"], attr.paths(document)),
-                         {})
+        self.assertEqual(attr.unfilled(document["entries"]), [])
+        for e in document["entries"]:
+            self.assertEqual(subprocess.run(
+                ["git", "cat-file", "-t", e["candidate_blob"]], cwd=REPO,
+                capture_output=True, text=True).stdout, "blob\n", e["path"])
+        sources = {e["path"]: dict(blob=e["candidate_blob"],
+                                   reason=e["reason"])
+                   for e in document["entries"] if e["kind"] == "source"}
+        self.assertEqual(pins.pins(document["entries"], c.SOURCES), sources)
 
     def test_the_baseline_blobs_are_those_of_git(self):
         for e in attr.load()["entries"]:

@@ -318,8 +318,10 @@ class Code(unittest.TestCase):
 
 
 class Tables(unittest.TestCase):
-    def test_the_shipped_placeholder_blob_is_refused_by_identity(self):
-        document = g.attribution(argparse.Namespace(attributed=None), False)
+    def test_a_placeholder_blob_is_refused_by_identity(self):
+        document = copy.deepcopy(
+            g.attribution(argparse.Namespace(attributed=None), False))
+        document["entries"][0]["candidate_blob"] = None
         args = argparse.Namespace(repo=a.HERE.parents[3], baseline=BASE,
                                   candidate=BASE)
         self.assertTrue(g.attr.unfilled(document["entries"]))
