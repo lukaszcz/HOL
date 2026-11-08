@@ -54,7 +54,6 @@ removal of the mixed legacy constructors; this suite uses none of them.
 
 Successful execution prints `TraverseExt focused checks: 131` and exits zero.
 The counter includes `convtest` assertions and the two negative clients.
-Accepted-body and missing-file negative controls are recorded in TASK_09 evidence.
 The parent `../../src/Holmakefile` runs this separate target at selftest level 1;
 ordinary `selftest.sml` does not import the new engine.
 

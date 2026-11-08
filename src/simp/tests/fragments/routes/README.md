@@ -118,13 +118,6 @@ including `route_h`. No assertion accepts missing/extra hypotheses. Proof
 mismatches print actual and expected conclusions and all hypotheses before the
 ordinary failing testutils check.
 
-The diagnosis receipt is
-`/tmp/task15-routes-proof-probe/baseline-routes.json.gz` (expected failure).
-The corrected full baseline/worktree pair passed in
-`/tmp/task15-routes-proof-fixed/manifest.json`; final sealed-input receipts are
-in `/tmp/task15-routes-final/` (`manifest.json`, both `*-build.json.gz`, and
-both `*-routes.json.gz`). No benchmark or whole-tree build was run.
-
 This is isolated-source compatibility evidence, not independent full builds,
 allocation/performance evidence, or proof of every simplifier route. AC order
 is observed via a public invalid-pair diagnostic with a positive sensitivity

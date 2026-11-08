@@ -49,7 +49,7 @@ From the repository root, use the configured-path wrapper (it need not be
 executable):
 
 ```sh
-sh src/simp/tests/compatibility/evidence/task23/configured-path.sh \
+sh src/simp/tests/compatibility/tools/root-wrapper.sh \
   sh -c 'cd src/num/arith/tests/tracked-recipes && Holmake check'
 ```
 
@@ -60,6 +60,6 @@ congruences including exponentiation, exclusions, traversal limits,
 fragment prohibition, bounded-rule spending, and native source identities
 across control-preserving removal.
 
-Verified: `NUMERAL_RECIPE_CHECKS=91`; configured-path
-`bin/build -t --seq=tools/sequences/upto-parallel` succeeded; `h4pedant -q`
-passed for the arithmetic source directory and this test directory.
+The check prints `NUMERAL_RECIPE_CHECKS=<n>` on success.  Also run
+`bin/build -t --seq=tools/sequences/upto-parallel` and `h4pedant -q` on the
+arithmetic source directory and this test directory.

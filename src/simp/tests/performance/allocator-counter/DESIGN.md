@@ -3,19 +3,16 @@
 ## Status and scope
 
 This is an experimental patch derived from the local Isabelle2025-2
-`polyml-5.9.2-2/src` distribution named in `SOURCE_SHA256.json`. It has been
-reviewed by inspection of the allocator, ARM64 trap/entry mechanisms, native
-allocation emitters, interpreter allocator, code allocator, and relevant
-GC/image paths. A second source review checked native pointer conventions and
-ordinary FFI paths. The driver executes 233 brackets across seven
-Holmake/testutils launcher processes: the original controls (34), ML workers
-(22), hybrid bytecode (47) and native failures (35), plus three lower-level
-path launchers (22 native/RTS success, 33 bytecode, 40 RTS/native/code
-failure).
+`polyml-5.9.2-2/src` distribution named in `SOURCE_SHA256.json`. The audit
+covers the allocator, ARM64 trap/entry mechanisms, native allocation
+emitters, interpreter allocator, code allocator, relevant GC/image paths,
+native pointer conventions and ordinary FFI paths. The driver runs its
+brackets across several Holmake/testutils launcher processes (controls, ML
+workers, hybrid bytecode, native failures and lower-level path launchers).
 This is not independent maintainer approval or executed proof of
-completeness. Static analysis and runtime receipts are kept distinct. Nothing
-here closes TASK29B's paired-matrix requirement, TASK29's comparison, or
-TASK33's lifetime/peak requirements.
+completeness. Static analysis and runtime receipts are kept distinct. It does
+not replace the paired allocation matrix (`../ALLOCATION_COUNTER.md`) or
+lifetime and peak-memory accounting.
 
 The supported and measured target is the native Linux/aarch64 runtime with
 64-bit PolyWords, including the hybrid bytecode interpreter inside it.

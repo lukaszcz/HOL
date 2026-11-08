@@ -36,10 +36,11 @@ pinned, reviewed one (`task30_pins.PINNED`), and the exit status is zero only
 when every cell passes. The exact-allocation counterpart
 is `allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
 `history_theory_change` the allocation fixture makes no `new_theory`
-transition, see `PROTOCOL.md` and `TASK_29B_allocation_counter.md`).
+transition, see `PROTOCOL.md` and `ALLOCATION_COUNTER.md`).
 
 Fresh post-workload actual object/code/pool diagnostics are documented in
-[`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md) and [`RUNTIME_POOLS.md`](RUNTIME_POOLS.md).
+[`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md) and
+[`RUNTIME_POOLS.md`](RUNTIME_POOLS.md).
 They are explicitly **not timing acceptance**. The read-only environment
 diagnostic cannot certify exclusivity.
 
@@ -58,13 +59,12 @@ source seals, graph arithmetic, ordered runtime records and controlled weak-ref
 release. RSS snapshots and process-lifetime VmHWM are not exact temporary peaks;
 Poly/ML 5.9.2 lacks a cumulative allocated-byte counter. Weak collection proves
 only release of the controlled simpset-ref wrapper, not opaque internal objects
-or absence of global retention. Those stronger gates remain blocked, alongside
-missing independent integer/real dependencies and routine/full clean snapshots.
+or absence of global retention.
 
-The main ten-pair experiment validates integrated machinery, not matrix-wide
-performance approval. Shared-heap final-source isolation is **not independent
-builds**. Manifest verification is runnable, but independent mode still blocks
-until fresh independent launchers, inventories and consumed observations exist.
+A runnable matrix is not a measured one, and the ten-pair experiment validates
+machinery, not matrix-wide performance approval. Shared-heap final-source
+isolation is **not independent builds**; independent mode blocks until fresh
+independent launchers, inventories and consumed observations exist.
 
 Matrix archives need manifest-bound shared sources/products (`shared_inputs`)
 and exact runtime/tool/launcher provenance to be admissible. Storage slopes and
@@ -116,7 +116,7 @@ single-add/AC cases. Nothing overwrites receipts: controls JSON and smoke JSON/
 sibling logs must be new. Do not invoke real targets concurrently; smoke drivers
 do not acquire the acceptance frontend's host-wide serial lock. Hosts with a
 heap embedding a historical root must use the configured-root wrapper from
-`../compatibility/evidence/task26/root-wrapper.sh`.
+`../compatibility/tools/root-wrapper.sh`.
 
 Optional serial real-integration discovery switches are `HOL_CLIENT_REPO` (an
 absolute configured tree) and `RUNTIME_METRICS_SML=1`; the latter can retain its

@@ -10,7 +10,8 @@ suite that imports both types, **not** the ordinary selftest dependency scope.
 
 The ordinary `src/selftest.sml` is now the complete pinned develop input.
 Additional ordinary contracts live alongside this suite, not inside that input.
-See [the ownership map](../compatibility/migration/TASK26.md).
+See [the compatibility README](../compatibility/README.md)
+for the ownership map.
 
 ## Run
 

@@ -153,7 +153,7 @@ adapter, not a memory-safe decoder for hostile pointers or a proof that every
 custom DSO calling itself 5.9.2 has identical internals. Seal the actual
 executable, runtime DSO, interposer and capture in the diagnostic receipt.
 
-## Executed smoke test
+## Smoke test
 
 Tested with ordinary `/usr/local/bin/poly --script selftest.sml`,
 not a patched runtime or `bin/hol`.

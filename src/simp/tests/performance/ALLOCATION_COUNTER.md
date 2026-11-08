@@ -1,13 +1,12 @@
-# TASK29B — supported cumulative HOL allocation measurement
+# Cumulative HOL allocation: counter and paired matrix
 
-## Context and dependency
+## Why a counter
 
-Bounded prerequisite follow-up to TASK29, after TASK28. This follows the
-existing `allocation_prerequisite` row, not a new exemption. TASK29 measured
-reachable graph words, GC and approximate RSS/HWM. None is cumulative
-allocation. Poly/ML 5.9.2's `sizeAllocation`/`sizeAllocationFree` fields report
-allocation-area capacity/free space updated by GC, not an allocated-byte total.
-Python `tracemalloc` does not measure HOL allocations.
+Reachable graph words, GC counts and approximate RSS/HWM are not cumulative
+allocation. Poly/ML 5.9.2's `sizeAllocation`/`sizeAllocationFree` fields
+report allocation-area capacity/free space updated by GC, not an
+allocated-byte total, and Python `tracemalloc` does not measure HOL
+allocations.
 
 ## The allocation profiler is not a counter
 
@@ -17,8 +16,8 @@ unknown-PC request of any size lands in a single `UNKNOWN` count of one per
 event: the installed disassembly shows the `incr` argument discarded on that
 path. A displayed-entry sum is therefore not a cumulative allocator total. The
 control injects profiler arguments; it neither allocates the requested memory
-nor is an allocator instrument, and it says nothing about how often TASK29's
-workloads reach that path.
+nor is an allocator instrument, and it says nothing about how often the
+measured workloads reach that path.
 
 ## Experimental successful-reservation counter (not closure)
 
@@ -101,36 +100,8 @@ The harness head and the build lineage are recorded in the receipt, not
 pinned in the repository.
 
 This is not a supported full-matrix instrument: the paired allocation matrix
-below needs a controls receipt of this driver and a full run. No TASK29B
-completion or ordinary timing claim follows from the controls alone.
-
-## Required input
-
-A supported cumulative allocator counter or a reviewed, version-pinned Poly/ML
-allocator instrument with documented semantics, units, overflow/thread/GC
-accounting, and reproducible build/tool fingerprints. Authorization and a
-compatible toolchain/runtime are needed for measurements on that instrumented
-runtime; do not relabel the configured uninstrumented shared heap.
-
-## Acceptance
-
-- Validate the actual HOL counter with executed known allocation/no-allocation
-  and GC controls. Allocation escaping to retained results must be consumed;
-  distinguish code/heap and measured-operation versus process-startup costs.
-- Make both baseline/candidate use the same sealed runtime/options/dependencies
-  and bracket construction, complete operations and ordinary application
-  separately. No production-source instrumentation or unsafe closure casts.
-- Run every TASK29 fragment/compiler/storage case at 0/1/10/100/1000/10000,
-  with baseline-baseline controls and at least ten paired fresh AB/BA process
-  observations. Publish raw allocated bytes (or explicitly documented words),
-  all adjacent allocation-per-rule slopes and size-zero constants.
-- Per-rule and constant work must match or improve develop without hidden
-  extension costs. Failure or uncertainty blocks TASK29; there is no regression
-  allowance. Invalidate affected runtime/timing evidence rather than mixing
-  instrumented and uninstrumented observations.
-
-Independent lifetime and exact temporary-peak accounting remain TASK33; this
-follow-up does not claim those gates or substitute a live-heap snapshot.
+below needs a controls receipt of this driver and a full run. No ordinary
+timing claim follows from the controls alone.
 
 ## MATRIX: paired allocation matrix method
 
@@ -241,8 +212,9 @@ default and is chosen by the caller outside the repository.
 - **Startup.** `startup` is published for baseline, candidate and control, and
   the candidate-minus-baseline and control-minus-baseline differences are
   published per pair, but it is not gated: work moved into module load is
-  caught by TASK31/33, not here. All three selections use equal-length labels
-  and directory names so that the label cannot change the startup words.
+  caught by the lifetime and peak accounting, not here. All three selections
+  use equal-length labels and directory names so that the label cannot change
+  the startup words.
 - **Canary.** The parser requires the `canary` bracket to cost exactly the
   known words per category beyond the no-op `empty` bracket, and a nonzero
   `startup` total. A dead or under-reporting counter therefore rejects every
@@ -334,7 +306,8 @@ default and is chosen by the caller outside the repository.
   `acceptance.py`; any other baseline is measured and published, a definite
   fail is still a fail, but a pass is reported as inconclusive.
 - **Candidate startup.** The startup words of the candidate are published by
-  the startup bracket and deliberately not gated here; TASK31/33 own them.
+  the startup bracket and deliberately not gated here; the lifetime and peak
+  accounting own them.
 - **Concurrency.** Counting is not timing, so cells run in parallel
   (`--jobs`, default 8) while the whole run holds the serial lock; each worker
   has its own private selection directories, a pair keeps its AB/BA order, and
@@ -350,7 +323,7 @@ default and is chosen by the caller outside the repository.
 - **Commands.** `run` (with `--resume`, `--only`, exclusive-create output,
   per-cell lossless archives verified before scratch is removed, and the
   private build commands persisted in `build-N.json.gz`), `replay`
-  (recomputes every decision and `RESULTS.md` from the archives alone),
+  (recomputes every decision from the archives alone),
   `check-jobs` and `toolchain`. `python3 -B -m unittest discover -s
   src/simp/tests/performance -p 'test_allocation_*.py'` runs the negative
   controls over synthetic fixtures; no runtime, toolchain or receipt is

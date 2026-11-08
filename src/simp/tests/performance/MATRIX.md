@@ -210,7 +210,7 @@ source-isolated loading is still not independent-build loading acceptance.
 For the runnable fresh-load gate, use TASK27's configured-root-aware command:
 
 ```sh
-sh src/simp/tests/compatibility/evidence/task26/root-wrapper.sh \
+sh src/simp/tests/compatibility/tools/root-wrapper.sh \
   bin/Holmake -C src/simp/tests/api-audit check
 ```
 
@@ -244,7 +244,7 @@ bin/build -t --seq=tools/sequences/upto-parallel
 bin/build -t -F
 python3 src/simp/tests/compatibility/run_task25_consumer.py \
   --consumer-patch \
-  src/simp/tests/compatibility/evidence/task25/consumer.patch \
+  src/simp/tests/compatibility/consumer/consumer.patch \
   --simplifier-revision CANDIDATE --output FRESH_CONSUMER_OUTPUT
 ```
 
