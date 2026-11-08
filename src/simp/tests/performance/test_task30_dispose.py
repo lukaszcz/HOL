@@ -1139,58 +1139,143 @@ class Seals(Toy):
                 td.check_code(old)
             text = str(caught.exception)
             self.assertIn("1 file(s) changed", text)
-            self.assertIn("void_attempts.py: add to task30_dispose.HISTORY "
-                          "the entry `\"void_attempts.py\": (%s,),`" %
-                          json.dumps(held, sort_keys=True), text)
+            # The rule, not a HISTORY entry to paste.
+            self.assertIn(
+                "void_attempts.py: this record lacks the file and so "
+                "depends on the held seal %s (task30_dispose.ADDED); an "
+                "edit that is non-behavioural" % json.dumps(
+                    held, sort_keys=True), text)
+            self.assertIn("replaces the held seal in ADDED, after review; "
+                          "any other edit is not allowed while a record "
+                          "depends on the held seal", text)
+            self.assertNotIn("add to", text)
+            self.assertNotIn("the entry", text)
+            self.assertNotIn("HISTORY the", text)
+
+    def test_the_held_and_an_ordinary_file_get_their_own_messages(self):
+        self.dispose(record=True)
+        recorded = self.load(self.out / "disposition.json")["code"]
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        old[host] = before[0]
+        real, patcher = self.changed("void_attempts.py", "acceptance.py")
+        with patcher:
+            with self.assertRaises(ValueError) as caught:
+                td.check_code(old)
+        text = str(caught.exception)
+        self.assertIn("2 file(s) changed", text)
+        # The ordinary file: the HISTORY entry to paste.
+        self.assertIn('acceptance.py: add to task30_dispose.HISTORY the '
+                      'entry `"acceptance.py": (%s,),`' % json.dumps(
+                          recorded["acceptance.py"], sort_keys=True), text)
+        # The held file: the rule, with no entry for it.
+        self.assertIn("void_attempts.py: this record lacks the file", text)
+        self.assertNotIn('"void_attempts.py": (', text)
+        self.assertNotIn("void_attempts.py: add", text)
 
     # The moved functions of void_attempts.py, as the tree of
     # 40e176538f's task30_dispose.py (the host the older records ran) has
-    # them, with every string constant blanked and each `"..." % (...)`
-    # message blanked whole. Derived: ast.parse the file, take the module
-    # level FunctionDefs runner_failure, void_failure and attempts_of in
-    # order, ast.dump each of the normalised nodes (see `normalised`),
-    # join with "\n" and take the SHA-256. It is the same for the host's
-    # three functions and for the held version of void_attempts.py.
+    # them, with the message strings blanked. Derived: ast.parse the file,
+    # take the module level FunctionDefs runner_failure, void_failure and
+    # attempts_of in order, ast.dump each of the normalised nodes (see
+    # `normalised`), join with "\n" and take the SHA-256. It is the same for
+    # the host's three functions and for the held version of
+    # void_attempts.py. Every other string (event names, statuses, keys,
+    # option and file names) stays in the dump.
     MOVED = ("runner_failure", "void_failure", "attempts_of")
-    MOVED_HASH = ("51b3dac24ea0ff4e84a630490684788205564d5c6623a33973ea5e0c"
-                  "afae95a6")
+    MOVED_HASH = ("97b15e53087876ee374b0a7236731b2e9a0cc65a453abfc37f3e4f2"
+                  "532385ee1")
 
     @classmethod
     def normalised(cls, source):
+        """The dump of the moved functions with exactly these strings
+        blanked: (1) docstrings; (2) `"..." % (...)` messages; (3) a
+        string that is the whole value of a `return` (the functions return
+        a message or None); (4) the message, the second argument, of
+        `a.require`; (5) the two reviewed strings that are not messages
+        and differ from the host's: the `prefix=` of
+        `tempfile.TemporaryDirectory`, and the `what` of `want, what =
+        ..., "..."`, which feeds only a message."""
         import ast
 
+        def is_str(node):
+            return isinstance(node, ast.Constant) and isinstance(
+                node.value, str)
+
         class Blank(ast.NodeTransformer):
-            def visit_BinOp(self, node):
-                if isinstance(node.op, ast.Mod) and isinstance(
-                        node.left, ast.Constant) and isinstance(
-                        node.left.value, str):
+            def visit_FunctionDef(self, node):  # (1)
+                first = node.body[0]
+                if isinstance(first, ast.Expr) and is_str(first.value):
+                    first.value = ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_BinOp(self, node):  # (2)
+                if isinstance(node.op, ast.Mod) and is_str(node.left):
                     return ast.Constant("")
                 return self.generic_visit(node)
 
-            def visit_Constant(self, node):
-                return ast.Constant("") if isinstance(
-                    node.value, str) else node
+            def visit_Return(self, node):  # (3)
+                if is_str(node.value):
+                    node.value = ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_Call(self, node):
+                func = node.func
+                if isinstance(func, ast.Attribute):
+                    if func.attr == "require" and isinstance(
+                            func.value, ast.Name) and func.value.id == "a" \
+                            and len(node.args) > 1 and is_str(node.args[1]):
+                        node.args[1] = ast.Constant("")  # (4)
+                    if func.attr == "TemporaryDirectory":  # (5)
+                        for keyword in node.keywords:
+                            if keyword.arg == "prefix" and is_str(
+                                    keyword.value):
+                                keyword.value = ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_Assign(self, node):  # (5)
+                target, value = node.targets[0], node.value
+                if isinstance(target, ast.Tuple) and [
+                        getattr(e, "id", None) for e in target.elts
+                        ] == ["want", "what"] and isinstance(
+                        value, ast.Tuple) and is_str(value.elts[1]):
+                    value.elts[1] = ast.Constant("")
+                return self.generic_visit(node)
         tree = ast.parse(source)
         found = {n.name: ast.dump(Blank().visit(n)) for n in tree.body
                  if isinstance(n, ast.FunctionDef) and n.name in cls.MOVED}
         return "\n".join(found[name] for name in cls.MOVED)
 
-    def test_the_held_file_holds_the_code_the_older_records_ran(self):
+    def moved_hash(self, source):
         import hashlib
+        return hashlib.sha256(self.normalised(source).encode()).hexdigest()
+
+    def test_the_held_file_holds_the_code_the_older_records_ran(self):
         text = (a.HERE / "void_attempts.py").read_text()
-        self.assertEqual(
-            hashlib.sha256(self.normalised(text).encode()).hexdigest(),
-            self.MOVED_HASH)
-        # A change of the logic, not of a string, is another hash.
-        changed = text.replace('if row["resumed"]:', "if False:")
-        self.assertNotEqual(changed, text)
-        self.assertNotEqual(
-            hashlib.sha256(self.normalised(changed).encode()).hexdigest(),
-            self.MOVED_HASH)
-        # ... and a reworded message is the same one.
-        reworded = text.replace("it was resumed", "it was resumed again")
-        self.assertNotEqual(reworded, text)
-        self.assertEqual(self.normalised(reworded), self.normalised(text))
+        self.assertEqual(self.moved_hash(text), self.MOVED_HASH)
+        # A change of the logic, a literal of it included, is another hash.
+        for old, new in (
+                ('if row["resumed"]:', "if False:"),
+                ('("open", "resume", "close")',
+                 '("open", "resume", "closed")'),
+                ('row["statuses"] != ["inconclusive"]',
+                 'row["statuses"] != ["pass"]'),
+                ('"--output" not in argv', '"--out" not in argv')):
+            with self.subTest(old):
+                changed = text.replace(old, new)
+                self.assertNotEqual(changed, text)
+                self.assertNotEqual(self.moved_hash(changed),
+                                    self.MOVED_HASH)
+        # ... and a reworded message (of each blanked kind) is the same.
+        for old, new in (
+                ("it was resumed", "it was resumed again"),
+                ("no attempts ledger", "there is no attempts ledger"),
+                ("None when the unpacked", "Nothing when the unpacked"),
+                ('prefix="void-attempt-"', 'prefix="other-"')):
+            with self.subTest(old):
+                reworded = text.replace(old, new)
+                self.assertNotEqual(reworded, text)
+                self.assertEqual(self.moved_hash(reworded), self.MOVED_HASH)
 
     def test_the_resumed_attempt_mutant_is_refused_for_the_old_record(self):
         # The logic of the resumed-attempt rule is held for the record that
@@ -1213,8 +1298,8 @@ class Seals(Toy):
             mutant.write_text(text.replace('if row["resumed"]:',
                                            "if False:"))
             with self.assertRaisesRegex(
-                    ValueError, "void_attempts.py: add to "
-                    "task30_dispose.HISTORY"):
+                    ValueError, "void_attempts.py: this record lacks the "
+                    "file and so depends on the held seal"):
                 td.check_code(old, here=scratch)
             # The same copy without the mutant checks.
             mutant.write_text(text)
@@ -1918,6 +2003,17 @@ class Attempts(Toy):
                          re.escape(str(self.out)),
                          re.escape(str(self.root / "fork"))),
                      **given)
+
+    @after_void
+    def test_an_output_named_only_by_a_close_line_is_an_output(self):
+        given = self.rerun()
+        attempt, out = self.open_void_copy()
+        other = self.root / "close-only"
+        self.append_lines(other, attempt, ("close", "inconclusive"))
+        self.refuses("attempt %s of table %s ran in more than one "
+                     "output: %s, %s" % (
+                         attempt, self.fgrid.t.name, re.escape(str(out)),
+                         re.escape(str(other))), **given)
 
     @after_void
     def test_a_judged_attempt_with_a_second_output_is_refused(self):

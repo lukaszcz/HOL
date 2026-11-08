@@ -332,16 +332,22 @@ class Modules(unittest.TestCase):
     ../compatibility/), is sealed for that side or reached only by an
     exempt import edge with a stated reason. "Sealed" is: in a seal list
     that a record of the side carries (and its replay checks), or, for the
-    modules of timing_grid.REPLAY_CODE, re-derived by the replay of a
-    first-stage record: only a follow-up's counts carry their seals
-    (`replaces.code`)."""
+    modules of timing_grid.REPLAY_CODE that the first-stage record does not
+    carry (timing_grid.py and acceptance.py are carried as `engine` and
+    `acceptance`), a module whose result the replay recomputes and compares
+    with the record (each cell's archived report, "changed point
+    analysis"; decisions.json, "changed TASK31 decisions"): a change of
+    one can make a replay refuse but cannot alter a recorded decision. Only
+    a follow-up's counts carry their seals (`replaces.code`). Code run by
+    path (run_paired) is not seen as an import: it is a root."""
 
     # The reasons of the exempt edges.
     TOOLCHAIN = (
         "private_runtime builds and checks the runtime (loading, "
-        "prepare_patch, check_patch, path_schema); the replays call its "
-        "harness_identity and tree_outside_performance, which use none of "
-        "them")
+        "prepare_patch, check_patch, path_schema); TASK31 code uses only its "
+        "harness_identity, tree_outside_performance, AGENT_STATE and "
+        "PERFORMANCE_DIR, which use none of them (measurement calls "
+        "harness_identity too, through clean_head)")
     CONTRACTS = (
         "run_paired.main imports it under --prior-contracts, "
         "--staging-contracts or --public-contracts, which no TASK31 command "
@@ -361,16 +367,20 @@ class Modules(unittest.TestCase):
         "from task30_grid and no function. No seal list of a timing grid "
         "has task30_grid.py: what binds the constants is the table's "
         "SEALED, whose names the check compares as a set with the record's "
-        "and whose files it compares by seal, so a changed constant "
-        "refuses a recorded grid")
+        "and whose files it compares by seal, so a changed INSTALLED or "
+        "SEALED[1:5] refuses a recorded grid (PAIRED only through the "
+        "names of INSTALLED)")
     ALLOCATION_BUILD = (
         "the allocation matrix's toolchain building (loading, "
         "prepare_patch, bootstrap_probe), which the disposition's replay of "
         "an allocation grid does not do")
     ALLOCATION_CASES = (
-        "allocation_matrix builds its task30 case list from it; the "
-        "allocation grid binds it as a harness input to the blob of the "
-        "commit it ran at (allocation_matrix.harness_files)")
+        "allocation_matrix builds the TASK30 task from it, which a TASK31 "
+        "allocation grid does not replay: it replays as task `task31`, "
+        "whose cases come from the sealed task31_cases (a change that "
+        "breaks the TASK30 task fails the import, a refusal); the "
+        "harness_files binding of the blob is a record of the "
+        "measurement, which the replay does not compare")
 
     @staticmethod
     def edges(reason, *edges):
@@ -433,8 +443,13 @@ class Modules(unittest.TestCase):
             sorted(e for e in exempt if e[1] in sealed), [])
         return found
 
+    # run_paired is a root of the identity and the timing process: it is
+    # executed by path (runpy in task31_snapshot, a subprocess of
+    # acceptance), which an import graph does not see.
     IDENTITY_ROOTS = ("task31_identity_grid", "task31_identity",
-                      "task31_attribution", "task31_snapshot")
+                      "task31_attribution", "task31_snapshot",
+                      "run_paired")
+    TIMING_ROOTS = ("task31_grid", "task31_followup", "run_paired")
 
     def identity(self, sources=None):
         import task31_identity_grid as idgrid
@@ -455,7 +470,7 @@ class Modules(unittest.TestCase):
         self.assertIn("task31_pins.py", idgrid.IDENTITY_CODE)
 
     def test_the_timing_modules_import_only_sealed_code(self):
-        found = self.covered("timing", ("task31_grid", "task31_followup"),
+        found = self.covered("timing", self.TIMING_ROOTS,
                              self.timing_sealed())
         self.assertIn("private_runtime", found)
 
@@ -506,6 +521,31 @@ class Modules(unittest.TestCase):
                 self.covered(
                     "identity", self.IDENTITY_ROOTS,
                     [n for n in idgrid.IDENTITY_CODE if n != name], sources)
+
+    def test_run_paired_is_sealed_though_no_import_reaches_it(self):
+        # Hide the one import of run_paired (runtime_metrics.smoke), and
+        # drop its seal: the root alone makes the closure demand the seal.
+        import task31_identity_grid as idgrid
+        sources = dict(ic.sources())
+        self.assertIn("import run_paired as rp", sources["runtime_metrics"])
+        sources["runtime_metrics"] = sources["runtime_metrics"].replace(
+            "import run_paired as rp", "rp = __import__('run_paired')")
+        self.assertNotIn(("runtime_metrics", "run_paired", "smoke"),
+                         ic.edges(sources, "runtime_metrics"))
+        pattern = "neither sealed nor reached only by an exempt edge"
+        unsealed = [n for n in idgrid.IDENTITY_CODE if "run_paired" not in n]
+        with self.assertRaisesRegex(AssertionError, pattern):
+            self.covered("identity", self.IDENTITY_ROOTS, unsealed, sources)
+        timing_unsealed = [n for n in self.timing_sealed()
+                           if "run_paired" not in n]
+        with self.assertRaisesRegex(AssertionError, pattern):
+            self.covered("timing", self.TIMING_ROOTS, timing_unsealed,
+                         sources)
+        # Sealed, it checks.
+        self.covered("identity", self.IDENTITY_ROOTS,
+                     idgrid.IDENTITY_CODE, sources)
+        self.covered("timing", self.TIMING_ROOTS, self.timing_sealed(),
+                     sources)
 
 
 if __name__ == "__main__":

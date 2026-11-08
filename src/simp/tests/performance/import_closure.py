@@ -5,7 +5,9 @@ A module is named by its stem; no stem is in two of the directories the
 harness puts on its path: this one, allocator-counter/ (which timing_grid
 adds) and ../compatibility (which loading and runtime_metrics add). An edge
 is (importer, module imported, function it is made in), the function being
-None for an import that runs when the importer is imported."""
+None for an import that runs when the importer is imported. Code that is
+run by path (runpy, a subprocess) is not an import and is not seen: a test
+names it as a root of the closure."""
 import ast
 from pathlib import Path
 

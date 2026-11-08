@@ -124,8 +124,10 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
 # file carries it. The third element is the version of the file reviewed as
 # holding exactly the code the older records ran: the moved functions
 # (runner_failure, void_failure, attempts_of) are AST-equal to the host's
-# inline ones apart from message strings (test_task30_dispose.py pins the
-# normalised hash). An edit of the file that keeps that property replaces
+# inline ones apart from message strings: docstrings, `"..." % (...)`,
+# returned strings, the message of `a.require` and two reviewed
+# non-message strings (test_task30_dispose.py `normalised` names them and
+# pins the hash). An edit of the file that keeps that property replaces
 # the third element, after that review. An edit that changes behaviour is
 # not allowed while a record depends on the element: a seal listed in
 # HISTORY accepts every later file, so it would rebind the record to logic
@@ -558,6 +560,19 @@ def entries(name, seal):
     return found
 
 
+def held_refusal(name):
+    """The refusal text for a file of ADDED that the record lacks: its
+    rule is not a HISTORY entry."""
+    return (
+        "%s: this record lacks the file and so depends on the held seal "
+        "%s (task30_dispose.ADDED); an edit that is non-behavioural (the "
+        "moved functions keep the normalised hash that test_task30_dispose"
+        ".py pins) replaces the held seal in ADDED, after review; any other "
+        "edit is not allowed while a record depends on the held seal, and "
+        "no HISTORY entry may be added for it (PROTOCOL.md, \"Seal "
+        "histories\")" % (name, json.dumps(ADDED[name][2], sort_keys=True)))
+
+
 def check_code(recorded, here=None):
     """The seals a disposition records are those of the code now or of
     the earlier code HISTORY names. Every file that is not is named in one
@@ -575,22 +590,30 @@ def check_code(recorded, here=None):
                if recorded[name] != now[name] and
                recorded[name] not in HISTORY.get(name, ())]
     if changed:
+        held = [held_refusal(n) for n in changed if n in older]
         lines = []
         for name in changed:
-            lines.append("%s: add %s" % (name, " and, where records were "
-                                         "made by the old file, ".join(
-                "to %s the entry %s" % found
-                for found in entries(name, recorded[name]))))
-        raise ValueError(
-            "changed TASK30 disposition: %d file(s) changed since it was "
-            "recorded; in the same commit add each entry below to its "
-            "constant and update the tests that pin those constants "
-            "(task30_dispose.HISTORY: test_task30_dispose.py; "
-            "task30_followup.ENGINES, ACCEPTANCE, DRIVERS and "
-            "SEALED_HISTORY: test_task30_grid.py); a change to a history "
-            "constant changes its file, which then needs its own entry "
-            "(PROTOCOL.md, \"Seal histories\"): %s"
-            % (len(changed), "; ".join(lines)))
+            if name not in older:
+                lines.append("%s: add %s" % (name, " and, where records "
+                                             "were made by the old file, "
+                                             "".join(
+                    "to %s the entry %s" % found
+                    for found in entries(name, recorded[name]))))
+        text = "changed TASK30 disposition: %d file(s) changed since it " \
+               "was recorded" % len(changed)
+        if lines:
+            text += (
+                "; in the same commit add each entry below to its "
+                "constant and update the tests that pin those constants "
+                "(task30_dispose.HISTORY: test_task30_dispose.py; "
+                "task30_followup.ENGINES, ACCEPTANCE, DRIVERS and "
+                "SEALED_HISTORY: test_task30_grid.py); a change to a "
+                "history constant changes its file, which then needs its "
+                "own entry (PROTOCOL.md, \"Seal histories\"): %s"
+                % "; ".join(lines))
+        if held:
+            text += "; " + "; ".join(held)
+        raise ValueError(text)
 
 
 def pair(timing, counted, label):

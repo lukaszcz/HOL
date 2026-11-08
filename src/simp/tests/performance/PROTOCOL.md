@@ -1701,12 +1701,20 @@ table of its own on the shared engine, with the following additions to it.
     of the listed, and is then treated as recording the held seal for the
     file. The held seal names the version of the added file reviewed as
     holding exactly the code the older records ran: its moved functions are
-    AST-equal to the host's, apart from message strings (a test pins the
-    normalised hash of them). An edit of the added file that keeps that
+    AST-equal to the host's, apart from message strings: docstrings,
+    `"..." % (...)` messages, returned string constants, the message
+    argument of `a.require`, and two reviewed strings that are not messages
+    (the `prefix=` of `tempfile.TemporaryDirectory` and the `what` of
+    `want, what = ...`). A test pins the hash of the functions with exactly
+    those blanked; every other string (event names, statuses, keys, option
+    and file names) is in the hash, so a changed literal of the logic
+    changes it. An edit of the added file that keeps that
     property replaces the held seal, after that review. A behavioural edit
     is not allowed while a record depends on the held seal: a seal in
     `HISTORY[file]` accepts every later file, so it would bind the record to
-    logic it never ran. A record made by the current code carries the file.
+    logic it never ran. Where a record lacks the file, `check_code`'s
+    refusal of an edit states this rule and names no `HISTORY` entry. A
+    record made by the current code carries the file.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
