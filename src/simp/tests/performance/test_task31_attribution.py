@@ -43,9 +43,12 @@ class Shipped(unittest.TestCase):
         document = attr.load()
         self.assertEqual(attr.unfilled(document["entries"]), [])
         for e in document["entries"]:
-            self.assertEqual(subprocess.run(
-                ["git", "cat-file", "-t", e["candidate_blob"]], cwd=REPO,
-                capture_output=True, text=True).stdout, "blob\n", e["path"])
+            found = subprocess.run(
+                ["git", "log", "-1", "-m", "--format=%H",
+                 "--find-object=" + e["candidate_blob"], "HEAD", "--",
+                 e["path"]], cwd=REPO, capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, check=True).stdout
+            self.assertRegex(found, "^[0-9a-f]{40}\n$", e["path"])
         sources = {e["path"]: dict(blob=e["candidate_blob"],
                                    reason=e["reason"])
                    for e in document["entries"] if e["kind"] == "source"}
