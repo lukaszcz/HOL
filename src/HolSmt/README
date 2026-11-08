@@ -95,6 +95,9 @@ CPC arithmetic reductions for integer division, modulus, real division and
 absolute value instantiate general checked identities, so nested conditional
 operands do not change their proof or their zero-divisor endpoints.
 
+CPC replay compacts exact occurrence metadata for large terms while retaining
+nested conjunction operand boundaries, including those in equality endpoints.
+
 For a cvc5 upgrade, test the official release binary against the checked
 matrix rather than accepting proof-format drift.  The matrix commands are in
 `$HOLSMT_VALIDATION_DIR/tools/cvc5-version-matrix.md`.

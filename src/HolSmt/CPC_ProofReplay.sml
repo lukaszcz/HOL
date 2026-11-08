@@ -334,8 +334,8 @@ local
      its right-associated HOL encoding is checked directly above.  Keep every
      other shell unavailable.  In particular, do not rebuild equality or
      application trees from a large checked theorem: source-occurrence facts
-     are not recoverable from them, and retaining them defeats live-proof
-     compaction. *)
+     are not recoverable from them.  Exact source metadata is instead
+     retained by compact_live_provenance, including its AND boundaries. *)
   fun recovered_checked_provenance reason term =
     let
       fun recover term =
@@ -485,8 +485,7 @@ local
         | exact =>
             if not (use_compact_provenance term) andalso
                not (contains_binder_block_dag exact) then
-              UnavailableProvenance
-                "exact provenance exceeds the compact metadata budget"
+              compact_live_provenance exact
             else exact
     in
       {thm = theorem, located = {term = term, provenance = provenance},

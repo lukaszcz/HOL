@@ -16057,6 +16057,42 @@ in
       {term = ``F``, provenance = CPC_Proof.AtomicProvenance})
 end
 
+fun cpc_proof_replay_large_conjunction_provenance_success () =
+let
+  val names = List.tabulate (300, fn n => "boundary" ^ Int.toString n)
+  val declarations = String.concat (List.map
+    (fn name => "(declare-const " ^ name ^ " Bool) ")
+    ("p" :: "q" :: names))
+  val source =
+    "(and (or " ^ String.concatWith " " names ^ ") (and p q))"
+  val expected = boolSyntax.mk_conj
+    (Term.mk_var ("p", Type.bool), Term.mk_var ("q", Type.bool))
+  fun check (assumption, commands, premise) =
+    let
+      val proof = parse_cpc_proof_string
+        ("(" ^ declarations ^ "(assume @source " ^ assumption ^ ") " ^
+         commands ^ "(step @out :rule and_elim :premises (" ^ premise ^
+         ") :args (1)))")
+      val input = case CPC_Proof.proof_commands proof of
+          CPC_Proof.ASSUME (_, {term, ...}) :: _ => term
+        | _ => die "FAIL: large conjunction test lost its assumption"
+      val result = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (SmtResource.dag_nodes_up_to 257 input > 256,
+        "large conjunction test did not cross the metadata cutoff");
+      assert (Thm.concl result ~~ expected,
+        "large binary conjunction lost its nested operand boundary");
+      assert (List.length (Thm.hyp result) = 1 andalso
+              hd (Thm.hyp result) ~~ input,
+        "large conjunction selection changed its hypothesis");
+      check_oracle_tags "CPC large conjunction provenance" result
+    end
+in
+  check (source, "", "@source");
+  check ("(= " ^ source ^ " true)",
+    "(step @pair :rule true_elim :premises (@source)) ", "@pair")
+end
+
 fun cpc_proof_replay_boolean_rewrites_success () =
 let
   val proof = parse_cpc_proof_string
@@ -29161,6 +29197,8 @@ let
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
       cpc_proof_replay_and_elim_success),
+    ("cpc_proof_replay_large_conjunction_provenance_success",
+      cpc_proof_replay_large_conjunction_provenance_success),
     ("cpc_proof_replay_boolean_rewrites_success",
       cpc_proof_replay_boolean_rewrites_success),
     ("cpc_proof_replay_seq_rules_success",
