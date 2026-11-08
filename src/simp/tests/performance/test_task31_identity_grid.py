@@ -226,10 +226,16 @@ class Tree(unittest.TestCase):
         d = self.decide({path: ("5" * 40, "6" * 40)})
         self.assertEqual(d["tree"][path][0], "unloaded")
 
-    def test_a_project_file_is_a_build_file_above_a_loaded_directory(self):
-        # Holmake reads holproject.toml from the directory it builds in and
-        # from every directory above it: the root file is a build input of
-        # every cell, and it needs an entry.
+    def test_a_project_file_is_a_build_file_wherever_it_is(self):
+        # Holmake reads holproject.toml beside the directories it visits,
+        # which INCLUDES and project externals widen: the root file is a
+        # build input of every cell, a file of that name in a directory
+        # nothing loaded from is one too, and each needs an entry.
+        other = "src/other/sub/holproject.toml"
+        d = self.decide({other: ("5" * 40, "6" * 40)})
+        self.assertEqual(d["tree"][other][0], "unattributed-build")
+        self.assertEqual((d["status"], d["unaccounted"]),
+                         ("different", [other]))
         path = "holproject.toml"
         d = self.decide({path: ("5" * 40, "6" * 40)})
         self.assertEqual(d["tree"][path][0], "unattributed-build")

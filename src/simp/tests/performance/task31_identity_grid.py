@@ -60,13 +60,16 @@ IDENTITY_TABLE = "task31-identity"
 # One pair, three samples, free ramp calibration of 0.1 s batches: nothing
 # is timed for a decision; the process loads, runs the fixture and is audited.
 ID_PAIRS, ID_SAMPLES, ID_SECONDS = 1, 3, 0.1
+# (a test pins that every local module the identity modules import, to the
+# transitive closure, is here or is on its short list of reviewed exemptions)
 IDENTITY_CODE = ("task31_identity_grid.py", "task31_grid.py",
                  "task31_identity.py",
                  "task31_snapshot.py", "task31_cases.py",
-                 "task31_attribution.py", "acceptance.py",
+                 "task31_attribution.py", "task31_pins.py", "acceptance.py",
                  "audit_evidence.py", "performance_schema.py",
                  "evidence_bundle.py", "client_dependencies.py",
-                 "timing_grid.py", "matrix_schema.py",
+                 "timing_grid.py", "matrix_schema.py", "summarize.py",
+                 "runtime_metrics.py", "task29_gate.py",
                  "../compatibility/run_paired.py")
 # Per file of IDENTITY_CODE, the seals it had when an identity grid was
 # recorded, once it has changed since (a reviewed change that alters no
@@ -585,7 +588,11 @@ HANDLERS = {"prepare": prepare, "identity": identity,
 
 def main(argv=None):
     """The status of the command, or `REFUSED` (3) with one line on the
-    standard error for one that decided nothing (as the engine's `main`)."""
+    standard error for one that decided nothing (as the engine's `main`).
+
+    The handler below copies `timing_grid.Grid.main`'s error wrapper (that
+    file is sealed for TASK30, so it cannot be factored out): keep the two
+    in step, so that a refusal reads the same from either command."""
     with tg.terminating_as_interrupt():
         try:
             args = parser().parse_args(argv)

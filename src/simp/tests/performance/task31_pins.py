@@ -21,8 +21,9 @@ identity gate (task31_attribution.py, which imports this module).
   such entries is `attributed`;
 - `heap`: a file of the shared heap (hol.state0), which both sides load;
 - `build`: a build file (Holmakefile, MANIFEST, a .ML tool script, a
-  project file) of a directory a cell loads from, or read by Holmake from
-  a loaded directory or an ancestor of one.
+  project file) of a directory a cell loads from, or a file of a name
+  Holmake reads beside the directories it builds in (UPWARD), wherever it
+  is.
 
 `gate` names what measures the difference. `baseline_blob` is the git blob
 at the baseline (null for a file the baseline lacks). `candidate_blob` is

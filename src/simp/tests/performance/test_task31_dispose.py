@@ -17,6 +17,7 @@ import task31_dispose as d
 import task31_attribution as attr
 import task31_followup as follow
 import task31_grid as timing
+import task31_pins as reviewed
 import task31_identity_grid as g
 import timing_grid as tg
 from void_attempts import attempts_of
@@ -40,6 +41,15 @@ def identity(**status):
             cells[n].update(route="derived from " + g.anchor(n))
     return dict(cells=cells, diagnostic=False, status="identical",
                 unaccounted=[], attributed=[], attribution_table="t" * 64)
+
+
+def attr_entry(blob="2" * 40):
+    return dict(path=c.SOURCES[0], kind="source", baseline_blob="1" * 40,
+                candidate_blob=blob, reason="why", gate="gate 2")
+
+
+def reviewed_pins(entries):
+    return reviewed.pins(entries, c.SOURCES)
 
 
 def row(decision="pass", work="equal", pairs=10):
@@ -619,6 +629,115 @@ class Command(unittest.TestCase):
             self.refused(r"attempt f1 of table \w+ "
                          r"\(status pass, output .*\) is not "
                          r"void")
+
+    # A real follow-up table over two cells of the sample, standing in for
+    # the declared one; its replay is stood in for, the rest of `derive`
+    # is the real code.
+    FCELLS = ["traversal_construct-0", "tactic_full_complete-100"]
+
+    def follow_world(self, extension=False, pins=None):
+        """A follow-up engine and its judged output (a second stage with
+        its first stage where `extension`), in the ledger; returns the
+        output that --followup names."""
+        engine = tg.Grid(follow.table(self.FCELLS))
+        first = self.root / "ffirst"
+        first.mkdir()
+        runs = [dict(case=x, size=y) for x, y in engine.t.keys()]
+        a.save(first / "inventory.json", dict(
+            attempt="f1", runs=runs, pins=pins or TABLE, resumed=[]))
+        tg.ledger_append(self.ledger, event="open", stage="first",
+                         table="task31f", attempt="f1", candidate=CAND,
+                         output=str(first), checkout="c")
+        tg.ledger_append(self.ledger, event="close", stage="first",
+                         table="task31f", attempt="f1", candidate=CAND,
+                         output=str(first), checkout="c", status="pass")
+        named = first
+        if extension:
+            named = self.root / "fsecond"
+            named.mkdir()
+            a.save(named / "inventory.json", dict(
+                attempt="f2", runs=runs, pins=pins or TABLE, resumed=[],
+                grid="../ffirst", schema=engine.t.schema("extension")))
+            for event, more in (("open", {}), ("close",
+                                               dict(status="pass"))):
+                tg.ledger_append(
+                    self.ledger, event=event, stage="second",
+                    table="task31f", attempt="f2", candidate=CAND,
+                    output=str(named), checkout="c", **more)
+
+        def replay(args):
+            engine.replayed = dict(
+                stage1={}, stage2={}, decisions=dict(status="pass"))
+            return 0
+        patches = [
+            mock.patch.object(d.follow, "ENGINE", engine),
+            mock.patch.object(d.follow, "TABLE", engine.t),
+            mock.patch.object(engine, "attempts_file",
+                              lambda *a_, **k: self.ledger),
+            mock.patch.object(engine, "replay", replay),
+            mock.patch.object(d.grid.ENGINE, "replayed", dict(
+                stage1={}, stage2={}, inventory={}), create=True),
+            mock.patch.object(d.grid.ENGINE.h, "summary",
+                              lambda reports: self.timing),
+            mock.patch.object(d.grid.ENGINE.h, "with_sources",
+                              lambda summary, inventory: summary)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        return engine, named
+
+    def run_followup(self, named, *more):
+        return self.run_main("--followup", str(named), "--followup-pilot",
+                             str(self.root / "fp"), *more)
+
+    def test_a_judged_follow_up_is_recorded_as_judged(self):
+        _, named = self.follow_world()
+        record = self.root / "disposition.json"
+        code, text = self.run_followup(named, "--record", str(record))
+        self.assertEqual(code, 0, text)
+        found = a.load(record)
+        self.assertEqual([(f["attempt"], f["judged"], f["void"])
+                          for f in found["followup_attempts"]],
+                         [("f1", True, False)])
+        self.assertEqual(found["followup"]["status"], "pass")
+
+    def test_a_judged_follow_up_extension_and_its_first_stage(self):
+        _, named = self.follow_world(extension=True)
+        record = self.root / "disposition.json"
+        code, text = self.run_followup(named, "--record", str(record))
+        self.assertEqual(code, 0, text)
+        self.assertEqual(
+            sorted((f["attempt"], f["judged"], f["void"])
+                   for f in a.load(record)["followup_attempts"]),
+            [("f1", True, False), ("f2", True, False)])
+
+    def test_a_follow_up_not_named_is_judged_as_none(self):
+        # Without --followup, its judged attempt is an attempt like any
+        # other and is not void: the rule is not skipped.
+        self.follow_world()
+        self.refused(r"attempt f1 of table \w+ "
+                     r"\(status pass, output .*\) is not void")
+
+    def test_a_follow_up_judged_by_other_pins_is_refused(self):
+        engine, named = self.follow_world(pins=dict(
+            TABLE, sha256="c" * 64))
+        self.refused_followup(named, "changed pins")
+        # A seal the table keeps in its history, with other pins for a
+        # measured source, is refused too; the same seal with the
+        # committed pins is accepted.
+        other = reviewed_pins([attr_entry(blob="4" * 40)])
+        with mock.patch.object(engine.t, "pin_history", {
+                "c" * 64: other}):
+            self.refused_followup(named, "judged by pins that are not "
+                                  "the committed table's")
+        same = reviewed_pins(reviewed.load()["entries"])
+        with mock.patch.object(engine.t, "pin_history", {"c" * 64: same}):
+            code, text = self.run_followup(named)
+            self.assertEqual(code, 0, text)
+
+    def refused_followup(self, named, why):
+        self.refused(why, "--followup", str(named), "--followup-pilot",
+                     str(self.root / "fp"))
 
     def test_the_attempt_rule_is_the_one_shared_with_task30(self):
         import task30_dispose

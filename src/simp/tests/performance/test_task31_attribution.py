@@ -186,28 +186,31 @@ class Account(unittest.TestCase):
                              "tools/sequences/base-hol"], "mismatch")
 
     def test_a_file_holmake_reads_upward_is_a_build_file(self):
-        # Holmake reads these from the directory it builds in and from
-        # every directory above it, so a file in a loaded directory or in
-        # an ancestor of one is a build input; elsewhere it is unloaded.
+        # Holmake also follows INCLUDES, PRE_INCLUDES and project
+        # externals, so a file of these names is a build input wherever it
+        # is: in a loaded directory, in an ancestor of one, or in a
+        # directory (non-ancestor) that nothing loaded.
         loaded = ["src/boss/b.sml"]
-        here = ["src/boss/", "src/", ""]
         for name in attr.UPWARD:
-            for where in here:
+            for where in ("src/boss/", "src/", "", "src/far/",
+                          "src/boss/sub/", "src/boss2/", "examples/x/"):
                 path = where + name
                 self.assertEqual(
                     self.classes(self.diff(path), loaded=loaded),
                     {path: "unattributed-build"}, path)
-            for where in ("src/far/", "src/boss/sub/", "src/boss2/"):
-                path = where + name
-                self.assertEqual(
-                    self.classes(self.diff(path), loaded=loaded),
-                    {path: "unloaded"}, path)
         self.assertEqual(sorted(attr.UPWARD), [
             ".hol_preexec", ".holpath", "holproject.local.toml",
             "holproject.toml"])
-        # Without any loaded file there is no directory above it.
+        # Nothing loaded changes nothing.
         self.assertEqual(self.classes(self.diff("holproject.toml")),
-                         {"holproject.toml": "unloaded"})
+                         {"holproject.toml": "unattributed-build"})
+        # An excluded path is excluded whatever its name.
+        path = "src/simp/tests/performance/.hol_preexec"
+        self.assertEqual(self.classes(self.diff(path), loaded=loaded),
+                         {path: "excluded"})
+        path = "help/holproject.toml"
+        self.assertEqual(self.classes(self.diff(path), loaded=loaded),
+                         {path: "excluded"})
         # A reviewed entry attributes it; other blobs do not.
         row = entry("holproject.toml", "build")
         self.assertEqual(self.classes(self.diff("holproject.toml"), [row],
@@ -216,12 +219,6 @@ class Account(unittest.TestCase):
         self.assertEqual(self.classes(
             self.diff("holproject.toml"), [dict(row, candidate_blob="4" * 40)],
             loaded), {"holproject.toml": "mismatch"})
-
-    def test_the_ancestors_of_the_loaded_directories(self):
-        self.assertEqual(attr.ancestors({"a/b/c", "a/d"}),
-                         {"a/b/c", "a/b", "a", "", "a/d"})
-        self.assertEqual(attr.ancestors({""}), {""})
-        self.assertEqual(attr.ancestors(set()), set())
 
     def test_a_loaded_path_is_never_excluded(self):
         path = "src/simp/tests/performance/x.sml"

@@ -9,12 +9,12 @@ changes no seal of the counts; every record carries its seal instead.
 commits, from the git blobs and from the files the receipts show were
 loaded: a file is attributed (an entry with exactly the blobs), or decisive
 (loaded and unattributed, a build tool or build sequence and unattributed, a
-build file of a loaded directory and unattributed, a file Holmake reads
-upward (UPWARD) from a loaded directory or an ancestor of one and
+build file of a loaded directory and unattributed, a file of a name
+Holmake reads beside its build directories (UPWARD) anywhere and
 unattributed, an entry with other blobs), or not loaded (proved by the
-receipts), or excluded. EXCLUDED is the
-reviewed list of the paths that are no part of any build a cell measures,
-each with its reason; no other path is left out.
+receipts), or excluded. EXCLUDED is the reviewed list of the paths that
+are no part of any build a cell measures, each with its reason; no other
+path is left out.
 """
 import hashlib
 import posixpath
@@ -24,10 +24,17 @@ import timing_grid as tg
 from task31_pins import FILE, SOURCE_SUFFIXES, load
 
 BUILD_NAMES = ("Holmakefile", "MANIFEST")
-# The files Holmake reads from a directory it builds in and from every
-# directory above it (holpathdb.files_upward_in_hierarchy and
-# HMProject.load): the project file and its local override, the holpath
-# registration and the pre-exec script. They decide what a build does.
+# The files Holmake reads beside the directories it builds in
+# (holpathdb.files_upward_in_hierarchy and HMProject.load): the project file
+# and its local override, the holpath registration and the pre-exec script.
+# They decide what a build does. A difference in a file of one of these
+# names is decisive wherever it is in the repository (unless EXCLUDED), not
+# only in a loaded directory or above one: Holmake looks for them in the
+# ancestors of every directory it visits, and it visits more than the
+# directories a cell loads from (it also follows INCLUDES, PRE_INCLUDES and
+# the external directories of a project), so the loaded directories and
+# their ancestors are not the whole set. No include closure is computed;
+# the rule is conservative, and a file that cannot matter is attributed.
 UPWARD = ("holproject.toml", "holproject.local.toml", ".holpath",
           ".hol_preexec")
 # The reviewed exclusions: (path or directory, reason). A path is excluded
@@ -125,19 +132,6 @@ def toolchain(path):
         name.endswith(".md") or name.startswith("README"))
 
 
-def ancestors(folders):
-    """The directories in `folders` and every directory above them (the
-    repository root is the empty string)."""
-    found = set()
-    for folder in folders:
-        while True:
-            found.add(folder)
-            if not folder:
-                break
-            folder = posixpath.dirname(folder)
-    return found
-
-
 def account(blobs, entries, loaded):
     """{path: (class, note)} of every path of `blobs` whose two blobs
     differ. `blobs` is {path: {baseline, candidate}} (every tracked path
@@ -150,8 +144,7 @@ def account(blobs, entries, loaded):
     - unattributed: loaded, with no entry;
     - excluded: on the reviewed exclusion list (EXCLUDED) and not loaded;
     - unattributed-build: a file of the build tools or the sequences
-      (TOOLCHAIN), a file Holmake reads upward (UPWARD) in a directory that
-      something loaded came from or in one above it, or a build file in a
+      (TOOLCHAIN), a file of an UPWARD name anywhere, or a build file in a
       directory that something loaded came from, with no entry;
     - unloaded: no loaded file of either side is this one, and it is no
       build file."""
@@ -161,7 +154,6 @@ def account(blobs, entries, loaded):
                   sorted(set(by_path) - set(blobs))))
     loaded = set(loaded)
     folders = {posixpath.dirname(p) for p in loaded}
-    above = ancestors(folders)
     out = {}
     for path in sorted(blobs):
         found = blobs[path]
@@ -186,11 +178,10 @@ def account(blobs, entries, loaded):
             out[path] = ("unattributed-build", "a build tool or sequence: "
                          "the receipts record no file of it, so they "
                          "cannot show it unused")
-        elif posixpath.basename(path) in UPWARD and \
-                posixpath.dirname(path) in above:
-            out[path] = ("unattributed-build", "a file Holmake reads from "
-                         "a directory a measured cell loads from or from "
-                         "one above it")
+        elif posixpath.basename(path) in UPWARD:
+            out[path] = ("unattributed-build", "a file Holmake reads "
+                         "beside the directories it builds in, which "
+                         "include more than the ones a cell loads from")
         elif is_build(path) and posixpath.dirname(path) in folders:
             out[path] = ("unattributed-build", "build file of a directory "
                          "a measured cell loads from")

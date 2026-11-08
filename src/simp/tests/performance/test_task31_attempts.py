@@ -326,24 +326,111 @@ class Pins(unittest.TestCase):
 
 
 class Modules(unittest.TestCase):
-    def test_every_module_the_decision_imports_is_sealed(self):
+    """Every local module that a decision imports, to the transitive closure
+    (function-level imports included), is in the seal list of that
+    decision, or is exempt here for a stated reason."""
+
+    # Reasons shared by the exemptions below.
+    TASK30_TABLE = (
+        "the TASK30 table (cases and pins feed its own table only; its "
+        "driver is imported for constants): closed, sealed by "
+        "task30_dispose.CODE where TASK31's disposition reads it, and the "
+        "TASK31 table seals the files it takes from it by name")
+    ALLOCATION = (
+        "the allocation matrix and its modules, reached by a function-level "
+        "import of task30_grid.harness_match: the allocation grid is "
+        "replayed and sealed by the disposition (CODE), and no identity or "
+        "timing decision is taken from it")
+    EXEMPT = {
+        "identity": {
+            "task30_grid.py": TASK30_TABLE,
+            "task30_cases.py": TASK30_TABLE,
+            "task30_pins.py": TASK30_TABLE,
+            "allocation_matrix.py": ALLOCATION,
+            "allocation_analysis.py": ALLOCATION,
+            "allocation_schema.py": ALLOCATION,
+            "allocation_boundary.py": ALLOCATION,
+            "path_schema.py": ALLOCATION,
+            "loading.py": ALLOCATION},
+        "timing": {
+            "task30_grid.py": TASK30_TABLE,
+            "task30_cases.py": TASK30_TABLE,
+            "task30_pins.py": TASK30_TABLE,
+            "allocation_matrix.py": ALLOCATION,
+            "allocation_analysis.py": ALLOCATION,
+            "allocation_schema.py": ALLOCATION,
+            "allocation_boundary.py": ALLOCATION,
+            "path_schema.py": ALLOCATION,
+            "loading.py": ALLOCATION},
+        "disposition": {
+            "task30_cases.py": TASK30_TABLE,
+            "task30_pins.py": TASK30_TABLE,
+            "loading.py": (
+                "the allocation matrix's toolchain building, which the "
+                "disposition's replay of an allocation grid does not do "
+                "(test_timing_followup.py, ALLOCATION_BUILD)")}}
+
+    @staticmethod
+    def local_imports(name):
         import ast
+        tree = ast.parse((a.HERE / name).read_text())
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [n.name for n in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                modules = [node.module] if node.module else []
+            else:
+                continue
+            for module in modules:
+                if (a.HERE / (module + ".py")).is_file():
+                    found.add(module + ".py")
+        return found
+
+    def closure(self, roots):
+        seen, todo = set(), list(roots)
+        while todo:
+            name = todo.pop()
+            if name not in seen:
+                seen.add(name)
+                todo.extend(sorted(self.local_imports(name)))
+        return seen
+
+    def covered(self, side, roots, sealed):
+        missing = self.closure(roots) - set(sealed)
+        exempt = self.EXEMPT[side]
+        self.assertEqual(
+            sorted(missing - set(exempt)), [],
+            "%s: imported (transitively) and neither sealed nor reviewed "
+            "as exempt" % side)
+        # An exemption is for a module that is not sealed.
+        self.assertEqual(sorted(set(exempt) & set(sealed)), [])
+        # ... and is still imported: no stale entry.
+        self.assertEqual(sorted(set(exempt) - missing), [])
+
+    def test_the_identity_modules_import_only_sealed_code(self):
         import task31_identity_grid as idgrid
-        sealed = set(d.CODE) | set(idgrid.IDENTITY_CODE)
-        for name in ("task31_dispose.py", "task31_grid.py",
-                     "task31_followup.py"):
-            tree = ast.parse((a.HERE / name).read_text())
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    modules = [n.name for n in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    modules = [node.module]
-                else:
-                    continue
-                for module in modules:
-                    if (a.HERE / (module + ".py")).is_file():
-                        self.assertIn(module + ".py", sealed,
-                                      "%s imports %s" % (name, module))
+        self.covered("identity", (
+            "task31_identity_grid.py", "task31_identity.py",
+            "task31_attribution.py", "task31_snapshot.py"),
+            idgrid.IDENTITY_CODE)
+        self.assertIn("task31_pins.py", idgrid.IDENTITY_CODE)
+
+    def test_the_timing_modules_import_only_sealed_code(self):
+        sealed = {Path(n).name for n in (
+            *timing.SEALED, "task31_grid.py", "task31_followup.py",
+            *tg.REPLAY_CODE)}
+        self.covered("timing", ("task31_grid.py", "task31_followup.py"),
+                     sealed)
+
+    def test_the_disposition_imports_only_sealed_code(self):
+        import task31_identity_grid as idgrid
+        # The disposition replays the identity grid (IDENTITY_CODE), the
+        # timing grid (the timing seals) and the allocation grid.
+        sealed = {Path(n).name for n in (
+            *d.CODE, *idgrid.IDENTITY_CODE, *timing.SEALED,
+            *tg.REPLAY_CODE)}
+        self.covered("disposition", ("task31_dispose.py",), sealed)
         # The harness the disposition compares the allocation grid with.
         self.assertIn("task30_grid.py", d.CODE)
         self.assertIn("task31_pins.py", d.CODE)

@@ -2415,10 +2415,10 @@ Reviewed table. `task31_attributed.json` holds `{"schema", "entries",
 reason, gate}`, `kind` being `source` (a simplifier source whose private
 copy differs), `heap` (a file of the shared heap) or `build` (a Holmakefile,
 manifest, tool script or project file of a loaded directory, or a file
-Holmake reads upward, see "The tree"); `gate` says what measures the
-difference. A `candidate_blob` of `null` is a placeholder that
-`identity` refuses (it names the blob git has, to be filled at integration);
-the filled entries that are sources of the timing table are its pins (an
+of a name Holmake reads beside its build directories, see "The tree");
+`gate` says what measures the difference. A `candidate_blob` of `null` is
+a placeholder that `identity` refuses (it names the blob git has, to be
+filled at integration); the filled entries that are sources of the timing table are its pins (an
 entry of kind `heap` or `build` is no source of the table and pins nothing).
 The file is outside the seals of the counts; every record carries its sha256
 and the entries it was judged by, and `history` maps the sha256 of an
@@ -2456,11 +2456,15 @@ heap, over all measured cells and both sides):
 - `unattributed-build`: a file of the build tools, their prelude or the
   build sequences (`tools/`, `tools-poly/`, `bin/`, which the receipts do
   not record), a build file of a directory that a loaded file comes from,
-  or a file Holmake reads from the directory it builds in and from every
-  directory above it (`task31_attribution.UPWARD`: `holproject.toml`,
-  `holproject.local.toml`, `.holpath`, `.hol_preexec`) located in a
-  directory that a loaded file comes from or in an ancestor of one (the
-  repository root included), no entry;
+  or a file of a name Holmake reads beside the directories it builds in
+  (`task31_attribution.UPWARD`: `holproject.toml`,
+  `holproject.local.toml`, `.holpath`, `.hol_preexec`) anywhere in the
+  repository that is not `EXCLUDED`, no entry. The last rule is general and
+  conservative on purpose: Holmake looks for these files in the ancestors
+  of every directory it visits, and it also follows `INCLUDES`,
+  `PRE_INCLUDES` and the external directories of a project, so the loaded
+  directories and their ancestors are not the whole set. No include closure
+  is computed; a file that cannot matter is attributed with its reason;
 - `excluded`: on the reviewed list `task31_attribution.EXCLUDED` of paths
   that are no part of any build a cell measures, each with its reason (the
   measuring harness and paired runner, installed from the checkout; `help/`,
@@ -2536,8 +2540,11 @@ files of the table. Adding an entry for another file changes that sha256 and
 no pin; the grid replays by the pins of the file it was made with
 (`pin_history`). The driver has its own history (`DRIVERS` and the others,
 as TASK30's), empty until a grid is recorded; a change to the identity
-module, to `task31_identity.py`, to `task31_attribution.py` or to the
-reviewed file alters no seal of a timing grid. The identity module offers
+module, to `task31_identity.py` or to `task31_attribution.py` alters no
+seal of a timing grid. Every timing record carries the pins, the projection
+of the reviewed table onto the measured sources: a change to the entry of a
+measured source voids the grid, and adding or changing a heap or build
+entry does not. The identity module offers
 the identity commands only (`prepare`, `identity`, `identity-replay`,
 `sources`). The difference below `src` is published by `tree`. The counts file
 `task31_iterations.json` does not exist until `pilot` and `predeclare` make

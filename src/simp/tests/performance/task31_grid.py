@@ -59,9 +59,11 @@ SEALED = ("task31_cases.py", "task31_pins.py") + base30.SEALED[1:5] + \
 # nothing measured) an old sealed file to SEALED_HISTORY[name]; edit
 # test_task31_grid.py, which pins them, too. The identity gate is another
 # module (task31_identity_grid.py, importing this one): a change to it, to
-# task31_identity.py, task31_attribution.py or the reviewed table touches no
-# seal of this table. The code that computes the pins is task31_pins.py,
-# sealed here.
+# task31_identity.py or to task31_attribution.py touches no seal of this
+# table. Every record of this table carries the pins, the projection of the
+# reviewed table onto the measured sources: a change to the entry of a
+# measured source voids the grid; adding or changing a heap or build entry
+# does not. The code that computes the pins is task31_pins.py, sealed here.
 DRIVERS, ENGINES, ACCEPTANCE, SEALED_HISTORY = (), (), (), {}
 # The reviewed table: read once. Its file is not among SEALED (the counts
 # are not bound to it); every record seals it. The table's sources are the
