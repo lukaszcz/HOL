@@ -12,8 +12,10 @@ class StructuralAudit(unittest.TestCase):
     def setUpClass(cls):
         # Preserve the original whole-closure mutation tests on their sealed
         # landing, not on later intentionally changed extension sources.
+        # The key set comes from the sealed manifest, not from live files:
+        # TASK31 deleted SimpTracking, which that manifest still lists.
         cls.sources = {p: audit.git_source('ba366bcae', p)
-                       for p in audit.read_sources()}
+                       for p in audit.source_paths(audit.read_manifest())}
         cls.manifest = audit.read_manifest()
         audit.audit(cls.sources)
 

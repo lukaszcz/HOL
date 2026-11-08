@@ -25,7 +25,7 @@ LABELS = ("rewrites", "rewrites_with_names", "named_rewrites",
 # Match registry/context state with API-compatible cold dependencies only.
 # Cond_rewrExt cannot elaborate against pinned Cond_rewr; do not transform
 # that public signature or claim this is a complete matching of loaded code.
-MATCHED_MODULES = ("SimpTracking", "TraverseExt", "simpMarkerTheory",
+MATCHED_MODULES = ("TraverseExt", "simpMarkerTheory",
                    "simpMarkerLib", "SplitData", "splitLib")
 
 EXTRAS = ("empty", "update callback and persistence",

@@ -22,9 +22,6 @@ Cond_rewrExt.sml: Explicit paired/configured conditional compilation.
                Tracked preparation binds both runners to the actual
                bounded control; projections do not recompile or reset it.
 
-SimpTracking.sml: Internal shared thread-local rewrite reporter used by
-               both conditional engines. No extension registrations.
-
 Opening.sml:   Moving into a term under the control of a congruence
                rule.
 
@@ -133,9 +130,10 @@ congExtLib.sml:
 
 Shared identities:
                Cond_rewr owns the sole stack_limit; Trace owns the original
-               action, hook, level and registered trace knob. SimpTracking
-               owns one reporter slot; BoundedRewrites owns actual quota
-               refs. Both engines use original Context/types/exceptions.
+               action, hook, level and registered trace knob. Cond_rewr also
+               owns the one rewrite-tracking extent, shared by both engines
+               through Cond_rewr.note_rewrite; BoundedRewrites owns actual
+               quota refs. Both engines use original Context/types/exceptions.
                Named fragment registries are deliberately different typed
                slots, simpLib.ssfragDB and simpExtLib.ssfragDB, with no
                cross-engine lookup fallback. SplitData/splitLib are single

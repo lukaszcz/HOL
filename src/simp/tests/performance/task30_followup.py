@@ -79,7 +79,13 @@ COUNTS = a.HERE / "task30_followup_iterations.json"
 # (task30_dispose.py) in neither table's seals, so task30_grid.py stays as
 # it is from Z0 on. TASK30's own set of sealed names is frozen by its Y
 # records: do not add a file to task30_grid.INSTALLED or SEALED.
-DRIVERS, ENGINES, ACCEPTANCE = (), (), ()
+DRIVERS = (dict(bytes=6360,
+                sha256="287a3140d4bd12567ca4fcf8510d2c6a"
+                       "111b96116db8ebff9461905920fe8ebd"),)
+ENGINES = (dict(bytes=190317,
+                sha256="6fbc62fac47439a5a7ad13dd1f2edf61"
+                       "62729a15f7cb7d6c28434f1a4ee06ac3"),)
+ACCEPTANCE = ()
 # task30_grid.py is sealed like the helpers of the cases: this table takes
 # its constants (SECONDS, PAIRS, SAMPLES, SEALED) and replays the TASK30
 # grid through its table, so a change to it alters what is measured or

@@ -112,8 +112,17 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
         "allocation_analysis.py", "allocation_schema.py",
         "allocation_boundary.py", "path_schema.py")
 # Per file of CODE, the seals it had when a disposition was recorded, once
-# it has changed since (empty until then).
-HISTORY = {}
+# it has changed since.
+HISTORY = {
+    "task30_dispose.py": (dict(
+        bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
+                       "8e864bf5d9298ce73366c88a069cef59"),),
+    "task30_followup.py": (dict(
+        bytes=6360, sha256="287a3140d4bd12567ca4fcf8510d2c6a"
+                       "111b96116db8ebff9461905920fe8ebd"),),
+    "timing_grid.py": (dict(
+        bytes=190317, sha256="6fbc62fac47439a5a7ad13dd1f2edf61"
+                       "62729a15f7cb7d6c28434f1a4ee06ac3"),)}
 
 TAIL = (
     "Not shown by any row: CPU that neither allocates nor traces, net node "

@@ -126,10 +126,10 @@ bind the unchanged production sources. Assertions, not line numbers, are invaria
 
 - Move paired/configured preparation to Cond_rewrExt. Restore direct pinned
   ordinary COND_REWR_CONV; it must not construct a pair and discard half.
-- Extract current ThreadLocal tracking extent to internal SimpTracking, with
-  note_rewrite and polymorphic with_tracking. Existing Cond_rewr export aliases
-  it; both compilers report to it. Keep the original public signature/control ref
-  and Trace identity. No extension import in Cond_rewr itself.
+- Keep the ThreadLocal tracking extent in Cond_rewr, unchanged. Its signature
+  gains the one spec note_rewrite; Cond_rewrExt reports through it, so both
+  compilers report to the one extent. Keep the original control ref and Trace
+  identity. No extension import in Cond_rewr itself.
 - Retarget simpExtLib and surviving mixed ordinary compiler at simpLib:126 to
   Cond_rewrExt explicitly; **16 removes the latter import**.
 - Execute paired matcher tests in both orders, partial/exhausted quotas, late
@@ -235,7 +235,7 @@ bind the unchanged production sources. Assertions, not line numbers, are invaria
 | M6 | Interleaved test dependency aliases/local scopes and temporary duplicate assertions | 10/11 minimum migration | final integration **26**; must remain executable throughout | closed 26; byte-exact native relocation, pinned ordinary selftest, independent launchers and strict post-list full regression |
 
 The graph's introduced-node ledger models the pre-extraction availability:
-SimpTracking/Cond_rewrExt arrive in 12, OpeningExt/TravrulesExt in 13. Prior to
+Cond_rewrExt arrives in 12, OpeningExt/TravrulesExt in 13. Prior to
 those steps the source uses X1/X2 and the existing single local tracking slot;
 it must not reference a not-yet-created module. Delete the early-API witness
 aliases in Task08Cutovers at 12/13 while moving their assertions to the actual

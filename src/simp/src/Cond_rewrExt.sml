@@ -7,7 +7,20 @@ open HolKernel boolLib liteLib Trace
 (* Preserve the observable diagnostic origin of the conditional engine. *)
 fun WRAP_ERR x = STRUCT_WRAP "Cond_rewr" x
 fun ERR x = STRUCT_ERR "Cond_rewr" x
-val is_var_perm = Cond_rewr.is_var_perm
+
+(* Cond_rewr keeps its own (unexported) definition, as develop does; this
+   copy must agree with it.  src/simp/tests/cond-rewr-ext checks that the
+   two engines accept and refuse the same permutative rewrites. *)
+fun vperm(tm1,tm2) =
+ case (dest_term tm1, dest_term tm2)
+  of (VAR v1,VAR v2)   => (snd v1 = snd v2)
+   | (LAMB t1,LAMB t2) => vperm(snd t1, snd t2)
+   | (COMB t1,COMB t2) => vperm(fst t1,fst t2) andalso vperm(snd t1,snd t2)
+   | (x,y) => aconv tm1 tm2
+
+fun is_var_perm(tm1,tm2) =
+    vperm(tm1,tm2) andalso
+    HOLset.equal(FVL [tm1] empty_tmset, FVL [tm2] empty_tmset)
 
 type config =
   {solver : term list -> term -> thm, stack : term list,
@@ -20,7 +33,7 @@ type runners =
       caller retains the actual bound reference and supplies its status. *)
    fun COND_REWR_CONVS (nm,th) bounded =
       let val eqn = snd (strip_imp (concl th))
-          val isperm = Cond_rewr.is_var_perm (dest_eq eqn)
+          val isperm = is_var_perm (dest_eq eqn)
           val instth = HO_PART_MATCH (lhs o snd o strip_imp) th
                        handle HOL_ERR _ => ERR("COND_REWR_CONV",
                          "bad theorem argument (not a conditional equation)")
@@ -66,7 +79,7 @@ type runners =
               trace(if isperm then 2 else 1, REWRITING(nm,tm,th))
                     else ()
             (* note_rewrite is a no-op unless someone is tracking *)
-            val _ = if null stack then SimpTracking.note_rewrite th else ()
+            val _ = if null stack then Cond_rewr.note_rewrite th else ()
         in trace(if isperm then 3 else 2,PRODUCE(tm,nm,final_thm));
             final_thm
         end
@@ -116,7 +129,7 @@ type runners =
               trace(if isperm then 2 else 1, REWRITING(nm,tm,th))
                     else ()
             (* note_rewrite is a no-op unless someone is tracking *)
-            val _ = if null stack then SimpTracking.note_rewrite th else ()
+            val _ = if null stack then Cond_rewr.note_rewrite th else ()
         in trace(if isperm then 3 else 2,PRODUCE(tm,nm,final_thm));
             final_thm
         end

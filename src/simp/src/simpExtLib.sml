@@ -3163,7 +3163,10 @@ fun global_simp_tac cfg ss0 thl gl =
 
 
 
-val track = with_tracking
+(* The ordinary engine's tracking extent, not a copy: Cond_rewrExt reports
+   through Cond_rewr.note_rewrite, so both engines feed one list, in firing
+   order. *)
+val track = Cond_rewr.with_tracking
 
 (* ----------------------------------------------------------------------
     creating per-type ssdata values

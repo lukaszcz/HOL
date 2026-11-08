@@ -351,7 +351,7 @@ class FragmentProtocolTests(unittest.TestCase):
                                         "supplement snapshot drift"):
                 probe.install_supplements(dst, snapshot)
             self.assertFalse(list(dst.iterdir()))
-            missing = root / "src/simp/src/SimpTracking.sml"
+            missing = root / "src/simp/src/TraverseExt.sml"
             missing.unlink()
             with self.assertRaises(FileNotFoundError):
                 probe.supplement_snapshot(root, root / "missing-snapshot")

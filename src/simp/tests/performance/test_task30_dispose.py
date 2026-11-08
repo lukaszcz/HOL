@@ -265,8 +265,12 @@ class Spec(unittest.TestCase):
                 note = td.DISPOSITION["attributed"][case + "-10000"]["note"]
                 self.assertIn("only by the operation words", note)
 
-    def test_the_seal_histories_start_empty_and_name_only_the_code(self):
-        self.assertEqual(td.HISTORY, {})
+    def test_the_seal_histories_name_only_the_code(self):
+        self.assertEqual(
+            {k: [v["bytes"] for v in h] for k, h in td.HISTORY.items()},
+            {"task30_dispose.py": [50202], "task30_followup.py": [6360],
+             "timing_grid.py": [190317]})
+        self.assertLessEqual(set(td.HISTORY), set(td.CODE))
         self.assertEqual(set(td.seals()), set(td.CODE))
         for name in td.CODE:
             self.assertTrue((a.HERE / name).is_file(), name)

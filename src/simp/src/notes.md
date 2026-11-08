@@ -29,7 +29,7 @@ The earlier mixed branch APIs are not develop APIs. Their final owners are:
 | Earlier branch use | Final module/type/construction |
 | --- | --- |
 | `Traverse.CONTEXT_REDUCER`, `CONFIG_REDUCER`, configuration/solver/policy types, `XTRAVERSE`, root/observed/child-first traversal | `TraverseExt`; use `TraverseExt.reducer` at the reducer factory. |
-| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. Pure `is_var_perm` remains available in both modules. |
+| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. `Cond_rewrExt.is_var_perm` is its own copy of Cond_rewr's unexported predicate (tested to agree); `Cond_rewr.sig` is develop's. |
 | `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `OpeningExt`, `TravrulesExt`, `simpExtLib.threaded_cong_ss`. Ordinary congruence factories are unchanged. |
 | Extended `dproc_ss`, `SSFRAG`, fragments/sets/weakener data | `simpExtLib.ssfrag/simpset`, with `TraverseExt.reducer`, from the first relevant construction. |
 | Configured `congLib` calls | `congExtLib`; construct its distinct congset before installation and pass an extension simpset. |
@@ -154,8 +154,14 @@ implements configured invocation.
 identities while threading earlier results into later premises and
 beta-reducing rebuilt RHS terms. Ordinary factories do no such extra work.
 Both engines use the same original `Trace` action/hook/ref and registered
-`simplifier` knob; rewrite tracking has one internal `SimpTracking` thread-local
-slot. Nested tracking reports only its inner extent and restores on exceptions.
+`simplifier` knob; rewrite tracking is one extent, owned by `Cond_rewr`
+(develop's, byte-identical apart from the `note_rewrite` spec added to its
+signature). `Cond_rewrExt` reports through `Cond_rewr.note_rewrite`, and
+`simpExtLib.track` is `Cond_rewr.with_tracking`. `simpLib.track` and
+`simpExtLib.track` are therefore the same extent: either sees the rewrites
+of both engines in the order they fired. A nested extent of either kind
+reports only its own rewrites and the enclosing extent does not see them,
+as on develop; exceptions restore the enclosing extent.
 Existing `BoundedRewrites.control`, `Conv.UNCHANGED`, `Feedback.HOL_ERR` and
 `Portable.Interrupt` identities are not copied. Named-fragment registries are
 intentionally **different typed Context slots**, `simpLib.ssfragDB` and

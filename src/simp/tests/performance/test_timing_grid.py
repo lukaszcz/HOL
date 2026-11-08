@@ -3210,6 +3210,30 @@ class PinFile(Rig):
         with self.assertRaisesRegex(ValueError, "changed pins"):
             self.go(self.replay_argv(out))
 
+    def test_a_record_replays_by_the_pins_that_admitted_its_added_file(
+            self):
+        self.absent, self.differ = {"src/two.sml"}, {"src/two.sml"}
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
+        header = self.inventory(out)
+        self.assertEqual(header["sources"]["src/two.sml"],
+                         dict(baseline=None, candidate="f" * 40))
+        # The pin file changes and no longer pins the file the baseline
+        # lacks; the table keeps the version the record was judged by.
+        self.bump({}, history=True)
+        repo = self.repo
+        self.grid.check_sources(header, repo)
+        self.assertEqual(self.go(self.replay_argv(out))[0], 0)
+        # A new run is judged by the current pins and refuses the file.
+        with self.assertRaisesRegex(ValueError, "absent at the baseline "
+                                    "and not pinned: src/two.sml"):
+            self.grid.h.source_record(repo, a.BASE, CANDIDATE)
+        # A record sealed with the current pins is judged by them too.
+        current = dict(header, pins=a.seal(self.sealed_dir / "pins.py"))
+        with self.assertRaisesRegex(ValueError, "absent at the baseline "
+                                    "and not pinned: src/two.sml"):
+            self.grid.check_sources(current, repo)
+
     def test_a_pin_history_belongs_to_a_table_with_a_pin_file(self):
         with self.assertRaisesRegex(ValueError, "belongs to a table"):
             tg.Table("toy", "TOY", CASES, "d.py", "c.json", sources=SOURCES,

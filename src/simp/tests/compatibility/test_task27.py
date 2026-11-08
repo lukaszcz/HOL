@@ -25,14 +25,14 @@ class RuntimeReceiptControls(unittest.TestCase):
         cls.text = ''.join('OBS used.path=' + str(
             audit.ROOT / 'src/simp/src' / (name + suffix)) + '\n'
             for name in ('simpLib', 'congLib', 'Traverse', 'Cond_rewr',
-                         'Trace', 'SimpTracking', 'simpExtLib', 'TraverseExt',
+                         'Trace', 'simpExtLib', 'TraverseExt',
                          'Cond_rewrExt', 'congExtLib')
-            for suffix in ('.sig', '.sml')) + ' ... OK\n' * 172 + (
+            for suffix in ('.sig', '.sml')) + ' ... OK\n' * 178 + (
                 'OBS result=pass\n')
 
     def test_complete_receipt(self):
         self.assertEqual(self.runner.validate_output(
-            self.text, 0, 'attribute', 'before'), 172)
+            self.text, 0, 'attribute', 'before'), 178)
 
     def test_incomplete_failed_and_wrong_count(self):
         for text, exitcode in ((self.text, 1), (self.text[:-1], 0),
@@ -60,7 +60,7 @@ class LiveSourceGate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.sources = audit.read_sources()
-        cls.manifest = audit.prior.read_manifest()
+        cls.manifest = audit.read_manifest()
         # Deliberately exercise the default LIVE entry, not a historical map.
         cls.result = audit.audit()
         cls.observations = cls.result['defining_source_dependencies']
@@ -79,9 +79,9 @@ class LiveSourceGate(unittest.TestCase):
     def test_live_graph_and_recorded_hashes(self):
         result = self.result
         self.assertEqual(result['structural'], 'pass')
-        self.assertEqual(result['transitive_modules'], 231)
-        self.assertEqual(result['transitive_sources'], 446)
-        self.assertEqual(len(result['sources']), 478)
+        self.assertEqual(result['transitive_modules'], 230)
+        self.assertEqual(result['transitive_sources'], 444)
+        self.assertEqual(len(result['sources']), 476)
         self.assertEqual(result['head'], subprocess.check_output(
             ['git', '-C', str(audit.ROOT), 'rev-parse', 'HEAD'],
             text=True).strip())
@@ -111,11 +111,17 @@ class LiveSourceGate(unittest.TestCase):
             with self.subTest(path=path):
                 revision = (audit.START if path in audit.SHARED_DELTAS else
                             audit.BASE)
+                if path in audit.REVIEWED_31:
+                    # Sealed by content: the recorded git blob id.
+                    self.assertEqual(
+                        audit.blob_id(self.sources[path]),
+                        audit.REVIEWED_31[path]['blob'])
+                    continue
                 self.assertEqual(self.sources[path],
                                  audit.git_source(revision, path))
         self.assertEqual(set(self.result['shared_identity_deltas']),
                          set(audit.SHARED_DELTAS))
-        self.assertEqual(len(audit.SHARED_DELTAS), 6)
+        self.assertEqual(len(audit.SHARED_DELTAS), 3)
         for path in audit.prior.ORDINARY:
             self.assertEqual(self.sources[path],
                              audit.git_source(audit.BASE, path))
@@ -125,12 +131,12 @@ class LiveSourceGate(unittest.TestCase):
                          set(audit.DELTAS))
         actual_deltas = set()
         for path in audit.EXTENSIONS:
-            self.assertEqual(self.sources[path],
-                             audit.git_source(audit.REVIEW, path))
+            self.assertEqual(self.sources[path], audit.reference_source(
+                path, self.sources[path]))
             if audit.baseline_source(path) != self.sources[path]:
                 actual_deltas.add(path)
         self.assertEqual(actual_deltas, set(audit.DELTAS))
-        self.assertEqual(len(actual_deltas), 12)
+        self.assertEqual(len(actual_deltas), 13)
         for path, delta in audit.delta_records().items():
             self.assertTrue(delta['reason'])
             self.assertNotEqual(delta['baseline'], delta['reviewed'])
@@ -141,12 +147,17 @@ class LiveSourceGate(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, 'bytes'):
                         audit.audit(changed)
 
-    def test_actual_graph_contains_source_discovered_tracking(self):
+    def test_actual_graph_keeps_tracking_out_of_the_ordinary_closure(self):
         graph = self.result['dependency_graph']
-        self.assertIn('SimpTracking',
-                      graph['Cond_rewr']['defining_source_imports'])
+        self.assertNotIn('SimpTracking', graph)
+        self.assertNotIn('SimpTracking',
+                         graph['Cond_rewr']['defining_source_imports'])
+        self.assertNotIn('SimpTracking',
+                         self.observations[audit.SRC + 'Cond_rewrExt.sml'])
+        self.assertIn('Cond_rewr',
+                      self.observations[audit.SRC + 'Cond_rewrExt.sml'])
         self.assertIn('ThreadLocal',
-                      graph['SimpTracking']['defining_source_imports'])
+                      self.observations[audit.SRC + 'Cond_rewr.sml'])
         for name, node in graph.items():
             self.assertEqual(node['reviewed_runtime_imports'],
                              self.manifest['modules'][name]['imports'])
@@ -169,7 +180,7 @@ class LiveSourceGate(unittest.TestCase):
     def test_raw_bytes_not_comment_token_or_newline_equivalence(self):
         for path in (audit.SRC + 'simpLib.sml',
                      audit.SRC + 'Cond_rewr.sml',
-                     audit.SRC + 'SimpTracking.sml',
+                     audit.SRC + 'Cond_rewr.sig',
                      audit.SRC + 'simpExtLib.sig'):
             with self.subTest(path=path):
                 changed = dict(self.sources)
@@ -177,6 +188,69 @@ class LiveSourceGate(unittest.TestCase):
                 self.assertNotEqual(changed[path], self.sources[path])
                 with self.assertRaisesRegex(AssertionError, 'bytes'):
                     audit.audit(changed)
+
+    def test_task31_files_are_sealed_by_content_not_by_commit(self):
+        self.assertEqual(audit.blob_id(b'hello\n'),
+                         'ce013625030ba8dba906f756967f9e9ca394464a')
+        self.assertEqual(set(audit.REVIEWED_31), {
+            audit.SRC + n for n in ('Cond_rewr.sig', 'Cond_rewrExt.sml',
+                                    'simpExtLib.sml', 'simpExtLib.sig')})
+        for path, record in audit.REVIEWED_31.items():
+            with self.subTest(path=path):
+                self.assertTrue(record['reason'])
+                self.assertEqual(audit.blob_id(self.sources[path]),
+                                 record['blob'])
+                self.assertEqual(audit.reference_revision(path),
+                                 'blob:' + record['blob'])
+                self.reject(path, extra=b'(* drift *)',
+                            message='extension/control')
+
+    def test_var_perm_copy_must_match_develop_token_for_token(self):
+        path = audit.SRC + 'Cond_rewrExt.sml'
+        audit.check_var_perm_copy(self.sources)
+        source = self.sources[path]
+        relaid = source.replace(b'  case (dest_term tm1',
+                                b'      case (dest_term tm1')
+        audit.check_var_perm_copy({**self.sources, path: relaid})
+        for old, new in ((b'snd v1 = snd v2', b'true'),
+                         (b'vperm(fst t1,fst t2) andalso',
+                          b'vperm(fst t1,fst t2) orelse'),
+                         (b'HOLset.equal(', b'HOLset.isSubset('),
+                         (b'FVL [tm2] empty_tmset)',
+                          b'FVL [tm1] empty_tmset)')):
+            with self.subTest(old=old):
+                self.assertEqual(source.count(old), 1)
+                with self.assertRaisesRegex(AssertionError,
+                                            'differs from develop'):
+                    audit.check_var_perm_copy(
+                        {**self.sources, path: source.replace(old, new)})
+        for old, new in ((b'FVL [tm2] empty_tmset)\n',
+                         b'FVL [tm2] empty_tmset) andalso false\n'),
+                         (b'FVL [tm2] empty_tmset)\n',
+                          b'FVL [tm2] empty_tmset))\n')):
+            with self.subTest(tail=new):
+                self.assertEqual(source.count(old), 1)
+                with self.assertRaisesRegex(AssertionError,
+                                            'differs from develop'):
+                    audit.check_var_perm_copy(
+                        {**self.sources, path: source.replace(old, new)})
+
+    def test_task31_overlay_is_applied_to_the_sealed_task16_manifest(self):
+        sealed = audit.prior.read_manifest()
+        self.assertIn('SimpTracking', sealed['modules'])
+        self.assertNotIn('SimpTracking', self.manifest['modules'])
+        self.assertEqual(self.manifest['modules']['Cond_rewr']['imports'],
+                         sorted(set(sealed['modules']['Cond_rewr']['imports'])
+                                - {'SimpTracking'} | {'ThreadLocal'}))
+        for broken in ('node', 'edge'):
+            changed = copy.deepcopy(sealed)
+            if broken == 'node':
+                changed['modules']['SimpTracking']['imports'].pop()
+            else:
+                changed['modules']['Cond_rewr']['imports'].append(
+                    'ThreadLocal')
+            with self.assertRaisesRegex(AssertionError, 'overlay base'):
+                audit.overlay31(changed)
 
     def test_direct_and_aliased_extension_edges(self):
         for path in (audit.SRC + 'Cond_rewr.sml',
@@ -194,7 +268,6 @@ class LiveSourceGate(unittest.TestCase):
 
     def test_computed_dynamic_load_edges_not_just_identifier_grep(self):
         for path in (audit.SRC + 'Cond_rewr.sml',
-                     audit.SRC + 'SimpTracking.sml',
                      'tools-poly/poly/poly-init2.ML',
                      'src/basicProof/BasicProvers.sml'):
             for extra in (
@@ -221,7 +294,7 @@ class LiveSourceGate(unittest.TestCase):
 
     def test_duplicate_tracker_and_control_copies(self):
         for path, extra in (
-                (audit.SRC + 'SimpTracking.sml',
+                (audit.SRC + 'Cond_rewr.sml',
                  b'val second = ThreadLocal.new ()'),
                 (audit.SRC + 'Cond_rewrExt.sml',
                  b'val slot : thm list option ThreadLocal.t = '
@@ -259,8 +332,8 @@ class LiveSourceGate(unittest.TestCase):
             b'        ThreadLocal.set (slot, SOME (th :: xs))\n'
             b'    | _ => ()\nend')
         self.assertEqual(changed[path].count(
-            b'SimpTracking.note_rewrite th'), 2)
-        changed[path] = changed[path].replace(b'SimpTracking.note_rewrite th',
+            b'Cond_rewr.note_rewrite th'), 2)
+        changed[path] = changed[path].replace(b'Cond_rewr.note_rewrite th',
                                               b'Private.note_rewrite th')
         with self.assertRaisesRegex(AssertionError, 'extension/control'):
             audit.audit(changed)
@@ -352,13 +425,21 @@ class LiveSourceGate(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, 'extension'):
                         audit.validate_manifest(changed)
         changed = copy.deepcopy(self.manifest)
-        del changed['modules']['SimpTracking']
+        del changed['modules']['Trace']
         with self.assertRaisesRegex(AssertionError, 'missing transitive'):
+            audit.validate_manifest(changed)
+        # The extension engine's reporter is not an ordinary dependency.
+        changed = copy.deepcopy(self.manifest)
+        changed['modules']['Cond_rewr']['imports'].append('SimpTracking')
+        changed['modules']['SimpTracking'] = dict(
+            sources=['src/simp/src/SimpTracking.sml'], imports=[],
+            basis_or_local_names=[])
+        with self.assertRaisesRegex(AssertionError, 'extension'):
             audit.validate_manifest(changed)
 
     def test_manifest_omission_and_rewrite_cannot_pass_seal(self):
         changed = copy.deepcopy(self.manifest)
-        changed['modules']['Cond_rewr']['imports'].remove('SimpTracking')
+        changed['modules']['Cond_rewr']['imports'].remove('Trace')
         with patch.object(audit.prior.Path, 'read_bytes',
                           return_value=json.dumps(changed).encode()):
             with self.assertRaisesRegex(AssertionError, 'manifest changed'):
@@ -369,7 +450,7 @@ class LiveSourceGate(unittest.TestCase):
             changed = copy.deepcopy(self.observations)
             path = audit.SRC + 'Cond_rewr.sml'
             if operation == 'drop':
-                changed[path].remove('SimpTracking')
+                changed[path].remove('Trace')
             elif operation == 'invent':
                 changed[path].append('trackedSimpDefaults')
             else:

@@ -204,9 +204,9 @@ class Table(unittest.TestCase):
     def test_the_pins_are_the_reviewed_simplifier_files(self):
         table = t30.TABLE
         self.assertEqual(table.pinned, pins.PINNED)
-        self.assertEqual(sorted(pins.PINNED), [
-            "src/simp/src/Cond_rewr.sig", "src/simp/src/Cond_rewr.sml",
-            "src/simp/src/SimpTracking.sig", "src/simp/src/SimpTracking.sml"])
+        # Cond_rewr.sml is develop's again (TASK31); the one reviewed
+        # difference is the added note_rewrite spec of its signature.
+        self.assertEqual(sorted(pins.PINNED), ["src/simp/src/Cond_rewr.sig"])
         for path, pin in pins.PINNED.items():
             self.assertIn(path, cases.SOURCES)
             self.assertRegex(pin["blob"], "^[0-9a-f]{40}$")
@@ -226,11 +226,20 @@ class Table(unittest.TestCase):
 
     def test_the_files_added_by_the_candidate_are_pinned(self):
         self.checkout()
+        gone = []
         for path in cases.SOURCES:
             if base_blob(path) is None:
-                self.assertIn(path, pins.PINNED, path)
-                self.assertTrue((REPO / path).is_file(), path)
-        self.assertIsNone(base_blob("src/simp/src/SimpTracking.sml"))
+                if (REPO / path).is_file():
+                    self.assertIn(path, pins.PINNED, path)
+                else:
+                    gone.append(path)
+        # TASK31 deleted SimpTracking; the sealed list still names it, so
+        # the table refuses a new run ("absent at the baseline and not
+        # pinned") until its owner revises that list.
+        self.assertEqual(gone, ["src/simp/src/SimpTracking.sml",
+                                "src/simp/src/SimpTracking.sig"])
+        for path in gone:
+            self.assertNotIn(path, pins.PINNED)
 
     def test_every_unpinned_source_is_the_baseline_file_here(self):
         self.checkout()
@@ -366,12 +375,15 @@ class Followup(unittest.TestCase):
         self.assertEqual(mine["driver"], a.seal(f.__file__))
 
     def test_its_seal_histories_are_those_the_module_names(self):
-        # Empty until a change is made to the code after the table's first
-        # record (PROTOCOL.md): the mechanism is TASK30's.
+        # Each entry is the seal a record of the table was made by, appended
+        # in the commit that changed the file (PROTOCOL.md): the mechanism
+        # is TASK30's.
         import task30_followup as f
         table = f.TABLE
-        self.assertEqual((f.DRIVERS, f.ENGINES, f.ACCEPTANCE,
-                          f.SEALED_HISTORY), ((), (), (), {}))
+        self.assertEqual(
+            [(len(h), h[0]["bytes"]) for h in (f.DRIVERS, f.ENGINES)],
+            [(1, 6360), (1, 190317)])
+        self.assertEqual((f.ACCEPTANCE, f.SEALED_HISTORY), ((), {}))
         self.assertEqual((table.drivers, table.engines,
                           table.layout_acceptance, table.acceptance,
                           table.sealed_history),
@@ -558,8 +570,7 @@ class Whole(ttg.Rig):
     def setUp(self):
         super().setUp()
         # The files the candidate adds are absent at the baseline.
-        self.absent = {p for p in pins.PINNED if p.endswith(
-            ("SimpTracking.sml", "SimpTracking.sig"))}
+        self.absent = set()
 
     def fake_blob(self, repo, rev, path):
         """As the rig's, but the candidate holds each pinned file at its
@@ -871,6 +882,14 @@ class RealChain(ttg.ChainRig):
             self.pilot_revision = a.BASE
         table = copy.copy(t30.TABLE)
         table.counts, table.ledger = self.counts, None
+        # TASK31 deleted SimpTracking, which the sealed list still names, so
+        # the real table refuses a new run (see
+        # test_the_files_added_by_the_candidate_are_pinned). The chain
+        # runs on the files of the list that exist at HEAD or the baseline.
+        table.sources = tuple(
+            p for p in cases.SOURCES if base_blob(p) is not None or git(
+                "rev-parse", "--verify", "-q",
+                "%s:%s" % (self.head, p)) is not None)
         return table
 
     def allocation_at(self, y):

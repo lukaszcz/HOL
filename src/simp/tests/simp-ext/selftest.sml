@@ -354,7 +354,7 @@ val _ = scoped (fn () => let
   in pin "extension consumer of ordinary SF stays tracked"
        (S.SIMP_TAC pureSimpsExt.pure_ss [osf]) ``ext_k x`` end)
 
-  (* One tracking slot across the two engines. Nested tracking isolates its
+  (* One tracking extent across the two engines. Nested tracking isolates its
      report and restores the outer slot even after a foreign exception. *)
   val ordinary = simpLib.SIMP_CONV pureSimps.pure_ss [reducer]
   val extension = S.SIMP_CONV pureSimpsExt.pure_ss [original]
@@ -379,6 +379,39 @@ val _ = scoped (fn () => let
     (null (hyp oth) andalso null (hyp eth) andalso
      aconv (rhs (concl oth)) ``ext_h x`` andalso
      aconv (rhs (concl eth)) output andalso uses [reducer,original] both)
+  (* One extent for both engines: two distinct rules per engine, fired
+     alternately, are reported in exactly their firing order, by either
+     engine's track. *)
+  fun fv n = mk_var (n, ``:bool -> bool``)
+  fun rule f = ASSUME (mk_eq (mk_comb (fv f, ``ord_x:bool``), ``ord_y:bool``))
+  val eA = rule "ord_ea" val eC = rule "ord_ec"
+  val oB = rule "ord_ob" val oD = rule "ord_od"
+  fun ext r = S.SIMP_CONV pureSimpsExt.pure_ss [r]
+  fun ord r = simpLib.SIMP_CONV pureSimps.pure_ss [r]
+  fun lhs_of r = lhs (concl r)
+  fun interleaved () =
+    (ignore (ext eA (lhs_of eA)); ignore (ord oB (lhs_of oB));
+     ignore (ext eC (lhs_of eC)); ignore (ord oD (lhs_of oD)))
+  val (_,order_ext) = S.track interleaved ()
+  val (_,order_ord) = simpLib.track interleaved ()
+  val _ = check "extension track: both engines interleaved, firing order"
+    (uses [eA,oB,eC,oD] order_ext)
+  val _ = check "ordinary track sees extension rewrites, firing order"
+    (uses [eA,oB,eC,oD] order_ord)
+  (* A nested extent of either kind takes both engines' rewrites inside it
+     and hides them from the enclosing extent. *)
+  fun nest outer_track inner_track =
+    outer_track (fn () =>
+      (ignore (ext eA (lhs_of eA));
+       let val (_,inner) = inner_track (fn () =>
+             (ignore (ord oB (lhs_of oB)); ignore (ext eC (lhs_of eC)))) ()
+       in ignore (ord oD (lhs_of oD)); inner end)) ()
+  val (inner,outer) = nest S.track simpLib.track
+  val _ = check "simpLib.track nested in simpExtLib.track: inner extent only"
+    (uses [oB,eC] inner andalso uses [eA,oD] outer)
+  val (inner,outer) = nest simpLib.track S.track
+  val _ = check "simpExtLib.track nested in simpLib.track: inner extent only"
+    (uses [oB,eC] inner andalso uses [eA,oD] outer)
   val ((_,inner),outer) = simpLib.track (fn () => let
     val _ = ordinary_once ()
     val nested = S.track extension_once ()

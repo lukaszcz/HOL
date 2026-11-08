@@ -56,7 +56,8 @@ is used.
 - Same-name ordinary/extension typed registries remain independent. Saved SF
   tactics resolve late, follow replacement/Context rewind, and fail when absent.
   SF's shared string-marker syntax does not permit cross-registry fallback.
-- One Trace listener and one tracking extent observe both engines. Nesting in
+- One Trace listener and one tracking extent observe both engines. Two distinct
+  rules per engine fired alternately are reported in firing order. Nesting in
   both directions isolates inner reports and restores outer tracking, including
   a foreign exception leaving the nested extent.
 - Eight real Poly/ML negative clients reject reducer, set-consumer, fragment

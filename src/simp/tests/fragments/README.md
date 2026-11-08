@@ -116,8 +116,8 @@ Matched counts control batch-size asymmetry, not all process/allocator noise.
 change default extraction, production code or any default fast path. Ordinary
 baseline `.sml`/`.sig` files are extracted unchanged from the selected commit.
 Only missing files from this explicit current-worktree dependency closure are
-supplemented: `SimpTracking`, `TraverseExt`, `simpMarkerTheory`,
-`simpMarkerLib`, `SplitData`, `splitLib`. Existing selected files are **never
+supplemented: `TraverseExt`, `simpMarkerTheory`, `simpMarkerLib`,
+`SplitData`, `splitLib`. Existing selected files are **never
 replaced**, even if a helper's historical API is incompatible. Such an
 incompatibility fails elaboration; there is no source transformation or fallback
 to current ordinary sources. `simpExtLib` is not supplemented or loaded.

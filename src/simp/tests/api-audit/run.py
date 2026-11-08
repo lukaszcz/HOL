@@ -27,10 +27,10 @@ def seal(path):
 def validate_output(text, returncode, kind, owner):
     """Reject truncated observations, wrong counts and foreign core inputs."""
     lines = text.splitlines()
-    expected = {("attribute", "before"): 172,
-                ("attribute", "after"): 168,
-                ("exporter", "before"): 176,
-                ("exporter", "after"): 171}[kind, owner]
+    expected = {("attribute", "before"): 178,
+                ("attribute", "after"): 174,
+                ("exporter", "before"): 182,
+                ("exporter", "after"): 177}[kind, owner]
     clean = re.sub(r"\x1b\[[0-9;]*[mCG]", "", text)
     checks = clean.count("OK\n")
     if (returncode != 0 or not text.endswith("\n") or
@@ -42,7 +42,7 @@ def validate_output(text, returncode, kind, owner):
     used = {line.split("=", 1)[1] for line in lines
             if line.startswith("OBS used.path=")}
     for module in ("simpLib", "congLib", "Traverse", "Cond_rewr", "Trace",
-                   "SimpTracking", "simpExtLib", "TraverseExt",
+                   "simpExtLib", "TraverseExt",
                    "Cond_rewrExt", "congExtLib"):
         for suffix in (".sig", ".sml"):
             path = ROOT / "src/simp/src" / (module + suffix)

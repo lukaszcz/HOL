@@ -14,8 +14,8 @@ val forbidden_names =
    "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
    "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
    "intReduceExt","integer_wordLibExt","realSimpsExt",
-   "trackedSimpDefaults","simpMarkerTheory","simpMarkerLib",
-   "SplitData","splitLib","splitPersistLib"]
+   "SimpTracking","trackedSimpDefaults","simpMarkerTheory",
+   "simpMarkerLib","SplitData","splitLib","splitPersistLib"]
 val used = ref ([] : string list)
 fun files stage = List.app (fn (file,dir) =>
   print ("OBS " ^ stage ^ ".loaded.path=" ^ OS.Path.concat (dir,file) ^ "\n"))

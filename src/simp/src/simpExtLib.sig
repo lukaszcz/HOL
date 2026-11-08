@@ -436,8 +436,13 @@ sig
    (* Reporting which rewrite rules actually fired.  This is an aid for a
       human watching a simplification, so it hands the list back with the
       result rather than leaving it in a ref to be read afterwards; there
-      is no flag to set and none to forget to unset.  Nested tracking
-      reports only the inner extent.                                     *)
+      is no flag to set and none to forget to unset.
+
+      This is the same extent as simpLib.track, not a copy: both engines
+      report into it, so the result lists the rewrites of the ordinary
+      and the extension engine together, in the order they fired.  A
+      nested extent of either function reports only its own rewrites, as
+      on develop, and the enclosing extent does not see them.            *)
    (* ---------------------------------------------------------------------*)
 
    val track : ('a -> 'b) -> 'a -> 'b * thm list

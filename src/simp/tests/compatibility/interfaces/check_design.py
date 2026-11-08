@@ -176,7 +176,7 @@ def validate_graph(graph):
     expected_introductions = {
         "TraverseExt": 9, "simpExtLib": 10,
         "pureSimpsExt": 10, "boolSimpsExt": 10, "congExtLib": 11,
-        "SimpTracking": 12, "Cond_rewrExt": 12,
+        "Cond_rewrExt": 12,
         "OpeningExt": 13, "TravrulesExt": 13,
         "combinSimpsExt": 24, "trackedSimpDefaults": 24}
     if introduced != expected_introductions:

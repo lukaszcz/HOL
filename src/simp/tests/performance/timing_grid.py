@@ -2066,15 +2066,18 @@ class Grid:
         a.require(inventory.get("iterations_seal") == a.seal(path),
                   "changed counts seal")
 
-    def source_record(self, repo, baseline, candidate):
+    def source_record(self, repo, baseline, candidate, pins=None):
         """The git blob of each source file of the table at the baseline
         and at the candidate. A file the baseline lacks is recorded with no
-        baseline blob, and only when the table pins it."""
+        baseline blob, and only when `pins` pin it: the table's current
+        pins for a new run, the pins a record was judged by (`pins_for`)
+        when it is replayed."""
+        pins = self.t.pinned if pins is None else pins
         record = {}
         for path in self.t.sources:
             base = git_blob(repo, baseline, path)
             found = git_blob(repo, candidate, path)
-            a.require(base is not None or path in self.t.pinned,
+            a.require(base is not None or path in pins,
                       "source file absent at the baseline and not pinned: "
                       + path)
             a.require(base is not None or found is not None,
@@ -2097,7 +2100,8 @@ class Grid:
         base, cand = inventory["baseline"], inventory["candidate"]
         if t.sources:
             a.require(inventory.get("sources") == self.h.source_record(
-                repo, base, cand), "changed source identity")
+                repo, base, cand, self.h.pins_for(inventory)),
+                "changed source identity")
         if t.tree:
             a.require(inventory.get("source_tree") == self.h.source_tree(
                 repo, base, cand), "changed source difference")

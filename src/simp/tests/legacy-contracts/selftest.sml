@@ -9,7 +9,9 @@ val _ = if !Paired.checks = expected then ()
 val forbidden =
   ["TraverseExt", "Cond_rewrExt", "OpeningExt", "TravrulesExt",
    "simpExtLib", "congExtLib", "pureSimpsExt", "boolSimpsExt",
-   "combinSimpsExt", "simpMarkerTheory", "simpMarkerSyntax",
+   "combinSimpsExt", "numSimpsExt", "pred_setSimpsExt", "listSimpsExt",
+   "intReduceExt", "integer_wordLibExt", "realSimpsExt", "SimpTracking",
+   "simpMarkerTheory", "simpMarkerSyntax",
    "simpMarkerLib", "splitLib", "SplitData", "splitPersistLib"]
 val _ = List.app (fn name =>
   if List.exists (equal name) (Meta.loaded ()) orelse

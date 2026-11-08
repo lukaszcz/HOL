@@ -154,8 +154,7 @@ def main(argv=None):
 
     def snapshot(repo, ref, dst):
         revision, inventory = original_snapshot(repo, ref, dst)
-        for name in ("simpLib.sml", "simpLib.sig", "Cond_rewr.sml",
-                     "SimpTracking.sml", "SimpTracking.sig"):
+        for name in ("simpLib.sml", "simpLib.sig", "Cond_rewr.sml"):
             path = dst / name
             if path.exists():
                 archive(dst.name + ".source." + name + ".gz", path.read_bytes())

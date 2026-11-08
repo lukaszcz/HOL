@@ -97,6 +97,32 @@ val _ = check "shared trace listener cleanup restores exact listener list"
   (same_hooks original_trace_listeners
     (Listener.listeners original_trace_hook));
 
+(* A second distinct rule per engine, so that firing order is observable
+   within each engine as well as across them. *)
+val ordinary_rule2 = ASSUME
+  ``(audit_of2:bool -> bool) audit_x = audit_y``;
+val extension_rule2 = ASSUME
+  ``(audit_ef2:bool -> bool) audit_x = audit_z``;
+fun ordinary_twice () = simpLib.SIMP_CONV pureSimps.pure_ss
+  [ordinary_rule2] ``(audit_of2:bool -> bool) audit_x``;
+fun extension_twice () = S.SIMP_CONV pureSimpsExt.pure_ss
+  [extension_rule2] ``(audit_ef2:bool -> bool) audit_x``;
+
+val _ = let
+  val (_,order) = S.track (fn () =>
+    (extension_once (); ordinary_once (); extension_twice ();
+     ordinary_twice ())) ()
+  val _ = check "one extent: interleaved firing order across both engines"
+    (uses [extension_rule,ordinary_rule,extension_rule2,ordinary_rule2]
+          order)
+  val (_,order') = simpLib.track (fn () =>
+    (ordinary_twice (); extension_once (); ordinary_once ();
+     extension_twice ())) ()
+  val _ = check "simpLib.track also sees extension rewrites in order"
+    (uses [ordinary_rule2,extension_rule,ordinary_rule,extension_rule2]
+          order')
+in () end;
+
 val _ = let
   val ((oth,eth),both) = S.track (fn () =>
     (ordinary_once (),extension_once ())) ()

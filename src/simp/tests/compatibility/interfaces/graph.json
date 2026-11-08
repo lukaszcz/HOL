@@ -10,9 +10,8 @@
     "ThmAttribute": {"layer": "shared", "imports": ["Context"]},
     "ThmSetData": {"layer": "shared", "imports": ["ThmAttribute"]},
     "Trace": {"layer": "shared", "imports": []},
-    "SimpTracking": {"layer": "shared", "imports": ["ThreadLocal"]},
     "boolSimpsContextTheory": {"layer": "shared", "imports": []},
-    "Cond_rewr": {"layer": "ordinary", "imports": ["Trace", "SimpTracking", "BoundedRewrites"]},
+    "Cond_rewr": {"layer": "ordinary", "imports": ["Trace", "ThreadLocal", "BoundedRewrites"]},
     "Opening": {"layer": "ordinary", "imports": ["Trace"]},
     "Travrules": {"layer": "ordinary", "imports": ["Opening"]},
     "Traverse": {"layer": "ordinary", "imports": ["Opening", "Travrules", "Trace"]},
@@ -22,7 +21,7 @@
     "combinSimps": {"layer": "ordinary", "imports": ["simpLib"]},
     "congLib": {"layer": "ordinary", "imports": ["simpLib", "Traverse", "Opening", "Travrules"]},
     "BasicProvers": {"layer": "ordinary", "imports": ["boolSimps", "combinSimps", "Context", "TypeBase", "ThmSetData"]},
-    "Cond_rewrExt": {"layer": "extension", "imports": ["Cond_rewr", "Trace", "SimpTracking", "BoundedRewrites"]},
+    "Cond_rewrExt": {"layer": "extension", "imports": ["Cond_rewr", "Trace", "BoundedRewrites"]},
     "OpeningExt": {"layer": "extension", "imports": ["Opening", "Trace"]},
     "TravrulesExt": {"layer": "extension", "imports": ["Travrules", "OpeningExt"]},
     "TraverseExt": {"layer": "extension", "imports": ["Traverse", "Cond_rewr", "Travrules", "Trace"]},
@@ -41,7 +40,7 @@
   "introduced_nodes": {
     "TraverseExt": 9, "simpExtLib": 10,
     "pureSimpsExt": 10, "boolSimpsExt": 10, "congExtLib": 11,
-    "SimpTracking": 12, "Cond_rewrExt": 12,
+    "Cond_rewrExt": 12,
     "OpeningExt": 13, "TravrulesExt": 13,
     "combinSimpsExt": 24, "trackedSimpDefaults": 24
   },

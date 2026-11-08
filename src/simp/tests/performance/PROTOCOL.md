@@ -590,7 +590,7 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   that the candidate may have changed: `task30_cases.SOURCES` lists them,
   each `.sml` with its `.sig`: the simplifier (`simpLib`, `Ho_Net`,
   `BoundedRewrites`, `Traverse`, `Travrules`, `Opening`, `Cond_rewr`,
-  `SimpTracking`, `Trace`), the marker library (`markerLib`, `markerSyntax`)
+  `Trace`), the marker library (`markerLib`, `markerSyntax`)
   and the modules the cases call through them (`liteLib`, `Theory`,
   `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records the git
   blob of each file at the baseline and at the candidate in the inventory
@@ -633,14 +633,19 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   `SOURCE-DIFFERS` and stops. `--only` still measures a diagnostic subset,
   marked `diagnostic` in its inventory, which has no decisions, can never
   complete a grid, and cannot be resumed without `--only`. The reviewed
-  differences are `Cond_rewr.sml`/`.sig` (the
-  rewrite-tracking helper moves to the new `SimpTracking`, aliased as
-  `note_rewrite` and `with_tracking`, which call through its opaque
-  signature, and `is_var_perm` is exported; `mk_cond_rewrs` and
-  `COND_REWR_CONV` are textually unchanged and no loop is added) and the new
-  `SimpTracking.sml`/`.sig` themselves. The pin tests compute the blob of
-  each file in the checkout and compare it with the pin, and with the
-  baseline's.
+  difference is the one `note_rewrite` spec added to `Cond_rewr.sig` (see the
+  next item). The pin tests compute the blob of each file in the checkout
+  and compare it with the pin, and with the baseline's.
+- **Pins and the sealed source list.** `task30_pins.PINNED` holds only
+  `Cond_rewr.sig` (one added spec, `note_rewrite`); `Cond_rewr.sml` is
+  develop's and has no pin, since a pin on a file identical to the baseline
+  is an error. The earlier pin sets are in `PIN_HISTORY`, and a replay
+  judges a record by the pins its pins seal names (`pins_for`), also for a
+  file the baseline lacks (`source_record(..., pins)`); a new run is judged
+  by the current ones. `task30_cases.SOURCES` is sealed and still lists
+  `SimpTracking.sml`/`.sig`, which exist at neither commit, so a new TASK30
+  run refuses with `source file absent at the baseline and not pinned:
+  src/simp/src/SimpTracking.sml` until its owner revises that list.
 - **Theory hooks.** `Theory.register_hook` is the way a module adds work to
   a theory transition. Audit of its callers: the baseline has nine sites in
   seven files (`TexTokenMap`, `markerLib`, `OpenTheoryMap`, `Parse` twice,
@@ -1636,7 +1641,7 @@ table of its own on the shared engine, with the following additions to it.
     repository's (`Table.root`), the same whatever checkout `--repo` names,
     and a sealed file outside that repository is refused.
 - **Seal histories.** `task30_followup.py` has `DRIVERS`, `ENGINES` and
-  `ACCEPTANCE` (empty tuples) and `SEALED_HISTORY` (empty), passed to its
+  `ACCEPTANCE` and `SEALED_HISTORY`, passed to its
   table as TASK30's are to its own: `check_code` accepts a record whose
   driver, engine or acceptance seal is the current one or one listed, and a
   sealed file's seal is the current one or one of its history. They are read
@@ -1655,7 +1660,7 @@ table of its own on the shared engine, with the following additions to it.
     `acceptance.py` to `ACCEPTANCE`, of `task30_followup.py` to `DRIVERS`,
     and (a reviewed change that alters nothing measured, only after `run`)
     of `task30_grid.py` to `SEALED_HISTORY["task30_grid.py"]`. The test that
-    pins these empty (`test_task30_grid.py`) is edited with them.
+    pins them (`test_task30_grid.py`) is edited with them.
   - `task30_grid.py` is a *sealed file* of the follow-up, not a driver: the
     follow-up imports its constants (`SECONDS`, `PAIRS`, `SAMPLES`, `SEALED`)
     and replays the TASK30 grid through its table, which are inputs of the

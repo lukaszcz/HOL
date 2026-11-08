@@ -182,10 +182,58 @@ val _ = let
   val down = if Cond_rewr.ac_term_ord (xy,yx) = GREATER then xy else yx
   val up = if aconv down xy then yx else xy
   val want = REWR_CONV perm down
-  val _ = check "is_var_perm is the ordinary predicate"
-    (List.all (fn ts => Cond_rewrExt.is_var_perm ts =
-                       Cond_rewr.is_var_perm ts)
-      [(xy,yx),(input,a),(a,a),(a,p)])
+  val _ = check "Cond_rewrExt.is_var_perm classifies permutations"
+    (List.map Cond_rewrExt.is_var_perm
+      [(xy,yx),(input,a),(a,a),(a,p),
+       (``cond_ext_t:bool``,``cond_ext_t:bool -> bool``),
+       (``(cond_ext_f:bool -> bool) cond_ext_t``,
+        ``(cond_ext_f:bool -> bool) cond_ext_t``)] =
+     [true,false,true,false,false,true])
+  (* Cond_rewr no longer exports is_var_perm (develop's signature), and
+     Cond_rewrExt keeps a copy.  The copies agree iff both engines accept
+     and refuse the same permutative rewrites, whichever way the term
+     ordering points. *)
+  val x = ``cond_ext_x:bool``
+  val y = ``cond_ext_y:bool``
+  val z = ``cond_ext_z:bool``
+  fun mk l r = mk_thm ([], mk_eq (l,r))
+  val eqns =
+    [("perm",mk (mk_conj (x,y)) (mk_conj (y,x))),
+     ("nested perm",mk (mk_conj (x,mk_disj (y,z)))
+                       (mk_conj (z,mk_disj (x,y)))),
+     ("fewer variables",mk (mk_conj (x,y)) (mk_conj (x,x))),
+     ("other shape",mk (mk_conj (x,y)) (mk_disj (y,x))),
+     ("same shape",mk (mk_conj (x,y)) (mk_conj (x,y)))]
+  fun swapped t = subst [x |-> y, y |-> x] t
+  fun outcome f = case Exn.capture f () of
+                      Exn.Res th => SOME th
+                    | Exn.Exn _ => NONE
+  fun agree (nm,th) tm =
+    let val ord = outcome (fn () =>
+          Cond_rewr.COND_REWR_CONV ("agree",th) false solver [] tm)
+        val ext = outcome (fn () =>
+          #legacy (Cond_rewrExt.COND_REWR_CONVS ("agree",th) false)
+            solver [] tm)
+        val cfg = outcome (fn () =>
+          #configured (Cond_rewrExt.COND_REWR_CONVS ("agree",th) false)
+            (default solver [] NONE) tm)
+    in case (ord,ext,cfg) of
+           (NONE,NONE,NONE) => true
+         | (SOME a,SOME b,SOME c) => same a b andalso same a c
+         | _ => false
+    end
+  val _ = check "engines accept and refuse the same permutative rewrites"
+    (List.all (fn (nm,th) =>
+         let val l = lhs (concl th) in
+           agree (nm,th) l andalso agree (nm,th) (swapped l)
+         end) eqns)
+  val _ = check "permutative rewrites are refused in one orientation"
+    (let val th = #2 (hd eqns)
+         val l = lhs (concl th)
+         val rs = map (fn t => isSome (outcome (fn () =>
+               Cond_rewr.COND_REWR_CONV ("perm",th) false solver [] t)))
+               [l,swapped l]
+     in List.exists (fn b => b) rs andalso List.exists not rs end)
   val _ = check "AC legacy proof agrees with direct ordinary constructor"
     (same (#legacy pair solver [] down) want andalso
      same (Cond_rewr.COND_REWR_CONV ("commute",perm) false

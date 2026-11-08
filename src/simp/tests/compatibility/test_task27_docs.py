@@ -256,5 +256,54 @@ class ExecutionTests(unittest.TestCase):
             self.assertIsNone(run.call_args.kwargs.get("input"))
 
 
+
+class ExportClaimTests(unittest.TestCase):
+    """Develop's Cond_rewr.sig does not export is_var_perm (TASK_31 keeps
+    the pure copy in Cond_rewrExt), so no live document may say it does.
+    Sealed history (migration/TASK*.md, EXTERNAL.md, handoffs, evidence,
+    references.tsv) records what was true when written and is not input."""
+
+    LIVE = (
+        "src/simp/src/notes.md", "src/simp/src/MANIFEST", "src/simp/README",
+        "src/simp/tests/compatibility/README.md",
+        "src/simp/tests/compatibility/interfaces/DESIGN.md",
+        "src/simp/tests/compatibility/interfaces/CUTOVERS.md",
+        "src/simp/tests/compatibility/migration/MIGRATION.md",
+        "src/simp/tests/compatibility/migration/IDENTITIES.md",
+        "src/simp/tests/compatibility/migration/final-apis.tsv",
+        "src/simp/tests/cond-rewr-ext/README.md",
+        "src/simp/tests/fragments/README.md")
+    # Phrases that deny the export, and the one mapping row of
+    # final-apis.tsv that names the old symbol beside its replacement.
+    DENIAL = ("no longer exported", "not exported", "unexported",
+              "does not export", "absent from pinned",
+              "R1\tCond_rewr.is_var_perm\tCond_rewrExt.is_var_perm\t")
+    CLAIM = "Cond_rewr.is_var_perm"
+
+    def test_signature_does_not_export_it(self):
+        symbols = gate.signature_symbols(
+            (gate.ROOT / gate.SIGNATURES["Cond_rewr"]).read_text(),
+            {"Abbrev": set()})
+        self.assertNotIn("is_var_perm", symbols)
+        self.assertIn("note_rewrite", symbols)
+
+    def test_no_live_document_claims_the_export(self):
+        for name in self.LIVE:
+            with self.subTest(document=name):
+                text = (gate.ROOT / name).read_text()
+                self.assertTrue(self.claims(text) == [], self.claims(text))
+
+    def claims(self, text):
+        return [line for line in text.splitlines()
+                if self.CLAIM in line and
+                not any(d in line for d in self.DENIAL)]
+
+    def test_detector_catches_a_claim(self):
+        self.assertEqual(self.claims(
+            "is_var_perm remains exported: Cond_rewr.is_var_perm\n"
+            "Cond_rewr.is_var_perm is no longer exported\n"), [
+            "is_var_perm remains exported: Cond_rewr.is_var_perm"])
+
+
 if __name__ == "__main__":
     unittest.main()
