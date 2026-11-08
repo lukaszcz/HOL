@@ -68,17 +68,18 @@ the report line on stdout.
 
 Other exits. A command line that argparse rejects (an unknown option, a bad
 value) exits 2 with its usage message on stderr and nothing on stdout.
-`--replay` and `--ledger-status` exit 0 when they succeed, even if the
-replayed decision is a fail. Only `--replay` prints a decision: its `exit`
-field. `--ledger-status` prints `{ledger, table, smokes}` instead, with the
-outcomes in `table[].statuses`; it has no `exit` field. Both exit 1 on a
-refusal (and `--replay` also on a replay mismatch), with nothing on
+`--replay` and `--ledger-status` exit 0 when they succeed, `--replay` even
+if the replayed decision is a fail. Only `--replay` prints a decision: its
+`exit` field. `--ledger-status` prints `{ledger, table, smokes}` instead,
+with the outcomes in `table[].statuses`; it has no `exit` field. Both exit 1
+on a refusal (and `--replay` also on a replay mismatch), with nothing on
 stdout. A run that exits 1 with nothing on stdout stopped without a report
-line. That covers a refusal before any report (an argument, ledger or
-output check), and a decision run that ends in a traceback or in a failed
-save of `loading.json`: the `finally` saves, and an exception skips
-`close_attempt`. In both cases the decision attempt stays open, is judged
-as having no close line, and no second draw is allowed.
+line. In any mode that covers a refusal before any report (an argument,
+ledger or output check), an uncaught exception (a traceback), and a failed
+save of `loading.json`. When a decision run or an `--extend` has already
+written its `open` line, such an exception skips `close_attempt`: the
+attempt stays open, is judged as having no close line, and no second draw
+is allowed. An exception before the `open` line leaves no attempt.
 
 ## Timed boundary and proof check
 

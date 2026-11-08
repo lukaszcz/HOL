@@ -1448,6 +1448,56 @@ class BuildBinding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "judged attempt already"):
             self.decide("again")
 
+    def main_with_failing_save(self, argv):
+        """`main` over the mocked build, the save of loading.json raising
+        OSError: (exit status, stdout)."""
+        save = l.a.save
+
+        def failing(path, data):
+            if Path(path).name == "loading.json":
+                raise OSError("disk full")
+            return save(path, data)
+
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(l, "execute", self.execute), \
+                patch.object(l.shutil, "which", return_value=str(
+                    self.repo / "bin/poly")), \
+                patch.object(l.a, "serial_lock", lambda _: nullcontext(())), \
+                patch.object(l.a, "save", failing), \
+                patch("sys.stdout", out), patch("sys.stderr", err):
+            status = l.main(argv)
+        self.assertIn("disk full", err.getvalue())
+        return status, out.getvalue()
+
+    def test_a_failed_save_leaves_the_attempt_open_and_judged(self):
+        self.decision_settings()
+        argv = ["--baseline", self.pin, "--candidate", self.pin,
+                "--module", "congLib", "--authorize-measurements",
+                "--api-audit", str(self.repo / "audit.json"),
+                "--repo", str(self.repo)]
+        self.assertEqual(self.main_with_failing_save(
+            argv + ["--output", str(self.repo / "failed")]), (1, ""))
+        self.assertEqual([r["event"] for r in self.records()], ["open"])
+        found = l.read_ledger(self.ledger)[1]
+        self.assertEqual(list(l.reasons(found).values()),
+                         ["no close line"])
+        before = self.processes
+        with self.assertRaisesRegex(ValueError, "judged attempt already"):
+            self.decide("again")
+        self.assertEqual(self.processes, before)
+        self.assertEqual([r["event"] for r in self.records()], ["open"])
+
+    def test_a_failed_save_of_an_extend_leaves_it_open_and_judged(self):
+        first, plan, args = self.second_stage()
+        self.assertEqual(self.main_with_failing_save(
+            ["--extend", str(first), "--output", str(self.repo / "second"),
+             "--repo", str(self.repo), "--authorize-measurements"]),
+            (1, ""))
+        self.assertEqual([r["event"] for r in self.records()],
+                         ["open", "close", "open"])
+        with self.assertRaisesRegex(ValueError, "at most one --extend"):
+            self.extend(plan, dict(args, output=self.repo / "second2"))
+
     def test_a_second_extend_is_refused(self):
         first, plan, args = self.second_stage()
         self.assertEqual(self.extend(plan, args)["stage"], "second")
