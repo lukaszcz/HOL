@@ -210,9 +210,14 @@ source-isolated loading is still not independent-build loading acceptance.
 For the runnable fresh-load gate, use TASK27's configured-root-aware command:
 
 ```sh
-sh src/simp/tests/compatibility/tools/root-wrapper.sh \
+env API_AUDIT_OUTPUT=FRESH_API_AUDIT_OUTPUT \
+  sh src/simp/tests/compatibility/tools/root-wrapper.sh \
   bin/Holmake -C src/simp/tests/api-audit check
 ```
+
+`API_AUDIT_OUTPUT` names a new directory that keeps the receipt
+(`STAMP/receipt.json`) for `loading.py --api-audit`; without it the Holmakefile
+removes the receipt when the audit ends.
 
 Existing TASK27 instrumentation checks actual imports, defining paths,
 initialization callbacks, and extension absence. Use a receipt bound to the

@@ -689,18 +689,43 @@ class SemanticGateTests(unittest.TestCase):
         self.assertEqual(self.check()["cases"], 8)
 
     def test_gate_follows_the_audits_constants_not_a_copy(self):
+        """Two distinct constant sets. The modified one adds a native module
+        and raises every count of CASE_CHECKS by SHIFT; a receipt made from
+        either set passes the tree holding that set and is refused by the
+        tree holding the other."""
+        shift = 6
         text = (l.AUDIT / "audit_constants.py").read_text()
-        changed = text.replace('"simpExtLib"', '"SimpTracking", "simpExtLib"',
-                               1).replace("182", "176").replace(
-            "178", "172").replace("177", "171").replace("174", "168")
+        start = text.index("CASE_CHECKS = {")
+        stop = text.index("}", start)
+        counts = re.sub(r"(?<=: )(\d+)(?=[,}])",
+                        lambda m: str(int(m[1]) + shift),
+                        text[start:stop + 1])
+        self.assertNotEqual(counts, text[start:stop + 1])
+        changed = text[:start] + counts + text[stop + 1:]
+        changed = changed.replace('"simpExtLib"',
+                                  '"ExtraModule", "simpExtLib"', 1)
         self.assertNotEqual(changed, text)
-        self.build(changed)
-        self.assertIn("SimpTracking", self.constants.NATIVE_MODULES)
+
+        self.build(text)
+        original = self.constants
         self.assertEqual(self.check()["cases"], 8)
-        # A receipt of the old counts no longer fits the new constants.
         self.build(changed)
+        modified = self.constants
+        self.assertIn("ExtraModule", modified.NATIVE_MODULES)
+        self.assertNotIn("ExtraModule", original.NATIVE_MODULES)
+        for key, value in original.CASE_CHECKS.items():
+            self.assertEqual(modified.CASE_CHECKS[key], value + shift)
+        # The receipt of the modified set fits the modified tree.
+        self.assertEqual(self.check()["cases"], 8)
+        # A receipt of the original counts (same modules) does not.
         for case in self.receipt["cases"]:
-            case["checks"] += 6
+            case["checks"] -= shift
+        with self.assertRaisesRegex(ValueError, "failed semantic process"):
+            self.check()
+        # Nor does a receipt of the modified counts fit the original tree.
+        self.build(text)
+        for case in self.receipt["cases"]:
+            case["checks"] += shift
         with self.assertRaisesRegex(ValueError, "failed semantic process"):
             self.check()
 

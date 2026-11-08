@@ -99,7 +99,7 @@ def extents(text, private):
     return result
 
 
-def records(extent, *, require_optimized=True):
+def records(extent):
     """Keep every emitted pass/body, including repeated names, in order.
 
     Opaque printed constants and pool operands retain their literal text. This
@@ -143,8 +143,7 @@ def records(extent, *, require_optimized=True):
             row["static"] = assembly.counts(row["body"])
             row["relocation_text"] = assembly.normalized(row["body"])
         result.append(row)
-    required_kinds = ("icode", "assembly") + (
-        ("optimized-tree",) if require_optimized else ())
+    required_kinds = ("icode", "assembly", "optimized-tree")
     require(result and all(any(r["kind"] == k for r in result)
                            for k in required_kinds),
             "compiler did not emit every requested representation")

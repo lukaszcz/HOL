@@ -90,14 +90,6 @@ class CallerCodegenTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "uniquely|duplicate"):
             c.extents(duplicate, Path("/private"))
 
-    def test_optional_optimizer_absence_is_not_fabricated(self):
-        text = BODY[BODY.index("Fixture.run(1)\n"):]
-        span = dict(text=text, stdout_start_line=1)
-        with self.assertRaisesRegex(ValueError, "representation"):
-            c.records(span)
-        rows = c.records(span, require_optimized=False)
-        self.assertEqual([r["kind"] for r in rows], ["icode", "assembly"])
-
     def test_missing_representation_and_bad_native_encoding(self):
         for text in (BODY.split("Fixture.run(1):")[0],
                      BODY[BODY.index("Fixture.run(1):"):],

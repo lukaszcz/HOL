@@ -260,8 +260,8 @@ class ExecutionTests(unittest.TestCase):
 class ExportClaimTests(unittest.TestCase):
     """Develop's Cond_rewr.sig does not export is_var_perm (TASK_31 keeps
     the pure copy in Cond_rewrExt), so no live document may say it does.
-    Sealed history (migration/TASK*.md, EXTERNAL.md, handoffs, evidence,
-    references.tsv) records what was true when written and is not input."""
+    The tests check the signature, and that no file of LIVE has a line naming
+    `Cond_rewr.is_var_perm` unless the line denies the export (DENIAL)."""
 
     LIVE = (
         "src/simp/src/notes.md", "src/simp/src/MANIFEST", "src/simp/README",

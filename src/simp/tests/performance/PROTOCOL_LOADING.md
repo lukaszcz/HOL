@@ -15,8 +15,9 @@ serial frontend takes the same host-wide and git-directory advisory locks as
 needed for even a smoke run. Do not run concurrently with builds or
 telemetry probes.
 
-A decision run has fixed settings, so it takes neither `--pairs` nor
-`--reps`:
+A decision run has fixed settings: it takes either neither `--pairs` nor
+`--reps`, or exactly `--pairs 40 --reps 5` (`loading.PAIRS`, `loading.REPS`,
+the form of the matrix command), and no other counts:
 
 ```
 python3 src/simp/tests/performance/loading.py \

@@ -14,7 +14,7 @@ TravrulesExt; paired conditional compilation uses Cond_rewrExt.
 Current documentation and ownership:
   src/notes.md                           migration, controls, rebuild caveats
   src/MANIFEST                           defining modules and dependency rules
-  tests/compatibility/README.md           compatibility gates and coverage ledger
+  tests/compatibility/README.md          compatibility gates, coverage ledger
   tests/api-audit/Documentation.sml       executable typed examples
   tests/simp-ext/APIExamples.sml          configured/global tactic examples
   help/Docfiles/simpExtLib.*.smd          extension reference (repository root)

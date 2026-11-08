@@ -175,12 +175,16 @@ REQUIRED_REQUIREMENTS = frozenset(
 # from quietly becoming echo commands, dry runs, or receipt-only blockers.
 EXTERNAL_COMMANDS = {
     "loading_timing": [
-        "python3 src/simp/tests/performance/loading.py --baseline " + BASELINE +
-        " --candidate CANDIDATE --module simpLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT "
-        "--authorize-measurements --output FRESH_SIMP_LOADING",
-        "python3 src/simp/tests/performance/loading.py --baseline " + BASELINE +
-        " --candidate CANDIDATE --module congLib --pairs 40 --reps 5 --api-audit API_AUDIT_RECEIPT "
-        "--authorize-measurements --output FRESH_CONG_LOADING"],
+        "python3 src/simp/tests/performance/loading.py "
+        "--baseline " + BASELINE +
+        " --candidate CANDIDATE --module simpLib --pairs 40 --reps 5 "
+        "--api-audit API_AUDIT_RECEIPT --authorize-measurements "
+        "--output FRESH_SIMP_LOADING",
+        "python3 src/simp/tests/performance/loading.py "
+        "--baseline " + BASELINE +
+        " --candidate CANDIDATE --module congLib --pairs 40 --reps 5 "
+        "--api-audit API_AUDIT_RECEIPT --authorize-measurements "
+        "--output FRESH_CONG_LOADING"],
     "loading_audit": [
         "env API_AUDIT_OUTPUT=FRESH_API_AUDIT_OUTPUT "
         "sh src/simp/tests/compatibility/tools/root-wrapper.sh "
@@ -346,6 +350,13 @@ def validate_sources(cases, fixture_dir=HERE):
             "ClientPerformance source cases do not match ledger")
 
 
+COMMAND_FIRST_WORDS = frozenset((
+    "python3", "poly", "sh", "bin/Holmake", "bin/build",
+    "BASELINE/bin/Holmake", "CANDIDATE/bin/Holmake",
+    "BASELINE/bin/build", "CANDIDATE/bin/build", "/usr/bin/time"))
+ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.DOTALL)
+
+
 def _gate_records(records, ids, status, where):
     exact_keys(records, ids, where)
     for key, record in records.items():
@@ -369,11 +380,16 @@ def _gate_records(records, ids, status, where):
                 words = shlex.split(command)
             except ValueError as error:
                 raise ValueError(location + ": malformed command") from error
-            require(words and words[0] in {
-                "python3", "poly", "sh", "env", "bin/Holmake", "bin/build",
-                "BASELINE/bin/Holmake", "CANDIDATE/bin/Holmake",
-                "BASELINE/bin/build", "CANDIDATE/bin/build", "/usr/bin/time"},
-                location + ": not a prerequisite command")
+            if words and words[0] == "env":
+                # Only `env NAME=VALUE... <allowed first word> ...`.
+                rest = words[1:]
+                while rest and ENV_ASSIGNMENT.fullmatch(rest[0]):
+                    rest = rest[1:]
+                require(len(rest) < len(words) - 1,
+                        location + ": env without a NAME=VALUE assignment")
+                words = rest
+            require(words and words[0] in COMMAND_FIRST_WORDS,
+                    location + ": not a prerequisite command")
 
 
 def validate_matrix(data, *, fixture_dir=HERE):

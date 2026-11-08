@@ -216,6 +216,28 @@ class MatrixTests(unittest.TestCase):
                             with self.assertRaises(ValueError):
                                 self.validate()
 
+    def test_env_first_word_needs_assignments_and_an_allowed_command(self):
+        name = next(iter(self.original["blockers"]))
+        accepted = ("env A=1 python3 x.py", "env _a1=x=y B= sh -c true",
+                    "env NAME=VALUE bin/Holmake -C d check",
+                    "env 'A=two words' /usr/bin/time ls")
+        refused = ("env", "env A=1", "env python3 x.py", "env -i python3 x",
+                   "env -u A python3 x", "env 1A=x python3 x",
+                   "env A-B=x python3 x", "env A=1 echo pass",
+                   "env A=1 env B=2 python3 x", "env =x python3 x",
+                   "env A=1 -i python3 x",
+                   "echo A=1 python3 x")
+        for command, ok in [(c, True) for c in accepted] + [
+                (c, False) for c in refused]:
+            with self.subTest(command=command):
+                self.data = copy.deepcopy(self.original)
+                self.data["blockers"][name]["commands"] = [command]
+                if ok:
+                    self.validate()
+                else:
+                    with self.assertRaises(ValueError):
+                        self.validate()
+
     def test_unknown_dangling_gate_references(self):
         for key, mode in (("loading.startup_time", "blocker"),
                           ("protocol.extensions_enabled", "external")):

@@ -84,6 +84,9 @@ python3 -B src/simp/tests/performance/caller_codegen.py \
 # Remove only this newly created scratch directory when finished.
 ```
 
-Use the containing source revision for input-seal replay. Scope is the local
+Use the containing source revision for input-seal replay. An archive made
+before `SimpTracking` was removed holds a `SimpTracking.sml` extent, which the
+current `--replay` refuses as an unexpected extent: replay it at the commit
+that made it. Scope is the local
 Linux/AArch64 Poly/ML 5.9.2 runtime/shared HOL heap, not clean independent
 builds, a compiler-lineage proof or another platform.
