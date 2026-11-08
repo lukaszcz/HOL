@@ -433,7 +433,8 @@ def parse_declared(text):
 
     entries: files whose fresh-load words may differ between baseline and
     candidate sources, keyed by repository path and the exact baseline and
-    candidate blobs, with the kinds they may affect. noise: files whose
+    candidate blobs (null for a file that only the other side has), with the
+    kinds they may affect. noise: files whose
     bracket may differ between images with the source fixed, each with the
     mechanism that explains it (null when none is shown). candidate_only:
     modules, structures or files that the candidate alone may load."""
@@ -443,13 +444,16 @@ def parse_declared(text):
                                  "schema"], "declaration schema")
     paths = set()
 
-    def blob_ok(x):
-        return isinstance(x, str) and len(x) == 40 and set(x) <= HEX40
+    def blob_ok(x, none=False):
+        return (none and x is None) or (
+            isinstance(x, str) and len(x) == 40 and set(x) <= HEX40)
 
     for e in data["entries"]:
         require(sorted(e) == ["baseline_blob", "candidate_blob", "kinds",
                               "mechanism", "path", "reason"] and
-                blob_ok(e["baseline_blob"]) and blob_ok(e["candidate_blob"])
+                blob_ok(e["baseline_blob"], True) and
+                blob_ok(e["candidate_blob"], True) and
+                (e["baseline_blob"] or e["candidate_blob"])
                 and e["path"].startswith("src/") and e["path"] not in paths
                 and e["kinds"] and set(e["kinds"]) <= set(LOADS) and
                 e["reason"].strip() and e["mechanism"].strip(),
@@ -504,13 +508,20 @@ def add_rows(rows):
     return total
 
 
-def diff_tables(left, right):
+def diff_tables(left, right, whole=False):
     """right minus left by bracket name, every field: (deltas, names only on
     the left, names only on the right). A bracket on one side only has no
-    delta; the caller turns it into a reason."""
+    delta; the caller turns it into a reason. With `whole` it is a file
+    that only one side compiles, and its whole bracket is its delta
+    (negative for a left-only file)."""
     out = {n: {k: right[n][i] - left[n][i]
                for i, k in enumerate(OUT_FIELDS)}
            for n in left if n in right}
+    if whole:
+        for n in set(left) - set(right):
+            out[n] = {k: -left[n][i] for i, k in enumerate(OUT_FIELDS)}
+        for n in set(right) - set(left):
+            out[n] = {k: right[n][i] for i, k in enumerate(OUT_FIELDS)}
     return (out, sorted(set(left) - set(right)),
             sorted(set(right) - set(left)))
 
@@ -637,18 +648,27 @@ def analyse(records, sides, declared, sources, pairs, null=False,
         per_image = r2[kind] = {}
         for image in images:
             fd, lo, ro = diff_tables(tables[(fk, image, "base")],
-                                     tables[(fk, image, "candidate")])
+                                     tables[(fk, image, "candidate")], True)
             ld, llo, lro = diff_tables(tables[(kind, image, "base")],
                                        tables[(kind, image, "candidate")])
-            for names in (lo, ro, llo, lro):
+            for names in (llo, lro):
                 if names:
                     reasons.append(
                         "R2 %s image %s: brackets on one side only: %s" % (
                             kind, image, ", ".join(names)))
+            # A file that only one side compiles: its whole bracket is its
+            # delta, and it needs a declaration like any other.
+            for n in lo + ro:
+                if (kind, n) not in valid:
+                    reasons.append(
+                        "R2 %s image %s: file %s is compiled by the %s "
+                        "sources only and is not declared" % (
+                            kind, image, n,
+                            "baseline" if n in lo else "candidate"))
             files = {n: row for n, row in fd.items()
                      if n not in IMAGE_BRACKETS and not is_zero(row)}
             for n, row in sorted(files.items()):
-                if (kind, n) not in valid:
+                if (kind, n) not in valid and n not in lo + ro:
                     reasons.append(
                         "R2 %s image %s: undeclared file %s carries %s" % (
                             kind, image, n, json.dumps(row, sort_keys=True)))
@@ -765,10 +785,8 @@ def analyse(records, sides, declared, sources, pairs, null=False,
                                  ("structure", "structures")):
                 found += ["%s %s" % (label, name) for name in rs[0][field]
                           if name not in known[label]]
-            for name in rs[0]["files"] or []:
-                if name not in known["file"]:
-                    notes.append("candidate-only registered file %s (%s)" % (
-                        name, key[0]))
+            found += ["file %s" % name for name in rs[0]["files"] or []
+                      if name not in known["file"]]
             found = sorted(f for f in found if f not in allowed_extra)
             extension["%s/%s/%s" % key] = found
             if found:
@@ -851,46 +869,79 @@ def overlay_files(hol):
             if p.is_file() and p.suffix in OVERLAY_SUFFIXES}
 
 
+CLOCK_NAMES = (b"hol_clock", b"checkCPUTimer")
+
+
 class Overlay:
     """The simplifier sources of the two sides over one image: the files
     (and load plans) in which the reference trees differ, written into a
-    tree before each process. Only files present in both references are
-    exchanged; anything the candidate alone adds is found by the loaded
-    lists."""
+    tree before each process. A file that only one side has is written for
+    that side and removed for the other, so the per-file brackets cover it
+    (the analysis then needs it declared). `clock` lists the overlaid and
+    extra files that mention the image's CPU timer: the source kinds reset
+    its stored readings, which is sound only if no file under test uses it.
+    """
 
     def __init__(self, base_hol, candidate_hol, extra=()):
         b, c = overlay_files(base_hol), overlay_files(candidate_hol)
         self.content = {"base": {}, "candidate": {}}
-        for rel in sorted(set(b) & set(c)):
-            x, y = b[rel].read_bytes(), c[rel].read_bytes()
-            if x != y:
-                self.content["base"][rel] = x
-                self.content["candidate"][rel] = y
+        self.only = {"base": [], "candidate": []}
+        for rel in sorted(set(b) | set(c)):
+            if rel in b and rel in c:
+                x, y = b[rel].read_bytes(), c[rel].read_bytes()
+                if x != y:
+                    self.content["base"][rel] = x
+                    self.content["candidate"][rel] = y
+            else:
+                side = "base" if rel in b else "candidate"
+                self.content[side][rel] = (b if rel in b else c)[
+                    rel].read_bytes()
+                self.only[side].append(rel)
         self.blobs = {v: {rel: blob_id(d) for rel, d in files.items()}
                       for v, files in self.content.items()}
+        mentions = {rel for files in self.content.values()
+                    for rel, d in files.items()
+                    if any(n in d for n in CLOCK_NAMES)}
         for v, hol in zip(VARIANTS, (base_hol, candidate_hol)):
             for rel in extra:
                 p = Path(hol) / rel
                 if p.is_file():
-                    self.blobs[v][rel] = blob_id(p.read_bytes())
+                    data = p.read_bytes()
+                    self.blobs[v][rel] = blob_id(data)
+                    if any(n in data for n in CLOCK_NAMES):
+                        mentions.add(rel)
+        self.clock = sorted(mentions)
 
     def paths(self):
-        return sorted(self.content["base"])
+        return sorted(set(self.content["base"]) |
+                      set(self.content["candidate"]))
+
+    def other(self, variant):
+        return "candidate" if variant == "base" else "base"
 
     def apply(self, hol, variant):
         """Make the overlay files of a tree those of a side; returns the
-        number of files rewritten."""
+        number of files rewritten or removed."""
         changed = 0
         for rel, data in self.content[variant].items():
             path = Path(hol) / rel
             if not path.is_file() or path.read_bytes() != data:
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
+                changed += 1
+        for rel in self.only[self.other(variant)]:
+            path = Path(hol) / rel
+            if path.is_file():
+                path.unlink()
                 changed += 1
         return changed
 
     def check(self, hol, variant):
-        return all((Path(hol) / rel).read_bytes() == data
-                   for rel, data in self.content[variant].items())
+        return all((Path(hol) / rel).is_file() and
+                   (Path(hol) / rel).read_bytes() == data
+                   for rel, data in self.content[variant].items()) and \
+            not any((Path(hol) / rel).exists()
+                    for rel in self.only[self.other(variant)])
 
 
 # ---------------------------------------------------------------- running
@@ -970,6 +1021,9 @@ def gate(args):
         trees[sides["base"][0]]["hol"], trees[sides["candidate"][0]]["hol"],
         extra=[e["path"] for e in declared["entries"]] +
         [n["path"] for n in declared["noise"]])
+    require(not overlay.clock,
+            "files under test mention the image's CPU timer (the source "
+            "kinds reset its readings): " + ", ".join(overlay.clock))
     for side, variant in zip(("base", "candidate"), VARIANTS):
         for l in sides[side]:
             require(overlay.check(trees[l]["hol"], variant),
@@ -1034,6 +1088,7 @@ def gate(args):
         declared_text=declared_text,
         declared_sha256=hashlib.sha256(declared_text.encode()).hexdigest(),
         sources=overlay.blobs, overlay=overlay.paths(),
+        clock_mentions=overlay.clock,
         record_sha256=record_sha,
         environment=dict(env), seconds=round(time.time() - started, 1))
     report = analyse(records, sides, declared, overlay.blobs, args.pairs,
@@ -1060,7 +1115,11 @@ def write_archive(out, records, header, report):
 def render(report, header):
     """RESULTS.md: the decision and the figures behind it."""
     lines = ["# TASK31 ordinary-startup allocation gate", "",
-             "Decision: **%s**" % report["decision"], ""]
+             "Decision: **%s**" % report["decision"], "",
+             "Absolute source-kind figures are under the reset of the "
+             "image's stored CPU timer readings (Globals.hol_clock) and "
+             "are not client figures; only deltas and the hol-* kinds "
+             "are.", ""]
     lines += ["- " + r for r in report["reasons"]]
     lines += ["- blocker: " + b for b in report["blockers"]]
     lines += ["", "Images: " + json.dumps(report["images"], sort_keys=True),
@@ -1109,6 +1168,11 @@ def replay(args):
     report = analyse(records, sides, parse_declared(header["declared_text"]),
                      header["sources"], header["pairs"], header["null"],
                      header["record_sha256"])
+    require(header["clock_mentions"] == [],
+            "files under test mention the image's CPU timer")
+    if header["record_sha256"]:
+        require(args.record is not None,
+                "the archive is sealed to a record: pass --record")
     if args.record:
         require(sha_file(args.record) == header["record_sha256"],
                 "the record differs from its seal")
@@ -1121,6 +1185,32 @@ def replay(args):
     return 0
 
 # ----------------------------------------------------- TASK29B cell replica
+
+def install_cell_fixtures(repo, rev, dst, am):
+    """The fixtures of a cell directory: those of this checkout, or with
+    `rev` the committed blobs of that revision (the fixtures a past run
+    carried). Both the paired runner files and the matrix fixtures."""
+    import shutil
+    if rev is None:
+        rp.install_fixtures(dst)
+        for fx in am.FIXTURES:
+            target = "Performance.sml" if fx == am.FIXTURES[0] else fx
+            shutil.copyfile(am.HERE / fx, dst / target)
+        return
+    paired = "src/simp/tests/compatibility/paired/"
+    for path in a.git(repo, "ls-tree", "--name-only", rev,
+                      paired).splitlines():
+        name = Path(path).name
+        if name.endswith(".sml") or name == "Holmakefile":
+            (dst / name).write_bytes(subprocess.run(
+                ["git", "show", rev + ":" + path], cwd=repo, check=True,
+                capture_output=True).stdout)
+    for fx in am.FIXTURES:
+        target = "Performance.sml" if fx == am.FIXTURES[0] else fx
+        (dst / target).write_bytes(subprocess.run(
+            ["git", "show", rev + ":src/simp/tests/performance/" + fx],
+            cwd=repo, check=True, capture_output=True).stdout)
+
 
 def cell_startup(args):
     """The TASK29B startup bracket of `base` and `candidate` revisions as
@@ -1157,11 +1247,7 @@ def cell_startup(args):
                 d = job / name
                 d.mkdir()
                 rp.extract(repo, revs[side], d)
-                rp.install_fixtures(d)
-                for fx in am.FIXTURES:
-                    target = "Performance.sml" if fx == am.FIXTURES[0] \
-                        else fx
-                    shutil.copyfile(am.HERE / fx, d / target)
+                install_cell_fixtures(repo, args.fixtures_rev, d, am)
                 with (d / "Holmakefile").open("a") as f:
                     f.write("\npaired.exe: Performance.uo\n")
                 receipt = loading.execute(
@@ -1202,6 +1288,7 @@ def cell_startup(args):
     require(len(base) == 1 and len(cand) == 1, "nondeterministic startup")
     b, c = base.pop(), cand.pop()
     result = dict(
+        tree=args.tree, fixtures=args.fixtures_rev or "current",
         lengths=dict(tmpdir=len(str(args.tmpdir)), holdir=len(str(hol)),
                      library=len(str(lib_dir)) +
                      len("/libpolyml.so.16.0.0"), shim=len(str(shim)),
@@ -1256,6 +1343,9 @@ def main(argv=None):
                    help="symlink to the runtime directory (path length)")
     c.add_argument("--shim-copy", default=None,
                    help="copy of the shim at this path (path length)")
+    c.add_argument("--fixtures-rev", default=None,
+                   help="take the paired and matrix fixtures from this "
+                   "revision (those of a past run), not from this checkout")
     c.add_argument("-n", type=int, default=2)
     c.add_argument("--timeout", type=int, default=3600)
     r = sub.add_parser("replay")

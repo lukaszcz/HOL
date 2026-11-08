@@ -361,6 +361,81 @@ class SourceRuleTest(unittest.TestCase):
         report = run(world(), declared_data(entries=[]))
         self.assertEqual(report["decision"], "pass", report["reasons"])
 
+    def one_sided(self, side, words=7, entry=True):
+        """A file that only `side` compiles, with its whole bracket as the
+        delta (and the same words in the load brackets)."""
+        name = "$(HOLDIR)/src/simp/src/New.sml"
+        records, _ = attributed_world()
+        for r in records:
+            if r["variant"] != side:
+                continue
+            if r["kind"].startswith("files"):
+                r["brackets"].append(dict(name=name, start=words_(0),
+                                          end=words_(words)))
+            else:
+                r["brackets"][2]["end"][3] += words
+                r["brackets"][2]["end"][4] += words
+        entries = [entry_of(n, k) for n, k in (
+            ("Cond_rewr.sig", None), ("Cond_rewr.sml", None),
+            ("simpLib.sml", None), ("congLib.sml", ["load-congLib"]))]
+        new = dict(entry_of("Trace.sml"), path="src/simp/src/New.sml",
+                   kinds=list(g.LOADS))
+        if side == "candidate":
+            new.update(baseline_blob=None, candidate_blob="8" * 40)
+        else:
+            new.update(baseline_blob="8" * 40, candidate_blob=None)
+        if entry:
+            entries.append(new)
+        sources = {v: dict(m) for v, m in SOURCES.items()}
+        sources[side]["src/simp/src/New.sml"] = "8" * 40
+        return records, declared_data(entries=entries), sources
+
+    def run_sources(self, records, declared, sources):
+        with mock.patch.object(g, "PAIRS", TEST_PAIRS):
+            return g.analyse(records, SIDES, declared, sources, TEST_PAIRS,
+                             False, RECORD)
+
+    def test_candidate_added_file_is_attributed_when_declared(self):
+        records, declared, sources = self.one_sided("candidate")
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+        row = report["attributed"]["load-simpLib"][
+            "$(HOLDIR)/src/simp/src/New.sml"]
+        self.assertEqual(row["delta"]["total"], 7)
+
+    def test_candidate_added_file_fails_cleanly_when_undeclared(self):
+        records, declared, sources = self.one_sided("candidate",
+                                                       entry=False)
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("compiled by the candidate sources only" in r
+                            for r in report["reasons"]))
+
+    def test_baseline_only_file_is_a_negative_declared_delta(self):
+        records, declared, sources = self.one_sided("base")
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+        row = report["attributed"]["load-congLib"][
+            "$(HOLDIR)/src/simp/src/New.sml"]
+        self.assertEqual(row["delta"]["total"], -7)
+        records, declared, sources = self.one_sided("base", entry=False)
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("compiled by the baseline sources only" in r
+                            for r in report["reasons"]))
+
+    def test_one_sided_declaration_needs_one_blob(self):
+        both_none = dict(entry_of("simpLib.sml"), baseline_blob=None,
+                         candidate_blob=None)
+        with self.assertRaises(sc.InvalidAllocation):
+            g.parse_declared(json.dumps(dict(
+                schema=g.DECLARED_SCHEMA, entries=[both_none], noise=[],
+                candidate_only=[])))
+        ok = dict(entry_of("simpLib.sml"), baseline_blob=None)
+        g.parse_declared(json.dumps(dict(
+            schema=g.DECLARED_SCHEMA, entries=[ok], noise=[],
+            candidate_only=[])))
+
     def test_declared_entries_measuring_zero_fail(self):
         report = run(world())
         self.assertEqual(report["decision"], "fail")
@@ -568,6 +643,24 @@ class ExtensionTest(unittest.TestCase):
             candidate_only=["module simpMarkerTheory"]))
         self.assertEqual(report["decision"], "attributed", report["reasons"])
 
+    def test_candidate_only_registered_file_fails_unless_declared(self):
+        records, _ = attributed_world()
+        for r in records:
+            if r["kind"] == "files-simpLib" and r["image"] == "s1" and \
+                    r["pair"] == 0:
+                r["files"] = FILES + ["New.sml"]
+                r["files_sha"] = g.sha(r["files"])
+        for r in records:
+            if r["kind"] == "files-simpLib" and r["image"] == "s1" and \
+                    r["pair"] > 0:
+                r["files_sha"] = g.sha(FILES + ["New.sml"])
+        report = run(records)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("file New.sml" in r for r in report["reasons"]))
+        report = run(records, declared_data(
+            candidate_only=["file New.sml"]))
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+
     def test_candidate_only_structure_fails(self):
         records, _ = attributed_world()
         for r in records:
@@ -675,22 +768,58 @@ class OverlayTest(unittest.TestCase):
                 "src/simp/src/notes.md": b"changed\n",
                 "src/simp/src/Ext.sml": b"e\n"}))
             ov = g.Overlay(t / "b", t / "c", extra=["src/simp/src/A.sml"])
-            self.assertEqual(ov.paths(), ["src/simp/src/Cond_rewr.sig"])
+            self.assertEqual(ov.paths(), [
+                "src/simp/src/Cond_rewr.sig", "src/simp/src/Ext.sml",
+                "src/simp/src/OnlyBase.sml"])
+            self.assertEqual(ov.only, {"base": ["src/simp/src/OnlyBase.sml"],
+                                       "candidate": ["src/simp/src/Ext.sml"]})
+            self.assertEqual(ov.clock, [])
             self.assertEqual(ov.blobs["base"]["src/simp/src/A.sml"],
                              g.blob_id(b"a\n"))
             self.assertEqual(ov.blobs["candidate"][
                 "src/simp/src/Cond_rewr.sig"], g.blob_id(b"new\n"))
-            self.assertEqual(ov.apply(t / "b", "candidate"), 1)
+            self.assertTrue(ov.check(t / "b", "base"))
+            self.assertTrue(ov.check(t / "c", "candidate"))
+            self.assertFalse(ov.check(t / "b", "candidate"))
+            # The candidate variant: changed file, added file, and the
+            # baseline-only file is gone.
+            self.assertEqual(ov.apply(t / "b", "candidate"), 3)
             self.assertEqual(
                 (t / "b/src/simp/src/Cond_rewr.sig").read_bytes(), b"new\n")
+            self.assertEqual((t / "b/src/simp/src/Ext.sml").read_bytes(),
+                             b"e\n")
+            self.assertFalse((t / "b/src/simp/src/OnlyBase.sml").exists())
             self.assertEqual(ov.apply(t / "b", "candidate"), 0)
             self.assertTrue(ov.check(t / "b", "candidate"))
             self.assertFalse(ov.check(t / "b", "base"))
-            self.assertEqual(ov.apply(t / "b", "base"), 1)
+            self.assertEqual(ov.apply(t / "b", "base"), 3)
             self.assertEqual(
                 (t / "b/src/simp/src/Cond_rewr.sig").read_bytes(), b"old\n")
             self.assertEqual((t / "b/src/simp/src/OnlyBase.sml").read_bytes(),
                              b"x\n")
+            self.assertFalse((t / "b/src/simp/src/Ext.sml").exists())
+            self.assertTrue(ov.check(t / "b", "base"))
+            self.assertEqual(ov.blobs["candidate"]["src/simp/src/Ext.sml"],
+                             g.blob_id(b"e\n"))
+            self.assertNotIn("src/simp/src/Ext.sml", ov.blobs["base"])
+
+    def test_clock_mentions_are_listed(self):
+        with tempfile.TemporaryDirectory() as raw:
+            t = Path(raw)
+            files = {"src/simp/src/Trace.sml": b"val t = hol_clock\n",
+                     "src/simp/src/Same.sml": b"Timer.checkCPUTimer x\n",
+                     "src/simp/src/Fine.sml": b"fine\n"}
+            self.tree(t / "b", dict(files, **{
+                "src/simp/src/Other.sml": b"1\n"}))
+            self.tree(t / "c", dict(files, **{
+                "src/simp/src/Other.sml": b"2\n",
+                "src/simp/src/New.sml": b"Globals.hol_clock\n"}))
+            ov = g.Overlay(t / "b", t / "c", extra=[
+                "src/simp/src/Same.sml", "src/simp/src/Fine.sml"])
+            # Same.sml is declared (extra), Trace.sml is neither declared nor
+            # different, New.sml is overlaid.
+            self.assertEqual(ov.clock, ["src/simp/src/New.sml",
+                                        "src/simp/src/Same.sml"])
 
     def test_blob_id_is_the_git_blob(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -699,6 +828,38 @@ class OverlayTest(unittest.TestCase):
             want = subprocess.run(["git", "hash-object", str(p)], check=True,
                                   capture_output=True, text=True).stdout
             self.assertEqual(g.blob_id(b"hello\n"), want.strip())
+
+
+class CellFixtureTest(unittest.TestCase):
+    def test_fixtures_of_a_revision_are_the_committed_blobs(self):
+        with tempfile.TemporaryDirectory() as raw:
+            repo, dst = Path(raw) / "repo", Path(raw) / "dst"
+            perf = repo / "src/simp/tests/performance"
+            paired = repo / "src/simp/tests/compatibility/paired"
+            perf.mkdir(parents=True)
+            paired.mkdir(parents=True)
+            dst.mkdir()
+            (perf / "F1.sml").write_text("old1\n")
+            (perf / "F2.sml").write_text("old2\n")
+            (paired / "runner.sml").write_text("runner\n")
+            (paired / "Holmakefile").write_text("hm\n")
+            (paired / "note.txt").write_text("skip\n")
+
+            def git(*args):
+                subprocess.run(("git", "-c", "user.name=t", "-c",
+                                "user.email=t@t") + args, cwd=repo,
+                               check=True, capture_output=True)
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-q", "-m", "one")
+            (perf / "F1.sml").write_text("new1\n")
+            am = mock.Mock(FIXTURES=("F1.sml", "F2.sml"), HERE=perf)
+            g.install_cell_fixtures(repo, "HEAD", dst, am)
+            self.assertEqual((dst / "Performance.sml").read_text(), "old1\n")
+            self.assertEqual((dst / "F2.sml").read_text(), "old2\n")
+            self.assertEqual((dst / "runner.sml").read_text(), "runner\n")
+            self.assertEqual((dst / "Holmakefile").read_text(), "hm\n")
+            self.assertFalse((dst / "note.txt").exists())
 
 
 class PlanTest(unittest.TestCase):
@@ -720,10 +881,10 @@ class PlanTest(unittest.TestCase):
 
 
 class ArchiveTest(unittest.TestCase):
-    def archive(self, root, records):
+    def archive(self, root, records, record=RECORD):
         header = dict(
             schema=g.SCHEMA, sides=SIDES, null=False, pairs=TEST_PAIRS,
-            record_sha256=RECORD,
+            record_sha256=record, clock_mentions=[],
             hol={l: "/s/%s/hol-source" % l for l in BASE + CAND},
             holdir_length=len("/s/b1/hol-source"), sources=SOURCES,
             declared_text=json.dumps(declared_data_raw()),
@@ -731,7 +892,7 @@ class ArchiveTest(unittest.TestCase):
                 json.dumps(declared_data_raw()).encode()).hexdigest())
         with mock.patch.object(g, "PAIRS", TEST_PAIRS):
             report = g.analyse(records, SIDES, g.parse_declared(
-                header["declared_text"]), SOURCES, TEST_PAIRS, False, RECORD)
+                header["declared_text"]), SOURCES, TEST_PAIRS, False, record)
         g.write_archive(root, records, header, report)
         return report
 
@@ -739,11 +900,19 @@ class ArchiveTest(unittest.TestCase):
         records, _ = attributed_world()
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            self.archive(root, records)
-            args = mock.Mock(output=root, record=None)
+            record = root / "record.md"
+            record.write_text("x\n")
+            self.archive(root, records, g.sha_file(record))
             patch = mock.patch.object(g, "PAIRS", TEST_PAIRS)
             patch.start()
             self.addCleanup(patch.stop)
+            args = mock.Mock(output=root, record=record)
+            with self.assertRaisesRegex(sc.InvalidAllocation, "--record"):
+                g.replay(mock.Mock(output=root, record=None))
+            record.write_text("y\n")
+            with self.assertRaisesRegex(sc.InvalidAllocation, "seal"):
+                g.replay(args)
+            record.write_text("x\n")
             self.assertEqual(g.replay(args), 0)
             self.assertIn("receipt.json", os.listdir(root))
             text = (root / "decisions.json").read_text()
