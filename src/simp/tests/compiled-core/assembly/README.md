@@ -1,13 +1,14 @@
 # TASK16 compiler structural inspection
 
-Run from the repository root (AArch64, Poly/ML 5.9.2):
+Run from the repository root (AArch64, Poly/ML 5.9.2); `$OUT` is a new
+directory outside the repository:
 
 ```
 python3 src/simp/tests/compiled-core/assembly/run_assembly.py \
-  --output src/simp/tests/compiled-core/assembly/evidence/current
+  --output "$OUT"/assembly-current
 python3 src/simp/tests/compiled-core/assembly/run_assembly.py \
   --baseline-control \
-  --output src/simp/tests/compiled-core/assembly/evidence/control
+  --output "$OUT"/assembly-control
 python3 -m unittest discover -s src/simp/tests/compiled-core/assembly
 ```
 
@@ -38,5 +39,3 @@ retains anonymous top-level initialization and any unselected compiler
 records. This is static *local* emitted work: reservations are not measured
 allocations, calls are not dynamic counts, and callees/loops/GC paths are not
 cumulative costs. No closure introspection, timings or speed claims.
-
-See `RESULTS.md` for the actual inspection and its limits.

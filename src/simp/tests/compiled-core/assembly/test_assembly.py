@@ -1,6 +1,4 @@
 """TASK16 parser/diff sensitivity controls; no compiler or timing runs."""
-import gzip
-import json
 from pathlib import Path
 import unittest
 import run_assembly as core
@@ -114,51 +112,6 @@ class AssemblyTests(unittest.TestCase):
             self.assertTrue(core.selected("simpLib." + n + "(1)(2)"))
         self.assertFalse(core.selected("simpLib.appconv_other(1)"))
         self.assertFalse(core.selected("Cond_rewr.appconv(1)"))
-
-    def test_archived_evidence(self):
-        for directory in (core.HERE / "evidence").glob("*"):
-            with self.subTest(evidence=directory.name):
-                m = json.loads((directory / "manifest.json").read_text())
-                self.assertTrue(m["success"])
-                self.assertTrue(m["inspection_complete"])
-                self.assertTrue(m["collection_validated"])
-                self.assertTrue(m["compiler_source_matches_pinned"])
-                for name, seal in m["artifacts"].items():
-                    self.assertEqual(core.paired.fingerprint(directory / name),
-                                     seal)
-                for name, seal in m["extra_artifacts"].items():
-                    path = directory / name
-                    raw = gzip.decompress(path.read_bytes())
-                    self.assertEqual(core.paired.digest(raw),
-                                     seal["uncompressed_sha256"])
-                for side in ("baseline", "candidate"):
-                    source = gzip.decompress((directory /
-                        (side + '.source.simpLib.sml.gz')).read_bytes())
-                    lines = source.decode().splitlines(keepends=True)
-                    for span in m['source_spans'].values():
-                        self.assertEqual(''.join(lines[
-                            span['start_line'] - 1:span['end_line']]),
-                            span['text'])
-                    full = gzip.decompress((directory /
-                        (side + '.compiler-extent.txt.gz')).read_bytes())
-                    offset = m['extra_artifacts'][side +
-                        '.compiler-extent.txt.gz']['stdout_start_line']
-                    full_lines = full.decode().splitlines(keepends=True)
-                    trees = json.loads(gzip.decompress((directory /
-                        (side + ".optimized-tree.json.gz")).read_bytes()))
-                    for r in trees:
-                        self.assertEqual(core.paired.digest(r["text"].encode()),
-                                         r["sha256"])
-                        self.assertEqual(''.join(full_lines[
-                            r['stdout_start_line'] - offset:
-                            r['stdout_end_line'] - offset + 1]), r['text'])
-                self.assertTrue(all(row["identical_after_pool_relocation"]
-                    for row in m["extended_native_comparison"].values()))
-                if m["baseline_control"]:
-                    self.assertTrue(m["strict_equality_accepted"])
-                    self.assertTrue(all(row["identical"] for key, row in
-                        m["compiler_comparison"].items()
-                        if not key.startswith("assembly:")))
 
 
 if __name__ == "__main__":
