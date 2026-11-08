@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fresh ordinary first-import timing; NOT independent/release approval."""
 import argparse
+import functools
 import gzip
 import importlib.util
 import itertools
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -25,17 +27,10 @@ import performance_schema as ps
 import run_paired as rp
 
 
-class _Grid:
-    """`timing_grid`, imported on first use: `allocation_matrix` imports this
-    module, and the allocation harness does not list timing_grid.py among
-    its inputs, so it must not become a module-level import here."""
-
-    def __getattr__(self, name):
-        import timing_grid
-        return getattr(timing_grid, name)
-
-
-tg = _Grid()
+# `timing_grid` is imported inside the functions that need it, never at the
+# top: `allocation_matrix` imports this module, the allocation harness does
+# not list timing_grid.py among its inputs, and timing_grid imports this
+# module itself (through private_runtime).
 
 
 def require(ok, message):
@@ -46,7 +41,7 @@ MODULES = ("simpLib", "congLib")
 FIELDS = ("wall", "nongc_usr", "nongc_sys", "gc_usr", "gc_sys",
           "cpu_usr", "cpu_sys", "gc_user_only")
 METRICS = ("wall", "cpu", "gc_cpu")
-# TASK31 loading unit: every sample is the mean of REPS first imports, each in
+# Loading unit: every sample is the mean of REPS first imports, each in
 # its own fresh process; a module is never loaded twice in one process.
 REPS = 5
 PAIRS = 40
@@ -88,8 +83,14 @@ def audit_forbidden_names(audit_dir=AUDIT):
     return names
 
 
-# Names that no ordinary import may load; patterns catch the rest.
-EXTENSION_NAMES = audit_forbidden_names()
+@functools.lru_cache(maxsize=None)
+def extension_names():
+    """Names that no ordinary import may load (patterns catch the rest):
+    the audit's list, read on first use and not when this module is
+    imported."""
+    return audit_forbidden_names()
+
+
 # Stems a candidate process may load although no baseline process does:
 # a reviewed allowance, empty unless the source design requires otherwise.
 STEM_ALLOWANCE = frozenset()
@@ -97,13 +98,13 @@ NO_EXTENSIONS = "none"
 
 
 def extension_name(name):
-    return (name in EXTENSION_NAMES or name.endswith(("Ext", "ExtLib"))
+    return (name in extension_names() or name.endswith(("Ext", "ExtLib"))
             or name.startswith("simpMarker"))
 
 
 # The loading call is a top-level runner operation, NOT inside a pending
 # traced selftest use. Thus nested source uses never defeat rp.validate.
-TIMING = '''fun loadingMeasure f = let
+TIMING_TEMPLATE = '''fun loadingMeasure f = let
   val cpu = Timer.startCPUTimer ()
   val wall = Timer.startRealTimer ()
   val _ = f ()
@@ -142,8 +143,15 @@ fun loadingImport () = let
   val _ = loadingEmit "loading.raw" data
 in Paired.observe "loading.extensions" (loadingExtensions ()) end
 '''
-TIMING = TIMING.replace("@PROBE@", ", ".join(
-    '"%s"' % n for n in EXTENSION_NAMES)).replace("@NONE@", NO_EXTENSIONS)
+
+
+def timing_source():
+    """The timing code inserted into the runner, with the audit's names."""
+    return TIMING_TEMPLATE.replace("@PROBE@", ", ".join(
+        '"%s"' % n for n in extension_names())).replace(
+            "@NONE@", NO_EXTENSIONS)
+
+
 VERIFY = '''open HolKernel
 val p = mk_var ("loading_p",bool)
 val input = boolSyntax.mk_conj (boolSyntax.T,p)
@@ -184,7 +192,7 @@ def install(dst, module):
     require(text.count(anchor) == 1, "runner timing insertion anchor changed")
     old = 'Meta.loadPlan tracedUse (Paired.env "PAIR_TARGET"); "pass")'
     require(text.count(old) == 1, "runner loading anchor changed")
-    text = text.replace(anchor, TIMING + anchor).replace(
+    text = text.replace(anchor, timing_source() + anchor).replace(
         old, 'loadingImport ();\n   ' + old)
     runner.write_text(text)
     (dst / "selftest.sml").write_text(
@@ -485,11 +493,13 @@ def finite(value):
 def control_width(control):
     """The grid's measure of a B/B control: the larger half log-width of the
     gated metrics' intervals (`timing_grid.control_half_width`)."""
-    return tg.control_half_width({"control": control})
+    import timing_grid
+    return timing_grid.control_half_width({"control": control})
 
 
 def second_stage_count(control, pairs):
     """The grid's second-stage pair count, from the B/B control alone."""
+    import timing_grid as tg
     return tg.second_stage_pairs(control_width(control), pairs, tg.TARGET,
                                  tg.MAX_PAIRS)
 
@@ -497,7 +507,9 @@ def second_stage_count(control, pairs):
 def required_units(unit_sd):
     """n * R needed for a 95% interval half width of `tg.TARGET`, when the
     paired log ratio of two R-means has sd `unit_sd / sqrt(R)`."""
-    return math.ceil((Z95 * MEDIAN_FACTOR * unit_sd / tg.TARGET) ** 2)
+    import timing_grid
+    return math.ceil((Z95 * MEDIAN_FACTOR * unit_sd /
+                      timing_grid.TARGET) ** 2)
 
 
 def gamma_p(shape, x):
@@ -564,6 +576,13 @@ def second_stage_plan(report, results):
     require(not all(metrics[m].get("control_valid") for m in gated),
             "the B/B control met its window: the first stage is final")
     return second_stage_count(results["control"], report["pairs"])
+
+
+def check_seed(seed):
+    """A seed that every process of a run can use: `layout_units` appends
+    the longest suffix, "-pilot", before the schema's length limit."""
+    require(isinstance(seed, str), "layout seed must be a string")
+    ps.layout_seed(seed + "-pilot")
 
 
 def layout_units(seed, phase, pair, side, rep):
@@ -658,6 +677,16 @@ def jitter(rows, control, pairs, reps):
                 second_stage_pairs=second_stage_count(control, pairs))
 
 
+def covered(found):
+    """A calibration covers the first stage when every gated metric's
+    `unit_sd_upper` is at most `UNIT_SD_BOUND` (the bound the stage is sized
+    for): the one acceptance rule."""
+    gated = [e for e in found["metrics"].values() if e["gated"]]
+    return bool(gated) and all(
+        "unit_sd_upper" in e and e["unit_sd_upper"] <= UNIT_SD_BOUND
+        for e in gated)
+
+
 def check_settings(args, first):
     """The counts, seed and baseline a run may have. A decision run is
     exactly PAIRS x REPS; its one second stage is the grid's, driven by the
@@ -665,7 +694,7 @@ def check_settings(args, first):
     require(args.module in MODULES, "unknown ordinary module")
     require(not (args.smoke and args.calibrate),
             "--smoke and --calibrate are exclusive")
-    ps.layout_seed(args.layout_seed)
+    check_seed(args.layout_seed)
     require(args.timeout > 0, "invalid timeout")
     if args.smoke or args.calibrate:
         require(args.reps >= 1, "invalid repetitions")
@@ -693,6 +722,134 @@ def check_settings(args, first):
                 getattr(args, side), "the second stage changes the " + side)
 
 
+# The attempts ledger: the timing grid's (`timing_grid.Ledger`), under this
+# table's name. A decision run and a `--extend` each open an attempt before
+# the first process and close it with the seal of their `loading.json` and
+# the decision.
+TABLE = "task31-loading"
+FAILED = "failed"  # the status of a run that decided nothing (success false)
+DECISIONS = {0: "pass", 1: "fail", 2: "inconclusive"}
+
+
+def ledger_path(repo):
+    """The one ledger of the table in a checkout: below its root, in the
+    directory git excludes."""
+    return (Path(repo).resolve() / ".agent-files" / "evidence" / TABLE /
+            "attempts.jsonl")
+
+
+def gate_attempts(state, candidate, module, stage):
+    """attempt id -> its ledger row, for the table's attempts of this
+    candidate and module at `stage`."""
+    rows = state.attempts(TABLE)
+    return {r["attempt"]: rows[r["attempt"], stage] for r in state.records
+            if r["event"] == "open" and r.get("table") == TABLE and
+            (r["candidate"], r["module"], r["stage"]) ==
+            (candidate, module, stage)}
+
+
+def judged(rows):
+    """The attempts that count as the draw: all but the runs that decided
+    nothing. An attempt with no close (a crash, a kill) counts."""
+    return sorted(i for i, row in rows.items()
+                  if row["statuses"][-1] != FAILED)
+
+
+def refuse_second_draw(path, args, stage):
+    """Under the serial lock, before anything is created: the gate (this
+    candidate and module) has no judged attempt at this stage yet."""
+    import timing_grid as tg
+    inside = path.resolve().is_relative_to(Path(args.repo).resolve())
+    if inside:
+        ignored = subprocess.run(
+            ["git", "-C", str(args.repo), "check-ignore", "-q", str(path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        require(ignored.returncode == 0, "the attempts ledger would be "
+                "tracked by git: exclude .agent-files first, in the file "
+                "`git rev-parse --git-path info/exclude` names: %s" % path)
+    if not path.exists():
+        return
+    found = judged(gate_attempts(tg.Ledger(path), args.candidate, args.module,
+                                 stage))
+    require(not found, "the %s stage of this candidate and module has a "
+            "judged attempt already (%s): a rerun is allowed only after a "
+            "run that decided nothing%s" % (
+                stage, ", ".join(found), "" if stage == "first" else
+                "; at most one --extend per first stage"))
+
+
+def open_attempt(path, args, report, first, output, repo):
+    """Append the opening of this run; the attempt id goes into the report."""
+    import timing_grid as tg
+    path.parent.mkdir(parents=True, exist_ok=True)
+    attempt = "%s-%s" % (report["stage"], uuid.uuid4().hex[:12])
+    tg.ledger_append(
+        path, event="open", stage=report["stage"], table=TABLE,
+        attempt=attempt, candidate=args.candidate, module=args.module,
+        baseline=args.baseline, seed=args.layout_seed,
+        first_attempt=None if first is None else first["report"]["attempt"],
+        output=str(output), checkout=str(repo))
+    report["attempt"] = attempt
+
+
+def close_attempt(path, report, output):
+    """Append the close: the seal of loading.json and the decision. When it
+    cannot be written the attempt stays open, which counts as judged."""
+    import timing_grid as tg
+    try:
+        seal = a.seal(output / "loading.json")
+        status = FAILED
+        if report["success"]:
+            status = DECISIONS[exit_status(
+                report["results"]["candidate"]["metrics"])]
+        tg.ledger_append(
+            path, event="close", stage=report["stage"], table=TABLE,
+            attempt=report["attempt"], status=status,
+            seal=seal["sha256"], output=str(output),
+            checkout=report["repo"])
+    except Exception as error:
+        print("ATTEMPT-NOT-CLOSED %s: %s" % (report["attempt"], error),
+              file=sys.stderr, flush=True)
+
+
+def check_ledger(path, report, seal, status, first_attempt):
+    """Replay: this run is the recorded attempt of its stage, closed with
+    this seal and decision, and no other judged attempt exists for the same
+    gate. Returns the counts of the gate's attempts."""
+    import timing_grid as tg
+    path = Path(path)
+    require(path.is_file(), "no attempts ledger: %s" % path)
+    state = tg.Ledger(path)
+    attempt, stage = report.get("attempt"), report["stage"]
+    opened = [r for r in state.records if r["event"] == "open" and
+              r.get("table") == TABLE and r["attempt"] == attempt and
+              r["stage"] == stage]
+    require(len(opened) == 1,
+            "the attempts ledger has no opening of this run")
+    want = (report["selections"]["candidate"]["revision"], report["module"],
+            report["selections"]["baseline"]["revision"],
+            report["layout_seed"], first_attempt)
+    require((opened[0]["candidate"], opened[0]["module"],
+             opened[0]["baseline"], opened[0]["seed"],
+             opened[0]["first_attempt"]) == want,
+            "the ledger's opening disagrees with this run")
+    closes = [r for r in state.records if r["event"] == "close" and
+              r.get("table") == TABLE and r["attempt"] == attempt and
+              r["stage"] == stage]
+    require(closes and closes[-1]["seal"] == seal["sha256"] and
+            closes[-1]["status"] == status,
+            "the ledger's close does not name this loading.json and decision")
+    rows = gate_attempts(state, want[0], want[1], stage)
+    require(judged(rows) == [attempt],
+            "another judged attempt exists for this candidate, module and "
+            "stage: " + ", ".join(i for i in judged(rows) if i != attempt))
+    counts = {}
+    for st in ("first", "second"):
+        found = gate_attempts(state, want[0], want[1], st)
+        counts[st] = dict(attempts=len(found), judged=len(judged(found)))
+    return counts
+
+
 def source_seals(selections):
     return {side: [(s["git_path"], s["bytes"], s["sha256"])
                    for s in selections[side]["sources"]]
@@ -709,7 +866,11 @@ def run(args, first=None):
     require(light or args.api_audit,
             "candidate eight-process --api-audit receipt required")
     repo, output = args.repo.resolve(strict=True), args.output.resolve()
+    ledger = None if light else ledger_path(repo)
     with a.serial_lock(repo) as fds:
+        if ledger is not None:
+            refuse_second_draw(ledger, args, "first" if first is None
+                               else "second")
         output.mkdir(parents=True, exist_ok=False)
         report = {"schema": SCHEMA, "success": False,
                   "mode": "smoke" if args.smoke else
@@ -723,6 +884,8 @@ def run(args, first=None):
                   "policy": POLICY, "timer_fields": FIELDS,
                   "timeout": args.timeout, "selections": {}, "runs": [],
                   "argv": sys.argv, "inputs": {}, "tools": {}}
+        if ledger is not None:
+            open_attempt(ledger, args, report, first, output, repo)
         try:
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("HOL", "POLY", "ML", "PAIR_",
@@ -736,7 +899,9 @@ def run(args, first=None):
                      HERE / "test_loading_provenance.py",
                      HERE / "PROTOCOL_LOADING.md", Path(a.__file__),
                      Path(rp.__file__), HERE / "summarize.py",
-                     HERE / "performance_schema.py"]
+                     HERE / "performance_schema.py",
+                     HERE / "timing_grid.py", AUDIT / "selftest.sml",
+                     AUDIT / "audit_constants.py"]
             paths += sorted((rp.HERE / "paired").glob("*.sml"))
             paths += [rp.HERE / "paired/Holmakefile",
                       HERE / "review-20261021/abicheck.sml"]
@@ -817,6 +982,7 @@ def run(args, first=None):
                             "stage's")
                     report["first_stage"] = dict(
                         run=str(first["folder"]), seal=first["seal"],
+                        attempt=first["report"]["attempt"],
                         pairs=first["report"]["pairs"],
                         second_stage_pairs=first["pairs"])
                 if args.api_audit:
@@ -937,6 +1103,8 @@ def run(args, first=None):
             report["failure"] = str(error)
         finally:
             a.save(output / "loading.json", report)
+        if ledger is not None:
+            close_attempt(ledger, report, output)
     return report
 
 
@@ -997,6 +1165,13 @@ def replay_run(folder, report, entry):
     require(receipt["actual_selection"] == actual,
             "wrong actual selection: " + label)
     env = receipt["environment"]
+    private = report["selections"][actual]["private"]
+    require(receipt["command"] == [private + "/paired.exe"],
+            "wrong launcher command: " + label)
+    require(receipt["cwd"] == private and env["PAIR_PRIVATE"] == private,
+            "wrong launcher directory: " + label)
+    require(env["LOADING_MODULE"] == report["module"],
+            "wrong module in the environment: " + label)
     require(env["PAIR_SELECTION"] == entry["selection"] and
             env["PERF_LAYOUT"] == str(layout_units(
                 report["layout_seed"], entry["phase"], entry["pair"],
@@ -1016,8 +1191,9 @@ def replay_run(folder, report, entry):
                 rep=entry["rep"], accepted=entry["accepted"])
 
 
-def replay_stage(report, first_dir):
-    """The second stage is bound to its first stage's seal and count."""
+def replay_stage(report, first_dir, ledger):
+    """The second stage is bound to its first stage's seal and count.
+    Returns the first stage's attempt id (None for a first stage)."""
     if report["stage"] == "first":
         require("first_stage" not in report, "a first stage has no parent")
         if report["mode"] == "isolated-source":
@@ -1026,11 +1202,12 @@ def replay_stage(report, first_dir):
                     (PAIRS, REPS, LAYOUT_SEED, a.BASE),
                     "a decision run is exactly %d pairs of %d fresh "
                     "imports" % (PAIRS, REPS))
-        return
+        return None
     require(report["mode"] == "isolated-source", "only decisions extend")
+    require("first_stage" in report, "a second stage names its first stage")
     link = report["first_stage"]
     parent = first_stage(first_dir or link["run"],
-                         link["seal"]["sha256"])
+                         link["seal"]["sha256"], ledger)
     first = parent["report"]
     require(report["pairs"] == parent["pairs"] == link["second_stage_pairs"]
             and link["pairs"] == first["pairs"] and
@@ -1038,6 +1215,8 @@ def replay_stage(report, first_dir):
             report["layout_seed"] == EXTENSION_SEED and
             report["module"] == first["module"],
             "the second stage differs from the plan of its first stage")
+    require(link["attempt"] == first["attempt"],
+            "the second stage names another attempt of its first stage")
     for side in ("baseline", "candidate"):
         require(report["selections"][side]["revision"] ==
                 first["selections"][side]["revision"],
@@ -1045,12 +1224,23 @@ def replay_stage(report, first_dir):
     require(source_seals(report["selections"]) ==
             source_seals(first["selections"]),
             "the second stage's sources are not the first stage's")
+    return first["attempt"]
 
 
-def replay_all(folder, first_dir=None, expect_seal=None):
+def replay_all(folder, first_dir=None, expect_seal=None, ledger=None):
     """Recompute every observation, extension check and decision of a
-    finished run from its archived process receipts. Returns the summary,
-    the report and its results."""
+    finished run from its archived process receipts. A decision run is also
+    checked against the attempts ledger (`ledger`, by default the one of the
+    checkout that measured). Returns the summary, the report and its
+    results. A malformed report is refused, not a traceback."""
+    try:
+        return replay_checked(folder, first_dir, expect_seal, ledger)
+    except (KeyError, TypeError, IndexError, AttributeError) as error:
+        raise ValueError("malformed loading report: %s: %s" % (
+            type(error).__name__, error))
+
+
+def replay_checked(folder, first_dir, expect_seal, ledger):
     folder = Path(folder).resolve(strict=True)
     seal = a.seal(folder / "loading.json")
     require(expect_seal is None or seal["sha256"] == expect_seal,
@@ -1063,12 +1253,12 @@ def replay_all(folder, first_dir=None, expect_seal=None):
             report.get("stage") in ("first", "second") and
             report["module"] in MODULES, "malformed loading report")
     module, pairs, reps = report["module"], report["pairs"], report["reps"]
-    ps.layout_seed(report["layout_seed"])
+    check_seed(report["layout_seed"])
     require(report["policy"] == POLICY, "unexpected loading policy")
     light = mode != "isolated-source"
     require(reps >= 1 and pairs >= (1 if mode == "smoke" else 10),
             "too few pairs or repetitions")
-    replay_stage(report, first_dir)
+    first_attempt = replay_stage(report, first_dir, ledger)
     order = expected_runs(pairs, reps, mode == "calibration")
     require([(r["phase"], r["pair"], r["selection"], r["rep"])
              for r in report["runs"]] == order,
@@ -1106,19 +1296,27 @@ def replay_all(folder, first_dir=None, expect_seal=None):
                 "recomputed control width or count differs from the report")
     replay_gate(report)
     status = None if light else exit_status(results["candidate"]["metrics"])
-    return dict(replayed=len(report["runs"]), exit=status,
-                stage=report["stage"], seal=seal), report, results
+    info = dict(replayed=len(report["runs"]), exit=status,
+                stage=report["stage"], seal=seal)
+    if mode == "calibration":
+        info["covered"] = covered(report["jitter"])
+    if not light:
+        info["attempts"] = check_ledger(
+            ledger or ledger_path(report["repo"]), report, seal,
+            DECISIONS[status], first_attempt)
+    return info, report, results
 
 
-def first_stage(folder, expect_seal=None):
+def first_stage(folder, expect_seal=None, ledger=None):
     """A replayed first-stage decision run and the pairs of its second."""
-    info, report, results = replay_all(folder, expect_seal=expect_seal)
+    info, report, results = replay_all(folder, expect_seal=expect_seal,
+                                       ledger=ledger)
     return dict(folder=Path(folder).resolve(), seal=info["seal"],
                 report=report, pairs=second_stage_plan(report, results))
 
 
-def replay(folder, first_dir=None, expect_seal=None):
-    return replay_all(folder, first_dir, expect_seal)[0]
+def replay(folder, first_dir=None, expect_seal=None, ledger=None):
+    return replay_all(folder, first_dir, expect_seal, ledger)[0]
 
 
 def main(argv=None):
@@ -1147,6 +1345,9 @@ def main(argv=None):
                         help="with --replay: the seal of loading.json")
     parser.add_argument("--first-stage", type=Path, metavar="RUN_DIR",
                         help="with --replay: where the first stage now is")
+    parser.add_argument("--ledger", type=Path, metavar="FILE",
+                        help="with --replay: the attempts ledger of the "
+                        "checkout that measured (a copy of it)")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--api-audit", type=Path)
     parser.add_argument("--timeout", type=float)
@@ -1158,14 +1359,18 @@ def main(argv=None):
         require(not (args.replay and args.extend),
                 "--replay and --extend are exclusive")
         if args.replay:
-            others = given - {"replay", "expect_seal", "first_stage"}
-            require(not others, "--replay takes only --expect-seal and "
-                    "--first-stage, not: " + ", ".join(sorted(others)))
-            info = replay(args.replay, args.first_stage, args.expect_seal)
+            others = given - {"replay", "expect_seal", "first_stage",
+                              "ledger"}
+            require(not others, "--replay takes only --expect-seal, "
+                    "--first-stage and --ledger, not: " +
+                    ", ".join(sorted(others)))
+            info = replay(args.replay, args.first_stage, args.expect_seal,
+                          args.ledger)
             print(json.dumps(info))
             return 0
-        require(not (given & {"expect_seal", "first_stage"}),
-                "--expect-seal and --first-stage belong to --replay")
+        require(not (given & {"expect_seal", "first_stage", "ledger"}),
+                "--expect-seal, --first-stage and --ledger belong to "
+                "--replay")
         args.repo = args.repo or HERE.parents[3]
         args.timeout = args.timeout or 1800
         first = None
@@ -1175,7 +1380,8 @@ def main(argv=None):
             require(not others, "--extend takes its settings from the first "
                     "stage, not: " + ", ".join(sorted(others)))
             require(args.output, "--output is required")
-            first = first_stage(args.extend)
+            first = first_stage(args.extend,
+                                ledger=ledger_path(args.repo))
             report = first["report"]
             args.baseline = report["selections"]["baseline"]["revision"]
             args.candidate = report["selections"]["candidate"]["revision"]

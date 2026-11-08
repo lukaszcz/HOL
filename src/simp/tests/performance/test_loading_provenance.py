@@ -106,6 +106,10 @@ class BuildBinding(unittest.TestCase):
         l.rp.git(self.repo, "-c", "user.name=Protocol Test", "-c",
                  "user.email=test@invalid", "commit", "-qm", "fixture")
         self.pin = l.rp.git(self.repo, "rev-parse", "HEAD").decode().strip()
+        # The attempts ledger lives below the checkout, ignored by git.
+        exclude = self.repo / ".git/info/exclude"
+        exclude.write_text(exclude.read_text() + ".agent-files\n")
+        self.ledger = l.ledger_path(self.repo)
         (self.repo / "bin").mkdir()
         for name in ("hol", "Holmake", "hol.state0", "poly"):
             (self.repo / "bin" / name).write_text("synthetic tool\n")
@@ -272,12 +276,27 @@ class BuildBinding(unittest.TestCase):
         out = self.repo / "output"
         info = l.replay(out)
         self.assertEqual((info["replayed"], info["exit"]), (42, None))
+        self.assertIs(info["covered"], l.covered(report["jitter"]))
         self.assertEqual(info["seal"], l.a.seal(out / "loading.json"))
         # Tampering with a process receipt is caught by its seal.
         victim = out / report["runs"][5]["receipt"]
         victim.write_bytes(victim.read_bytes() + b"x")
         with self.assertRaisesRegex(ValueError, "changed process receipt"):
             l.replay(out)
+
+    def test_a_long_seed_is_refused_before_anything_is_created(self):
+        # layout_units appends "-pilot", so 59-64 characters do not fit.
+        for seed, ok in (("s" * 58, True), ("s" * 59, False),
+                         ("s" * 64, False)):
+            with self.subTest(length=len(seed)):
+                out = self.repo / ("seed%d" % len(seed))
+                if ok:
+                    self.assertTrue(self.run_protocol(
+                        layout_seed=seed, output=out)["success"])
+                else:
+                    with self.assertRaisesRegex(ValueError, "layout seed"):
+                        self.run_protocol(layout_seed=seed, output=out)
+                    self.assertFalse(out.exists())
 
     def test_every_process_gets_a_recorded_replayed_layout(self):
         report = self.run_protocol(pairs=10, reps=2, smoke=False,
@@ -455,6 +474,23 @@ class BuildBinding(unittest.TestCase):
             "selection env": (
                 None, lambda x: x["environment"].update(
                     PAIR_SELECTION="baseline"), cand, "environment"),
+            "control from the candidate launcher": (
+                None, lambda x: x.update(command=[x["command"][0].replace(
+                    "baseline", "candidate")]), control, "launcher command"),
+            "candidate from the baseline launcher": (
+                None, lambda x: x.update(command=[x["command"][0].replace(
+                    "candidate", "baseline")]), cand, "launcher command"),
+            "launcher cwd": (
+                None, lambda x: x.update(cwd=x["cwd"].replace(
+                    "candidate", "baseline")), cand, "launcher directory"),
+            "private directory": (
+                None, lambda x: x["environment"].update(
+                    PAIR_PRIVATE=x["environment"]["PAIR_PRIVATE"].replace(
+                        "baseline", "candidate")), control,
+                "launcher directory"),
+            "module": (
+                None, lambda x: x["environment"].update(
+                    LOADING_MODULE="simpLib"), cand, "module"),
             "stems": (
                 None, lambda x: x["measurement"].update(
                     loaded_stems=x["measurement"]["loaded_stems"] + ["q"]),
@@ -481,7 +517,7 @@ class BuildBinding(unittest.TestCase):
                 "semantic"),
             "first stage": (
                 lambda r: r.update(stage="second"), None, control,
-                "first_stage|KeyError|second"),
+                "malformed|first stage"),
             "floor": (
                 lambda r: r.update(layout_seed="free"), None, control,
                 "exactly"),
@@ -493,8 +529,7 @@ class BuildBinding(unittest.TestCase):
             self.rewrite(out, edit_report, edit_run, index)
             with self.subTest(case=name):
                 try:
-                    with self.assertRaisesRegex(
-                            (ValueError, KeyError), error):
+                    with self.assertRaisesRegex(ValueError, error):
                         l.replay(out)
                 finally:
                     for file, data in backup.items():
@@ -548,7 +583,8 @@ class BuildBinding(unittest.TestCase):
         self.assertEqual(second["layout_seed"], l.EXTENSION_SEED)
         self.assertEqual(second["first_stage"], dict(
             run=str(first), seal=l.a.seal(first / "loading.json"),
-            pairs=l.PAIRS, second_stage_pairs=plan["pairs"]))
+            attempt=report["attempt"], pairs=l.PAIRS,
+            second_stage_pairs=plan["pairs"]))
         units = 2 + 4 * plan["pairs"] * 2
         self.assertEqual(self.processes, units)
         out = self.repo / "second"
@@ -592,17 +628,198 @@ class BuildBinding(unittest.TestCase):
         self.processes = 0
         self.scale = lambda n, side: self.wide(n, side) * (
             3.0 if side == "candidate" and n > 2 + 2 * 10 * 2 else 1.0)
+        self.ledger.unlink()  # another gate: the draw is not a rerun
         self.assertTrue(self.decide("failing")["success"])
         info = l.replay(self.repo / "failing")
         self.assertEqual(info["exit"], 1)
         with self.assertRaisesRegex(ValueError, "fail is final"):
             l.first_stage(self.repo / "failing")
-        # Smoke and calibration runs have no second stage.
+        # Smoke and calibration runs have no second stage and no ledger.
         self.assertTrue(self.run_protocol(
             pairs=10, reps=2, smoke=False, calibrate=True,
             output=self.repo / "cal")["success"])
         with self.assertRaises(ValueError):
             l.first_stage(self.repo / "cal")
+
+    def records(self):
+        return [json.loads(x) for x in self.ledger.read_text().splitlines()]
+
+    def test_each_decision_run_and_extend_is_one_recorded_attempt(self):
+        first, plan, args = self.second_stage()
+        opened, closed = self.records()
+        self.assertEqual((opened["event"], closed["event"]),
+                         ("open", "close"))
+        self.assertEqual((opened["table"], opened["stage"],
+                          opened["module"], opened["candidate"]),
+                         (l.TABLE, "first", "congLib", self.pin))
+        self.assertEqual(closed["attempt"], opened["attempt"])
+        self.assertEqual(closed["seal"],
+                         l.a.seal(first / "loading.json")["sha256"])
+        self.assertEqual(closed["status"], "inconclusive")
+        self.assertEqual(l.a.load(first / "loading.json")["attempt"],
+                         opened["attempt"])
+
+    def test_a_second_decision_run_is_refused(self):
+        self.decision_settings()
+        self.assertTrue(self.decide()["success"])
+        before = self.processes
+        with self.assertRaisesRegex(ValueError, "judged attempt already"):
+            self.decide("again")
+        self.assertEqual(self.processes, before)
+        self.assertFalse((self.repo / "again").exists())
+        self.assertEqual(len(self.records()), 2)
+        # The refusal is the gate's, whatever the first run decided.
+        self.assertEqual(l.main([
+            "--baseline", l.a.BASE, "--candidate", self.pin, "--module",
+            "congLib", "--authorize-measurements", "--api-audit", "/x",
+            "--repo", str(self.repo), "--output", str(self.repo / "cli")]),
+            1)
+        self.assertFalse((self.repo / "cli").exists())
+
+    def test_a_run_that_decided_nothing_may_be_rerun(self):
+        self.decision_settings()
+        self.mutation = "candidate-build"
+        failed = self.decide("failed")
+        self.assertFalse(failed["success"])
+        self.assertEqual(self.records()[-1]["status"], l.FAILED)
+        self.mutation = None
+        self.assertTrue(self.decide("retry")["success"])
+        info = l.replay(self.repo / "retry")
+        # Both attempts stay in the ledger and in the replay's counts.
+        self.assertEqual(info["attempts"]["first"],
+                         dict(attempts=2, judged=1))
+        with self.assertRaisesRegex(ValueError, "judged attempt already"):
+            self.decide("third")
+
+    def test_an_interrupted_attempt_counts_as_judged(self):
+        self.decision_settings()
+        self.assertTrue(self.decide()["success"])
+        lines = self.ledger.read_text().splitlines(True)
+        self.ledger.write_text(lines[0])  # the close never written
+        with self.assertRaisesRegex(ValueError, "judged attempt already"):
+            self.decide("again")
+
+    def test_a_second_extend_is_refused(self):
+        first, plan, args = self.second_stage()
+        self.assertEqual(self.extend(plan, args)["stage"], "second")
+        with self.assertRaisesRegex(ValueError, "at most one --extend"):
+            self.extend(plan, dict(args, output=self.repo / "second2"))
+        self.assertEqual(self.processes, 0)
+        self.assertFalse((self.repo / "second2").exists())
+        self.assertEqual([r["event"] for r in self.records()],
+                         ["open", "close", "open", "close"])
+        self.assertEqual(l.main(["--extend", str(first), "--output",
+                                 str(self.repo / "second3"),
+                                 "--repo", str(self.repo),
+                                 "--authorize-measurements"]), 1)
+
+    def extend(self, plan, args):
+        options = SimpleNamespace(**dict(
+            repo=self.repo, module="congLib", timeout=30,
+            authorize_measurements=True, **args))
+        self.processes = 0
+        with patch.object(l, "execute", self.execute), \
+                patch.object(l.shutil, "which", return_value=str(
+                    self.repo / "bin/poly")), \
+                patch.object(l.a, "serial_lock", lambda _: nullcontext(())):
+            return l.run(options, plan)
+
+    def edit_ledger(self, edit):
+        """Rewrite the ledger with its hash chain kept intact."""
+        records = self.records()
+        edit(records)
+        prev, lines = "0" * 64, []
+        for record in records:
+            record["prev"] = prev
+            line = json.dumps(record, sort_keys=True)
+            prev = tg.ledger_hash(line)
+            lines.append(line)
+        self.ledger.write_text("\n".join(lines) + "\n")
+
+    def test_replay_checks_the_ledger(self):
+        first, plan, args = self.second_stage()
+        self.assertEqual(self.extend(plan, args)["stage"], "second")
+        second = self.repo / "second"
+        info = l.replay(second)
+        self.assertEqual(info["attempts"], dict(
+            first=dict(attempts=1, judged=1),
+            second=dict(attempts=1, judged=1)))
+        # A copy of the ledger may be named from another checkout.
+        copy = self.repo / "copy.jsonl"
+        copy.write_bytes(self.ledger.read_bytes())
+        self.ledger.unlink()
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
+            l.replay(second)
+        self.assertEqual(l.replay(second, ledger=copy), info)
+        self.assertEqual(l.main(["--replay", str(second), "--ledger",
+                                 str(copy)]), 0)
+        self.ledger.write_bytes(copy.read_bytes())
+        pristine = copy.read_bytes()
+        stray = dict(event="open", stage="first", table=l.TABLE,
+                     attempt="first-stray", candidate=self.pin,
+                     module="congLib", baseline=self.pin, seed=l.LAYOUT_SEED,
+                     first_attempt=None, output="/x", checkout="/x",
+                     time="2026-01-01T00:00:00Z")
+
+        def forget_open(r):
+            del r[0]
+
+        def forget_close(r):
+            del r[1]
+
+        def wrong_seal(r):
+            r[1]["seal"] = "0" * 64
+
+        def wrong_status(r):
+            r[1]["status"] = "fail"
+
+        def other_candidate(r):
+            r[0]["candidate"] = "d" * 40
+
+        def other_parent(r):
+            r[2]["first_attempt"] = "first-other"
+
+        def extra_first(r):
+            r.append(stray)
+
+        def extra_second(r):
+            r.append(dict(stray, stage="second", attempt="second-stray",
+                          first_attempt=r[0]["attempt"]))
+
+        def extra_failed(r):
+            r.append(stray)
+            r.append(dict(stray, event="close", status=l.FAILED,
+                          seal="0" * 64))
+
+        cases = {"no opening": (forget_open, "no opening|chain|disagrees"),
+                 "no close": (forget_close, "close does not name"),
+                 "seal": (wrong_seal, "close does not name"),
+                 "decision": (wrong_status, "close does not name"),
+                 "candidate": (other_candidate, "disagrees"),
+                 "parent": (other_parent, "disagrees"),
+                 "second first attempt": (extra_first, "another judged"),
+                 "second second attempt": (extra_second, "another judged")}
+        for name, (edit, error) in cases.items():
+            with self.subTest(case=name):
+                self.edit_ledger(edit)
+                try:
+                    with self.assertRaisesRegex(ValueError, error):
+                        l.replay(second)
+                    if name == "second first attempt":
+                        with self.assertRaisesRegex(ValueError, error):
+                            l.replay(first)
+                finally:
+                    self.ledger.write_bytes(pristine)
+        # An attempt that decided nothing does not count against the run.
+        self.edit_ledger(extra_failed)
+        self.assertEqual(l.replay(second)["attempts"]["first"],
+                         dict(attempts=2, judged=1))
+        self.ledger.write_bytes(pristine)
+        # A broken hash chain is refused.
+        self.ledger.write_text(pristine.decode().replace(
+            '"stage": "first"', '"stage": "first" ', 1))
+        with self.assertRaisesRegex(ValueError, "chain|malformed"):
+            l.replay(second)
 
     def test_candidate_extension_load_blocks_the_run(self):
         self.mutation = "extension"

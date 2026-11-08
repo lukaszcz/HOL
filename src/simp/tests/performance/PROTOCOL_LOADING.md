@@ -42,11 +42,11 @@ Other modes:
   (P >= 10). Reports the jitter quantities below. No candidate phase, no
   audit receipt, no decision.
 - `--layout-seed S`: the layout seed of a smoke or calibration run. A
-  decision run uses `loading.LAYOUT_SEED`.
+  decision run uses `loading.LAYOUT_SEED`. At most 58 characters.
 - `--extend RUN_DIR --output DIR`: the one second stage of a first-stage
   decision run (see Counts and the second stage).
 - `--replay RUN_DIR`: recompute a finished run from its receipts (see
-  Replay). It takes only `--expect-seal` and `--first-stage`.
+  Replay). It takes only `--expect-seal`, `--first-stage` and `--ledger`.
 
 Exit status of a decision run: 0 only if every gated metric passes, 1 if
 any gated metric fails, 2 for an inconclusive or blocked result.
@@ -170,8 +170,9 @@ sqrt(R). The 95% half width of the median of n paired log ratios is about
 import, pooled within a side of a pair), `paired_log_ratio_sd`, `unit_sd`,
 its one-sided 95% chi-square upper bound `unit_sd_upper` for the n pairs
 (`unit_sd * sqrt(df / chi2_0.05(df))`), and `required_units` for that
-bound. A calibration whose `required_units` exceeds `PAIRS * REPS` means
-the constants are too small for the host.
+bound. One rule accepts a calibration (`loading.covered`, printed by
+`--replay` of a calibration): every gated metric has `unit_sd_upper` at most
+`UNIT_SD_BOUND`. Otherwise the constants are too small for the host.
 
 **Second stage.** It is allowed only when the B/B control missed its window
 for a gated metric and no gated candidate metric failed. Its pair count
@@ -186,6 +187,31 @@ records the first stage's `loading.json` seal, and its decision replaces
 the first stage's. A first-stage fail, a valid control and every other
 inconclusive result are final; so is the second stage's own result. A
 candidate-limited inconclusive is resolved structurally, not by rerunning.
+
+**Attempts ledger.** Every decision run and every `--extend` is one draw,
+and the draws are recorded in the timing grid's attempts ledger
+(`timing_grid.Ledger`, a hash chain) under the table name
+`loading.TABLE`: `.agent-files/evidence/task31-loading/attempts.jsonl`
+below the root of the checkout, which git must ignore (the run refuses
+otherwise). The run appends an `open` line before its first process, with
+the stage (`first`, `second`), a fresh attempt id, the candidate, module,
+baseline and layout seed (for a second stage, the attempt id of its first
+stage), and after the run a `close` line with the seal of its
+`loading.json` (the value `--expect-seal` takes) and its status: `pass`,
+`fail` or `inconclusive`, or `failed` for a run that decided nothing
+(`success` false). The rules:
+
+- for one candidate and module, a first stage is refused when the ledger
+  holds a judged first-stage attempt, and an `--extend` when it holds a
+  judged second-stage attempt, so there is at most one `--extend` per first
+  stage;
+- a judged attempt is any but a `failed` one; an attempt that was opened
+  and never closed (a crash, a kill) is judged;
+- a `failed` run may be rerun, and stays in the ledger;
+- `--extend` replays its first stage against the ledger before it runs;
+- the ledger is a discipline and not a proof: a deleted ledger cannot be
+  detected, so the handoff publishes the whole ledger, `failed` attempts
+  included.
 
 ## Extension absence
 
@@ -305,14 +331,24 @@ receipts and fails on any difference. It checks:
 - the settings of a decision run (exactly `PAIRS` x `REPS`, the develop
   pin, `LAYOUT_SEED`);
 - the semantic gate: the receipt's and its inventory's seals, when the
-  receipt still exists.
+  receipt still exists;
+- the launcher of each process: the command, working directory and
+  `PAIR_PRIVATE` are the private launcher of the actual side, and
+  `LOADING_MODULE` is the run's module;
+- for a decision run, the attempts ledger (the checkout's own, or
+  `--ledger FILE`, a copy of it): this run is the recorded attempt of its
+  stage, its close names this `loading.json` seal and decision, and no
+  other judged attempt of the same candidate, module and stage exists. The
+  attempt counts are printed.
 
 It prints the exit status the CLI gave and the seal of `loading.json`;
 `--expect-seal SHA256` fails unless that seal matches, so the report cannot
 be swapped after the seal is recorded. A second stage is replayed against
 its first stage (`--first-stage DIR` names it if it moved): the recorded
-seal, the first stage's own replay, the eligibility rule, the count, the
-seed and the sources must all agree.
+seal, the first stage's own replay (against the ledger too), the
+eligibility rule, the count, the seed, the attempt of the first stage and
+the sources must all agree. A report that is not well formed is refused
+with a message.
 
 Non-timing regressions (no HOL imports or benchmarks):
 

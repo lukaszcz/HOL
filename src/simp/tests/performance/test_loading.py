@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ sys.dont_write_bytecode = True
 import loading as l
 import timing_grid as tg
 
+HERE = Path(__file__).resolve().parent
 RAW = "1,0.4,0.1,0.1,0.1,0.5,0.2,0.1"
 EMPTY = "0.000001,0,0,0,0,0,0,0"
 
@@ -285,7 +287,7 @@ class PairingTests(unittest.TestCase):
 
 
 class UnitAndPolicyTests(unittest.TestCase):
-    """The TASK31 loading unit and the timing grid's equivalence policy."""
+    """The loading unit and the timing grid's equivalence policy."""
 
     def rows(self, n, reps, value, phase_scale=1.0):
         """`value(pair, side, rep)` is the wall and cpu of each process."""
@@ -392,6 +394,22 @@ class UnitAndPolicyTests(unittest.TestCase):
         self.assertGreater(l.required_units(l.UNIT_SD_BOUND * 1.2),
                            l.PAIRS * l.REPS)
         self.assertEqual((l.PAIRS, l.REPS), (40, 5))
+
+    def test_calibration_is_covered_by_the_one_unit_sd_bound(self):
+        def found(*uppers):
+            return dict(metrics={
+                "m%d" % i: dict(gated=True, unit_sd_upper=u)
+                for i, u in enumerate(uppers)})
+        bound = l.UNIT_SD_BOUND
+        self.assertTrue(l.covered(found(bound, 0.01)))
+        self.assertFalse(l.covered(found(bound + 1e-9, 0.01)))
+        # The units the first stage has are what the bound requires.
+        self.assertGreaterEqual(l.PAIRS * l.REPS, l.required_units(bound))
+        # A metric that is only reported does not decide it.
+        data = found(0.01)
+        data["metrics"]["gc"] = dict(gated=False, unit_sd_upper=1.0)
+        self.assertTrue(l.covered(data))
+        self.assertFalse(l.covered(dict(metrics={})))
 
     def test_chi_square_upper_bound(self):
         self.assertAlmostEqual(l.chi2_quantile(0.05, 11), 4.5748, places=3)
@@ -533,7 +551,7 @@ class ExtensionAbsenceTests(LoadingProtocol):
         audit = re.findall(r'"([^"]+)"', block)
         self.assertGreater(len(audit), 10)
         # One source: the audit's list, in the audit's order.
-        self.assertEqual(list(l.EXTENSION_NAMES), audit)
+        self.assertEqual(list(l.extension_names()), audit)
         for name in audit:
             self.assertTrue(l.extension_name(name), name)
         # The audit's own patterns are the predicate's.
@@ -549,16 +567,35 @@ class ExtensionAbsenceTests(LoadingProtocol):
             self.assertFalse(l.extension_name(name), name)
 
     def test_generated_runner_probes_the_same_names(self):
-        for name in l.EXTENSION_NAMES:
-            self.assertIn('"%s"' % name, l.TIMING)
+        timing = l.timing_source()
+        for name in l.extension_names():
+            self.assertIn('"%s"' % name, timing)
         # Every structure of the global name space is tested, so a heap
         # binding that matches only a pattern is seen too.
-        self.assertIn("#allStruct PolyML.globalNameSpace ()", l.TIMING)
-        self.assertNotIn("lookupStruct", l.TIMING)
+        self.assertIn("#allStruct PolyML.globalNameSpace ()", timing)
+        self.assertNotIn("lookupStruct", timing)
         for pattern in ('"Ext"', '"ExtLib"', '"simpMarker"'):
-            self.assertIn(pattern, l.TIMING)
+            self.assertIn(pattern, timing)
         for mark in ("@PROBE@", "@NONE@"):
-            self.assertNotIn(mark, l.TIMING)
+            self.assertNotIn(mark, timing)
+
+
+class ImportTests(unittest.TestCase):
+    CODE = (
+        "import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import loading\n"
+        "print('timing_grid' in sys.modules,\n"
+        "      loading.extension_names.cache_info().currsize)\n")
+
+    def test_importing_loading_runs_no_grid_and_reads_no_audit_file(self):
+        # The allocation harness imports this module and lists neither
+        # timing_grid.py nor the audit's selftest.sml among its inputs.
+        done = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", self.CODE, str(HERE)],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["False", "0"])
 
 
 class SemanticGateTests(unittest.TestCase):

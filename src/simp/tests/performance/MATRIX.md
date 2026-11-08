@@ -227,7 +227,7 @@ The ledger's command templates must be completed with that option:
 
 ```sh
 python3 -B src/simp/tests/performance/loading.py \
-  --baseline BASELINE_FULL_40_HEX_COMMIT \
+  --baseline DEVELOP_PIN_FULL_40_HEX_COMMIT \
   --candidate CANDIDATE_FULL_40_HEX_COMMIT --module simpLib \
   --api-audit /absolute/path/to/receipt.json \
   --authorize-measurements --output NEW_LOADING_DIRECTORY
