@@ -361,12 +361,18 @@ class SourceRuleTest(unittest.TestCase):
         report = run(world(), declared_data(entries=[]))
         self.assertEqual(report["decision"], "pass", report["reasons"])
 
-    def one_sided(self, side, words=7, entry=True):
+    def one_sided(self, side, words=7, entry=True, register=False):
         """A file that only `side` compiles, with its whole bracket as the
-        delta (and the same words in the load brackets)."""
+        delta (and the same words in the load brackets).  With `register`
+        the candidate's records also list the file and its module, as a
+        real candidate-added file does."""
         name = "$(HOLDIR)/src/simp/src/New.sml"
         records, _ = attributed_world()
         for r in records:
+            if register and r["variant"] == "candidate":
+                r["loaded"] = list(r["loaded"]) + ["New"]
+                if r["files"] is not None:
+                    r["files"] = list(r["files"]) + [name]
             if r["variant"] != side:
                 continue
             if r["kind"].startswith("files"):
@@ -403,6 +409,29 @@ class SourceRuleTest(unittest.TestCase):
             "$(HOLDIR)/src/simp/src/New.sml"]
         self.assertEqual(row["delta"]["total"], 7)
 
+    def test_candidate_added_file_needs_both_declarations(self):
+        # An entries item (null baseline blob) pays for the words; the
+        # extension rule needs candidate_only for the module and the file.
+        records, declared, sources = self.one_sided("candidate",
+                                                       register=True)
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "fail")
+        self.assertTrue(any("candidate-only" in r and "module New" in r
+                            for r in report["reasons"]), report["reasons"])
+        self.assertTrue(any("file $(HOLDIR)/src/simp/src/New.sml" in r
+                            for r in report["reasons"]), report["reasons"])
+        declared["candidate_only"] = [
+            "module New", "file $(HOLDIR)/src/simp/src/New.sml"]
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "attributed", report["reasons"])
+        # candidate_only alone does not pay for the words.
+        records, declared, sources = self.one_sided(
+            "candidate", entry=False, register=True)
+        declared["candidate_only"] = [
+            "module New", "file $(HOLDIR)/src/simp/src/New.sml"]
+        report = self.run_sources(records, declared, sources)
+        self.assertEqual(report["decision"], "fail")
+
     def test_candidate_added_file_fails_cleanly_when_undeclared(self):
         records, declared, sources = self.one_sided("candidate",
                                                        entry=False)
@@ -423,6 +452,17 @@ class SourceRuleTest(unittest.TestCase):
         self.assertEqual(report["decision"], "fail")
         self.assertTrue(any("compiled by the baseline sources only" in r
                             for r in report["reasons"]))
+
+    def test_mechanism_may_be_a_list_of_lines(self):
+        e = dict(entry_of("simpLib.sml"), mechanism=["one ", "two"])
+        data = g.parse_declared(json.dumps(dict(
+            schema=g.DECLARED_SCHEMA, entries=[e], noise=[],
+            candidate_only=[])))
+        self.assertEqual(data["entries"][0]["mechanism"], "one two")
+        with self.assertRaises(sc.InvalidAllocation):
+            g.parse_declared(json.dumps(dict(
+                schema=g.DECLARED_SCHEMA, entries=[dict(e, mechanism=[])],
+                noise=[], candidate_only=[])))
 
     def test_one_sided_declaration_needs_one_blob(self):
         both_none = dict(entry_of("simpLib.sml"), baseline_blob=None,
@@ -821,6 +861,12 @@ class OverlayTest(unittest.TestCase):
             self.assertEqual(ov.clock, ["src/simp/src/New.sml",
                                         "src/simp/src/Same.sml"])
 
+    def test_gate_refuses_clock_mentions(self):
+        ov = mock.Mock(clock=["src/simp/src/New.sml"])
+        with self.assertRaisesRegex(sc.InvalidAllocation, "CPU timer"):
+            g.require_no_clock(ov)
+        g.require_no_clock(mock.Mock(clock=[]))
+
     def test_blob_id_is_the_git_blob(self):
         with tempfile.TemporaryDirectory() as raw:
             p = Path(raw) / "f"
@@ -866,6 +912,19 @@ class CellFixtureTest(unittest.TestCase):
             self.assertEqual((dst / "SignatureCheck.sml").read_text(),
                              'val x = 1\nval _ = Paired.check '
                              '"legacy signature" true\n')
+
+
+class SizedTmpdirTest(unittest.TestCase):
+    def test_path_has_the_requested_length(self):
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw) / "t"
+            for n in (len(str(base)) + 3, len(str(base)) + 8):
+                path = g.sized_tmpdir(base, n)
+                self.assertEqual(len(str(path)), n)
+                self.assertTrue(path.is_dir())
+            self.assertEqual(g.sized_tmpdir(base, None), base)
+            with self.assertRaises(sc.InvalidAllocation):
+                g.sized_tmpdir(base, len(str(base)) - 1)
 
 
 class PlanTest(unittest.TestCase):
@@ -926,6 +985,40 @@ class ArchiveTest(unittest.TestCase):
                 text.replace('"attributed"', '"pass"'))
             with self.assertRaisesRegex(sc.InvalidAllocation, "receipt"):
                 g.replay(args)
+
+    def test_replay_refuses_clock_mentions(self):
+        records, _ = attributed_world()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.archive(root, records)
+            self.reseal(root, clock_mentions=["src/simp/src/New.sml"])
+            with mock.patch.object(g, "PAIRS", TEST_PAIRS):
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "CPU timer"):
+                    g.replay(mock.Mock(output=root, record=None))
+
+    def test_replay_refuses_an_old_schema_cleanly(self):
+        records, _ = attributed_world()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.archive(root, records)
+            self.reseal(root, schema="task31-startup-gate-v2")
+            header = json.loads((root / "header.json").read_text())
+            del header["clock_mentions"]
+            (root / "header.json").write_text(json.dumps(header))
+            self.reseal(root)
+            with self.assertRaisesRegex(sc.InvalidAllocation,
+                                        "schema.*task31-startup-gate-v2"):
+                g.replay(mock.Mock(output=root, record=None))
+
+    def reseal(self, root, **fields):
+        header = json.loads((root / "header.json").read_text())
+        header.update(fields)
+        (root / "header.json").write_text(json.dumps(header))
+        (root / "receipt.json").write_text(json.dumps({
+            n: g.sha_file(root / n) for n in (
+                "records.json.gz", "header.json", "decisions.json",
+                "RESULTS.md")}))
 
     def test_replay_checks_the_declaration_seal(self):
         records, _ = attributed_world()

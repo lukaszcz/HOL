@@ -2258,9 +2258,16 @@ variants. With at least two images per side and ten pairs:
     a noise file without a mechanism makes the decision `blocked`.
   - Every process of a cell gives the same record; the foreign-thread
     counters read 0,0; the simplifier results are correct.
-  - A module or structure that the candidate images or sources load and the
-    baseline never does fails, unless `candidate_only` declares it. Names
-    ending in `Ext` and the extension modules are only a label.
+  - A module, structure or registered file that the candidate images or
+    sources load and the baseline never does fails, unless `candidate_only`
+    declares it. Names ending in `Ext` and the extension modules are only a
+    label.
+  - A file that only the candidate compiles needs both declarations: an
+    `entries` item (null baseline blob) pays for its words in R2, and
+    `candidate_only` entries (`module X`, `file X`) allow it in the
+    extension rule. Neither implies the other.
+  - `gate` refuses, and `replay` refuses an archive recording, a file under
+    test (overlaid or declared) that mentions the image's CPU timer.
 
 Decisions: `pass` (all rules hold, nothing declared carries words),
 `attributed` (all rules hold and the declared files carry exact words; it
@@ -2297,7 +2304,9 @@ into `header.json` with its sha256) holds:
 and TMPDIR lengths, the lineage sha256, the runtime and shim seals, the
 controls receipt, the harness blobs, the declaration text and sha256, the
 exchanged blobs, the not-client-visible record sha256), `decisions.json`,
-`RESULTS.md` and `receipt.json` (the sha256 of each). `replay --output DIR`
+`RESULTS.md` and `receipt.json` (the sha256 of each). The header carries a
+schema version; `replay` refuses an archive of another version, naming it.
+`replay --output DIR`
 checks the receipt and the declaration seal and recomputes `decisions.json`
 and `RESULTS.md` from the records alone. An archive sealed to a
 not-client-visible record is replayed only with `--record` of that record.
@@ -2306,7 +2315,10 @@ not-client-visible record is replayed only with `--record` of that record.
 path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
 TASK29B startup delta depends on the image and on path lengths. Every line
 names its tree; `--fixtures-rev` takes the paired and matrix fixtures from a
-past revision, which a past run carried.
+past revision, which a past run carried (the runner's own installation logic
+applied to that revision's blobs). `--tmpdir-length N` pads `--tmpdir` with
+`x` to exactly N characters; the private directories live under it.
+A `mechanism` in the declaration may be a list of lines, joined with spaces.
 
 ## Matrix boundaries and final evidence
 

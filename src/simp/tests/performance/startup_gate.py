@@ -56,7 +56,7 @@ import private_runtime as pr
 import run_paired as rp
 from prepare_patch import DEFAULT_SOURCE
 
-SCHEMA = "task31-startup-gate-v2"
+SCHEMA = "task31-startup-gate-v3"
 LINEAGE_SCHEMA = "task31-startup-toolchain-v1"
 MKTOOL = ("src/portableML/rawtheory/mktool.ML",
           'useB "theorystats";', 'useB "theoryfiles";\nuseB "theorystats";')
@@ -448,7 +448,15 @@ def parse_declared(text):
         return (none and x is None) or (
             isinstance(x, str) and len(x) == 40 and set(x) <= HEX40)
 
+    def joined(x):
+        """A mechanism may be a list of lines (a JSON string cannot wrap)."""
+        if isinstance(x, list) and x and all(isinstance(l, str) for l in x):
+            return " ".join(l.strip() for l in x)
+        return x
+
     for e in data["entries"]:
+        if isinstance(e, dict) and "mechanism" in e:
+            e["mechanism"] = joined(e["mechanism"])
         require(sorted(e) == ["baseline_blob", "candidate_blob", "kinds",
                               "mechanism", "path", "reason"] and
                 blob_ok(e["baseline_blob"], True) and
@@ -456,10 +464,13 @@ def parse_declared(text):
                 (e["baseline_blob"] or e["candidate_blob"])
                 and e["path"].startswith("src/") and e["path"] not in paths
                 and e["kinds"] and set(e["kinds"]) <= set(LOADS) and
-                e["reason"].strip() and e["mechanism"].strip(),
+                e["reason"].strip() and isinstance(e["mechanism"], str)
+                and e["mechanism"].strip(),
                 "bad declaration entry: %r" % (e,))
         paths.add(e["path"])
     for n in data["noise"]:
+        if isinstance(n, dict) and "mechanism" in n:
+            n["mechanism"] = joined(n["mechanism"])
         require(sorted(n) == ["blob", "mechanism", "path", "reason"] and
                 blob_ok(n["blob"]) and n["path"].startswith("src/") and
                 n["path"] not in paths and n["reason"].strip() and
@@ -1021,9 +1032,7 @@ def gate(args):
         trees[sides["base"][0]]["hol"], trees[sides["candidate"][0]]["hol"],
         extra=[e["path"] for e in declared["entries"]] +
         [n["path"] for n in declared["noise"]])
-    require(not overlay.clock,
-            "files under test mention the image's CPU timer (the source "
-            "kinds reset its readings): " + ", ".join(overlay.clock))
+    require_no_clock(overlay)
     for side, variant in zip(("base", "candidate"), VARIANTS):
         for l in sides[side]:
             require(overlay.check(trees[l]["hol"], variant),
@@ -1148,6 +1157,13 @@ def render(report, header):
     return "\n".join(lines) + "\n"
 
 
+def require_no_clock(overlay):
+    """Refuse files under test that mention the image's CPU timer."""
+    require(not overlay.clock,
+            "files under test mention the image's CPU timer (the source "
+            "kinds reset its readings): " + ", ".join(overlay.clock))
+
+
 def replay(args):
     """Recompute every decision from the archive alone."""
     out = args.output
@@ -1156,7 +1172,9 @@ def replay(args):
         require(sha_file(out / name) == digest, "receipt differs: " + name)
     records = a.load(out / "records.json.gz")
     header = a.load(out / "header.json")
-    require(header["schema"] == SCHEMA, "archive schema")
+    require(header.get("schema") == SCHEMA,
+            "archive schema %r is not %r: re-run the gate" % (
+                header.get("schema"), SCHEMA))
     require(hashlib.sha256(header["declared_text"].encode()).hexdigest() ==
             header["declared_sha256"], "declaration differs from its seal")
     sides = header["sides"]
@@ -1169,7 +1187,9 @@ def replay(args):
                      header["sources"], header["pairs"], header["null"],
                      header["record_sha256"])
     require(header["clock_mentions"] == [],
-            "files under test mention the image's CPU timer")
+            "files under test mention the image's CPU timer (the source "
+            "kinds reset its readings): " + ", ".join(
+                header["clock_mentions"]))
     if header["record_sha256"]:
         require(args.record is not None,
                 "the archive is sealed to a record: pass --record")
@@ -1189,37 +1209,61 @@ def replay(args):
 def install_cell_fixtures(repo, rev, dst, am):
     """The fixtures of a cell directory: those of this checkout, or with
     `rev` the committed blobs of that revision (the fixtures a past run
-    carried). Both the paired runner files and the matrix fixtures."""
+    carried).  Both the paired runner files and the matrix fixtures.  For
+    a past revision the runner's own `install_fixtures` (its paired files
+    and its SignatureCheck construction) is run over a temporary tree
+    holding that revision's blobs, so today's installation logic is
+    applied to the revision's inputs: the installation is reconstructed,
+    not replayed, and the revision must have the paired files, the
+    signature probe and today's `am.FIXTURES`."""
     import shutil
+    import tempfile
+    from unittest import mock
     if rev is None:
         rp.install_fixtures(dst)
         for fx in am.FIXTURES:
             target = "Performance.sml" if fx == am.FIXTURES[0] else fx
             shutil.copyfile(am.HERE / fx, dst / target)
         return
+
+    def blob(path):
+        return subprocess.run(["git", "show", rev + ":" + path], cwd=repo,
+                              check=True, capture_output=True).stdout
+
     paired = "src/simp/tests/compatibility/paired/"
-    for path in a.git(repo, "ls-tree", "--name-only", rev,
-                      paired).splitlines():
-        name = Path(path).name
-        if name.endswith(".sml") or name == "Holmakefile":
-            (dst / name).write_bytes(subprocess.run(
-                ["git", "show", rev + ":" + path], cwd=repo, check=True,
-                capture_output=True).stdout)
+    perf = "src/simp/tests/performance/"
+    with tempfile.TemporaryDirectory(prefix="fixtures-", dir=dst) as raw:
+        top = Path(raw)
+        (top / "compatibility/paired").mkdir(parents=True)
+        (top / "performance/review-20261021").mkdir(parents=True)
+        for path in a.git(repo, "ls-tree", "--name-only", rev,
+                          paired).splitlines():
+            name = Path(path).name
+            if name.endswith(".sml") or name == "Holmakefile":
+                (top / "compatibility/paired" / name).write_bytes(
+                    blob(path))
+        (top / "performance/review-20261021/abicheck.sml").write_bytes(
+            blob(perf + "review-20261021/abicheck.sml"))
+        with mock.patch.object(rp, "HERE", top / "compatibility"):
+            rp.install_fixtures(dst)
     for fx in am.FIXTURES:
         target = "Performance.sml" if fx == am.FIXTURES[0] else fx
-        (dst / target).write_bytes(subprocess.run(
-            ["git", "show", rev + ":src/simp/tests/performance/" + fx],
-            cwd=repo, check=True, capture_output=True).stdout)
-    # The signature fixture of run_paired.install_fixtures, from the
-    # revision's own probe.
-    abi = subprocess.run(
-        ["git", "show", rev + ":src/simp/tests/performance/"
-         "review-20261021/abicheck.sml"], cwd=repo, check=True,
-        capture_output=True, text=True).stdout
-    ending = "val _ = OS.Process.exit OS.Process.success\n"
-    require(abi.endswith(ending), "unexpected immutable signature fixture")
-    (dst / "SignatureCheck.sml").write_text(
-        abi[:-len(ending)] + 'val _ = Paired.check "legacy signature" true\n')
+        (dst / target).write_bytes(blob(perf + fx))
+
+
+def sized_tmpdir(base, length):
+    """A directory whose path has exactly `length` characters: `base`
+    padded with "x" (created if missing); the path of `base` itself when
+    `length` is None."""
+    base = Path(base)
+    if length is None:
+        return base
+    text = str(base)
+    require(len(text) <= length,
+            "tmpdir %s is longer than %d characters" % (text, length))
+    path = Path(text + "x" * (length - len(text)))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def cell_startup(args):
@@ -1233,6 +1277,7 @@ def cell_startup(args):
     import shutil
     import tempfile
     pr.use_fixed_path()
+    args.tmpdir = sized_tmpdir(args.tmpdir, args.tmpdir_length)
     repo = args.repo.resolve(strict=True)
     lineage = a.load(args.toolchain.resolve(strict=True) / "lineage.json")
     hol = Path(lineage["trees"][args.tree]["hol"])
@@ -1347,6 +1392,9 @@ def main(argv=None):
     c.add_argument("--tree", required=True, help="label of the HOL tree")
     c.add_argument("--repo", type=Path, default=HERE.parents[3])
     c.add_argument("--tmpdir", type=Path, required=True)
+    c.add_argument("--tmpdir-length", type=int, default=None,
+                   help="pad --tmpdir with x to exactly this many "
+                   "characters (the private directories live under it)")
     c.add_argument("--baseline", default=a.BASE)
     c.add_argument("--candidate", required=True)
     c.add_argument("--lib-alias", default=None,
