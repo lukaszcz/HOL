@@ -1,8 +1,8 @@
 # TASK29 complete post-workload constant pools (diagnostic only)
 
-`runtime_pools.py` closes the **pool-slot instrumentation omission**, not
-TASK29A. It leaves `runtime_layout.py` and its sealed v1 archives unchanged.
-No production simplifier, ordinary fixture or numerical policy is changed.
+`runtime_pools.py` records the complete (inline or split) constant pool
+of every post-workload code object.  It is a diagnostic, not a timing or
+allocation gate.
 
 ## Collection
 
@@ -20,7 +20,7 @@ python3 -B src/simp/tests/performance/runtime_pools.py --replay NEW_DIRECTORY
 ```
 
 Each experiment retains one fresh B/B and B/C structural pair. The paired
-runner's ordinary environment sanitization is unchanged. A scoped wrapper
+runner's ordinary environment sanitization applies. A scoped wrapper
 adds an exact private `LD_PRELOAD` only to its diagnostic Performance
 processes; no builds, compatibility processes or ordinary timing tool receive
 it. Native code is built with the recorded command and copied identically

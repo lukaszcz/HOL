@@ -231,8 +231,7 @@ initialization callbacks, shared controls and executable examples are checked
 in `../tests/api-audit`. Physical coverage ownership is in
 `../tests/compatibility/task26_relocation.py` with the coverage ledger
 `../tests/compatibility/coverage-ledger.json.gz` (the unchanged develop
-selftest is
-separate from the complete native-extension suite).
+selftest is separate from the complete native-extension suite).
 
 These are documentation/dependency/identity gates. They establish readiness
 for expanded acceptance measurements, **not** final runtime/allocation,

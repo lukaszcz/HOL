@@ -138,9 +138,10 @@ successfully and application raises Basis `Option`. Do not normalize or move it.
 ## Expected-red diagnostics
 
 `staging/reviewed.json` holds the expected-red (diagnostic) behavior. All
-requirement construction counts become zero; their callbacks and two/four inferences move
-to **each application**. Plain/empty, late lookup and nonthrowing proof outcomes
-otherwise match develop on this fixture. Exception stages do not:
+requirement construction counts become zero; their callbacks and two/four
+inferences move to **each application**. Plain/empty, late lookup and
+nonthrowing proof outcomes otherwise match develop on this fixture. Exception
+stages do not:
 
 - A printer already throwing makes develop construction fail, but candidate
   construction returns and each use raises the identical exception instead.

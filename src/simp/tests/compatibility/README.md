@@ -36,9 +36,10 @@ runs are not stored in the repository: every runner takes an explicit
   root when mapped), directly when the two paths are equal.  Apart from the
   configured root the host is visible, including `/dev/shm`; directories the
   mapping creates on the host are removed afterwards if empty.  Exit status 2
-  means no command, no git work tree, no configured root, no `bwrap` or an
-  unwritable ancestor of the configured root;
-  otherwise it is the command's status.
+  means no command, no git work tree, no configured root, no `bwrap`, an
+  ancestor of the configured root that is not a writable directory, or a
+  configured root that exists but is not a directory; otherwise it is the
+  command's status.
 - `tools/require_output.py`: the Holmakefile's output-directory check.
 - `interfaces/`, `migration/`: design prototypes and the API mapping tables
   (`apis.tsv`, `final-apis.tsv`) and relocation overlays; see
@@ -111,11 +112,11 @@ bin/Holmake --no-project --no-cache --no_prereqs \
 ```
 
 `PAIRED_OUTPUT` is required and must be an absolute path outside the
-repository.  This runs all Python validator tests (`python-tests`), then
-private Holmake-built SML launchers for both exact pinned source revisions,
-including all six negative controls.
-No SML is piped to `bin/hol`. Expected reviewed-candidate staging/signature
-regressions are explicitly **expected-red**, not compatibility passes.
+repository.  This runs the Python validator tests (`checked-tests`, after the
+`output-dir` check), then private Holmake-built SML launchers for both exact
+pinned source revisions, including all six negative controls. No SML is piped
+to `bin/hol`. Expected reviewed-candidate staging/signature regressions are
+explicitly **expected-red**, not compatibility passes.
 
 Direct driver and baseline-versus-baseline control:
 

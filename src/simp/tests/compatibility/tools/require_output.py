@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parents[5]
 
 
 def inside(path, root):
-    """True if path or an existing ancestor of it is the same as root."""
+    """True if path or an existing ancestor of it is the same as root.
+
+    api-audit/run.py keeps its own copy of this function: run.py's
+    receipt seals only files in api-audit/, so it cannot seal this one.
+    """
     p = Path(os.path.abspath(path))
     while True:
         try:

@@ -70,7 +70,9 @@ def inside(path, root):
     """True if path or an existing ancestor of it is the same as root.
 
     The comparison is by identity (device and inode), so symlinks and
-    bind-mounted aliases of the checkout are caught too.
+    bind-mounted aliases of the checkout are caught too.  The same check
+    exists in compatibility/tools/require_output.py; it is kept separate
+    so that the audit receipt seals all of its inputs.
     """
     p = Path(os.path.abspath(path))
     while True:

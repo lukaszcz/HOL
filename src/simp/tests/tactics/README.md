@@ -4,9 +4,9 @@ Maintained `selftest.sml` supplements (does not replace or regenerate) the
 43-scenario staged matrix in `../compatibility/staging/`. `run_behavior.py`
 uses the fragments snapshot (`../fragments/run_fragments.py`) and the
 private-first traced runner `../compatibility/run_paired.py`. It executes
-pinned develop and current
-worktree in fresh processes, with common state0/shared nonsimplifier dependencies;
-these are isolated-source experiments, not independent clean builds.
+pinned develop and current worktree in fresh processes, with common
+state0/shared nonsimplifier dependencies; these are isolated-source
+experiments, not independent clean builds.
 
 ```sh
 python3 -B -m unittest discover -s src/simp/tests/tactics -p 'test_*.py'
@@ -43,9 +43,8 @@ Exact inference counts, grammar/context changes, late fragment/abbreviation
 lookup, malformed bounds, ordering quirks and global tactic construction are
 covered by the staged matrix; see `../compatibility/STAGING_CONTRACTS.md`.
 Explicit extension recursion and marker controls are in
-`../markers/selftest.sml`;
-ordinary reentry here never imports those modules. The ordinary
-`simpLib.{sml,sig}` pair is byte-identical to develop
+`../markers/selftest.sml`; ordinary reentry here never imports those modules.
+The ordinary `simpLib.{sml,sig}` pair is byte-identical to develop
 (`cccaa27d7099cbadc886983020cbe745db7793f3`), checked by
 `performance/audit_sources.py`. Numerical parity and independent clean builds
 are not inferred from identical local source/native instructions.

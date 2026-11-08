@@ -168,16 +168,16 @@ provenance. Supplement source, snapshot and installed-file drift fail the run,
 including theory data drift. Supplements are not mislabelled as pinned git
 blobs or fixture products. Temporary snapshots are removed on all exits.
 
-This mode is **not a pinned-baseline full-source production runtime** and cannot
-establish that default overhead is fixed. Its purpose is to attribute remaining
-default full-module ambient effects versus exact local fragment work. Compiler
-dependencies/imports are not attributed here (see `../compiled-core`).
-Compare individual CPU, non-GC, GC, user,
-system and wall rows against unmodified-default observations; do not substitute
-matched timings for default acceptance. One pair is only a pilot: report raw
-batches separately from the median-per-process paired statistic, without a
-confidence/acceptance claim. Matching modules and heap simultaneously also
-cannot distinguish their separate causal contributions.
+This mode is **not a pinned-baseline full-source production runtime** and
+cannot establish that default overhead is fixed. Its purpose is to attribute
+remaining default full-module ambient effects versus exact local fragment work.
+Compiler dependencies/imports are not attributed here (see `../compiled-core`).
+Compare individual CPU, non-GC, GC, user, system and wall rows against
+unmodified-default observations; do not substitute matched timings for default
+acceptance. One pair is only a pilot: report raw batches separately from the
+median-per-process paired statistic, without a confidence/acceptance claim.
+Matching modules and heap simultaneously also cannot distinguish their separate
+causal contributions.
 
 `Cond_rewrExt` is deliberately not preloaded: that helper needs
 `Cond_rewr.is_var_perm`, absent from pinned `Cond_rewr.sig`, and the pinned

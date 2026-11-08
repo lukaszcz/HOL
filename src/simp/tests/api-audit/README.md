@@ -15,9 +15,8 @@ Without it (or if it is empty) `check` writes the receipts to a temporary
 directory and removes it when the audit finishes, pass or fail; set
 `API_AUDIT_OUTPUT` to keep them. Run `python3 run.py --output DIR` directly to
 choose the directory (without `--output`, `run.py` makes a directory with
-`mkdtemp` and prints its path). If the
-checkout is mounted at a different root than the one the build was
-configured with, run the command through
+`mkdtemp` and prints its path). If the checkout is mounted at a different root
+than the one the build was configured with, run the command through
 `src/simp/tests/compatibility/tools/root-wrapper.sh`.
 
 `check` compiles `Documentation.sml` against the real sealed signatures but

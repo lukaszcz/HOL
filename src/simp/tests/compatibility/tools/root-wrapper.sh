@@ -49,8 +49,12 @@ while [ "$p" != / ] && [ "$p" != . ] && [ ! -e "$p" ]; do
 $p"
   p=$(dirname "$p")
 done
-if [ -n "$created" ] && [ ! -w "$p" ]; then
-  echo "root-wrapper: cannot create $conf: $p is not writable" >&2
+if [ -n "$created" ] && { [ ! -d "$p" ] || [ ! -w "$p" ]; }; then
+  echo "root-wrapper: cannot create $conf: $p is not a writable directory" >&2
+  exit 2
+fi
+if [ -e "$conf" ] && [ ! -d "$conf" ]; then
+  echo "root-wrapper: $conf is not a directory" >&2
   exit 2
 fi
 bwrap --bind / / --dev-bind /dev /dev \

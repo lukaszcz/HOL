@@ -61,9 +61,9 @@ ordinary `selftest.sml` does not import the new engine.
 
 These anchors identify duplicated invariants, **not relocated original cases**.
 All 2,153 coverage-ledger IDs/bodies remain at their original sealed
-destinations and
-are checked by `../compatibility/coverage_ledger.py`. The new tests add explicit
-lifting and apply the same contracts to the separate type/engine.
+destinations and are checked by `../compatibility/coverage_ledger.py`. The new
+tests add explicit lifting and apply the same contracts to the separate
+type/engine.
 
 | New selftest block (exact comment anchor) | Coverage-ledger case/body provenance |
 | --- | --- |
