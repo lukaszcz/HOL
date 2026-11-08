@@ -36,7 +36,8 @@ runs are not stored in the repository: every runner takes an explicit
   root when mapped), directly when the two paths are equal.  Apart from the
   configured root the host is visible, including `/dev/shm`; directories the
   mapping creates on the host are removed afterwards if empty.  Exit status 2
-  means no command, no git work tree, no configured root or no `bwrap`;
+  means no command, no git work tree, no configured root, no `bwrap` or an
+  unwritable ancestor of the configured root;
   otherwise it is the command's status.
 - `tools/require_output.py`: the Holmakefile's output-directory check.
 - `interfaces/`, `migration/`: design prototypes and the API mapping tables

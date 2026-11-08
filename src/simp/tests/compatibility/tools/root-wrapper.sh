@@ -12,9 +12,11 @@
 # configured root.  This is not a sandbox: apart from the configured root,
 # everything, including /dev/shm, is the host's view.  Directories that the
 # mapping had to create on the host are removed afterwards if still empty.
-# Exit status 2 means the wrapper could not set up the mapping or was misused;
-# otherwise it is the command's status.
-[ $# -gt 0 ] || { echo "usage: root-wrapper.sh COMMAND [ARGS...]" >&2; exit 2; }
+# Exit status 2 means the wrapper was misused or the mapping cannot be set up
+# (no bwrap, or the configured root cannot be created); otherwise the status
+# is the command's.
+[ $# -gt 0 ] ||
+  { echo "usage: root-wrapper.sh COMMAND [ARGS...]" >&2; exit 2; }
 if [ -n "${HOL_CHECKOUT:-}" ]; then
   here=$HOL_CHECKOUT
 else
@@ -47,6 +49,10 @@ while [ "$p" != / ] && [ "$p" != . ] && [ ! -e "$p" ]; do
 $p"
   p=$(dirname "$p")
 done
+if [ -n "$created" ] && [ ! -w "$p" ]; then
+  echo "root-wrapper: cannot create $conf: $p is not writable" >&2
+  exit 2
+fi
 bwrap --bind / / --dev-bind /dev /dev \
   --bind "$here" "$conf" --chdir "$conf" \
   --setenv HOLDIR "$conf" --setenv PATH "$conf/bin:$PATH" -- "$@"
@@ -55,8 +61,10 @@ status=$?
 oldifs=$IFS
 IFS='
 '
+set -f
 for d in $created; do
   [ -n "$d" ] && rmdir "$d" 2>/dev/null
 done
+set +f
 IFS=$oldifs
 exit $status
