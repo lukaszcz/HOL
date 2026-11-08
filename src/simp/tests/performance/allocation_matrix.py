@@ -12,6 +12,7 @@ no thresholds, outlier removal or subtraction. Output goes only below
 """
 import argparse
 from collections import Counter
+import collections.abc
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 import gzip
 import hashlib
@@ -43,7 +44,6 @@ import private_runtime as pr
 import run_paired as rp
 import task29_gate as gate
 import task30_cases
-import task31_cases
 from prepare_patch import DEFAULT_SOURCE
 
 ITERATIONS = HERE / "allocation_iterations.json"
@@ -159,13 +159,49 @@ class Task:
 
 
 DEFAULT_TASK = "task29b"
-TASKS = {
+
+
+def task31():
+    """The TASK31 task. Its case list is read only when a process asks for
+    this task: the other tasks' processes, their replays and the TASK30
+    disposition never load task31_cases.py."""
+    import task31_cases
+    return Task("task31", "TASK31", task31_cases.CASES,
+                HERE / "allocation_iterations_task31.json",
+                task31_cases.INFEASIBLE_CELLS, rows=True)
+
+
+class Tasks(collections.abc.Mapping):
+    """The tasks by name. A task of `lazy` is built on its first lookup
+    (and then kept), so that its module is imported by no other task's
+    process; naming, iterating and testing membership build nothing."""
+
+    def __init__(self, eager, lazy):
+        self.made, self.lazy = dict(eager), dict(lazy)
+
+    def __getitem__(self, name):
+        if name not in self.made:
+            if name not in self.lazy:
+                raise KeyError(name)
+            self.made[name] = self.lazy[name]()
+        return self.made[name]
+
+    def __contains__(self, name):
+        return name in self.made or name in self.lazy
+
+    def __iter__(self):
+        return iter([*self.made, *(n for n in self.lazy
+                                   if n not in self.made)])
+
+    def __len__(self):
+        return len(set(self.made) | set(self.lazy))
+
+
+TASKS = Tasks({
     DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
     "task30": Task("task30", "TASK30", task30_cases.CASES,
-                   HERE / "allocation_iterations_task30.json"),
-    "task31": Task("task31", "TASK31", task31_cases.CASES,
-                   HERE / "allocation_iterations_task31.json",
-                   task31_cases.INFEASIBLE_CELLS, rows=True)}
+                   HERE / "allocation_iterations_task30.json")},
+    {"task31": task31})
 
 
 def task_named(name):

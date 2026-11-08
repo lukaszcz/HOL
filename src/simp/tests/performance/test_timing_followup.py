@@ -1840,11 +1840,11 @@ class ReplacedOpenings(Rig):
     # path and its own sealed code: the allocation matrix's building and
     # running of a toolchain, which its replay of an allocation grid does
     # not do.
-    # The TASK31 task of the matrix adds its case list, which the matrix
-    # imports and validates when it is loaded; the replay reads it only
-    # through that.
-    ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe",
-                        "task31_cases"}
+    ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe"}
+    # `allocation_matrix.task31` imports the TASK31 case list when that
+    # task is asked for, which no TASK29B or TASK30 process, replay or
+    # disposition does: the edge is left out of the disposition's closure.
+    TASK31_EDGE = ("allocation_matrix", "task31_cases", "task31")
 
     def test_the_disposition_is_downstream_of_the_replay(self):
         # The disposition consumes the replays and is in neither table's
@@ -1860,9 +1860,13 @@ class ReplacedOpenings(Rig):
         self.assertNotIn("task30_dispose", self.covered())
         self.ROOTS = ("task30_dispose",)
         try:
+            self.LEFT_OUT = self.LEFT_OUT | {self.TASK31_EDGE}
             own = self.closure(sources)
+            self.LEFT_OUT = type(self).LEFT_OUT
+            self.assertIn("task31_cases", self.closure(sources))
         finally:
             del self.ROOTS
+            del self.LEFT_OUT
         sealed = {Path(n).stem for n in dispose.CODE}
         self.assertEqual(
             sorted(own - replayed - sealed - self.ALLOCATION_BUILD), [])

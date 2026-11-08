@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -423,17 +424,58 @@ class HarnessFiles(unittest.TestCase):
         self.assertLessEqual(set(fixtures), set(inputs))
 
     def test_every_module_the_driver_imports_is_listed(self):
-        listed = {"allocation_matrix.py"}
-        for task in m.TASKS.values():
-            listed |= {p.name for p in m.harness_files(task)[0]}
+        # Per task: what the driver imports at module level is in the
+        # harness files of every task; a task's own case list, imported
+        # only when the task is asked for, is in that task's.
+        imported = self.imported()
+        for name, task in ((n, m.TASKS[n]) for n in m.TASKS):
+            listed = {p.name for p in m.harness_files(task)[0]}
+            self.assertLessEqual(imported, listed | {
+                "allocation_matrix.py"}, name)
         inputs, _ = m.harness_files()
-        self.assertLessEqual(self.imported(), listed)
         listed = {p.name for p in inputs}
         for name in ("allocation_boundary.py", "allocation_boundary.json",
                      "allocation_iterations.json", "path_schema.py",
                      "MatrixAllocation.sml", "MatrixSupport.sml",
                      "run_paired.py", "private_runtime.py", "bracket.c"):
             self.assertIn(name, listed)
+
+    def test_the_task31_cases_are_not_imported_at_module_level(self):
+        self.assertNotIn("task31_cases.py", self.imported())
+        self.assertIn("task31_cases.py", {
+            p.name for p in m.harness_files(m.TASKS["task31"])[0]})
+        self.assertNotIn("task31_cases.py", {
+            p.name for p in m.harness_files()[0]})
+
+    def test_importing_the_matrix_does_not_load_the_task31_cases(self):
+        code = (
+            "import sys\n"
+            "sys.dont_write_bytecode = True\n"
+            "import allocation_matrix as m, task30_dispose\n"
+            "assert 'task31_cases' not in sys.modules\n"
+            "assert sorted(m.TASKS) == ['task29b', 'task30', 'task31']\n"
+            "assert 'task31' in m.TASKS\n"
+            "task = m.task_of({})\n"
+            "assert task.name == 'task29b'\n"
+            "m.keys(task)\n"
+            "m.harness_files(m.task_named('task30'))\n"
+            "m.load_iterations(task=m.task_named('task30'))\n"
+            "assert 'task31_cases' not in sys.modules\n"
+            "m.task_named('task31')\n"
+            "assert 'task31_cases' in sys.modules\n")
+        ran = subprocess.run(
+            [sys.executable, "-B", "-c", code], cwd=m.HERE,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+
+    def test_the_tasks_are_built_once_and_named_without_building(self):
+        tasks = m.Tasks({"a": 1}, {"b": lambda: object()})
+        self.assertEqual(sorted(tasks), ["a", "b"])
+        self.assertIn("b", tasks)
+        self.assertEqual(len(tasks), 2)
+        self.assertIs(tasks["b"], tasks["b"])
+        with self.assertRaises(KeyError):
+            tasks["c"]
 
     def test_the_paired_fixtures_are_inputs_and_the_sml_ones_fixtures(self):
         inputs, fixtures = m.harness_files()
