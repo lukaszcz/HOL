@@ -640,14 +640,10 @@ class SemanticGateTests(unittest.TestCase):
             self.check()
 
     def test_audit_run_py_validates_with_the_same_constants(self):
-        sys.path.insert(0, str(l.AUDIT))
-        try:
-            spec = importlib.util.spec_from_file_location(
-                "audit_run_under_test", l.AUDIT / "run.py")
-            run = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(run)
-        finally:
-            sys.path.remove(str(l.AUDIT))
+        spec = importlib.util.spec_from_file_location(
+            "audit_run_under_test", l.AUDIT / "run.py")
+        run = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(run)
         real = l.audit_constants(l.AUDIT)
         self.assertEqual(run.CASE_CHECKS, real.CASE_CHECKS)
         self.assertEqual(run.NATIVE_MODULES, real.NATIVE_MODULES)

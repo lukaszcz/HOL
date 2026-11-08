@@ -13,9 +13,12 @@ import subprocess
 import sys
 import uuid
 
+HERE = Path(__file__).resolve().parent
+# The constants module sits beside this file: importable however this file
+# is loaded (by path, as the tests do, or run as a script).
+sys.path.insert(0, str(HERE))
 from audit_constants import CASE_CHECKS, NATIVE_MODULES, SOURCES
 
-HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 # Children never read the caller's standard input (an open pipe that is
 # never closed would hang a Poly/ML top level), and neither may wait for
