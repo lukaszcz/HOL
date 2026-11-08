@@ -18,10 +18,10 @@ runs are not stored in the repository: every runner takes an explicit
 - `coverage_ledger.py`, `coverage-ledger.json.gz`: the
   source-tied case ledger; relocations are explicit overlays
   (`task10_relocation.py`, `task26_relocation.py`, `migration/`).
-- `audit_task14.py`, `audit_task16.py`, `audit_task27.py`,
-  `check_task27_docs.py`: offline source-correspondence and documentation
-  gates (`task16-source-manifest.json` is the manifest `audit_task16.py`
-  validates and `audit_task27.py` reuses).
+- `audit_task14.py`, `audit_task27.py`, `check_task27_docs.py`: offline
+  source-correspondence and documentation gates (`source_manifest.py` is the
+  library that reads and validates the sealed `task16-source-manifest.json`,
+  which `audit_task27.py` applies its overlay to).
 - `run_prior_native.py`, `run_task22_negative.py`, `run_task23_lifecycle.py`,
   `run_task24_recipes.py`, `run_task25_consumer.py`: executing drivers; each
   requires `--output`.

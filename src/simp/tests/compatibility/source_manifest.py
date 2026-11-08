@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
-"""Offline TASK_16 whole-source correspondence and ordinary dependency gate.
+"""Library: the reviewed source manifest and the helpers audit_task27 uses.
 
-Byte equality, not token equivalence: even comments in simpLib's restored pair
-must match pinned develop. Extension compiler pairs stay at TASK_16 start.
-The reviewed manifest covers the transitive ordinary Poly/standard-kernel
-source closure, including shared facilities and signatures. It reads no build
-products. This is not an execution, fresh-load or performance receipt.
+The manifest (task16-source-manifest.json, sealed by MANIFEST_SHA256) covers
+the transitive ordinary Poly/standard-kernel source closure of the ordinary
+roots, including shared facilities and signatures. audit_task27.py applies
+its overlay to it. Sources are compared as bytes against pinned revisions
+(git_source), not as tokens. This module reads no build products and has no
+command line.
 """
 from functools import lru_cache
 import hashlib
@@ -100,59 +100,3 @@ def read_manifest():
     manifest = json.loads(data)
     validate_manifest(manifest)
     return manifest
-
-
-def source_paths(manifest):
-    return validate_manifest(manifest) | set(ORDINARY) | set(EXTENSIONS)
-
-
-def read_sources():
-    return {p: (ROOT / p).read_bytes()
-            for p in sorted(source_paths(read_manifest()))}
-
-
-def audit(sources=None):
-    manifest = read_manifest()
-    paths = source_paths(manifest)
-    if sources is None:
-        sources = read_sources()
-    require(paths == sources.keys(), 'missing/unexpected audited sources')
-    require(all(isinstance(s, bytes) for s in sources.values()),
-            'source audit requires bytes')
-
-    # No allowances for alternative representation, constructor staging,
-    # callback order, history, tactics, names, printer spelling or shadow code.
-    for path in ORDINARY:
-        require(sources[path] == git_source(BASE, path),
-                'ordinary source/signature differs from pinned develop: ' +
-                path)
-    for path in EXTENSIONS:
-        require(sources[path] == git_source(START, path),
-                'extension compiler differs from task start: ' + path)
-
-    # This seal is transitive, not a grep of simpLib's direct imports and not
-    # the aspirational interfaces/graph.json. Altering a shared dependency to
-    # import/load an extension (even through a string or an alias) fails here.
-    # All shared identities, including SimpTracking's sole slot, stay intact.
-    dependencies = validate_manifest(manifest)
-    for path in sorted(dependencies - set(ORDINARY)):
-        require(sources[path] == git_source(START, path),
-                'ordinary transitive source changed: ' + path)
-    return dict(task=16, structural='pass', baseline=BASE, task_start=START,
-                ordinary={p: seal(sources[p]) for p in ORDINARY},
-                extension_compiler={p: seal(sources[p]) for p in EXTENSIONS},
-                source_manifest=MANIFEST_SHA256,
-                ordinary_roots=list(ROOTS),
-                transitive_modules=len(manifest['modules']),
-                transitive_sources=len(dependencies),
-                scope='byte/source correspondence only; not runtime, '
-                      'fresh-process loading, generated-product or timing '
-                      'validation')
-
-
-if __name__ == '__main__':
-    try:
-        print(json.dumps(audit(), indent=2))
-    except (AssertionError, KeyError, OSError,
-            subprocess.CalledProcessError) as error:
-        raise SystemExit('TASK_16 audit failed: ' + str(error))

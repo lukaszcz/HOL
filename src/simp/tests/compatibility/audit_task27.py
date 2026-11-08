@@ -25,7 +25,7 @@ import re
 import subprocess
 import tempfile
 
-import audit_task16 as prior
+import source_manifest as prior
 
 HERE, ROOT, SRC = prior.HERE, prior.ROOT, prior.SRC
 BASE, START = prior.BASE, prior.START
