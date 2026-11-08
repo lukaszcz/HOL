@@ -2218,7 +2218,10 @@ and `.ui`/`.uo` load plans) in which the first baseline image and the first
 candidate image differ into the tree that the process uses, so that baseline
 and candidate simplifier sources are compiled over the same image and the
 same `HOLDIR`. Every image must hold the sources of its own side first; the
-trees are restored at the end. The blobs of every exchanged file and of
+trees are restored at the end. A file that only one side has is written for
+that side and removed for the other, so its bracket is measured: R2 takes
+its whole bracket as its delta (negative for a baseline-only file), and it
+needs a declaration like any other. The blobs of every exchanged file and of
 every file the declaration names are recorded in `header.json`.
 
 The source-compiling kinds (`load-*`, `files-*`) first reset the four
@@ -2226,7 +2229,11 @@ readings of `Globals.hol_clock`, the CPU timer that every image stores,
 to constants, after the `startup` record and outside every bracket: the
 words that compiling `Trace.sml` costs depend on those stored readings,
 which differ from image to image. The `hol-*` kinds leave the image as it
-is.
+is. The absolute figures of the source-compiling kinds are therefore under
+that reset and are not client figures (only their deltas are); `gate`
+refuses to run, and `replay` refuses an archive, when an exchanged or
+declared file mentions `hol_clock` or `checkCPUTimer`, since a reset could
+hide a difference that goes through the timer.
 
 ### Decision
 
@@ -2273,8 +2280,9 @@ between images.
 `startup_gate_declared.json` (reviewed data, never the command line, copied
 into `header.json` with its sha256) holds:
 
-  - `entries`: a repository path, the exact baseline and candidate blob, the
-    load kinds the file may affect, a reason and a mechanism. A different
+  - `entries`: a repository path, the exact baseline and candidate blob
+    (`null` for the side that lacks the file), the load kinds the file may
+    affect, a reason and a mechanism. A different
     blob makes the file undeclared. An entry whose source is byte-identical
     on both sides is allowed only because R2 measures a non-zero exact delta
     on it, and its mechanism says why (signature matching, `open`);
@@ -2291,11 +2299,14 @@ controls receipt, the harness blobs, the declaration text and sha256, the
 exchanged blobs, the not-client-visible record sha256), `decisions.json`,
 `RESULTS.md` and `receipt.json` (the sha256 of each). `replay --output DIR`
 checks the receipt and the declaration seal and recomputes `decisions.json`
-and `RESULTS.md` from the records alone.
+and `RESULTS.md` from the records alone. An archive sealed to a
+not-client-visible record is replayed only with `--record` of that record.
 
 `cell` repeats the TASK29B startup bracket of two revisions under chosen
 path lengths (TMPDIR, HOLDIR, runtime and shim paths); it measures how the
-TASK29B startup delta depends on the image and on path lengths.
+TASK29B startup delta depends on the image and on path lengths. Every line
+names its tree; `--fixtures-rev` takes the paired and matrix fixtures from a
+past revision, which a past run carried.
 
 ## Matrix boundaries and final evidence
 

@@ -10,7 +10,7 @@
     "load-congLib"
    ],
    "reason": "adds val note_rewrite : thm -> unit (single tracking extent)",
-   "mechanism": "the signature text: one more specification is elaborated"
+   "mechanism": "elaborating one more specification, val note_rewrite : thm -> unit, in the signature"
   },
   {
    "path": "src/simp/src/Cond_rewr.sml",
@@ -21,7 +21,7 @@
     "load-congLib"
    ],
    "reason": "source identical; matched against the changed signature",
-   "mechanism": "unchanged text, compiled against the larger signature"
+   "mechanism": "unchanged text; the exported specification keeps the compiler from inlining note_rewrite into its single use in COND_REWR_CONV, so a standalone note_rewrite code object is compiled and its closure is built at structure initialisation (a dummy value specification costs far less)"
   },
   {
    "path": "src/simp/src/simpLib.sml",
@@ -32,7 +32,7 @@
     "load-congLib"
    ],
    "reason": "source identical; opens the changed structure",
-   "mechanism": "unchanged text, compiled against the larger interface"
+   "mechanism": "unchanged text; one open declaration names eight structures including Cond_rewr, and its cost grows with every value Cond_rewr exports (same names in separate open declarations, or Cond_rewr qualified instead of opened, give no such growth)"
   },
   {
    "path": "src/simp/src/congLib.sml",
@@ -42,7 +42,7 @@
     "load-congLib"
    ],
    "reason": "source identical; opens the changed structure",
-   "mechanism": "unchanged text, compiled against the larger interface"
+   "mechanism": "unchanged text; one open declaration names ten structures including Cond_rewr, and its cost grows with every value Cond_rewr exports (Cond_rewr qualified instead of opened gives no difference)"
   }
  ],
  "noise": [],
