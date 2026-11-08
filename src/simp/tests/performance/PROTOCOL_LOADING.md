@@ -47,8 +47,7 @@ Other modes:
   decision run (see Counts and the second stage).
 - `--replay RUN_DIR`: recompute a finished run from its receipts (see
   Replay). It takes only `--expect-seal`, `--first-stage` and `--ledger`.
-- `--ledger-status`, `--release ATTEMPT --decider NAME --reason TEXT`: list
-  the attempts of the ledger, and record a policy decision (see Attempts
+- `--ledger-status`: list the attempts of the ledger (see Attempts
   ledger).
 
 Exit status of a decision run: 0 only if every gated metric passes, 1 if
@@ -202,11 +201,11 @@ baseline and layout seed, `source_key` and `baseline_key` (below) and, for a
 second stage, the attempt id of its first stage; and after the run a `close`
 line with the seal of its `loading.json` (the value `--expect-seal` takes)
 and its status: `pass`, `fail` or `inconclusive` for a decision; `blocked`
-for a run stopped by a rejection of an extension or of a new stem in any
-process, baseline or candidate; `failed` for any other run with `success`
-false. Everything before the first line of the run (the keys, the ledger
-check) happens before the output directory is created, so a refusal leaves
-nothing behind.
+for a run stopped by a rejection of an extension or of a new stem in a
+candidate process; `failed` for any other run with `success` false,
+a rejection of a baseline process included. Everything before the first
+line of the run (the keys, the ledger check) happens before the output
+directory is created, so a refusal leaves nothing behind.
 
 The draw key is the extracted inventory: the SHA-256 of the sorted
 `(git_path, git_blob)` pairs of the sources `rp.extract` takes from the
@@ -244,42 +243,41 @@ The rules:
   process that is rejected counts as not admitted even if it printed its
   timer fields; the first control process is baseline against baseline, so
   such data can only be baseline data;
-- `blocked` is judged for either side, the stricter reading. A `blocked`
-  attempt whose rejection was in a baseline process (the baseline is
-  `loading.a.BASE`, which has no extensions) points at a harness or
-  baseline defect, and the new draw needs a policy decision like any other;
+- `blocked` is a finding about the candidate and is always judged. A
+  rejection of a baseline process, an extension (the baseline
+  is `loading.a.BASE`, which has no extensions), is not: it closes `failed`
+  and follows the void rule, so it is void when no control or candidate
+  process was admitted (the baseline pilot is process 1, and pilots are
+  exempt) and judged when one was;
 - a void attempt may be redrawn, and stays in the ledger;
 - the outputs of all attempts, void ones included, stay at their recorded
   paths and are published with the ledger: a void attempt is void only while
   its output can be read there, and the replay of a later judged run refuses
   with the name of the attempt whose output is missing or changed;
-- a judged attempt that has no decision (killed, interrupted, failed after
-  measuring, blocked) leaves the gate blocked for that candidate, source key
-  and module until a policy decision is recorded (below);
-- an attempt with more than one close line, more than one decision line, or
-  without exactly one opening, is a corrupt ledger, refused both for a new
-  run and in replay;
+- a judged attempt that decided nothing (killed, interrupted, failed after
+  measuring, blocked) blocks the gate for that candidate, source key and
+  module and stage;
+- an attempt with more than one close line or without exactly one opening,
+  and a line of the table with an event other than `open` or `close`, is a
+  corrupt ledger, refused both for a new run and in replay;
 - `--extend` replays its first stage against the ledger before it runs;
 - `--replay` checks the run against the ledger and prints every attempt of
   the table (id, stage, candidate, source key, module, statuses, void and,
-  when judged, why, any release, output and checkout), and the checkouts
-  when there are several;
+  when judged, why, output and checkout), and the checkouts when there are
+  several;
 - the ledger is a discipline and not a proof: a deleted ledger, or a ledger
   of another checkout, cannot be detected, so the handoff publishes the
   whole ledger, `failed` attempts included, and any earlier judged line for
   the same key blocks a redraw.
 
-A new draw after a judged attempt that decided nothing is allowed by a
-recorded policy decision, written by an explicit command under the serial
-lock: `loading.py --release ATTEMPT --decider NAME --reason TEXT [--repo R]
-[--ledger FILE]` appends a `decision` line naming the attempt, the decider
-and the reason (all required). It is refused for an unknown, void, already
-released or decided (pass, fail, inconclusive) attempt: a decided attempt is
-final. A released attempt no longer counts as the draw, the later run's
-replay checks and prints the decision with the table, and a `decision` line
-with an empty decider or reason, or on a decided attempt, has no effect.
+The tool has no override for a judged attempt. A new draw of the same key
+after one that decided nothing needs two things: a written policy decision,
+kept with the evidence outside git, and a reviewed harness change
+that implements it (as TASK30's follow-up table did). A changed candidate
+inventory is a new draw anyway.
+
 `loading.py --ledger-status [--module M] [--repo R] [--ledger FILE]` prints
-the table (every attempt, void or why it is judged, releases) without
+the table (every attempt, void or why it is judged) without
 replaying a run, for a gate that is blocked, failed or unclosed.
 
 ## Extension absence

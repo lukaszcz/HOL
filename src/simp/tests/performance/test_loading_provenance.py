@@ -123,6 +123,7 @@ class BuildBinding(unittest.TestCase):
         self.discovery = 0
         self.mutation = None
         self.kill_at = None  # the process number that is killed
+        self.extension_from = 1  # first process of "baseline-extension"
         self.builds = []
         # Scale of the loading.raw of process number n (1-based) on `side`.
         self.scale = lambda n, side: 1.0
@@ -206,7 +207,9 @@ class BuildBinding(unittest.TestCase):
                 ["observation", "loading.extensions",
                  "SplitData" if (self.mutation, dst.name) in (
                      ("extension", "candidate"),
-                     ("baseline-extension", "baseline"))
+                     ("baseline-extension", "baseline")) and (
+                     self.mutation != "baseline-extension" or
+                     self.processes >= self.extension_from)
                  else l.NO_EXTENSIONS],
                 ["use", str(dst / "selftest.sml")],
                 ["check", "ordinary exact kernel equality", "pass"],
@@ -838,15 +841,38 @@ class BuildBinding(unittest.TestCase):
         self.assertFalse(l.is_void(key[0], key[1],
                                    next(iter(found.values()))))
 
-    def test_a_baseline_extension_is_blocked_too(self):
+    def test_a_baseline_rejection_with_nothing_admitted_is_void(self):
         self.decision_settings()
         self.mutation = "baseline-extension"
-        report = self.decide("blocked")
+        self.extension_from = 1  # the baseline pilot, which is exempt
+        report = self.decide("rejected")
         self.assertFalse(report["success"])
+        self.assertNotIn("blocked", report)
         self.assertEqual(self.processes, 1)
-        self.assertEqual(self.records()[-1]["status"], l.BLOCKED)
+        self.assertEqual(self.records()[-1]["status"], l.FAILED)
+        (key, row), = l.table_attempts(tg.Ledger(self.ledger)).items()
+        self.assertTrue(l.is_void(key[0], key[1], row))
+        self.mutation = None
+        self.assertTrue(self.decide("retry")["success"])
+        info = l.replay(self.repo / "retry")
+        self.assertEqual(info["attempts"]["first"],
+                         dict(attempts=2, judged=1))
 
-    def test_an_attempt_may_be_released_by_a_recorded_decision(self):
+    def test_a_baseline_rejection_after_admission_is_judged(self):
+        self.decision_settings()
+        self.mutation = "baseline-extension"
+        self.extension_from = 4  # control-001, after control-000 was admitted
+        report = self.decide("rejected")
+        self.assertFalse(report["success"])
+        self.assertNotIn("blocked", report)
+        self.assertEqual(self.records()[-1]["status"], l.FAILED)
+        (key, row), = l.table_attempts(tg.Ledger(self.ledger)).items()
+        self.assertIn("admitted", l.judged_because(key[0], key[1], row))
+        self.mutation = None
+        with self.assertRaisesRegex(ValueError, "judged attempt already"):
+            self.decide("retry")
+
+    def test_the_ledger_has_no_release_route(self):
         self.decision_settings()
         self.mutation = "extension"
         self.assertFalse(self.decide("blocked")["success"])
@@ -860,33 +886,28 @@ class BuildBinding(unittest.TestCase):
                           for r in listing],
                          [(attempt, ["blocked"], False)])
         self.assertIn("blocked", listing[0]["judged_because"])
-        # A decision needs a decider and a reason, and a judged attempt.
-        for extra in ([], ["--decider", "owner"], ["--reason", "why"]):
-            self.assertEqual(l.main(["--release", attempt] + status +
-                                    extra), 1)
-        self.assertEqual(l.main(["--release", "first-nope", "--decider",
-                                 "o", "--reason", "r"] + status), 1)
+        with self.assertRaises(SystemExit):
+            with patch("sys.stderr"):
+                l.main(["--release", attempt, "--decider", "o",
+                        "--reason", "r"] + status)
         with self.assertRaisesRegex(ValueError, "judged attempt already"):
             self.decide("retry")
-        with patch.object(l.a, "serial_lock", lambda _: nullcontext(())):
-            self.assertEqual(l.main(["--release", attempt, "--decider",
-                                     "owner", "--reason", "baseline fixed"]
-                                    + status), 0)
-            self.assertEqual(l.main(["--release", attempt, "--decider",
-                                     "owner", "--reason", "again"]
-                                    + status), 1)
-        self.assertEqual(self.records()[-1]["event"], "decision")
-        self.assertTrue(self.decide("retry")["success"])
-        info = l.replay(self.repo / "retry")
-        self.assertEqual(info["attempts"]["first"],
-                         dict(attempts=2, judged=1))
-        self.assertEqual(info["attempts"]["table"][0]["released"],
-                         dict(decider="owner", reason="baseline fixed"))
-        # A decided attempt cannot be released, whatever the ledger says.
-        retry = self.records()[-1]["attempt"]
-        with patch.object(l.a, "serial_lock", lambda _: nullcontext(())):
-            self.assertEqual(l.main(["--release", retry, "--decider", "o",
-                                     "--reason", "r"] + status), 1)
+        # A line of an unknown event is a corrupt ledger.
+        tg.ledger_append(self.ledger, event="decision", table=l.TABLE,
+                         stage="first", attempt=attempt, decider="o",
+                         reason="r")
+        with self.assertRaisesRegex(ValueError, "unknown event"):
+            self.decide("retry")
+        with self.assertRaisesRegex(ValueError, "unknown event"):
+            l.ledger_status(SimpleNamespace(
+                repo=self.repo, ledger=None, module=None))
+
+    def test_the_receipt_names_have_one_definition(self):
+        label = l.receipt_label("control", 7, "baseline", 3)
+        self.assertEqual(label, "control-007-baseline-03")
+        self.assertTrue(l.RECEIPT_NAME.fullmatch(label + ".json.gz"))
+        self.assertFalse(l.RECEIPT_NAME.fullmatch("pilot-000-baseline-00"
+                                                  ".json.gz"))
 
     def test_a_moved_void_output_is_named_by_the_replay(self):
         self.decision_settings()
