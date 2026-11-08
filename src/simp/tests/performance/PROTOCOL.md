@@ -46,7 +46,8 @@ not uncommitted implementation changes. Its source/product inventories and
 hashes remain part of each experiment. Unknown fixture cases fail closed.
 
 The command runs harness-only controls, then **baseline/baseline and
-baseline/candidate** for each requested case and size. Each child invocation is:
+baseline/candidate** for each requested case and size. Each child invocation
+is:
 
 - the existing `tests/compatibility/run_paired.py`;
 - `--matrix-performance --performance-case CASE --performance-size N`;
@@ -54,26 +55,29 @@ baseline/candidate** for each requested case and size. Each child invocation is:
 - identical samples, batch duration, process timeout, and >=10 pairs.
 
 A baseline control uses the baseline commit in both selection slots. It has the
-same sample counts, fresh processes, calibration and AB/BA order as its candidate
-comparison. No control costs are subtracted and no baseline variability is a
-regression budget. A baseline-control `fail` or `inconclusive` prevents a
-candidate pass (turning it inconclusive); a candidate failure is never excused
-by control noise. This applies to point metrics and retained-storage slopes.
+same sample counts, fresh processes, calibration and AB/BA order as its
+candidate comparison. No control costs are subtracted and no baseline
+variability is a regression budget. A baseline-control `fail` or `inconclusive`
+prevents a candidate pass (turning it inconclusive); a candidate failure is
+never excused by control noise. This applies to point metrics and
+retained-storage slopes.
 
-The SML harness consumes and verifies construction, reuse and complete-operation
-results. The Python schema contract is `suite="matrix", case=CASE, size=N`, one
-label CASE, consumption 1 per operation, and `storage=False` (not the old fixed
-storage-row protocol). Process environment includes `PERF_CASE` and `PERF_SIZE`.
-The installed `Performance.sml` must match the recorded MatrixPerformance or
-ClientPerformance input hash. Callback/proof verification belongs in the fixture;
-a nonzero exit, missing observation or ignored result is not an observation.
+The SML harness consumes and verifies construction, reuse and
+complete-operation results. The Python schema contract is `suite="matrix",
+case=CASE, size=N`, one label CASE, consumption 1 per operation, and
+`storage=False` (not the old fixed storage-row protocol). Process environment
+includes `PERF_CASE` and `PERF_SIZE`. The installed `Performance.sml` must
+match the recorded MatrixPerformance or ClientPerformance input hash.
+Callback/proof verification belongs in the fixture; a nonzero exit, missing
+observation or ignored result is not an observation.
 
 Acceptance requires >=10 fresh **process pairs**, not merely ten batches in one
 process. Each process calibrates by doubling iterations. Every measured batch
 must last at least half the calibration target, with >=3 measured batches.
-Process pair order is AB, BA, AB, BA, ... with no missing, duplicate or reordered
-receipts. Warm-up/calibration work is recorded separately, not silently counted
-as independent samples. Increase the predeclared batch duration for tiny work.
+Process pair order is AB, BA, AB, BA, ... with no missing, duplicate or
+reordered receipts. Warm-up/calibration work is recorded separately, not
+silently counted as independent samples. Increase the predeclared batch
+duration for tiny work.
 
 ### Equal-count attribution
 
@@ -95,15 +99,17 @@ silently recalibrates one side, drops a pair or selects a favorable repetition.
 Choose the schedule before observing the new experiment. A new schedule is a
 new whole experiment, with prior observations preserved. Fixed mode is matrix
 only (both fragment and client fixtures); omitting it retains the historical
-adaptive protocol for replay, not proof that its GC comparisons are unconfounded.
+adaptive protocol for replay, not proof that its GC comparisons are
+unconfounded.
 
 The count is bound to the manifest, `PERF_ITERATIONS` environment, complete
 ordered calibrations, samples and consumed-result counts by online and offline
 validation. Injecting that environment variable into an adaptive archive also
-rejects. `analyze(..., iterations=N)` must match the requested schedule; default
-analysis cannot silently admit fixed-mode evidence. No timing, GC, control,
-confidence-interval or pass/fail threshold changes with this mode. In particular,
-equal counts cannot turn uncertain B/B controls or zero/zero GC into passes.
+rejects. `analyze(..., iterations=N)` must match the requested schedule;
+default analysis cannot silently admit fixed-mode evidence. No timing, GC,
+control, confidence-interval or pass/fail threshold changes with this mode. In
+particular, equal counts cannot turn uncertain B/B controls or zero/zero GC
+into passes.
 
 ### The `warmup` schedule
 
@@ -223,10 +229,10 @@ Both matrix fixtures load sealed `RuntimeMetrics.sml`. Every calibration and
 sample has exactly one `@@MATRIX_RUNTIME` record matched in order to its stage
 and iteration count. Before/after snapshots supply actual full/partial GC and
 sharing-pass counts, GC-updated heap/free sizes, allocation-area capacity/free
-space and Linux `/proc/self/status` RSS/HWM bytes. Snapshot/record work is outside
-timing; counts are batch-boundary counters with small record/timer overhead,
-not cycle-exact attribution. `/proc` reads and semantic verification are outside
-the counter interval. Missing RSS is explicitly blocked, not zero.
+space and Linux `/proc/self/status` RSS/HWM bytes. Snapshot/record work is
+outside timing; counts are batch-boundary counters with small record/timer
+overhead, not cycle-exact attribution. `/proc` reads and semantic verification
+are outside the counter interval. Missing RSS is explicitly blocked, not zero.
 Linux documents these RSS fields as approximate: an observed raw VmHWM
 regression blocks RSS/high-water inference for that process. Raw values remain
 unchanged, never clamped; valid timing/GC observations remain independent.
@@ -247,10 +253,10 @@ Scope limits are mandatory:
 
 - Poly/ML 5.9.2 exposes no cumulative allocated-byte counter. Heap/free or
   allocation-area sizes are not total allocation; that field is uncollected.
-- VmHWM is the **process-lifetime** maximum including loading and prior batches.
-  HWM increases and RSS snapshots are measured, not exact temporary peaks.
-  An isolated high-water accounting domain remains unestablished. A zero HWM
-  increase is not evidence of zero temporary memory.
+- VmHWM is the **process-lifetime** maximum including loading and prior
+  batches. HWM increases and RSS snapshots are measured, not exact temporary
+  peaks. An isolated high-water accounting domain remains unestablished. A zero
+  HWM increase is not evidence of zero temporary memory.
 - Release checks a live conversion's controlled simpset **ref**, then observes
   actual weak collection after dropping the wrapper and three full GCs.
   `Weak.weak` accepts refs only, not opaque internal simpset/net objects.
@@ -266,8 +272,9 @@ python3 -B src/simp/tests/performance/runtime_metrics.py \
 ```
 
 It needs a configured tree and a new sibling `.log` path. Run alone; unlike
-`acceptance.py`/`loading.py`, smoke drivers do not take the host-wide serial lock.
-They clean private trees automatically, retaining compact source-tied receipts.
+`acceptance.py`/`loading.py`, smoke drivers do not take the host-wide serial
+lock. They clean private trees automatically, retaining compact source-tied
+receipts.
 
 ### Acceptance record, admission and exit codes
 
@@ -289,22 +296,24 @@ inventory are historical diagnostics only; do not reconstruct a supposedly
 independent inventory from the receipts being validated.
 
 Admission also requires exact runtime options (one GC thread and the recorded
-repo's `hol.state0`), runtime/heaps/Holmake/configuration fingerprints, a sealed
-successful Poly/ML version command, sealed successful dynamic-library discovery
-and fingerprints for its libraries. Selected builds must have succeeded, and
-each launcher's text, options and product hash must agree. These are local
-provenance-consistency checks, not authentication of a malicious producer or
-independent-build evidence. Non-matrix historical diagnostic audits retain
-their original weaker contract.
+repo's `hol.state0`), runtime/heaps/Holmake/configuration fingerprints, a
+sealed successful Poly/ML version command, sealed successful dynamic-library
+discovery and fingerprints for its libraries. Selected builds must have
+succeeded, and each launcher's text, options and product hash must agree. These
+are local provenance-consistency checks, not authentication of a malicious
+producer or independent-build evidence. Non-matrix historical diagnostic audits
+retain their original weaker contract.
 
 CLI exit codes: 0 = all reported candidate metrics/slopes pass; 1 = any fails;
 2 = uncertainty, invalid evidence or a blocked prerequisite. `success=true`
 means the experiment completed and validated, **not that its metrics passed**.
-No overall performance acceptance decision substitutes for per-metric decisions.
+No overall performance acceptance decision substitutes for per-metric
+decisions.
 
 ### Serialization
 
-`run` and `controls` hold nonblocking `flock` locks for their entire experiment:
+`run` and `controls` hold nonblocking `flock` locks for their entire
+experiment:
 
 - `.agent-files/hol4-performance-UID.lock` in the repository (one per
   user; ignored, and out of reach of shared `/tmp` cleaners);
@@ -312,15 +321,16 @@ No overall performance acceptance decision substitutes for per-metric decisions.
   runners), and common gitdir inode (across worktrees).
 
 Descriptors are inherited by the paired runner so it cannot continue unlocked
-if its parent exits. A busy lock blocks the invocation. Never unlink a lockfile:
-that permits two different inodes to be locked concurrently. Do not relock these
-inherited locks in child runners. All invocations of this front end serialize;
-the existing gitdir lock also conflicts with older same-worktree runners.
-Locks are advisory: they cannot stop unrelated manual `bin/build`, direct older
-runners in other worktrees, or other users. Authorization confirms those are
-quiescent. Do not use `--authorize-measurements` as permission for concurrent work.
-Unit tests acquire the same lock for actual timing controls; other tests create
-only tiny temporary synthetic git repositories and remove them immediately.
+if its parent exits. A busy lock blocks the invocation. Never unlink a
+lockfile: that permits two different inodes to be locked concurrently. Do not
+relock these inherited locks in child runners. All invocations of this front
+end serialize; the existing gitdir lock also conflicts with older same-worktree
+runners. Locks are advisory: they cannot stop unrelated manual `bin/build`,
+direct older runners in other worktrees, or other users. Authorization confirms
+those are quiescent. Do not use `--authorize-measurements` as permission for
+concurrent work. Unit tests acquire the same lock for actual timing controls;
+other tests create only tiny temporary synthetic git repositories and remove
+them immediately.
 
 ### Standard input and the version query
 
@@ -386,8 +396,9 @@ AB/BA order and must produce strict CI failures. The tests execute these real
 perturbations, not just construct invented ratios or assert an arbitrary error.
 Synthetic statistics and tampered archived/build receipts additionally exercise
 thresholds, undefined GC, completeness, provenance and stale-build guards.
-`tracemalloc` is **only a Python harness allocation control**, never a measurement
-of HOL/PolyML allocation. Bootstrap confidence is not a universal hardware proof.
+`tracemalloc` is **only a Python harness allocation control**, never a
+measurement of HOL/PolyML allocation. Bootstrap confidence is not a universal
+hardware proof.
 
 ## Statistics and policy
 
@@ -403,13 +414,14 @@ Fixed before candidate results are observed:
    inclusive CPU, wall, and GC. Poly/ML CPU includes GC; do not add GC again.
    Validate nongc+GC accounting and the positive-GC timer control first.
 3. Form candidate/baseline ratios within each process pair. Report raw process
-   observations, both medians, every ratio and their median. Do not replace paired
-   ratios with a ratio of pooled medians or pool workloads together.
+   observations, both medians, every ratio and their median. Do not replace
+   paired ratios with a ratio of pooled medians or pool workloads together.
 4. Bootstrap the **paired ratios**: 20,000 resamples, deterministic seed 3003,
    percentile ranks 499/19499 (zero-based), the existing `summarize.interval`.
 5. For each workload/size/metric: CI lower bound >1 means **fail**; upper bound
-   <=1 means **pass**; otherwise **inconclusive**. A reproducible slowdown of any
-   size fails. No fixed percent allowance, aggregate mean or compensating speedup.
+   <=1 means **pass**; otherwise **inconclusive**. A reproducible slowdown of
+   any size fails. No fixed percent allowance, aggregate mean or compensating
+   speedup.
 6. A zero denominator, including GC 0/0, means inconclusive with null ratio/CI;
    keep the pair and raw values. Do not turn undefined GC ratios into parity.
 
@@ -420,9 +432,9 @@ cannot pass a grid. Archives made under it replay under it.
 
 ### Equivalence policy (version 2)
 
-Decided by the policy owner; `acceptance.EQUIVALENCE_POLICY`.
-`acceptance.py run` and `task29a_grid.py` record it in every new report, and
-offline replay uses the policy a report recorded. Rules 1–4 and 6 are unchanged.
+Decided by the policy owner; `acceptance.EQUIVALENCE_POLICY`. `acceptance.py
+run` and `task29a_grid.py` record it in every new report, and offline replay
+uses the policy a report recorded. Rules 1–4 and 6 are unchanged.
 
 - **Margin** δ = 0.03 on inclusive CPU and wall. Lower bound > 1+δ: **fail**;
   upper bound <= 1+δ: **pass**; otherwise **inconclusive**.
@@ -2214,8 +2226,9 @@ Admission of externally produced builds and the runnable fresh-import gate.
 
 ### Independent-build admission: fail closed
 
-`verify-builds` audits a separately produced clean-build receipt against **live**
-roots and logs. It does not build, run proof workloads, or approve performance:
+`verify-builds` audits a separately produced clean-build receipt against
+**live** roots and logs. It does not build, run proof workloads, or approve
+performance:
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py verify-builds BUILD_JSON \
@@ -2231,23 +2244,24 @@ must be supplied separately.
 
 The external receipt producer must run serially under the same locks, in two
 new disjoint clean worktrees at the requested pins. Refuse an existing product,
-heap, theory cache, ignored or untracked file before configuration; never simply
-stamp an old product with a new mtime. Build logs and receipts live outside both
-roots. Preserve them until live verification completes. Required commands in
-each selected root, using the exact same Poly/ML executable:
+heap, theory cache, ignored or untracked file before configuration; never
+simply stamp an old product with a new mtime. Build logs and receipts live
+outside both roots. Preserve them until live verification completes. Required
+commands in each selected root, using the exact same Poly/ML executable:
 
 ```sh
 /absolute/path/to/poly < tools/smart-configure.sml
 /absolute/selected/root/bin/build -t -F
 ```
 
-Bare `bin/build` or an inherited partial sequence is insufficient. Record
-`git status --porcelain=v1 --untracked-files=all` and the same with
+Bare `bin/build` or an inherited partial sequence is insufficient. Record `git
+status --porcelain=v1 --untracked-files=all` and the same with
 `--ignored=matching` **before** configuration; both must be empty. Record every
 command's start/end nanoseconds, cwd, argv, stdin hash, executable hash, log
 path/hash, actual exit and timeout status. Hash tools and products while
 unchanged; roots must still be at the exact pins with no tracked/untracked
-changes during admission (ignored generated products are allowed after building).
+changes during admission (ignored generated products are allowed after
+building).
 
 #### Independent manifest v1
 
@@ -2256,15 +2270,15 @@ Required top-level fields:
 - `schema`: `task28-independent-build-v1`;
 - `mode`: `independent`; `success`: true;
 - `runtime_options`: `["--gcthreads=1"]`;
-- `toolchain`: map including `poly` with absolute `path`, nonempty `version`, and
-  `fingerprint: {sha256: HEX, bytes: INTEGER}`. Admission executes
-  `poly -v` (stdin is /dev/null) and requires its successful Poly/ML output to
-  match `version`. A `version` that contains `RTS version` (made by
-  `poly -v`) must equal the output in full once stripped, so another RTS
-  build (architecture, interpreter) is refused. A legacy `version` (made by
-  `poly --version`, the banner alone) is compared with the banner of the
-  output, the text before `RTS version`; that is also how a legacy record
-  meets a new probe. Include other external tools too;
+- `toolchain`: map including `poly` with absolute `path`, nonempty `version`,
+  and `fingerprint: {sha256: HEX, bytes: INTEGER}`. Admission executes `poly
+  -v` (stdin is /dev/null) and requires its successful Poly/ML output to match
+  `version`. A `version` that contains `RTS version` (made by `poly -v`) must
+  equal the output in full once stripped, so another RTS build (architecture,
+  interpreter) is refused. A legacy `version` (made by `poly --version`, the
+  banner alone) is compared with the banner of the output, the text before `RTS
+  version`; that is also how a legacy record meets a new probe. Include other
+  external tools too;
 - `selections`: exactly `baseline` and `candidate`.
 
 Each selection contains:
@@ -2279,8 +2293,8 @@ Each selection contains:
   null. Configure argv is only the recorded poly path; full argv is exactly
   `[ROOT/bin/build, "-t", "-F"]`;
 - `products`: map of root-relative logical names to `{path, physical, hash,
-  mtime_ns}`. `path` is the absolute logical name, `physical` its resolved file,
-  `hash` is `{sha256, bytes}`. Require `bin/hol`, `bin/hol.state0`,
+  mtime_ns}`. `path` is the absolute logical name, `physical` its resolved
+  file, `hash` is `{sha256, bytes}`. Require `bin/hol`, `bin/hol.state0`,
   `bin/hol.state.min`, `bin/Holmake`, `holproject.toml`, plus every generated
   `.uo`/`.ui`/`.dat` reachable under `sigobj/`;
 - `dependency_inventory`: exactly those sigobj product names. Source `.sig`
@@ -2291,11 +2305,12 @@ A product's current mtime must equal the recorded mtime and lie inside that
 selection's fresh build interval. Symlinks are allowed only when their targets
 remain inside the selected root; no cross-root product or shared product inode
 is accepted. Hashes, required products, tool versions, logs, exits, configure
-input and command/options are mandatory. Missing or changed prerequisites reject
-admission. Unsupported build recipes/platforms remain blocked until a separately
-reviewed manifest schema supports them; do not weaken this verifier to admit an
-old heap. A local receipt is a provenance record, not a cryptographic attestation
-against a malicious producer. Preserve actual pristine-state evidence too.
+input and command/options are mandatory. Missing or changed prerequisites
+reject admission. Unsupported build recipes/platforms remain blocked until a
+separately reviewed manifest schema supports them; do not weaken this verifier
+to admit an old heap. A local receipt is a provenance record, not a
+cryptographic attestation against a malicious producer. Preserve actual
+pristine-state evidence too.
 
 ### Fresh loading: runnable external gate
 
