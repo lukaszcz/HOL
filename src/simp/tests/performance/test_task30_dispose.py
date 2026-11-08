@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -286,12 +287,7 @@ class Spec(unittest.TestCase):
                                "2a0f3c092f6c5be25820537fa3c1a8e6"),),
             "allocation_matrix.py": (dict(
                 bytes=67973, sha256="45d1fc4045f4b2dc57ce77f9ffd71211"
-                               "6561ec3bd652aa5ebfd37b96a818221f"),),
-            # The file of 3f61e8b186, before the refusal texts were
-            # reworded; no record carries it.
-            "void_attempts.py": (dict(
-                bytes=10546, sha256="7fc59db36bc2531cff858cb04a1155d8"
-                               "3b59ed6de96df8bd2ef59625f24376de"),)})
+                               "6561ec3bd652aa5ebfd37b96a818221f"),)})
         self.assertEqual(set(td.seals()), set(td.CODE))
         for name in td.CODE:
             self.assertTrue((a.HERE / name).is_file(), name)
@@ -1104,8 +1100,8 @@ class Seals(Toy):
             "task30_dispose.py", (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                                "8e864bf5d9298ce73366c88a069cef59"),), dict(
-                bytes=10626, sha256="72b817bf924edc824758ed6177a5830a"
-                               "2be890d44b5f7d70dec6a2a955acf989"))})
+                bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe"
+                               "9e89120d4a162723b6385cae8ea1216b"))})
         self.assertIn("void_attempts.py", td.CODE)
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
@@ -1146,20 +1142,83 @@ class Seals(Toy):
             self.assertIn("void_attempts.py: add to task30_dispose.HISTORY "
                           "the entry `\"void_attempts.py\": (%s,),`" %
                           json.dumps(held, sort_keys=True), text)
-            # Once the commit that edits the rule names the seal it was
-            # held at, the record checks again.
-            with patch.dict(td.HISTORY, {"void_attempts.py": (held,)}):
-                td.check_code(old)
 
-    def test_the_seal_held_before_the_rewording_still_checks(self):
-        # A record made by the file of 3f61e8b186 (the held seal then)
-        # carries that seal, which HISTORY lists.
+    # The moved functions of void_attempts.py, as the tree of
+    # 40e176538f's task30_dispose.py (the host the older records ran) has
+    # them, with every string constant blanked and each `"..." % (...)`
+    # message blanked whole. Derived: ast.parse the file, take the module
+    # level FunctionDefs runner_failure, void_failure and attempts_of in
+    # order, ast.dump each of the normalised nodes (see `normalised`),
+    # join with "\n" and take the SHA-256. It is the same for the host's
+    # three functions and for the held version of void_attempts.py.
+    MOVED = ("runner_failure", "void_failure", "attempts_of")
+    MOVED_HASH = ("51b3dac24ea0ff4e84a630490684788205564d5c6623a33973ea5e0c"
+                  "afae95a6")
+
+    @classmethod
+    def normalised(cls, source):
+        import ast
+
+        class Blank(ast.NodeTransformer):
+            def visit_BinOp(self, node):
+                if isinstance(node.op, ast.Mod) and isinstance(
+                        node.left, ast.Constant) and isinstance(
+                        node.left.value, str):
+                    return ast.Constant("")
+                return self.generic_visit(node)
+
+            def visit_Constant(self, node):
+                return ast.Constant("") if isinstance(
+                    node.value, str) else node
+        tree = ast.parse(source)
+        found = {n.name: ast.dump(Blank().visit(n)) for n in tree.body
+                 if isinstance(n, ast.FunctionDef) and n.name in cls.MOVED}
+        return "\n".join(found[name] for name in cls.MOVED)
+
+    def test_the_held_file_holds_the_code_the_older_records_ran(self):
+        import hashlib
+        text = (a.HERE / "void_attempts.py").read_text()
+        self.assertEqual(
+            hashlib.sha256(self.normalised(text).encode()).hexdigest(),
+            self.MOVED_HASH)
+        # A change of the logic, not of a string, is another hash.
+        changed = text.replace('if row["resumed"]:', "if False:")
+        self.assertNotEqual(changed, text)
+        self.assertNotEqual(
+            hashlib.sha256(self.normalised(changed).encode()).hexdigest(),
+            self.MOVED_HASH)
+        # ... and a reworded message is the same one.
+        reworded = text.replace("it was resumed", "it was resumed again")
+        self.assertNotEqual(reworded, text)
+        self.assertEqual(self.normalised(reworded), self.normalised(text))
+
+    def test_the_resumed_attempt_mutant_is_refused_for_the_old_record(self):
+        # The logic of the resumed-attempt rule is held for the record that
+        # lacks the file: `if row["resumed"]:` made `if False:` changes the
+        # file, which check_code refuses for that record.
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
-        before = td.HISTORY["void_attempts.py"][0]
-        self.assertEqual(before["bytes"], 10546)
-        self.assertNotEqual(before, td.ADDED["void_attempts.py"][2])
-        td.check_code(dict(recorded, **{"void_attempts.py": before}))
+        host, before, held = td.ADDED["void_attempts.py"]
+        old = {n: s for n, s in recorded.items() if n != "void_attempts.py"}
+        old[host] = before[0]
+        td.check_code(old)
+        # A copy of the code with the mutant in place of the file.
+        with tempfile.TemporaryDirectory(prefix="mutant-") as scratch:
+            for name in td.CODE:
+                (Path(scratch) / name).write_bytes(
+                    (a.HERE / name).read_bytes())
+            mutant = Path(scratch) / "void_attempts.py"
+            text = mutant.read_text()
+            self.assertIn('if row["resumed"]:', text)
+            mutant.write_text(text.replace('if row["resumed"]:',
+                                           "if False:"))
+            with self.assertRaisesRegex(
+                    ValueError, "void_attempts.py: add to "
+                    "task30_dispose.HISTORY"):
+                td.check_code(old, here=scratch)
+            # The same copy without the mutant checks.
+            mutant.write_text(text)
+            td.check_code(old, here=scratch)
 
     def test_the_printed_entries_are_literals_of_their_constant(self):
         import ast

@@ -139,7 +139,7 @@ def void_failure(new, key, output, row=None):
 
 def attempts_of(args, new, judged):
     """Every attempt of the table `new` in the ledger: the judged ones
-    (`judged`: {attempt id: output directory} of the follow-up's final
+    (`judged`: {attempt id: output directory} of the table's final
     stage and, where it is a second stage, of its first) and the others,
     which must be void (`void_failure`): no cell of them admitted a
     measurement, so they are no outcome and the settings may be run again as

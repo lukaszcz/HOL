@@ -1696,13 +1696,17 @@ table of its own on the shared engine, with the following additions to it.
   - A file added to `task30_dispose.CODE` (`void_attempts.py`, the attempt
     rule moved out of `task30_dispose.py`) is absent from the records made
     before it existed. `task30_dispose.ADDED` names, per such file, the file
-    that held its code, that file's seals in those records, and the seal of
-    the added file that holds the moved code; a record may lack the file
-    only when its seal of the host is one of the listed, and is then
-    treated as recording that third seal for the file, so that the normal
-    rules apply to it: a later edit of the added file is refused for that
-    record until the commit that makes it appends the seal to
-    `HISTORY[file]`. A record made by the current code carries the file.
+    that held its code, that file's seals in those records, and the held
+    seal; a record may lack the file only when its seal of the host is one
+    of the listed, and is then treated as recording the held seal for the
+    file. The held seal names the version of the added file reviewed as
+    holding exactly the code the older records ran: its moved functions are
+    AST-equal to the host's, apart from message strings (a test pins the
+    normalised hash of them). An edit of the added file that keeps that
+    property replaces the held seal, after that review. A behavioural edit
+    is not allowed while a record depends on the held seal: a seal in
+    `HISTORY[file]` accepts every later file, so it would bind the record to
+    logic it never ran. A record made by the current code carries the file.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
