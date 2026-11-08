@@ -396,12 +396,28 @@ class LiveSourceGate(unittest.TestCase):
                  'rebound: snd'),
                 (b'type config',
                  b'val {a = is_var_perm} = {a = fn _ => true}\ntype config',
-                 'not bound exactly')):
+                 'not bound exactly'),
+                # a symbolic constructor that holds `=`
+                (b'fun vperm',
+                 b"datatype ('a, 'b) p = <=> of 'a * 'b\n"
+                 b'val <=> (_, aconv) = <=> (0, fn _ => fn _ => true)\n'
+                 b'fun vperm', 'rebound: aconv'),
+                (b'type config',
+                 b"datatype ('a, 'b) p = <=> of 'a * 'b\n"
+                 b'val <=> (_, is_var_perm) = <=> (0, fn _ => true)\n'
+                 b'type config', 'not bound exactly'),
+                (b'fun vperm',
+                 b'exception <=> of term -> term -> bool\n'
+                 b'val <=> aconv = <=> (fn _ => fn _ => true)\n'
+                 b'fun vperm', 'rebound: aconv')):
             with self.subTest(new=new[:40]):
                 self.assertEqual(source.count(old), 1)
                 with self.assertRaisesRegex(AssertionError, message):
                     audit.check_var_perm_copy(
                         {**self.sources, path: source.replace(old, new)})
+        # a symbolic name in a head that binds nothing of the block's
+        audit.check_var_perm_copy({**self.sources, path: source.replace(
+            b'fun vperm', b'fun op <=> (a, b) = a\nfun vperm')})
         # a fixity declaration of a name the block does not use is fine
         audit.check_var_perm_copy({**self.sources, path: source.replace(
             b'fun vperm', b'infix 3 unrelated\nfun vperm')})
