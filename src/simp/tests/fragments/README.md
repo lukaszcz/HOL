@@ -150,14 +150,13 @@ each selection's exact `runtime_options`, launcher text and launcher seal.
 All options precede `run`. Heap settings control one allocator variable, not
 all allocator state or OS effects.
 
-Example single pilot with the existing fixed schedule:
+Example single pilot with a fixed schedule:
 
 ```sh
 python3 -B src/simp/tests/fragments/run_fragments.py \
   --matched-environment --heap-mb 256 \
   --performance-pairs 1 --samples 3 --seconds .03 \
-  --fixed-iterations \
-  src/simp/tests/fragments/evidence/task15/fixed-iterations.json \
+  --fixed-iterations /tmp/task15-schedule.json \
   --require-baseline-graphs --output /tmp/task15-matched-pilot
 ```
 
@@ -179,10 +178,9 @@ batches separately from the median-per-process paired statistic, without a
 confidence/acceptance claim. Matching modules and heap simultaneously also
 cannot distinguish their separate causal contributions.
 
-An exploratory attempt also preloaded `Cond_rewrExt`. It correctly failed
-elaboration: that helper needs `Cond_rewr.is_var_perm`, absent from pinned
-`Cond_rewr.sig`. The reviewed compatible preload list above explicitly omits
-it, rather than replacing or transforming the pinned ordinary implementation.
+`Cond_rewrExt` is deliberately not preloaded: that helper needs
+`Cond_rewr.is_var_perm`, absent from pinned `Cond_rewr.sig`, and the pinned
+ordinary implementation is never replaced or transformed.
 Consequently this is a **matched registry/context** diagnostic, not a claim
 that the complete compiled-module environments match. Candidate's remaining
 paired-compiler dependency is still present and still owned by TASK16.

@@ -86,4 +86,3 @@ accepted equality requires `success: true`, both accepted paired receipts,
 `collection_validated: true`, `strict_equality_accepted: true`, and all
 `identical_after_pool_relocation` flags true. A validated collection with
 rejected equality is still useful negative evidence, never a parity pass.
-See `RESULTS.md` and retained `evidence/`.
