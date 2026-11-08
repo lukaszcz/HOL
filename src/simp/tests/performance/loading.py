@@ -825,8 +825,6 @@ EVENT_FIELDS = dict(
                baseline_key=str, module=str, seed=str, pairs=int, reps=int,
                output=str, checkout=str),
     **{"smoke-end": dict(attempt=str, success=bool, seal=STR_OR_NONE)})
-EVENT_KEYS = {event: tuple(fields)
-              for event, fields in EVENT_FIELDS.items()}
 
 
 def right_type(value, kind):
@@ -845,7 +843,7 @@ def table_lines(state):
         if record.get("table") != TABLE:
             continue
         event = record.get("event")
-        require(event in EVENT_FIELDS,
+        require(isinstance(event, str) and event in EVENT_FIELDS,
                 "corrupt attempts ledger: a line of unknown event %r" %
                 (event,))
         missing = [k for k in EVENT_FIELDS[event] if k not in record]
@@ -890,6 +888,14 @@ def table_attempts(state):
                 "opening and %d close lines" % (
                     attempt, stage, len(row["opens"]), len(row["closes"])))
     return found
+
+
+def read_ledger(path):
+    """The ledger and the attempts of its table, wholly validated: the one
+    check every reader and every run applies, a smoke included."""
+    import timing_grid as tg
+    state = tg.Ledger(path)
+    return state, table_attempts(state)
 
 
 def table_smokes(state, candidate=None, key=None, module=None):
@@ -1037,11 +1043,10 @@ def refuse_second_draw(path, args, stage, key):
     """Under the serial lock, before anything is created: the gate (this
     module, and this candidate commit or extracted-source key) has no judged
     attempt at this stage yet."""
-    import timing_grid as tg
     require_ignored(path, args.repo)
     if not path.exists():
         return
-    found = judged(gate_attempts(table_attempts(tg.Ledger(path)),
+    found = judged(gate_attempts(read_ledger(path)[1],
                                  args.candidate, key, args.module, stage))
     require(not found, "the %s stage of this candidate (or extracted-source "
             "key) and module has a judged attempt already (%s): only a run "
@@ -1070,11 +1075,10 @@ def open_attempt(path, args, report, first, output, repo, keys):
 def ledger_status(args):
     """The attempts of the table (those of `--module` when given), for a
     gate that is blocked, failed or unclosed: no run is replayed."""
-    import timing_grid as tg
     path = args.ledger or ledger_path(Path(args.repo).resolve(strict=True))
     require(path.is_file(), "no attempts ledger: %s" % path)
-    state = tg.Ledger(path)
-    table = attempts_table(table_attempts(state))
+    state, found = read_ledger(path)
+    table = attempts_table(found)
     return dict(ledger=str(path), table=[
         r for r in table if args.module in (None, r["module"])],
         smokes=table_smokes(state, module=args.module))
@@ -1136,11 +1140,9 @@ def check_ledger(path, report, seal, status, first_attempt):
     this seal and decision, and no other judged attempt exists for the same
     gate. Returns the counts of the gate's attempts and every attempt of the
     table."""
-    import timing_grid as tg
     path = Path(path)
     require(path.is_file(), "no attempts ledger: %s" % path)
-    state = tg.Ledger(path)
-    found = table_attempts(state)
+    state, found = read_ledger(path)
     attempt, stage = report.get("attempt"), report["stage"]
     require((attempt, stage) in found,
             "the attempts ledger has no opening of this run")
@@ -1211,14 +1213,14 @@ def run(args, first=None):
             # the start line is written ahead of the first process.
             require_ignored(ledger, repo)
             if ledger.exists():
-                import timing_grid as tg
-                table_lines(tg.Ledger(ledger))
+                read_ledger(ledger)
             require(not output.exists(), "output exists: %s" % output)
             smoke = open_smoke(ledger, args, output, keys, repo)
         elif ledger is not None:
             refuse_second_draw(ledger, args, "first" if first is None
                                else "second", keys["candidate"])
-        output.mkdir(parents=True, exist_ok=False)
+        if smoke is None:
+            output.mkdir(parents=True, exist_ok=False)
         report = {"schema": SCHEMA, "success": False,
                   "mode": "smoke" if args.smoke else
                   "calibration" if args.calibrate else "isolated-source",
@@ -1235,6 +1237,8 @@ def run(args, first=None):
             open_attempt(ledger, args, report, first, output, repo, keys)
         saved = False
         try:
+            if smoke is not None:
+                output.mkdir(parents=True, exist_ok=False)
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("HOL", "POLY", "ML", "PAIR_",
                                         "PERF_", "LOADING_", "LD_"))}

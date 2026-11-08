@@ -45,9 +45,10 @@ Other modes:
   whatever its outcome (see Attempts ledger).
 - `--calibrate --pairs P --reps R`: pilots and the B/B phase only
   (P >= 10). It measures the develop pin against itself: the baseline and
-  the candidate are both `a.BASE` (`--candidate` may be omitted), and
-  anything else is refused before any process runs. Reports the jitter
-  quantities below. No candidate phase, no audit receipt, no decision.
+  the candidate are both `acceptance.BASE` (`--candidate` may be
+  omitted), and anything else is refused before any process runs. Reports
+  the jitter quantities below. No candidate phase, no audit receipt, no
+  decision.
 - `--layout-seed S`: the layout seed of a smoke or calibration run (a
   smoke run: neither of the decision seeds). A decision run uses
   `loading.LAYOUT_SEED`. At most 58 characters.
@@ -252,7 +253,7 @@ The rules:
   timer fields; the first control process is baseline against baseline, so
   such data can only be baseline data;
 - `blocked` is a finding about the candidate and is always judged. A
-  baseline process that loads an extension (the baseline `loading.a.BASE`
+  baseline process that loads an extension (the baseline `acceptance.BASE`
   has none, so this is a harness or environment defect) is rejected but
   not `blocked`: the run closes `failed` and follows the void rule, so it
   is void when no control or candidate process was admitted (the baseline
@@ -275,10 +276,11 @@ The rules:
   the validator both use;
 - a smoke run is recorded by two lines. Under the serial lock, after the
   check that the ledger is excluded from git, after the whole ledger was
-  read and validated, and before the output directory is created or any
-  process starts, a `smoke` line is appended: attempt id, candidate,
-  baseline, both source keys, module, seed, pairs, repetitions, output and
-  checkout. When the line cannot be appended, nothing runs. When the run
+  read and validated (as `--ledger-status` does), and before the output
+  directory is created or any process starts, a `smoke` line is appended:
+  attempt id, candidate, baseline, both source keys, module, seed, pairs,
+  repetitions, output and checkout. When the line cannot be appended,
+  nothing runs. When the run
   ends, whatever its outcome, a `smoke-end` line names the attempt, its
   `success` and, if its `loading.json` was saved, the seal of it. A smoke
   with no end line (its run was killed, or the end line could not be

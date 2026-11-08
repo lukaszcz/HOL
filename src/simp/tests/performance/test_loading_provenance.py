@@ -1059,7 +1059,10 @@ class BuildBinding(unittest.TestCase):
         # The table is what the readers use: it names every field of an
         # open line that check_ledger compares.
         for key in ("baseline", "seed", "first_attempt", "source_key"):
-            self.assertIn(key, l.EVENT_KEYS["open"])
+            self.assertIn(key, l.EVENT_FIELDS["open"])
+        for event in ([1], {"a": 1}):
+            cases.append(("open", "event", "unknown event",
+                          dict(self.forged("open"), event=event)))
         for event, key, error, line in cases:
             with self.subTest(event=event, key=key, error=error):
                 self.ledger.write_bytes(good)
@@ -1154,6 +1157,41 @@ class BuildBinding(unittest.TestCase):
             self.run_protocol(output=self.repo / "s2")
         self.assertEqual(self.processes, before)
         self.assertFalse((self.repo / "s2").exists())
+
+    def test_a_smoke_refuses_what_ledger_status_refuses(self):
+        self.decision_settings()
+        self.assertTrue(self.decide("good")["success"])
+        opening = [r for r in map(json.loads,
+                                  self.ledger.read_text().splitlines())
+                   if r.get("event") == "open"][0]
+        for key in ("hash", "prev", "seq", "index"):
+            opening.pop(key, None)
+        tg.ledger_append(self.ledger, **opening)
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        with self.assertRaisesRegex(ValueError, "opening"):
+            l.ledger_status(status)
+        before, text = self.processes, self.ledger.read_bytes()
+        with self.assertRaisesRegex(ValueError, "opening"):
+            self.run_protocol(output=self.repo / "smoke")
+        self.assertEqual(self.processes, before)
+        self.assertFalse((self.repo / "smoke").exists())
+        self.assertEqual(self.ledger.read_bytes(), text)
+
+    def test_a_smoke_whose_output_cannot_be_created_ends_unsuccessful(self):
+        blocker = self.repo / "blocker"
+        blocker.write_text("a file\n")
+        before = self.processes
+        with self.assertRaises(OSError):
+            self.run_protocol(output=blocker / "smoke")
+        self.assertEqual(self.processes, before)
+        self.assertEqual(len(self.smoke_lines()), 1)
+        ends = self.smoke_ends()
+        self.assertEqual(len(ends), 1)
+        self.assertIs(ends[0]["success"], False)
+        self.assertIsNone(ends[0]["seal"])
+        status = SimpleNamespace(repo=self.repo, ledger=None, module=None)
+        smokes = l.ledger_status(status)["smokes"]
+        self.assertEqual([r["unfinished"] for r in smokes], [False])
 
     def test_a_smoke_is_listed_with_the_roles_swapped(self):
         self.decision_settings()
