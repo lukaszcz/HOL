@@ -3,8 +3,8 @@
    workload source bytes remain unchanged. Printing changes process layout:
    observations from this launcher are NOT acceptance timing evidence. *)
 val codegenTargets =
-  ["Cond_rewr.sml", "SimpTracking.sml", "Traverse.sml", "simpLib.sml",
-   "MatrixSupport.sml", "Performance.sml"]
+  ["Cond_rewr.sml", "Traverse.sml", "simpLib.sml", "MatrixSupport.sml",
+   "Performance.sml"]
 fun codegenSwitch enabled =
   (PolyML.Compiler.assemblyCode := enabled;
    PolyML.Compiler.codetreeAfterOpt := enabled;

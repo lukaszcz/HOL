@@ -11,7 +11,7 @@ val _ = List.app (fn name =>
   ["TraverseExt","Cond_rewrExt","OpeningExt","TravrulesExt",
    "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
    "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
-   "intReduceExt","integer_wordLibExt","realSimpsExt","SimpTracking",
+   "intReduceExt","integer_wordLibExt","realSimpsExt",
    "simpMarkerTheory","simpMarkerLib","splitLib","SplitData",
    "splitPersistLib"]
 val _ = new_theory "compiled_core_behavior"

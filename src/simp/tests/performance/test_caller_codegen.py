@@ -47,7 +47,7 @@ class CallerCodegenTests(unittest.TestCase):
 
     def test_extents_and_every_repeated_pass(self):
         text = listing()
-        spans = c.extents(text, Path("/private"), [])
+        spans = c.extents(text, Path("/private"))
         self.assertEqual(set(spans), set(c.TARGETS))
         span = spans["MatrixSupport.sml"]
         lines = text.splitlines(keepends=True)
@@ -61,14 +61,6 @@ class CallerCodegenTests(unittest.TestCase):
         self.assertEqual(rows[2]["static"]["allocation_reservations"],
                          ["sub x27,x27,#8"])
         self.assertEqual(rows[2]["body"], BODY[BODY.index("Fixture.run(1):"):])
-
-    def test_optional_source_bound_to_actual_inventory(self):
-        names = c.TARGETS + c.OPTIONAL
-        c.extents(listing(names), Path("/private"), c.OPTIONAL)
-        with self.assertRaisesRegex(ValueError, "inventory"):
-            c.extents(listing(names), Path("/private"), [])
-        with self.assertRaisesRegex(ValueError, "inventory"):
-            c.extents(listing(), Path("/private"), c.OPTIONAL)
 
     def test_loss_duplicate_nesting_nonprivate_abort_and_trace_faults(self):
         text = listing()
@@ -91,12 +83,12 @@ class CallerCodegenTests(unittest.TestCase):
         for mutant in mutations:
             with self.subTest(mutant=mutant[:80]):
                 with self.assertRaises(ValueError):
-                    c.extents(mutant, Path("/private"), [])
+                    c.extents(mutant, Path("/private"))
         # Duplicate spans with fresh event numbers, not just bad numbering.
         duplicate = text + listing(("Cond_rewr.sml",)).replace(
             "@@PAIR\t0", "@@PAIR\t10").replace("@@PAIR\t1\t", "@@PAIR\t11\t")
         with self.assertRaisesRegex(ValueError, "uniquely|duplicate"):
-            c.extents(duplicate, Path("/private"), [])
+            c.extents(duplicate, Path("/private"))
 
     def test_optional_optimizer_absence_is_not_fabricated(self):
         text = BODY[BODY.index("Fixture.run(1)\n"):]

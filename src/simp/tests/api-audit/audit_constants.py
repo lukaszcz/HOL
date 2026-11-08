@@ -10,10 +10,10 @@ SOURCES = ("Holmakefile", "selftest.sml", "ordinary.ML", "runtime.ML",
            "Documentation.sml", "audit_constants.py", "run.py")
 
 # Checks per process, by (foreign kind, owner timing).
-CASE_CHECKS = {("attribute", "before"): 178,
-               ("attribute", "after"): 174,
-               ("exporter", "before"): 182,
-               ("exporter", "after"): 177}
+CASE_CHECKS = {("attribute", "before"): 174,
+               ("attribute", "after"): 170,
+               ("exporter", "before"): 178,
+               ("exporter", "after"): 173}
 
 # Modules whose .sig and .sml the process must load from the native tree.
 NATIVE_MODULES = ("simpLib", "congLib", "Traverse", "Cond_rewr", "Trace",

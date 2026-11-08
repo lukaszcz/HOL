@@ -30,16 +30,15 @@ Each invocation collects fresh B/B and B/C private-source processes using the
 unchanged paired runner's build, library/tool/source/path, proof, callback and
 output-consumption checks. The private loader includes `CallerCodegen.sml`;
 original workload sources are copied byte-for-byte. The printing bracket
-covers `Cond_rewr`, optional `SimpTracking`, `Traverse`, `simpLib`,
+covers `Cond_rewr`, `Traverse`, `simpLib`,
 `MatrixSupport` and the installed `Performance` fixture. It restores all three
 compiler switches after success or an exception. It does not inspect closures,
 read process memory, cast runtime values or modify production modules.
 
 Full stdout is archived **before** parsing, including a failed process. Native,
 ICode, backend and optimized-lambda records retain emission order, repeated
-names, exact text hashes and original line offsets. Some modules emit backend
-output without the optimized-lambda printer form; an absent optional form is
-reported, not fabricated. Required caller/core forms remain mandatory.
+names, exact text hashes and original line offsets. Every target must emit
+its optimized-lambda form; a missing form is a failure, not fabricated.
 
 The exact dump is retained once. Paired receipts retain all original protocol,
 raw telemetry, measurements, proof checks and the complete stdout's hash/length

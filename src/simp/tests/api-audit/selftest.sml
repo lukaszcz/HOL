@@ -14,7 +14,7 @@ val forbidden_names =
    "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
    "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
    "intReduceExt","integer_wordLibExt","realSimpsExt",
-   "SimpTracking","trackedSimpDefaults","simpMarkerTheory",
+   "trackedSimpDefaults","simpMarkerTheory",
    "simpMarkerLib","SplitData","splitLib","splitPersistLib"]
 val used = ref ([] : string list)
 fun files stage = List.app (fn (file,dir) =>

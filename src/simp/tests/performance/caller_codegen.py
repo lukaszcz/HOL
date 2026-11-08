@@ -34,7 +34,6 @@ SPEC.loader.exec_module(assembly)
 require = paired.require
 TARGETS = ("Cond_rewr.sml", "Traverse.sml", "simpLib.sml",
            "MatrixSupport.sml", "Performance.sml")
-OPTIONAL = ("SimpTracking.sml",)
 MARKER = "@@CALLER_CODEGEN\t"
 HEADER = re.compile(r"(?:[^\s:]+|<top level>):?[ \t]*\n")
 SCHEMA = "task29-caller-codegen-v1"
@@ -49,16 +48,14 @@ def instrument_runner(original, helper):
     return result.replace("    Meta.qquse path;\n", "    codegenUse path;\n")
 
 
-def extents(text, private, optional):
+def extents(text, private):
     """Require complete, uniquely loaded private sources and printing spans.
 
     A duplicate, nested, missing, aborted or nonprivate extent is not evidence.
     Markers alone are insufficient: bind them to the paired use/used trace.
     Full raw stdout is kept separately; offsets below are one-indexed lines.
     """
-    allowed = set(TARGETS) | set(OPTIONAL)
-    require(set(optional) <= set(OPTIONAL), "unknown optional source")
-    expected = set(TARGETS) | set(optional)
+    expected = set(TARGETS)
     lines = text.splitlines(keepends=True)
     require(text.endswith("\n"), "truncated compiler stdout")
     result, pending = {}, None
@@ -73,7 +70,7 @@ def extents(text, private, optional):
         require(len(fields) == 3, "malformed codegen marker")
         _, stage, path = fields
         name = Path(path).name
-        require(name in allowed and Path(path) == private / name,
+        require(name in expected and Path(path) == private / name,
                 "unexpected/nonprivate compiler extent")
         if stage == "begin":
             require(pending is None and name not in result,
@@ -208,11 +205,9 @@ def diagnostic_loader(output, report):
                 diagnostic_accepted=False)
             if receipt.get("accepted"):
                 private = Path(receipt["environment"]["PAIR_PRIVATE"])
-                optional = [n for n in OPTIONAL if (private / n).exists()]
-                spans = extents(receipt["stdout"], private, optional)
+                spans = extents(receipt["stdout"], private)
                 collected[receipt["selection"]] = {
-                    name: records(span, require_optimized=name not in OPTIONAL)
-                    for name, span in spans.items()}
+                    name: records(span) for name, span in spans.items()}
                 report["stdout"][label]["extents"] = {
                     name: {k: v for k, v in span.items() if k != "text"}
                     for name, span in spans.items()}
@@ -242,9 +237,7 @@ def collect(args, output, baseline_control):
             "Printing and the diagnostic loader alter layout and heap state.",
             "Equal disassembly after relocation does not bind pool contents.",
             "Printed opaque constant names do not establish value identity.",
-            "Static reservations/calls are not dynamic execution totals.",
-            "SimpTracking emits backend/ICode/native output but may omit the "
-            "optimized-lambda printer form; no missing form is fabricated."])
+            "Static reservations/calls are not dynamic execution totals."])
     inputs = [Path(__file__), HERE / "CallerCodegen.sml",
               HERE / "test_caller_codegen.py",
               Path(assembly.__file__), Path(paired.__file__)]
@@ -371,15 +364,12 @@ def replay_report(output, repo):
                 "compiler output/proof trace mismatch")
         audit(checked, receipt)
         selected = manifest["selections"][receipt["selection"]]
-        names = {Path(s["git_path"]).name for s in selected["sources"]}
-        spans = extents(text, Path(selected["private"]),
-                        [n for n in OPTIONAL if n in names])
+        spans = extents(text, Path(selected["private"]))
         require(info["extents"] == {name: {k: v for k, v in span.items()
                 if k != "text"} for name, span in spans.items()},
                 "compiler extent offsets changed")
         collected[receipt["selection"]] = {
-            name: records(span, require_optimized=name not in OPTIONAL)
-            for name, span in spans.items()}
+            name: records(span) for name, span in spans.items()}
     comparison = {name: compare(collected["baseline"].get(name, []),
         collected["candidate"].get(name, [])) for name in dict.fromkeys(
             [*collected["baseline"], *collected["candidate"]])}

@@ -10,7 +10,7 @@ val forbidden =
   ["TraverseExt", "Cond_rewrExt", "OpeningExt", "TravrulesExt",
    "simpExtLib", "congExtLib", "pureSimpsExt", "boolSimpsExt",
    "combinSimpsExt", "numSimpsExt", "pred_setSimpsExt", "listSimpsExt",
-   "intReduceExt", "integer_wordLibExt", "realSimpsExt", "SimpTracking",
+   "intReduceExt", "integer_wordLibExt", "realSimpsExt",
    "simpMarkerTheory", "simpMarkerSyntax",
    "simpMarkerLib", "splitLib", "SplitData", "splitPersistLib"]
 val _ = List.app (fn name =>
