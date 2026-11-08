@@ -227,6 +227,11 @@ class LiveSourceGate(unittest.TestCase):
         for old, new in ((b'FVL [tm2] empty_tmset)\n',
                          b'FVL [tm2] empty_tmset) andalso false\n'),
                          (b'FVL [tm2] empty_tmset)\n',
+                          b'FVL [tm2] empty_tmset) (* x *) andalso false\n'),
+                         (b'FVL [tm2] empty_tmset)\n',
+                          b'FVL [tm2] empty_tmset) (* (* x *) *) andalso '
+                          b'false\n'),
+                         (b'FVL [tm2] empty_tmset)\n',
                           b'FVL [tm2] empty_tmset))\n')):
             with self.subTest(tail=new):
                 self.assertEqual(source.count(old), 1)
@@ -428,7 +433,8 @@ class LiveSourceGate(unittest.TestCase):
         del changed['modules']['Trace']
         with self.assertRaisesRegex(AssertionError, 'missing transitive'):
             audit.validate_manifest(changed)
-        # The extension engine's reporter is not an ordinary dependency.
+        # Tracking is one extent owned by Cond_rewr, which Cond_rewrExt
+        # reaches through Cond_rewr.note_rewrite; no SimpTracking module.
         changed = copy.deepcopy(self.manifest)
         changed['modules']['Cond_rewr']['imports'].append('SimpTracking')
         changed['modules']['SimpTracking'] = dict(

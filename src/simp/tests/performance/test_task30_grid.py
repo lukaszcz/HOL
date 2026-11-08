@@ -611,7 +611,8 @@ class Whole(ttg.Rig):
 
     def setUp(self):
         super().setUp()
-        # The files the candidate adds are absent at the baseline.
+        # The candidate adds no file here: every pinned file exists at the
+        # baseline, so nothing is absent.
         self.absent = set()
 
     def fake_blob(self, repo, rev, path):

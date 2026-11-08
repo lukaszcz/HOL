@@ -271,14 +271,43 @@ def delta_records():
 
 
 DECLARATION = re.compile(
-    r'^[ \t]*(?:fun|val|type|datatype|structure|local|open|exception|end)\b'
-    r'|\(\*', re.M)
+    r'^[ \t]*(?:fun|val|type|datatype|structure|local|open|exception|end)\b',
+    re.M)
+
+
+def strip_comments(text):
+    """`text` without its SML comments (nested ones included), each
+    replaced by a space; a string literal containing `(*` is kept."""
+    out, i, depth, n = [], 0, 0, len(text)
+    while i < n:
+        two = text[i:i + 2]
+        if depth == 0 and text[i] == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == '\\' else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif two == '(*':
+            if depth == 0:
+                out.append(' ')
+            depth += 1
+            i += 2
+        elif depth and two == '*)':
+            depth -= 1
+            i += 2
+        else:
+            if depth == 0:
+                out.append(text[i])
+            i += 1
+    return ''.join(out)
 
 
 def vperm_block(text):
-    """The tokens of `fun vperm` and `fun is_var_perm`, up to the start of
-    the next declaration or comment, so that nothing after the last
-    parenthesis of is_var_perm escapes the comparison."""
+    """The tokens of `fun vperm` and `fun is_var_perm`, comments removed,
+    up to the next declaration keyword at the start of a line, so that
+    nothing after the last parenthesis of is_var_perm escapes the
+    comparison."""
+    text = strip_comments(text)
     start = text.find('fun vperm')
     perm = text.find('fun is_var_perm', start)
     require(start >= 0 and perm > start, 'vperm/is_var_perm block not found')
@@ -358,8 +387,8 @@ def check_analysis(manifest, observations, baseline):
             additional_defining_input_names=sorted(extras))
     require(mapped == MAPPED_INPUTS.keys(),
             'reviewed defining-input mappings changed')
-    # Source-discovered edge: nothing ordinary reaches the extension
-    # engine's reporter, which only the extension engine imports.
+    # Source-discovered edge: rewrite tracking is one extent, owned by
+    # Cond_rewr; Cond_rewrExt reports through Cond_rewr.note_rewrite.
     require('SimpTracking' not in graph and
             'SimpTracking' not in observations[SRC + 'Cond_rewr.sml'] and
             'SimpTracking' not in observations[SRC + 'Cond_rewrExt.sml'] and

@@ -29,7 +29,7 @@ The earlier mixed branch APIs are not develop APIs. Their final owners are:
 | Earlier branch use | Final module/type/construction |
 | --- | --- |
 | `Traverse.CONTEXT_REDUCER`, `CONFIG_REDUCER`, configuration/solver/policy types, `XTRAVERSE`, root/observed/child-first traversal | `TraverseExt`; use `TraverseExt.reducer` at the reducer factory. |
-| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. `Cond_rewrExt.is_var_perm` is its own copy of Cond_rewr's unexported predicate (tested to agree); `Cond_rewr.sig` is develop's. |
+| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. `Cond_rewrExt.is_var_perm` is its own copy of Cond_rewr's unexported predicate (tested to agree); `Cond_rewr.sig` is develop's plus the `note_rewrite` spec. |
 | `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `OpeningExt`, `TravrulesExt`, `simpExtLib.threaded_cong_ss`. Ordinary congruence factories are unchanged. |
 | Extended `dproc_ss`, `SSFRAG`, fragments/sets/weakener data | `simpExtLib.ssfrag/simpset`, with `TraverseExt.reducer`, from the first relevant construction. |
 | Configured `congLib` calls | `congExtLib`; construct its distinct congset before installation and pass an extension simpset. |

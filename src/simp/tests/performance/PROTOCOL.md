@@ -598,7 +598,8 @@ disposition, with that of its follow-up, is `task30_dispose.py` (below).
   that the candidate may have changed: `task30_cases.SOURCES` lists them,
   each `.sml` with its `.sig`: the simplifier (`simpLib`, `Ho_Net`,
   `BoundedRewrites`, `Traverse`, `Travrules`, `Opening`, `Cond_rewr`,
-  `Trace`), the marker library (`markerLib`, `markerSyntax`)
+  `SimpTracking`, `Trace`), the marker library (`markerLib`,
+  `markerSyntax`)
   and the modules the cases call through them (`liteLib`, `Theory`,
   `Context`, `Uref`, `Drule`, `Conv`, `Tactical`). `run` records the git
   blob of each file at the baseline and at the candidate in the inventory
