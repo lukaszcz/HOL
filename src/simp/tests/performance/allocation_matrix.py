@@ -35,7 +35,6 @@ import acceptance as a
 import allocation_analysis as an
 import allocation_boundary as bd
 import allocation_schema as sc
-import client_dependencies as deps
 import evidence_bundle as bundle
 import loading
 import matrix_schema as ms
@@ -105,11 +104,12 @@ PATH_LAUNCHERS = (
 class Family:
     """The allocation fixture of the cases that one timing fixture of
     matrix.json (`fixture`) runs: the files installed in every private
-    directory as (file here, name there), and whether the process needs the
-    shared client closure recompiled privately (client_dependencies.py)."""
+    directory as (file here, name there). A process loads only the selected
+    simplifier sources, the installed files and the shared heap, so no
+    family installs a shared closure."""
 
-    def __init__(self, files, dependencies):
-        self.files, self.dependencies = files, dependencies
+    def __init__(self, files):
+        self.files = files
 
     @property
     def sources(self):
@@ -122,10 +122,10 @@ class Family:
 FAMILIES = {
     "MatrixPerformance.sml": Family(
         (("MatrixAllocation.sml", "Performance.sml"),
-         ("MatrixSupport.sml", "MatrixSupport.sml")), False),
+         ("MatrixSupport.sml", "MatrixSupport.sml"))),
     "ClientPerformance.sml": Family(
         (("ClientAllocation.sml", "Performance.sml"),
-         ("MatrixSupport.sml", "MatrixSupport.sml")), True)}
+         ("MatrixSupport.sml", "MatrixSupport.sml")))}
 
 
 class Task:
@@ -237,45 +237,8 @@ def grid_digest(header):
         shared["task"] = header["task"]  # TASK29B digests are unchanged
     if "structure" in header:  # so are those of grids without structure
         shared["structure"] = header["structure"]
-    if "dependencies" in header:  # and those of grids without client closure
-        shared["dependencies"] = header["dependencies"]
     data = json.dumps(shared, sort_keys=True, allow_nan=False).encode()
     return hashlib.sha256(data).hexdigest()
-
-
-PRIVATE = "@PRIVATE@"
-
-
-def dependency_products(installed, directory):
-    """The files of a private directory that client_dependencies installed,
-    by file name (theories sit below .hol/objs): sha256 and bytes. The
-    loader descriptors name the directory they were installed in; those are
-    sealed as a template (the directory replaced by PRIVATE, kept as text)
-    so that every job, in its own directory, installs the same product."""
-    found, here = {}, str(Path(directory).resolve())
-    for path in installed["products"]:
-        if path == "Holmakefile":  # the rules, not a source
-            continue
-        name = Path(path).name
-        sc.require(name not in found, "ambiguous installed file: " + name)
-        data = (Path(directory) / path).read_bytes()
-        if here.encode() in data:
-            data = data.replace(here.encode(), PRIVATE.encode())
-            found[name] = dict(sha256=hashlib.sha256(data).hexdigest(),
-                               bytes=len(data), template=data.decode())
-        else:
-            found[name] = dict(sha256=hashlib.sha256(data).hexdigest(),
-                               bytes=len(data))
-    return found
-
-
-def dependency_seal(want, private):
-    """What the installed file of a dependency entry must seal as in the
-    given private directory."""
-    if "template" not in want:
-        return {k: want[k] for k in ("sha256", "bytes")}
-    data = want["template"].replace(PRIVATE, str(private)).encode()
-    return dict(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
 
 
 def places(header):
@@ -290,8 +253,6 @@ def binding(header, case, size, where=None):
     name = name_of(case, size)
     named = {"structure": header["structure"]} if "structure" in header \
         else {}
-    if "dependencies" in header:
-        named["dependencies"] = header["dependencies"]
     return dict(
         named,
         case=case, size=size, steady=header["iterations"]["steady"][name],
@@ -325,8 +286,7 @@ def changed_settings(old, new):
              if old.get(k) != new[k]] +
             [k for k in ("task",) if old.get(k, DEFAULT_TASK) !=
              new.get(k, DEFAULT_TASK)] +
-            [k for k in ("structure", "dependencies")
-             if old.get(k) != new.get(k)] +
+            [k for k in ("structure",) if old.get(k) != new.get(k)] +
             [k + "-length" for k in LENGTH_KEYS
              if place_lengths(old).get(k) != place_lengths(new)[k]])
 
@@ -462,7 +422,7 @@ def harness_files(task=None):
         "allocation_boundary.json", task.iterations.name,
         *task.family.sources, "acceptance.py",
         "evidence_bundle.py", "loading.py", "task29_gate.py",
-        "task30_cases.py", "task31_cases.py", "client_dependencies.py",
+        "task30_cases.py", *(("task31_cases.py",) if task.rows else ()),
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
         "audit_evidence.py", "summarize.py")]
     inputs += [HERE / "allocator-counter" / n for n in (
@@ -512,7 +472,6 @@ class Grid:
     """Locked, sealed environment: toolchain, private runtime, shim."""
 
     task = TASKS[DEFAULT_TASK]
-    dependencies = None  # {side: installed shared files}: client family only
 
     def __init__(self, args):
         self.args = args
@@ -624,7 +583,6 @@ class Grid:
                 side, self.scratch / ("probe-" + side))
             self.sources[side] = source_map(inventory)
         self.check_sides()
-        self.dependencies = self.probe_dependencies()
         lib, _, self.source_seals = pr.build_runtime(
             args.source, self.scratch, self.run, report, patched)
         self.lib = lib.resolve(strict=True)
@@ -647,39 +605,14 @@ class Grid:
         self.header = self.make_header(lineage["head"], products)
         self.ready = True
 
-    def install_private(self, directory, inventory):
+    def install_private(self, directory):
         """The fixtures of the task in a private directory of one side (the
-        selected sources already checked out) and, for the client family,
-        the shared closure that can load a private simplifier, recompiled
-        there (client_dependencies.install); None for the others."""
+        selected sources already checked out)."""
         rp.install_fixtures(directory)
         for source, target in self.task.family.files:
             shutil.copyfile(HERE / source, directory / target)
         with (directory / "Holmakefile").open("a") as out:
             out.write("\npaired.exe: Performance.uo\n")
-        if not self.task.family.dependencies:
-            return None
-        return deps.install(self.hol, directory, {
-            Path(s["git_path"]).stem for s in inventory})
-
-    def probe_dependencies(self):
-        """What the shared closure installs in the private directory of each
-        side: {side: {file name: seal}}, with the shared inputs that the
-        installation read added to the sealed tools. None without one. The
-        control's is the baseline's, as its sources are."""
-        if not self.task.family.dependencies:
-            return None
-        found, shared = {}, {}
-        for side in SIDES:
-            directory = self.scratch / ("probe-" + side)
-            inventory = [dict(git_path=n) for n in self.sources[side]]
-            installed = self.install_private(directory, inventory)
-            found[side] = dependency_products(installed, directory)
-            shared.update(installed["inputs"])
-        sc.require(found["control"] == found["baseline"],
-                   "control dependencies differ from the baseline's")
-        self.tools.update(shared)
-        return found
 
     def check_toolchain_sources(self, built):
         """The tracked HOL sources (as the build left them) and sigobj, as
@@ -725,8 +658,6 @@ class Grid:
         named = {} if self.task.name == DEFAULT_TASK else dict(
             task=self.task.name)
         named["structure"] = sc.STRUCTURE
-        if self.dependencies is not None:
-            named["dependencies"] = self.dependencies
         return dict(
             named, schema=SCHEMA, baseline=args.baseline,
             candidate=args.candidate,
@@ -753,13 +684,7 @@ class Grid:
             sc.require(rev == self.revisions[side] and
                        source_map(sources) == self.sources[side],
                        "checkout differs from the grid's sources")
-            installed = self.install_private(directory, sources)
-            if installed is not None:
-                sc.require(dependency_products(installed, directory) ==
-                           self.dependencies[side] and all(
-                               self.tools.get(k) == v for k, v in
-                               installed["inputs"].items()),
-                           "shared closure differs from the grid's")
+            self.install_private(directory)
             job.inventory[side] = sources
         job.names = {Path(s["git_path"]).stem for v in job.inventory.values()
                      for s in v}
@@ -1030,19 +955,10 @@ def check_receipt(receipt, meta, experiment):
         physical = Path(info["physical"])
         seal = {k: info[k] for k in ("sha256", "bytes")}
         if physical.is_relative_to(private):
-            want = (source.get(physical.name) or
-                    meta["fixtures"].get(physical.name))
-            wanted = None if want is None else {
-                k: want[k] for k in ("sha256", "bytes")}
-            if want is None:
-                made = meta.get("dependencies", {}).get(side, {}).get(
-                    physical.name)
-                if made is not None:  # the directory may be a symlink's
-                    wanted = dependency_seal(made, private)
-                    if seal != wanted:
-                        wanted = dependency_seal(
-                            made, Path(private).resolve())
-            sc.require(wanted is not None and seal == wanted,
+            want = source.get(physical.name) or meta["fixtures"].get(
+                physical.name)
+            sc.require(want is not None and
+                       seal == {k: want[k] for k in ("sha256", "bytes")},
                        "wrong selected source: " + physical.name)
         else:
             sc.require(physical.is_relative_to(repo) and not

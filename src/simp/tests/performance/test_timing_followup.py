@@ -1840,10 +1840,11 @@ class ReplacedOpenings(Rig):
     # path and its own sealed code: the allocation matrix's building and
     # running of a toolchain, which its replay of an allocation grid does
     # not do.
-    # The TASK31 task of the matrix adds its case list and the client
-    # closure it recompiles in the private directories.
+    # The TASK31 task of the matrix adds its case list, which the matrix
+    # imports and validates when it is loaded; the replay reads it only
+    # through that.
     ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe",
-                        "client_dependencies", "task31_cases"}
+                        "task31_cases"}
 
     def test_the_disposition_is_downstream_of_the_replay(self):
         # The disposition consumes the replays and is in neither table's

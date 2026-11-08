@@ -2052,16 +2052,10 @@ and the use phase re-applies the conversion or tactic. The structural work row
 same kind of evidence as for the matrix cells, and is `equal`, `differs` or
 `inconclusive` beside the words, never in place of them.
 
-**The shared closure.** The client fixture loads theories and libraries that
-the matrix fixtures do not (numeric, arithmetic, reduce, boss). They are not
-the selected implementation, so `client_dependencies.install` recompiles that
-closure privately in each side's directory (the same source, the same
-compiler), and the header records the installed products per side
-(`dependencies`, in the grid digest, the binding and `changed_settings`; the
-inputs it read are among `tools`). A receipt may load such a file only if it
-is in the side's `dependencies` with the sealed content. The baseline and the
-control closure must be identical, and a job re-checks its own against the
-probe's.
+**No shared closure.** A process of either family loads the selected
+simplifier sources, the installed fixtures and the shared heap, so no closure
+of shared modules is recompiled in the private directories. A module that the
+fixture would load outside those is refused as a shared input.
 
 **Cells.** The `traversal_*` and `tactic_*` cells of the table: every size up
 to 1000 (the depth cases 0, 1, 10 and 100, the singletons 0), and 10000 only

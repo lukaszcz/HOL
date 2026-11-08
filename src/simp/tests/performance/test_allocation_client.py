@@ -118,8 +118,6 @@ class Families(unittest.TestCase):
                          ("ClientAllocation.sml", "MatrixSupport.sml"))
         self.assertEqual(m.FAMILIES["MatrixPerformance.sml"].sources,
                          m.FIXTURES)
-        self.assertTrue(TASK31.family.dependencies)
-        self.assertFalse(m.TASKS["task30"].family.dependencies)
 
     def test_both_families_install_the_names_the_protocol_checks(self):
         for family in m.FAMILIES.values():
@@ -139,11 +137,13 @@ class Families(unittest.TestCase):
         self.assertIn("allocation_iterations_task31.json", inputs)
         self.assertIn("ClientAllocation.sml", inputs | fixtures)
         self.assertNotIn("MatrixAllocation.sml", inputs | fixtures)
-        self.assertLessEqual({"task31_cases.py", "client_dependencies.py",
-                              "MatrixSupport.sml"}, inputs)
+        self.assertLessEqual({"task31_cases.py", "MatrixSupport.sml"},
+                             inputs)
+        self.assertNotIn("client_dependencies.py", inputs)
         inputs, fixtures = names(m.TASKS["task30"])
         self.assertIn("MatrixAllocation.sml", inputs)
         self.assertNotIn("ClientAllocation.sml", inputs | fixtures)
+        self.assertNotIn("task31_cases.py", inputs)
 
 
 class Fixture(unittest.TestCase):
@@ -414,246 +414,47 @@ class Decisions(unittest.TestCase):
         self.assertNotIn("infeasible", plain)
 
 
-class Dependencies(unittest.TestCase):
-    """The client family's shared closure in the header and the receipts."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.sb = tb.Sandbox(Path(self.tmp.name) / "sb", pairs=2)
-
-    def products(self, text="x"):
-        out = {}
-        for side, directory in self.sb.private.items():
-            (directory / "numTheory.sml").write_text(text)
-            out[side] = {"numTheory.sml": tb.seal(
-                directory / "numTheory.sml")}
-        return out
-
-    def with_file(self, side):
-        """A receipt that loads numTheory.sml from the private directory."""
-        raw = str(self.sb.private[side] / "numTheory.sml")
-
-        def mutate(events):
-            first = next(i for i, e in enumerate(events) if e[0] == "use")
-            events[first:first] = [["use", raw], ["used", raw]]
-            last = max(i for i, e in enumerate(events) if e[0] == "loaded")
-            events.insert(last + 1, ["loaded", raw])
-        receipt = self.sb.receipt("candidate", side, 0, 0, mutate=mutate)
-        receipt["paths"][raw] = dict(
-            physical=raw, **tb.seal(Path(raw)), related_products={},
-            origin="x")
-        return receipt, raw
-
-    def test_the_digest_binding_and_resume_know_the_dependencies(self):
-        header = self.sb.header()
-        base = m.grid_digest(header)
-        header["dependencies"] = self.products()
-        self.assertNotEqual(m.grid_digest(header), base)
-        self.assertEqual(m.changed_settings(self.sb.header(), header),
-                         ["dependencies"])
-        self.assertEqual(m.changed_settings(header, header), [])
-        bound = m.binding(header, tb.CASE, tb.SIZE)
-        self.assertEqual(bound["dependencies"], header["dependencies"])
-        self.assertNotIn("dependencies", m.binding(self.sb.header(),
-                                                   tb.CASE, tb.SIZE))
-        self.assertNotIn("dependencies", m.GRID_KEYS)
-
-    def test_the_header_of_a_client_grid_holds_them_and_others_do_not(self):
-        for task, expected in (("task30", False), ("task31", True)):
-            with self.subTest(task):
-                made = self.sb.real_grid()
-                made.task = m.task_named(task)
-                made.dependencies = self.products() if expected else None
-                with made.make():
-                    header = made.make_header(
-                        tb.CAND_PIN, self.sb.header()["toolchain_products"])
-                self.assertEqual("dependencies" in header, expected)
-
-    def test_a_receipt_may_load_a_file_the_closure_installed(self):
-        products = self.products()
-        header = self.sb.header(dependencies=products)
-        receipt, raw = self.with_file("baseline")
-        meta = dict(m.binding(header, tb.CASE, tb.SIZE), schema=m.SCHEMA,
-                    rejected=None)
-        self.assertIn(raw, receipt["paths"])
-        m.check_receipt(receipt, meta, "candidate")
-
-    def test_a_loaded_file_of_another_content_or_unknown_is_refused(self):
-        products = self.products()
-        receipt, raw = self.with_file("baseline")
-        for label, header in (
-                ("no closure", self.sb.header()),
-                ("another content", self.sb.header(dependencies={
-                    s: {"numTheory.sml": dict(sha256="0" * 64, bytes=1)}
-                    for s in m.SIDES})),
-                ("another side", self.sb.header(dependencies={
-                    s: {} if s == "baseline" else v
-                    for s, v in products.items()}))):
-            with self.subTest(label):
-                meta = dict(m.binding(header, tb.CASE, tb.SIZE),
-                            schema=m.SCHEMA, rejected=None)
-                with self.assertRaisesRegex(sc.InvalidAllocation,
-                                            "wrong selected source"):
-                    m.check_receipt(receipt, meta, "candidate")
-
-    def test_the_products_of_an_installation_are_listed_by_name(self):
-        root = Path(self.tmp.name) / "inst"
-        (root / ".hol/objs").mkdir(parents=True)
-        (root / ".hol/objs/numTheory.sml").write_text("val n = 1\n")
-        (root / "Holmakefile").write_text("rules\n")
-        (root / "arithmeticTheory.uo").write_text("%s/Foo.uo\n" % root)
-        installed = dict(products={
-            ".hol/objs/numTheory.sml": {}, "Holmakefile": {},
-            "arithmeticTheory.uo": {}})
-        found = m.dependency_products(installed, root)
-        self.assertEqual(sorted(found), ["arithmeticTheory.uo",
-                                         "numTheory.sml"])
-        self.assertNotIn("template", found["numTheory.sml"])
-        # a descriptor naming its directory is sealed as a template
-        self.assertEqual(found["arithmeticTheory.uo"]["template"],
-                         m.PRIVATE + "/Foo.uo\n")
-        other = Path(self.tmp.name) / "elsewhere"
-        data = (m.PRIVATE + "/Foo.uo\n").replace(m.PRIVATE, str(other))
-        self.assertEqual(
-            m.dependency_seal(found["arithmeticTheory.uo"], other),
-            dict(sha256=__import__("hashlib").sha256(
-                data.encode()).hexdigest(), bytes=len(data)))
-        installed["products"]["x/numTheory.sml"] = {}
-        with self.assertRaisesRegex(sc.InvalidAllocation, "ambiguous"):
-            m.dependency_products(installed, root)
-
-
 class Installation(unittest.TestCase):
-    """Grid.install_private, probe_dependencies and make_job for a client
-    task, with the shared closure stubbed."""
-    REVS = dict(baseline="a" * 40, control="a" * 40, candidate="b" * 40)
+    """Grid.install_private for the client family: its two fixtures and no
+    shared closure."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        root = Path(self.tmp.name)
-        self.hol = root / "hol"
-        (self.hol / "bin").mkdir(parents=True)
-        self.launcher = "%s --gcthreads=1 run --holstate=%s\n" % (
-            self.hol / "bin/hol", self.hol / "bin/hol.state0")
-        self.item = dict(git_path="src/Foo.sml", sha256="1" * 64, bytes=9,
-                         git_blob="2" * 40)
-        grid = m.Grid.__new__(m.Grid)
-        grid.task = TASK31
-        grid.scratch, grid.hol = root / "scratch", self.hol
-        grid.scratch.mkdir()
-        grid.revisions = dict(self.REVS)
-        grid.sources = {side: m.source_map([self.item]) for side in m.SIDES}
-        grid.tools = {}
-        self.grid, self.calls = grid, []
+        self.directory = Path(self.tmp.name) / "d"
+        self.directory.mkdir()
+        self.grid = m.Grid.__new__(m.Grid)
 
-        def checkout(side, directory):
-            directory.mkdir()
-            (directory / "Foo.sml").write_text("val x = 1\n")
-            return self.REVS[side], [self.item]
+    def install(self, task):
+        self.grid.task = task
+        with mock.patch.object(m.rp, "install_fixtures") as fixtures:
+            self.grid.install_private(self.directory)
+        fixtures.assert_called_once_with(self.directory)
 
-        def run(command, cwd):
-            directory = Path(command[command.index("-C") + 1])
-            (directory / "paired.exe").write_text(self.launcher)
-        grid.checkout, grid.run = checkout, run
-        self.content = {"n": "1"}
-
-        def install(repo, directory, names):
-            self.calls.append((repo, directory.name, sorted(names)))
-            theory = directory / ".hol/objs"
-            theory.mkdir(parents=True)
-            data = self.content["n"].encode()
-            (theory / "numTheory.sml").write_bytes(data)
-            seal = a.seal(theory / "numTheory.sml")
-            return dict(inputs={str(self.hol / "sigobj/x.uo"): dict(
-                sha256="4" * 64, bytes=1)},
-                products={".hol/objs/numTheory.sml": dict(
-                    role="shared-dependency", source="s", **seal),
-                    "Holmakefile": dict(sha256="5" * 64, bytes=2)})
-        patcher = mock.patch.object(m.deps, "install", install)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def probed(self):
-        for side in m.SIDES:
-            self.grid.checkout(side, self.grid.scratch / ("probe-" + side))
-        self.grid.dependencies = self.grid.probe_dependencies()
-        return self.grid.dependencies
-
-    def test_the_family_files_are_installed_with_the_closure(self):
-        directory = self.grid.scratch / "d"
-        self.grid.checkout("baseline", directory)
-        found = self.grid.install_private(directory, [self.item])
+    def test_the_client_family_installs_its_fixture_and_support(self):
+        self.install(TASK31)
         self.assertEqual(
-            (directory / "Performance.sml").read_bytes(),
+            (self.directory / "Performance.sml").read_bytes(),
             (HERE / "ClientAllocation.sml").read_bytes())
-        self.assertEqual((directory / "MatrixSupport.sml").read_bytes(),
-                         (HERE / "MatrixSupport.sml").read_bytes())
-        self.assertFalse((directory / "MatrixAllocation.sml").exists())
+        self.assertEqual(
+            (self.directory / "MatrixSupport.sml").read_bytes(),
+            (HERE / "MatrixSupport.sml").read_bytes())
+        self.assertFalse((self.directory / "MatrixAllocation.sml").exists())
         self.assertIn("paired.exe: Performance.uo",
-                      (directory / "Holmakefile").read_text())
-        self.assertEqual(self.calls, [(self.hol, "d", ["Foo"])])
-        self.assertIn(".hol/objs/numTheory.sml", found["products"])
+                      (self.directory / "Holmakefile").read_text())
 
-    def test_a_matrix_task_installs_no_closure(self):
-        self.grid.task = m.TASKS["task30"]
-        directory = self.grid.scratch / "d"
-        self.grid.checkout("baseline", directory)
-        self.assertIsNone(self.grid.install_private(directory, [self.item]))
-        self.assertEqual(self.calls, [])
-        self.assertEqual((directory / "Performance.sml").read_bytes(),
-                         (HERE / "MatrixAllocation.sml").read_bytes())
-        self.assertIsNone(self.grid.probe_dependencies())
+    def test_a_matrix_task_installs_the_matrix_fixture(self):
+        self.install(m.TASKS["task30"])
+        self.assertEqual(
+            (self.directory / "Performance.sml").read_bytes(),
+            (HERE / "MatrixAllocation.sml").read_bytes())
 
-    def test_the_probe_lists_the_products_of_each_side_and_seals_inputs(
-            self):
-        found = self.probed()
-        self.assertEqual(sorted(found), sorted(m.SIDES))
-        for side in m.SIDES:
-            self.assertEqual(list(found[side]), ["numTheory.sml"])
-        self.assertEqual(self.grid.tools, {
-            str(self.hol / "sigobj/x.uo"): dict(sha256="4" * 64, bytes=1)})
-        self.assertEqual(sorted(c[1] for c in self.calls),
-                         sorted("probe-" + s for s in m.SIDES))
-
-    def test_a_control_that_differs_from_the_baseline_is_refused(self):
-        original = m.dependency_products
-
-        def other(installed, directory):
-            found = original(installed, directory)
-            self.content["n"] = "2"
-            return found
-        for side in m.SIDES:
-            self.grid.checkout(side, self.grid.scratch / ("probe-" + side))
-        with mock.patch.object(m, "dependency_products", other):
-            with self.assertRaisesRegex(sc.InvalidAllocation,
-                                        "control dependencies"):
-                self.grid.probe_dependencies()
-
-    def test_a_job_installs_the_closure_and_checks_it_against_the_grid(self):
-        self.probed()
-        job = self.grid.make_job(0)
-        for side, directory in job.dirs.items():
-            self.assertTrue((directory / ".hol/objs/numTheory.sml").is_file())
-            self.assertIn("numTheory.sml", {
-                Path(p).name for p in job.sources})
-        self.assertEqual(job.names, {"Foo"})
-
-    def test_a_closure_that_changed_since_the_probe_is_refused(self):
-        self.probed()
-        self.content["n"] = "changed"
-        with self.assertRaisesRegex(sc.InvalidAllocation,
-                                    "shared closure differs"):
-            self.grid.make_job(0)
-
-    def test_a_shared_input_that_changed_is_refused(self):
-        self.probed()
-        self.grid.tools[str(self.hol / "sigobj/x.uo")] = dict(
-            sha256="9" * 64, bytes=1)
-        with self.assertRaisesRegex(sc.InvalidAllocation,
-                                    "shared closure differs"):
-            self.grid.make_job(0)
+    def test_no_family_installs_a_shared_closure(self):
+        # A process loads the selected sources, the installed files and the
+        # shared heap; a module outside them is refused as shared input.
+        self.assertFalse(hasattr(m.Family, "dependencies"))
+        self.assertFalse(hasattr(m, "deps"))
+        self.assertFalse(hasattr(m.Grid, "probe_dependencies"))
 
 
 if __name__ == "__main__":
