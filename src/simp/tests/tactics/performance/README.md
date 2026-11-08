@@ -9,7 +9,7 @@ controls. This subtree owns no production/shared files.
 ```sh
 P=src/simp/tests/tactics/performance
 python3 -B -m unittest discover -s "$P" -p 'test_*.py'
-python3 -B "$P/audit_sources.py" --output /tmp/task18-source.json
+python3 -B "$P/audit_sources.py" --output /tmp/source.json
 ```
 
 `audit_sources.py` compares **entire bytes**, not selected pretty bodies, of
@@ -57,7 +57,7 @@ and reuse include actual tactic proof reconstruction. Conversion/rule results
 are already theorems and their structural checks run outside the timer.
 Only the final escaping result is proof-checked per batch, not every iteration.
 This small boolean fixture is focused staging coverage, not a replacement for
-TASK18's broad staged exception/marker/late-context semantic suite.
+the broad staged exception/marker/late-context semantic suite in `..`.
 
 ## Authorized execution (serial only)
 
@@ -71,15 +71,15 @@ P=src/simp/tests/tactics/performance
 python3 -B "$P/run_tactics.py" --authorize-measurements \
   --pairs 10 --samples 3 --timeout 1800 \
   --fixed-iterations "$P/final-iterations.json" \
-  --output /tmp/task18-tactic-current
+  --output /tmp/tactic-current
 python3 -B "$P/run_tactics.py" --authorize-measurements \
   --baseline-control --pairs 10 --samples 3 --timeout 1800 \
   --fixed-iterations "$P/final-iterations.json" \
-  --output /tmp/task18-tactic-control
+  --output /tmp/tactic-control
 python3 -B "$P/summarize.py" \
-  --candidate /tmp/task18-tactic-current \
-  --control /tmp/task18-tactic-control \
-  --output /tmp/task18-tactic-analysis.json
+  --candidate /tmp/tactic-current \
+  --control /tmp/tactic-control \
+  --output /tmp/tactic-analysis.json
 ```
 
 `fixed-iterations.json` is the initial schedule. `final-iterations.json`

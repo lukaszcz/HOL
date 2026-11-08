@@ -246,9 +246,8 @@ Relocation alone must not change existing diagnostic origin/function labels,
 callback exception payloads or handler scopes, even when a new implementation
 module has a different name.
 
-SimpTracking extraction adds no per-rule inventory or new ordinary dispatch. Its
-extra helper call/source correspondence still needs a final cost audit;
-sharing identity is not itself a performance waiver. Do not move stack_limit to
+SimpTracking extraction adds no per-rule inventory or new ordinary dispatch.
+Sharing identity is not itself a performance waiver. Do not move stack_limit to
 the extension, duplicate tracking/Trace modules, or copy split persistence.
 
 ## 6. Standard recipes and the default-provider boundary

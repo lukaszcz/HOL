@@ -13,16 +13,16 @@ From the repository root:
 ```sh
 python3 -B -m unittest discover -s src/simp/tests/fragments -p 'test_*.py'
 python3 -B src/simp/tests/fragments/run_fragments.py \
-  --output /tmp/task15-fragment-behavior
+  --output /tmp/fragment-behavior
 # Run only when builds and other benchmarks are idle:
 python3 -B src/simp/tests/fragments/run_fragments.py \
   --performance-pairs 10 --samples 5 --seconds .2 \
-  --output /tmp/task15-fragment-performance
+  --output /tmp/fragment-performance
 # Baseline/baseline variability control, with the same batch options:
 python3 -B src/simp/tests/fragments/run_fragments.py \
   --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
   --performance-pairs 10 --samples 5 --seconds .2 \
-  --output /tmp/task15-fragment-control
+  --output /tmp/fragment-control
 ```
 
 Default baseline is the pinned develop commit. Default candidate `worktree`
@@ -61,7 +61,7 @@ Results escape through a ref on every iteration; complete inspection and proof
 application consume the final saved result after **every** calibration/sample,
 outside the construction timer. The sink counts timed iterations exactly.
 Input generation, TypeBase updates, full GCs and proof validation are untimed.
-This keeps compiler costs (TASK16) from concealing fragment costs (TASK15).
+This keeps compiler costs from concealing fragment costs.
 Both selections build before measurements start; paired process order alternates
 AB/BA. By default calibration doubles until the requested wall duration is
 reached, independently in each process (adaptive mode is unchanged).
@@ -83,8 +83,8 @@ remove independently chosen batch sizes as a source of allocator asymmetry:
 ```sh
 python3 -B src/simp/tests/fragments/run_fragments.py \
   --performance-pairs 10 --samples 5 \
-  --fixed-iterations /tmp/task15-schedule.json \
-  --output /tmp/task15-fragment-fixed
+  --fixed-iterations /tmp/schedule.json \
+  --output /tmp/fragment-fixed
 ```
 
 The JSON must be a complete object mapping **all 90** `label.n` keys to positive
@@ -156,8 +156,8 @@ Example single pilot with a fixed schedule:
 python3 -B src/simp/tests/fragments/run_fragments.py \
   --matched-environment --heap-mb 256 \
   --performance-pairs 1 --samples 3 --seconds .03 \
-  --fixed-iterations /tmp/task15-schedule.json \
-  --require-baseline-graphs --output /tmp/task15-matched-pilot
+  --fixed-iterations /tmp/schedule.json \
+  --require-baseline-graphs --output /tmp/matched-pilot
 ```
 
 Audit provenance is separate: `selections.*.sources` remains the ordinary
@@ -170,8 +170,9 @@ blobs or fixture products. Temporary snapshots are removed on all exits.
 
 This mode is **not a pinned-baseline full-source production runtime** and cannot
 establish that default overhead is fixed. Its purpose is to attribute remaining
-default full-module ambient effects versus exact local fragment work. Mixed
-dependencies/imports belong to TASK16. Compare individual CPU, non-GC, GC, user,
+default full-module ambient effects versus exact local fragment work. Compiler
+dependencies/imports are not attributed here (see `../compiled-core`).
+Compare individual CPU, non-GC, GC, user,
 system and wall rows against unmodified-default observations; do not substitute
 matched timings for default acceptance. One pair is only a pilot: report raw
 batches separately from the median-per-process paired statistic, without a
@@ -183,7 +184,7 @@ cannot distinguish their separate causal contributions.
 ordinary implementation is never replaced or transformed.
 Consequently this is a **matched registry/context** diagnostic, not a claim
 that the complete compiled-module environments match. Candidate's remaining
-paired-compiler dependency is still present and still owned by TASK16.
+paired-compiler dependency is not attributed here (see `../compiled-core`).
 
 ## Allocation scope and decisions
 

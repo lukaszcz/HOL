@@ -229,10 +229,11 @@ generic marker formats need no migration.
 `../tests/compatibility/audit_task27.py`; fresh ordinary load paths,
 initialization callbacks, shared controls and executable examples are checked
 in `../tests/api-audit`. Physical coverage ownership is in
-`../tests/compatibility/task26_relocation.py` and
-`../tests/compatibility/README.md` (the unchanged develop selftest is
+`../tests/compatibility/task26_relocation.py` with the coverage ledger
+`../tests/compatibility/coverage-ledger.json.gz` (the unchanged develop
+selftest is
 separate from the complete native-extension suite).
 
 These are documentation/dependency/identity gates. They establish readiness
 for expanded acceptance measurements, **not** final runtime/allocation,
-independent clean-build, full regression or release approval (TASK28 onward).
+independent clean-build, full regression or release approval.

@@ -10,7 +10,7 @@ From the repository root, with existing shared build prerequisites available:
 
 ```sh
 python3 -B src/simp/tests/fragments/routes/run_routes.py \
-  --output /tmp/task15-routes-current-UNIQUE
+  --output /tmp/routes-current-UNIQUE
 ```
 
 The baseline is pinned to compatibility `run_paired.BASE`
@@ -21,7 +21,7 @@ harness control (not candidate acceptance):
 ```sh
 python3 -B src/simp/tests/fragments/routes/run_routes.py \
   --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
-  --output /tmp/task15-routes-base-control-UNIQUE
+  --output /tmp/routes-base-control-UNIQUE
 ```
 
 Pure Python schema/mutation tests (no build or benchmark; the parent's

@@ -6,7 +6,7 @@ Run from the repository root:
 bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
   -C src/simp/tests/split-lifecycle -j1 check
 python3 -B src/simp/tests/compatibility/run_task23_lifecycle.py \
-  --output /tmp/task23-lifecycle
+  --output /tmp/lifecycle
 ```
 
 `check` is also part of `src/simp/src`'s selftest-enabled `all`. The Python

@@ -1,6 +1,6 @@
 # Native simplifier integration regression
 
-`selftest.sml` is the **byte-for-byte** TASK25 mixed selftest, relocated from
+`selftest.sml` is the **byte-for-byte** mixed selftest, relocated from
 `src/simp/src/`. It owns all 630 reviewed assertions plus the 12 explicitly
 mapped extension-registry repetitions. Its interleaved ordinary controls,
 proof/hypothesis predicates, exceptions, callback counters, warnings, source
@@ -10,8 +10,8 @@ suite that imports both types, **not** the ordinary selftest dependency scope.
 
 The ordinary `src/selftest.sml` is now the complete pinned develop input.
 Additional ordinary contracts live alongside this suite, not inside that input.
-See [the compatibility README](../compatibility/README.md)
-for the ownership map.
+The ownership map is `../compatibility/task26_relocation.py` together with
+the coverage ledger `../compatibility/coverage-ledger.json.gz`.
 
 ## Run
 
@@ -24,7 +24,8 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" \
 
 `check-full` executes the launcher and requires the entire mapped stream:
 **642 checks, seven warnings, and all 11 original aggregate result vectors
-(128 Boolean observations)**. The frozen TASK06 ledger and TASK10 mapping are
+(128 Boolean observations)**. The frozen coverage ledger and relocation
+mapping are
 not regenerated. Missing datatype cases, reordered/changed labels or warnings,
 missing vector fields and truncated output fail the gate.
 

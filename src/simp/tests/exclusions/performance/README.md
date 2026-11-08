@@ -2,7 +2,6 @@
 
 **Measurements need an exclusive window.** This suite never runs
 implicitly: even its Holmake `all` runs Python synthetic tests only.
-No production files or existing runners are modified.
 
 ## Offline preparation (no builds or HOL processes)
 
@@ -12,7 +11,7 @@ From repository root:
 python3 -B -m unittest discover \
   -s src/simp/tests/exclusions/performance -p 'test_*.py'
 python3 -B src/simp/tests/exclusions/performance/audit_sources.py \
-  --output /tmp/task17-source-correspondence.json
+  --output /tmp/source-correspondence.json
 ```
 
 The source audit reads full bytes from pinned develop
@@ -35,15 +34,15 @@ P=src/simp/tests/exclusions/performance
 python3 -B "$P/run_exclusions.py" --authorize-measurements \
   --pairs 10 --samples 3 --timeout 1800 \
   --fixed-iterations "$P/fixed-iterations.json" \
-  --output /tmp/task17-exclusion-current
+  --output /tmp/exclusion-current
 python3 -B "$P/run_exclusions.py" --authorize-measurements \
   --baseline-control --pairs 10 --samples 3 --timeout 1800 \
   --fixed-iterations "$P/fixed-iterations.json" \
-  --output /tmp/task17-exclusion-control
+  --output /tmp/exclusion-control
 python3 -B "$P/summarize.py" \
-  --candidate /tmp/task17-exclusion-current \
-  --control /tmp/task17-exclusion-control \
-  --output /tmp/task17-exclusion-analysis.json
+  --candidate /tmp/exclusion-current \
+  --control /tmp/exclusion-control \
+  --output /tmp/exclusion-analysis.json
 ```
 
 Candidate defaults to the working sources, including uncommitted changes;

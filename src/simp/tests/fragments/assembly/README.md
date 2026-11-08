@@ -57,8 +57,7 @@ permission to waive real assembly differences. Missing trees/call dumps fail
 collection rather than silently claiming a resolved relationship.
 
 Do not run this compiler workload concurrently with fragment benchmarks.
-For the task15 fixed run, wait until `/tmp/task15-logs/fixed-control.exit`
-exists **and** no `run_fragments.py` process remains before invoking it.
+Wait until no `run_fragments.py` process remains before invoking it.
 
 ## Comparison policy
 

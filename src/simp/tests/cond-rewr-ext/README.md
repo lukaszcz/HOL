@@ -68,7 +68,7 @@ These are additive tests, not relocations or replacements of existing cases.
 
 The executable establishes observable sharing and construction/application
 contracts. Proving that matcher preparation occurs **exactly once**, and that
-ordinary loading has no extension dependency, additionally requires TASK_12's
+ordinary loading has no extension dependency, additionally requires a
 production-source/dependency inspection; a black-box late-projection test
 alone cannot detect rebuilding an equivalent matcher while preserving its
 counter. Timing/allocation acceptance belongs to the separate paired probes,
