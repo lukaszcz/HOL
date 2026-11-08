@@ -7,13 +7,14 @@ records, named native bodies (all repeated occurrences), and exact comparisons.
 The trigger reuses the campaign's proof/name/persistence/callback fixture at
 sizes 0 and 10; code printing is enabled only around private simpLib source use.
 
-From the repository root, in the authorized exclusive window:
+From the repository root, in the authorized exclusive window, with `$OUT` a
+new directory outside the repository:
 
 ```sh
 P=src/simp/tests/exclusions/performance
-python3 -B "$P/assembly/run_assembly.py" --output "$P/evidence/codegen-current"
+python3 -B "$P/assembly/run_assembly.py" --output "$OUT/codegen-current"
 python3 -B "$P/assembly/run_assembly.py" --baseline-control \
-  --output "$P/evidence/codegen-control"
+  --output "$OUT/codegen-control"
 ```
 
 Required roots: `-*`, `filter_net_by_names`, and `remove_ssfrags`; helpers
@@ -26,4 +27,4 @@ native comparisons; exact raw operands, trees and machine words are retained.
 Named pool constants in trees are never silently equated. Valid collection
 with differences is successful inspection, not code-equality acceptance.
 These are static local bodies, not cumulative allocations, dynamic counts or
-timing/parity evidence. See `../evidence/RESULTS.md` for actual outcomes.
+timing/parity evidence.

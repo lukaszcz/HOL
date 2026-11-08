@@ -1,6 +1,0 @@
-{
-  "superseded": true,
-  "receipt": "../archive-compaction.json",
-  "prior_receipt": "../previous-inventories.json.gz",
-  "reason": "Failed raw bulk receipt replaced by compact unique failure.json.gz; duplicate sources/native copies now resolve through aliases. Final extents preserved losslessly in shared xz archive."
-}

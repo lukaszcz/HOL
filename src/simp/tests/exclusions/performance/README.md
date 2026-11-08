@@ -1,8 +1,8 @@
 # TASK17 focused ordinary exclusions and replay
 
-**Preparation only until main authorizes an exclusive window.** This suite
-never runs implicitly: even its Holmake `all` runs Python synthetic tests only.
-No production files or existing runners are modified. All new files live here.
+**Measurements need an exclusive window.** This suite never runs
+implicitly: even its Holmake `all` runs Python synthetic tests only.
+No production files or existing runners are modified.
 
 ## Offline preparation (no builds or HOL processes)
 
@@ -22,9 +22,9 @@ identity includes the literal parser, the single net filter, the single dproc
 filter, unmatched deletion-history recording and replay. This is structural
 source evidence, not proof of an identical ambient runtime or timing parity.
 
-## Main's authorized run commands
+## Run commands
 
-Only after **all** builds/other benchmark processes cease, run these commands
+Only when **all** builds/other benchmark processes cease, run these commands
 **serially** (not in the background). The flag asserts main authorization;
 it does not detect other HOL builds. A nonblocking advisory lock on the worktree
 Git directory prevents overlapping instances of this runner only, without
@@ -55,8 +55,7 @@ uses the same count for both sides and all pairs, with no adaptive doubling.
 `fixed-iterations.json` is an **uncalibrated initial schedule**; it does not
 claim a minimum duration. Inspect all recorded raw batch durations. If batches
 are too short, prepare a longer *common* schedule and rerun both full campaigns;
-never cherry-pick samples or silently discard the initial run. No native
-elaboration, launch or measurements were performed during preparation.
+never cherry-pick samples or silently discard the initial run.
 
 ## Workload matrix
 
@@ -131,6 +130,5 @@ remains visible even if control is noisy. An interval spanning one means
 whole-plan performance acceptance. Structural source identity and statistical
 uncertainty must be reported separately.
 
-After retaining compact unique receipts/analysis needed for the handoff, remove
-scratch output. No copied build tree, generated launcher, heap or cache belongs
-in this directory or a commit.
+Remove scratch output when finished. No receipt, copied build tree, generated
+launcher, heap or cache belongs in this directory or a commit.
