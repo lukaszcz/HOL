@@ -42,7 +42,7 @@
     },
     {
       "path": "holproject.toml",
-      "blob": "b450ad5d53b7f67140af92a399a6835cd898a85d",
+      "blob": "51cba3532821495d6447c2bab23d4128fbd9541f",
       "reason": "adds h4pedant line-length entries; only it reads them"
     },
     {
@@ -67,7 +67,7 @@
     },
     {
       "path": "src/simp/README",
-      "blob": "247e81b849089edb241969d2f46c2aca5bd0c017",
+      "blob": "af62d532a641cf05e7d24b67cd3423705af37b55",
       "reason": "documentation"
     },
     {
