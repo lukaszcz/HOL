@@ -52,10 +52,7 @@ count of the pilot; a table without fixed seconds, and the TASK30 and
 TASK29A tables, whose counts and archives are ramp, declare it. The counts
 file records the schedule and the rule, and a replay derives both again; a
 counts revision of a warmup table rescales a cell whose warm-up or batch was
-too short by the same factor. The default follows the TASK30A validation
-(2026-11-03, 12 cells, 20 pairs, 5 samples): the median ratio of the B/B
-interval widths, warmup over ramp, was 1.005 (CPU) and 1.004 (wall) at 0.38
-of the time, so "R <= 1.10: adopt warmup with unchanged pairs".
+too short by the same factor. The default is `warmup`.
 
 A table may be a follow-up (`replaces`, `cells`): it takes over the cells
 of an earlier grid that ended inconclusive and measures only those, as a

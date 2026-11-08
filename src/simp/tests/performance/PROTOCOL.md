@@ -18,9 +18,8 @@ archives they write. The sections below state the protocol of one experiment
 From the repository root. The host is shared and no exclusive window is
 required; a checkout's own builds and measurements stay serial, under its lock.
 `--authorize-measurements` is the explicit authorization to build and measure,
-not a claim of exclusive access. Every child process of the measurement
-harness gets `/dev/null` as standard input and the compiler version is
-queried with `poly -v`: see "Standard input and the version query". Run:
+not a claim of exclusive access. Standard input and the compiler version
+query are specified in "Standard input and the version query". Run:
 
 ```sh
 python3 -B src/simp/tests/performance/acceptance.py run \
@@ -332,10 +331,15 @@ them immediately.
 Poly/ML enters its top level and reads standard input, so every child that
 can start Poly/ML or HOL gets `/dev/null` (`run_paired.execute`,
 `loading.execute`, `acceptance.run_logged`, `verify_builds`,
-`api-audit/run.py`). The exceptions are the configure step, whose input is
-the file `tools/smart-configure.sml` (`run_logged(..., stdin=path)`), and git
-calls (`acceptance.git`, `run_paired.git`), which inherit it. The compiler is
-queried with `poly -v`; `poly --version` enters the top level.
+`api-audit/run.py`). The exception is git calls (`acceptance.git`,
+`run_paired.git`), which inherit it. The harness's own configure runs are
+`poly --error-exit --use tools/smart-configure.sml` through
+`loading.execute`, so they get `/dev/null` too (`startup_gate.py`,
+`allocator-counter/bootstrap_probe.py`). `verify_builds` nevertheless accepts
+an independent build whose configure step has the input file
+`tools/smart-configure.sml` (`run_logged` supports `stdin=path`) and checks
+its hash; the harness makes no such call. The compiler is queried with
+`poly -v`; `poly --version` enters the top level.
 
 The runners `fragments/assembly/run_assembly.py`,
 `tactics/performance/run_tactics.py` and
@@ -506,10 +510,10 @@ that pins the history constant is edited with it:
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
 follow-up". The disposition checks (`task30_dispose`, `task31_dispose`) name
-every changed file and the entry to paste; the grid's `check_code` says only
-"changed driver", "changed engine" or "changed acceptance". The follow-up's
-and the disposition's histories hold the seals of `40e176538f`, the code that
-made their records.
+every changed file and the entry to paste; the grid's `check_code` names the
+changed driver, engine, acceptance or sealed file, or the layout-seed check,
+and no entry to paste. The follow-up's and the disposition's histories hold
+the seals of `40e176538f`, the code that made their records.
 
 ## Timing grids, replay and resume
 
