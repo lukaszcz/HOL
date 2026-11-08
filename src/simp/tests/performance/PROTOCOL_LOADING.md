@@ -150,7 +150,7 @@ partial/unresolved output, failed/empty discovery and unsupported discovery
 formats block the run, rather than admitting a partial runtime inventory.
 Before success the original file seals are rechecked and discovery is repeated;
 changed mappings or same-byte symlink retargeting also reject. ASLR addresses
-are not identities. PATH's `poly --version` is separately archived compiler
+are not identities. PATH's `poly -v` is separately archived compiler
 provenance, queried under the same environment/timeout; it is not proof of
 HOL's linked runtime version. This is local consistency checking, not hostile
 producer authentication or protection against concurrent changes restored

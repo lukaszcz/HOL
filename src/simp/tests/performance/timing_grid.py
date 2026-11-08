@@ -3755,7 +3755,7 @@ class Grid:
             return self.h.prepare(args)
         if args.action in ("pilot", "run", "extend"):
             a.require(args.authorize_measurements,
-                      "exclusive window required")
+                      "measurement authorization required")
         if args.action in ("pilot", "run"):
             a.exact_pin(args.baseline)
         if args.action == "pilot":

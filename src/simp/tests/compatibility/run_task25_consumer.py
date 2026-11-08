@@ -598,7 +598,7 @@ def main():
                 require(path is not None, "missing tool: " + tool)
                 m.setdefault("tools", {})[tool] = {"path": path,
                                                    **fingerprint(Path(path).resolve())}
-            runner.inside("poly-version", ["poly", "--version"], scan=False)
+            runner.inside("poly-version", ["poly", "-v"], scan=False)
             if not args.existing_core:
                 runner.inside("configure", ["sh", "-c",
                                "exec poly < tools/smart-configure.sml"])

@@ -511,7 +511,7 @@ class FirstStage(Rig):
 
     def test_measurements_need_authorization_and_exact_pins(self):
         argv = self.argv("run", self.root / "x", "--candidate", CANDIDATE)
-        with self.assertRaisesRegex(ValueError, "exclusive window"):
+        with self.assertRaisesRegex(ValueError, "measurement authorization"):
             self.go(argv)
         with self.assertRaisesRegex(ValueError, "exact full git pin"):
             self.go(self.argv("run", self.root / "y", "--candidate",
@@ -1117,7 +1117,7 @@ class SecondStage(Rig):
         self.control = self.wide_unless_long
         grid, _, _ = self.first()
         self.runs.clear()
-        with self.assertRaisesRegex(ValueError, "exclusive window"):
+        with self.assertRaisesRegex(ValueError, "measurement authorization"):
             self.go(self.argv("extend", self.root / "ext", "--grid",
                               str(grid)))
         self.assertEqual(self.runs, [])
@@ -1483,7 +1483,7 @@ class Pilot(Rig):
             self.pilot(extra=("--samples", "2"))
         with self.assertRaisesRegex(ValueError, "exact full git pin"):
             self.pilot(extra=("--baseline", "develop"))
-        with self.assertRaisesRegex(ValueError, "exclusive window"):
+        with self.assertRaisesRegex(ValueError, "measurement authorization"):
             self.go(self.argv("pilot", self.root / "p"))
         self.assertEqual(self.launched, [])
 
@@ -6294,7 +6294,7 @@ class Refusals(Rig):
                          CANDIDATE)
         code, out, err = self.main(argv)
         self.assertEqual((code, out), (tg.REFUSED, ""))
-        self.assertEqual(err, "REFUSED: exclusive window required\n")
+        self.assertEqual(err, "REFUSED: measurement authorization required\n")
         self.assertFalse((self.root / "grid").exists())
 
     def test_a_held_lock_and_a_changed_checkout_are_refusals_too(self):
@@ -6403,9 +6403,11 @@ class Logged(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 a.run_logged(["/bin/true"], log, [], 60)
 
-    def test_the_default_is_the_inherited_standard_input(self):
-        self.assertIsNone(
-            inspect.signature(a.run_logged).parameters["stdin"].default)
+    def test_the_default_is_no_standard_input(self):
+        # Never the caller's: a Poly/ML top level would wait on an open one.
+        self.assertIs(
+            inspect.signature(a.run_logged).parameters["stdin"].default,
+            subprocess.DEVNULL)
 
 
 class Options(Rig):

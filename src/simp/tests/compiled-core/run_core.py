@@ -92,7 +92,7 @@ def main(argv=None):
         manifest["tools"][str(Path(poly).resolve())] = paired.fingerprint(
             Path(poly).resolve())
         manifest["poly_version"] = paired.execute(
-            [poly, "--version"], repo, env, args.timeout)
+            [poly, "-v"], repo, env, args.timeout)
         require(manifest["poly_version"]["exit"] == 0, "poly version failed")
         manifest["machine"] = dict(uname=list(os.uname()),
             cpu_affinity=sorted(os.sched_getaffinity(0)),

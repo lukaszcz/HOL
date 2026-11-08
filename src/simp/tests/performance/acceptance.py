@@ -445,7 +445,9 @@ def negative_controls(pairs=10):
     def launch(kind):
         command = [sys.executable, str(Path(__file__).resolve()),
                    "_control-worker", kind]
-        process = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+        process = subprocess.run(command, text=True,
+                                 stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, timeout=10)
         processes.append({"argv": command, "exit": process.returncode,
                           "stdout": process.stdout, "stderr": process.stderr})
@@ -531,11 +533,16 @@ def verify_builds(path, baseline, candidate):
     require(isinstance(tools["poly"]["version"], str) and
             tools["poly"]["version"].strip(),
             "missing compiler/runtime version")
-    version = subprocess.run([tools["poly"]["path"], "--version"],
-                             text=True, stdout=subprocess.PIPE,
+    # `poly -v` prints the banner and the RTS version; `poly --version` is no
+    # option (it enters the top level and reads stdin), which older records
+    # used. A record holding "RTS version" is compared in full; a legacy
+    # record is compared by its banner alone (see poly_version_matches).
+    version = subprocess.run([tools["poly"]["path"], "-v"],
+                             text=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, timeout=10)
     require(version.returncode == 0 and
-            version.stdout.strip() == tools["poly"]["version"] and
+            poly_version_matches(tools["poly"]["version"], version.stdout) and
             version.stdout.startswith("Poly/ML"),
             "compiler/runtime version changed")
     roots, products, logs, commands = [], [], set(), []
@@ -632,12 +639,31 @@ def verify_builds(path, baseline, candidate):
             "shared run_paired results cannot satisfy this prerequisite"}
 
 
-def run_logged(command, output, fds, timeout, stdin=None, append=False):
+def poly_banner(text):
+    """The Poly/ML version banner of a version query's output: `poly -v`
+    appends "RTS version: ..." to the line `poly --version` printed."""
+    return text.split("RTS version")[0].strip()
+
+
+def poly_version_matches(recorded, probe):
+    """Whether `probe`, the output of `poly -v` now, is the version a record
+    holds. A record made by `poly -v` holds the RTS version too, and the
+    whole stripped text must be equal (a different RTS build, as another
+    architecture or an interpreter, is another runtime). A legacy record,
+    made by `poly --version`, holds the banner alone, and only the banner of
+    the probe is compared with it."""
+    if "RTS version" in recorded:
+        return recorded.strip() == probe.strip()
+    return poly_banner(probe) == poly_banner(recorded)
+
+
+def run_logged(command, output, fds, timeout, stdin=subprocess.DEVNULL,
+               append=False):
     """Run `command` with its output in the new file `output` (`append`: the
     end of an existing file, for a second command of the same log). The
-    child inherits this process's standard input unless `stdin` names
-    another: subprocess.DEVNULL, for a command that must never wait for a
-    reader, or a path, a file the command reads (`poly < file`)."""
+    child reads no standard input (subprocess.DEVNULL) unless `stdin` names
+    a path, a file the command reads (`poly < file`); it never inherits this
+    process's, which a Poly/ML top level would wait on."""
     expired = False
     code = None
     with Path(output).open("a" if append else "x") as stream, \
@@ -710,7 +736,7 @@ def run(args):
     exact_pin(args.baseline)
     exact_pin(args.candidate)
     require(args.authorize_measurements,
-            "require exclusive build/measurement window authorization")
+            "require measurement authorization")
     require(args.case and len(args.case) == len(set(args.case)) and
             all(re.fullmatch(r"[a-z][a-z0-9_]*", c) for c in args.case),
             "require unique safe matrix cases")

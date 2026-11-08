@@ -311,7 +311,7 @@ def analyze_sources(sources):
             target.write_bytes(data)
             completed = subprocess.run(
                 [str(TOOL), str(target)], capture_output=True, timeout=30,
-                check=True)
+                stdin=subprocess.DEVNULL, check=True)
             require(not completed.stderr,
                     'dependency analyzer diagnostics for ' + path + ': ' +
                     completed.stderr.decode(errors='replace'))

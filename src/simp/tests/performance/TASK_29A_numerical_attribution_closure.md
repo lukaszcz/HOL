@@ -4,6 +4,11 @@
 "Attribution and policy-owner disposition" near the end. The earlier
 sections are kept as recorded.
 
+**Amendment (2026-11-05):** the exclusive-environment requirement named in
+the earlier sections' lists of what remains required was waived by the
+policy owner; the host is shared. The waiver changes no recorded text,
+number or measurement below.
+
 ## Context and dependency
 
 Bounded follow-up to TASK29, after TASK28. TASK29 is **blocked**, not landed

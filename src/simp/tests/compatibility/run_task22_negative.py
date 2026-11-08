@@ -39,7 +39,8 @@ def main():
                             ("derivation", "lifetimes")] + [Path(__file__)]}}
 
     def execute(label, command, cwd, expected):
-        p = subprocess.run(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+        p = subprocess.run(command, cwd=cwd, env=env,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, timeout=900)
         log = p.stdout.decode(errors="replace")
         name = label + ".log.gz"

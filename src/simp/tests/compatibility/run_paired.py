@@ -242,7 +242,10 @@ def validate(receipt, *, selection, fixture, control, private, repo,
 
 
 def execute(command, cwd, env, timeout):
+    # Never inherit the caller's stdin: Poly/ML (and so HOL) reads it, and an
+    # open pipe that is never closed would hang the child until the timeout.
     p = subprocess.Popen(command, cwd=cwd, env=env, text=True,
+                         stdin=subprocess.DEVNULL,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          start_new_session=True,
                          pass_fds=PERFORMANCE_LOCK_FDS)
@@ -506,9 +509,9 @@ def main():
         poly = shutil.which("poly", path=env["PATH"])
         require(poly is not None, "poly not found")
         manifest["tools"][poly] = fingerprint(Path(poly).resolve())
-        manifest["poly_version"] = execute([poly, "--version"], repo, env,
+        manifest["poly_version"] = execute([poly, "-v"], repo, env,
                                             args.timeout)
-        require(manifest["poly_version"]["exit"] == 0, "poly --version failed")
+        require(manifest["poly_version"]["exit"] == 0, "poly -v failed")
         if performance:
             import platform
             manifest["machine"] = {
