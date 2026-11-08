@@ -1,58 +1,43 @@
 """The reviewed differences of the TASK31 candidate from the baseline.
 
-The data is task31_attributed.json (a separate file, so that adding a
-reviewed file changes no seal of the counts: it is not among the sealed
-files of the timing table; every record carries its seal instead):
-
-    {"schema": "task31-attributed-v1",
-     "entries": [{"path", "kind", "baseline_blob", "candidate_blob",
-                  "reason", "gate"}, ...],
-     "history": {SHA256 OF AN EARLIER FILE: [its entries]}}
-
-`kind` is one of
-
-- `source`: a simplifier source that a cell elaborates and whose private
-  copy differs between the two sides; a cell whose every difference is of
-  such entries is `attributed`;
-- `heap`: a file of the shared heap (hol.state0), which both sides load;
-- `build`: a build file (Holmakefile, MANIFEST, a .ML tool script) of a
-  directory a cell loads from.
-
-`gate` names what measures the difference. `baseline_blob` is the git blob
-at the baseline (null for a file the baseline lacks). `candidate_blob` is
-the reviewed git blob at the candidate; null is the placeholder of an entry
-whose blob is to be filled at integration, and the identity grid refuses to
-run while one is left (`unfilled`).
+The data is task31_attributed.json, read and validated by task31_pins.py
+(which describes its shape and kinds, and projects it onto the pins of the
+timing table). It is a separate file, so that adding a reviewed file
+changes no seal of the counts; every record carries its seal instead.
 
 `account` classifies every tracked file that differs between the two
 commits, from the git blobs and from the files the receipts show were
 loaded: a file is attributed (an entry with exactly the blobs), or decisive
 (loaded and unattributed, a build tool or build sequence and unattributed, a
-build file of a loaded directory and unattributed, an entry with other
-blobs), or not loaded (proved by the receipts), or excluded. EXCLUDED is the
+build file of a loaded directory and unattributed, a file Holmake reads
+upward (UPWARD) from a loaded directory or an ancestor of one and
+unattributed, an entry with other blobs), or not loaded (proved by the
+receipts), or excluded. EXCLUDED is the
 reviewed list of the paths that are no part of any build a cell measures,
 each with its reason; no other path is left out.
 """
-import json
+import hashlib
 import posixpath
-import re
 
 import acceptance as a
 import timing_grid as tg
+from task31_pins import FILE, SOURCE_SUFFIXES, load
 
-FILE = a.HERE / "task31_attributed.json"
-SCHEMA = "task31-attributed-v1"
-KINDS = ("source", "heap", "build")
-FIELDS = ("baseline_blob", "candidate_blob", "gate", "kind", "path",
-          "reason")
-SOURCE_SUFFIXES = (".sml", ".sig")
 BUILD_NAMES = ("Holmakefile", "MANIFEST")
+# The files Holmake reads from a directory it builds in and from every
+# directory above it (holpathdb.files_upward_in_hierarchy and
+# HMProject.load): the project file and its local override, the holpath
+# registration and the pre-exec script. They decide what a build does.
+UPWARD = ("holproject.toml", "holproject.local.toml", ".holpath",
+          ".hol_preexec")
 # The reviewed exclusions: (path or directory, reason). A path is excluded
 # only if no receipt shows it loaded. The measuring harness and the paired
 # runner are installed from the checkout, the same file in both private
 # trees, and are bound by the harness seals and the checkout record; neither
-# is read from either commit. The documentation sources are read by no build
-# of the shared tree or of a cell.
+# is read from either commit. The documentation sources are read only by the
+# help-database step of the build (`build_help`, which runs after the sources
+# are built and the build is stamped): it makes the help database and the
+# manuals, nothing a cell loads.
 EXCLUDED = (
     ("src/simp/tests/performance/",
      "the measuring harness: installed from the checkout, the same file in "
@@ -62,8 +47,8 @@ EXCLUDED = (
     ("src/simp/tests/compatibility/paired/",
      "the paired fixtures: installed from the checkout, the same file in "
      "both private trees"),
-    ("help/", "documentation sources (Docfiles): no build of a cell or of "
-     "the shared tree reads them"),
+    ("help/", "documentation sources (Docfiles): read only by the "
+     "help-database step of the build, which makes nothing a cell loads"),
     ("CLAUDE.md", "instructions for assistants: documentation, outside "
      "every build"))
 # The build tools, their prelude and the build sequences decide what is
@@ -73,62 +58,8 @@ TOOLCHAIN = ("tools/", "tools-poly/", "bin/")
 DECISIVE = ("unattributed", "unattributed-build", "mismatch")
 
 
-def blob_ok(value):
-    return value is None or (isinstance(value, str) and re.fullmatch(
-        "[0-9a-f]{40}", value) is not None)
-
-
-def validate(entries):
-    """The entries, if they are well formed: exact fields, a known kind,
-    blob-or-null, a reason and a gate, sorted by path, no path twice, the
-    two blobs of an entry different."""
-    a.require(isinstance(entries, list), "malformed attribution entries")
-    for e in entries:
-        a.require(isinstance(e, dict) and sorted(e) == list(FIELDS),
-                  "malformed attribution entry: %r" % (e,))
-        a.require(isinstance(e["path"], str) and e["path"] and
-                  e["kind"] in KINDS, "malformed attribution entry: %r"
-                  % (e,))
-        a.require(blob_ok(e["baseline_blob"]) and
-                  blob_ok(e["candidate_blob"]),
-                  "attribution blob is not a git blob: " + e["path"])
-        a.require(all(isinstance(e[k], str) and e[k].strip()
-                      for k in ("reason", "gate")),
-                  "attribution without a reason and a gate: " + e["path"])
-        a.require(e["kind"] == "build" or
-                  e["path"].endswith(SOURCE_SUFFIXES),
-                  "a %s attribution is of a source file: %s"
-                  % (e["kind"], e["path"]))
-        a.require(e["candidate_blob"] is None or
-                  e["candidate_blob"] != e["baseline_blob"],
-                  "attribution blobs do not differ: " + e["path"])
-    paths = [e["path"] for e in entries]
-    a.require(paths == sorted(set(paths)),
-              "attribution entries are not sorted and unique by path")
-    return entries
-
-
-def load(path=None):
-    """The document of the attribution file (validated): {entries, history}
-    and the seal of the file."""
-    path = FILE if path is None else path
-    found = json.loads(path.read_text())
-    a.require(isinstance(found, dict) and sorted(found) == [
-        "entries", "history", "schema"] and found["schema"] == SCHEMA,
-        "not a TASK31 attribution file: %s" % path)
-    validate(found["entries"])
-    a.require(isinstance(found["history"], dict), "malformed history")
-    for seal, earlier in found["history"].items():
-        a.require(re.fullmatch("[0-9a-f]{64}", seal) is not None,
-                  "malformed attribution history key")
-        validate(earlier)
-    return dict(entries=found["entries"], history=found["history"],
-                seal=a.seal(path))
-
-
 def digest(entries):
     """The seal of a table of entries."""
-    import hashlib
     return hashlib.sha256(tg.canonical(entries).encode()).hexdigest()
 
 
@@ -153,24 +84,6 @@ def paths(document):
 def unfilled(entries):
     """The paths whose candidate blob is still the placeholder."""
     return [e["path"] for e in entries if e["candidate_blob"] is None]
-
-
-def pins(entries, within):
-    """The pins of a timing table: {path: {blob, reason}} of the filled
-    entries whose path is one of `within`, the table's sources. The other
-    entries (the shared heap and the build files) are no source of the
-    table: adding one changes no pin."""
-    within = set(within)
-    return {e["path"]: dict(blob=e["candidate_blob"], reason=e["reason"])
-            for e in entries
-            if e["candidate_blob"] is not None and e["path"] in within}
-
-
-def pin_history(document, within):
-    """The pins of each earlier version of the file (by its sha256), as
-    `pins` reads them."""
-    return {seal: pins(earlier, within)
-            for seal, earlier in document["history"].items()}
 
 
 def check_blobs(repo, baseline, candidate, entries):
@@ -212,6 +125,19 @@ def toolchain(path):
         name.endswith(".md") or name.startswith("README"))
 
 
+def ancestors(folders):
+    """The directories in `folders` and every directory above them (the
+    repository root is the empty string)."""
+    found = set()
+    for folder in folders:
+        while True:
+            found.add(folder)
+            if not folder:
+                break
+            folder = posixpath.dirname(folder)
+    return found
+
+
 def account(blobs, entries, loaded):
     """{path: (class, note)} of every path of `blobs` whose two blobs
     differ. `blobs` is {path: {baseline, candidate}} (every tracked path
@@ -224,8 +150,9 @@ def account(blobs, entries, loaded):
     - unattributed: loaded, with no entry;
     - excluded: on the reviewed exclusion list (EXCLUDED) and not loaded;
     - unattributed-build: a file of the build tools or the sequences
-      (TOOLCHAIN), or a build file in a directory that something loaded
-      came from, with no entry;
+      (TOOLCHAIN), a file Holmake reads upward (UPWARD) in a directory that
+      something loaded came from or in one above it, or a build file in a
+      directory that something loaded came from, with no entry;
     - unloaded: no loaded file of either side is this one, and it is no
       build file."""
     by_path = {e["path"]: e for e in entries}
@@ -234,6 +161,7 @@ def account(blobs, entries, loaded):
                   sorted(set(by_path) - set(blobs))))
     loaded = set(loaded)
     folders = {posixpath.dirname(p) for p in loaded}
+    above = ancestors(folders)
     out = {}
     for path in sorted(blobs):
         found = blobs[path]
@@ -258,6 +186,11 @@ def account(blobs, entries, loaded):
             out[path] = ("unattributed-build", "a build tool or sequence: "
                          "the receipts record no file of it, so they "
                          "cannot show it unused")
+        elif posixpath.basename(path) in UPWARD and \
+                posixpath.dirname(path) in above:
+            out[path] = ("unattributed-build", "a file Holmake reads from "
+                         "a directory a measured cell loads from or from "
+                         "one above it")
         elif is_build(path) and posixpath.dirname(path) in folders:
             out[path] = ("unattributed-build", "build file of a directory "
                          "a measured cell loads from")

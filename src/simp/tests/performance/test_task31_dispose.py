@@ -338,6 +338,7 @@ class Command(unittest.TestCase):
         a.save(self.root / "identity/inventory.json", dict(
             candidate=CAND, baseline=a.BASE, checkout=self.checkout,
             attributed=dict(file=TABLE)))
+        self.ledger = self.root / "attempts.jsonl"
         self.write_grid(CAND)
         self.write_alloc()
         self.survey = self.root / "survey.json"
@@ -345,7 +346,6 @@ class Command(unittest.TestCase):
             schema=d.SURVEY_SCHEMA, process_timeout=1800, cells=SURVEY)))
         self.timing = dict(status="pass", workloads=[], retained_scaling=None)
         self.classes = {"pass": list(c.SAMPLE)}
-        self.ledger = self.root / "attempts.jsonl"
         tg.ledger_append(self.ledger, event="open", stage="identity",
                          table=g.IDENTITY_TABLE, attempt="x",
                          candidate=CAND, output="o", checkout="c")
@@ -372,7 +372,23 @@ class Command(unittest.TestCase):
         path = self.root / "grid/inventory.json"
         path.unlink(missing_ok=True)
         a.save(path, dict(candidate=candidate, baseline=a.BASE,
-                          checkout=self.checkout, pins=pins or TABLE))
+                          checkout=self.checkout, pins=pins or TABLE,
+                          attempt="g1"))
+        if not self.ledger_has("g1"):
+            tg.ledger_append(
+                self.ledger, event="open", stage="first", table="task31",
+                attempt="g1", candidate=candidate,
+                output=str(path.parent.resolve()), checkout="c")
+            tg.ledger_append(
+                self.ledger, event="close", stage="first", table="task31",
+                attempt="g1", candidate=candidate,
+                output=str(path.parent.resolve()), checkout="c",
+                status="pass")
+
+    def ledger_has(self, attempt):
+        return self.ledger.exists() and any(
+            r.get("attempt") == attempt
+            for r in tg.Ledger(self.ledger).records)
 
     def write_alloc(self, inventory=None, **top):
         inventory = dict(dict(
@@ -538,26 +554,69 @@ class Command(unittest.TestCase):
             found, attributed=dict(file=other)))
         self.assertEqual(self.run_main()[0], tg.REFUSED)
 
-    def test_the_binding_is_refused_for_a_missing_or_foreign_seal(self):
-        with self.assertRaises(ValueError):
-            d.table_binding(dict(attributed=dict(file=None)), [])
-        with self.assertRaises(ValueError):
-            d.table_binding(dict(attributed=dict(file=TABLE)),
-                            [("timing grid", [None])])
-        self.assertEqual(d.table_binding(
-            dict(attributed=dict(file=TABLE)), [("timing grid", [TABLE])]),
-            TABLE)
+    def refused(self, why, *more):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _ = self.run_main(*more)
+        self.assertEqual(code, tg.REFUSED, err.getvalue())
+        self.assertRegex(err.getvalue(), why)
 
-    def test_a_redrawn_follow_up_attempt_is_refused(self):
-        engine = mock.Mock()
-        engine.t.schema = lambda kind: "x"
-        refuse = mock.Mock(side_effect=ValueError(
-            "a follow-up attempt that is not judged must be void"))
+    def test_the_first_stage_attempts_are_recorded_and_printed(self):
+        record = self.root / "disposition.json"
+        code, text = self.run_main("--record", str(record))
+        self.assertEqual(code, 0, text)
+        found = a.load(record)["timing_attempts"]
+        self.assertEqual([(f["attempt"], f["status"], f["judged"], f["void"])
+                          for f in found], [("g1", "pass", True, False)])
+        self.assertIn("TIMING-ATTEMPT g1 status pass output %s: judged"
+                      % (self.root / "grid").resolve(), text)
+
+    def test_a_second_attempt_of_the_first_stage_that_measured_is_refused(
+            self):
+        other = self.root / "other"
+        other.mkdir()
+        a.save(other / "inventory.json", dict(attempt="g2", runs=[]))
+        for event, more in (("open", {}), ("close", dict(status="pass"))):
+            tg.ledger_append(
+                self.ledger, event=event, stage="first", table="task31",
+                attempt="g2", candidate=CAND, output=str(other),
+                checkout="c", **more)
+        self.refused(r"attempt g2 \(status pass, output .*\) is not void: "
+                     r"its inventory has rows for 0 cell")
+        self.assertFalse((self.root / "disposition.json").exists())
+
+    def test_a_resumed_first_stage_attempt_is_refused(self):
+        tg.ledger_append(self.ledger, event="resume", stage="first",
+                         table="task31", attempt="g1", candidate=CAND,
+                         output=str((self.root / "grid").resolve()),
+                         checkout="c")
+        # The judged attempt itself may have been resumed: that is its own
+        # business (the replay reads the resumption); a second output for
+        # the same attempt is not.
+        self.assertEqual(self.run_main()[0], 0)
+        tg.ledger_append(self.ledger, event="resume", stage="first",
+                         table="task31", attempt="g1", candidate=CAND,
+                         output=str(self.root / "copy"), checkout="c")
+        self.refused(r"attempt g1 ran in more than one output")
+
+    def test_a_follow_up_attempt_that_measured_is_refused(self):
+        # A real follow-up table over two cells of the sample, its attempt
+        # in the ledger not judged and not void.
+        engine = tg.Grid(follow.table(
+            ["traversal_construct-0", "tactic_full_complete-100"]))
+        other = self.root / "f"
+        other.mkdir()
+        a.save(other / "inventory.json", dict(attempt="f1", runs=[]))
+        for event, more in (("open", {}), ("close", dict(status="pass"))):
+            tg.ledger_append(
+                self.ledger, event=event, stage="first", table="task31f",
+                attempt="f1", candidate=CAND, output=str(other),
+                checkout="c", **more)
         with mock.patch.object(d.follow, "ENGINE", engine), \
-                mock.patch.object(d, "attempts_of", refuse):
-            code, _ = self.run_main()
-        self.assertEqual(code, tg.REFUSED)
-        refuse.assert_called_once()
+                mock.patch.object(engine, "attempts_file", lambda *a_, **k:
+                                  self.ledger):
+            self.refused(r"attempt f1 \(status pass, output .*\) is not "
+                         r"void")
 
     def test_the_attempt_rule_is_the_one_shared_with_task30(self):
         import task30_dispose
@@ -598,9 +657,18 @@ class Code(unittest.TestCase):
 
     def test_the_code_includes_the_attribution_and_the_follow_up(self):
         for name in ("task31_attribution.py", "task31_followup.py",
-                     "task31_identity.py", "task31_snapshot.py"):
-            self.assertIn(name, d.CODE if name != "task31_snapshot.py"
-                          else d.CODE + ("task31_snapshot.py",))
+                     "task31_identity.py", "task31_pins.py",
+                     "task30_grid.py"):
+            self.assertIn(name, d.CODE)
+
+    def test_the_snapshot_wrapper_is_sealed_through_the_identity_replay(
+            self):
+        # The disposition replays the identity grid, which checks the seals
+        # of IDENTITY_CODE against the grid's record; the wrapper is there
+        # and is not part of CODE.
+        self.assertIn("task31_snapshot.py", g.IDENTITY_CODE)
+        self.assertNotIn("task31_snapshot.py", d.CODE)
+        self.assertTrue((a.HERE / "task31_snapshot.py").is_file())
 
 
 if __name__ == "__main__":

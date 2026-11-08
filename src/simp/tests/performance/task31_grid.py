@@ -10,10 +10,11 @@ stage whose pair counts come from the develop/develop control). Its counts
 file task31_iterations.json is made by `pilot` and `predeclare` and
 committed before any candidate observation. The table names `sources`
 (task31_cases.SOURCES, the files the cells elaborate) and pins the reviewed
-blobs of those of them that task31_attributed.json lists. The file is sealed
-in every record but not in the counts, and its entries outside the sources
-(the shared heap and the build files) are not the table's: adding one alters
-no sources record, and a grid made before it replays by the file's history.
+blobs of those of them that task31_attributed.json lists, by the code of
+task31_pins.py, which is among the sealed files. The file is sealed in every
+record but not in the counts, and its entries outside the sources (the
+shared heap and the build files) are not the table's: adding one alters no
+pin, and a grid made before it replays by the file's history.
 A source that differs without a current pin never passes, and `run` refuses
 to measure it. The difference below src/ is published by the table's `tree`.
 
@@ -29,8 +30,8 @@ import sys
 sys.dont_write_bytecode = True
 import acceptance as a
 import task30_grid as base30
-import task31_attribution as attr
 import task31_cases as cases
+import task31_pins as reviewed
 import timing_grid as tg
 
 PAIRS, SAMPLES = 20, 5
@@ -48,7 +49,8 @@ PAIRED = base30.PAIRED
 INSTALLED = tuple(n for n in base30.INSTALLED
                   if n != "MatrixPerformance.sml") + (
     "ClientPerformance.sml", "client_dependencies.py")
-SEALED = ("task31_cases.py",) + base30.SEALED[1:5] + INSTALLED
+SEALED = ("task31_cases.py", "task31_pins.py") + base30.SEALED[1:5] + \
+    INSTALLED
 # Seals of the code that earlier records of this table were made by, as
 # TASK30's (task30_grid.py): empty until a change is made after this table's
 # first record (its pilot). Then, in the same commit, append the seal the
@@ -58,14 +60,15 @@ SEALED = ("task31_cases.py",) + base30.SEALED[1:5] + INSTALLED
 # test_task31_grid.py, which pins them, too. The identity gate is another
 # module (task31_identity_grid.py, importing this one): a change to it, to
 # task31_identity.py, task31_attribution.py or the reviewed table touches no
-# seal of this table.
+# seal of this table. The code that computes the pins is task31_pins.py,
+# sealed here.
 DRIVERS, ENGINES, ACCEPTANCE, SEALED_HISTORY = (), (), (), {}
 # The reviewed table: read once. Its file is not among SEALED (the counts
 # are not bound to it); every record seals it. The table's sources are the
 # files the cells elaborate (task31_cases.SOURCES), and it pins the reviewed
 # blobs of those of them the file lists; the entries for the shared heap and
 # the build files are the identity gate's.
-ATTRIBUTED = attr.load()
+ATTRIBUTED = reviewed.load()
 SOURCES = cases.SOURCES
 
 
@@ -79,9 +82,9 @@ def table(document):
         engines=ENGINES, drivers=DRIVERS, layout_acceptance=ACCEPTANCE,
         sealed_history=SEALED_HISTORY, tree="src", sealed=SEALED,
         cells=cases.SAMPLE, require_seed=True, sources=SOURCES,
-        pinned=attr.pins(document["entries"], SOURCES),
-        pin_file=attr.FILE.name,
-        pin_history=attr.pin_history(document, SOURCES),
+        pinned=reviewed.pins(document["entries"], SOURCES),
+        pin_file=reviewed.FILE.name,
+        pin_history=reviewed.pin_history(document, SOURCES),
         allocation="the separate gate of allocation_matrix.py --task "
         "task31; task31_dispose.py joins the gates")
 

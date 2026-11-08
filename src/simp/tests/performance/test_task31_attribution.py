@@ -8,6 +8,7 @@ import unittest
 import acceptance as a
 import task31_attribution as attr
 import task31_cases as c
+import task31_pins as pins
 import timing_grid as tg
 
 REPO = a.HERE.parents[3]
@@ -41,7 +42,7 @@ class Shipped(unittest.TestCase):
         document = attr.load()
         self.assertEqual(attr.unfilled(document["entries"]),
                          [e["path"] for e in document["entries"]])
-        self.assertEqual(attr.pins(document["entries"], attr.paths(document)),
+        self.assertEqual(pins.pins(document["entries"], attr.paths(document)),
                          {})
 
     def test_the_baseline_blobs_are_those_of_git(self):
@@ -61,11 +62,11 @@ class Shipped(unittest.TestCase):
 class Validate(unittest.TestCase):
     def refused(self, entries):
         with self.assertRaises(ValueError):
-            attr.validate(entries)
+            pins.validate(entries)
 
     def test_good_entries_pass(self):
-        attr.validate([entry(), entry("src/x/Holmakefile", "build")])
-        attr.validate([entry(new=None)])
+        pins.validate([entry(), entry("src/x/Holmakefile", "build")])
+        pins.validate([entry(new=None)])
 
     def test_malformed_entries_are_refused(self):
         self.refused("no")
@@ -86,7 +87,7 @@ class Files(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(prefix="task31-attr-")
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "t.json"
-        document = dict(schema=attr.SCHEMA, entries=[entry()], history={})
+        document = dict(schema=pins.SCHEMA, entries=[entry()], history={})
         document.update(more)
         path.write_text(json.dumps(document))
         return path
@@ -96,9 +97,9 @@ class Files(unittest.TestCase):
         document = attr.load(path)
         self.assertEqual(document["seal"], a.seal(path))
         self.assertEqual(
-            attr.pins(document["entries"], ["src/simp/src/A.sig"]),
+            pins.pins(document["entries"], ["src/simp/src/A.sig"]),
             {"src/simp/src/A.sig": dict(blob=C, reason="why")})
-        self.assertEqual(attr.pins(document["entries"], []), {})
+        self.assertEqual(pins.pins(document["entries"], []), {})
 
     def test_another_schema_or_extra_field_is_refused(self):
         for bad in (dict(schema="x"), dict(extra=1)):
@@ -115,10 +116,10 @@ class Files(unittest.TestCase):
         with self.assertRaises(ValueError):
             attr.entries_of(document, {"sha256": "b" * 64})
         self.assertIn("src/simp/src/A.sig", attr.paths(document))
-        history = attr.pin_history(document, ["src/simp/src/A.sig"])
+        history = pins.pin_history(document, ["src/simp/src/A.sig"])
         self.assertEqual(history[digest]["src/simp/src/A.sig"]["blob"],
                          "3" * 40)
-        self.assertEqual(attr.pin_history(document, []), {digest: {}})
+        self.assertEqual(pins.pin_history(document, []), {digest: {}})
 
     def test_the_digest_follows_the_entries(self):
         self.assertEqual(attr.digest([entry()]), attr.digest([entry()]))
@@ -156,7 +157,7 @@ class Account(unittest.TestCase):
             "tools/sequences/base-hol", "tools/Holmake/Foo.sml",
             "tools-poly/build.sml", "bin/build", "tools/README.md",
             "tools/h4pedant/x.sml", "help/Docfiles/a.smd", "CLAUDE.md",
-            "holproject.toml", "Manual/Developers/x.md", "examples/e.sml",
+            "Manual/Developers/x.md", "examples/e.sml",
             "src/simp/tests/compatibility/run_paired.py",
             "src/simp/tests/compatibility/paired/P.sml",
             "src/simp/tests/compatibility/inputs/x.sml",
@@ -170,7 +171,7 @@ class Account(unittest.TestCase):
             "src/simp/tests/compatibility/run_paired.py",
             "src/simp/tests/compatibility/paired/P.sml")}
         unloaded = {p: "unloaded" for p in (
-            "tools/README.md", "holproject.toml", "Manual/Developers/x.md",
+            "tools/README.md", "Manual/Developers/x.md",
             "examples/e.sml", "src/simp/tests/compatibility/inputs/x.sml",
             "src/simp/tests/native-extension/Holmakefile")}
         self.assertEqual(got, {**build, **excluded, **unloaded})
@@ -183,6 +184,44 @@ class Account(unittest.TestCase):
             self.classes(self.diff("tools/sequences/base-hol"),
                          [dict(row, candidate_blob="4" * 40)])[
                              "tools/sequences/base-hol"], "mismatch")
+
+    def test_a_file_holmake_reads_upward_is_a_build_file(self):
+        # Holmake reads these from the directory it builds in and from
+        # every directory above it, so a file in a loaded directory or in
+        # an ancestor of one is a build input; elsewhere it is unloaded.
+        loaded = ["src/boss/b.sml"]
+        here = ["src/boss/", "src/", ""]
+        for name in attr.UPWARD:
+            for where in here:
+                path = where + name
+                self.assertEqual(
+                    self.classes(self.diff(path), loaded=loaded),
+                    {path: "unattributed-build"}, path)
+            for where in ("src/far/", "src/boss/sub/", "src/boss2/"):
+                path = where + name
+                self.assertEqual(
+                    self.classes(self.diff(path), loaded=loaded),
+                    {path: "unloaded"}, path)
+        self.assertEqual(sorted(attr.UPWARD), [
+            ".hol_preexec", ".holpath", "holproject.local.toml",
+            "holproject.toml"])
+        # Without any loaded file there is no directory above it.
+        self.assertEqual(self.classes(self.diff("holproject.toml")),
+                         {"holproject.toml": "unloaded"})
+        # A reviewed entry attributes it; other blobs do not.
+        row = entry("holproject.toml", "build")
+        self.assertEqual(self.classes(self.diff("holproject.toml"), [row],
+                                      loaded), {"holproject.toml":
+                                                "attributed"})
+        self.assertEqual(self.classes(
+            self.diff("holproject.toml"), [dict(row, candidate_blob="4" * 40)],
+            loaded), {"holproject.toml": "mismatch"})
+
+    def test_the_ancestors_of_the_loaded_directories(self):
+        self.assertEqual(attr.ancestors({"a/b/c", "a/d"}),
+                         {"a/b/c", "a/b", "a", "", "a/d"})
+        self.assertEqual(attr.ancestors({""}), {""})
+        self.assertEqual(attr.ancestors(set()), set())
 
     def test_a_loaded_path_is_never_excluded(self):
         path = "src/simp/tests/performance/x.sml"

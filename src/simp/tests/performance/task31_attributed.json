@@ -1,6 +1,14 @@
 {
   "entries": [
     {
+      "baseline_blob": "f37f2ad358c72c6121f15479a0b7fd9f5a622342",
+      "candidate_blob": null,
+      "gate": "TASK_32/33 independent builds of the directory under both trees",
+      "kind": "build",
+      "path": "holproject.toml",
+      "reason": "The project file Holmake reads from the build directory and every directory above it: adds two [[h4pedant.dir]] stanzas, which are read by tools/h4pedant only; Holmake lists h4pedant among its recognised keys and never reads inside the table (HMProject.sml), so the project's holmake keys, includes and pre-execs are unchanged."
+    },
+    {
       "baseline_blob": "1556c516004b961b4dcd39db4e8fac66eda400d2",
       "candidate_blob": null,
       "gate": "gate 5 startup gate; TASK_32/33 independent builds",

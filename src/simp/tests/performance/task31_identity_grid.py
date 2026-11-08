@@ -20,15 +20,14 @@ The grid is made with the committed reviewed table (task31_attributed.json)
 and no other: `--attributed FILE` is a diagnostic of `--only` runs. The
 engine and the ledger are the timing driver's (task31_grid.py, which this
 module imports and which does not import it), so that a change to this
-module alters no seal of a timing grid.
+module alters no seal of a timing grid. The timing commands are that
+module's; this one has none.
 
   prepare          configure, build and stamp the checkout   (takes the lock)
   identity         gate 1: --output DIR --candidate COMMIT   (authorized)
                    [--only CELL ...: a diagnostic, any checkout]
   identity-replay  re-derive every identity decision offline (--output DIR)
   sources          print the files the grid's cells elaborated (--output DIR)
-  pilot, predeclare, verify-counts, run, extend, replay: the timing table's
-                   (task31_grid.py)
 
 The exit status of `identity` and `identity-replay` is 0 when every cell is
 identical or attributed, 1 when one is different (or a file is
@@ -355,7 +354,7 @@ def record(path, event, inventory, root, repo, **more):
             output=str(root), checkout=str(Path(repo).resolve()), **more)
 
 
-def attempts_of(path, candidate):
+def attempt_counts(path, candidate):
     """(identity attempts, those of the candidate) in a ledger."""
     found = tg.Ledger(path).attempts(IDENTITY_TABLE)
     return len(found), sum(1 for row in found.values()
@@ -530,44 +529,76 @@ def sources(args):
     return 0
 
 
-def commands():
-    """The actions of this task besides the engine's."""
+def parser():
+    """The commands of this gate (the timing table's are not among them)."""
     repo = a.HERE.parents[3]
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="action", required=True)
 
-    def configure(p):
-        p.add_argument("--output", type=Path, required=True)
-        p.add_argument("--baseline", default=a.BASE)
-        p.add_argument("--candidate", required=True)
-        p.add_argument("--only", action="append", metavar="CELL",
-                       help="diagnostic subset in any checkout; never a "
-                       "grid decision")
-        p.add_argument("--resume", action="store_true")
-        p.add_argument("--authorize-measurements", action="store_true")
-        p.add_argument("--repo", type=Path, default=repo)
-        p.add_argument("--timeout", type=int, default=1800)
-        p.add_argument("--attributed", type=Path, help="the reviewed "
-                       "table, if not task31_attributed.json")
+    build = sub.add_parser(
+        "prepare", help="configure and build the checkout and stamp it "
+        "for the measuring commands")
+    build.add_argument("--repo", type=Path, default=repo)
+    build.add_argument("--timeout", type=int, default=tg.BUILD_TIMEOUT,
+                       help="seconds each of the two commands, configure "
+                       "and the build, may take")
 
-    def again(p):
-        p.add_argument("--output", type=Path, required=True)
-        p.add_argument("--repo", type=Path, default=repo)
-        p.add_argument("--attributed", type=Path, help="the reviewed "
-                       "table the grid was made with, if not "
-                       "task31_attributed.json")
-        p.add_argument("--ledger", type=Path, help="require that this "
+    run = sub.add_parser("identity", help="gate 1, every cell")
+    run.add_argument("--output", type=Path, required=True)
+    run.add_argument("--baseline", default=a.BASE)
+    run.add_argument("--candidate", required=True)
+    run.add_argument("--only", action="append", metavar="CELL",
+                     help="diagnostic subset in any checkout; never a "
+                     "grid decision")
+    run.add_argument("--resume", action="store_true")
+    run.add_argument("--authorize-measurements", action="store_true")
+    run.add_argument("--repo", type=Path, default=repo)
+    run.add_argument("--timeout", type=int, default=1800)
+    run.add_argument("--attributed", type=Path, help="the reviewed "
+                     "table, if not task31_attributed.json (a diagnostic "
+                     "run only)")
+
+    again = sub.add_parser("identity-replay", help="re-derive the "
+                           "decisions of an identity grid offline")
+    again.add_argument("--output", type=Path, required=True)
+    again.add_argument("--repo", type=Path, default=repo)
+    again.add_argument("--attributed", type=Path, help="the reviewed "
+                       "table a diagnostic grid was made with")
+    again.add_argument("--ledger", type=Path, help="require that this "
                        "attempts ledger holds the opening of the grid")
 
-    def listing(p):
-        p.add_argument("--output", type=Path, required=True)
-        p.add_argument("--heap", action="store_true",
-                       help="add the files of the initial heap")
-    return {"identity": (configure, identity),
-            "identity-replay": (again, identity_replay),
-            "sources": (listing, sources)}
+    listing = sub.add_parser("sources", help="the files the cells "
+                             "elaborated")
+    listing.add_argument("--output", type=Path, required=True)
+    listing.add_argument("--heap", action="store_true",
+                         help="add the files of the initial heap")
+    return p
+
+
+def prepare(args):
+    return ENGINE.h.prepare(args)
+
+
+HANDLERS = {"prepare": prepare, "identity": identity,
+            "identity-replay": identity_replay, "sources": sources}
 
 
 def main(argv=None):
-    return ENGINE.main(argv, extra=commands())
+    """The status of the command, or `REFUSED` (3) with one line on the
+    standard error for one that decided nothing (as the engine's `main`)."""
+    with tg.terminating_as_interrupt():
+        try:
+            args = parser().parse_args(argv)
+            return HANDLERS[args.action](args)
+        except Exception as error:
+            text = str(error)
+            if not isinstance(error, ValueError):
+                import traceback
+                traceback.print_exc()
+                text = "%s: %s" % (type(error).__name__, text)
+            print("REFUSED: " + " ".join(text.split()), file=sys.stderr,
+                  flush=True)
+            return tg.REFUSED
 
 
 if __name__ == "__main__":

@@ -48,12 +48,17 @@ other two; its `decisions.json` is then read (PROTOCOL.md, "TASK31"):
 `infeasible` is the infeasible set and `rows` has exactly one row for every
 other cell, none repeated; a row of any other shape is refused.
 
-The identity grid's recorded table and the pins of the timing grid (and of
-the follow-up) must be the one committed file, by sha256; its seal is
-recorded as the `attribution` input. Every attempt of the follow-up's table
-that the command does not judge must be void (void_attempts.py, the rule of
-the TASK30 disposition). An unresolved allocation row may carry `"pairs":
-null`.
+The identity grid's recorded table must be the committed file, by sha256
+(its seal is recorded as the `attribution` input). The pins of the timing
+grid (and of the follow-up), with those of every resumption and of an
+extension's first stage, must be the committed table's projection onto the
+sources the grid measures (task31_pins.pins, the function the driver uses;
+recorded as the `pins` input): an entry added for the shared heap or a build
+file voids no timing grid, and a change to the entry of a measured source
+does. Every attempt of the first stage's table and of the follow-up's that
+the command does not judge must be void (void_attempts.py, the rule of the
+TASK30 disposition): at most one attempt that is not void per table and
+stage. An unresolved allocation row may carry `"pairs": null`.
 
 The record carries the seals of the code (`CODE`, with `HISTORY` for earlier
 versions a record was made by) and of every input it read. The exit status
@@ -70,11 +75,12 @@ import sys
 
 sys.dont_write_bytecode = True
 import acceptance as a
-import task31_attribution as attr
+import task30_grid as base30
 import task31_cases as cases
 import task31_followup as follow
 import task31_grid as grid
 import task31_identity_grid as idgrid
+import task31_pins as reviewed
 import timing_grid as tg
 from void_attempts import attempts_of
 
@@ -87,11 +93,14 @@ INFEASIBLE_TEXT = "untimed, unallocated: infeasible"
 # assumptions for the allocation cells.
 ALLOCATION_LIMIT = 1000
 # The code whose change must be named in HISTORY once a disposition is
-# recorded.
+# recorded: this module and every module it takes a decision from (a test
+# pins that every module it, the timing driver and the follow-up import is
+# here or is sealed by the identity grid).
 CODE = ("task31_dispose.py", "task31_grid.py", "task31_identity_grid.py",
         "task31_followup.py", "task31_identity.py", "task31_attribution.py",
-        "task31_cases.py", "timing_grid.py", "acceptance.py",
-        "void_attempts.py", "allocation_matrix.py", "allocation_analysis.py",
+        "task31_cases.py", "task31_pins.py", "task30_grid.py",
+        "timing_grid.py", "acceptance.py", "void_attempts.py",
+        "allocation_matrix.py", "allocation_analysis.py",
         "allocation_schema.py", "allocation_boundary.py", "path_schema.py")
 # Per file of CODE, the seals it had when a disposition was recorded, once it
 # has changed since.
@@ -334,11 +343,13 @@ def dispose(identity, allocated, timed, survey):
 
 def lines(record, timeout=cases.PROCESS_TIMEOUT):
     out = []
-    for found in record.get("followup_attempts", []):
-        out.append("FOLLOW-UP-ATTEMPT %s status %s output %s: %s" % (
-            found["attempt"], found["status"], found["output"],
-            "void (no measurement admitted)" if found["void"] else
-            "judged"))
+    for label, key in (("TIMING-ATTEMPT", "timing_attempts"),
+                       ("FOLLOW-UP-ATTEMPT", "followup_attempts")):
+        for found in record.get(key, []):
+            out.append("%s %s status %s output %s: %s" % (
+                label, found["attempt"], found["status"], found["output"],
+                "void (no measurement admitted)" if found["void"] else
+                "judged"))
     for path in record["identity_unaccounted"]:
         out.append("FAIL identity grid: unaccounted difference " + path)
     for name, found in record["cells"].items():
@@ -378,57 +389,74 @@ def allocation_inventory(root, identity, timing):
               counted["baseline"] == identity["baseline"],
               "the allocation grid has another candidate or baseline than "
               "the identity grid")
-    grid.base30.harness_match(timing, counted)
+    base30.harness_match(timing, counted)
     return counted
 
 
-def pin_seals(engine, root):
-    """The seal of the reviewed table each inventory of a timing grid was
-    judged by, with its resumptions, and for an extension those of its first
-    stage too."""
+def pin_codes(engine, root):
+    """The records of a timing grid that carry the seal of the reviewed
+    table it was judged by: its inventory, each resumption, and for an
+    extension those of its first stage too."""
     root = Path(root).resolve()
     found = a.load(root / "inventory.json")
-    seals_ = [code.get("pins") for code in
-              [found, *found.get("resumed", [])]]
+    codes = [found, *found.get("resumed", [])]
     if found.get("schema") == engine.t.schema("extension"):
-        seals_ += pin_seals(engine, (root / found["grid"]).resolve())
-    return seals_
+        codes += pin_codes(engine, (root / found["grid"]).resolve())
+    return codes
 
 
-def table_binding(identity, grids):
-    """The reviewed table every gate was judged by, as the seal of its file:
-    the identity grid's recorded table and every pin seal of the timing
-    grids (`grids`: [(label, seals)]) must be the same file, by sha256. A
-    grid that replays by the table's history still has to be of this one
-    table. Returns that seal."""
+def identity_binding(identity, document):
+    """The seal of the reviewed table the identity grid recorded, which must
+    be the committed file (by sha256)."""
     held = identity["attributed"]["file"]
     a.require(isinstance(held, dict) and held.get("sha256"),
               "the identity grid records no reviewed table")
-    for label, found in grids:
-        for seal in found:
-            a.require(isinstance(seal, dict) and
-                      seal.get("sha256") == held["sha256"],
-                      "the identity grid was judged by the reviewed table "
-                      "%s and the %s by %s: one table must bind every "
-                      "gate" % (held["sha256"], label,
-                                seal.get("sha256") if isinstance(seal, dict)
-                                else seal))
+    a.require(held["sha256"] == document["seal"]["sha256"],
+              "the identity grid was judged by the reviewed table %s, not "
+              "the committed %s: run it again" % (
+                  held["sha256"], document["seal"]["sha256"]))
     return held
 
 
-def followup_judged(args, engine):
-    """{attempt id: output} of the follow-up the disposition judges: its
-    final stage and, for a second stage, its first."""
-    judged = {}
-    if args.followup is None:
-        return judged
-    root = args.followup.resolve()
+def pins_binding(engine, label, root, document):
+    """The pins a timing grid (and each resumption and first stage of it)
+    was judged by must be the committed table's projection onto the sources
+    the grid measures (`task31_pins.pins`, the function the driver uses).
+    The seal of the file may be an earlier one, if its history keeps it:
+    adding an entry that is no source of the grid changes no pin, while any
+    change to the entry of a measured source does. Returns the pins."""
+    expected = reviewed.pins(document["entries"], cases.SOURCES)
+    for code in pin_codes(engine, root):
+        found = engine.h.pins_for(code)
+        a.require(found == expected,
+                  "the %s was judged by pins that are not the committed "
+                  "table's for the sources it measures (%s against %s): "
+                  "a measured source's reviewed entry changed, so the "
+                  "grid is void" % (label, json.dumps(found, sort_keys=True),
+                                    json.dumps(expected, sort_keys=True)))
+    return expected
+
+
+def judged_attempts(engine, root):
+    """{attempt id: output} of the grid in `root`, a final stage of
+    `engine`'s table and, for a second stage, of its first."""
+    root = Path(root).resolve()
     found = a.load(root / "inventory.json")
-    judged[found["attempt"]] = root
+    judged = {found["attempt"]: root}
     if found.get("schema") == engine.t.schema("extension"):
         first = (root / found["grid"]).resolve()
         judged[a.load(first / "inventory.json")["attempt"]] = first
     return judged
+
+
+def table_attempts(engine, root, repo, ledger):
+    """Every attempt of `engine`'s table in the ledger: the judged ones
+    (`judged_attempts` of `root`) and the others, which must be void
+    (void_attempts.py). One rule for the first stage's table and a
+    follow-up's alike: at most one attempt that is not void per table and
+    stage."""
+    return attempts_of(argparse.Namespace(repo=repo, ledger=ledger), engine,
+                       judged_attempts(engine, root))
 
 
 def derive(args):
@@ -451,21 +479,27 @@ def derive(args):
               "products)")
     counted = allocation_inventory(args.allocation.resolve(), inventory,
                                    timing)
-    grids = [("timing grid", pin_seals(grid.ENGINE, args.grid))]
+    committed = reviewed.load()
+    table = identity_binding(inventory, committed)
+    pins = pins_binding(grid.ENGINE, "timing grid", args.grid, committed)
     if args.followup is not None:
         a.require(follow.ENGINE is not None and
                   args.followup_pilot is not None,
                   "a follow-up needs task31_followup.CELLS and "
                   "--followup-pilot")
-        grids.append(("follow-up", pin_seals(follow.ENGINE, args.followup)))
-    table = table_binding(inventory, grids)
+        pins_binding(follow.ENGINE, "follow-up", args.followup, committed)
+    # Every attempt of the first stage's table that is not judged must be
+    # void, and so must those of the follow-up's table, whether or not a
+    # follow-up is named.
+    timing_attempts = table_attempts(grid.ENGINE, args.grid, repo,
+                                     args.ledger)
     attempts = []
     if follow.ENGINE is not None:
-        # Every attempt of the follow-up's table that is not judged must be
-        # void, whether or not a follow-up is named.
         attempts = attempts_of(
             argparse.Namespace(repo=repo, ledger=args.ledger),
-            follow.ENGINE, followup_judged(args, follow.ENGINE))
+            follow.ENGINE,
+            judged_attempts(follow.ENGINE, args.followup)
+            if args.followup is not None else {})
     with contextlib.redirect_stdout(io.StringIO()):
         a.require(idgrid.identity_replay(argparse.Namespace(
             output=args.identity, repo=repo, attributed=None,
@@ -487,7 +521,7 @@ def derive(args):
         timing_decisions=seal_of(args.grid / "decisions.json"),
         allocation_inventory=seal_of(args.allocation / "inventory.json"),
         allocation_decisions=seal_of(args.allocation / "decisions.json"),
-        attribution=table, survey=survey["seal"])
+        attribution=table, pins=pins, survey=survey["seal"])
     followup = None
     if args.followup is not None:
         follow.ENGINE.replay(argparse.Namespace(
@@ -519,15 +553,16 @@ def derive(args):
         allocation_status=a.load(args.allocation.resolve() /
                                  "decisions.json")["status"],
         allocation_replay_exit=alloc_code,
-        followup=followup, followup_attempts=attempts, inputs=inputs,
+        followup=followup, followup_attempts=attempts,
+        timing_attempts=timing_attempts, inputs=inputs,
         code=seals(),
         survey=dict(seal=survey["seal"],
                     process_timeout=survey["process_timeout"]),
         attempts=dict(
             timing=list(grid.ENGINE.attempt_counts(
                 tg.Ledger(ledger), inventory["candidate"])),
-            identity=list(idgrid.attempts_of(ledger,
-                                             inventory["candidate"]))))
+            identity=list(idgrid.attempt_counts(ledger,
+                                                inventory["candidate"]))))
     return record
 
 

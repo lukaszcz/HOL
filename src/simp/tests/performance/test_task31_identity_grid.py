@@ -226,6 +226,26 @@ class Tree(unittest.TestCase):
         d = self.decide({path: ("5" * 40, "6" * 40)})
         self.assertEqual(d["tree"][path][0], "unloaded")
 
+    def test_a_project_file_is_a_build_file_above_a_loaded_directory(self):
+        # Holmake reads holproject.toml from the directory it builds in and
+        # from every directory above it: the root file is a build input of
+        # every cell, and it needs an entry.
+        path = "holproject.toml"
+        d = self.decide({path: ("5" * 40, "6" * 40)})
+        self.assertEqual(d["tree"][path][0], "unattributed-build")
+        self.assertEqual((d["status"], d["unaccounted"]),
+                         ("different", [path]))
+        self.assertEqual(d["build_files"], {path: "unattributed-build"})
+        reviewed = dict(path=path, kind="build", baseline_blob="5" * 40,
+                        candidate_blob="6" * 40, reason="why",
+                        gate="gate 5")
+        d = self.decide({path: ("5" * 40, "6" * 40)},
+                        entries=ENTRIES + [reviewed])
+        self.assertEqual(d["tree"][path][0], "attributed")
+        self.assertEqual(d["unaccounted"], [])
+        # The committed table reviews the current difference.
+        self.assertIn(path, [e["path"] for e in attr.load()["entries"]])
+
     def test_the_excluded_paths_are_not_read_from_either_commit(self):
         for path in ("src/simp/tests/performance/Foo.py",
                      "help/Docfiles/x.smd", "CLAUDE.md"):
@@ -251,7 +271,7 @@ class Tree(unittest.TestCase):
         self.assertEqual((d["status"], d["unaccounted"]), ("attributed", []))
 
     def test_a_path_the_receipts_do_not_show_loaded_is_not_different(self):
-        for path in ("holproject.toml", "Manual/Developers/x.md",
+        for path in ("Manual/Developers/x.md",
                      "src/simp/tests/compatibility/inputs/x.sml"):
             d = self.decide({path: ("5" * 40, "6" * 40)})
             self.assertEqual(d["tree"][path][0], "unloaded", path)
@@ -451,20 +471,76 @@ class Commands(unittest.TestCase):
         argv[argv.index("--candidate") + 1] = "develop"
         self.assertEqual(self.main(argv)[0], tg.REFUSED)
 
+    @contextlib.contextmanager
+    def whole_grid(self):
+        """Everything a full grid needs but the code under test: the
+        checkout is bound, rechecked and judged by stand-ins."""
+        checkout = dict(head=CAND, tree_outside_performance="t" * 40)
+        with mock.patch.object(g.ENGINE.h, "bind_checkout", lambda *a_:
+                               dict(checkout)), \
+                mock.patch.object(g.ENGINE.h, "recheck", lambda *a_: None), \
+                mock.patch.object(g.ENGINE.h, "judge_end", lambda *a_:
+                                  None), \
+                mock.patch.object(g.ENGINE.h, "check_checkout", lambda *a_:
+                                  None):
+            yield
+
+    def refused(self, argv, why):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, text = self.main(argv)
+        self.assertEqual(code, tg.REFUSED, text)
+        self.assertIn(why, err.getvalue())
+
     def test_another_table_is_for_diagnostics_only(self):
         other = self.repo / "other.json"
         other.write_text(attr.FILE.read_text() + "\n")
-        argv, out = self.args()
-        self.assertEqual(self.main(argv + ["--attributed", str(other)])[0],
-                         tg.REFUSED)
-        replay = ["identity-replay", "--output", str(out), "--repo",
-                  str(self.repo), "--attributed", str(other)]
-        self.assertEqual(self.main(replay)[0], tg.REFUSED)
+        why = "--attributed is for diagnostics"
+        # The rule itself, on a full grid and on a diagnostic.
+        with self.assertRaisesRegex(ValueError, why):
+            g.attribution(argparse.Namespace(attributed=other), False)
+        self.assertEqual(g.attribution(
+            argparse.Namespace(attributed=other), True)["seal"],
+            a.seal(other))
+        self.assertEqual(g.attribution(
+            argparse.Namespace(attributed=None), False)["seal"],
+            a.seal(attr.FILE))
+        # A full grid refuses it for that reason alone: with the table
+        # left out it completes, with every other check satisfied.
+        with self.whole_grid():
+            argv, out = self.args()
+            self.refused(argv + ["--attributed", str(other)], why)
+            self.assertFalse(out.exists())
+            code, text = self.main(argv)
+            self.assertEqual(code, 0, text)
+            replay = ["identity-replay", "--output", str(out), "--repo",
+                      str(self.repo)]
+            code, text = self.main(replay)
+            self.assertEqual(code, 0, text)
+            self.refused(replay + ["--attributed", str(other)], why)
         argv, out = self.args("traversal_construct-0", out="o2")
         code, text = self.main(argv + ["--attributed", str(other)])
         self.assertEqual(code, 0, text)
         recorded = a.load(out / "inventory.json")["attributed"]["file"]
         self.assertEqual(recorded, a.seal(other))
+
+    def test_the_identity_module_offers_only_the_identity_commands(self):
+        self.assertEqual(sorted(g.HANDLERS), [
+            "identity", "identity-replay", "prepare", "sources"])
+        help_ = io.StringIO()
+        with contextlib.redirect_stdout(help_), \
+                self.assertRaises(SystemExit):
+            g.main(["--help"])
+        self.assertIn("TASK31 gate 1", help_.getvalue())
+        self.assertNotIn("timing of a stratified", help_.getvalue())
+        for command in ("pilot", "predeclare", "verify-counts", "run",
+                        "extend", "replay"):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), \
+                    self.assertRaises(SystemExit) as caught:
+                g.main([command])
+            self.assertEqual(caught.exception.code, 2, command)
+            self.assertIn("invalid choice", err.getvalue())
 
     def test_the_committed_table_is_recorded_with_its_seal(self):
         argv, out = self.args("traversal_construct-0")
@@ -507,8 +583,8 @@ class Commands(unittest.TestCase):
         ledger = self.root / "attempts.jsonl"
         found = tg.Ledger(ledger).attempts(g.IDENTITY_TABLE)
         self.assertEqual(len(found), 1)
-        self.assertEqual(g.attempts_of(ledger, CAND), (1, 1))
-        self.assertEqual(g.attempts_of(ledger, BASE), (1, 0))
+        self.assertEqual(g.attempt_counts(ledger, CAND), (1, 1))
+        self.assertEqual(g.attempt_counts(ledger, BASE), (1, 0))
         code, text = self.main(["identity-replay", "--output", str(out),
                                 "--repo", str(self.repo),
                                 "--ledger", str(ledger)])

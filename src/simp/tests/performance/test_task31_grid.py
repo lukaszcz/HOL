@@ -61,23 +61,46 @@ class Table(unittest.TestCase):
             grown.pins_for(dict(pins=dict(bytes=1, sha256="b" * 64)))
 
 
+def imports(name):
+    """The modules a file of the harness imports (top level or not)."""
+    tree = ast.parse((a.HERE / name).read_text())
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(n.name for n in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            found.add(node.module)
+    return found
+
+
 class Driver(unittest.TestCase):
     def test_it_does_not_import_the_identity_gate(self):
-        tree = ast.parse((a.HERE / "task31_grid.py").read_text())
-        found = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                found.update(n.name for n in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                found.add(node.module)
-        self.assertFalse({n for n in found if "identity" in n}, found)
+        found = imports("task31_grid.py")
+        self.assertFalse({n for n in found if "identity" in n or
+                          "attribution" in n}, found)
+        self.assertIn("task31_pins", found)
 
     def test_no_identity_file_is_sealed_into_a_timing_grid(self):
         sealed = set(timing.SEALED) | {timing.__name__ + ".py"}
         for name in ("task31_identity_grid.py", "task31_identity.py",
-                     "task31_attribution.py", "task31_attributed.json"):
+                     "task31_attribution.py", "task31_attributed.json",
+                     "task31_snapshot.py"):
             self.assertNotIn(name, sealed)
-        self.assertNotIn(timing.attr.FILE.name, timing.SEALED)
+        self.assertNotIn(timing.reviewed.FILE.name, timing.SEALED)
+
+    def test_the_code_that_computes_the_pins_is_sealed_in_the_timing_grid(
+            self):
+        self.assertIn("task31_pins.py", timing.SEALED)
+        self.assertIn("task31_pins.py", timing.TABLE.sealed)
+        import task31_followup as follow
+        self.assertIn("task31_pins.py", follow.SEALED)
+        self.assertEqual(timing.TABLE.pinned, timing.reviewed.pins(
+            timing.ATTRIBUTED["entries"], timing.SOURCES))
+        # ... and it stands on nothing else of the harness but the
+        # acceptance module, which the table seals as its own.
+        self.assertEqual({m for m in imports("task31_pins.py")
+                          if (a.HERE / (m + ".py")).exists()},
+                         {"acceptance"})
 
     def test_the_driver_history_is_empty_until_a_grid_is_recorded(self):
         self.assertEqual(
