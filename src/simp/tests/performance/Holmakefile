@@ -1,10 +1,13 @@
 # Machinery/diagnostic isolation only. No final acceptance is implied.
-ifndef PERFORMANCE_OUTPUT
-PERFORMANCE_OUTPUT = performance-results
-endif
-ifndef PERFORMANCE_CHECK_OUTPUT
-PERFORMANCE_CHECK_OUTPUT = performance-check-results
-endif
+# Output locations have no default: PERFORMANCE_OUTPUT (diagnostic) and
+# PERFORMANCE_CHECK_OUTPUT (the other targets) must name new directories
+# outside the repository.
+NEED_CHECK_OUT = test -n "$(PERFORMANCE_CHECK_OUTPUT)" || \
+  { echo "set PERFORMANCE_CHECK_OUTPUT=/new/dir outside the repository" >&2; \
+    exit 1; }
+NEED_OUT = test -n "$(PERFORMANCE_OUTPUT)" || \
+  { echo "set PERFORMANCE_OUTPUT=/new/dir outside the repository" >&2; \
+    exit 1; }
 ifndef PERFORMANCE_BASELINE
 PERFORMANCE_BASELINE = cccaa27d7099cbadc886983020cbe745db7793f3
 endif
@@ -26,6 +29,7 @@ matrix-completeness:
 	python3 -B matrix_schema.py
 
 controls:
+	$(NEED_CHECK_OUT)
 	mkdir -p "$(PERFORMANCE_CHECK_OUTPUT)"
 	python3 -B acceptance.py controls \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/controls.json"
@@ -33,16 +37,19 @@ controls:
 # Exclusive-created JSON + sibling .log; never overwrite earlier evidence.
 # These shared-heap smokes need a configured tree and an exclusive window.
 smoke:
+	$(NEED_CHECK_OUT)
 	python3 -B smoke_matrix.py --baseline $(PERFORMANCE_BASELINE) \
 	  --candidate $(PERFORMANCE_CANDIDATE) --scope $(MATRIX_SMOKE_SCOPE) \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/matrix-smoke.json"
 
 client-smoke:
+	$(NEED_CHECK_OUT)
 	python3 -B smoke_clients.py --baseline $(PERFORMANCE_BASELINE) \
 	  --candidate $(PERFORMANCE_CANDIDATE) --scope small \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/client-smoke.json"
 
 runtime-smoke:
+	$(NEED_CHECK_OUT)
 	python3 -B runtime_metrics.py --baseline $(PERFORMANCE_BASELINE) \
 	  --candidate $(PERFORMANCE_CANDIDATE) \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/runtime-smoke.json"
@@ -57,6 +64,7 @@ driver-staging-control:
 # Explicit, binary-pinned private-ABI diagnostic; never run implicitly on
 # other runtimes. This proves profiler information loss, NOT allocation parity.
 profiler-loss-control:
+	$(NEED_CHECK_OUT)
 	mkdir -p "$(PERFORMANCE_CHECK_OUTPUT)"
 	python3 -B allocation_profiler_probe.py --authorize-runtime-probe \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/profiler-loss.json"
@@ -64,6 +72,7 @@ profiler-loss-control:
 # Keep real controls before smoke even with a parallel caller. No acceptance
 # run, loading experiment or costly full-grid/10000 AC pass is implicit.
 check: python-tests
+	$(NEED_CHECK_OUT)
 	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs \
 	  -C . -j1 driver-staging-control
 	python3 -B matrix_schema.py
@@ -80,6 +89,7 @@ check: python-tests
 # One recipe keeps baseline variability before reviewed observations even
 # when invoked by a parallel caller. Never benchmark alongside other builds.
 diagnostic: python-tests
+	$(NEED_OUT)
 	python3 -B ../compatibility/run_paired.py \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
 	  --candidate-signature pass --candidate-behavior baseline \

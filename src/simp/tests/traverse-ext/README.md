@@ -94,4 +94,3 @@ conversion reuse, for ordinary default, extended default, old mixed refresh and
 separate refresh. Every result's conclusion/hypotheses and exact callback counts
 are consumed. CPU and wall displays are single-process diagnostics only, not
 calibrated performance acceptance, independent builds or a legacy cost claim.
-See `../compatibility/TASK_09_HANDOFF.md` for commands, source seals and results.

@@ -1,5 +1,0 @@
-<<HOL message: Created theory "reviewstaging">>
-STAGE construction printers=1 primitives=2
-STAGE first printers=1 HOL_ERR
-STAGE second printers=1 HOL_ERR
-OUTCOME goals=1

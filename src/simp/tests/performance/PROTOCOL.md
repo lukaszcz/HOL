@@ -88,7 +88,6 @@ rejects. `analyze(..., iterations=N)` must match the requested schedule; default
 analysis cannot silently admit fixed-mode evidence. No timing, GC, control,
 confidence-interval or pass/fail threshold changes with this mode. In particular,
 equal counts cannot turn uncertain B/B controls or zero/zero GC into passes.
-See `TASK_29_HANDOFF.md` for the still-failing ten-pair equal-count experiment.
 
 #### The `warmup` schedule
 
@@ -308,7 +307,7 @@ offline replay uses the policy a report recorded. Rules 1–4 and 6 are unchange
 - **Storage** graph words and retained slopes keep the zero-margin rule.
 - **Counts and size.** `task29a_grid.py` gives every process of a cell the
   same predeclared batch count, derived only from develop/develop processes of
-  the historical grid (`evidence/task29a/iterations.json`). Pairs and samples
+  the historical grid (`task29a_iterations.json`). Pairs and samples
   are run options (minimum ten and three), fixed before the run and recorded
   in its inventory.
 
@@ -320,7 +319,7 @@ host (Linux/aarch64, Neoverse-V2, Poly/ML 5.9.2) this alone moves the
 per-operation cost of the large fragment cells by up to ±10%. Develop
 processes with the same code-area size run alike, and both B/B sides share
 one layout. A source change elsewhere that moves the layout therefore looks
-like a slowdown or speedup at a fixed layout (`evidence/task29a/attribution/`).
+like a slowdown or speedup at a fixed layout.
 
 - `--layout-seed S` (`run_paired.py`, `acceptance.py run`,
   `task29a_grid.py run`) sets `PERF_LAYOUT` for every matrix process to

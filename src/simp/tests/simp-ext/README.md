@@ -99,10 +99,8 @@ compare complete expected conclusions and hypothesis sets.
 
 The inventory getter `rewrite_sources` now rejects directives. First call
 `prepare_rewrite_arguments` explicitly and inspect its returned set/rules.
-See [TASK14 migration](../compatibility/migration/TASK14.md) for contracts and
-[handoff](../compatibility/TASK_14_HANDOFF.md) for final evidence. This is
-bounded tracked-compiler acceptance, not exhaustive TASK_21 view/bundle
-validation, TASK_26 test migration or performance acceptance.
+This is bounded tracked-compiler acceptance, not exhaustive TASK_21
+view/bundle validation, TASK_26 test migration or performance acceptance.
 
 ## Exclusion and replay gate (TASK_19)
 
@@ -129,8 +127,7 @@ Only extension-owned `looper_tac` changes: split/case suppression applies to
 split loopers, not unrelated ordinary names. Resolution, private history order,
 strict reparsing versus resolved replay, and ordinary-reset versus explicit
 preserving-control replay stay unchanged. There is no legacy-history identity
-inference, new ordinary import, or ordinary representation change. See the
-[TASK19 handoff](../compatibility/TASK_19_HANDOFF.md) for source-tied evidence.
+inference, new ordinary import, or ordinary representation change.
 
 ## Configured tactics and strategies (TASK_20)
 
@@ -162,8 +159,7 @@ addition returns its exact input before entering compilation.
 
 `APIExamples.sml` compiles explicit strategy, global, child-first and bound
 clients. Branch-only help examples now use `simpExtLib`/`TraverseExt` and tracked
-recipes; ordinary callers require no migration. See the
-[TASK20 handoff](../compatibility/TASK_20_HANDOFF.md) for validation/evidence.
+recipes; ordinary callers require no migration.
 
 ## Sources, views and prepared bundles (TASK_21)
 
@@ -195,8 +191,6 @@ The added invalidation assertion fails on the pre-TASK21 implementation.
 and compiled statements in installation order, not only history-event identity
 or final membership. All work remains extension-owned; no legacy
 allocation, cache, representation, registration or callback path changes.
-See the [migration audit](../compatibility/migration/TASK21.md) and
-[TASK21 handoff](../compatibility/TASK_21_HANDOFF.md).
 
 ## Child-first derivation and solver lifetimes (TASK_22)
 
@@ -228,5 +222,4 @@ capture avoidance, default/configured factory schedules, limit rollback and
 unchanged observer/reducer/solver/charge counts. `strategies.sml` retains
 safe/unsafe solver validation, counted global passes, looper limits and real
 proof reconstruction. Native tests and frozen legacy traversal streams are
-unchanged. See [TASK22 migration](../compatibility/migration/TASK22.md) and
-[TASK22 handoff](../compatibility/TASK_22_HANDOFF.md).
+unchanged.

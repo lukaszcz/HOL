@@ -3,7 +3,7 @@
 `allocation_profiler_probe.py` demonstrates an information-loss path in the
 **actual linked HOL runtime**, not an inferred source-tree version. It is a
 negative control for a proposed `ProfileAllocations`-sum counter, **not an
-allocation instrument or performance experiment**. TASK29/29B remain blocked.
+allocation instrument or performance experiment**.
 
 ## Reproduce
 

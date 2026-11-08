@@ -74,14 +74,13 @@ solve pool permutation by pretending that equal function names prove identity.
 - Available indirect targets are not evidence that a particular call executed.
   No repair is selected from address alignment or graph-size correlation.
 
-## Regression tests and durable observations
+## Regression tests
 
 ```sh
 python3 -B -m unittest discover -s src/simp/tests/performance \
   -p test_runtime_layout.py -v
 RUNTIME_LAYOUT_EVIDENCE=UNPACKED_DIRECTORY python3 -B -m unittest discover \
   -s src/simp/tests/performance -p test_runtime_layout.py -v
-python3 -B src/simp/tests/performance/evidence/task29/runtime-layout/replay.py
 ```
 
 Tests cover actual pool addressing (including negative page displacement),
@@ -91,13 +90,10 @@ binding, retained rejected output, authorization, timing rejection, real replay
 and coherent source/loader/postlude/proof/inventory/comparison mutations. The
 real B/C archive also rejects substitution into the B/B role.
 
-`evidence/task29/runtime-layout/RESULTS.md` records the fresh observations and
-remaining blockers. Bundles use the existing lossless `evidence_bundle.py`
-transport; its unpack command produces a new directory for direct inspection.
-No production or ordinary fixture change was made, and no earlier observation
-is discarded or promoted to a pass.
+Bundles use the lossless `evidence_bundle.py` transport; its unpack command
+produces a new directory for direct inspection.
 
 A separate subsequent diagnostic, [`RUNTIME_POOLS.md`](RUNTIME_POOLS.md),
 supplies all actual split-pool slots with a sealed native interposer. It leaves
-this v1 tool/archives unchanged and still does not establish measurement-boundary
+this v1 tool unchanged and still does not establish measurement-boundary
 layout, executed targets, causation or TASK29A completion.

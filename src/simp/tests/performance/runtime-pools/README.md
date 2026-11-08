@@ -155,26 +155,8 @@ executable, runtime DSO, interposer and capture in the diagnostic receipt.
 
 ## Executed smoke test
 
-Tested with ordinary `/usr/local/bin/poly --script /tmp/.../selftest.sml`,
-not a patched runtime or `bin/hol`. Runtime identities:
-
-```text
-/usr/local/bin/poly SHA-256
-1d7600bacb16cad6a5b6b6356b6972e6abb78f6a24c5c2c35f4b3f3d93ec2311
-/usr/local/lib/libpolyml.so.16.0.0 SHA-256
-8e39afa6fd362322a6e19b16e0055c39a6b3f8aae67d3fb04191feec4961fd7d
-runtime ELF BuildID
-f0e01be674131082ebdc27943ffc6c4f44342fd5
-interposer SHA-256 (command above, GCC 13.3.0 Ubuntu)
-812fdcc768d06ecb0cf4af297d909c609c1e7b3868b35cc56d8ac54fe6363de0
-```
-
-This initial smoke preceded the minimum-two-constant admission guard.
-The final two-case collection uses the sealed source and native build receipts
-in `../evidence/task29/runtime-pools/`, with interposer SHA-256
-`a01959efdd4d9159b22f6f4ceb90ed5da6db709002a64106976e65528e7258ee`
-(71,792 bytes). Both complete experiments and executable negative controls
-pass with that guard. See `../RUNTIME_POOLS.md` for current commands.
+Tested with ordinary `/usr/local/bin/poly --script selftest.sml`,
+not a patched runtime or `bin/hol`.
 
 The installed runtime's disassembly agrees with the audited helper's
 full-64 loads, `ff` test, ADRP/LDR decoder call, and 56-bit split length mask.
@@ -208,33 +190,18 @@ val _ = let
 in marker "SMOKE_OK\n" end;
 ```
 
-Result: exit 0, empty stderr, `SMOKE_OK`; 7 pool records, 1 inline / 6 split,
-34 words. A one-off checker verified all records and the single handshake
-were inside the extent, exact word counts/full-width hex, each owner matching
-the preceding CODE, and inline words matching their offsets in that CODE.
-The original inline CODE record was byte-identical before/inside/after the
-extent. Keeping all calls in one ML phrase avoids intervening compiler GCs
-that can legitimately relocate pointer-valued constants between snapshots.
+Expected: exit 0, empty stderr and `SMOKE_OK`, with every pool record, the
+single handshake and the owning CODE records inside the extent, exact word
+counts and full-width hex, and inline words matching their offsets in that
+CODE. Keeping all calls in one ML phrase avoids intervening compiler GCs that
+can legitimately relocate pointer-valued constants between snapshots.
 
-Negative controls also exited 0 with empty stderr and **no pool markers**:
-(1) same script with both extent-control calls replaced by `()`;
-(2) active extent calling `PolyML.showSize 7` instead of the function pair.
-Temporary input scripts, DSO, and captures were removed after validation.
-
-Compact test identities (addresses make capture hashes run-specific):
-
-```text
-selftest.sml SHA-256
-93c6d878b0f7a1b7b9bc168c4ee5019e6531683e41151ef65607a89ee7dd8970
-smoke stdout SHA-256 (12935 bytes)
-a57ab13bfc85b1f9b9408e457685ca9175ec0f0046d42d6ded1b5d0fd02d8719
-```
+Negative controls exit 0 with empty stderr and **no pool markers**:
+(1) the same script with both extent-control calls replaced by `()`;
+(2) an active extent calling `PolyML.showSize 7` instead of the function pair.
 
 Limitations: admission does not prove traversal completeness, root identity,
 absence of concurrent mutations, temporal measurement-boundary identity,
 or that a static pool entry was used during execution. A layout consumer
 must validate those separate protocol claims and fail closed on malformed,
-aborted, duplicate, or unadmitted captures. No timing/profiling runs or
-end-to-end parent parser tests were performed in this initial smoke. The
-subsequent complete captures and end-to-end tests are recorded separately
-in `../evidence/task29/runtime-pools/RESULTS.md`.
+aborted, duplicate, or unadmitted captures.
