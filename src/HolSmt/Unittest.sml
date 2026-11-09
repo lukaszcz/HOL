@@ -7324,9 +7324,23 @@ let
     check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
   val _ = if CVC.is_configured () then
     check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  (* An operator on recursive lists alone selects no Seq model, so no Seq
+     operator such as seq.rev (which Z3 lacks) is required. *)
+  val recursive_only = ([``(f:smt_tree -> int) x < f y``,
+      ``(R:smt_tree list -> bool) (REVERSE ts)``], ``(x:smt_tree) <> y``)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover recursive_only of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 recursive-list REVERSE goal did not replay"
+    else ()
+  val recursive_text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE recursive_only))
   val text = String.concat
     (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
 in
+  assert (not (contains "(Seq " recursive_text) andalso
+    not (contains "seq." recursive_text),
+    "recursive-list REVERSE selected the Seq model");
   assert (contains "(Seq Int)" text, "int list did not select Seq");
   assert (contains "(List_Smt_tree 0)" text andalso
     not (contains "(Seq Smt_tree)" text),

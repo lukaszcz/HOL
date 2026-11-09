@@ -938,6 +938,14 @@ local
     Type.compare (ty, stringSyntax.string_ty) <> EQUAL andalso
     not (is_recursive_list_type ty)
 
+  (* Whether a list operator is applied at a recursive list type, which keeps
+     it off the Seq model. *)
+  fun has_recursive_list_signature tm =
+    let val (doms, rng) = boolSyntax.strip_fun (Term.type_of tm) in
+      List.exists (fn ty => listSyntax.is_list_type ty andalso
+        is_recursive_list_type ty) (rng :: doms)
+    end
+
   (* Checked Seq replay is introduced by TASK_18.  Until then, proof
      requests retain the old datatype encoding while oracle emission uses the
      native surface. *)
@@ -1694,7 +1702,8 @@ local
         ((named "list" direct_list_heads tm orelse
           named "rich_list" rich_list_heads tm orelse
           named "HolSmt" holsmt_heads tm) andalso
-         native_sequence_parts tm) orelse
+         native_sequence_parts tm andalso
+         not (has_recursive_list_signature tm)) orelse
         List.exists (fn whole => Term.aconv tm whole) totalized
       fun has_unconverted_word_num tm =
         Lib.can wordsSyntax.dest_w2n tm
@@ -2523,8 +2532,11 @@ local
       fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
       val sequences = !current_native_sequence_emission andalso
         (subterm_types is_native_sequence_type orelse
-         List.exists (fn tm => is_native_sequence_const
-           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms)
+         List.exists (fn tm =>
+           let val head = Lib.fst (boolSyntax.strip_comb tm) in
+             is_native_sequence_const head andalso
+             not (has_recursive_list_signature head)
+           end) all_subterms)
       (* Finite-set hypotheses select cvc5's native Set sort and are removed
          before this scan, so backend selection itself is also a Set feature. *)
       val sets = not (List.null (!current_set_terms)) orelse
