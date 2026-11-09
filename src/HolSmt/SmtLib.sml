@@ -1833,7 +1833,7 @@ local
       ("higher-order", higher_order)
     ]))
 
-  fun infer_logic_from_features_for_regime regime
+  fun infer_logic_from_features_for_regime regime has_nonnullary_uf
       (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
       floating_point, strings, sequences, sets, bags, datatypes, nonlinear,
@@ -1919,7 +1919,9 @@ local
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          if quantifiers then quantified_array_arith_logic () else "QF_AX"
+          if quantifiers then quantified_array_arith_logic ()
+          else if has_nonnullary_uf then "QF_AUFLIA"
+          else "QF_AX"
         else
           qf ^ "UF"
       fun bitvector_datatype_logic () =
@@ -2716,6 +2718,11 @@ local
         has_uninterpreted_type orelse
         Redblackmap.foldl (fn (key, value, b) =>
           b orelse term_needs_uf (key, value)) false tmdict
+      (* QF_AX admits free sorts and constants, but no non-nullary UF. *)
+      val has_nonnullary_uf =
+        Redblackmap.foldl (fn (key as (_, arity), value, b) =>
+          b orelse (arity > 0 andalso term_needs_uf (key, value)))
+          false tmdict
       val higher_order =
         case regime of FirstOrder => false | HigherOrder _ => true
       val function_arrays =
@@ -2732,12 +2739,12 @@ local
         function_arrays orelse
         List.exists combinSyntax.is_update_comb all_subterms
     in
-      LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
+      (LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
         arrays = arrays, bitvectors = bitvectors, integers = integers,
         reals = reals, floating_point = floating_point, strings = strings,
         sequences = sequences, sets = sets, bags = bags,
         datatypes = datatypes, nonlinear = nonlinear,
-        higher_order = higher_order}
+        higher_order = higher_order}, has_nonnullary_uf)
     end
 
   fun advanced_encoding_records regime terms
@@ -5317,10 +5324,10 @@ local
       ((tydict, tmdict), terms)
       handle NestedTranslation e => raise e
     val (tydict, tmdict) = acc
-    val features =
+    val (features, has_nonnullary_uf) =
       infer_features regime terms tydict tmdict
     val (feature_logic, feature_reason) =
-      infer_logic_from_features_for_regime regime features
+      infer_logic_from_features_for_regime regime has_nonnullary_uf features
     (* Z3's array-lambda extension is accepted uniformly under ALL, while
        narrower FO array logics reject lambda as quantified syntax on some
        supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
@@ -6924,10 +6931,11 @@ in
   val parser_dicts_for_translation = parser_dicts_for_translation_aux NONE
   fun parser_dicts_for_solver_translation solver =
     parser_dicts_for_translation_aux (SOME solver)
+  fun infer_logic_from_features_with_regime regime
+      (features as LogicFeatures {uninterpreted, ...}) =
+    infer_logic_from_features_for_regime regime uninterpreted features
   fun infer_logic_from_features features =
-    infer_logic_from_features_for_regime FirstOrder features
-  val infer_logic_from_features_with_regime =
-    infer_logic_from_features_for_regime
+    infer_logic_from_features_with_regime FirstOrder features
   val goal_requires_ho = goal_requires_ho_aux
   fun regime_for_goal dialect goal =
     select_regime (AutomaticRegime dialect) goal

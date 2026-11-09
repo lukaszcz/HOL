@@ -274,6 +274,8 @@ val sat_CVCp = mk_CVCp expect_sat
 (* HOL definitions (e.g., user-defined data types)                           *)
 (*****************************************************************************)
 
+val _ = new_constant ("array_uf_fun", ``:'b -> 'b``)
+
 val _ = bossLib.Hol_datatype `dt1 = foo | bar | baz`
 
 val _ = bossLib.Hol_datatype `dirn = NS | EW`
@@ -1380,6 +1382,15 @@ in
     (``(f (f x) = x) /\ (f (f (f (f (f x)))) = x) ==> (f x = x)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(f x = f y) ==> (x = y)``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
+
+    (* Arrays mixed with a non-nullary UF require more than QF_AX. *)
+    (``(array_uf_fun (array_uf_fun ((f:'a -> 'b) a)) = f a) /\
+      (array_uf_fun (array_uf_fun (array_uf_fun
+        (array_uf_fun (array_uf_fun (f a))))) = f a)
+      ==> (array_uf_fun (f a) = f a)``,
+      [thm_Z3, thm_Z3p_v4, thm_CVC, thm_CVCp]),
+    (``(f:'a -> 'b) a = f a``,
+      [thm_Z3, thm_Z3p_v4, thm_CVC, thm_CVCp]),
 
     (* arrays as function updates *)
 

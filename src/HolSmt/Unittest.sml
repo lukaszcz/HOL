@@ -277,6 +277,7 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant ("smtlib_array_uf_fun", ``:'a -> 'a``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
 val _ = new_constant ("smtlib_native_dt_uf", ``:smt_tri -> int``)
@@ -6658,6 +6659,8 @@ in
       false, false))
   ];
   List.app (expect_features "QF_AUFLIA") [
+    ("quantifier-free arrays UF", (false, true, true, false, false,
+      false, false, false)),
     ("quantifier-free arrays LIA", (false, false, true, false, true,
       false, false, false))
   ];
@@ -6792,6 +6795,9 @@ in
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_NIA" ``ediv (x:int) y = x``;
   expect_logic "QF_NIA" ``emod (x:int) y = x``;
+  expect_logic "QF_AUFLIA"
+    ``smtlib_array_uf_fun x = y ==>
+      ((f:'a -> 'b) (smtlib_array_uf_fun x) = f y)``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_UFLIA" ``smtlib_uf_logic_foo (x:int) = x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
