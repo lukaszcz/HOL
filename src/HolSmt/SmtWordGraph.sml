@@ -1802,14 +1802,76 @@ struct
     in normalize_using_in (new_context ()) false admission
       (guarded_conversions conversions) root end
 
+  (* Arithmetic normalization turns complement into a negation and adder.
+     Keep its one-bit law available until projection expansion instead. *)
+  fun builtin_word_conversion term =
+    case Lib.total wordsSyntax.dest_word_1comp term of
+      SOME word =>
+        if wordsSyntax.is_word_literal word then
+          Library.replay_word_simp_conv term
+        else raise Conv.UNCHANGED
+    | NONE => Library.replay_word_simp_conv term
+
+  val projection_simp = simpLib.SIMP_CONV
+    (simpLib.++ (simpLib.++ (simpLib.++ (boolSimps.bool_ss, fcpLib.FCP_ss),
+      wordsLib.SIZES_ss), numSimps.REDUCE_ss))
+    [wordsTheory.word_and_def, wordsTheory.word_or_def,
+     Rewrite.REWRITE_RULE [blastTheory.xor_thm] wordsTheory.word_xor_def,
+     wordsTheory.word_1comp_def, wordsTheory.word_lsl_def,
+     wordsTheory.word_lsr_def, wordsTheory.word_extract_def,
+     wordsTheory.word_bits_def, wordsTheory.w2w,
+     wordsTheory.word_concat_def, wordsTheory.word_join_index]
+
+  fun literal_bit_conversion term =
+    case Lib.total wordsSyntax.dest_index term of
+      SOME (word, _) =>
+        if wordsSyntax.is_word_literal word then wordsLib.WORD_EVAL_CONV term
+        else raise Conv.UNCHANGED
+    | NONE => raise Conv.UNCHANGED
+
+  (* Project these operators before expanding a whole word into bits. *)
+  fun builtin_bit_conversion term =
+    let
+      val direct =
+        case Lib.total wordsSyntax.dest_index term of
+          NONE => false
+        | SOME (word, _) =>
+            let val (head, arguments) = boolSyntax.strip_comb word in
+              case Lib.total Term.dest_thy_const head of
+                SOME {Thy="words", Name, ...} =>
+                  List.exists (fn name => name = Name)
+                    ["word_and", "word_or", "word_xor", "word_1comp",
+                     "word_concat", "word_join", "w2w"]
+                  orelse
+                  (List.exists (fn name => name = Name)
+                     ["word_lsl", "word_lsr"] andalso
+                   case arguments of [_, amount] => numSyntax.is_numeral amount
+                     | _ => false)
+                  orelse
+                  (List.exists (fn name => name = Name)
+                     ["word_extract", "word_bits"] andalso
+                   case arguments of [high, low, _] =>
+                     numSyntax.is_numeral high andalso numSyntax.is_numeral low
+                   | _ => false)
+              | _ => false
+            end
+    in
+      if direct then
+        Conv.ORELSEC
+          (Conv.THENC (projection_simp,
+            Conv.THENC (Conv.DEPTH_CONV literal_bit_conversion,
+              Rewrite.REWRITE_CONV [])), blastLib.BIT_BLAST_CONV) term
+      else blastLib.BIT_BLAST_CONV term
+    end
+
   (* Built-in operator laws are pure and reusable within this producer.
      Custom conversion probes above retain their uncached contract. *)
   fun normalize_with_metrics root =
     normalize_using_in (new_context_with_local_laws true) false
       (new_type_admission ())
       (guarded_conversions
-        {word_conversion = Library.replay_word_simp_conv,
-         bit_conversion = blastLib.BIT_BLAST_CONV,
+        {word_conversion = builtin_word_conversion,
+         bit_conversion = builtin_bit_conversion,
          node_conversion = unchanged_node}) root
 
   (* Independent term-facing FP field/LET/beta compatibility adapter.
@@ -1818,8 +1880,8 @@ struct
   fun normalize_with_node_conversion_and_metrics node_conversion root =
     normalize_template_using_in (new_context ()) false (new_type_admission ())
       false {callback_failed = ref false,
-       word_conversion = Library.replay_word_simp_conv,
-       bit_conversion = blastLib.BIT_BLAST_CONV,
+       word_conversion = builtin_word_conversion,
+       bit_conversion = builtin_bit_conversion,
        node_conversion = fn _ => node_conversion} root
 
   fun normalize_with_node_conversion node_conversion =
@@ -1832,8 +1894,8 @@ struct
         (fn source => Portable.pointer_eq (source, term)) sources))
       (new_context ()) false (new_type_admission ())
       false {callback_failed = ref false,
-       word_conversion = Library.replay_word_simp_conv,
-       bit_conversion = blastLib.BIT_BLAST_CONV,
+       word_conversion = builtin_word_conversion,
+       bit_conversion = builtin_bit_conversion,
        node_conversion = fn _ => node_conversion} root
 
   fun normalize_with_node_conversion_stopping sources node_conversion =
@@ -1844,8 +1906,8 @@ struct
 
   fun graph_normalize_in context graph scope source =
     discover_using_in true context true (new_type_admission ())
-      (guarded_conversions {word_conversion=Library.replay_word_simp_conv,
-       bit_conversion=blastLib.BIT_BLAST_CONV,node_conversion=unchanged_node})
+      (guarded_conversions {word_conversion=builtin_word_conversion,
+       bit_conversion=builtin_bit_conversion,node_conversion=unchanged_node})
       NONE graph scope source
 
   fun graph_normalize_using_with_metrics conversions graph scope source =
@@ -1874,8 +1936,8 @@ struct
       val (plan,_) = discover_using_in false
         (new_context_with_local_laws true) false (new_type_admission ())
         (guarded_conversions
-          {word_conversion=Library.replay_word_simp_conv,
-           bit_conversion=blastLib.BIT_BLAST_CONV,
+          {word_conversion=builtin_word_conversion,
+           bit_conversion=builtin_bit_conversion,
            node_conversion=node_conversion}) (SOME record) graph scope source
       val _ = if C.graph_source plan=C.graph_result plan then
           raise Conv.UNCHANGED else ()
@@ -2036,8 +2098,8 @@ struct
       val source = #node (G.import graph scope maximum target)
       val admission = new_type_admission ()
       val conversions = guarded_conversions
-        {word_conversion=Library.replay_word_simp_conv,
-         bit_conversion=blastLib.BIT_BLAST_CONV,
+        {word_conversion=builtin_word_conversion,
+         bit_conversion=builtin_bit_conversion,
          node_conversion=node_conversion}
       fun reflexive admission =
         let val callback = #node_conversion conversions admission
@@ -2102,8 +2164,8 @@ struct
                   val normalized = #1 (normalize_template_using_in context true
                     admission true
                     {callback_failed=ref false,
-                     word_conversion=Library.replay_word_simp_conv,
-                     bit_conversion=blastLib.BIT_BLAST_CONV,
+                     word_conversion=builtin_word_conversion,
+                     bit_conversion=builtin_bit_conversion,
                      node_conversion=fn _ => reflexive} template)
                     handle Conv.UNCHANGED => Thm.REFL template
                   val residue = boolSyntax.rhs (Thm.concl normalized)

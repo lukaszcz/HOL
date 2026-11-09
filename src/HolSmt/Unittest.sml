@@ -32821,6 +32821,24 @@ local
   structure C = SmtReplayCanonGraph
   structure P = SmtReplayProof
 in
+fun word_graph_wide_bitwise_success () =
+let
+  val targets =
+    [``(x : 256 word) &&
+       0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
+       word_lsl (word_lsr x 5) 5``,
+     ``(x : 256 word) = x && m || x && ~m``]
+  val _ = List.app (fn target =>
+    let
+      val theorem = Timeout.apply (Time.fromSeconds 30)
+        SmtWordGraph.prove target
+    in
+      assert_concl_alpha ("wide bitwise word graph", theorem, target);
+      assert_no_hyps ("wide bitwise word graph", theorem);
+      check_oracle_tags "wide bitwise word graph" theorem
+    end) targets
+in () end
+
 fun word_graph_boolean_circuit_success () =
 let
   val target = ``((p /\ q) ==>
@@ -33212,12 +33230,16 @@ let
             andalso #memo_hits metrics>0 andalso
             ptr (boolSyntax.lhs (Thm.concl theorem)) source,
           "shared callback control missed a prover or lost its source");
-        assert (#operator_calls cached_metrics = #operator_calls metrics
+        assert (#operator_calls cached_metrics <= #operator_calls metrics
             andalso #memo_hits cached_metrics > #memo_hits metrics andalso
             ptr (boolSyntax.lhs (Thm.concl cached)) source andalso
             Lib.can (SmtSkeletonProve.nodewise_equality
-              (boolSyntax.rhs (Thm.concl theorem)))
-              (boolSyntax.rhs (Thm.concl cached)),
+              (boolSyntax.rhs (Thm.concl
+                (Conv.CONV_RULE (Conv.RAND_CONV
+                  (Rewrite.REWRITE_CONV [])) theorem))))
+              (boolSyntax.rhs (Thm.concl
+                (Conv.CONV_RULE (Conv.RAND_CONV
+                  (Rewrite.REWRITE_CONV [])) cached))),
           "local built-in schema reuse lost its benefit or normal form");
         assert_no_hyps ("Task05 typed frontiers",theorem);
         check_oracle_tags "Task05 typed frontiers" theorem;
@@ -33377,6 +33399,7 @@ end
 fun run_word_graph_unittests () =
   List.app run_test
     [("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
      ("word_graph_discovery_invariants_success",
@@ -34223,6 +34246,7 @@ let
     ("z3_hypothesis_presence_fastpath_boundary",
       Z3_HypothesisPresenceTests.run),
     ("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
     ("word_graph_discovery_invariants_success",

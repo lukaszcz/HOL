@@ -4089,17 +4089,14 @@ local
     | ("bool-double-not-elim", [p]) =>
         let
           val variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_neg (boolSyntax.mk_neg variable), variable))
+          val law = Thm.SPEC variable (Thm.CONJUNCT1 boolTheory.NOT_CLAUSES)
         in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-impl-elim", [left, right]) =>
         let
           val left_variable = Term.genvar Type.bool
           val right_variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_imp (left_variable, right_variable),
-             boolSyntax.mk_disj
-               (boolSyntax.mk_neg left_variable, right_variable)))
+          val law = Drule.SPECL [left_variable, right_variable]
+            boolTheory.IMP_DISJ_THM
         in
           observed_inst
             [{redex = left_variable, residue = left},
@@ -4108,15 +4105,14 @@ local
     | ("bool-eq-false", [p]) =>
         let
           val variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_eq (variable, boolSyntax.F),
-             boolSyntax.mk_neg variable))
+          val law = List.nth (Drule.CONJUNCTS
+            (Thm.SPEC variable boolTheory.EQ_CLAUSES), 3)
         in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-eq-true", [p]) =>
         let
           val variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_eq (variable, boolSyntax.T), variable))
+          val law = List.nth (Drule.CONJUNCTS
+            (Thm.SPEC variable boolTheory.EQ_CLAUSES), 1)
         in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-xor-comm", [left, right]) =>
         let
@@ -5056,31 +5052,35 @@ local
                     (term, identity) :: !structural_memo
                 in identity end
           val seen = ref ([] : Term.term list)
+          val collected = ref ([] : Term.term list)
+          fun add_bit bit =
+            if List.exists
+                 (fn saved => structural_id bit = structural_id saved)
+                 (!collected) then ()
+            else if List.length (!collected) = 16 then
+              raise ERR "bv_poly_norm"
+                "word constructor schema exceeds sixteen Boolean inputs"
+            else collected := bit :: !collected
           fun collect term =
             if List.exists
                  (fn saved => Portable.pointer_eq (term, saved)) (!seen) then
-              []
+              ()
             else
               let val _ = seen := term :: !seen in
                 case singleton_bit term of
-                  SOME bit => [bit]
+                  SOME bit => add_bit bit
                 | NONE =>
                     if Term.is_comb term then
                       let val (operator, operand) = Term.dest_comb term
-                      in collect operator @ collect operand end
-                    else []
+                      in collect operator; collect operand end
+                    else ()
               end
-          fun distinct (bit, bits) =
-            if List.exists
-                 (fn saved => structural_id bit = structural_id saved) bits then
-              bits
-            else bit :: bits
           val constructor_source =
             case singleton_bit left_word of
               SOME condition => condition
             | NONE => left_word
-          val bits = List.rev
-            (List.foldl distinct [] (collect constructor_source))
+          val _ = collect constructor_source
+          val bits = List.rev (!collected)
           val _ =
             case OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" of
               SOME "1" => Feedback.HOL_MESG
@@ -5088,9 +5088,6 @@ local
             | _ => ()
           val _ = not (List.null bits) orelse raise ERR "bv_poly_norm"
             "word constructor schema found no Boolean constructors"
-          val _ = List.length bits <= 16 orelse
-            raise ERR "bv_poly_norm"
-              "word constructor schema exceeds sixteen Boolean inputs"
           val variables = List.map (fn _ => Term.genvar Type.bool) bits
           val replacements = ListPair.mapEq
             (fn (bit, variable) => (structural_id bit, variable))
@@ -5668,6 +5665,25 @@ local
   fun mk_disj_terms [tm] = tm
     | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
     | mk_disj_terms [] = boolSyntax.F
+
+  val equivalence_clause_laws =
+    let
+      val left = Term.genvar Type.bool
+      val right = Term.genvar Type.bool
+      val equality = boolSyntax.mk_eq (left, right)
+      val neg = boolSyntax.mk_neg
+      val clauses =
+        [("cnf_equiv_neg1", [left, right, equality]),
+         ("cnf_equiv_neg2", [neg left, neg right, equality]),
+         ("cnf_equiv_pos1", [neg left, right, neg equality]),
+         ("cnf_equiv_pos2", [left, neg right, neg equality])]
+      fun prove (name, literals) =
+        (name, Library.prove (mk_disj_terms literals,
+          Tactical.THEN
+            (Tactical.EVERY
+              [Tactic.BOOL_CASES_TAC left, Tactic.BOOL_CASES_TAC right],
+             boolLib.REWRITE_TAC [])))
+    in (left, right, List.map prove clauses) end
 
   (* The kernel comparison preserves physical DAG sharing and uses an
      operation-local identity memo.  Reuse it rather than retain a second
@@ -6758,25 +6774,11 @@ local
           [equality] =>
             let
               val (left, right) = boolSyntax.dest_eq equality
-              val left_variable = Term.genvar Type.bool
-              val right_variable = Term.genvar Type.bool
-              val generic_equality = boolSyntax.mk_eq
-                (left_variable, right_variable)
-              val clause =
-                case name of
-                  "cnf_equiv_neg1" => mk_disj_terms
-                    [left_variable, right_variable, generic_equality]
-                | "cnf_equiv_neg2" => mk_disj_terms
-                    [boolSyntax.mk_neg left_variable,
-                     boolSyntax.mk_neg right_variable, generic_equality]
-                | "cnf_equiv_pos1" => mk_disj_terms
-                    [boolSyntax.mk_neg left_variable, right_variable,
-                     boolSyntax.mk_neg generic_equality]
-                | "cnf_equiv_pos2" => mk_disj_terms
-                    [left_variable, boolSyntax.mk_neg right_variable,
-                     boolSyntax.mk_neg generic_equality]
-                | _ => raise ERR name "not an equivalence CNF rule"
-              val law = tautLib.TAUT_PROVE clause
+              val (left_variable, right_variable, laws) =
+                equivalence_clause_laws
+              val law = case List.find (fn (rule, _) => rule = name) laws of
+                  SOME (_, law) => law
+                | NONE => raise ERR name "not an equivalence CNF rule"
             in
               observed_inst
                 [{redex = left_variable, residue = left},
@@ -6822,26 +6824,27 @@ local
             case Lib.total destructor term of
               SOME (left, right) =>
                 let
-                  val (left_tree, left_leaves, left_instances) = build left
-                  val (right_tree, right_leaves, right_instances) = build right
+                  val (left_tree, left_instances) = build left
+                  val (right_tree, right_instances) = build right
                 in
                   (constructor (left_tree, right_tree),
-                   left_leaves @ right_leaves,
                    left_instances @ right_instances)
                 end
             | NONE =>
                 let val variable = Term.genvar Type.bool in
-                  (variable, [variable],
+                  (variable,
                    [{redex = variable, residue = term}])
                 end
-          val (tree, leaves, instances) = build aggregate
-          val clause =
-            if negated then
-              mk_disj_terms (tree :: List.map boolSyntax.mk_neg leaves)
-            else
-              mk_disj_terms (boolSyntax.mk_neg tree :: leaves)
+          val (tree, instances) = build aggregate
+          val first = if negated then tree else boolSyntax.mk_neg tree
+          val law = Thm.SPEC first boolTheory.EXCLUDED_MIDDLE
+          (* Keep the aggregate literal intact; flatten only its complement. *)
+          val law = Conv.CONV_RULE
+            (Conv.RAND_CONV (Rewrite.PURE_REWRITE_CONV
+              [boolTheory.DE_MORGAN_THM, boolTheory.NOT_CLAUSES,
+               Conv.GSYM boolTheory.DISJ_ASSOC])) law
         in
-          observed_inst instances (tautLib.TAUT_PROVE clause)
+          observed_inst instances law
         end
       fun cnf_and_pos_prove () =
         case args of
