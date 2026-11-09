@@ -36,6 +36,7 @@ uncovered or unused source, a closure that is not cell-independent). A
 command that is refused prints one REFUSED line and exits 3.
 """
 import argparse
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -57,9 +58,15 @@ ENGINE = timing.ENGINE
 SCHEMA = "task31-identity-v1"
 DECISIONS = "task31-identity-decisions-v1"
 IDENTITY_TABLE = "task31-identity"
-# One pair, three samples, free ramp calibration of 0.1 s batches: nothing
+# One pair, three samples, free ramp calibration of 1 s batches: nothing
 # is timed for a decision; the process loads, runs the fixture and is audited.
-ID_PAIRS, ID_SAMPLES, ID_SECONDS = 1, 3, 0.1
+# The runner's own rule still applies (performance_schema.py: every sample
+# lasts at least half the batch seconds). A major GC pause of about 0.1 s in
+# the final calibration batch stopped a 0.1 s ramp at a count whose
+# pause-free batches fell under that half-target, systematically for
+# tactic_dependency_reverse_construct-1000 (baseline side). With 1.0 s about
+# five such pauses are needed to be refused. Identity compares no timing.
+ID_PAIRS, ID_SAMPLES, ID_SECONDS = 1, 3, 1.0
 # (a test pins that every local module the identity modules import, to the
 # transitive closure, is here or is reached only by an import edge on its
 # short list of reviewed exemptions)
@@ -292,6 +299,16 @@ def run_one(command, log, fds, timeout):
     return a.run_logged(command, log, fds, timeout)
 
 
+def runner_failure(folder):
+    """The `failure` of the run's manifest, or None (missing file, not JSON,
+    not an object or no such key: the diagnosis never raises)."""
+    try:
+        value = json.loads((folder / "manifest.json").read_text())
+        return str(value["failure"]) if "failure" in value else None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
 def measure(args, case, size, root, inventory, fds):
     name = name_of(case, size)
     print("IDENTITY %s" % name, flush=True)
@@ -311,9 +328,11 @@ def measure(args, case, size, root, inventory, fds):
         archive = root / (name + ".json.xz")
         files = ENGINE.h.archive(folder, archive, scratch) \
             if folder.is_dir() else None
+        why = runner_failure(folder) if failed or files is None else None
         try:
             a.require(not failed and files is not None,
-                      "identity runner failed: " + name)
+                      "identity runner failed: " + name +
+                      (": " + why if why else ""))
             row = idt.cell(folder, case, size, args.baseline,
                            args.candidate, ID_SAMPLES,
                            inventory["attributed"]["table"])

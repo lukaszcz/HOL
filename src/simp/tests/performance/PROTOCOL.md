@@ -2553,8 +2553,15 @@ measured candidate, after its last change.
 --authorize-measurements` runs, for each feasible cell, the real paired
 runner (`run_paired.py --matrix-performance`) once: one fresh process for
 the baseline and one for the candidate, the runner's own loaded-source audit,
-one pair of three samples, free ramp calibration of 0.1 s batches (nothing is
-timed for a decision). The runner is started through `task31_snapshot.py`,
+one pair of three samples, free ramp calibration of 1 s batches (nothing is
+timed for a decision, but the runner accepts a process only if every sample
+lasts at least half the batch seconds; a major collection of about 0.1 s in
+the last calibration batch of a cell of about 80 ns per iteration stopped a
+0.1 s ramp at a count whose samples were too short, systematically for
+`tactic_dependency_reverse_construct-1000`, so the target is well above twice
+a collector pause). A refused cell is set aside as `<cell>.json.xz.failed-N`
+and measured again by `--resume`; the refusal names the runner's failure.
+The runner is started through `task31_snapshot.py`,
 which runs it unchanged (`runpy`, the same arguments and exit status) and,
 just before the runner deletes its private trees, records every file of
 them as `private-snapshot.json`: its size, its sha256, its sha256 with the
