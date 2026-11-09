@@ -4133,39 +4133,20 @@ local
               ((tydict, tmdict), (typedecls @ [declaration], name))
             end
       end
+    fun mentions_bound_variable t =
+      List.exists (fn v => Option.isSome (Redblackmap.peek (bounds, v)))
+        (Term.free_vars t)
     fun translate_injected_string acc =
-      let
-        val string = dest_injected_string tm
-      in
-        case Redblackmap.peek (bounds, string) of
-          SOME name => (acc, ([], name))
-        | NONE =>
-          let
-            val depends_on_bound =
-              List.exists
-                (fn v => Option.isSome (Redblackmap.peek (bounds, v)))
-                (Term.free_vars string)
-            val _ =
-              if depends_on_bound then
-                raise ERR "translate_injected_string"
-                  "non-atomic injected term depends on a bound variable"
-              else
-                ()
-          in
-            case Redblackmap.peek (tmdict, (tm, 0)) of
-              SOME name => (acc, ([], name))
-            | NONE =>
-              let
-                val name =
-                  tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
-                val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
-                val declaration =
-                  term_declaration_text regime name [] "String"
-              in
-                ((tydict, tmdict), ([declaration], name))
-              end
-          end
-      end
+      case Redblackmap.peek (tmdict, (tm, 0)) of
+        SOME name => (acc, ([], name))
+      | NONE =>
+        let
+          val name = tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
+          val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
+          val declaration = term_declaration_text regime name [] "String"
+        in
+          ((tydict, tmdict), ([declaration], name))
+        end
     fun translate_injected_float acc =
       let
         val float = dest_injected_float tm
@@ -4445,10 +4426,14 @@ local
     (acc, ([], Redblackmap.find (bounds, tm)))
     handle Redblackmap.NotFound =>
 
-    (* Each str_inj image is generalized to an SMT String value.  Proving the
-       strengthened SMT formula over every Unicode string and then using the
-       tactic validation at this image is the sound direction. *)
-    (if is_injected_string tm then
+    (* Each closed str_inj image is generalized to an SMT String value.
+       Proving the strengthened SMT formula over every Unicode string and
+       then using the tactic validation at this image is the sound
+       direction.  An image whose argument mentions a bound variable is
+       left to the application case below, which emits str_inj as an
+       uninterpreted function from the argument's sort to String. *)
+    (if is_injected_string tm andalso
+        not (mentions_bound_variable (dest_injected_string tm)) then
        translate_injected_string acc
        handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
      else
