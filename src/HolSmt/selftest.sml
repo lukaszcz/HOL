@@ -210,19 +210,6 @@ fun mk_Z3 expect_fun =
 val thm_Z3 = mk_Z3 (expect_thm false)
 val sat_Z3 = mk_Z3 expect_sat
 
-(* A mixed String/UF goal may be weakened by carrier abstraction, but must
-   still be well-sorted and accepted by the solver. *)
-fun expect_decided name solver tm =
-  case solver ([], tm) of
-    SolverSpec.SAT _ => ()
-  | SolverSpec.UNSAT _ => ()
-  | SolverSpec.UNKNOWN _ => die (name ^ " did not decide the mixed string goal")
-
-val decided_Z3 = mk_test_fun (Z3.is_configured ()) expect_decided
-  "Z3" Z3.Z3_SMT_Oracle
-val decided_CVC = mk_test_fun (CVC.is_configured ()) expect_decided
-  "cvc5" CVC.CVC_SMT_Oracle
-
 fun mk_Z3p expect_fun =
   mk_test_fun (Z3.is_configured ()) expect_fun "Z3 (proofs)" HolSmtLib.Z3_TAC
 
@@ -383,7 +370,7 @@ in
     (``(s:string) = "abc" ==> STRLEN s = 3``, [thm_Z3, thm_CVC]),
     (``0 <= (&(STRLEN (s:string)) : int)``, [thm_Z3, thm_CVC]),
     (``(s:string) = STRCAT t u /\ P u ==>
-        STRLEN s = STRLEN t + STRLEN u``, [decided_Z3, decided_CVC]),
+        STRLEN s = STRLEN t + STRLEN u``, [thm_Z3, thm_CVC]),
 
     (* Native SMT-LIB Unicode strings exercise checked Z3 replay end to end. *)
     (``smtstring$smtstr_len
