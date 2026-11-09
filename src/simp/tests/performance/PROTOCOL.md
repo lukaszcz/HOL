@@ -2561,10 +2561,10 @@ the last calibration batch of a cell of about 80 ns per iteration stopped a
 `tactic_dependency_reverse_construct-1000`, so the target is well above twice
 a collector pause). A refused cell is set aside as `<cell>.json.xz.failed-N`
 and measured again by `--resume`; the refusal names the runner's failure.
-The runner is started through `task31_snapshot.py`,
-which runs it unchanged (`runpy`, the same arguments and exit status) and,
-just before the runner deletes its private trees, records every file of
-them as `private-snapshot.json`: its size, its sha256, its sha256 with the
+The runner is started through `task31_snapshot.py`, which runs it
+unchanged (`runpy`, the same arguments and exit status) and, just before
+the runner deletes its private trees, records every file of them as
+`private-snapshot.json`: its size, its sha256, its sha256 with the
 directory of the side replaced by `<PRIVATE>`, and for a file of at most
 256 KiB its text. A loader product (`.uo`, `.ui`) names the directory of its
 side, so the raw hashes of two sides always differ; the normalized ones

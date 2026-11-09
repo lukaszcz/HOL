@@ -304,9 +304,10 @@ def runner_failure(folder):
     not an object or no such key: the diagnosis never raises)."""
     try:
         value = json.loads((folder / "manifest.json").read_text())
-        return str(value["failure"]) if "failure" in value else None
-    except (OSError, ValueError, TypeError, KeyError):
+        found = value.get("failure") if isinstance(value, dict) else None
+    except (OSError, ValueError):
         return None
+    return found if isinstance(found, str) and found else None
 
 
 def measure(args, case, size, root, inventory, fds):

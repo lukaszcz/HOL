@@ -573,7 +573,8 @@ class Commands(unittest.TestCase):
         self.assertEqual(a.load(out / "inventory.json")["runs"], [])
         self.assertFalse((out / "traversal_construct-0.json.xz").exists())
 
-    def refuse_with(self, manifest, name="traversal_construct-0"):
+    def refuse_with(self, manifest, name="traversal_construct-0",
+                    out="out"):
         def fail(command, log, fds, timeout):
             folder = Path(command[command.index("--output") + 1])
             folder.mkdir()
@@ -581,7 +582,7 @@ class Commands(unittest.TestCase):
                 (folder / "manifest.json").write_text(manifest)
             Path(log).write_text("x")
             return dict(exit=1, timed_out=False)
-        argv, out = self.args(name)
+        argv, out = self.args(name, out=out)
         err = io.StringIO()
         with mock.patch.object(g, "run_one", fail), \
                 contextlib.redirect_stderr(err):
@@ -605,16 +606,14 @@ class Commands(unittest.TestCase):
                         .is_file())
 
     def test_a_manifest_without_a_failure_gives_the_plain_refusal(self):
-        for manifest in (None, "not json", "[1]", "null", "{}",
-                         json.dumps(dict(success=False))):
+        manifests = (None, "not json", "[1]", "null", "{}",
+                     json.dumps(dict(success=False)),
+                     json.dumps(dict(failure=None)),
+                     json.dumps(dict(failure="")),
+                     json.dumps(dict(failure=3)))
+        for i, manifest in enumerate(manifests):
             with self.subTest(manifest=manifest):
-                with tempfile.TemporaryDirectory() as tmp:
-                    root = self.root
-                    self.root = Path(tmp)
-                    try:
-                        _, _, text = self.refuse_with(manifest)
-                    finally:
-                        self.root = root
+                _, _, text = self.refuse_with(manifest, out="out-%d" % i)
                 self.assertIn("identity runner failed: "
                               "traversal_construct-0", text)
                 self.assertNotIn("traversal_construct-0:", text)
