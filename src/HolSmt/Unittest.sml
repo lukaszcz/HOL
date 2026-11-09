@@ -14505,6 +14505,79 @@ in
   check_oracle_tags "CPC n-ary HO congruence unit test" theorem
 end
 
+fun cpc_nested_ho_application_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const f (-> Int Int)) \
+    \(declare-const g (-> Int Int)) (declare-const x Int) \
+    \(assume @p1 (= f g)) \
+    \(step @p2 (= (+ (_ f x) 1) (+ (_ g x) 1)) \
+    \:rule cong :premises (@p1) :args ((+ (_ f x) 1))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``(f:int->int) x + 1 = g x + 1``
+  val first_order = CPC_ProofReplay.replay_root_for_test
+    (CPC_ProofParser.parse_stream_with_version
+      (SmtLib_Logics.parsedicts_of_logic "QF_UF") "1.3.4"
+      (TextIO.openString
+        "((declare-const f (-> Bool Bool)) (declare-const x Bool) \
+        \(step @p :rule refl :args ((= (_ f x) x))))"))
+  val first_order_source = ``(f:bool->bool) x = x``
+  fun reflexive source expected =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string
+          ("((declare-const f (-> Int Int)) \
+           \(declare-const g (-> Int Int)) (declare-const x Int) \
+           \(declare-const h (-> (_ BitVec 8) (_ BitVec 8))) \
+           \(declare-const c Bool) \
+           \(step @p :rule refl :args (" ^ source ^ ")))"))
+    in
+      assert (Thm.concl theorem ~~ boolSyntax.mk_eq (expected, expected),
+        "CPC higher-order application changed its source term");
+      check_oracle_tags "CPC nested higher-order reflexivity" theorem
+    end
+in
+  assert (Thm.concl theorem ~~ expected,
+    "CPC nested higher-order congruence has the wrong conclusion");
+  assert (List.length (Thm.hyp theorem) = 1 andalso
+      List.hd (Thm.hyp theorem) ~~ ``(f:int->int) = g``,
+    "CPC nested higher-order congruence changed its premise");
+  check_oracle_tags "CPC nested higher-order congruence" theorem;
+  assert (Thm.concl first_order ~~
+      boolSyntax.mk_eq (first_order_source, first_order_source),
+    "CPC higher-order application needs a higher-order source logic");
+  check_oracle_tags "CPC higher-order first-order dictionary" first_order;
+  reflexive "(+ (_ (ite c f g) x) 1)"
+    ``(if c then (f:int->int) else g) x + 1``;
+  reflexive "(_ (lambda (@list (@var x Int)) x) 1)"
+    ``(\x:int. x) 1``;
+  reflexive "(_ bv5 8)" ``5w:word8``;
+  reflexive "((_ extract 3 0) (_ bv5 8))" ``(3 >< 0) (5w:word8):word4``;
+  reflexive "((_ extract 3 0) (_ h (_ bv5 8)))"
+    ``(3 >< 0) ((h:word8->word8) 5w):word4``;
+  reflexive "(_ +zero 3 5)" ``smtfp_pzero:(4,3) smtfp``;
+  reflexive "(_ BitVec 8)" (Term.mk_var ("@cpc.BitVec", ``:word8``));
+  reflexive "(_ FloatingPoint 3 5)"
+    (Term.mk_var ("@cpc.FloatingPoint", ``:(4,3) smtfp``))
+end
+
+fun cpc_live_checked_ho_application_success () =
+let
+  fun check goal =
+    let
+      val theorem = Tactical.TAC_PROOF (goal, HolSmtLib.CVC_TAC)
+    in
+      assert (Thm.concl theorem ~~ Lib.snd goal,
+        "CPC higher-order tactic returned the wrong conclusion");
+      check_oracle_tags "CPC live higher-order application" theorem
+    end
+in
+  check ([``(if c then (f:int->int) else g) a = 1``, ``c:bool``],
+    ``(f:int->int) a = 1``);
+  check ([``(r:smt_fun_rec).smt_fun a b = 1``, ``(r:smt_fun_rec) = q``],
+    ``(q:smt_fun_rec).smt_fun a b = 1``)
+end
+
 fun cpc_proof_replay_ho_rare_rewrites_success () =
 let
   val proof = parse_cpc_proof_string
@@ -28708,6 +28781,10 @@ let
       cpc_proof_replay_ho_cong_and_ite_success),
     ("cpc_proof_replay_ho_cong_nary_success",
       cpc_proof_replay_ho_cong_nary_success),
+    ("cpc_nested_ho_application_success",
+      cpc_nested_ho_application_success),
+    ("cpc_live_checked_ho_application_success",
+      cpc_live_checked_ho_application_success),
     ("cpc_proof_replay_ho_rare_rewrites_success",
       cpc_proof_replay_ho_rare_rewrites_success),
     ("cpc_proof_parser_declarations_success",
