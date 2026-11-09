@@ -1815,7 +1815,7 @@ struct
   val projection_simp = simpLib.SIMP_CONV
     (simpLib.++ (simpLib.++ (simpLib.++ (boolSimps.bool_ss, fcpLib.FCP_ss),
       wordsLib.SIZES_ss), numSimps.REDUCE_ss))
-    [wordsTheory.word_and_def, wordsTheory.word_or_def,
+    [combinTheory.o_THM, wordsTheory.word_and_def, wordsTheory.word_or_def,
      Rewrite.REWRITE_RULE [blastTheory.xor_thm] wordsTheory.word_xor_def,
      wordsTheory.word_1comp_def, wordsTheory.word_lsl_def,
      wordsTheory.word_lsr_def, wordsTheory.word_extract_def,
