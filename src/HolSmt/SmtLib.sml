@@ -1422,51 +1422,65 @@ local
         SOME (_, then_bag, else_bag) =>
           collect_bag else_bag (collect_bag then_bag (add_bag_term bag terms))
       | NONE => add_bag_term bag terms
-    val (rator, rands) = boolSyntax.strip_comb tm
-    val terms =
-      (let val (_, body) = Term.dest_abs tm in
-         collect_native_bag_terms body terms
-       end
-       handle Feedback.HOL_ERR _ =>
-         List.foldl (fn (arg, acc) => collect_native_bag_terms arg acc)
-           terms rands)
-    (* [strip_comb] flattens a partially applied bag operation into its head
-       and all arguments.  Retain the immediate rator too: in [(b + c) x],
-       it is the bag-valued prefix that must be marked for [bag.count]. *)
-    val terms =
-      (let val (immediate_rator, _) = Term.dest_comb tm in
-         collect_native_bag_terms immediate_rator terms
-       end
-       handle Feedback.HOL_ERR _ => terms)
-    fun binary () =
-      case rands of [left, right] =>
-        collect_bag tm (collect_bag left (collect_bag right terms))
-      | _ => terms
-  in
-    if same_const rator bag_in_tm then
-      (case rands of [_, bag] => collect_bag bag terms | _ => terms)
-    else if same_const rator bagSyntax.BAG_CARD_tm orelse
-            same_const rator finite_bag_tm then
-      (case rands of [bag] => collect_bag bag terms | _ => terms)
-    else if same_const rator bagSyntax.BAG_INSERT_tm then
-      (case rands of [_, bag] => collect_bag tm (collect_bag bag terms)
-       | _ => terms)
-    else if same_const rator bagSyntax.BAG_UNION_tm orelse
-            same_const rator bagSyntax.BAG_DIFF_tm orelse
-            same_const rator bag_merge_tm orelse same_const rator bag_inter_tm
-    then binary ()
-    else if same_const rator bagSyntax.SUB_BAG_tm then
-      (case rands of [left, right] =>
-         collect_bag left (collect_bag right terms)
-       | _ => terms)
-    else if bagSyntax.is_empty tm then add_bag_term tm terms
-    else if same_const rator boolSyntax.equality then
-      (case rands of [left, right] =>
-         if is_bag_type left andalso is_bag_type right then
+    (* Marks the bag terms that the application [node] = [rator rands]
+       introduces, where [rands] are exactly the arguments of [node]. *)
+    fun mark node rator rands terms =
+    let
+      fun binary () =
+        case rands of [left, right] =>
+          collect_bag node (collect_bag left (collect_bag right terms))
+        | _ => terms
+    in
+      if same_const rator bag_in_tm then
+        (case rands of [_, bag] => collect_bag bag terms | _ => terms)
+      else if same_const rator bagSyntax.BAG_CARD_tm orelse
+              same_const rator finite_bag_tm then
+        (case rands of [bag] => collect_bag bag terms | _ => terms)
+      else if same_const rator bagSyntax.BAG_INSERT_tm then
+        (case rands of [_, bag] => collect_bag node (collect_bag bag terms)
+         | _ => terms)
+      else if same_const rator bagSyntax.BAG_UNION_tm orelse
+              same_const rator bagSyntax.BAG_DIFF_tm orelse
+              same_const rator bag_merge_tm orelse
+              same_const rator bag_inter_tm
+      then binary ()
+      else if same_const rator bagSyntax.SUB_BAG_tm then
+        (case rands of [left, right] =>
            collect_bag left (collect_bag right terms)
-         else terms
-       | _ => terms)
-    else terms
+         | _ => terms)
+      else if bagSyntax.is_empty node then add_bag_term node terms
+      else if same_const rator boolSyntax.equality then
+        (case rands of [left, right] =>
+           if is_bag_type left andalso is_bag_type right then
+             collect_bag left (collect_bag right terms)
+           else terms
+         | _ => terms)
+      else terms
+    end
+    (* The application spine of [tm]: its head and, from the shortest prefix
+       up, each partial application [head a1 .. ak] with its last argument
+       [ak]. *)
+    fun spine t links =
+      case Lib.total Term.dest_comb t of
+        SOME (f, x) => spine f ((t, x) :: links)
+      | NONE => (t, links)
+    val (head, links) = spine tm []
+    (* Each argument and the head are visited once.  A partially applied bag
+       operation, as in [(b + c) x], still needs its own mark, so every prefix
+       of the spine is marked from its own arguments without being walked
+       again. *)
+    val terms = List.foldl (fn ((_, arg), acc) =>
+      collect_native_bag_terms arg acc) terms links
+    val terms =
+      case Lib.total Term.dest_abs head of
+        SOME (_, body) => collect_native_bag_terms body terms
+      | NONE => terms
+    val terms = mark head head [] terms
+  in
+    #1 (List.foldl (fn ((node, arg), (acc, rev_rands)) =>
+      let val rev_rands = arg :: rev_rands in
+        (mark node head (List.rev rev_rands) acc, rev_rands)
+      end) (terms, []) links)
   end
 
   fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
