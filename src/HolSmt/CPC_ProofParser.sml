@@ -1850,14 +1850,18 @@ local
             Term.mk_var
               ("cpc_decl_arg" ^ Int.toString index, ty) ::
             make_args (index + 1) rest
-      val signatures =
-        if List.null domain andalso Lib.can Type.dom_rng range then
-          let val (function_domain, function_range) =
-            boolSyntax.strip_fun range
-          in
-            [([], range), (function_domain, function_range)]
-          end
-        else [(domain, range)]
+      (* CPC may curry a source symbol's sort differently from the source
+         declaration (e.g. [(declare-fun f (A) (Array B Bool))] becomes
+         [(declare-const f (-> A (Array B Bool)))]), and HOL reads arrays
+         as functions.  The dictionary entry fixes the arity it accepts,
+         so try every split of the declared HOL type into arguments and
+         result. *)
+      val (all_domains, final_range) =
+        boolSyntax.strip_fun (boolSyntax.list_mk_fun (domain, range))
+      val signatures = List.tabulate (List.length all_domains + 1,
+        fn k => (List.take (all_domains, k),
+          boolSyntax.list_mk_fun (List.drop (all_domains, k),
+            final_range)))
       val candidates =
         case Redblackmap.peek (tmdict, key) of
           SOME parsefns => parsefns
