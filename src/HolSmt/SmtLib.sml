@@ -2189,12 +2189,6 @@ local
       else
         NONE
 
-  val invented_uf_native_datatype_domain_diagnostic =
-    "HOLSMT_TRANSLATION_INVENTED_UF_NATIVE_DATATYPE_DOMAIN"
-
-  val uninterpreted_native_datatype_destructor_diagnostic =
-    "HOLSMT_TRANSLATION_UNINTERPRETED_NATIVE_DATATYPE_DESTRUCTOR"
-
   val unsupported_smtfloat_constant_diagnostic =
     "HOLSMT_TRANSLATION_UNSUPPORTED_SMTFLOAT_CONSTANT"
 
@@ -2270,122 +2264,17 @@ local
         Term.same_const destructor (datatype_destructor_head theorem))
       (TypeBasePure.destructors_of tyinfo)
 
-  (* This predicate follows the actual type emitter: ordinary native lists
-     are datatypes, but a selected Seq backend emits them as `(Seq ...)` and
-     therefore does not create the under-specified native-datatype boundary. *)
-  fun emits_native_datatype_sort ty =
-    not (is_function_type ty) andalso
-    not (has_type_builtin ty) andalso
-    not (!current_native_sequence_emission andalso
-      is_native_sequence_type ty) andalso
-    Option.isSome (datatype_family ty)
-
-  fun registered_destructor_for_domain destructor domain =
-    case TypeBase.fetch domain of
-      SOME tyinfo =>
-        Option.isSome (datatype_destructor_theorem tyinfo destructor)
-    | NONE => false
-
-  fun emitted_native_sort ty =
-    emits_native_datatype_sort ty orelse
-    (!current_native_sequence_emission andalso is_native_sequence_type ty)
-
-  fun uninterpreted_native_destructor_domain rator domain_types =
-    if Term.is_const rator then
-      List.find (fn domain => emitted_native_sort domain andalso
-        registered_destructor_for_domain rator domain) domain_types
-    else
-      NONE
-
-  fun raise_uninterpreted_native_destructor rator domain =
-    raise ERR "translate_term"
-      (uninterpreted_native_datatype_destructor_diagnostic ^
-       ": refusing an uninterpreted TypeBase destructor over a native " ^
-       "sort; destructor=" ^ Hol_pp.term_to_string rator ^
-       "; domain=" ^ Hol_pp.type_to_string domain)
-
   fun theorem_reduces_exact_application theorem tm =
     let
       val reduction = simpLib.SIMP_CONV pureSimps.pure_ss [theorem] tm
       val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl reduction)
       val _ = Term.aconv lhs tm orelse
-        raise ERR "closed_constructor_destructor_residual"
+        raise ERR "theorem_reduces_exact_application"
           "registered destructor proof has the wrong left-hand side"
     in
       not (Term.aconv lhs rhs)
     end
     handle Conv.UNCHANGED => false
-
-  (* A partial destructor on a closed constructor outside its owning branch
-     is a fixed but unspecified HOL value.  It can soundly be represented by
-     one zero-arity SMT constant keyed by the whole application: unlike an
-     uninterpreted destructor function, that declaration has no native-sort
-     domain.  Admission is theorem-sensitive: a registered equation which can
-     reduce the exact application must be used by preprocessing, never hidden
-     behind this residual boundary.  Any free/symbolic scrutinee remains behind
-     the hard diagnostic. *)
-  fun closed_constructor_destructor_residual tm =
-    if not (Term.is_comb tm) then false
-    else
-        let
-          val (destructor, scrutinee) = Term.dest_comb tm
-          val domain = Term.type_of scrutinee
-          val (constructor, _) = boolSyntax.strip_comb scrutinee
-          val registered =
-            case TypeBase.fetch domain of
-              NONE => NONE
-            | SOME tyinfo =>
-                Option.map (fn theorem => (tyinfo, theorem))
-                  (datatype_destructor_theorem tyinfo destructor)
-        in
-          case registered of
-            NONE => false
-          | SOME (_, theorem) =>
-              emitted_native_sort domain andalso
-              Term.is_const constructor andalso
-              TypeBase.is_constructor constructor andalso
-              List.null (Term.free_vars tm) andalso
-              not (theorem_reduces_exact_application theorem tm)
-        end
-
-  fun reject_uninterpreted_native_destructors terms =
-  let
-    fun reject tm =
-      if not (Term.is_comb tm) then ()
-      else
-        let val (rator, argument) = Term.dest_comb tm in
-          if closed_constructor_destructor_residual tm then ()
-          else
-            (case uninterpreted_native_destructor_domain rator
-                [Term.type_of argument] of
-              SOME domain => raise_uninterpreted_native_destructor rator domain
-            | NONE => ())
-        end
-  in
-    List.app reject (List.concat (List.map Library.subterms terms))
-  end
-
-
-  fun reject_invented_native_datatype_domain rator domain_types =
-  let
-    val destructor_domain =
-      uninterpreted_native_destructor_domain rator domain_types
-  in
-    case destructor_domain of
-      SOME domain => raise_uninterpreted_native_destructor rator domain
-    | NONE =>
-        (case List.find emits_native_datatype_sort domain_types of
-          NONE => ()
-        | SOME domain =>
-            raise ERR "translate_term"
-              (invented_uf_native_datatype_domain_diagnostic ^
-               ": refusing an invented function whose domain was emitted " ^
-               "as a native datatype sort; the query is under-specified " ^
-               "and its sat/unknown verdict is not a countermodel; " ^
-               "function=" ^ Hol_pp.term_to_string rator ^ "; domain=" ^
-               Hol_pp.type_to_string domain))
-  end
-
 
   fun constructor_name type_name constructor used =
     let
@@ -4121,27 +4010,6 @@ local
     fun ensure_type ((tydict, tmdict), ty) =
       let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
       in (((tydict, tmdict), decls), name) end
-    fun translate_closed_destructor_residual acc =
-      let
-        val _ = closed_constructor_destructor_residual tm orelse
-          raise ERR "translate_closed_destructor_residual"
-            "not a closed constructor-headed destructor residue"
-        val (((tydict, tmdict), typedecls), sort) =
-          ensure_type (acc, Term.type_of tm)
-      in
-        case Redblackmap.peek (tmdict, (tm, 0)) of
-          SOME name => ((tydict, tmdict), (typedecls, name))
-        | NONE =>
-            let
-              val name = tm_prefix ^
-                Int.toString (Redblackmap.numItems tmdict)
-              val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
-              val declaration = term_declaration_text regime name [] sort
-              val _ = record_emitted_term_sorts (tm, 0) ([], sort)
-            in
-              ((tydict, tmdict), (typedecls @ [declaration], name))
-            end
-      end
     fun translate_injected_string acc =
       let
         val string = dest_injected_string tm
@@ -4521,17 +4389,6 @@ local
     handle e as NestedTranslation _ => raise e
          | Feedback.HOL_ERR _ =>
 
-    (* A closed partial-destructor residue is one fixed HOL value.  Emit the
-       whole residual as a reusable zero-arity symbol; never decompose it into
-       a function whose domain is the native datatype/sequence sort. *)
-    (if closed_constructor_destructor_residual tm then
-       translate_closed_destructor_residual acc
-       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
-     else
-       raise ERR "translate_term" "not a closed destructor residue")
-    handle e as NestedTranslation _ => raise e
-         | Feedback.HOL_ERR _ =>
-
     (* cvc5 parses a bag literal as a lambda, but retransmission must retain
        the Bag operation rather than send that lambda to Array consumers. *)
     (if is_parsed_bag_literal tm then translate_parsed_bag_literal acc
@@ -4811,7 +4668,9 @@ local
                 (tmdict, (rator, declaration_arity))))
               handle Redblackmap.NotFound =>
 
-              (* translate the rator as a new (i.e., uninterpreted) symbol *)
+              (* Unknown constants, including partial datatype destructors,
+                 are over-approximated by uninterpreted functions.  UNSAT is
+                 sufficient for proving; SAT need not be a HOL countermodel. *)
               let
                 (* translate 'rator' types required for the rator's
                    SMT-LIB declaration *)
@@ -4852,7 +4711,6 @@ local
                   Lib.foldl_map translate_domain (tydict,
                     ListPair.zip (List.tabulate (List.length domtys, Lib.I),
                       domtys))
-                val _ = reject_invented_native_datatype_domain rator domtys
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 fun translate_variable_function_type (tydict, index, ty) =
@@ -5361,7 +5219,6 @@ local
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
-    val _ = reject_uninterpreted_native_destructors terms
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) =>
         translate_term regime apply_operator (acc, (bounds, tm)))
@@ -7233,10 +7090,6 @@ in
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
   val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
   val DATATYPE_TO_SMT_CONV = DATATYPE_TO_SMT_CONV
-  val invented_uf_native_datatype_domain_diagnostic =
-    invented_uf_native_datatype_domain_diagnostic
-  val uninterpreted_native_datatype_destructor_diagnostic =
-    uninterpreted_native_datatype_destructor_diagnostic
   val unsupported_smtfloat_constant_diagnostic =
     unsupported_smtfloat_constant_diagnostic
   val smtfloat_opaque_replay_constants_for_test =
@@ -7263,10 +7116,6 @@ in
     datatype_case_branch_eta_conv_with
   val datatype_case_branch_eta_conv_for_test =
     datatype_case_branch_eta_conv
-  val closed_constructor_destructor_residual_for_test =
-    closed_constructor_destructor_residual
-  val reject_uninterpreted_native_destructors_for_test =
-    reject_uninterpreted_native_destructors
   val native_float_guarded_context_match_conv_with_for_test =
     native_float_guarded_context_match_conv_with
   val native_float_guarded_postorder_conv_for_test =
