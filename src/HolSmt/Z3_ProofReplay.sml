@@ -4872,9 +4872,62 @@ local
     bv_rewrite_prove_with_pre_bblast rewrite_profile direct_bv lowered_bv
       no_pre_bblast definitions target
 
+  (* Preserve contiguous slices as one extraction instead of expanding a
+     separate word-width schema for every node in a long concat spine. *)
+  fun concat_extract_conv term =
+    let
+      val (left, right) = wordsSyntax.dest_word_concat term
+      val (high, left_low, source, _) = wordsSyntax.dest_word_extract left
+      val (middle, low, other_source, _) = wordsSyntax.dest_word_extract right
+      val _ = Term.aconv source other_source andalso
+        numSyntax.dest_numeral left_low =
+          Arbnum.plus1 (numSyntax.dest_numeral middle) orelse
+        raise Conv.UNCHANGED
+      val theorem = Drule.ISPECL [high, middle, low, source]
+        (Thm.INST_TYPE
+          [{redex = Type.beta, residue = wordsSyntax.dim_of left},
+           {redex = Type.gamma, residue = wordsSyntax.dim_of right},
+           {redex = Type.delta, residue = wordsSyntax.dim_of term}]
+          wordsTheory.CONCAT_EXTRACT)
+      val theorem = simpLib.SIMP_RULE
+        (simpLib.++ (bossLib.arith_ss, wordsLib.SIZES_ss)) [] theorem
+      val _ = Term.aconv (boolSyntax.lhs (Thm.concl theorem)) term orelse
+        raise Conv.UNCHANGED
+    in theorem end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun concat_compact_conv term =
+    let val (left, right) = wordsSyntax.dest_word_concat term
+    in
+      if wordsSyntax.is_word_literal left andalso
+         wordsSyntax.is_word_literal right then wordsLib.WORD_EVAL_CONV term
+      else concat_extract_conv term
+    end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun concat_word_prove context target =
+    let
+      val normalized = if SmtResource.contains
+          wordsSyntax.is_word_concat target then
+        SmtReplayCanon.dag_rewrite_conv concat_compact_conv target
+      else Thm.REFL target
+      val theorem = SmtWordGraph.prove_in context
+        (boolSyntax.rhs (Thm.concl normalized))
+    in Thm.EQ_MP (Thm.SYM normalized) theorem end
+
+  fun concat_definition_prove context definitions equation =
+    SmtFpProve.definition_bitblast_prove_with
+      (concat_word_prove context) definitions equation
+    handle HolSatLib.SAT_cex _ =>
+        raise ERR "concat_definition_prove" "concat identity is false"
+      | HolSatLib.SAT_satisfiable _ =>
+        raise ERR "concat_definition_prove" "concat identity is false"
+
   fun bv_rewrite_prove rewrite_profile pre_bblast (state : state) =
     bv_rewrite_prove_with_word_prover
-      (SmtWordGraph.prove_in (#word_context state)) rewrite_profile has_word_atom
+      (if HOLset.isEmpty (#concat_bits state) then
+         SmtWordGraph.prove_in (#word_context state)
+       else concat_word_prove (#word_context state)) rewrite_profile has_word_atom
       (has_allocated_fp_bv_atom state) pre_bblast
       (#translation_definitions state)
 
@@ -5280,55 +5333,7 @@ local
         else attempt reversed
     end
 
-    (* Preserve contiguous slices as one extraction instead of expanding a
-     separate word-width schema for every node in a long concat spine. *)
-  fun concat_extract_conv term =
-    let
-      val (left, right) = wordsSyntax.dest_word_concat term
-      val (high, left_low, source, _) = wordsSyntax.dest_word_extract left
-      val (middle, low, other_source, _) = wordsSyntax.dest_word_extract right
-      val _ = Term.aconv source other_source andalso
-        numSyntax.dest_numeral left_low =
-          Arbnum.plus1 (numSyntax.dest_numeral middle) orelse
-        raise Conv.UNCHANGED
-      val theorem = Drule.ISPECL [high, middle, low, source]
-        (Thm.INST_TYPE
-          [{redex = Type.beta, residue = wordsSyntax.dim_of left},
-           {redex = Type.gamma, residue = wordsSyntax.dim_of right},
-           {redex = Type.delta, residue = wordsSyntax.dim_of term}]
-          wordsTheory.CONCAT_EXTRACT)
-      val theorem = simpLib.SIMP_RULE
-        (simpLib.++ (bossLib.arith_ss, wordsLib.SIZES_ss)) [] theorem
-      val _ = Term.aconv (boolSyntax.lhs (Thm.concl theorem)) term orelse
-        raise Conv.UNCHANGED
-    in theorem end
-    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
-
-  fun concat_compact_conv term =
-    let val (left, right) = wordsSyntax.dest_word_concat term
-    in
-      if wordsSyntax.is_word_literal left andalso
-         wordsSyntax.is_word_literal right then wordsLib.WORD_EVAL_CONV term
-      else concat_extract_conv term
-    end
-    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
-
-  fun concat_word_prove context target =
-    let
-      val normalized = SmtReplayCanon.dag_rewrite_conv concat_compact_conv target
-      val theorem = SmtWordGraph.prove_in context
-        (boolSyntax.rhs (Thm.concl normalized))
-    in Thm.EQ_MP (Thm.SYM normalized) theorem end
-
-  fun concat_definition_prove context definitions equation =
-    SmtFpProve.definition_bitblast_prove_with
-      (concat_word_prove context) definitions equation
-    handle HolSatLib.SAT_cex _ =>
-        raise ERR "concat_definition_prove" "concat identity is false"
-      | HolSatLib.SAT_satisfiable _ =>
-        raise ERR "concat_definition_prove" "concat identity is false"
-
-  fun z3_rewrite (state, t) =
+    fun z3_rewrite (state, t) =
   let
     val (l, r) = boolSyntax.dest_eq t
     (* Admit String rewrites before the generic Boolean ladder walks a large
@@ -6078,14 +6083,8 @@ local
        TextIO.flushOut TextIO.stdOut) else ()
     val orientation =
       profile "rewrite(entry)(canonical-orientation)"
-        (fn target =>
-          let
-            val compact = if HOLset.isEmpty (#concat_bits state) then
-                Thm.REFL target
-              else SmtReplayCanon.dag_rewrite_conv concat_compact_conv target
-            val canonical = Conv.QCONV SmtReplayCanon.z3_rewrite_canon_conv
-              (boolSyntax.rhs (Thm.concl compact))
-          in Thm.TRANS compact canonical end) target
+        (Conv.QCHANGED_CONV SmtReplayCanon.z3_rewrite_canon_conv) target
+      handle Conv.UNCHANGED => Thm.REFL target
     val _ = if trace then
       (Feedback.HOL_MESG "Z3 rewrite: canonicalized";
        TextIO.flushOut TextIO.stdOut) else ()
