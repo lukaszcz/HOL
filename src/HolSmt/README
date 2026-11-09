@@ -403,6 +403,10 @@ parser/typechecker embeddings and record proof obligations for the soundness
 audit.  Replay is not claimed merely because parsing, typechecking or HOL
 translation succeeds.
 
+Native datatype emission groups new constructor-field dependencies into one
+declaration, including recursion through lists and products. Opaque field
+sorts are declared before that group; previously declared sorts are reused.
+
 The Datatypes row's checked selector replay applies to parser-native selector
 case terms.  It is not, by itself, a claim about HOL destructor constants.
 Before emission, applications of TypeBase-registered destructors to symbolic

@@ -269,6 +269,10 @@ val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
+val _ = Hol_datatype
+  `smt_nested = SmtTip of bool |
+                SmtBranch of ((string # smt_nested) list)`
+
 val _ = new_constant
   ("smt_left_from_int", ``:int -> smt_left``)
 
@@ -7249,6 +7253,48 @@ in
     builtin_text;
   assert (has_datatype_record,
     "translation records did not include datatype declaration record")
+end
+
+fun smtlib_nested_datatype_dependencies_success () =
+let
+  val goal = ([``(f:smt_nested -> int) x < f y``],
+    ``(x:smt_nested) <> y``)
+  val sat_goals = [([], ``(x:smt_nested) = y``),
+    ([], ``(xs:smt_nested list) = ys``),
+    ([], ``(p:string # smt_nested) = q``)]
+  fun check name prover oracle =
+    (List.app (fn g =>
+       case oracle g of
+         SolverSpec.SAT _ => ()
+       | SolverSpec.UNKNOWN (SOME reason) => die (name ^ ": " ^ reason)
+       | _ => die (name ^ " rejected nested datatype declarations"))
+       sat_goals;
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+           List.all (fn h => List.exists (Term.aconv h)
+             (Lib.fst goal)) (Thm.hyp thm),
+           name ^ " nested datatype congruence changed the goal")
+     | _ => die (name ^ " nested datatype congruence did not replay"))
+  val _ = if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
+  val _ = if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  val (translation, strings) =
+    SmtLib.goal_to_SmtLib_translation NONE goal
+  val declarations = List.mapPartial
+    (fn SmtLib.DatatypeDeclaration {declaration, ...} => SOME declaration
+      | _ => NONE) (SmtLib.translation_records translation)
+in
+  assert (List.all (fn declaration => List.exists
+      (Lib.equal declaration) strings) declarations,
+    "datatype records differ from the emitted declaration blocks");
+  assert (List.exists (fn declaration =>
+      contains "(Smt_nested 0)" declaration andalso
+      contains "(Prod_List_Char_Smt_nested 0)" declaration andalso
+      contains "(List_Prod_List_Char_Smt_nested 0)" declaration)
+    declarations,
+    "nested recursive datatypes were not declared together")
 end
 
 fun smtlib_extended_hol_encoding_records_success () =
@@ -28473,6 +28519,8 @@ let
       smtlib_distinct_translation_success),
     ("smtlib_datatype_type_translation_success",
       smtlib_datatype_type_translation_success),
+    ("smtlib_nested_datatype_dependencies_success",
+      smtlib_nested_datatype_dependencies_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_seq_set_bag_feature_inference_success",

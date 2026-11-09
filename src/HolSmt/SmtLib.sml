@@ -2009,6 +2009,8 @@ local
   val emitted_term_sorts =
     ref ([] : ((Term.term * int) * (string list * string)) list)
 
+  val emitted_datatypes = ref ([] : translation_record list)
+
   fun record_emitted_term_sorts key sorts =
     emitted_term_sorts := (key, sorts) :: !emitted_term_sorts
 
@@ -2388,22 +2390,6 @@ local
       "(declare-datatypes (" ^ String.concatWith " " sort_decls ^ ") (" ^
       String.concatWith " " datatype_decls ^ "))\n"
     end
-
-  fun datatype_decl_record regime tydict ty =
-    case datatype_family ty of
-      NONE => NONE
-    | SOME family =>
-      let
-        val names = List.map (fn fam_ty => Redblackmap.find (tydict, fam_ty))
-          family
-        val declaration = datatype_declaration_text
-          (smt_sort_of_type regime tydict) family names
-      in
-        SOME (DatatypeDeclaration {hol_types = family, smt_names = names,
-          declaration = declaration}, family)
-      end
-      handle Redblackmap.NotFound => NONE
-           | Feedback.HOL_ERR _ => NONE
 
   fun infer_features regime terms tydict tmdict =
     let
@@ -2796,30 +2782,26 @@ local
     end
 
   fun build_translation_records regime regime_reason terms logic reason
-      features tydict tmdict =
+      features tydict tmdict datatype_records =
     let
       val regime_record =
         RegimeSelection {regime = regime, reason = regime_reason}
       val logic_record = LogicSelection {logic = logic, reason = reason,
         features = features}
-      fun add_type_record (ty, name, (seen, acc)) =
-        if member_type ty seen then
-          (seen, acc)
-        else
-          case datatype_decl_record regime tydict ty of
-            SOME (record, family) =>
-              (List.foldl (fn (fam_ty, seen) => add_type fam_ty seen)
-                seen family, record :: acc)
-          | NONE =>
-              (add_type ty seen, type_decl_record (ty, name) :: acc)
-      val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
+      val datatype_types = List.concat (List.map
+        (fn DatatypeDeclaration {hol_types, ...} => hol_types | _ => [])
+        datatype_records)
+      fun add_type_record (ty, name, acc) =
+        if member_type ty datatype_types then acc
+        else type_decl_record (ty, name) :: acc
+      val type_records = Redblackmap.foldl add_type_record [] tydict
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict regime tydict (key, name) :: acc)
         [] tmdict
       val builtin_records = encoded_symbol_records terms
       val advanced_records = advanced_encoding_records regime terms features
     in
-      regime_record :: logic_record :: List.rev type_records @
+      regime_record :: logic_record :: List.rev type_records @ datatype_records @
       List.rev term_records @ List.rev builtin_records @ advanced_records
     end
 
@@ -3167,8 +3149,37 @@ local
   and translate_datatype_type regime (tydict, ty) =
     case datatype_family ty of
       NONE => NONE
-    | SOME family =>
+    | SOME _ =>
       let
+        fun constructor_doms ty = List.concat (List.map
+          (Lib.fst o boolSyntax.strip_fun o Term.type_of o
+           TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
+        fun known ty types = member_type ty types orelse
+          Option.isSome (Redblackmap.peek (tydict, ty))
+        (* A nested container can refer back to its parent datatype without
+           appearing in the parent's induction theorem. Declare the whole
+           new dependency closure together, before using any of its names. *)
+        fun collect (ty, types) =
+          if known ty types then types
+          else if !current_native_sequence_emission andalso
+                  is_native_sequence_type ty then
+            collect (listSyntax.dest_list_type ty, types)
+          else if is_function_type ty then
+            let val (dom, rng) = Type.dom_rng ty
+            in collect (rng, collect (dom, types)) end
+          else if has_type_builtin ty then types
+          else case datatype_family ty of
+            NONE => types
+          | SOME family =>
+              let
+                val fresh = List.filter (fn ty => not (known ty types)) family
+                val types = List.foldl (fn (ty, acc) => add_type ty acc)
+                  types fresh
+              in
+                List.foldl (fn (ty, acc) =>
+                  List.foldl collect acc (constructor_doms ty)) types fresh
+              end
+        val family = List.rev (collect (ty, []))
         val used0 = dict_type_names tydict @ smt_reserved_type_names
         fun add_name (fam_ty, (used, acc)) =
           let
@@ -3184,28 +3195,16 @@ local
           tydict (family, names)
         fun translate_constructor_doms (fam_ty, (dict, decls, sorts)) =
           let
-            val tyinfo =
-              case TypeBase.fetch fam_ty of
-                SOME info => info
-              | NONE => raise ERR "translate_datatype_type"
-                  "missing TypeBase entry"
-            fun translate_one (constructor, (dict, decls, sorts)) =
+            fun translate_dom (dom, (dict, decls, sorts)) =
               let
-                val constructor = TypeBasePure.cinst fam_ty constructor
-                val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-                fun translate_dom (dom, (dict, decls, sorts)) =
-                  let
-                    val (dict, (new_decls, sort)) =
-                      translate_type regime (dict, dom)
-                  in
-                    (dict, decls @ new_decls, (dom, sort) :: sorts)
-                  end
+                val (dict, (new_decls, sort)) =
+                  translate_type regime (dict, dom)
               in
-                List.foldl translate_dom (dict, decls, sorts) doms
+                (dict, decls @ new_decls, (dom, sort) :: sorts)
               end
           in
-            List.foldl translate_one (dict, decls, sorts)
-              (TypeBasePure.constructors_of tyinfo)
+            List.foldl translate_dom (dict, decls, sorts)
+              (constructor_doms fam_ty)
           end
         val (tydict, dependency_decls, field_sorts) =
           List.foldl translate_constructor_doms
@@ -3220,6 +3219,9 @@ local
           case Redblackmap.peek (tydict, ty) of
             SOME n => n
           | NONE => raise ERR "translate_datatype_type" "unregistered type"
+        val _ = emitted_datatypes :=
+          DatatypeDeclaration {hol_types = family, smt_names = names,
+            declaration = declaration} :: !emitted_datatypes
       in
         SOME (tydict, (dependency_decls @ [declaration], name))
       end
@@ -4925,6 +4927,7 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
+    val _ = emitted_datatypes := []
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
     val bag_terms = List.foldl (fn (term, acc) =>
@@ -5203,6 +5206,7 @@ local
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
     val record_emitted_term_sorts = !emitted_term_sorts
+    val datatype_records = List.rev (!emitted_datatypes)
     fun records () =
       let
         val restorers = [
@@ -5220,7 +5224,7 @@ local
            current_bag_backend := record_bag_backend;
            emitted_term_sorts := record_emitted_term_sorts;
            build_translation_records regime regime_reason terms
-             selected_logic reason features tydict tmdict)
+             selected_logic reason features tydict tmdict datatype_records)
         fun restore () = restore_cells restorers
       in
         Portable.finally restore work ()
@@ -5264,6 +5268,7 @@ local
       save_cell current_native_sequence_emission,
       save_cell current_generated_forall_emissions,
       save_cell emitted_term_sorts,
+      save_cell emitted_datatypes,
       save_cell current_set_backend,
       save_cell current_set_terms,
       save_cell current_raw_num_terms,
