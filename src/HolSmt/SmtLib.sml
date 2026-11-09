@@ -904,12 +904,39 @@ local
 
   fun is_function_type ty = Lib.can Type.dom_rng ty
 
-  (* Lists are the native model of SMT sequences, except for HOL strings.
-     The latter must retain Phase 4's str_inj/smtstr route rather than being
-     silently reclassified as arbitrary (Seq Char) content. *)
+  (* A list type is recursive when its element type leads back to the list
+     itself through datatype constructor fields or function types, as in
+     tree = Leaf | Node of tree list. *)
+  fun is_recursive_list_type ty =
+    let
+      fun constructor_doms ty = List.concat (List.map
+        (Lib.fst o boolSyntax.strip_fun o Term.type_of o
+         TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
+        handle Feedback.HOL_ERR _ => []
+      fun reaches _ [] = false
+        | reaches seen (t :: ts) =
+          if Type.compare (t, ty) = EQUAL then true
+          else if List.exists (fn s => Type.compare (s, t) = EQUAL) seen
+                  orelse has_type_builtin t then
+            reaches seen ts
+          else if is_function_type t then
+            let val (dom, rng) = Type.dom_rng t
+            in reaches (t :: seen) (dom :: rng :: ts) end
+          else
+            reaches (t :: seen) (constructor_doms t @ ts)
+    in
+      reaches [] [listSyntax.dest_list_type ty]
+    end
+
+  (* Lists are the native model of SMT sequences, except for HOL strings and
+     recursive lists.  Strings must retain Phase 4's str_inj/smtstr route
+     rather than being silently reclassified as arbitrary (Seq Char) content.
+     Recursive lists stay algebraic datatypes: a datatype recursing through
+     Seq is nested-recursive, which cvc5 rejects. *)
   fun is_native_sequence_type ty =
     listSyntax.is_list_type ty andalso
-    Type.compare (ty, stringSyntax.string_ty) <> EQUAL
+    Type.compare (ty, stringSyntax.string_ty) <> EQUAL andalso
+    not (is_recursive_list_type ty)
 
   (* Checked Seq replay is introduced by TASK_18.  Until then, proof
      requests retain the old datatype encoding while oracle emission uses the
@@ -3486,7 +3513,8 @@ local
         same_const rator int_of_num_tm) andalso
        (case rands of
           [arg] => same_const (Lib.fst (boolSyntax.strip_comb arg))
-            seq_length_tm
+            seq_length_tm andalso
+            is_native_sequence_type (Term.type_of (Term.rand arg))
         | _ => false)) orelse
       Option.isSome (Lib.total dest_string_nth_shape tm) orelse
       Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
@@ -7441,7 +7469,8 @@ in
       SOME (Z3Inverse (realSyntax.dest_inv tm))
     else if intrealSyntax.is_INT_CEILING tm then
       SOME (Z3Ceiling (intrealSyntax.dest_INT_CEILING tm))
-    else if listSyntax.is_cons tm then
+    else if listSyntax.is_cons tm andalso
+            is_native_sequence_type (Term.type_of tm) then
       let val (element, tail) = listSyntax.dest_cons tm in
         if listSyntax.is_nil tail orelse listSyntax.is_cons tail then NONE
         else SOME (Z3SymbolicCons (element, tail))
