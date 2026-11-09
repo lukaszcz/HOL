@@ -3358,6 +3358,9 @@ local
       Lib.list_compare (Lib.pair_compare (Term.compare, String.compare))))
   val current_translation_failures = ref no_translation_failures
 
+  (* Partial applications whose eta expansions enclose the current term. *)
+  val current_eta_expansions : Term.term list ref = ref []
+
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB (type and term) declarations, and the SMT-LIB
      representation of the given term *)
@@ -4260,20 +4263,44 @@ local
       end
     fun eta_expand_ranked_constant acc applied rator rank rands_count =
       let
-        fun drop 0 ty = ty
-          | drop n ty = drop (n - 1) (Lib.snd (Type.dom_rng ty))
-        fun take_doms 0 _ acc = List.rev acc
-          | take_doms n ty acc =
-              let val (dom, rng) = Type.dom_rng ty
-              in take_doms (n - 1) rng (dom :: acc) end
-        val residual_ty = drop rands_count (Term.type_of rator)
-        val missing_doms =
-          take_doms (rank - rands_count) residual_ty []
-        val vars = List.map Term.genvar missing_doms
-        val expanded = Term.list_mk_abs
-          (vars, Term.list_mk_comb (applied, vars))
+        val enclosing = !current_eta_expansions
+        fun expand () =
+          let
+            fun drop 0 ty = ty
+              | drop n ty = drop (n - 1) (Lib.snd (Type.dom_rng ty))
+            fun take_doms 0 _ acc = List.rev acc
+              | take_doms n ty acc =
+                  let val (dom, rng) = Type.dom_rng ty
+                  in take_doms (n - 1) rng (dom :: acc) end
+            val residual_ty = drop rands_count (Term.type_of rator)
+            val missing_doms =
+              take_doms (rank - rands_count) residual_ty []
+            val vars = List.map Term.genvar missing_doms
+            val expanded = Term.list_mk_abs
+              (vars, Term.list_mk_comb (applied, vars))
+          in
+            current_eta_expansions := applied :: enclosing;
+            Portable.finally (fn () => current_eta_expansions := enclosing)
+              (fn () =>
+                translate_term regime apply_operator (acc, (bounds, expanded)))
+              ()
+          end
+        (* When the expanded body fails, a later rung (curried application,
+           a bag count, ...) may translate 'applied' again, and expanding it
+           again would repeat the body with fresh variables forever.  Report
+           the failing operand instead, or else the repetition. *)
+        fun repeated () =
+          (List.app (fn operand =>
+             ignore (translate_term regime apply_operator
+               (acc, (bounds, operand))))
+             (Lib.snd (boolSyntax.strip_comb applied));
+           raise ERR "translate_term"
+             "eta expansion of a partial application repeats")
       in
-        translate_term regime apply_operator (acc, (bounds, expanded))
+        (if List.exists (fn t => Term.identical t applied) enclosing then
+           repeated ()
+         else
+           expand ())
         handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       end
     fun constructor_info_for tydict ty constructor =
@@ -5348,6 +5375,7 @@ local
     val terms = ts @ [boolSyntax.mk_neg t]
     val _ = reject_uninterpreted_native_destructors terms
     val _ = current_translation_failures := no_translation_failures
+    val _ = current_eta_expansions := []
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) =>
         translate_term regime apply_operator (acc, (bounds, tm)))
@@ -5451,7 +5479,8 @@ local
       save_cell current_bag_terms,
       save_cell current_bag_helpers,
       save_cell current_collection_function_arguments,
-      save_cell current_translation_failures
+      save_cell current_translation_failures,
+      save_cell current_eta_expansions
     ]
     fun work () =
       goal_to_SmtLib_aux_inner request apply_operator policy target
