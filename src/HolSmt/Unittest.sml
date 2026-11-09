@@ -27747,6 +27747,82 @@ fun run_cnf_graph_unittests () =
      ("z3_e0_replay_measurement_reserved_snapshot_success",
        z3_e0_replay_measurement_reserved_snapshot_success)]
 
+fun cpc_chain_resolution_success () =
+  let
+    val declarations = "(declare-const p Bool) (declare-const q Bool) \
+      \(declare-const r Bool) (declare-const s Bool) "
+    fun check body expected hypotheses fallback =
+      let
+        val proof = parse_cpc_proof_string ("(" ^ declarations ^ body ^ ")")
+        val _ = Profile.reset_all ()
+        val theorem = CPC_ProofReplay.replay_root_for_test proof
+        val _ = assert (Thm.concl theorem ~~ expected,
+          "chain_resolution returned the wrong endpoint")
+        val _ = assert (List.length (Thm.hyp theorem) = hypotheses,
+          "chain_resolution lost premise hypotheses")
+        val _ = assert
+          ((cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" > 0)
+            = fallback, "chain_resolution used the wrong replay route")
+      in check_oracle_tags "CPC chain_resolution" theorem end
+    fun chain aliases explicit source premises polarities atoms
+        target expected hypotheses =
+      let
+        val lists = "(@list " ^ polarities ^ ") (@list " ^ atoms ^ ")"
+        val definitions = if aliases then
+          "(define @pols () (@list " ^ polarities ^ ")) " ^
+          "(define @atoms () (@list " ^ atoms ^ ")) " else ""
+        val arguments = if aliases then "@pols @atoms" else lists
+        val conclusion = if explicit then " " ^ target else ""
+      in check (definitions ^ source ^ "(step @out" ^ conclusion ^
+        " :rule chain_resolution :premises (" ^ premises ^ ") :args (" ^
+        arguments ^ "))") expected hypotheses false end
+    val _ = List.app (fn aliases => List.app (fn explicit =>
+      (chain aliases explicit
+        "(assume @a (or p q r)) (assume @b (not p)) (assume @c (not q)) "
+        "@a @b @c" "true true" "p q" "r" ``r:bool`` 3;
+       chain aliases explicit
+        "(assume @a (or (not p) q)) (assume @b p) (assume @c (not q)) "
+        "@a @b @c" "false true" "p q" "false" boolSyntax.F 3;
+       chain aliases explicit
+        "(assume @a p) (assume @b (not p)) "
+        "@a @b" "true" "p" "false" boolSyntax.F 2;
+       chain aliases explicit
+        "(assume @a (or p p q)) (assume @b (not p)) "
+        "@a @b @b" "true true" "p p" "q" ``q:bool`` 2))
+      [false, true]) [false, true]
+    val _ = List.app (fn conclusion => check
+      ("(assume @a (or p q r)) (assume @b (not p)) \
+       \(assume @c (not q)) \
+       \(step @eq :rule refl :args ((or p q r))) \
+       \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+       \(step @out" ^ conclusion ^ " :rule chain_resolution \
+       \:premises (@opaque @b @c) :args ((@list true true) (@list p q)))")
+      ``r:bool`` 3 true) ["", " r"]
+    val _ = check
+      "(assume @a (or (not (not p)) q r)) \
+      \(assume @b (not p)) (assume @c (not q)) \
+      \(step @out :rule chain_resolution :premises (@a @b @c) \
+      \:args ((@list true true) (@list p q)))" ``r:bool`` 3 true
+    val _ = check
+      "(assume @a (or (not p) q r)) (assume @b p) \
+      \(assume @c (not q)) \
+      \(step @eq :rule refl :args ((or (not p) q r))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @out :rule chain_resolution :premises (@opaque @b @c) \
+      \:args ((@list false true) (@list p q)))" ``r:bool`` 3 true
+    val _ = expect_hol_error_contains "chain_resolution list lengths"
+      "annotation lengths differ" (fn () => ignore (parse_cpc_proof_string
+        ("(" ^ declarations ^ "(assume @a p) (assume @b (not p)) \
+         \(step @out :rule chain_resolution :premises (@a @b) \
+         \:args ((@list true false) (@list p))))")))
+    val _ = expect_hol_error_contains "chain_resolution wrong conclusion"
+      "resolution" (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string ("(" ^ declarations ^
+          "(assume @a (or p q r)) (assume @b (not p)) \
+          \(assume @c (not q)) (step @out s :rule chain_resolution \
+          \:premises (@a @b @c) :args ((@list true true) (@list p q))))"))))
+  in () end
+
 fun cpc_clause_producer_occurrences_success () =
   let
     val declarations = "(declare-const p Bool) (declare-const q Bool) \
@@ -28715,6 +28791,7 @@ let
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",
       cpc_proof_parser_version_resolution_success),
+    ("cpc_chain_resolution_success", cpc_chain_resolution_success),
     ("cpc_clause_producer_occurrences_success",
       cpc_clause_producer_occurrences_success),
     ("cpc_clause_normalization_success", cpc_clause_normalization_success),

@@ -14038,10 +14038,10 @@ local
               val first_pivot =
                 if Term.aconv polarity boolSyntax.T then pivot
                 else if Term.aconv polarity boolSyntax.F then
-                  boolSyntax.mk_neg pivot
+                  complement pivot
                 else raise ERR "resolution"
                   "CPC resolution polarity is not Boolean"
-              val second_pivot = boolSyntax.mk_neg first_pivot
+              val second_pivot = complement first_pivot
               val first_rest =
                 case remove_first first_pivot first_lits of
                   SOME rest => rest
@@ -18066,8 +18066,31 @@ local
             case (conclusion, args) of
               (SOME target, _) => SOME target
             | (NONE, [_, _]) => NONE
-            | (NONE, target :: _) => SOME target
+            | (NONE, target :: _) =>
+                if #name rule = "chain_resolution" then NONE else SOME target
             | (NONE, []) => NONE
+          fun replay prems conclusion args =
+            if #name rule <> "chain_resolution" then
+              replay_resolution prems conclusion args
+            else
+              let
+                val count = List.length prems - 1
+                val _ = if count > 0 andalso List.length args = 2 * count
+                  then () else raise ERR "resolution"
+                    "CPC chain_resolution annotation arity mismatch"
+                fun fold result [] [] [] = result
+                  | fold result (next :: rest) (polarity :: polarities)
+                      (pivot :: pivots) =
+                      fold (replay_resolution [result, next] NONE
+                        [polarity, pivot]) rest polarities pivots
+                  | fold _ _ _ _ = raise ERR "resolution"
+                      "CPC chain_resolution annotation arity mismatch"
+              in case conclusion of
+                  SOME target => replay_resolution prems conclusion
+                    (target :: args)
+                | NONE => fold (List.hd prems) (List.tl prems)
+                    (List.take (args, count)) (List.drop (args, count))
+              end
           fun restore theorem =
             case replay_target of
               NONE => theorem
@@ -18086,7 +18109,7 @@ local
                 Option.map canonical_operand conclusion
               val normalized_args = List.map canonical_operand args
             in
-              restore (replay_resolution normalized_prems
+              restore (replay normalized_prems
                 normalized_conclusion normalized_args)
             end
           fun integer_resolution () =
@@ -18100,7 +18123,7 @@ local
               val integer_args = List.map (fn argument =>
                 boolSyntax.rhs
                   (Thm.concl (cpc_integer_normal_form_conv argument))) args
-              val theorem = replay_resolution integer_prems
+              val theorem = replay integer_prems
                 integer_conclusion integer_args
             in
               restore_with cpc_integer_normal_form_conv
@@ -18108,7 +18131,7 @@ local
             end
         in
         (require_declared "resolution"
-           (replay_resolution prems conclusion args)
+           (replay prems conclusion args)
          handle Feedback.HOL_ERR _ =>
            (normalized_resolution ()
             handle Feedback.HOL_ERR _ =>
@@ -18128,9 +18151,9 @@ local
                     SOME target =>
                       if Term.aconv target boolSyntax.T then
                         retain_all boolTheory.TRUTH strong_prems
-                      else replay_resolution strong_prems
+                      else replay strong_prems
                         strong_conclusion strong_args
-                  | NONE => replay_resolution strong_prems
+                  | NONE => replay strong_prems
                       strong_conclusion strong_args
               in
                 restore_strong theorem
@@ -18280,10 +18303,32 @@ local
                             (SmtClause.theorem aligned))))
                   end
             end
+          fun targetless_chain premises =
+            let
+              val count = List.length premises - 1
+              fun fold result [] [] = finish NONE result
+                | fold result (next :: rest) (pivot :: pending) =
+                    (case SmtClause.resolve pivot result next of
+                       SOME resolved => fold resolved rest pending
+                     | NONE => decline "binary-pivot")
+                | fold _ _ _ = decline "annotation-arity"
+            in
+              if count < 1 orelse List.length args <> 2 * count then
+                decline "annotation-arity"
+              else case pivots (List.take (args, count))
+                  (List.drop (args, count)) of
+                  NONE => decline "polarity"
+                | SOME signed_pivots => fold (List.hd premises)
+                    (List.tl premises) signed_pivots
+            end
           fun run () = case clauses premise_steps of
             NONE => decline "premise-boundaries"
           | SOME clause_prems =>
-              case (located_args, args, clause_prems) of
+              if #name rule = "chain_resolution" then
+                (case located_conclusion of
+                   NONE => targetless_chain clause_prems
+                 | SOME target => chain target args clause_prems)
+              else case (located_args, args, clause_prems) of
                 ([_, _], [polarity, pivot], [first, second]) =>
                   (case signed polarity pivot of
                      NONE => decline "polarity"
@@ -18313,7 +18358,8 @@ local
             let
               val destination = case located_conclusion of
                   SOME target => SOME target
-                | NONE => if List.length args = 2 then NONE
+                | NONE => if #name rule = "chain_resolution" orelse
+                      List.length args = 2 then NONE
                     else Lib.total List.hd located_args
             in case destination of
                 NONE => NONE
@@ -18340,7 +18386,8 @@ local
           case run () of
             SOME result => SOME result
           | NONE => if not (!needs_normalization) then NONE
-            else if List.length args = 2 andalso
+            else if (#name rule = "chain_resolution" orelse
+                List.length args = 2) andalso
                 not (Option.isSome located_conclusion) then
               decline "normalization-without-target"
             else
@@ -18368,7 +18415,8 @@ local
               val recorded = case located_conclusion of
                   SOME target => SOME target
                 | NONE =>
-                    if List.length prems > 1 andalso
+                    if #name rule <> "chain_resolution" andalso
+                        List.length prems > 1 andalso
                         List.length located_args = 2 * List.length prems - 1
                     then Lib.total List.hd located_args else NONE
             in case recorded of

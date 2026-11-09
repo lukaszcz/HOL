@@ -3070,30 +3070,39 @@ local
                       val _ = ignore_terms ()
                     in [polarity, pivot] end
                 end
+              fun parse_list_after_open () =
+                let
+                  fun entries acc =
+                    let val token = get_token () in
+                      if token = ")" then List.rev acc
+                      else entries (parse_located_term dicts_ref
+                        (Library.undo_look_ahead [token] get_token) :: acc)
+                    end
+                in entries [] end
+              fun parse_list token =
+                if token = "(" then
+                  let
+                    val _ = Library.expect_token "@list" (get_token ())
+                  in parse_list_after_open () end
+                else
+                  case lookup_cpc_list token of
+                    SOME terms => List.map
+                      (unavailable_term
+                        "expanded CPC resolution-list alias") terms
+                  | NONE => raise ERR "parse_step"
+                      ("undefined CPC resolution @list alias " ^ token)
+              fun chain_resolution_args () =
+                let
+                  val polarities = parse_list (get_token ())
+                  val pivots = parse_list (get_token ())
+                  val _ = Library.expect_token ")" (get_token ())
+                  val _ = if List.length polarities = List.length pivots
+                    then () else raise ERR "parse_step"
+                      "CPC chain_resolution annotation lengths differ"
+                in polarities @ pivots end
               fun macro_resolution_args () =
                 let
                   val first = get_token ()
-                  fun parse_list_after_open () =
-                    let
-                      fun entries acc =
-                        let val token = get_token () in
-                          if token = ")" then List.rev acc
-                          else entries (parse_located_term dicts_ref
-                            (Library.undo_look_ahead [token] get_token) :: acc)
-                        end
-                    in entries [] end
-                  fun parse_list token =
-                    if token = "(" then
-                      let
-                        val _ = Library.expect_token "@list" (get_token ())
-                      in parse_list_after_open () end
-                    else
-                      case lookup_cpc_list token of
-                        SOME terms => List.map
-                          (unavailable_term
-                            "expanded CPC resolution-list alias") terms
-                      | NONE => raise ERR "parse_step"
-                          ("undefined CPC resolution @list alias " ^ token)
                 in
                   if first = ")" then []
                   else
@@ -3390,6 +3399,8 @@ local
             in
               if rule_name = "resolution" then
                 attrs seen_premises true premises (resolution_args ())
+              else if rule_name = "chain_resolution" then
+                attrs seen_premises true premises (chain_resolution_args ())
               else if #replay_handler rule = "resolution" then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)

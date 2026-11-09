@@ -315,6 +315,9 @@ in
 
   val tests = [
 
+    (``(~P (s:'a) \/ ((x:'b) = y)) ==> P s ==> (y = x)``,
+      [thm_CVCp]),
+
     (* propositional logic *)
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
