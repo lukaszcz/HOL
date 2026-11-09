@@ -2418,6 +2418,25 @@ local
       val all_subterms = List.concat (List.map encoding_subterms terms)
       fun subterm_types p =
         List.exists (fn tm => p (Term.type_of tm)) all_subterms
+      (* A native datatype declaration gives the sort of every constructor
+         field, so a theory sort can reach the query through a field alone.
+         Field datatypes are tydict entries themselves. *)
+      fun constructor_field_types ty =
+        case TypeBase.fetch ty of
+          SOME tyinfo =>
+            List.concat (List.map (fn constructor =>
+              Lib.fst (boolSyntax.strip_fun
+                (Term.type_of (TypeBasePure.cinst ty constructor))))
+              (TypeBasePure.constructors_of tyinfo))
+        | NONE => []
+      val field_types =
+        Redblackmap.foldl (fn (ty, _, acc) =>
+          case datatype_family ty of
+            SOME family =>
+              List.concat (List.map constructor_field_types family) @ acc
+          | NONE => acc) [] tydict
+      fun field_types_have p = List.exists p field_types
+      fun emitted_types p = subterm_types p orelse field_types_have p
       fun is_smtfp_bits_application tm =
         let
           val (head, args) = boolSyntax.strip_comb tm
@@ -2448,22 +2467,23 @@ local
         else false
       val quantifiers = !current_generated_forall_emissions > 0 orelse
         List.exists has_quantifier terms
-      val bitvectors = List.exists has_nonconstructor_bitvector terms
+      val bitvectors = List.exists has_nonconstructor_bitvector terms orelse
+        field_types_have type_contains_word
       val integers =
-        subterm_types type_contains_int orelse
+        emitted_types type_contains_int orelse
         List.exists (fn tm => is_int_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val reals =
-        subterm_types type_contains_real orelse
+        emitted_types type_contains_real orelse
         List.exists (fn tm => is_real_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val floating_point =
-        subterm_types type_contains_fp orelse
+        emitted_types type_contains_fp orelse
         List.exists (fn tm => is_fp_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val strings =
-        subterm_types type_contains_string orelse
-        subterm_types
+        emitted_types type_contains_string orelse
+        emitted_types
           (Library.type_contains
             (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
         List.exists (fn tm => is_string_const
@@ -2601,7 +2621,8 @@ local
               type_contains_function (Term.type_of tm)) all_subterms orelse
             Redblackmap.foldl (fn ((tm, arity), _, b) =>
               b orelse (arity = 0 andalso
-                type_contains_function (Term.type_of tm))) false tmdict
+                type_contains_function (Term.type_of tm))) false tmdict orelse
+            field_types_have type_contains_function
         | HigherOrder _ => false
       val arrays =
         function_arrays orelse
