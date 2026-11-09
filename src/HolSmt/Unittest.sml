@@ -11614,6 +11614,48 @@ in
   check_oracle_tags "D13 de-indexed operator replay" theorem
 end
 
+(* Minimized arrays_ext step from a cvc5 1.3.4 array-set certificate. *)
+fun cpc_arrays_ext_replay_success () =
+let
+  fun run (sort, range) =
+    let
+      val declarations =
+        "((declare-const a (Array Int " ^ sort ^ ")) " ^
+        "(declare-const b (Array Int " ^ sort ^ ")) " ^
+        "(define @k () (@array_deq_diff a b)) " ^
+        "(assume-push @neq (not (= a b))) "
+      val target = "(not (= (select a @k) (select b @k)))"
+      fun replay declared = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string (declarations ^
+          "(step @ext " ^ declared ^
+          " :rule arrays_ext :premises (@neq)) " ^
+          "(step-pop @closed :rule scope :premises (@ext)))"))
+      val ty = Type.--> (intSyntax.int_ty, range)
+      val a = Term.mk_var ("a", ty)
+      val b = Term.mk_var ("b", ty)
+      val witness = CPC_ProofParser.cpc_parameterized_skolem_for_test
+        "@array_deq_diff" [a, b]
+      val expected = boolSyntax.mk_imp
+        (boolSyntax.mk_neg (boolSyntax.mk_eq (a, b)),
+         boolSyntax.mk_neg (boolSyntax.mk_eq
+           (Term.mk_comb (a, witness), Term.mk_comb (b, witness))))
+      fun check declared =
+        let val theorem = replay declared in
+          assert (Term.aconv (Thm.concl theorem) expected andalso
+              List.null (Thm.hyp theorem),
+            "CPC arrays_ext did not derive closed extensionality at " ^ sort)
+        end
+    in
+      check "";
+      check target;
+      expect_hol_error_contains "CPC arrays_ext wrong conclusion"
+        "direct result differs from the declared conclusion"
+        (fn () => ignore (replay "false"))
+    end
+in
+  List.app run [("Bool", Type.bool), ("Int", intSyntax.int_ty)]
+end
+
 fun cpc_parameterized_skolem_registry_success () =
 let
   val expected =
@@ -28611,6 +28653,7 @@ let
       cpc_registry_deindexing_complete_success),
     ("cpc_d13_deindexed_operator_repros_success",
       cpc_d13_deindexed_operator_repros_success),
+    ("cpc_arrays_ext_replay_success", cpc_arrays_ext_replay_success),
     ("cpc_parameterized_skolem_registry_success",
       cpc_parameterized_skolem_registry_success),
     ("cpc_skolem_witness_forall_1_success",

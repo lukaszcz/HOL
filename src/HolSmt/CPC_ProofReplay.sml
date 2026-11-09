@@ -3579,15 +3579,16 @@ local
           end
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
-  fun replay_sets_ext prems =
+  fun replay_ext name prems =
     case prems of
       [premise] =>
         let
           val (left, right) = boolSyntax.dest_eq
             (boolSyntax.dest_neg (Thm.concl premise))
           val (element, range) = Type.dom_rng (Term.type_of left)
-          val _ = Type.compare (range, Type.bool) = EQUAL orelse
-            raise ERR "sets_ext" "expected two Sets"
+          val _ = name <> "sets_ext" orelse
+            Type.compare (range, Type.bool) = EQUAL orelse
+            raise ERR name "expected two Sets"
           val variable = Term.variant (Term.all_varsl [left, right])
             (Term.mk_var ("sets_deq_diff_x", element))
           val witness = boolSyntax.mk_select (variable, boolSyntax.mk_neg
@@ -3604,7 +3605,7 @@ local
                    bossLib.METIS_TAC
                      [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM])))) ()
         end
-    | _ => raise ERR "sets_ext" "expected one disequality premise"
+    | _ => raise ERR name "expected one disequality premise"
 
   (* Set rewrites are deliberately driven by the certificate conclusion.
      Their names are closed explicitly in CPC_Proof's frozen inventory; this
@@ -19313,7 +19314,12 @@ local
            | "str_substr_full_eq" => opaque ( replay_str_substr_full_eq args)
            | "seq_at_elim" => opaque ( replay_seq_at_elim conclusion args)
            | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
-           | "sets_ext" => opaque ( replay_sets_ext prems)
+           | "arrays_ext" =>
+               if List.null args then
+                 opaque (require_declared "arrays_ext"
+                   (replay_ext "arrays_ext" prems))
+               else raise ERR "arrays_ext" "expected no arguments"
+           | "sets_ext" => opaque ( replay_ext "sets_ext" prems)
            | "sets_rewrite" => opaque (
                replay_sets state (#name rule) prems conclusion args)
            | "rewrite" =>
