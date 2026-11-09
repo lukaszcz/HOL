@@ -1063,6 +1063,15 @@ local
     ("not", SmtLib_Theories.zero_zero (fn token =>
       if token = "not" then boolSyntax.negation
       else SmtLib_Theories.decline "<z3_builtin_dict.not>" "not a Boolean negation")),
+    (* Z3 proofs write a single conjunct or disjunct as a unary [and] or
+       [or], e.g. when rewriting an equation between applications of a
+       one-field datatype constructor.  SMT-LIB requires at least two
+       arguments, so only proofs accept the unary form, which means its
+       argument. *)
+    ("and", SmtLib_Theories.K_zero_one
+      (SmtLib_Theories.typed_unary Type.bool Lib.I)),
+    ("or", SmtLib_Theories.K_zero_one
+      (SmtLib_Theories.typed_unary Type.bool Lib.I)),
     (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
        It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
        the Int-array representation of bags.  Reconstructing the lambda is

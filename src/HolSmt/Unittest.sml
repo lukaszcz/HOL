@@ -16936,6 +16936,28 @@ in
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
 end
 
+fun z3_proof_parser_unary_and_or_success () =
+let
+  val p = Term.mk_var ("p", Type.bool)
+  fun rewrite_concl contents =
+    case Redblackmap.peek (Z3_Proof.proof_steps
+        (parse_z3_proof_string "4.15.3" contents), 0) of
+      SOME (Z3_Proof.REWRITE concl) => concl
+    | _ => die "FAIL: unary and/or proof did not parse to a rewrite"
+  val concl = rewrite_concl
+    "((declare-fun p () Bool)\n(proof (rewrite (= (and p) (or p)))))"
+in
+  assert (Term.aconv concl (boolSyntax.mk_eq (p, p)),
+    "unary (and p) and (or p) did not parse as p");
+  expect_hol_error_contains "unary and over Int" "'and'"
+    (fn () => ignore (rewrite_concl
+      "((declare-fun x () Int)\n(proof (rewrite (= (and x) (and x)))))"));
+  expect_hol_error_contains "unary and in a benchmark" "'and'"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_UF)\n(declare-const p Bool)\n" ^
+       "(assert (and p))\n(exit)\n")))
+end
+
 fun z3_asserted_membership_diagnostic () =
 let
   val rogue = ``p:bool``
@@ -28847,6 +28869,8 @@ let
       z3_regular_language_semantics_success),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_proof_parser_unary_and_or_success",
+      z3_proof_parser_unary_and_or_success),
     ("z3_fpa2bv_proof_dictionary_replay_success",
       z3_fpa2bv_proof_dictionary_replay_success),
     ("z3_fpa2bv_proof_dictionary_strictness",
