@@ -27427,6 +27427,24 @@ in
     (fn () => ignore (SmtResource.bounded_structure 8 large_binder))
 end
 
+(* Word lowering reaches the assumptions as well as the conclusion.  Left in
+   an assumption, `word_bit 0 w` and `w >>> 1` are translated as
+   uninterpreted functions, and the solvers report this sequent's negation
+   satisfiable. *)
+fun word_simp_assumptions_success () =
+let
+  val goal =
+    ([``(w : 256 word) <> 0w``, ``~word_bit 0 (w : 256 word)``],
+     ``(w : 256 word) >>> 1 <> 0w``)
+  val ((lowered, _), _) =
+    SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
+  fun mentions c = List.exists (can (find_term (same_const c))) lowered
+in
+  assert (not (mentions wordsSyntax.word_bit_tm orelse
+               mentions wordsSyntax.word_lsr_tm),
+    "word lowering left word_bit or word_lsr in an assumption")
+end
+
 fun word_graph_conversion_success () =
 let
   val x = ``x : word8``
@@ -28249,6 +28267,7 @@ let
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),
     ("skeleton_typed_cnf_graph_success", skeleton_typed_cnf_graph_success),
     ("word_graph_conversion_success", word_graph_conversion_success),
+    ("word_simp_assumptions_success", word_simp_assumptions_success),
     ("cpc_reglan_native_aggregate_focused_success",
       cpc_reglan_native_aggregate_focused_success),
     ("cvc_tac_oracle_tag_gate_rejects_oracle_thm",

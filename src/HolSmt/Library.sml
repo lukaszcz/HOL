@@ -710,17 +710,28 @@ struct
   val bit_field_insert_rwt = simpLib.SIMP_RULE
         (simpLib.++(bossLib.bool_ss, boolSimps.LET_ss)) [] wordsTheory.bit_field_insert;
 
+  (* Lowers constant-index bit operations and shifts to the bit-vector forms
+     the translation encodes natively.  Each assumption is rewritten on its
+     own, like the conclusion: a word operation left in an assumption is
+     translated as an uninterpreted function, which can make an unsatisfiable
+     negation satisfiable. *)
   val WORD_SIMP_TAC = let
     open Tactical Conv Tactic wordsTheory simpLib
+    val ss = pureSimps.pure_ss ++ numSimps.REDUCE_ss ++ wordsLib.SIZES_ss
+    val thms =
+      [word_rol_bv_def, word_ror_bv_def,
+       w2n_n2w, word_bit_def, bit_field_insert_rwt,
+       word_lsb_def, word_msb_def,
+       WORD_SLICE_THM, WORD_BITS_EXTRACT,
+       WORD_BIT_EXTRACT, WORD_SHIFT_BV, TO_WORD_EXTRACT]
   in
     CONV_TAC (DEPTH_CONV wordsLib.EXPAND_REDUCE_CONV) THEN
-      SIMP_TAC (pureSimps.pure_ss ++ numSimps.REDUCE_ss ++ wordsLib.SIZES_ss)
-        [word_rol_bv_def, word_ror_bv_def,
-         w2n_n2w, word_bit_def, bit_field_insert_rwt,
-         word_lsb_def, word_msb_def,
-         WORD_SLICE_THM, WORD_BITS_EXTRACT,
-         WORD_BIT_EXTRACT, WORD_SHIFT_BV, TO_WORD_EXTRACT] THEN
-      CONV_TAC (DEPTH_CONV wordsLib.EXTEND_EXTRACT_CONV)
+      SIMP_TAC ss thms THEN
+      CONV_TAC (DEPTH_CONV wordsLib.EXTEND_EXTRACT_CONV) THEN
+      RULE_ASSUM_TAC
+        (CONV_RULE (DEPTH_CONV wordsLib.EXTEND_EXTRACT_CONV) o
+         SIMP_RULE ss thms o
+         CONV_RULE (DEPTH_CONV wordsLib.EXPAND_REDUCE_CONV))
   end
 
 (*
