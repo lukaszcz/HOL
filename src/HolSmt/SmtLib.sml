@@ -2763,7 +2763,9 @@ local
           replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; injected occurrences are generalized to SMT-LIB String.  " ^
+            "kit; closed injected occurrences are generalized to SMT-LIB " ^
+            "String, bound-dependent ones apply str_inj as an " ^
+            "uninterpreted function into String.  " ^
             "The HOL :string type itself is not the SMT String sort: a " ^
             "residual occurrence is emitted as an uninterpreted sort.  " ^
             "Ground native smtstr goals do replay; the oracle tactics " ^
