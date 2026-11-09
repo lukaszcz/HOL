@@ -19683,6 +19683,54 @@ local
            TextIO.flushOut TextIO.stdOut)
     in Portable.finally report (fn () => loop initial commands) () end
 
+  (* Replay heaps load without a current theory; derive these rules on use. *)
+  val array_set_echo_conv = Susp.delay (fn () =>
+    let
+      val element = Type.alpha
+      val x = Term.mk_var ("x", element)
+      val s = Term.mk_var ("s", Type.--> (element, Type.bool))
+      val applied = List.map
+        (Rewrite.PURE_REWRITE_RULE [pred_setTheory.SPECIFICATION])
+        [pred_setTheory.IN_INSERT, pred_setTheory.IN_DELETE]
+      fun prove (left, right) = Drule.GEN_ALL
+        (Tactical.TAC_PROOF (([], boolSyntax.mk_eq (left, right)),
+          Tactical.THEN
+            (Tactic.CONV_TAC (Conv.REWR_CONV boolTheory.FUN_EQ_THM),
+             Tactical.THEN (Tactic.GEN_TAC,
+               Tactical.THEN
+                 (Rewrite.PURE_REWRITE_TAC
+                    (applied @ [combinTheory.APPLY_UPDATE_THM,
+                      pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+                      combinTheory.K_THM]),
+                  Tactical.THEN
+                    (Tactic.CONV_TAC (Conv.DEPTH_CONV Thm.BETA_CONV),
+                     Tactical.THEN
+                       (Tactical.REPEAT boolLib.COND_CASES_TAC,
+                        bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+                          [boolTheory.EQ_SYM_EQ])))))))
+      fun update value = Term.mk_comb (combinSyntax.mk_update (x, value), s)
+      val equations = List.map prove
+        [(pred_setSyntax.mk_insert (x, s), update boolSyntax.T),
+         (pred_setSyntax.mk_delete (s, x), update boolSyntax.F),
+         (pred_setSyntax.mk_empty element,
+          combinSyntax.mk_K_1 (boolSyntax.F, element)),
+         (pred_setSyntax.mk_univ element,
+          combinSyntax.mk_K_1 (boolSyntax.T, element))]
+    in
+      Conv.QCONV (Conv.THENC
+        (Rewrite.PURE_REWRITE_CONV
+           (pred_setTheory.SPECIFICATION :: pred_setTheory.SUBSET_applied ::
+            equations),
+         Conv.DEPTH_CONV Thm.BETA_CONV))
+    end)
+
+  fun contains_array_set_echo term =
+    Lib.can (HolKernel.find_term (fn tm =>
+      combinSyntax.is_update_comb tm orelse combinSyntax.is_K_1 tm orelse
+      pred_setSyntax.is_in tm orelse pred_setSyntax.is_insert tm orelse
+      pred_setSyntax.is_delete tm orelse pred_setSyntax.is_empty tm orelse
+      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm)) term
+
   (* cvc5's preprocessing can expose canonical arithmetic spellings, record
      and datatype eliminators, and FP bit representations in a proof
      assumption while the HOL goal retains its surface form.  Discharge only
@@ -19716,6 +19764,28 @@ local
         in
           Lib.tryfind match context
         end
+      fun prove_array_set_hyp hyp =
+        let
+          val _ = List.exists contains_array_set_echo (hyp :: context) orelse
+            raise ERR "remove_extra_hyps" "no array-set echo form"
+          val conv = Susp.force array_set_echo_conv
+          val hyp_eq = conv hyp
+          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
+          fun match assumption =
+            let
+              val normalized_assumption =
+                Thm.EQ_MP (conv assumption)
+                  (Thm.ASSUME assumption)
+              val _ = Term.aconv (Thm.concl normalized_assumption)
+                normalized_hyp orelse
+                raise ERR "remove_extra_hyps"
+                  "array-set assumption did not match extra hypothesis"
+            in
+              Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
+            end
+        in
+          Lib.tryfind match context
+        end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
           Tactical.THEN
@@ -19726,6 +19796,8 @@ local
       fun prove_hyp hyp =
         profile "CPC(remove_extra_hyps:canonical_assumption)"
           prove_canonical_hyp hyp
+        handle Feedback.HOL_ERR _ =>
+          profile "CPC(remove_extra_hyps:array_set)" prove_array_set_hyp hyp
         handle Feedback.HOL_ERR _ =>
           profile "CPC(remove_extra_hyps:fp_special_values)"
             Tactical.TAC_PROOF
@@ -19768,7 +19840,7 @@ local
           raise ERR "remove_extra_hyps"
             ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
              "bridges; hypothesis=" ^ Library.term_to_string hyp ^
-             "; attempted=[canonical assumption, FP special values, " ^
+             "; attempted=[canonical assumption, array-set echo, FP special values, " ^
              "floor/ceiling negation, datatype normalization, conditional " ^
              "arithmetic]; " ^
              "underlying=" ^ Feedback.message_of holerr)
@@ -19777,6 +19849,8 @@ local
     end
 
 in
+
+  val remove_hyps_for_test = remove_extra_hyps
 
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology
