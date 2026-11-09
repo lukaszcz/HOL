@@ -268,6 +268,13 @@ fun mk_CVCp expect_fun =
     "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
 val thm_CVCp = mk_CVCp (expect_thm true)
+
+(* These small higher-order regressions need checked replay even though
+   their function domains contain integers. *)
+val thm_CVCp_ho =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (higher-order proofs)"
+    (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
 val sat_CVCp = mk_CVCp expect_sat
 
 (*****************************************************************************)
@@ -2083,7 +2090,13 @@ in
 
     (``!(x:real). 2 <= x /\ x <= 3 ==>
       0 < x - (x pow 3) / 6 + (x pow 5) / 120 - (x pow 7) / 5040``,
-        [(*thm_AUTO, thm_CVC,*) thm_Z3_v4(*, thm_Z3p_v4*)])
+        [(*thm_AUTO, thm_CVC,*) thm_Z3_v4(*, thm_Z3p_v4*)]),
+
+    (* Nested CPC applications in congruence sources. *)
+    (``(if c then (f:int->int) else g) a = 1 ==> c ==> f a = 1``,
+      [thm_CVCp_ho]),
+    (``(r:smt_fun_rec).smt_fun a b = 1 ==> r = q ==>
+       (q:smt_fun_rec).smt_fun a b = 1``, [thm_CVCp_ho])
 
 
   ]  (* tests *)

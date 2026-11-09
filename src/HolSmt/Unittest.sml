@@ -14561,23 +14561,6 @@ in
     (Term.mk_var ("@cpc.FloatingPoint", ``:(4,3) smtfp``))
 end
 
-fun cpc_live_checked_ho_application_success () =
-let
-  fun check goal =
-    let
-      val theorem = Tactical.TAC_PROOF (goal, HolSmtLib.CVC_TAC)
-    in
-      assert (Thm.concl theorem ~~ Lib.snd goal,
-        "CPC higher-order tactic returned the wrong conclusion");
-      check_oracle_tags "CPC live higher-order application" theorem
-    end
-in
-  check ([``(if c then (f:int->int) else g) a = 1``, ``c:bool``],
-    ``(f:int->int) a = 1``);
-  check ([``(r:smt_fun_rec).smt_fun a b = 1``, ``(r:smt_fun_rec) = q``],
-    ``(q:smt_fun_rec).smt_fun a b = 1``)
-end
-
 fun cpc_proof_replay_ho_rare_rewrites_success () =
 let
   val proof = parse_cpc_proof_string
@@ -28783,8 +28766,6 @@ let
       cpc_proof_replay_ho_cong_nary_success),
     ("cpc_nested_ho_application_success",
       cpc_nested_ho_application_success),
-    ("cpc_live_checked_ho_application_success",
-      cpc_live_checked_ho_application_success),
     ("cpc_proof_replay_ho_rare_rewrites_success",
       cpc_proof_replay_ho_rare_rewrites_success),
     ("cpc_proof_parser_declarations_success",
