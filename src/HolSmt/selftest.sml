@@ -1868,10 +1868,11 @@ in
       [thm_Z3, thm_Z3p]),
 
     (* ALL_DISTINCT over a non-literal list is an ordinary predicate
-       application, not an n-ary distinct *)
+       application, not an n-ary distinct.  (thm_CVCp would skip this goal:
+       it skips goals with num subterms.) *)
 
     (``ALL_DISTINCT (s:string) /\ (STRLEN s = 2) ==> STRLEN s > 1``,
-      [thm_Z3, thm_Z3p, thm_CVC, thm_CVCp]),
+      [thm_Z3, thm_Z3p, thm_CVC]),
 
     (* records: field selectors *)
 
