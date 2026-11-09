@@ -301,6 +301,11 @@ val thm_flc_CVCp =
   mk_test_fun (CVC.is_configured ()) expect_flc_checked
     "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
+(* thm_CVCp without its num-goal skip, for a row whose regression needs num *)
+val thm_num_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (proofs)" HolSmtLib.CVC_TAC
+
 val _ = bossLib.Hol_datatype `person = <| employed :bool; age :num |>`
 
 val _ = bossLib.Hol_datatype `
@@ -1868,11 +1873,10 @@ in
       [thm_Z3, thm_Z3p]),
 
     (* ALL_DISTINCT over a non-literal list is an ordinary predicate
-       application, not an n-ary distinct.  (thm_CVCp would skip this goal:
-       it skips goals with num subterms.) *)
+       application, not an n-ary distinct *)
 
     (``ALL_DISTINCT (s:string) /\ (STRLEN s = 2) ==> STRLEN s > 1``,
-      [thm_Z3, thm_Z3p, thm_CVC]),
+      [thm_Z3, thm_Z3p, thm_CVC, thm_num_CVCp]),
 
     (* records: field selectors *)
 
