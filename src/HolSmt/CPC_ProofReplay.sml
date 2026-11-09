@@ -4546,6 +4546,11 @@ local
         bossLib.SIMP_TAC (bossLib.srw_ss()) [wordsTheory.WORD_NOT_NOT])
     end
 
+  (* ((_ zero_extend 0) x) = x, i.e. w2w x = x at x's own width. *)
+  fun replay_bv_zero_extend_eliminate_0 args =
+    Drule.ISPEC (expect_one_arg "bv-zero-extend-eliminate-0" args)
+      wordsTheory.w2w_id
+
   fun replay_bv_shl_by_const_0 args =
     case args of
       word :: _ =>
@@ -19285,6 +19290,8 @@ local
                     (replay_aci_norm args))
            | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
            | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
+           | "bv_zero_extend_eliminate_0" =>
+               opaque (replay_bv_zero_extend_eliminate_0 args)
            | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
            | "bv_shl_by_const_2" => opaque ( replay_bv_shl_by_const_2 args)
            | "bv_lshr_by_const_0" => opaque ( replay_bv_lshr_by_const_0 args)

@@ -16881,6 +16881,25 @@ fun cpc_live_checked_replay_bv_bitblast_success () =
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector OR theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector OR test"
 
+(* Word lowering turns `word_bit 0 w` into `w2w ((0 >< 0) w) = 1w` at width 1,
+   which cvc5 simplifies with bv-zero-extend-eliminate-0. *)
+fun cpc_live_checked_replay_bv_zero_extend_eliminate_success () =
+let
+  val assumption = ``~word_bit 0 (x : word8)``
+  val conclusion = ``(x : word8) <> 1w``
+in
+  case CVC.CVC_SMT_CPC_Prover ([assumption], conclusion) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ conclusion andalso
+               List.all (fn h => h ~~ assumption) (Thm.hyp thm),
+        "live CPC zero-extend replay returned an unexpected theorem");
+       check_oracle_tags "CPC live zero-extend replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for zero-extend theorem"
+  | SolverSpec.UNKNOWN _ =>
+      die "FAIL: cvc5 returned unknown for zero-extend test"
+end
+
 fun cpc_live_checked_replay_boolean_resolution_success () =
   case CVC.CVC_SMT_CPC_Prover
     ([], ``((p : bool) ==> q) /\ (q ==> p) ==> (p = q)``) of
@@ -28848,6 +28867,8 @@ let
       cpc_live_checked_replay_bv_xor_success),
     ("cpc_live_checked_replay_bv_bitblast_success",
       cpc_live_checked_replay_bv_bitblast_success),
+    ("cpc_live_checked_replay_bv_zero_extend_eliminate_success",
+      cpc_live_checked_replay_bv_zero_extend_eliminate_success),
     ("cpc_live_checked_replay_boolean_resolution_success",
       cpc_live_checked_replay_boolean_resolution_success),
     ("cpc_live_checked_replay_nat_max_success",
