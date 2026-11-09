@@ -5071,8 +5071,8 @@ local
       collect_native_set_terms term acc) [] (t :: original_ts)
     val bag_terms = List.foldl (fn (term, acc) =>
       collect_native_bag_terms term acc) [] (t :: original_ts)
-    (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
-       opaque HOL-num position it must remain an uninterpreted function. *)
+    (* Num keeps its HOL-num result in opaque positions, including operands
+       of an uninterpreted integer coercion. *)
     fun raw_num_terms term =
       let
         fun insert tm terms =
@@ -5092,8 +5092,9 @@ local
               val (rator, rand) = Term.dest_comb tm
               val domain = Lib.fst (Type.dom_rng (Term.type_of rator))
               val expected_arg =
-                if same_const rator intSyntax.int_injection orelse
-                   same_const rator int_of_num_tm then NONE else SOME domain
+                if (same_const rator intSyntax.int_injection orelse
+                    same_const rator int_of_num_tm) andalso
+                   not (intSyntax.is_Num rand) then NONE else SOME domain
               val acc = visit NONE rator acc
               val acc = visit expected_arg rand acc
             in
@@ -5698,6 +5699,26 @@ local
       (NUM_BINDERS_TO_INT_CONV,
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
     handle Conv.UNCHANGED => Thm.REFL tm
+
+  (* Mixed word goals retain HOL num. Give their numerals an integer image
+     without rewriting the literal indices consumed by native operators. *)
+  fun NUMERAL_TO_INT_CONV tm =
+  let
+    val head = Lib.fst (boolSyntax.strip_comb tm)
+    val indexed = List.exists (same_const head)
+      [wordsSyntax.word_extract_tm, wordsSyntax.word_replicate_tm,
+       wordsSyntax.word_rol_tm, wordsSyntax.word_ror_tm, smtstr_char_tm,
+       smtstring_const "reglan_power", smtstring_const "reglan_loop"]
+  in
+    if intSyntax.is_int_literal tm orelse ratSyntax.is_literal tm orelse
+       realSyntax.is_real_literal tm orelse wordsSyntax.is_word_literal tm
+       orelse Lib.can native_string_literal tm orelse indexed then
+      raise Conv.UNCHANGED
+    else if numSyntax.is_numeral tm then
+      Thm.SYM (Thm.SPEC tm integerTheory.NUM_OF_INT)
+    else
+      Conv.SUB_CONV NUMERAL_TO_INT_CONV tm
+  end
 
   type native_float_transfer_info = {
     surface : string list,
@@ -6699,7 +6720,7 @@ local
     structure R = realTheory
     structure RA = realaxTheory
   in
-    fun thms_per_const const =
+    fun thms_per_const preserve_num const =
     let
       val { Thy, Name, Ty } = Term.dest_thy_const const
       val bool = Type.bool
@@ -6722,35 +6743,44 @@ local
          seem to cause issues, but EXP_2 prevents Z3 from solving
          ``x DIV 42 <= x``. *)
       case (Thy, Name) of
-        ("arithmetic", "*") => []
-      | ("arithmetic", "+") => []
-      | ("arithmetic", "-") => []
-      | ("arithmetic", "<=") => []
-      | ("arithmetic", ">") => []
-      | ("arithmetic", ">=") => []
-      | ("arithmetic", "DIV") => []
-      | ("arithmetic", "EXP") => []
-      | ("arithmetic", "MAX") => []
-      | ("arithmetic", "MIN") => []
-      | ("arithmetic", "MOD") => []
-      | ("integer", "Num") => []
+        ("arithmetic", "*") =>
+          if preserve_num then [I.NUM_INT_MUL] else []
+      | ("arithmetic", "+") => if preserve_num then [I.INT_ADD] else []
+      | ("arithmetic", "-") =>
+          if preserve_num then [int_arithTheory.INT_NUM_SUB] else []
+      | ("arithmetic", "<=") => if preserve_num then [I.INT_LE] else []
+      | ("arithmetic", ">") => if preserve_num then [A.GREATER_DEF] else []
+      | ("arithmetic", ">=") => if preserve_num then [A.GREATER_EQ] else []
+      | ("arithmetic", "DIV") =>
+          if preserve_num then [I.NUM_INT_EDIV] else []
+      | ("arithmetic", "EXP") =>
+          if preserve_num then [A.EXP, A.EXP_1, A.EXP_POS] else []
+      | ("arithmetic", "MAX") => if preserve_num then [A.MAX_DEF] else []
+      | ("arithmetic", "MIN") => if preserve_num then [A.MIN_DEF] else []
+      | ("arithmetic", "MOD") =>
+          if preserve_num then [I.NUM_INT_EMOD] else []
+      | ("integer", "Num") =>
+          if preserve_num then [I.INT_OF_NUM, I.NUM_OF_INT] else []
       | ("integer", "int_div") => [ I.INT_DIV_EDIV ]
       | ("integer", "int_exp") => [ I.int_exp ]
       | ("integer", "int_max") => [ I.INT_MAX ]
       | ("integer", "int_min") => [ I.INT_MIN ]
       | ("integer", "int_mod") => [ I.INT_MOD_EMOD ]
-      | ("integer", "int_of_num") => []
+      | ("integer", "int_of_num") =>
+          if preserve_num then [I.INT_OF_NUM, I.INT_POS, I.NUM_OF_INT]
+          else []
       | ("integer", "int_quot") => [ I.INT_QUOT_EDIV ]
       | ("integer", "int_rem") => [ I.INT_REM_EMOD ]
       | ("intreal", "INT_CEILING") => []
       | ("marker", "Abbrev") => [ markerTheory.Abbrev_def ]
       | ("min", "=") =>
-          if Type.compare (Ty, num --> num --> bool) = EQUAL then
-            []
+          if preserve_num andalso
+             Type.compare (Ty, num --> num --> bool) = EQUAL then
+            [I.INT_INJ]
           else
             []
-      | ("num", "SUC") => []
-      | ("prim_rec", "<") => []
+      | ("num", "SUC") => if preserve_num then [I.INT] else []
+      | ("prim_rec", "<") => if preserve_num then [I.INT_LT] else []
       | ("realax", "/") => [ HolSmtTheory.real_div_smt_rdiv ]
       | ("realax", "NUM_CEILING") => [ IR.INT_NUM_CEILING, R.NUM_CEILING_BASE ]
       | ("realax", "NUM_FLOOR") => [ IR.INT_NUM_FLOOR, R.NUM_FLOOR_BASE ]
@@ -6785,8 +6815,8 @@ local
      terms in the goal. Since the resulting list of theorems might require more
      theorems to be added (for the SMT solvers to properly solve the goal), this
      function calls itself recursively until no new theorems are needed anymore. *)
-  fun get_thms ([], acc) = HOLset.listItems acc
-    | get_thms (terms, acc) =
+  fun get_thms preserve_num ([], acc) = HOLset.listItems acc
+    | get_thms preserve_num (terms, acc) =
       let
         (* Create a set of all the constants used in all the provided terms *)
         val atoms = Term.all_atomsl terms Term.empty_tmset
@@ -6794,16 +6824,18 @@ local
 
         (* Generate a set of all the theorems we want to add, based on these
            constants *)
-        fun const_thms (const, acc) = HOLset.addList (acc, thms_per_const const)
+        fun const_thms (const, acc) =
+          HOLset.addList (acc, thms_per_const preserve_num const)
         val wanted_thms = HOLset.foldl const_thms empty_thmset consts
 
-        (* Apply NUM_TO_INT_CONV to these theorems, to convert any num literals
-           they might have into int literals. We do this here because this
-           conversion introduces constants that might trigger new theorems to be
-           added in subsequent iterations *)
+        (* Retained naturals need the numeral-only conversion: the semantic
+           transfer would erase their bridge laws. Both conversions can
+           introduce constants requiring further theorem discovery. *)
+        val convert =
+          if preserve_num then NUMERAL_TO_INT_CONV else NUM_TO_INT_CONV
         fun conv_thm (thm, acc) =
           let
-            val thm = Conv.CONV_RULE NUM_TO_INT_CONV thm
+            val thm = Conv.CONV_RULE convert thm
             val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl thm)
           in
             if Term.aconv lhs rhs then acc else HOLset.add (acc, thm)
@@ -6822,7 +6854,8 @@ local
         fun add_new_terms (thm, acc) = HOLset.addList (acc, thm_terms thm)
         val new_terms = HOLset.foldl add_new_terms Term.empty_tmset thms_to_add
       in
-        get_thms (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
+        get_thms preserve_num
+          (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
       end
 
 in
@@ -7369,7 +7402,7 @@ in
 
     val thms_to_add =
       if !include_theorems then
-        get_thms (goal_terms, empty_thmset)
+        get_thms (goal_entangles_num_and_word g) (goal_terms, empty_thmset)
       else
         []
 
@@ -7386,6 +7419,7 @@ in
   let
     open Tactic Tactical
     val assumptions = #1 g
+    val preserve_num = goal_entangles_num_and_word g
     fun is_true tm =
       Term.aconv tm boolSyntax.T orelse
       (let val (_, body) = boolSyntax.dest_forall tm
@@ -7393,8 +7427,14 @@ in
        handle Feedback.HOL_ERR _ => false)
     fun cleanup thm =
     let
-      val thm = simpLib.SIMP_RULE pureSimps.pure_ss
-        (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
+      (* The transfer rewrites would erase the retained num bridge laws. *)
+      val thm =
+        if preserve_num then
+          simpLib.SIMP_RULE pureSimps.pure_ss [boolTheory.REFL_CLAUSE]
+            (Conv.CONV_RULE NUMERAL_TO_INT_CONV thm)
+        else
+          simpLib.SIMP_RULE pureSimps.pure_ss
+            (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
     in
       if is_true (Thm.concl thm) then
         ALL_TAC
@@ -7551,6 +7591,13 @@ in
     Tactic.CONV_TAC
       (Conv.DEPTH_CONV (fun_eq_preprocess_conv preserve_native_bags)) THEN
     stage "word-simp" Library.WORD_SIMP_TAC THEN
+    (* Word simplification still needs literal shift amounts and bit indices.
+       Normalize retained numerals only after it has lowered those forms. *)
+    stage "num-literals" (fn g =>
+      if goal_entangles_num_and_word g then
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE NUMERAL_TO_INT_CONV) THEN
+         Tactic.CONV_TAC NUMERAL_TO_INT_CONV) g
+      else ALL_TAC g) THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
        which does not have a native SMT Set translation. *)

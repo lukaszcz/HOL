@@ -1752,6 +1752,17 @@ in
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3(*, thm_Z3p*)]),
     (``~ 0w >=+ 0w:word32``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* Entangled naturals retain their arithmetic and coercion laws. *)
+    (``w2i (w:256 word) = &w2n w ==> Num (w2i w) = w2n w``,
+      [thm_CVC, thm_Z3, thm_Z3p,
+       mk_test_fun (CVC.is_configured ()) (expect_thm true)
+         "cvc5 (proofs, mixed num/word)" HolSmtLib.CVC_TAC]),
+    (``x = n2w (w2n (x:256 word)) ==> w2n x MOD 32 <= w2n x``,
+      [thm_CVC, thm_Z3]),
+    (``(x:256 word) &&
+         0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
+       word_lsl (word_lsr x 5) 5``, [thm_CVC, thm_Z3]),
+
     (* A word atom must not stop the num-to-int transfer when the naturals it
        guards never meet the word theory: `DIV` is only in the SMT-LIB
        fragment once `x` has been transferred to an integer. *)
