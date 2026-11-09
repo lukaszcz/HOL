@@ -5246,7 +5246,19 @@ local
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
     val record_emitted_term_sorts = !emitted_term_sorts
-    val datatype_records = List.rev (!emitted_datatypes)
+    (* Translation alternatives can discard declarations after registering
+       their types. Publish records only for the final emitted blocks, in
+       output order, and match their types against the final dictionary. *)
+    fun datatype_record text =
+      List.find
+        (fn DatatypeDeclaration {declaration, hol_types, smt_names} =>
+              declaration = text andalso
+              ListPair.allEq (fn (ty, name) =>
+                Redblackmap.peek (tydict, ty) = SOME name)
+                (hol_types, smt_names)
+          | _ => false) (!emitted_datatypes)
+    val datatype_records = List.mapPartial datatype_record
+      (List.concat (List.map Lib.fst smtlibs))
     fun records () =
       let
         val restorers = [

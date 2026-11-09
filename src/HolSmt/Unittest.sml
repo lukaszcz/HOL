@@ -7282,15 +7282,25 @@ let
     check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
   val _ = if CVC.is_configured () then
     check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
-  val (translation, strings) =
-    SmtLib.goal_to_SmtLib_translation NONE goal
-  val declarations = List.mapPartial
-    (fn SmtLib.DatatypeDeclaration {declaration, ...} => SOME declaration
-      | _ => NONE) (SmtLib.translation_records translation)
+  fun check_records goal =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation NONE goal
+      val declarations = List.mapPartial
+        (fn SmtLib.DatatypeDeclaration {declaration, ...} => SOME declaration
+          | _ => NONE) (SmtLib.translation_records translation)
+      val emitted = List.filter
+        (String.isPrefix "(declare-datatypes ") strings
+    in
+      assert (declarations = emitted,
+        "datatype records differ from the emitted declaration blocks");
+      declarations
+    end
+  val declarations = check_records goal
+  (* Constructor translation first declares the result type, then falls
+     back to a UF. Its discarded attempt must leave no metadata behind. *)
+  val _ = check_records ([], ``smtlib_native_dt_id d = (e:smt_tri)``)
 in
-  assert (List.all (fn declaration => List.exists
-      (Lib.equal declaration) strings) declarations,
-    "datatype records differ from the emitted declaration blocks");
   assert (List.exists (fn declaration =>
       contains "(Smt_nested 0)" declaration andalso
       contains "(Prod_List_Char_Smt_nested 0)" declaration andalso
