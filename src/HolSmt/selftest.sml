@@ -1867,6 +1867,12 @@ in
        ov = NONE \/ ?x. ov = SOME x``,
       [thm_Z3, thm_Z3p]),
 
+    (* ALL_DISTINCT over a non-literal list is an ordinary predicate
+       application, not an n-ary distinct *)
+
+    (``ALL_DISTINCT (s:string) /\ (STRLEN s = 2) ==> STRLEN s > 1``,
+      [thm_Z3, thm_Z3p, thm_CVC, thm_CVCp]),
+
     (* records: field selectors *)
 
     (``(x = y) <=> (x.employed = y.employed) /\ (x.age = y.age)``,

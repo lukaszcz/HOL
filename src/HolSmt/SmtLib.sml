@@ -2522,15 +2522,11 @@ local
         let
           fun walk (tm, acc) =
             tm ::
-            (if listSyntax.is_all_distinct tm then
-               let
-                 val (elements, _) =
-                   listSyntax.dest_list (listSyntax.dest_all_distinct tm)
-               in
+            (case SmtLib_Logics.distinct_literal_elements tm of
+               SOME elements =>
                  List.foldl (fn (element, rest) => walk (element, rest))
                    acc elements
-               end
-             else
+             | NONE =>
                (let val (rator, rand) = Term.dest_comb tm
                 in walk (rator, walk (rand, acc)) end
                 handle Feedback.HOL_ERR _ =>

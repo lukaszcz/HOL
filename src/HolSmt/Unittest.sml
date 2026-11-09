@@ -7187,6 +7187,16 @@ in
     "singleton ALL_DISTINCT did not translate to true:\n" ^ singleton_text)
 end
 
+fun smtlib_nonliteral_distinct_success () =
+  (* ALL_DISTINCT over a list that is not a literal is an ordinary
+     application of a predicate to a list, not an n-ary distinct. *)
+  List.app
+    (fn tm =>
+      assert (SmtLib_Logics.assertion_mentions_datatype_sort false tm,
+        "non-literal ALL_DISTINCT list sort not seen: " ^
+        Hol_pp.term_to_string tm))
+    [``ALL_DISTINCT (xs:int list)``, ``ALL_DISTINCT ((x:int)::xs)``]
+
 fun smtlib_datatype_type_translation_success () =
 let
   fun smtlib_text goal =
@@ -28507,6 +28517,8 @@ let
       z3_result_error_precedes_status),
     ("smtlib_distinct_translation_success",
       smtlib_distinct_translation_success),
+    ("smtlib_nonliteral_distinct_success",
+      smtlib_nonliteral_distinct_success),
     ("smtlib_datatype_type_translation_success",
       smtlib_datatype_type_translation_success),
     ("smtlib_extended_hol_encoding_records_success",
