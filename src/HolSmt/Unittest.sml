@@ -32505,7 +32505,10 @@ let
      (``word_bit 7 (w : word8)``, ``(w : word8) ' 7``),
      (``word_bit 8 (w : word8)``, boolSyntax.F),
      (``word_bit 31 (w : word32)``, ``(w : word32) ' 31``),
-     (``word_bit 32 (w : word32)``, boolSyntax.F)]
+     (``word_bit 32 (w : word32)``, boolSyntax.F),
+     (``(((3 >< 3) (w : word4)) : word1) ' 0``, ``(w : word4) ' 3``),
+     (``(((a : word1) @@ (b : word3)) : word4) ' 3``,
+      ``(a : word1) ' 0``)]
   val sum = wordsSyntax.mk_word_add (x, y)
   val bit0 = numSyntax.zero_tm
   val projection = wordsSyntax.mk_index (sum, bit0)

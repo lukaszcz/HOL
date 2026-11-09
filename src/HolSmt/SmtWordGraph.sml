@@ -1815,7 +1815,8 @@ struct
   val projection_simp = simpLib.SIMP_CONV
     (simpLib.++ (simpLib.++ (simpLib.++ (boolSimps.bool_ss, fcpLib.FCP_ss),
       wordsLib.SIZES_ss), numSimps.REDUCE_ss))
-    [combinTheory.o_THM, wordsTheory.word_and_def, wordsTheory.word_or_def,
+    [combinTheory.o_THM, fcpTheory.index_sum,
+     wordsTheory.word_and_def, wordsTheory.word_or_def,
      Rewrite.REWRITE_RULE [blastTheory.xor_thm] wordsTheory.word_xor_def,
      wordsTheory.word_1comp_def, wordsTheory.word_lsl_def,
      wordsTheory.word_lsr_def, wordsTheory.word_extract_def,
@@ -1855,12 +1856,24 @@ struct
                    | _ => false)
               | _ => false
             end
-    in
-      if direct then
-        Conv.ORELSEC
-          (Conv.THENC (projection_simp,
+      fun project term =
+        let
+          val theorem = Conv.THENC (projection_simp,
             Conv.THENC (Conv.DEPTH_CONV literal_bit_conversion,
-              Rewrite.REWRITE_CONV [])), blastLib.BIT_BLAST_CONV) term
+              Rewrite.REWRITE_CONV [])) term
+          fun compound_projection subterm =
+            case Lib.total wordsSyntax.dest_index subterm of
+              SOME (word, _) =>
+                not (Term.is_var word orelse wordsSyntax.is_word_literal word)
+            | NONE => false
+        in
+          if SmtResource.contains compound_projection
+               (boolSyntax.rhs (Thm.concl theorem)) then
+            raise Conv.UNCHANGED
+          else theorem
+        end
+    in
+      if direct then Conv.ORELSEC (project, blastLib.BIT_BLAST_CONV) term
       else blastLib.BIT_BLAST_CONV term
     end
 
