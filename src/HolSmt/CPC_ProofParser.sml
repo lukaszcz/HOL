@@ -1385,6 +1385,8 @@ local
                 Library.union_dict tmdict
                   SmtLib_Theories.Reals_Ints.tmdict)))))
       val tmdict = with_cpc_parameterized_skolems tmdict
+      val tmdict = Library.extend_dict
+        (("@", SmtLib_Theories.apply_operator "@"), tmdict)
       val tmdict = Library.extend_dict (("=", cpc_equality_parsefn),
         Library.extend_dict (("distinct", cpc_distinct_parsefn), tmdict))
     in
@@ -1418,6 +1420,14 @@ local
             with_cpc_fp_entries tmdict)))))))))))))))))))))))
     end
 
+  fun cpc_indexed_identifier name =
+    name = "BitVec" orelse name = "FloatingPoint" orelse
+    List.exists (fn (family, _) => family <> "_" andalso family = name)
+      cpc_indexed_term_families orelse
+    (String.isPrefix "bv" name andalso String.size name > 2 andalso
+     List.all Char.isDigit
+       (String.explode (String.extract (name, 2, NONE))))
+
   fun parse_term dicts_ref raw_get_token =
     let
       (* Keep the lexical spelling through the shared term parser.  Its
@@ -1436,17 +1446,24 @@ local
           val marked_head = get_token ()
           val head = cpc_semantic_token marked_head
         in
-          if head = "_" then
+          if marked_head = "_" orelse marked_head = "@" then
             let
+              val first_operand = get_token ()
+              val application_token =
+                Library.undo_look_ahead [first_operand] get_token
               fun application_terms terms =
-                let val token = get_token () in
+                let val token = application_token () in
                   if token = ")" then List.rev terms
                   else application_terms
                     (parse_term dicts_ref
-                       (Library.undo_look_ahead [token] get_token) :: terms)
+                       (Library.undo_look_ahead [token]
+                         application_token) :: terms)
                 end
             in
-              case application_terms [] of
+              if marked_head = "_" andalso
+                 cpc_indexed_identifier first_operand then
+                ordinary ["(", marked_head, first_operand]
+              else case application_terms [] of
                 function :: arguments =>
                   if List.null arguments then
                     raise ERR "parse_term"
@@ -1557,7 +1574,10 @@ local
      spelling.  Normalize the complete raw occurrence tree before
      elaboration so nested CPC testers take the same registered dictionary
      path as ((_ is Constructor) scrutinee).  Malformed arities remain
-     untouched and therefore retain the ordinary parser diagnostic. *)
+     untouched and therefore retain the ordinary parser diagnostic.
+     CPC also spells higher-order application (_ f x).  Normalize nested
+     occurrences to the shared parser's @ spelling, retaining genuine
+     indexed identifiers and the heads of indexed operator applications. *)
   fun normalize_cpc_testers raw =
     case raw of
       RawList [RawAtom "is", RawAtom constructor, scrutinee] =>
@@ -1570,6 +1590,14 @@ local
         normalize_cpc_testers operand
     | RawList [RawAtom "or", operand] =>
         normalize_cpc_testers operand
+    | RawList (RawAtom "_" :: (operands as RawAtom name :: _)) =>
+        if cpc_indexed_identifier name then raw
+        else RawList (RawAtom "@" ::
+          List.map normalize_cpc_testers operands)
+    | RawList (RawAtom "_" :: operands) =>
+        RawList (RawAtom "@" :: List.map normalize_cpc_testers operands)
+    | RawList ((head as RawList (RawAtom "_" :: _)) :: operands) =>
+        RawList (head :: List.map normalize_cpc_testers operands)
     | RawList entries => RawList (List.map normalize_cpc_testers entries)
     | RawAtom _ => raw
 
