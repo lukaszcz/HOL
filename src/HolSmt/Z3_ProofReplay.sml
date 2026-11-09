@@ -1069,27 +1069,29 @@ local
   val ediv_tm = Term.prim_mk_const {Thy = "integer", Name = "ediv"}
   val emod_tm = Term.prim_mk_const {Thy = "integer", Name = "emod"}
 
-  (* Collect divisors from the whole integer div/mod family.  Canonical
-     totalization may expose raw [ediv]/[emod], so this is deliberately keyed
-     by operation identity and arity rather than by a recorded clause shape. *)
-  fun ediv_emod_divisors target =
+  (* Collect the (dividend, divisor) operands of the whole integer div/mod
+     family.  Canonical totalization may expose raw [ediv]/[emod], so this is
+     deliberately keyed by operation identity and arity rather than by a
+     recorded clause shape. *)
+  fun ediv_emod_operations target =
     let
-      fun divisor term =
+      fun operation term =
         case boolSyntax.strip_comb term of
-          (head, [_, denominator]) =>
+          (head, [numerator, denominator]) =>
             if List.exists (Term.same_const head)
                  [ediv_tm, emod_tm,
                   SmtReplayCanon.smt_ediv_total_tm,
                   SmtReplayCanon.smt_emod_total_tm] then
-              SOME denominator
+              SOME (numerator, denominator)
             else NONE
         | _ => NONE
-      fun add (denominator, denominators) =
-        if List.exists (Term.aconv denominator) denominators then denominators
-        else denominator :: denominators
+      fun same (n, d) (n', d') = Term.aconv n n' andalso Term.aconv d d'
+      fun add (operands, operations) =
+        if List.exists (same operands) operations then operations
+        else operands :: operations
     in
       List.foldl add []
-        (List.mapPartial divisor (Library.subterms target))
+        (List.mapPartial operation (Library.subterms target))
     end
 
   val SMT_RDIV_CANCEL_CLAUSE = Library.prove(
@@ -1247,7 +1249,11 @@ local
       val aliases = SmtReplayCanon.cpc_term_canon_conv unfolded
       val normalization = Thm.TRANS totalization aliases
       val normalized = boolSyntax.rhs (Thm.concl normalization)
-      val divisors = ediv_emod_divisors normalized
+      val operations = ediv_emod_operations normalized
+      fun add_divisor ((_, denominator), denominators) =
+        if List.exists (Term.aconv denominator) denominators then denominators
+        else denominator :: denominators
+      val divisors = List.foldr add_divisor [] operations
       val _ = not (List.null divisors) orelse
         raise ERR "arith_prove_ediv_emod" "no integer div/mod operation"
       (* Three sign branches are complete for each divisor but multiply
@@ -1286,7 +1292,14 @@ local
                       [intLib.ARITH_TAC,
                        Tactical.TRY intLib.ARITH_TAC THEN split rest]]]
             end
-      val proof = Tactical.TAC_PROOF (([], normalized), split divisors)
+      (* The decision procedures treat each operation with a symbolic
+         divisor as an opaque atom; its division identity and remainder
+         bounds are what Z3's arithmetic lemmas rely on. *)
+      fun division_fact (numerator, denominator) =
+        Tactic.MP_TAC (Drule.SPECL [numerator, denominator]
+          HolSmtTheory.smt_ediv_emod_division)
+      val proof = Tactical.TAC_PROOF (([], normalized),
+        Tactical.MAP_EVERY division_fact operations THEN split divisors)
     in
       Thm.EQ_MP (Thm.SYM normalization) proof
     end
