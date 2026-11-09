@@ -496,7 +496,8 @@ local
       fun width index = fcpLib.index_type (numeral_of_term token index)
     in
       case (token, indices, args) of
-        ("BitVec", [bits], []) =>
+        ("Int", [], []) => marker "@cpc.Int" intSyntax.int_ty
+      | ("BitVec", [bits], []) =>
           marker "@cpc.BitVec" (wordsSyntax.mk_word_type (width bits))
       | ("FloatingPoint", [eb, sb], []) =>
           marker "@cpc.FloatingPoint"
@@ -731,7 +732,7 @@ local
       val tmdict = List.foldl
         (fn (name, dict) => Library.extend_dict
           ((name, cpc_sort_marker_parsefn), dict))
-        tmdict ["BitVec", "FloatingPoint", "->"]
+        tmdict ["Int", "BitVec", "FloatingPoint", "->"]
       val tmdict = List.foldl
         (fn (name, dict) => Library.extend_dict
           ((name, cpc_fp_private_parsefn), dict))
