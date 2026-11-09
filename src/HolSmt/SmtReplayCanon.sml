@@ -293,10 +293,48 @@ struct
     else
       raise Conv.UNCHANGED
 
+  fun polynomial_conv ty =
+    if Type.compare (ty, intSyntax.int_ty) = EQUAL then
+      intLib.INT_POLY_CONV
+    else if Type.compare (ty, realSyntax.real_ty) = EQUAL then
+      RealField.REAL_POLY_CONV
+    else
+      raise ERR "arith_poly_norm_prove"
+        "polynomial equality is neither integer nor real"
+
+  (* A strict order a < b becomes 0 < b - a, so that the polynomial
+     normalization below decides guards that differ by moving terms across
+     the relation. *)
+  fun strict_difference_conv tm =
+    case Lib.total intSyntax.dest_less tm of
+      SOME (left, _) =>
+        if Term.aconv left intSyntax.zero_tm then raise Conv.UNCHANGED
+        else Conv.REWR_CONV (Conv.GSYM integerTheory.INT_SUB_LT) tm
+    | NONE =>
+    case Lib.total realSyntax.dest_less tm of
+      SOME (left, _) =>
+        if Term.aconv left realSyntax.zero_tm then raise Conv.UNCHANGED
+        else Conv.REWR_CONV (Conv.GSYM realTheory.REAL_SUB_LT) tm
+    | NONE => raise Conv.UNCHANGED
+
+  (* Ring normal form of each arithmetic operation, applied bottom-up, so
+     that operands Z3 re-associated, reordered or re-spelled (-x for
+     -1 * x, a - b for a + -1 * b) meet; other subterms (conditionals,
+     divisions) stay atoms. *)
+  fun polynomial_operation_conv tm =
+    if intSyntax.is_plus tm orelse intSyntax.is_minus tm orelse
+       intSyntax.is_mult tm orelse intSyntax.is_negated tm orelse
+       realSyntax.is_plus tm orelse realSyntax.is_minus tm orelse
+       realSyntax.is_mult tm orelse realSyntax.is_negated tm
+    then polynomial_conv (Term.type_of tm) tm
+    else raise Conv.UNCHANGED
+
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
      dag_orientation_conv z3_order_cond_polarity_conv,
      z3_cond_polarity_conv,
+     dag_orientation_conv strict_difference_conv,
+     dag_orientation_conv polynomial_operation_conv,
      dag_orientation_conv additive_order_conv,
      z3_primary_rewrite_canon_conv]
 
@@ -370,15 +408,6 @@ struct
       cpc_operand_canon_conv tm
 
   fun cpc_canon_rule theorem = Conv.CONV_RULE cpc_canon_conv theorem
-
-  fun polynomial_conv ty =
-    if Type.compare (ty, intSyntax.int_ty) = EQUAL then
-      intLib.INT_POLY_CONV
-    else if Type.compare (ty, realSyntax.real_ty) = EQUAL then
-      RealField.REAL_POLY_CONV
-    else
-      raise ERR "arith_poly_norm_prove"
-        "polynomial equality is neither integer nor real"
 
   fun normalize_polynomial conv tm =
     compose [cpc_term_canon_conv, conv] tm

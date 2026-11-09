@@ -23274,7 +23274,23 @@ let
       ``(if (x:real) < y then T else F) =
         (if y <= x then F else T)``),
     ("int-additive-order", ``((x:int) + y) = (y + x)``),
-    ("real-additive-order", ``((x:real) + y) = (y + x)``)]
+    ("real-additive-order", ``((x:real) + y) = (y + x)``),
+    ("real-polynomial-guard",
+      ``(if (x:real) + -1 * y <= 0 then -1 * x + y else 0) =
+        (if y < x then 0 else y - x)``),
+    (* Z3's arithmetic rewrite of a guarded division over a product of
+       re-spelled absolute values *)
+    ("int-conditional-product-polynomial",
+      ``(if d = 0 then 0 else
+          ((if v1 >= 0 then v1 else -1 * v1) *
+           (if d + -1 * (if v2 >= 0 then v2 else -1 * v2) <= 0 then
+              -1 * d + if v2 >= 0 then v2 else -1 * v2
+            else 0) * (if v5 >= 0 then v5 else -1 * v5)) / d) =
+        (if d = 0 then 0 else
+          ((if v1 < 0 then -v1 else v1) *
+           ((if (if v2 < 0 then -v2 else v2) < d then 0
+             else (if v2 < 0 then -v2 else v2) - d) *
+            (if v5 < 0 then -v5 else v5))) / (d:int))``)]
   val incomplete = ``~((x:int) < y) = (x <= y)``
   val (incomplete_left, incomplete_right) = boolSyntax.dest_eq incomplete
   val incomplete_reversed =
@@ -23323,6 +23339,102 @@ let
 in
   assert (profile_call_count "arith(8)(nla)" = 0,
     "symbolic power was routed to nla_prove")
+end
+
+fun cpc_arith_mult_sign_replay_success () =
+let
+  val sign = CPC_ProofReplay.replay_arith_mult_sign_for_test
+  val a = ``if (x:int) < 0 then -x else x``
+  val b = ``if (y:int) = 0 then 0 else (x:int) * x / y``
+  val c = ``if (y:int) < x then 0 else y - (x:int)``
+  val r = ``if (u:real) < 0 then -u else u``
+  val s = ``if (v:real) = 0 then 0 else (u:real) * u / v``
+  val cases = [
+    ("two positive int factors",
+      ``^a > 0 /\ ^b > 0``, ``^a * ^b``,
+      ``^a > 0 /\ ^b > 0 ==> ^a * ^b > 0``),
+    ("positive and negative int factors",
+      ``^a > 0 /\ ^b < 0``, ``^a * ^b``,
+      ``^a > 0 /\ ^b < 0 ==> ^a * ^b < 0``),
+    ("nonzero int square", ``~(^c = 0)``, ``^c * ^c``,
+      ``~(^c = 0) ==> ^c * ^c > 0``),
+    ("positive int cube", ``^a > 0``, ``^a * ^a * ^a``,
+      ``^a > 0 ==> ^a * ^a * ^a > 0``),
+    ("two negative int factors",
+      ``^a < 0 /\ ^c < 0``, ``^a * ^c``,
+      ``^a < 0 /\ ^c < 0 ==> ^a * ^c > 0``),
+    ("positive and negative real factors",
+      ``^r > 0 /\ ^s < 0``, ``^r * ^s``,
+      ``^r > 0 /\ ^s < 0 ==> ^r * ^s < 0``),
+    ("nonzero real square", ``~(^s = 0)``, ``^s * ^s``,
+      ``~(^s = 0) ==> ^s * ^s > 0``)]
+  val () = Profile.reset_all ()
+  fun check (name, factors, product, expected) =
+    let val theorem = sign [factors, product]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+in
+  List.app check cases;
+  assert (profile_call_count "CPC(rung:arith/cases)" = 0,
+    "arith_mult_sign was routed to arithmetic search")
+end
+
+fun cpc_arith_mult_monotone_replay_success () =
+let
+  val pos = CPC_ProofReplay.replay_arith_mult_pos_for_test
+  val neg = CPC_ProofReplay.replay_arith_mult_neg_for_test
+  val k = ``if (z:int) < 0 then -z else z + 1``
+  val n = ``if (z:int) < 0 then z else -z - 1``
+  val a = ``if (y:int) = 0 then 0 else (x:int) * x / y``
+  val b = ``if (y:int) < x then 0 else y - (x:int)``
+  val r = ``if (u:real) < 0 then -u else u + 1``
+  val c = ``if (v:real) = 0 then 0 else (u:real) * u / v``
+  val d = ``if (v:real) < u then 0 else v - (u:real)``
+  fun int_case (name, replay, coefficient, sign, relation, result) =
+    (name, replay, coefficient, relation,
+     mk_imp (mk_conj (sign, relation), result))
+  val cases = [
+    int_case ("positive int equality", pos, k, ``^k > 0``,
+      ``^a = ^b``, ``^k * ^a = ^k * ^b``),
+    int_case ("positive int less", pos, k, ``^k > 0``,
+      ``^a < ^b``, ``^k * ^a < ^k * ^b``),
+    int_case ("positive int less-or-equal", pos, k, ``^k > 0``,
+      ``^a <= ^b``, ``^k * ^a <= ^k * ^b``),
+    int_case ("positive int greater", pos, k, ``^k > 0``,
+      ``^a > ^b``, ``^k * ^a > ^k * ^b``),
+    int_case ("positive int greater-or-equal", pos, k, ``^k > 0``,
+      ``^a >= ^b``, ``^k * ^a >= ^k * ^b``),
+    int_case ("negative int equality", neg, n, ``^n < 0``,
+      ``^a = ^b``, ``^n * ^a = ^n * ^b``),
+    int_case ("negative int less", neg, n, ``^n < 0``,
+      ``^a < ^b``, ``^n * ^a > ^n * ^b``),
+    int_case ("negative int less-or-equal", neg, n, ``^n < 0``,
+      ``^a <= ^b``, ``^n * ^a >= ^n * ^b``),
+    int_case ("negative int greater", neg, n, ``^n < 0``,
+      ``^a > ^b``, ``^n * ^a < ^n * ^b``),
+    int_case ("negative int greater-or-equal", neg, n, ``^n < 0``,
+      ``^a >= ^b``, ``^n * ^a <= ^n * ^b``),
+    int_case ("positive real less", pos, r, ``^r > 0``,
+      ``^c < ^d``, ``^r * ^c < ^r * ^d``),
+    int_case ("negative real greater-or-equal", neg, ``-^r``, ``-^r < 0``,
+      ``^c >= ^d``, ``-^r * ^c <= -^r * ^d``)]
+  val () = Profile.reset_all ()
+  fun check (name, replay, coefficient, relation, expected) =
+    let val theorem = replay [coefficient, relation]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+in
+  List.app check cases;
+  assert (profile_call_count "CPC(rung:arith/cases)" = 0,
+    "arith_mult_pos/neg was routed to arithmetic search")
 end
 
 fun cpc_arith_mult_relation_replay_success () =
@@ -29049,6 +29161,10 @@ let
       symbolic_power_avoids_nla_route_success),
     ("cpc_arith_mult_relation_replay_success",
       cpc_arith_mult_relation_replay_success),
+    ("cpc_arith_mult_sign_replay_success",
+      cpc_arith_mult_sign_replay_success),
+    ("cpc_arith_mult_monotone_replay_success",
+      cpc_arith_mult_monotone_replay_success),
     ("nonlinear_power_nla_route_success",
       nonlinear_power_nla_route_success),
     ("z3_ediv_emod_general_replay_success",

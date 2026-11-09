@@ -10154,6 +10154,106 @@ local
       exact_result provenance theorem
     end
 
+  (* arith_mult_pos and arith_mult_neg conclude
+     (k > 0 /\ a REL b) ==> k * a REL k * b, respectively
+     (k < 0 /\ a REL b) ==> k * a REL' k * b with REL' the converse of REL.
+     Instantiate the monotonicity of multiplication rather than search,
+     which does not finish on large factor terms; [target] is the
+     conclusion the rule states. *)
+  fun derive_arith_mult_monotone negative target =
+    let
+      val (antecedent, _) = boolSyntax.dest_imp target
+      val (sign_literal, relation) = boolSyntax.dest_conj antecedent
+      val coefficient =
+        if negative then #1 (arith_dest_less sign_literal)
+        else #1 (arith_dest_greater sign_literal)
+      val is_int = Term.type_of coefficient = intSyntax.int_ty
+      val zero = arith_zero coefficient
+      val greater = if is_int then integerTheory.INT_GT else realTheory.real_gt
+      val geq = if is_int then integerTheory.INT_GE else realTheory.real_ge
+      (* 0 < k ==> (k * a < k * b <=> a < b), and likewise for <=, or with
+         k < 0 the converse on the right *)
+      val (mono_less, mono_leq) =
+        if not negative then
+          if is_int then (integerTheory.INT_LT_MONO, integerTheory.INT_LE_MONO)
+          else (realTheory.REAL_LT_LMUL, realTheory.REAL_LE_LMUL)
+        else if not is_int then
+          (realTheory.REAL_LT_LMUL_NEG, realTheory.REAL_LE_LMUL_NEG)
+        else
+          let
+            val k = Term.genvar intSyntax.int_ty
+            val a = Term.genvar intSyntax.int_ty
+            val b = Term.genvar intSyntax.int_ty
+            fun negated monotone =
+              Thm.GENL [k, a, b] (Rewrite.PURE_REWRITE_RULE
+                [integerTheory.INT_MUL_LNEG, integerTheory.INT_NEG_GT0,
+                 integerTheory.INT_LT_NEG, integerTheory.INT_LE_NEG]
+                (Drule.SPECL [intSyntax.mk_negated k, b, a] monotone))
+          in
+            (negated integerTheory.INT_LT_MONO,
+             negated integerTheory.INT_LE_MONO)
+          end
+      val sign = Thm.ASSUME sign_literal
+      val positive =
+        if negative then sign
+        else Thm.EQ_MP (Drule.SPECL [coefficient, zero] greater) sign
+      val premise = Thm.ASSUME relation
+      fun unfold definition (left, right) theorem =
+        Thm.EQ_MP (Drule.SPECL [left, right] definition) theorem
+      fun fold definition (left, right) theorem =
+        Thm.EQ_MP (Thm.SYM (Drule.SPECL [left, right] definition)) theorem
+      (* from x REL y, k * x REL k * y (or the converse when negative) *)
+      fun scale monotone (x, y) theorem =
+        let val (left, right) = if negative then (y, x) else (x, y)
+        in
+          Thm.EQ_MP (Thm.SYM (Thm.MP
+            (Drule.SPECL [coefficient, left, right] monotone) positive))
+            theorem
+        end
+      fun times term = arith_mult (coefficient, term)
+      val result =
+        case Lib.total boolSyntax.dest_eq relation of
+          SOME _ => Thm.AP_TERM (Term.rator (times zero)) premise
+        | NONE =>
+        case Lib.total arith_dest_less relation of
+          SOME (a, b) =>
+            let val scaled = scale mono_less (a, b) premise
+            in
+              if negative then fold greater (times a, times b) scaled
+              else scaled
+            end
+        | NONE =>
+        case Lib.total arith_dest_leq relation of
+          SOME (a, b) =>
+            let val scaled = scale mono_leq (a, b) premise
+            in
+              if negative then fold geq (times a, times b) scaled
+              else scaled
+            end
+        | NONE =>
+        case Lib.total arith_dest_greater relation of
+          SOME (a, b) =>
+            let val scaled =
+              scale mono_less (b, a) (unfold greater (a, b) premise)
+            in
+              if negative then scaled
+              else fold greater (times a, times b) scaled
+            end
+        | NONE =>
+            let
+              val (a, b) = arith_dest_geq relation
+              val scaled = scale mono_leq (b, a) (unfold geq (a, b) premise)
+            in
+              if negative then scaled
+              else fold geq (times a, times b) scaled
+            end
+      val theorem = Thm.DISCH antecedent
+        (Drule.PROVE_HYP (Thm.CONJUNCT1 (Thm.ASSUME antecedent))
+          (Drule.PROVE_HYP (Thm.CONJUNCT2 (Thm.ASSUME antecedent)) result))
+    in
+      Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) target) theorem
+    end
+
   fun replay_arith_mult_neg args =
     case args of
       [coefficient, equality] =>
@@ -10190,7 +10290,10 @@ local
             (boolSyntax.mk_conj
              (arith_less (coefficient, arith_zero coefficient), equality),
              result)
-        in arith_prove target end
+        in
+          derive_arith_mult_monotone true target
+          handle Feedback.HOL_ERR _ => arith_prove target
+        end
     | _ => raise ERR "arith_mult_neg"
       "expected a coefficient and an arithmetic relation"
 
@@ -10227,18 +10330,172 @@ local
             (boolSyntax.mk_conj
              (arith_greater (coefficient, arith_zero coefficient), equality),
              result)
-        in arith_prove target end
+        in
+          derive_arith_mult_monotone false target
+          handle Feedback.HOL_ERR _ => arith_prove target
+        end
     | _ => raise ERR "arith_mult_pos"
       "expected a coefficient and a non-negative arithmetic literal"
 
-  (* CPC uses this rule to establish that two strictly positive factors have
-     a strictly positive product. *)
+  (* CPC uses this rule to establish the sign of a monomial from the signs
+     of its factors: the first argument is a conjunction of literals
+     x > 0, x < 0 or ~(x = 0) over the factors, and the conclusion is
+     F ==> m > 0 or F ==> m < 0.  Derive it from the sign cases of a
+     product rather than by arithmetic search, which does not finish on
+     large factor terms; factors known only to be nonzero are split into
+     their two signs, which must agree. *)
+  datatype mult_sign = MultPositive of Thm.thm | MultNegative of Thm.thm
+
+  fun derive_arith_mult_sign (positive_factors, product) =
+    let
+      val is_int = Term.type_of product = intSyntax.int_ty
+      val _ = is_int orelse Term.type_of product = realSyntax.real_ty orelse
+        raise ERR "arith_mult_sign" "expected an Int or Real monomial"
+      val zero = arith_zero product
+      val greater = if is_int then integerTheory.INT_GT else realTheory.real_gt
+      val total = if is_int then integerTheory.INT_LT_TOTAL
+        else realTheory.REAL_LT_TOTAL
+      fun is_mult term =
+        if is_int then intSyntax.is_mult term else realSyntax.is_mult term
+      fun dest_mult term =
+        if is_int then intSyntax.dest_mult term else realSyntax.dest_mult term
+      (* The Real form of INT_MUL_SIGN_CASES, derived over fresh variables
+         so that the rewrites cannot reach into the factors. *)
+      val mul_sign_cases =
+        if is_int then integerTheory.INT_MUL_SIGN_CASES
+        else
+          let
+            val p = Term.genvar realSyntax.real_ty
+            val q = Term.genvar realSyntax.real_ty
+            val positive = Drule.SPECL [p, q] realTheory.REAL_MUL_POS_LT
+            val negative = Rewrite.PURE_REWRITE_RULE
+              [realTheory.REAL_MUL_RNEG, realTheory.REAL_NEG_GT0,
+               realTheory.REAL_NEG_LT0]
+              (Drule.SPECL [p, realSyntax.mk_negated q]
+                realTheory.REAL_MUL_POS_LT)
+          in Thm.GENL [p, q] (Thm.CONJ positive negative) end
+      fun sign_cases (left, right) =
+        Drule.SPECL [left, right] mul_sign_cases
+      fun is_zero term = Term.aconv term zero
+      (* Each conjunct is a literal about one factor. *)
+      fun literal theorem =
+        let val term = Thm.concl theorem in
+          case Lib.total (boolSyntax.dest_eq o boolSyntax.dest_neg) term of
+            SOME (factor, z) =>
+              if is_zero z then (factor, NONE, SOME theorem)
+              else raise ERR "arith_mult_sign" "unsupported literal"
+          | NONE =>
+          case Lib.total arith_dest_greater term of
+            SOME (factor, z) =>
+              if is_zero z then
+                (factor, SOME (MultPositive
+                  (Thm.EQ_MP (Drule.SPECL [factor, z] greater) theorem)), NONE)
+              else if is_zero factor then
+                (z, SOME (MultNegative
+                  (Thm.EQ_MP (Drule.SPECL [factor, z] greater) theorem)), NONE)
+              else raise ERR "arith_mult_sign" "unsupported literal"
+          | NONE =>
+          case Lib.total arith_dest_less term of
+            SOME (factor, z) =>
+              if is_zero z then (factor, SOME (MultNegative theorem), NONE)
+              else if is_zero factor then
+                (z, SOME (MultPositive theorem), NONE)
+              else raise ERR "arith_mult_sign" "unsupported literal"
+          | NONE => raise ERR "arith_mult_sign" "unsupported literal"
+        end
+      val literals = List.map literal
+        (Drule.CONJUNCTS (Thm.ASSUME positive_factors))
+      fun combine (left_sign, right_sign) =
+        let
+          fun parts (MultPositive theorem) = theorem
+            | parts (MultNegative theorem) = theorem
+          val left = parts left_sign
+          val right = parts right_sign
+          fun operand theorem =
+            let val (l, r) = arith_dest_less (Thm.concl theorem)
+            in if is_zero l then r else l end
+          val cases = sign_cases (operand left, operand right)
+          val both = Thm.CONJ left right
+          fun choose equivalence first =
+            let
+              val (d1, d2) = boolSyntax.dest_disj
+                (boolSyntax.rhs (Thm.concl equivalence))
+              val disjunction =
+                if first then Thm.DISJ1 both d2 else Thm.DISJ2 d1 both
+            in Thm.EQ_MP (Thm.SYM equivalence) disjunction end
+        in
+          case (left_sign, right_sign) of
+            (MultPositive _, MultPositive _) =>
+              MultPositive (choose (Thm.CONJUNCT1 cases) true)
+          | (MultNegative _, MultNegative _) =>
+              MultPositive (choose (Thm.CONJUNCT1 cases) false)
+          | (MultPositive _, MultNegative _) =>
+              MultNegative (choose (Thm.CONJUNCT2 cases) true)
+          | (MultNegative _, MultPositive _) =>
+              MultNegative (choose (Thm.CONJUNCT2 cases) false)
+        end
+      fun sign_of signs term =
+        case List.find (fn (factor, _) => Term.aconv factor term) signs of
+          SOME (_, sign) => sign
+        | NONE =>
+            if is_mult term then
+              let val (left, right) = dest_mult term
+              in combine (sign_of signs left, sign_of signs right) end
+            else raise ERR "arith_mult_sign"
+              "monomial factor has no sign literal"
+      (* Split every factor known only to be nonzero into its two signs. *)
+      fun split signs nonzero =
+        case nonzero of
+          [] => sign_of signs product
+        | (factor, theorem) :: rest =>
+            let
+              val negative_term = arith_less (factor, zero)
+              val positive_term = arith_less (zero, factor)
+              val choice = boolSyntax.mk_disj (negative_term, positive_term)
+              val cases = Drule.SPECL [factor, zero] total
+              val equal = boolSyntax.dest_disj (Thm.concl cases)
+              val excluded = Drule.CONTR choice
+                (Thm.MP (Thm.NOT_ELIM theorem) (Thm.ASSUME (#1 equal)))
+              val nonzero_cases =
+                Thm.DISJ_CASES cases excluded (Thm.ASSUME choice)
+              val negative = split
+                ((factor, MultNegative (Thm.ASSUME negative_term)) :: signs)
+                rest
+              val positive = split
+                ((factor, MultPositive (Thm.ASSUME positive_term)) :: signs)
+                rest
+            in
+              case (negative, positive) of
+                (MultPositive n, MultPositive p) =>
+                  MultPositive (Thm.DISJ_CASES nonzero_cases n p)
+              | (MultNegative n, MultNegative p) =>
+                  MultNegative (Thm.DISJ_CASES nonzero_cases n p)
+              | _ => raise ERR "arith_mult_sign"
+                  "a nonzero factor leaves the product's sign open"
+            end
+      val signs = List.mapPartial
+        (fn (factor, sign, _) =>
+          Option.map (fn sign => (factor, sign)) sign) literals
+      val nonzero = List.mapPartial
+        (fn (factor, _, theorem) =>
+          Option.map (fn theorem => (factor, theorem)) theorem) literals
+      val result =
+        case split signs nonzero of
+          MultPositive theorem =>
+            Thm.EQ_MP (Thm.SYM (Drule.SPECL [product, zero] greater)) theorem
+        | MultNegative theorem => theorem
+    in
+      Thm.DISCH positive_factors result
+    end
+
   fun replay_arith_mult_sign args =
     case args of
       [positive_factors, product] =>
-        arith_prove (boolSyntax.mk_imp
-          (positive_factors,
-           arith_greater (product, arith_zero product)))
+        (derive_arith_mult_sign (positive_factors, product)
+         handle Feedback.HOL_ERR _ =>
+           arith_prove (boolSyntax.mk_imp
+             (positive_factors,
+              arith_greater (product, arith_zero product))))
     | _ => raise ERR "arith_mult_sign"
       "expected a conjunction of positive factors and their product"
 
@@ -20165,6 +20422,9 @@ in
 
   fun replay_arith_mult_pos_for_test args =
     replay_arith_mult_pos args
+
+  fun replay_arith_mult_sign_for_test args =
+    replay_arith_mult_sign args
 
   fun instantiate_cpc_fp_private_markers theorem =
     let
