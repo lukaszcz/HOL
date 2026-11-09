@@ -71,6 +71,8 @@ sig
 
   type decls
   val empty_decls : decls
+  (* Reserve consecutive indices for lazily derived declarations. *)
+  val reserve_decl_indices : int -> decls -> int * decls
   val make_decl : {name : string, spec : rulespec, weight : int,
                    info : info, orig : thm} -> decl
   val extend_decl : decl -> decls -> decl option * decls

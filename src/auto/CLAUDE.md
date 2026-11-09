@@ -106,6 +106,13 @@ belongs to the parallel build band.
   goal unknowns directly.
 - **Wrappers and tactic-valued rules are never persisted** — they are
   closures; libraries re-establish them at load via `augment_claset`.
+- Constructor distinctness is a runtime TypeBase entry per datatype,
+  named `__claset_tyinfo_<thy>_<ty>_distinct`. Retrieval derives and caches
+  ordinary safe elimination theorems from the case definition for the
+  requested constructor pairs. These entries and cached theorems are absent
+  from `rules_of`; `distinct_rule_names` lists their `Del` handles. Engine
+  queries must supply genuine metavariables so rigid datatype variables do
+  not trigger pair enumeration. Injectivity remains ordinary declarations.
 - Preserve observable claset behaviour when refactoring: `rules_of`
   contents and order, wrapper lists, exact candidate-query sequences,
   `process_claset_tags` leftovers, and the existing warnings for

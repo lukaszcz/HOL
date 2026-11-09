@@ -673,6 +673,9 @@ datatype decls =
 val empty_decls =
   Decls {next = ~1, byconcl = Termtab.empty, byname = Symtab.empty}
 
+fun reserve_decl_indices count (Decls {next, byconcl, byname}) =
+  (next, Decls {next = next - count, byconcl = byconcl, byname = byname})
+
 fun make_decl {name, spec, weight, info, orig} =
   {name = name, spec = spec, tag = {weight = weight, index = 0},
    info = info, orig = canonical_rule_of (#kind spec) orig}

@@ -706,6 +706,8 @@ fun query_skeleton_measured checkpoint formula =
     val body = if goal then rand formula else formula
     val depth = if goal then 2 else 3
     val decoded = ref []
+    val variables = ref []
+    val qvars = ref Term.empty_tmset
 
     fun strip term =
       let
@@ -766,8 +768,27 @@ fun query_skeleton_measured checkpoint formula =
               Ty = Type.type_subst subst generic}
          end)
 
-    fun build expected 0 _ = (checkpoint (); genvar expected)
-      | build expected level term =
+    fun unknown track expected term =
+      case term of
+          Var variable =>
+            if not track then genvar expected
+            else
+              (case findMeasured checkpoint
+                 (fn (key, tm) => key = variable andalso
+                   type_of tm = expected) (!variables) of
+                   SOME (_, tm) => tm
+                 | NONE =>
+                     let val tm = genvar expected
+                     in
+                       variables := (variable, tm) :: !variables;
+                       qvars := HOLset.add (!qvars, tm);
+                       tm
+                     end)
+        | _ => genvar expected
+
+    fun build track expected 0 term =
+          (checkpoint (); unknown track expected term)
+      | build track expected level term =
           (checkpoint ();
            (case strip term of
                 (Const (name, proto_args), actual_args) =>
@@ -777,7 +798,7 @@ fun query_skeleton_measured checkpoint formula =
                           let
                             val _ = checkpoint ()
                             val (domain, _) = Type.dom_rng (type_of head)
-                            val arg' = build domain (level - 1) arg
+                            val arg' = build track domain (level - 1) arg
                             val _ = checkpoint ()
                           in
                             apply (mk_comb (head, arg'), args)
@@ -789,10 +810,15 @@ fun query_skeleton_measured checkpoint formula =
                     if type_of result = expected then result
                     else genvar expected
                   end
-              | _ => genvar expected)
+              | _ => unknown track expected term)
            handle HOL_ERR _ => genvar expected)
   in
-    build bool depth body
+    let
+      val static = build false bool depth body
+      val query = build true bool depth (blastTerm.normMeasured checkpoint body)
+    in
+      (static, {q = query, qvars = !qvars})
+    end
   end
 
 fun pseudoRulesMeasured checkpoint cache vars formula =
@@ -833,11 +859,13 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
   if not (isGoal formula) andalso isVarForm formula then []
   else
     let
-      val query = query_skeleton_measured checkpoint formula
+      val (query, distinct_query) =
+        query_skeleton_measured checkpoint formula
       fun intros part =
         clasetLib.unify_intro_candidates_measured checkpoint part query
       fun elims part =
-        clasetLib.unify_elim_candidates_measured checkpoint part query
+        clasetLib.unify_elim_candidates_with checkpoint part query
+          distinct_query
       val tagged =
         if safe then
           if isGoal formula then
