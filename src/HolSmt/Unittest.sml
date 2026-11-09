@@ -10757,6 +10757,126 @@ in
 end
 
 
+(* Z3 bv1-blast can use its fresh bits before visiting the concat rewrite. *)
+fun z3_bv1_concat_replay_success () =
+let
+  fun run width =
+    let
+      val source = Term.mk_var ("bv1_source",
+        wordsSyntax.mk_int_word_type width)
+      val bits = List.tabulate (width, fn i =>
+        Term.mk_var ("bv1_bit" ^ Int.toString i,
+          wordsSyntax.mk_int_word_type 1))
+      fun pack [bit] = bit
+        | pack (bit :: rest) = wordsSyntax.mk_word_concat (bit, pack rest)
+        | pack [] = raise Fail "empty concat fixture"
+      val equation = boolSyntax.mk_eq (source, pack bits)
+      val vars = HOLset.addList (Term.empty_tmset, bits)
+      fun proof root = Z3_Proof.mk_proof
+        (Redblackmap.insert (Redblackmap.insert
+          (Redblackmap.mkDict Int.compare, 0, root), 1,
+          Z3_Proof.REWRITE equation), vars, [], "4.15.3")
+      fun extract i = wordsSyntax.mk_word_extract
+        (numSyntax.term_of_int i, numSyntax.term_of_int i, source,
+         wordsSyntax.dest_word_type (wordsSyntax.mk_int_word_type 1))
+      fun is_one word = boolSyntax.mk_eq (word, wordsSyntax.mk_wordii (1, 1))
+      val low = is_one (extract 0)
+      val high = is_one (extract (width - 1))
+      val low_name = is_one (List.last bits)
+      val high_name = is_one (List.hd bits)
+      val low_eq = boolSyntax.mk_eq (low, low_name)
+      val high_eq = boolSyntax.mk_eq (high, high_name)
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_conj (low, high),
+         boolSyntax.mk_conj (low_name, high_name))
+      val result = Z3_ProofReplay.replay_root_with_state_for_test
+        (proof (Z3_Proof.MONOTONICITY
+          ([Z3_Proof.REWRITE low_eq, Z3_Proof.REWRITE high_eq], target)))
+      fun has_definition bit i = List.exists (Term.aconv
+        (boolSyntax.mk_eq (bit, extract i))) (#definition_hyps result)
+      val _ = assert
+        (List.length (#definition_hyps result) = width andalso
+         has_definition (List.hd bits) (width - 1) andalso
+         has_definition (List.last bits) 0 andalso
+         Thm.concl (#thm result) ~~ target,
+         "bv1-blast did not preserve its MSB/LSB definitions and rewrites")
+      val concat = Z3_ProofReplay.replay_root_for_test
+        (proof (Z3_Proof.REWRITE equation))
+      val _ = assert (Thm.concl concat ~~ equation,
+        "bv1-blast concat equation did not replay")
+      val empty = Z3_Proof.mk_proof
+        (Redblackmap.mkDict Int.compare, vars, [], "4.15.3")
+      val initial = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] empty
+      val refusal = Feedback.mk_HOL_ERR "SmtResource" "concat-test"
+        "resource-gated: bitvector-replay; injected hint refusal"
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => raise refusal) initial equation
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined) andalso
+         HOLset.equal (#flexible_vars declined, vars),
+         "resource-gated concat hint changed replay state")
+      fun typed_concat width (left, right) = Term.list_mk_comb
+        (Term.inst
+          [{redex = Type.alpha, residue = wordsSyntax.dim_of left},
+           {redex = Type.beta, residue = wordsSyntax.dim_of right},
+           {redex = Type.gamma, residue = wordsSyntax.dest_word_type
+             (wordsSyntax.mk_int_word_type width)}] wordsSyntax.word_concat_tm,
+         [left, right])
+      val (left, right) = wordsSyntax.dest_word_concat (pack bits)
+      val malformed = boolSyntax.mk_eq (source,
+        typed_concat width (left,
+          typed_concat 1 (wordsSyntax.dest_word_concat right)))
+      val malformed_proof = Z3_Proof.mk_proof
+        (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
+          Z3_Proof.REWRITE malformed), vars, [], "4.15.3")
+      val declined = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] malformed_proof
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined),
+         "truncating concat hint changed replay state")
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => boolTheory.TRUTH) initial equation
+      val _ = assert (HOLset.isEmpty (#concat_bits declined),
+        "concat hint cached a different theorem conclusion")
+      val flexible_source = Z3_Proof.update_proof_vars empty
+        (HOLset.add (vars, source))
+      val unanchored = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] flexible_source
+      val _ = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => raise Fail "unanchored concat attempted a proof")
+        unanchored equation
+      val goal = boolSyntax.mk_eq (low, low)
+      val step = Z3_Proof.REWRITE low_eq
+      val self = Z3_Proof.TRANS (step, Z3_Proof.SYMM
+        (step, boolSyntax.mk_eq (low_name, low)), goal)
+      val contradiction = Z3_Proof.UNIT_RESOLUTION
+        ([Z3_Proof.ASSERTED (boolSyntax.mk_neg goal), self], boolSyntax.F)
+      val theorem = Thm.CCONTR goal
+        (Z3_ProofReplay.check_proof ([], goal, proof contradiction))
+    in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "bv1-blast definitions survived final theorem validation")
+    end
+in
+  List.app run [8, 256]
+end
+
+fun z3_bv1_concat_live_success () =
+let
+  val goals =
+    [``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+     ``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``]
+  fun check goal =
+    let val theorem = Tactical.TAC_PROOF (([], goal), HolSmtLib.Z3_TAC)
+    in assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+      "live bv1-blast replay returned the wrong theorem or hypotheses") end
+in
+  List.app check goals
+end
+
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
   (* The first rewrite is TASK_02's exact Float32 decomposition preamble.
@@ -28234,6 +28354,8 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
+    ("z3_bv1_concat_live_success", z3_bv1_concat_live_success),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
