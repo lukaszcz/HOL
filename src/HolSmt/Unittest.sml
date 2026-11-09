@@ -6797,6 +6797,13 @@ in
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
   expect_logic "QF_DT" ``(x:ordering) = y``;
+  (* theory sorts that only occur in emitted datatype constructor fields *)
+  expect_logic "QF_UFDTLIA" ``(x:int option) = y``;
+  expect_logic "QF_UFDTLIA" ``(x:int option option) = y``;
+  expect_logic "QF_UFDTLIRA" ``(x:real option) = y``;
+  expect_logic "UFBVDT" ``(x:word8 option) = y``;
+  expect_logic "ALL" ``(x:smtstr option) = y``;
+  expect_logic "AUFDTLIA" ``(x:(int -> bool) option) = y``;
   expect_logic "ALL" ``CONS (x:int) xs = CONS y ys``;
   expect_logic "AUFLIA" ``!(x:'a). (P:'a -> bool) x``
 end
