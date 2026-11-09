@@ -6460,6 +6460,21 @@ local
     handle Feedback.HOL_ERR _ =>
       profile "CPC(rung:arith/int_arith)" Tactical.TAC_PROOF
         (([], target), intLib.ARITH_TAC)
+    handle error as Feedback.HOL_ERR _ =>
+      (* The rungs above treat totalized div/mod as opaque atoms, but
+         cvc5 steps can rely on their definitions, e.g. that
+         smt_emod_total a 0 = a. *)
+      let
+        val unfolding = Rewrite.PURE_REWRITE_CONV
+          [HolSmtTheory.smt_ediv_total_def,
+           HolSmtTheory.smt_emod_total_def] target
+          handle Conv.UNCHANGED => raise error
+        val unfolded = boolSyntax.rhs (Thm.concl unfolding)
+      in
+        Thm.EQ_MP (Thm.SYM unfolding)
+          (profile "CPC(rung:arith/total_div_mod)" Tactical.TAC_PROOF
+            (([], unfolded), intLib.ARITH_TAC))
+      end
 
   val arith_prove_from_prems = prove_from_prems arith_prove
 
