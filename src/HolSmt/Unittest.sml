@@ -14551,6 +14551,8 @@ in
     ``(if c then (f:int->int) else g) x + 1``;
   reflexive "(_ (lambda (@list (@var x Int)) x) 1)"
     ``(\x:int. x) 1``;
+  reflexive "(_ (@const 0 (-> Int Bool)) x)"
+    (Term.mk_comb (Term.mk_var ("@cpc.const.0", ``:int->bool``), ``x:int``));
   reflexive "(_ bv5 8)" ``5w:word8``;
   reflexive "((_ extract 3 0) (_ bv5 8))" ``(3 >< 0) (5w:word8):word4``;
   reflexive "((_ extract 3 0) (_ h (_ bv5 8)))"
