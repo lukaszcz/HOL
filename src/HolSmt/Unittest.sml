@@ -10865,7 +10865,7 @@ in
 end
 
 fun z3_bv1_concat_live_success () =
-let
+if Z3.is_configured () then let
   val goals =
     [``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
      ``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``]
@@ -10875,7 +10875,7 @@ let
       "live bv1-blast replay returned the wrong theorem or hypotheses") end
 in
   List.app check goals
-end
+end else ()
 
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
