@@ -293,6 +293,9 @@ New features
 
 Bugs fixed
 ----------
+-   HolSmt translates HOL string lengths with `str.len`, preserving string
+    literal content and avoiding ill-sorted `seq.len` applications.
+
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at

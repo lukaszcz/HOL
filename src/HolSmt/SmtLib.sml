@@ -1743,22 +1743,29 @@ local
   fun native_string_literal tm =
     let
       val (constructor, representation) = Term.dest_comb tm
-      val _ =
-        if same_const
-            (smtstring_const "SmtStr") constructor then ()
-        else raise ERR "native_string_literal" "not an SMT String"
-      val (elements, element_ty) = listSyntax.dest_list representation
-      val _ =
-        if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
-        else raise ERR "native_string_literal"
-          "String representation is not a num list"
       fun code_point element =
         Arbnum.toInt
           (SmtLib_String_Literal.check_code_point "code point"
             (numSyntax.dest_numeral element))
         handle SmtLib_String_Literal.InvalidCodePoint detail =>
           raise ERR "native_string_literal" detail
-      val code_points = List.map code_point elements
+      val code_points =
+        if same_const str_inj_tm constructor then
+          List.map Char.ord
+            (String.explode (stringSyntax.fromHOLstring representation))
+        else
+          let
+            val _ =
+              if same_const (smtstring_const "SmtStr") constructor then ()
+              else raise ERR "native_string_literal" "not an SMT String"
+            val (elements, element_ty) = listSyntax.dest_list representation
+            val _ =
+              if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
+              else raise ERR "native_string_literal"
+                "String representation is not a num list"
+          in
+            List.map code_point elements
+          end
     in
       "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
     end
@@ -2753,8 +2760,8 @@ local
       val string_record =
         HOLTheoryEncoding {
           feature =
-            "HOL strings: str_inj images of STRCAT, isPREFIX, string_lt, " ^
-            "string_le and string equality",
+            "HOL strings: str_inj images of STRCAT, STRLEN, isPREFIX, " ^
+            "string_lt, string_le and string equality",
           smt_theory = "UnicodeStrings",
           mode = NativeSMTLIB,
           parse = true,
@@ -2763,7 +2770,8 @@ local
           replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; injected occurrences are generalized to SMT-LIB String.  " ^
+            "kit; literals retain their content and other injected " ^
+            "occurrences are generalized to SMT-LIB String.  " ^
             "The HOL :string type itself is not the SMT String sort: a " ^
             "residual occurrence is emitted as an uninterpreted sort.  " ^
             "Ground native smtstr goals do replay; the oracle tactics " ^
@@ -3594,8 +3602,11 @@ local
       ((same_const rator intSyntax.int_injection orelse
         same_const rator int_of_num_tm) andalso
        (case rands of
-          [arg] => same_const (Lib.fst (boolSyntax.strip_comb arg))
-            seq_length_tm
+          [arg] =>
+            (case boolSyntax.strip_comb arg of
+               (head, [seq]) => same_const head seq_length_tm andalso
+                 is_native_sequence_type (Term.type_of seq)
+             | _ => false)
         | _ => false)) orelse
       Option.isSome (Lib.total dest_string_nth_shape tm) orelse
       Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
@@ -6049,6 +6060,7 @@ local
 
   val hol_string_transfer_rewrites = [
     Conv.GSYM smtstringTheory.str_inj_11,
+    Conv.GSYM smtstringTheory.str_inj_STRLEN,
     smtstringTheory.str_inj_STRCAT,
     smtstringTheory.str_inj_isPREFIX,
     smtstringTheory.str_inj_string_lt,
@@ -7247,6 +7259,7 @@ in
       | SOME {Thy = "realax", Name = "NUM_CEILING", ...} => true
       | SOME {Thy = "pred_set", Name = "CARD", ...} => true
       | SOME {Thy = "bag", Name = "BAG_CARD", ...} => true
+      | SOME {Thy = "list", Name = "LENGTH", ...} => true
       | _ => false
 
   fun atom_needs_num_transfer atom =
@@ -7521,6 +7534,7 @@ in
        HolSmtTheory.num_ceiling_zero, arithmeticTheory.MAX_0,
        arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE]) THEN
     stage "num-to-int" num_to_int THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "let-simp"
       (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV) THEN
@@ -7568,6 +7582,7 @@ in
        assumptions even when they no longer mention num themselves. *)
     stage "num-to-int" num_to_int THEN
     stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "datatype-to-smt" DATATYPE_TO_SMT_TAC
   end
 
