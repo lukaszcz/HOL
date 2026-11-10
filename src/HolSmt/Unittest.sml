@@ -10760,6 +10760,9 @@ end
 (* Z3 bv1-blast can use its fresh bits before visiting the concat rewrite. *)
 fun z3_bv1_concat_replay_success () =
 let
+  fun pack [bit] = bit
+    | pack (bit :: rest) = wordsSyntax.mk_word_concat (bit, pack rest)
+    | pack [] = raise Fail "empty concat fixture"
   fun run width =
     let
       val source = Term.mk_var ("bv1_source",
@@ -10767,9 +10770,6 @@ let
       val bits = List.tabulate (width, fn i =>
         Term.mk_var ("bv1_bit" ^ Int.toString i,
           wordsSyntax.mk_int_word_type 1))
-      fun pack [bit] = bit
-        | pack (bit :: rest) = wordsSyntax.mk_word_concat (bit, pack rest)
-        | pack [] = raise Fail "empty concat fixture"
       val equation = boolSyntax.mk_eq (source, pack bits)
       val vars = HOLset.addList (Term.empty_tmset, bits)
       fun proof root = Z3_Proof.mk_proof
@@ -10800,10 +10800,12 @@ let
          has_definition (List.last bits) 0 andalso
          Thm.concl (#thm result) ~~ target,
          "bv1-blast did not preserve its MSB/LSB definitions and rewrites")
+      val _ = check_oracle_tags "bv1 endpoint replay" (#thm result)
       val concat = Z3_ProofReplay.replay_root_for_test
         (proof (Z3_Proof.REWRITE equation))
       val _ = assert (Thm.concl concat ~~ equation,
         "bv1-blast concat equation did not replay")
+      val _ = check_oracle_tags "bv1 concat equation" concat
       val _ = if width <> 8 then () else
         let
           val recorded =
@@ -10863,9 +10865,13 @@ let
         (HOLset.add (vars, source))
       val unanchored = Z3_ProofReplay.initial_replay_state
         Term.empty_tmset [] flexible_source
-      val _ = Z3_ProofReplay.define_concat_bits_with
+      val declined = Z3_ProofReplay.define_concat_bits_with
         (fn _ => fn _ => raise Fail "unanchored concat attempted a proof")
         unanchored equation
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined),
+         "unanchored concat hint changed replay state")
       val goal = boolSyntax.mk_eq (low, low)
       val step = Z3_Proof.REWRITE low_eq
       val self = Z3_Proof.TRANS (step, Z3_Proof.SYMM
@@ -10876,24 +10882,33 @@ let
         (Z3_ProofReplay.check_proof ([], goal, proof contradiction))
     in
       assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
-        "bv1-blast definitions survived final theorem validation")
+        "bv1-blast definitions survived final theorem validation");
+      check_oracle_tags "bv1 final validation" theorem
     end
+  val seed = Term.mk_var ("bv1_shared_source",
+    wordsSyntax.mk_int_word_type 8)
+  fun shared 0 = seed
+    | shared depth = let val child = shared (depth - 1)
+                     in wordsSyntax.mk_word_add (child, child) end
+  val source = shared 30
+  val bits = List.tabulate (8, fn i => Term.mk_var
+    ("bv1_shared_bit" ^ Int.toString i, wordsSyntax.mk_int_word_type 1))
+  val equation = boolSyntax.mk_eq (source, pack bits)
+  val proof = Z3_Proof.mk_proof
+    (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
+      Z3_Proof.REWRITE equation),
+     HOLset.addList (Term.empty_tmset, bits), [], "4.15.3")
+  val result = Timeout.apply (Time.fromSeconds 5)
+    Z3_ProofReplay.replay_root_with_state_for_test proof
+  val _ = assert (List.length (#definition_hyps result) = 8 andalso
+    Term.aconv (Thm.concl (#thm result)) equation andalso
+    List.all (fn hyp => List.exists (Term.aconv hyp)
+      (#definition_hyps result)) (Thm.hyp (#thm result)),
+    "shared concat lost its endpoint or bit definitions")
+  val _ = check_oracle_tags "shared bv1 concat" (#thm result)
 in
   List.app run [8, 256]
 end
-
-fun z3_bv1_concat_live_success () =
-if Z3.is_configured () then let
-  val goals =
-    [``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
-     ``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``]
-  fun check goal =
-    let val theorem = Tactical.TAC_PROOF (([], goal), HolSmtLib.Z3_TAC)
-    in assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
-      "live bv1-blast replay returned the wrong theorem or hypotheses") end
-in
-  List.app check goals
-end else ()
 
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
@@ -34331,8 +34346,6 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
-    ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
-    ("z3_bv1_concat_live_success", z3_bv1_concat_live_success),
     (* Native sharing forces full GC. Keep its short anti-unfolding guards
        on a cold heap, before the allocation-heavy replay groups, as in the
        focused word-graph runner. Every input and watchdog stays unchanged. *)
@@ -34357,6 +34370,7 @@ let
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
+    ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",

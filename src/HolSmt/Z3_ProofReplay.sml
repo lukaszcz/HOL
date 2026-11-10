@@ -6526,7 +6526,9 @@ local
         numSyntax.dest_numeral left_low =
           Arbnum.plus1 (numSyntax.dest_numeral middle) orelse
         raise Conv.UNCHANGED
-      val theorem = Drule.ISPECL [high, middle, low, source]
+      (* Simplify only the bounded schema, before inserting a shared word. *)
+      val variable = Term.genvar (Term.type_of source)
+      val theorem = Drule.ISPECL [high, middle, low, variable]
         (Thm.INST_TYPE
           [{redex = Type.beta, residue = wordsSyntax.dim_of left},
            {redex = Type.gamma, residue = wordsSyntax.dim_of right},
@@ -6534,6 +6536,7 @@ local
           wordsTheory.CONCAT_EXTRACT)
       val theorem = simpLib.SIMP_RULE
         (simpLib.++ (bossLib.arith_ss, wordsLib.SIZES_ss)) [] theorem
+      val theorem = Thm.INST [{redex = variable, residue = source}] theorem
       val _ = Term.aconv (boolSyntax.lhs (Thm.concl theorem)) term orelse
         raise Conv.UNCHANGED
     in theorem end
