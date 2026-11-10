@@ -19907,6 +19907,31 @@ in
   check_oracle_tags "quantified implication transitivity" theorem
 end
 
+fun cpc_instantiate_after_quantified_trans_success () =
+let
+  val proof = parse_cpc_proof_string (
+    "((declare-fun p (Int) Bool) " ^
+    " (declare-fun q (Int) Bool) " ^
+    " (declare-fun r (Int) Bool) " ^
+    " (declare-const s Bool) " ^
+    " (declare-const a Int) " ^
+    " (define @q () (forall ((x Int)) (or (p x) (q x) (r x)))) " ^
+    " (define @r () (forall ((x Int)) (or (r x) (p x) (q x)))) " ^
+    " (assume @a s) " ^
+    " (assume @e (= s (not (not @r)))) " ^
+    " (step @nn :rule bool-double-not-elim :args (@q)) " ^
+    " (step @trans :rule trans :premises (@e @nn)) " ^
+    " (step @forall :rule eq_resolve :premises (@a @trans)) " ^
+    " (step @inst :rule instantiate :premises (@forall) :args ((@list a)))) ")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``(p:int -> bool) a \/ q a \/ r a``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 2,
+    "quantified transitivity lost the endpoint needed by instantiate");
+  check_oracle_tags "instantiate after quantified transitivity" theorem
+end
+
 fun cpc_word_rewrite_rules_success () =
 let
   val cases =
@@ -29552,6 +29577,8 @@ let
       cpc_word_aci_literal_identity_success),
     ("cpc_quantified_imp_disj_trans_success",
       cpc_quantified_imp_disj_trans_success),
+    ("cpc_instantiate_after_quantified_trans_success",
+      cpc_instantiate_after_quantified_trans_success),
     ("cpc_word_rewrite_rules_success",
       cpc_word_rewrite_rules_success),
     ("cpc_word_rewrite_rejects_bad_endpoint",
