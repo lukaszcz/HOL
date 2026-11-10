@@ -6847,17 +6847,10 @@ local
               handle Feedback.HOL_ERR _ => left_left false
               handle Feedback.HOL_ERR _ => left_right false)
              handle Feedback.HOL_ERR _ =>
-               if bounded_propositional_tautology accumulated then
-                 result (retain_support next accumulated)
-                   (fn (_, pair) => pair)
-               else if bounded_propositional_tautology next then
-                 result (retain_support accumulated next)
-                   (fn (pair, _) => pair)
-               else
-                 (right_left true
-                  handle Feedback.HOL_ERR _ => right_right true
-                  handle Feedback.HOL_ERR _ => left_left true
-                  handle Feedback.HOL_ERR _ => left_right true))
+               (right_left true
+                handle Feedback.HOL_ERR _ => right_right true
+                handle Feedback.HOL_ERR _ => left_left true
+                handle Feedback.HOL_ERR _ => left_right true))
         end
       val (theorem, provenance) =
         case premise_steps of
