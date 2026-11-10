@@ -13,6 +13,8 @@ val _ = set_trace "bit blast" 0
 
 val ERR = mk_HOL_ERR "selftest"
 
+val _ = WordCancelLiteralTests.run ()
+
 fun parse_n_eval s expected =
     let
       fun checkconv th =
