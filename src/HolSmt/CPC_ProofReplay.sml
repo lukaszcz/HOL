@@ -21250,6 +21250,10 @@ local
         in
           Lib.tryfind match context
         end
+      val array_set_context = List.map
+        (fn assumption => Susp.delay (fn () =>
+          Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
+            (Thm.ASSUME assumption))) context
       fun prove_array_set_hyp hyp =
         let
           val _ = List.exists contains_array_set_echo (hyp :: context) orelse
@@ -21266,9 +21270,7 @@ local
                Rewrite.REWRITE_CONV []]) hyp)
           fun match assumption =
             let
-              val normalized_assumption =
-                Thm.EQ_MP (conv assumption)
-                  (Thm.ASSUME assumption)
+              val normalized_assumption = Susp.force assumption
               val _ = Term.aconv (Thm.concl normalized_assumption)
                 normalized_hyp orelse
                 raise ERR "remove_extra_hyps"
@@ -21278,7 +21280,7 @@ local
             end
         in
           identity () handle Feedback.HOL_ERR _ =>
-            Lib.tryfind match context
+            Lib.tryfind match array_set_context
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
@@ -21293,7 +21295,8 @@ local
         handle Feedback.HOL_ERR error =>
           if SmtResource.is_resource_gate error then
             raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:array_set)" prove_array_set_hyp hyp
+          else profile "CPC(remove_extra_hyps:array_set)"
+            prove_array_set_hyp hyp
         handle Feedback.HOL_ERR error =>
           if SmtResource.is_resource_gate error then
             raise Feedback.HOL_ERR error
@@ -21347,7 +21350,8 @@ local
           else raise ERR "remove_extra_hyps"
             ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
              "bridges; hypothesis=" ^ Library.term_to_string hyp ^
-             "; attempted=[canonical assumption, array-set echo, FP special values, " ^
+             "; attempted=[canonical assumption, array-set echo, " ^
+             "FP special values, " ^
              "floor/ceiling negation, datatype normalization, conditional " ^
              "arithmetic]; " ^
              "underlying=" ^ Feedback.message_of holerr)
