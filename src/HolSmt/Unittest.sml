@@ -15231,16 +15231,23 @@ let
      "(declare-const g (-> (_ BitVec 256) Int (_ BitVec 256))) " ^
      "(declare-const a (_ BitVec 256)) (declare-const n Int) " ^
      ring_step "(f n)" "(g (bvand a (f n)) n)" ^ ")"]
+  val expected =
+    [``(1w:256 word) * (a - b) = -1w * (b - a)``,
+     ``(1w:256 word) * (f (n:int) - g (a && f n) n) =
+       -1w * (g (a && f n) n - f n)``]
   fun replay proof = SmtResource.with_e0_invocation_for_test
     CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string proof)
   val () = Profile.reset_all ()
   val theorems = List.map replay proofs
   val results = Profile.results ()
 in
-  List.app (fn theorem =>
-    (assert (null (Thm.hyp theorem),
+  ListPair.appEq (fn (theorem, expected) =>
+    (assert (Thm.concl theorem ~~ expected,
+       "CPC word ring replay proved the wrong identity");
+     assert (null (Thm.hyp theorem),
        "CPC word ring replay retained hypotheses");
-     check_oracle_tags "CPC word ring replay" theorem)) theorems;
+     check_oracle_tags "CPC word ring replay" theorem))
+    (theorems, expected);
   assert
     (profile_count "CPC(rung:word/poly_norm_schematic_word_ring)_OK"
        results = 2,

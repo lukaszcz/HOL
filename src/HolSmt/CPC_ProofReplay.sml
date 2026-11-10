@@ -5472,6 +5472,15 @@ local
             orelse raise ERR "bv_poly_norm" "not a fixed-width ring identity"
           val atoms = ref ([] : (Term.term * Term.term) list)
           val memo = ref ([] : (Term.term * Term.term) list)
+          (* Each distinct ring node visited adds a template node, so the
+             skeleton limit also bounds this traversal and its list
+             lookups. *)
+          val visited = ref 0
+          fun visit () =
+            (visited := !visited + 1;
+             SmtResource.check_dag_size_with_limit
+               "BitVector" "word-ring-schema"
+               SmtResource.max_skeleton_replay_dag_nodes (!visited))
           fun atom term =
             case List.find (fn (saved, _) => Term.aconv saved term) (!atoms) of
               SOME (_, variable) => variable
@@ -5488,7 +5497,9 @@ local
                 let
                   val result =
                     if is_ring_operation term then
-                      let val (operator, operands) = boolSyntax.strip_comb term
+                      let
+                        val () = visit ()
+                        val (operator, operands) = boolSyntax.strip_comb term
                       in Term.list_mk_comb
                         (operator, List.map abstract operands) end
                     else if wordsSyntax.is_word_literal term then term
