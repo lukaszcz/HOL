@@ -7326,10 +7326,11 @@ let
        sat_goals;
      case prover goal of
        SolverSpec.UNSAT (SOME thm) =>
-         assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+         (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
            List.all (fn h => List.exists (Term.aconv h)
              (Lib.fst goal)) (Thm.hyp thm),
-           name ^ " nested datatype congruence changed the goal")
+           name ^ " nested datatype congruence changed the goal");
+          check_oracle_tags name thm)
      | _ => die (name ^ " nested datatype congruence did not replay"))
   val _ = if Z3.is_configured () then
     check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
