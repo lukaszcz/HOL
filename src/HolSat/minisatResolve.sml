@@ -40,7 +40,7 @@ fun mk_resolution_var lfn sva n =
     if RBM.numItems lfn = 0 then mk_sat_var lfn sva n
     else Array.sub(sva,n+1)
       handle Subscript =>
-        failwith("mk_resolution_var"^(int_to_string (n+1))^"\n")
+        failwith("mk_sat_var"^(int_to_string (n+1))^"\n")
 
 type root_context =
   {conjunction : term,
