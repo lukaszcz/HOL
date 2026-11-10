@@ -19974,6 +19974,21 @@ let
     end
 in List.app check cases end
 
+fun cpc_word_rewrite_resource_gate () =
+let
+  val proof = parse_cpc_proof_string
+    ("((declare-const x (_ BitVec 8)) (define @t0 () x) " ^
+     String.concat (List.tabulate (21, fn index =>
+       let val previous = "@t" ^ Int.toString index
+       in "(define @t" ^ Int.toString (index + 1) ^ " () (bvadd " ^
+          previous ^ " " ^ previous ^ ")) " end)) ^
+     "(step @out :rule bv-extract-whole :args (@t21 7)))")
+in
+  expect_hol_error_contains "oversized word rewrite"
+    "feature=resource-gate:BitVector:word-rewrite"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test proof))
+end
+
 fun cpc_word_rewrite_rejects_bad_endpoint () =
   expect_hol_error_contains "constant shift rejects wrong endpoint"
     "incorrect constant-shift extraction endpoint"
@@ -35537,6 +35552,8 @@ let
       cpc_quantified_imp_disj_trans_success),
     ("cpc_word_rewrite_rules_success",
       cpc_word_rewrite_rules_success),
+    ("cpc_word_rewrite_resource_gate",
+      cpc_word_rewrite_resource_gate),
     ("cpc_word_rewrite_rejects_bad_endpoint",
       cpc_word_rewrite_rejects_bad_endpoint),
     ("cpc_word_involution_trust_success",
