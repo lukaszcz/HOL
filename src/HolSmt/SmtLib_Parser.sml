@@ -6,6 +6,7 @@ structure SmtLib_Parser =
 struct
 
   exception CPCProofEOF
+  exception ProofEOF
 
   type 'a parse_fn = string -> Term.term list -> 'a list -> 'a
 
@@ -172,6 +173,77 @@ struct
     parse_lambda: bool
   }
 
+  (* Construction is selected before elaborating let bodies or binders.
+     Proof dialects may use semantic terms as indices (notably CPC skolems),
+     so retain those as backend values instead of forcing a HOL expansion.
+     Lexical indices additionally preserve the legacy pre-LET variable role;
+     ordinary recipes must not confuse them with external literal aliases. *)
+  type 'a index_source =
+    {tokens : unit -> string list,
+     binding_type : string -> Type.hol_type option,
+     heads : unit -> (string * 'a * int) list, sorts : Type.hol_type dict,
+     callbacks : unit -> SmtLib_GraphBackend.index_callback list,
+     symbol_key : string -> string, type_symbol_key : string -> string,
+     parse_choice : bool, parse_lambda : bool,
+     binder_lists : unit -> (string * Term.term list) list,
+     fixed : Term.term option, literal : Term.term option ref,
+     diagnostic : (unit -> Term.term option) option ref}
+  datatype 'a construction_index =
+      LiteralIndex of Term.term
+    | ValueIndex of 'a * string
+    | LexicalIndex of 'a * string
+    | SourceIndex of 'a * 'a index_source
+    | SymbolIndex of string
+  type 'a construction_parse_fn =
+    'a SmtLib_GraphBackend.frame -> string ->
+    'a construction_index list -> 'a list -> 'a
+  type 'a construction_dict =
+    (string, 'a construction_parse_fn list) Redblackmap.dict
+  (* Binder-list lookup distinguishes a missing alias (outer NONE) from
+     retained non-variable operands (inner NONE). Recursive CPC grammar
+     validates those operands only after the body and closing token. *)
+  type 'a construction_cfg = {
+    backend : 'a SmtLib_GraphBackend.backend,
+    frame : 'a SmtLib_GraphBackend.frame,
+    symbol_key : string -> string,
+    type_symbol_key : string -> string,
+    index_limit : int,
+    parse_choice : bool,
+    parse_lambda : bool,
+    lookup_binder_list : string ->
+      'a SmtLib_GraphBackend.binder option list option,
+    binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
+      'a SmtLib_GraphBackend.binder,
+    record_binder_block : string * int * 'a -> unit,
+    ascribed_symbol : 'a SmtLib_GraphBackend.frame ->
+      {name : string, constructor : string option, sort : Type.hol_type,
+       arguments : 'a list} -> 'a,
+    coerce_arguments : 'a SmtLib_GraphBackend.frame -> 'a list ->
+      'a list * bool
+  }
+  datatype recipe_index =
+      RecipeLiteral of Term.term
+    | RecipeSymbol of string
+    | RecipeOperand of {position : int, hol_type : Type.hol_type}
+
+  datatype construction_role =
+      ConstructionAtom
+    | ConstructionApplication
+    | ConstructionIndexed of string list
+    | ConstructionAscribed of
+        {constructor : string option, sort : Type.hol_type}
+    | ConstructionLet of (string * string) list
+    | ConstructionBinder of
+        {kind : string, variables : (string * string * Type.hol_type) list}
+    | ConstructionAnnotation
+    (* CPC occurrence aliases retain a shared boundary, not a copied tree.
+       The stamp is parse-local metadata, never semantic identity. *)
+    | ConstructionReference of int
+  datatype 'a construction_occurrence = ConstructionOccurrence of
+    {value : 'a, role : construction_role, token : string,
+     children : 'a construction_occurrence list}
+  fun construction_value (ConstructionOccurrence {value, ...}) = value
+
   datatype query_command =
       QueryCheckSat of {
         assumptions: Term.term list,
@@ -203,6 +275,26 @@ struct
   }
 
   type checked_script = command_state_snapshot
+
+  type 'a policy_construction_cfg = {
+    backend : 'a SmtLib_GraphBackend.backend,
+    frame : 'a SmtLib_GraphBackend.frame,
+    symbol_key : string -> string,
+    type_symbol_key : string -> string,
+    index_limit : SmtReplayResourcePolicy.limit,
+    parse_choice : bool,
+    parse_lambda : bool,
+    lookup_binder_list : string ->
+      'a SmtLib_GraphBackend.binder option list option,
+    binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
+      'a SmtLib_GraphBackend.binder,
+    record_binder_block : string * int * 'a -> unit,
+    ascribed_symbol : 'a SmtLib_GraphBackend.frame ->
+      {name : string, constructor : string option, sort : Type.hol_type,
+       arguments : 'a list} -> 'a,
+    coerce_arguments : 'a SmtLib_GraphBackend.frame -> 'a list ->
+      'a list * bool
+  }
 
 local
 
@@ -437,15 +529,21 @@ local
      raw terms; the Z3 proof tokenizer deliberately retains its old policy. *)
   val proof_string_token_prefix = "\001HolSmtString:"
   val proof_quoted_symbol_token_prefix = "\001HolSmtQuoted:"
+  (* Adapter-only: raw marker prefixes are rejected below, and the quoted
+     symbol grammar cannot produce a NUL in its decoded payload. *)
+  val cpc_recursive_binders =
+    proof_quoted_symbol_token_prefix ^ "\000cpc-recursive-binders"
+  val cpc_recursive_named_binders =
+    proof_quoted_symbol_token_prefix ^ "\000cpc-recursive-named-binders"
 
   fun proof_marker_collision text =
     String.isPrefix proof_string_token_prefix text orelse
     String.isPrefix proof_quoted_symbol_token_prefix text
 
-  fun make_proof_tokenizer_from_input preserve_quoted cpc_eof
-      z3_quoted_escapes token_byte_gate input =
+  fun make_proof_tokenizer_with_eof preserve_quoted cpc_lexical_policy
+      z3_quoted_escapes token_byte_gate eof input =
     let
-      val next_token = make_tokenizer_from_input false cpc_eof
+      val next_token = make_tokenizer_from_input false cpc_lexical_policy
         z3_quoted_escapes token_byte_gate input
     in
       fn () =>
@@ -462,10 +560,15 @@ local
               proof_quoted_symbol_token_prefix ^ token_text tok
             else
               token_text tok
-        | NONE =>
-            if cpc_eof then raise CPCProofEOF
-            else raise ERR "make_proof_tokenizer_from_input" "end of stream"
+        | NONE => eof ()
     end
+
+  fun make_proof_tokenizer_from_input preserve_quoted cpc_eof
+      z3_quoted_escapes token_byte_gate =
+    make_proof_tokenizer_with_eof preserve_quoted cpc_eof
+      z3_quoted_escapes token_byte_gate
+      (fn () => if cpc_eof then raise CPCProofEOF
+        else raise ERR "make_proof_tokenizer_from_input" "end of stream")
 
   fun make_proof_stream_tokenizer_with_policy preserve_quoted cpc_eof
       z3_quoted_escapes token_byte_gate instream =
@@ -495,6 +598,24 @@ local
     make_proof_stream_tokenizer_with_policy false false false NONE
   val make_cpc_proof_stream_tokenizer =
     make_proof_stream_tokenizer_with_policy true true false NONE
+  fun make_cpc_proof_tokenizer_from_input input =
+    let fun checked_input () =
+          input () handle CPCProofEOF =>
+            raise ERR "make_cpc_proof_tokenizer_from_input"
+              "supplier raised parser EOF"
+    in make_proof_tokenizer_from_input true true false NONE
+      checked_input end
+
+  (* The generic graph grammar uses the same lexical policy as the
+     generic stream tokenizer.  Only its EOF signal differs, so a caller
+     can check completion without mistaking malformed input for EOF. *)
+  fun make_proof_input_tokenizer input =
+    let fun checked_input () =
+          input () handle ProofEOF =>
+            raise ERR "make_proof_input_tokenizer"
+              "supplier raised parser EOF"
+    in make_proof_tokenizer_with_eof false false false NONE
+      (fn () => raise ProofEOF) checked_input end
   val make_z3_proof_stream_tokenizer =
     make_proof_stream_tokenizer_with_policy true false true NONE
   fun make_bounded_z3_proof_stream_tokenizer gate =
@@ -1500,8 +1621,8 @@ local
 
   val unknown_symbol_origin = "t_with_args_unknown_symbol"
 
-  fun t_with_args_raw_key dict (marked_token : string) (key : string)
-      (indices : Term.term list) (args : 'a list) : 'a =
+  fun select_dictionary_entry invoke render_index dict
+      (marked_token : string) (key : string) indices args =
   let
     (* A CPC quoted symbol is keyed by its marked spelling.  Its parse
        function receives only the decoded display spelling, but lookup never
@@ -1510,7 +1631,7 @@ local
     val token = Option.getOpt (quoted, marked_token)
     fun try_fns [] last_err = (NONE, last_err)
       | try_fns (f :: fs) last_err =
-          (SOME (f token indices args), last_err)
+          (SOME (invoke f token indices args), last_err)
           handle Interrupt => raise Interrupt
                | SmtLib_Theories.ParseDecline
                    (Feedback.HOL_ERR holerr) => try_fns fs (SOME holerr)
@@ -1528,7 +1649,7 @@ local
     val diagnostic_token = token
     fun generic_msg detail =
       "failed to parse '" ^ diagnostic_token ^ "' (with indices [" ^
-      String.concatWith ", " (List.map Hol_pp.term_to_string indices) ^
+      String.concatWith ", " (List.map render_index indices) ^
       "] and " ^ Int.toString (List.length args) ^ " argument(s))" ^
       detail
   in
@@ -1563,6 +1684,10 @@ local
                       (Feedback.mk_HOL_ERR "SmtLib_Parser" "t_with_args"
                         (generic_msg ""))))
   end
+
+  fun t_with_args_raw_key dict marked_token key indices args =
+    select_dictionary_entry (fn parse => parse) Hol_pp.term_to_string
+      dict marked_token key indices args
 
   fun t_with_args_raw dict token indices args =
     t_with_args_raw_key dict token token indices args
@@ -2238,6 +2363,1215 @@ local
     Library.expect_token "(" (get_token ());
     parse_term_operands smtlib_cfg get_token (tydict, tmdict) []
   )
+
+  (***************************************************************************)
+  (* Backend construction for proof-term parsers. The lexical/type grammar  *)
+  (* is shared; graph dictionaries supply recipes or ID-based constructors. *)
+  (***************************************************************************)
+
+  local
+    open SmtLib_GraphBackend
+    structure B = SmtLib_GraphBackend
+    structure C = SmtLib_ConstructorSyntax
+  in
+
+  fun construction_index_text (LiteralIndex term) = Hol_pp.term_to_string term
+    | construction_index_text (SymbolIndex name) = Hol_pp.term_to_string
+        (Term.mk_var (name,Type.mk_vartype "'smtlib_index"))
+    | construction_index_text (ValueIndex (_, token)) =
+        "<term index " ^ SmtResource.bounded_text 240 token ^ ">"
+    | construction_index_text (LexicalIndex (_, token)) =
+        construction_index_text (SymbolIndex (proof_symbol_text token))
+    | construction_index_text (SourceIndex (_, {literal,diagnostic,...})) =
+        (case !literal of SOME term => Hol_pp.term_to_string term
+         | NONE => case !diagnostic of
+             SOME describe => (case describe () of
+                 SOME term => Hol_pp.term_to_string term
+               | NONE => "<term index (>")
+           | NONE => "<term index (>")
+
+  fun apply_construction_symbol (cfg : 'a construction_cfg) dictionary frame
+      token indices arguments =
+    let
+      fun apply arguments = select_dictionary_entry
+        (fn parse => parse frame) construction_index_text dictionary token
+        ((#symbol_key cfg) token) indices arguments
+      val result = apply arguments
+        handle decline as SmtLib_Theories.ParseDecline _ =>
+          let val (coerced, changed) = (#coerce_arguments cfg) frame arguments
+          in if changed then
+            (apply coerced handle SmtLib_Theories.ParseDecline _ =>
+              raise decline)
+          else raise decline end
+    in result end
+    handle SmtLib_Theories.ParseDecline exn => raise exn
+
+  (* A recipe builder receives only types and admitted literal/symbol data.
+     Semantic indices are extra typed operand holes, never expanded terms. *)
+  fun construction_recipe_parsefn backend build frame token indices arguments =
+    let
+      fun index (SourceIndex (value,_), state) =
+            index (ValueIndex (value,"("),state)
+        | index (LexicalIndex pair, state) = index (ValueIndex pair,state)
+        | index (LiteralIndex term, (descriptions, values, next)) =
+            (RecipeLiteral term :: descriptions, values, next)
+        | index (SymbolIndex name, (descriptions, values, next)) =
+            (RecipeSymbol name :: descriptions, values, next)
+        | index (ValueIndex (value, _), (descriptions, values, next)) =
+            (RecipeOperand {position = next,
+                            hol_type = B.type_of backend value}
+               :: descriptions,
+             value :: values, next + 1)
+      val (descriptions, values, offset) = List.foldl index ([], [], 0) indices
+      val operands = List.rev values @ arguments
+      val recipe = build token
+        {indices = List.rev descriptions,
+         operand_types = List.map (B.type_of backend) operands,
+         argument_offset = offset}
+    in B.construct backend frame recipe operands end
+
+  fun construction_value_parsefn backend value frame token indices arguments =
+    if List.null indices then
+      List.foldl (fn (argument, function) =>
+        B.application backend frame (function, argument)) value arguments
+    else SmtLib_Theories.decline token "source value does not take indices"
+
+  (* Existing ordinary clients can select the new grammar with their actual
+     term dictionary; this adapter is never used for graph dictionaries. *)
+  fun construction_term_dictionary (dictionary : Term.term dict)
+      : Term.term construction_dict =
+    let
+      fun term_index (LiteralIndex term) = term
+        | term_index (ValueIndex (term, _)) = term
+        | term_index (LexicalIndex (term, _)) = term
+        | term_index (SourceIndex (term, _)) = term
+        | term_index (SymbolIndex name) =
+            Term.mk_var (name, Type.mk_vartype "'smtlib_index")
+      fun adapt parse _ token indices arguments =
+        parse token (List.map term_index indices) arguments
+    in Redblackmap.map (fn (_, parses) => List.map adapt parses) dictionary end
+
+  (* Lexical bindings are nullary dictionary entries, not a separate
+     rejection path. On applied/indexed uses they decline so older entries
+     (including builtins and the literal catch-all) can still be tried.
+     Record the successful lexical callback, including `_` fallback, rather
+     than guessing its origin from the requested name. Keep values as backend
+     operands; no native projection is needed. *)
+  fun construction_scope_dictionary backend frame dictionary key value
+      selected =
+    let
+      fun extend (key, value, dictionary) =
+        Library.extend_dict
+          ((key, fn _ => fn token => fn indices => fn arguments =>
+            if List.null indices andalso List.null arguments then
+              (selected := SOME (if key = "_" then "_" else token); value)
+            else SmtLib_Theories.decline token "wrong number of arguments"),
+           dictionary)
+      val dictionary = case value of
+          SOME value => extend (key, value, dictionary)
+        | NONE => dictionary
+    in
+      if key = "_" then dictionary else
+        if B.is_blocked backend frame "_" then
+          (* Like a native nullary proof alias, block atomic fallback but
+             let applied/indexed uses try the original dictionary parsers. *)
+          case Redblackmap.peek (dictionary, "_") of NONE => dictionary
+          | SOME callbacks => Redblackmap.insert (dictionary, "_",
+              List.map (fn parse => fn frame => fn token => fn indices =>
+                fn arguments =>
+                  if null indices andalso null arguments then
+                    raise ERR "parse_term" "proof binding is not a term"
+                  else parse frame token indices arguments) callbacks)
+        else case B.lookup backend frame "_" of
+          SOME value => extend ("_", value, dictionary)
+        | NONE => dictionary
+    end
+
+  (* Record source tokens, not substituted backend syntax. Only compound
+     indices need this side channel. Lookahead is recorded on its first
+     read, never when it is replayed from the local pending-token queue.
+     Persistent tails let nested captures share the token/head histories. *)
+  fun construction_binder_lookup lookup
+      {backend,frame,symbol_key,type_symbol_key,index_limit,parse_choice,
+       parse_lambda,lookup_binder_list,record_binder_block,binder_reference,
+       ascribed_symbol,coerce_arguments} =
+    {backend=backend,frame=frame,symbol_key=symbol_key,
+     type_symbol_key=type_symbol_key,index_limit=index_limit,
+     parse_choice=parse_choice,parse_lambda=parse_lambda,
+     lookup_binder_list=lookup,record_binder_block=record_binder_block,
+     binder_reference=binder_reference,ascribed_symbol=ascribed_symbol,
+     coerce_arguments=coerce_arguments}
+
+  fun index_source_reader backend symbol_key type_symbol_key sorts
+      parse_choice parse_lambda lookup_binder_list original_token =
+    let
+      val depth = ref 0
+      val history = ref []
+      val heads = ref []
+      val binder_lists = ref []
+      val lexical = ref NONE
+      fun prefix tail pending =
+        if Portable.pointer_eq (tail,pending) then []
+        else case pending of x::xs => x :: prefix tail xs
+          | [] => raise Fail "index source history"
+      fun get_token () =
+        let val token = original_token ()
+        in if !depth = 0 then () else history := token :: !history;
+           token
+        end
+      fun record token indices arguments value selected =
+        (lexical := selected;
+         if !depth = 0 orelse not (null indices) orelse
+            Option.isSome selected then ()
+         else heads := (token,value,List.length arguments) :: !heads)
+      fun lookup token =
+        let val result = lookup_binder_list token in
+          if !depth = 0 then () else
+            Option.app (fn entries =>
+              (* Invalid lists cannot yield a captured index source. *)
+              if List.all Option.isSome entries then
+                binder_lists := (token,List.map
+                  (fn entry => let val ((_,name,ty),_) = valOf entry
+                    in Term.mk_var (name,ty) end) entries) :: !binder_lists
+              else ()) result;
+          result
+        end
+      fun source frame token parse =
+        let
+          (* Capture backend kind while live. Recovery must never validate
+             a context already retired by the primary parse failure. *)
+          val native = not (Option.isSome (B.frame_scope backend frame))
+        in let
+          val binding_type = B.binding_type_lookup backend frame
+          val before_tokens = !history
+          val before_heads = !heads
+          val before_lists = !binder_lists
+          val _ = depth := !depth + 1
+          val result = Exn.capture
+            (fn () => B.capture_index_callbacks backend parse) ()
+          val after_tokens = !history
+          val after_heads = !heads
+          val after_lists = !binder_lists
+          fun tokens () = token :: List.rev (prefix before_tokens after_tokens)
+          val _ = depth := !depth - 1
+          val _ = if !depth = 0 then
+            (history := []; heads := []; binder_lists := []) else ()
+          val (parsed,{last,callbacks}) = Exn.release result
+          fun root (ConstructionOccurrence {role,token,children,...}) =
+            case (role,children) of
+              (ConstructionAnnotation,[child]) => root child
+            | (ConstructionBinder {variables=[],...},[child]) => root child
+            | _ => (case role of ConstructionLet _ => NONE
+               | ConstructionBinder _ => NONE
+               | ConstructionAscribed _ => NONE
+               | _ => case last of
+                   SOME (name,_,fixed) => if token=name then fixed else NONE
+                 | NONE => NONE)
+          val fixed = root parsed
+          val source =
+            {tokens=tokens,binding_type=binding_type,
+             heads=fn () => prefix before_heads after_heads,
+             callbacks=callbacks,sorts=sorts,
+             symbol_key=symbol_key,
+             type_symbol_key=type_symbol_key,parse_choice=parse_choice,
+             parse_lambda=parse_lambda,
+             binder_lists=fn () => prefix before_lists after_lists,
+             fixed=fixed,literal=ref fixed,diagnostic=ref NONE}
+        in (SourceIndex (construction_value parsed,source),SOME parsed,token)
+        end handle B.IndexBinderError primary =>
+          if B.failure_requires_propagation backend then raise primary
+          else
+            (* Native binders read their close before checking body type. *)
+            (ignore (get_token ());
+             (SymbolIndex (proof_symbol_text token),NONE,token))
+        | B.IndexSyntaxError primary =>
+          if B.failure_requires_propagation backend then raise primary
+          else (SymbolIndex (proof_symbol_text token),NONE,token)
+        | Feedback.HOL_ERR error =>
+          if B.failure_requires_propagation backend then
+            raise Feedback.HOL_ERR error
+          else if Feedback.top_function_of error = "parse_indexed_term" andalso
+             Feedback.message_of error =
+               "index literal exceeds its bounded import contract" then
+            raise Feedback.HOL_ERR error
+          else if native orelse
+             (Feedback.top_structure_of error = "Type" andalso
+              Feedback.top_function_of error = "dom_rng") orelse
+             List.exists (fn name => name=Feedback.top_structure_of error)
+               ["SmtLib_Parser","SmtLib_Theories","Library"] then
+            (SymbolIndex (proof_symbol_text token),NONE,token)
+          else raise Feedback.HOL_ERR error
+        end
+      fun occurrence value role token children =
+        let
+          (* Reject at the same cursor as native mk_anylet: AFTER the LET's
+             closing token, not inside the backend's alias construction. *)
+          val _ = case role of ConstructionLet [] =>
+              if !depth>0 andalso Option.isSome
+                  (B.frame_scope backend (B.root backend)) then
+                B.index_callback backend
+                  (fn () => ignore (pairSyntax.mk_anylet ([],boolSyntax.T)))
+              else ()
+            | _ => ()
+        in ConstructionOccurrence
+          {value=value,role=role,token=token,children=children} end
+    in {get_token=get_token,source=source,record=record,
+        lexical=fn () => !lexical,
+        lookup_binder_list=lookup,occurrence=occurrence} end
+
+  (* Qualified builtins check the source constructor before looking up its
+     arguments, just as parse_ascribed_term does for ordinary clients. *)
+  fun construction_symbolic_index backend frame symbol_key symbolic head
+      token =
+    if Option.isSome (B.lookup backend frame (symbol_key token)) orelse
+       (not (B.is_blocked backend frame "_") andalso
+        Option.isSome (B.lookup backend frame "_")) then NONE
+    else symbolic head token
+
+  fun construction_lookup backend frame key indices arguments =
+    if (not (null indices) orelse not (null arguments)) andalso
+        B.is_blocked backend frame key then NONE
+    else B.lookup backend frame key
+
+  fun construction_qualified_constructor name = case name of
+      "const" => SOME ("Array","Z3 const")
+    | "union" => SOME ("Array","Z3 union")
+    | "seq.empty" => SOME ("Seq",name)
+    | "set.empty" => SOME ("Set",name)
+    | "set.universe" => SOME ("Set",name)
+    | "bag.empty" => SOME ("Bag",name)
+    | _ => NONE
+
+  fun construction_qualified_sort get_token name constructor =
+    case construction_qualified_constructor name of NONE => ()
+      | SOME (head,label) => if constructor = SOME head then () else
+          (* parse_qualified_type reads both the opening token and head,
+             even when the opening token is not "(". Preserve that cursor
+             before index recovery resumes after this rejection. *)
+          (if Option.isSome constructor then () else ignore (get_token ());
+           raise ERR "parse_ascribed_term"
+             (label ^ " expects a " ^ head ^ " sort"))
+
+  (* Native qualification applies an abstraction by substitution, otherwise
+     by mk_comb. Validate on typed atoms before applying shared backend values
+     so malformed applications keep that first native error on either route. *)
+  fun construction_apply_qualified backend frame occurrence function [] =
+        function
+    | construction_apply_qualified backend frame occurrence function arguments =
+    let
+      val spend = B.syntax_spend backend
+      val single = case arguments of [_] => true | _ => false
+      fun apply (argument,function) =
+        let
+          val _ = spend 4
+          val hole = Term.genvar
+            (B.type_of backend (construction_value (#1 argument)))
+          val function_type =
+            B.type_of backend (construction_value (#1 function))
+          val abstraction = C.dest_abs spend (#2 function)
+          val _ = B.index_callback backend (fn () =>
+            case abstraction of SOME (variable,_) =>
+              ignore (Term.subst [{redex=variable,residue=hole}] variable)
+            | NONE => ignore (Term.mk_comb (Term.genvar function_type,hole)))
+          (* The ordinary parser recognizes constant arrays by their exposed
+             binder shape, even when a dictionary supplied the function. *)
+          val literal = case abstraction of SOME (variable,body) =>
+              if single andalso #1 (Term.dest_var variable) =
+                  "array_const_value" andalso Term.type_of variable = Type.bool
+              then (case C.dest_abs spend body of NONE => NONE
+                | SOME (index,_) =>
+                  if C.is_constant spend boolSyntax.F (#2 argument) then
+                    SOME (pred_setSyntax.mk_empty (Term.type_of index))
+                  else if C.is_constant spend boolSyntax.T (#2 argument) then
+                    SOME (pred_setSyntax.mk_univ (Term.type_of index))
+                  else NONE)
+              else NONE
+            | NONE => NONE
+          val (value,source) = case literal of SOME term =>
+              (B.literal backend frame term,C.native term)
+            | NONE =>
+              (B.application backend frame
+                (construction_value (#1 function),
+                 construction_value (#1 argument)),
+               case abstraction of SOME (variable,body) =>
+                   C.substitute spend [(variable,#2 argument)] body
+                 | NONE => C.application (#2 function,#2 argument))
+        in occurrence frame (SOME source) value
+          ConstructionApplication "as" [function,argument] end
+    in List.foldl apply function arguments end
+
+  (* These checks precede the head's closing token and operand lookup, as
+     in parse_ascribed_term. Construction callbacks run after the operands
+     and therefore cannot own qualified-sort validation. *)
+  fun construction_qualified_type name sort =
+    let
+      fun invalid head = raise ERR "parse_ascribed_term"
+        (name ^ " expects a " ^ head ^ " sort")
+    in
+      if name = "const" then ignore (Type.dom_rng sort)
+      else if name = "union" then
+        let val (_,range) = Type.dom_rng sort
+        in if range = Type.bool then () else
+          raise ERR "parse_ascribed_term"
+            "Z3 union expects an Array with Bool range" end
+      else if name = "seq.empty" then
+        if listSyntax.is_list_type sort orelse
+           sort = Type.mk_thy_type
+             {Thy="smtstring",Tyop="smtstr",Args=[]} then ()
+        else invalid "Seq"
+      else if name = "set.empty" orelse name = "set.universe" then
+        if pred_setSyntax.is_set_type sort then () else invalid "Set"
+      else if name = "bag.empty" then
+        if bagSyntax.is_bag_ty sort then () else invalid "Bag"
+      else ()
+    end
+
+  (* Recursive CPC binders validate only after all operands and the body.
+     Defer exactly this identity failure, never parsing or resource errors. *)
+  fun cpc_binder_option operand =
+    SOME (operand ())
+    handle error as Feedback.HOL_ERR detail =>
+      if Feedback.top_structure_of detail = "SmtLib_Parser" andalso
+         Feedback.top_function_of detail = "parse_binder_term" andalso
+         Feedback.message_of detail =
+           "CPC @list binder contains a non-variable term" then NONE
+      else raise error
+
+  (* A bounded native probe preserves kernel-specific validation order.
+     A valid suffix needs only its rightmost type to expose body-type errors;
+     no actual operand or body is realized. *)
+  fun cpc_invalid_binder name rightmost_type body_type =
+    let
+      val variables = case rightmost_type of
+          NONE => [boolSyntax.T]
+        | SOME ty => [boolSyntax.T, Term.genvar ty]
+      val body = Term.genvar body_type
+      val _ = if name = "forall" then
+          boolSyntax.list_mk_forall (variables, body)
+        else if name = "exists" then
+          boolSyntax.list_mk_exists (variables, body)
+        else Term.list_mk_abs (variables, body)
+    in raise ERR "parse_binder_term"
+      "CPC @list binder contains a non-variable term" end
+
+  (* Private binder identities close only private source atoms, never an
+     ordinary lexical variable with the same printed name and type. *)
+  fun construction_binder_source backend kind binders body =
+    let
+      fun binder (((_, name, ty), original), body) =
+        let
+          val _ = B.syntax_spend backend 1
+          val variable = Term.mk_var (name, ty)
+          val abstraction = case original of
+              SOME _ => C.private_abstraction (B.syntax_spend backend)
+                (variable, body)
+            | NONE => C.abstraction (variable, body)
+        in if kind = "lambda" then abstraction else
+          let
+            val _ = B.syntax_spend backend 2
+            val operator = if kind = "forall" then boolSyntax.universal
+              else if kind = "exists" then boolSyntax.existential
+              else boolSyntax.select
+            val operator = Term.inst
+              [{redex = Type.alpha, residue = ty}] operator
+          in C.application (C.native operator, abstraction) end
+        end
+    in List.foldr binder body binders end
+
+  (* Source syntax belongs to a parse occurrence, not to its backend value:
+     in particular two lexical aliases of one value remain two variables.
+     Only the public tree is handed to the index callback machinery. *)
+  fun construction_source_occurrence backend make frame supplied value role
+      token (children : ('a construction_occurrence * C.syntax) list) =
+    let
+      val public = make value role token (List.map #1 children)
+      val _ = B.syntax_spend backend 1
+      val source = case supplied of
+          SOME source => source
+        | NONE => case (role, children) of
+            (* Native mk_anylet rejects this before reaching metadata, and
+               the index reader retains its own rejection cursor. Outside
+               indices the graph backend accepts it as a body alias; there
+               is no ordinary LET source to reconstruct in that case. *)
+            (ConstructionLet [], [(_, body)]) => body
+          | (ConstructionLet bindings, _) =>
+              let
+                val body = #2 (List.last children)
+                val rhs = List.take (children, List.length bindings)
+                val bindings = ListPair.map
+                  (fn ((_, name), (_, source)) =>
+                    (B.syntax_spend backend 4;
+                     (Term.mk_var (name, C.type_of source), source)))
+                  (bindings, rhs)
+              in C.let_expression (bindings, body) end
+          | (ConstructionBinder {kind, variables}, [(_, body)]) =>
+              construction_binder_source backend kind
+                (List.map (fn variable => (variable, NONE)) variables) body
+          | (ConstructionAnnotation, [(_, source)]) => source
+          | _ => B.source_syntax backend frame value
+      val _ = case role of ConstructionBinder {kind,variables} =>
+          B.record_source_binder backend (kind,List.length variables,source)
+        | _ => ()
+    in (public, source) end
+
+  (* #source consumes/returns public occurrences. Keep the paired source
+     across that call without changing its callback or recovery protocol. *)
+  fun construction_source_index backend source frame token parse =
+    let
+      val parsed_source = ref NONE
+      val (index, parsed, token) = source frame token (fn () =>
+        let val (public, syntax) = parse ()
+        in parsed_source := SOME syntax; public end)
+    in case parsed of
+        SOME public =>
+          let val syntax = valOf (!parsed_source)
+          in (index, SOME (public, syntax), token, syntax) end
+      | NONE =>
+          (B.syntax_spend backend 1;
+           (index, NONE, token, C.variable (Term.mk_var
+             (proof_symbol_text token, Type.mk_vartype "'smtlib_index"))))
+    end
+
+  fun parse_term_sourced_with_backend_and_indices
+      (cfg : 'a construction_cfg) symbolic_index get_token
+      (tydict, dictionary : 'a construction_dict) =
+    let
+      val backend = #backend cfg
+      val reader = index_source_reader backend (#symbol_key cfg)
+        (#type_symbol_key cfg) tydict (#parse_choice cfg)
+        (#parse_lambda cfg) (#lookup_binder_list cfg) get_token
+      val cfg = construction_binder_lookup (#lookup_binder_list reader) cfg
+      val original_token = #get_token reader
+      val pending_tokens = ref ([] : string list)
+      fun get_token () = case !pending_tokens of
+          token :: rest => (pending_tokens := rest; token)
+        | [] => original_token ()
+      fun unread tokens = pending_tokens := tokens @ !pending_tokens
+      fun expect token = Library.expect_token token (get_token ())
+      val construction_value = fn (public, _ : C.syntax) =>
+        construction_value public
+      val occurrence = construction_source_occurrence backend
+        (#occurrence reader)
+      fun apply frame token indices arguments role children =
+        let
+          val key = (#symbol_key cfg) token
+          val sources =
+            {indices = List.map (fn (_,_,_,source) => source) indices,
+             arguments = List.map #2 arguments}
+          val indices = List.map #1 indices
+          val arguments = List.map construction_value arguments
+          val selected = ref NONE
+          val (value, source) = B.with_constructor_sources backend sources
+            (fn () => case
+                construction_lookup backend frame key indices arguments of
+              SOME value =>
+                if List.null indices andalso List.null arguments then
+                  (selected := SOME token; value)
+                else apply_construction_symbol cfg
+                  (construction_scope_dictionary backend frame dictionary key
+                    (SOME value) selected) frame token indices arguments
+            | NONE => apply_construction_symbol cfg
+                (construction_scope_dictionary backend frame dictionary key
+                  NONE selected) frame token indices arguments)
+          val _ = (#record reader) token indices arguments value (!selected)
+          val source = case !selected of
+              SOME name =>
+                (B.syntax_spend backend 1;
+                 SOME (C.variable (Term.mk_var
+                   (proof_symbol_text name, B.type_of backend value))))
+            | NONE => source
+        in occurrence frame source value role token children end
+        handle SmtLib_Theories.ParseDecline error => raise error
+      fun resolved_index value token =
+        case (#lexical reader) () of
+          SOME name => LexicalIndex (value,name)
+        | NONE => ValueIndex (value,token)
+      fun bounded_index term =
+        case SmtReplayImport.bounded_raw_size (#index_limit cfg) term of
+          SOME _ => LiteralIndex term
+        | NONE => raise ERR "parse_indexed_term"
+            "index literal exceeds its bounded import contract"
+      fun symbolic_source name =
+        (B.syntax_spend backend 1;
+         C.variable (Term.mk_var (name, Type.mk_vartype "'smtlib_index")))
+      fun index frame head "(" =
+            construction_source_index backend (#source reader) frame "("
+              (fn () => term_aux frame "(" [])
+        | index frame head token =
+        (* Native indices recognize numerals before consulting any lexical
+           binding, including proof blockers with the same decoded name. *)
+        case Lib.total index_numeral_term token of
+          SOME term =>
+            let val index = bounded_index term
+                val _ = B.syntax_spend backend 1
+            in (index, NONE, token, C.native term) end
+        | NONE => case construction_symbolic_index backend frame
+            (#symbol_key cfg) symbolic_index head token of
+          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
+        | NONE =>
+            (let val parsed = term_aux frame token []
+                 val index = resolved_index (construction_value parsed) token
+             in (index,SOME parsed,token,#2 parsed)
+             end handle Feedback.HOL_ERR error =>
+               if Feedback.top_structure_of error = "SmtLib_Parser" andalso
+                  Feedback.top_function_of error = unknown_symbol_origin then
+                 let val name = proof_symbol_text token
+                 in (SymbolIndex name, NONE, token, symbolic_source name) end
+               else raise Feedback.HOL_ERR error)
+      and indices frame head accumulated =
+        let val token = get_token () in
+          if token = ")" then List.rev accumulated
+          else indices frame head (index frame head token :: accumulated)
+        end
+      and operands frame accumulated =
+        let val token = get_token () in
+          if token = ")" then List.rev accumulated
+          else operands frame (term_aux frame token [] :: accumulated)
+        end
+      and term frame = term_aux frame (get_token ()) []
+      and term_aux frame token arguments =
+        if token = "(" then (compound frame) arguments
+        else apply frame token [] arguments ConstructionAtom arguments
+      and compound frame =
+        let val head = get_token () in
+          if head = "_" then
+            let val name = get_token ()
+                val indices = indices frame name []
+            in fn arguments => apply frame name indices arguments
+              (ConstructionIndexed (List.map #3 indices))
+              (List.mapPartial #2 indices @ arguments) end
+          else if head = "as" then
+            let
+              val name = get_token ()
+            in if Option.isSome (construction_qualified_constructor name) then
+              let
+                val first = get_token ()
+                val (constructor, prefix) = if first = "(" then
+                    let val constructor = get_token ()
+                    in (SOME constructor, [first, constructor]) end
+                  else (NONE, [first])
+                val _ = construction_qualified_sort get_token name constructor
+                val sort = parse_type_with_key (#type_symbol_key cfg)
+                  (Library.undo_look_ahead prefix get_token) tydict
+                val _ = construction_qualified_type name sort
+                val _ = expect ")"
+              in fn arguments =>
+                let
+                  val (value, source) = B.with_constructor_sources backend
+                    {indices = [], arguments = List.map #2 arguments}
+                    (fn () => (#ascribed_symbol cfg) frame
+                      {name = name, constructor = constructor, sort = sort,
+                       arguments = List.map construction_value arguments})
+                in occurrence frame source value
+                  (ConstructionAscribed {constructor = constructor, sort = sort})
+                  name arguments end
+              end
+            else
+              let
+                (* Generic qualification follows ordinary compound parsing:
+                   the identifier and sort spelling are TERM operands of the
+                   dictionary's "as" entry, in that order. *)
+                val _ = unread [name]
+                val children = operands frame []
+                val function = apply frame "as" [] children
+                  ConstructionApplication children
+              in construction_apply_qualified backend frame occurrence function
+              end
+            end
+          else if head = "@var" then
+            let
+              val token = get_token ()
+              val name = case proof_string_token token of
+                  SOME name => name | NONE => proof_symbol_text token
+              val ty = parse_type_with_key (#type_symbol_key cfg)
+                get_token tydict
+              val _ = expect ")"
+              val value = B.variable backend frame
+                SmtReplayGraph.SolverFlexible (name, ty)
+            in fn arguments => no_arguments arguments
+              (occurrence frame (SOME (C.variable (Term.mk_var (name, ty))))
+                value ConstructionAtom "@var" []) end
+          else if head = "let" then
+            let val value = let_term frame
+            in fn arguments => no_arguments arguments value end
+          else if head = "forall" orelse head = "exists" orelse
+                  (head = "choice" andalso #parse_choice cfg) orelse
+                  (head = "lambda" andalso #parse_lambda cfg) then
+            let val value = binder_term frame head
+            in fn arguments => no_arguments arguments value end
+          else if head = "!" then
+            let val value = annotated_term frame
+            in fn arguments => no_arguments arguments value end
+          else
+            let
+              (* Higher-order qualified heads remain constructors/functions
+                 until their actual arguments have been parsed as IDs. *)
+              val head_function = if head = "(" then compound frame
+                else fn args => apply frame head [] args
+                  ConstructionApplication args
+              val arguments = operands frame []
+              val value = head_function arguments
+            in fn arguments => no_arguments arguments value end
+        end
+      and no_arguments [] value = value
+        | no_arguments _ _ = raise ERR "parse_indexed_or_compound_term"
+            "compound: no arguments expected"
+      and let_term frame =
+        let
+          val _ = expect "("
+          fun bindings accumulated =
+            let val token = get_token () in
+              if token = ")" then List.rev accumulated
+              else
+                let
+                  val _ = Library.expect_token "(" token
+                  val name = get_token ()
+                  val _ = if Option.isSome (proof_string_token name) then
+                    raise ERR "parse_var_bindings"
+                      "string literal used as a let binding name" else ()
+                  val value = term frame
+                  val _ = expect ")"
+                in bindings (((#symbol_key cfg) name, proof_symbol_text name,
+                  value) :: accumulated) end
+            end
+          val entries = bindings []
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
+          val result = B.let_expression backend frame
+            (List.map (fn (key, name, parsed) =>
+              (key, name, fn _ => construction_value parsed)) entries)
+            (fn child => let val parsed = term child in
+              parsed_body := SOME parsed; construction_value parsed end)
+          val _ = expect ")"
+        in occurrence frame NONE result
+          (ConstructionLet
+            (List.map (fn (key, name, _) => (key, name)) entries))
+          "let" (List.map #3 entries @ [valOf (!parsed_body)]) end
+      and sorted_variables () =
+        let
+          val _ = expect "("
+          fun variables accumulated =
+            let val token = get_token () in
+              if token = ")" then List.rev accumulated
+              else
+                let
+                  val _ = Library.expect_token "(" token
+                  val name = get_token ()
+                  val _ = if Option.isSome (proof_string_token name) then
+                    raise ERR "parse_sorted_vars"
+                      "string literal used as a bound-variable name" else ()
+                  val ty = parse_type_with_key (#type_symbol_key cfg)
+                    get_token tydict
+                  val _ = expect ")"
+                in variables ((((#symbol_key cfg) name,
+                  proof_symbol_text name, ty), NONE) :: accumulated) end
+            end
+        in variables [] end
+      and binder_variables frame =
+        let val first = get_token ()
+            val second = get_token ()
+        in
+          if first = "(" andalso
+             (second = "@list" orelse second = cpc_recursive_binders) then
+            let
+              val recursive = second = cpc_recursive_binders
+              fun variables accumulated =
+              let val token = get_token () in
+                if token = ")" then List.rev accumulated
+                else if not recursive andalso token <> "(" then variables
+                  (SOME ((#binder_reference cfg) frame token) :: accumulated)
+                else
+                  let
+                    (* Elaborate compound operands before checking identity.
+                       Atomic names retain lexical LET binder semantics. *)
+                    val parsed = term_aux frame token []
+                    fun operand () = B.binder_operand backend frame
+                      (#2 parsed) (construction_value parsed)
+                    val variable = if recursive then cpc_binder_option operand
+                      else SOME (operand ())
+                  in variables (variable :: accumulated) end
+              end
+            in (variables [], true, recursive) end
+          else if first = cpc_recursive_named_binders then
+            (* The adapter resolves the alias before reading any body token.
+               Invalid operands remain deferred until after body/close. *)
+            (case (#lookup_binder_list cfg) second of
+               SOME variables => (variables, true, true)
+             | NONE => raise ERR "parse_binder_term"
+                 "unresolved recursive CPC binder-list alias")
+          else case (#lookup_binder_list cfg) first of
+            SOME variables =>
+              let val _ = List.all Option.isSome variables orelse
+                    raise ERR "parse_binder_term"
+                      "binder list contains a non-variable term"
+              in (unread [second]; (variables, true, false)) end
+          | NONE =>
+              (unread [first, second];
+               (List.map SOME (sorted_variables ()), false, false))
+        end
+      and binder_term frame name =
+        let
+          val (variables, cpc_names, recursive) = binder_variables frame
+          val _ = if List.exists (not o Option.isSome) variables then
+              let
+                (* Native recursive parsing has not bound any operand yet. *)
+                val body = term frame
+                val _ = expect ")"
+                val rightmost_type = Option.map
+                  (fn ((_, _, ty), _) => ty) (List.last variables)
+              in cpc_invalid_binder name rightmost_type
+                (B.type_of backend (construction_value body)) end
+            else ()
+          val variables = List.map valOf variables
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
+          fun bind [] frame =
+                let
+                  val parsed = term frame
+                  (* Recursive CPC checks the close before constructing
+                     any abstraction or typed quantifier. Other readers
+                     retain their existing staged/index error ordering. *)
+                  val _ = if recursive then expect ")" else ()
+                in parsed_body := SOME parsed; construction_value parsed end
+            | bind (((key, printed, ty), original) :: rest) frame =
+                let
+                  (* CPC binder-list aliases bind the original lexical
+                     variable name, while source metadata retains its proof
+                     dictionary key. Sorted quoted binders keep marked keys. *)
+                  val binding_key = if cpc_names then
+                    (#symbol_key cfg) printed else key
+                  val abstraction = B.abstraction_with_identity backend frame
+                    {dictionary_binding = not cpc_names,
+                     binder = ((binding_key, printed, ty), original)} (bind rest)
+                in if name = "lambda" then abstraction else
+                  let
+                    val operator = if name = "forall" then boolSyntax.universal
+                      else if name = "exists" then boolSyntax.existential
+                      else boolSyntax.select
+                    val operator = Term.inst
+                      [{redex = Type.alpha, residue = ty}] operator
+                  in B.application backend frame
+                    (B.literal backend frame operator, abstraction) end
+                end
+          val result = bind variables frame
+          val _ = if recursive then () else expect ")"
+          val _ = (#record_binder_block cfg)
+            (name, List.length variables, result)
+          val body = valOf (!parsed_body)
+          val source = construction_binder_source backend name variables
+            (#2 body)
+        in occurrence frame (SOME source) result
+          (ConstructionBinder {kind = name, variables = List.map #1 variables})
+          name [body] end
+      and annotated_term frame =
+        let
+          val value = term frame
+          fun skip depth =
+            let val token = get_token () in
+              if token = ")" then if depth = 0 then () else skip (depth - 1)
+              else if token = "(" then skip (depth + 1)
+              else skip depth
+            end
+          val _ = skip 0
+        in occurrence frame NONE (construction_value value)
+          ConstructionAnnotation "!" [value] end
+    in term (#frame cfg) end
+
+  fun parse_term_recorded_with_backend_and_indices cfg symbolic_index
+      get_token dictionaries =
+    #1 (parse_term_sourced_with_backend_and_indices cfg symbolic_index
+      get_token dictionaries)
+
+  fun parse_term_sourced_with_backend cfg get_token dictionaries =
+    parse_term_sourced_with_backend_and_indices cfg
+      (fn _ => fn _ => NONE) get_token dictionaries
+
+  fun parse_term_recorded_with_backend cfg get_token dictionaries =
+    parse_term_recorded_with_backend_and_indices cfg
+      (fn _ => fn _ => NONE) get_token dictionaries
+
+  fun parse_term_with_backend cfg get_token dictionaries =
+    construction_value
+      (parse_term_recorded_with_backend cfg get_token dictionaries)
+
+  fun apply_construction_symbol_with_policy (cfg : 'a policy_construction_cfg) dictionary frame
+      token indices arguments =
+    let
+      fun apply arguments = select_dictionary_entry
+        (fn parse => parse frame) construction_index_text dictionary token
+        ((#symbol_key cfg) token) indices arguments
+      val result = apply arguments
+        handle decline as SmtLib_Theories.ParseDecline _ =>
+          let val (coerced, changed) = (#coerce_arguments cfg) frame arguments
+          in if changed then
+            (apply coerced handle SmtLib_Theories.ParseDecline _ =>
+              raise decline)
+          else raise decline end
+    in result end
+    handle SmtLib_Theories.ParseDecline exn => raise exn
+
+  fun parse_term_sourced_with_policy_and_indices
+      (cfg : 'a policy_construction_cfg) symbolic_index get_token
+      (tydict, dictionary : 'a construction_dict) =
+    let
+      val backend = #backend cfg
+      val reader = index_source_reader backend (#symbol_key cfg)
+        (#type_symbol_key cfg) tydict (#parse_choice cfg)
+        (#parse_lambda cfg) (#lookup_binder_list cfg) get_token
+      val cfg = construction_binder_lookup (#lookup_binder_list reader) cfg
+      val original_token = #get_token reader
+      val pending_tokens = ref ([] : string list)
+      fun get_token () = case !pending_tokens of
+          token :: rest => (pending_tokens := rest; token)
+        | [] => original_token ()
+      fun unread tokens = pending_tokens := tokens @ !pending_tokens
+      fun expect token = Library.expect_token token (get_token ())
+      val construction_value = fn (public, _ : C.syntax) =>
+        construction_value public
+      val occurrence = construction_source_occurrence backend
+        (#occurrence reader)
+      fun apply frame token indices arguments role children =
+        let
+          val key = (#symbol_key cfg) token
+          val sources =
+            {indices = List.map (fn (_,_,_,source) => source) indices,
+             arguments = List.map #2 arguments}
+          val indices = List.map #1 indices
+          val arguments = List.map construction_value arguments
+          val selected = ref NONE
+          val (value, source) = B.with_constructor_sources backend sources
+            (fn () => case
+                construction_lookup backend frame key indices arguments of
+              SOME value =>
+                if List.null indices andalso List.null arguments then
+                  (selected := SOME token; value)
+                else apply_construction_symbol_with_policy cfg
+                  (construction_scope_dictionary backend frame dictionary key
+                    (SOME value) selected) frame token indices arguments
+            | NONE => apply_construction_symbol_with_policy cfg
+                (construction_scope_dictionary backend frame dictionary key
+                  NONE selected) frame token indices arguments)
+          val _ = (#record reader) token indices arguments value (!selected)
+          val source = case !selected of
+              SOME name =>
+                (B.syntax_spend backend 1;
+                 SOME (C.variable (Term.mk_var
+                   (proof_symbol_text name, B.type_of backend value))))
+            | NONE => source
+        in occurrence frame source value role token children end
+        handle SmtLib_Theories.ParseDecline error => raise error
+      fun resolved_index value token =
+        case (#lexical reader) () of
+          SOME name => LexicalIndex (value,name)
+        | NONE => ValueIndex (value,token)
+      fun bounded_index term =
+        case SmtReplayImport.raw_size_with_policy (#index_limit cfg) term of
+          SOME _ => LiteralIndex term
+        | NONE => raise ERR "parse_indexed_term"
+            "index literal exceeds its bounded import contract"
+      fun symbolic_source name =
+        (B.syntax_spend backend 1;
+         C.variable (Term.mk_var (name, Type.mk_vartype "'smtlib_index")))
+      fun index frame head "(" =
+            construction_source_index backend (#source reader) frame "("
+              (fn () => term_aux frame "(" [])
+        | index frame head token =
+        (* Keep the same numeral-first rule on policy and Value carriers. *)
+        case Lib.total index_numeral_term token of
+          SOME term =>
+            let val index = bounded_index term
+                val _ = B.syntax_spend backend 1
+            in (index, NONE, token, C.native term) end
+        | NONE => case construction_symbolic_index backend frame
+            (#symbol_key cfg) symbolic_index head token of
+          SOME name => (SymbolIndex name, NONE, token, symbolic_source name)
+        | NONE =>
+            (let val parsed = term_aux frame token []
+                 val index = resolved_index (construction_value parsed) token
+             in (index,SOME parsed,token,#2 parsed)
+             end handle Feedback.HOL_ERR error =>
+               if Feedback.top_structure_of error = "SmtLib_Parser" andalso
+                  Feedback.top_function_of error = unknown_symbol_origin then
+                 let val name = proof_symbol_text token
+                 in (SymbolIndex name, NONE, token, symbolic_source name) end
+               else raise Feedback.HOL_ERR error)
+      and indices frame head accumulated =
+        let val token = get_token () in
+          if token = ")" then List.rev accumulated
+          else indices frame head (index frame head token :: accumulated)
+        end
+      and operands frame accumulated =
+        let val token = get_token () in
+          if token = ")" then List.rev accumulated
+          else operands frame (term_aux frame token [] :: accumulated)
+        end
+      and term frame = term_aux frame (get_token ()) []
+      and term_aux frame token arguments =
+        if token = "(" then (compound frame) arguments
+        else apply frame token [] arguments ConstructionAtom arguments
+      and compound frame =
+        let val head = get_token () in
+          if head = "_" then
+            let val name = get_token ()
+                val indices = indices frame name []
+            in fn arguments => apply frame name indices arguments
+              (ConstructionIndexed (List.map #3 indices))
+              (List.mapPartial #2 indices @ arguments) end
+          else if head = "as" then
+            let
+              val name = get_token ()
+            in if Option.isSome (construction_qualified_constructor name) then
+              let
+                val first = get_token ()
+                val (constructor, prefix) = if first = "(" then
+                    let val constructor = get_token ()
+                    in (SOME constructor, [first, constructor]) end
+                  else (NONE, [first])
+                val _ = construction_qualified_sort get_token name constructor
+                val sort = parse_type_with_key (#type_symbol_key cfg)
+                  (Library.undo_look_ahead prefix get_token) tydict
+                val _ = construction_qualified_type name sort
+                val _ = expect ")"
+              in fn arguments =>
+                let
+                  val (value, source) = B.with_constructor_sources backend
+                    {indices = [], arguments = List.map #2 arguments}
+                    (fn () => (#ascribed_symbol cfg) frame
+                      {name = name, constructor = constructor, sort = sort,
+                       arguments = List.map construction_value arguments})
+                in occurrence frame source value
+                  (ConstructionAscribed {constructor = constructor, sort = sort})
+                  name arguments end
+              end
+            else
+              let
+                (* Generic qualification follows ordinary compound parsing:
+                   the identifier and sort spelling are TERM operands of the
+                   dictionary's "as" entry, in that order. *)
+                val _ = unread [name]
+                val children = operands frame []
+                val function = apply frame "as" [] children
+                  ConstructionApplication children
+              in construction_apply_qualified backend frame occurrence function
+              end
+            end
+          else if head = "@var" then
+            let
+              val token = get_token ()
+              val name = case proof_string_token token of
+                  SOME name => name | NONE => proof_symbol_text token
+              val ty = parse_type_with_key (#type_symbol_key cfg)
+                get_token tydict
+              val _ = expect ")"
+              val value = B.variable backend frame
+                SmtReplayGraph.SolverFlexible (name, ty)
+            in fn arguments => no_arguments arguments
+              (occurrence frame (SOME (C.variable (Term.mk_var (name, ty))))
+                value ConstructionAtom "@var" []) end
+          else if head = "let" then
+            let val value = let_term frame
+            in fn arguments => no_arguments arguments value end
+          else if head = "forall" orelse head = "exists" orelse
+                  (head = "choice" andalso #parse_choice cfg) orelse
+                  (head = "lambda" andalso #parse_lambda cfg) then
+            let val value = binder_term frame head
+            in fn arguments => no_arguments arguments value end
+          else if head = "!" then
+            let val value = annotated_term frame
+            in fn arguments => no_arguments arguments value end
+          else
+            let
+              (* Higher-order qualified heads remain constructors/functions
+                 until their actual arguments have been parsed as IDs. *)
+              val head_function = if head = "(" then compound frame
+                else fn args => apply frame head [] args
+                  ConstructionApplication args
+              val arguments = operands frame []
+              val value = head_function arguments
+            in fn arguments => no_arguments arguments value end
+        end
+      and no_arguments [] value = value
+        | no_arguments _ _ = raise ERR "parse_indexed_or_compound_term"
+            "compound: no arguments expected"
+      and let_term frame =
+        let
+          val _ = expect "("
+          fun bindings accumulated =
+            let val token = get_token () in
+              if token = ")" then List.rev accumulated
+              else
+                let
+                  val _ = Library.expect_token "(" token
+                  val name = get_token ()
+                  val _ = if Option.isSome (proof_string_token name) then
+                    raise ERR "parse_var_bindings"
+                      "string literal used as a let binding name" else ()
+                  val value = term frame
+                  val _ = expect ")"
+                in bindings (((#symbol_key cfg) name, proof_symbol_text name,
+                  value) :: accumulated) end
+            end
+          val entries = bindings []
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
+          val result = B.let_expression backend frame
+            (List.map (fn (key, name, parsed) =>
+              (key, name, fn _ => construction_value parsed)) entries)
+            (fn child => let val parsed = term child in
+              parsed_body := SOME parsed; construction_value parsed end)
+          val _ = expect ")"
+        in occurrence frame NONE result
+          (ConstructionLet
+            (List.map (fn (key, name, _) => (key, name)) entries))
+          "let" (List.map #3 entries @ [valOf (!parsed_body)]) end
+      and sorted_variables () =
+        let
+          val _ = expect "("
+          fun variables accumulated =
+            let val token = get_token () in
+              if token = ")" then List.rev accumulated
+              else
+                let
+                  val _ = Library.expect_token "(" token
+                  val name = get_token ()
+                  val _ = if Option.isSome (proof_string_token name) then
+                    raise ERR "parse_sorted_vars"
+                      "string literal used as a bound-variable name" else ()
+                  val ty = parse_type_with_key (#type_symbol_key cfg)
+                    get_token tydict
+                  val _ = expect ")"
+                in variables ((((#symbol_key cfg) name,
+                  proof_symbol_text name, ty), NONE) :: accumulated) end
+            end
+        in variables [] end
+      and binder_variables frame =
+        let val first = get_token ()
+            val second = get_token ()
+        in
+          if first = "(" andalso
+             (second = "@list" orelse second = cpc_recursive_binders) then
+            let
+              val recursive = second = cpc_recursive_binders
+              fun variables accumulated =
+              let val token = get_token () in
+                if token = ")" then List.rev accumulated
+                else if not recursive andalso token <> "(" then variables
+                  (SOME ((#binder_reference cfg) frame token) :: accumulated)
+                else
+                  let
+                    (* Elaborate compound operands before checking identity.
+                       Atomic names retain lexical LET binder semantics. *)
+                    val parsed = term_aux frame token []
+                    fun operand () = B.binder_operand backend frame
+                      (#2 parsed) (construction_value parsed)
+                    val variable = if recursive then cpc_binder_option operand
+                      else SOME (operand ())
+                  in variables (variable :: accumulated) end
+              end
+            in (variables [], true, recursive) end
+          else if first = cpc_recursive_named_binders then
+            (* The adapter resolves the alias before reading any body token.
+               Invalid operands remain deferred until after body/close. *)
+            (case (#lookup_binder_list cfg) second of
+               SOME variables => (variables, true, true)
+             | NONE => raise ERR "parse_binder_term"
+                 "unresolved recursive CPC binder-list alias")
+          else case (#lookup_binder_list cfg) first of
+            SOME variables =>
+              let val _ = List.all Option.isSome variables orelse
+                    raise ERR "parse_binder_term"
+                      "binder list contains a non-variable term"
+              in (unread [second]; (variables, true, false)) end
+          | NONE =>
+              (unread [first, second];
+               (List.map SOME (sorted_variables ()), false, false))
+        end
+      and binder_term frame name =
+        let
+          val (variables, cpc_names, recursive) = binder_variables frame
+          val _ = if List.exists (not o Option.isSome) variables then
+              let
+                (* Native recursive parsing has not bound any operand yet. *)
+                val body = term frame
+                val _ = expect ")"
+                val rightmost_type = Option.map
+                  (fn ((_, _, ty), _) => ty) (List.last variables)
+              in cpc_invalid_binder name rightmost_type
+                (B.type_of backend (construction_value body)) end
+            else ()
+          val variables = List.map valOf variables
+          val parsed_body = ref
+            (NONE : ('a construction_occurrence * C.syntax) option)
+          fun bind [] frame =
+                let
+                  val parsed = term frame
+                  (* Recursive CPC checks the close before constructing
+                     any abstraction or typed quantifier. Other readers
+                     retain their existing staged/index error ordering. *)
+                  val _ = if recursive then expect ")" else ()
+                in parsed_body := SOME parsed; construction_value parsed end
+            | bind (((key, printed, ty), original) :: rest) frame =
+                let
+                  (* CPC binder-list aliases bind the original lexical
+                     variable name, while source metadata retains its proof
+                     dictionary key. Sorted quoted binders keep marked keys. *)
+                  val binding_key = if cpc_names then
+                    (#symbol_key cfg) printed else key
+                  val abstraction = B.abstraction_with_identity backend frame
+                    {dictionary_binding = not cpc_names,
+                     binder = ((binding_key, printed, ty), original)} (bind rest)
+                in if name = "lambda" then abstraction else
+                  let
+                    val operator = if name = "forall" then boolSyntax.universal
+                      else if name = "exists" then boolSyntax.existential
+                      else boolSyntax.select
+                    val operator = Term.inst
+                      [{redex = Type.alpha, residue = ty}] operator
+                  in B.application backend frame
+                    (B.literal backend frame operator, abstraction) end
+                end
+          val result = bind variables frame
+          val _ = if recursive then () else expect ")"
+          val _ = (#record_binder_block cfg)
+            (name, List.length variables, result)
+          val body = valOf (!parsed_body)
+          val source = construction_binder_source backend name variables
+            (#2 body)
+        in occurrence frame (SOME source) result
+          (ConstructionBinder {kind = name, variables = List.map #1 variables})
+          name [body] end
+      and annotated_term frame =
+        let
+          val value = term frame
+          fun skip depth =
+            let val token = get_token () in
+              if token = ")" then if depth = 0 then () else skip (depth - 1)
+              else if token = "(" then skip (depth + 1)
+              else skip depth
+            end
+          val _ = skip 0
+        in occurrence frame NONE (construction_value value)
+          ConstructionAnnotation "!" [value] end
+    in term (#frame cfg) end
+
+  fun parse_term_recorded_with_policy_and_indices cfg symbolic_index
+      get_token dictionaries =
+    #1 (parse_term_sourced_with_policy_and_indices cfg symbolic_index
+      get_token dictionaries)
+
+  fun parse_term_sourced_with_policy cfg get_token dictionaries =
+    parse_term_sourced_with_policy_and_indices cfg
+      (fn _ => fn _ => NONE) get_token dictionaries
+
+  fun parse_term_recorded_with_policy cfg get_token dictionaries =
+    parse_term_recorded_with_policy_and_indices cfg
+      (fn _ => fn _ => NONE) get_token dictionaries
+
+  fun parse_term_with_policy cfg get_token dictionaries =
+    construction_value
+      (parse_term_recorded_with_policy cfg get_token dictionaries)
+
+  end
 
   (***************************************************************************)
   (* parsing of benchmarks                                                   *)
@@ -6698,8 +8032,33 @@ in
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term
   val parse_term_list = parse_term_list
+  val parse_term_with_backend = parse_term_with_backend
+  val parse_term_recorded_with_backend = parse_term_recorded_with_backend
+  val parse_term_sourced_with_backend = parse_term_sourced_with_backend
+  val parse_term_sourced_with_backend_and_indices =
+    parse_term_sourced_with_backend_and_indices
+  val parse_term_recorded_with_backend_and_indices =
+    parse_term_recorded_with_backend_and_indices
+  val apply_construction_symbol = apply_construction_symbol
+  val apply_construction_symbol_with_policy =
+    apply_construction_symbol_with_policy
+  val parse_term_recorded_with_policy_and_indices =
+    parse_term_recorded_with_policy_and_indices
+  val parse_term_recorded_with_policy = parse_term_recorded_with_policy
+  val parse_term_sourced_with_policy = parse_term_sourced_with_policy
+  val parse_term_sourced_with_policy_and_indices =
+    parse_term_sourced_with_policy_and_indices
+  val parse_term_with_policy = parse_term_with_policy
+  val construction_recipe_parsefn = construction_recipe_parsefn
+  val construction_value_parsefn = construction_value_parsefn
+  val construction_term_dictionary = construction_term_dictionary
   val make_proof_stream_tokenizer = make_proof_stream_tokenizer
+  val cpc_recursive_binders = cpc_recursive_binders
+  val cpc_recursive_named_binders = cpc_recursive_named_binders
   val make_cpc_proof_stream_tokenizer = make_cpc_proof_stream_tokenizer
+  val make_cpc_proof_tokenizer_from_input =
+    make_cpc_proof_tokenizer_from_input
+  val make_proof_input_tokenizer = make_proof_input_tokenizer
   val make_z3_proof_stream_tokenizer = make_z3_proof_stream_tokenizer
   val make_bounded_z3_proof_stream_tokenizer =
     make_bounded_z3_proof_stream_tokenizer
