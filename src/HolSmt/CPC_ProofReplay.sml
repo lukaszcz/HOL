@@ -4626,6 +4626,14 @@ local
               val _ = natural high = Arbnum.- (width, Arbnum.one) orelse
                 raise ERR name "whole extraction must preserve the width"
             in boolSyntax.mk_eq (extract high zero_int word, word) end
+        | ("bv-extract-not", [word, low, high]) =>
+            let
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val _ = Arbnum.< (natural high, width) orelse
+                raise ERR name "extraction exceeds the operand width"
+            in boolSyntax.mk_eq
+              (extract high low (wordsSyntax.mk_word_1comp word),
+               wordsSyntax.mk_word_1comp (extract high low word)) end
         | ("bv-extract-concat-1", [word, prefix, upper, low, high]) =>
             let
               val _ = listSyntax.is_nil prefix orelse

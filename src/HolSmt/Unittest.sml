@@ -19669,6 +19669,8 @@ let
   val cases =
     [("bv-extract-whole", "x 7",
       ``((7 >< 0) (x:word8):word8) = x``),
+     ("bv-extract-not", "x 1 6",
+      ``((6 >< 1) (~(x:word8)):word6) = ~((6 >< 1) x:word6)``),
      ("bv-extract-concat-1", "x @bv_empty #b1010 1 6",
       ``((6 >< 1) (((0xAw:word4) @@ (x:word8)):word12):word6) =
         ((6 >< 1) x:word6)``),
