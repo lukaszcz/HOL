@@ -6860,10 +6860,7 @@ local
     in
       case provenance of
         SOME (left, right) =>
-          if provenance_term_has_abs (Thm.concl theorem) then
-            exact_result (EqualityProvenance (left, right)) theorem
-          else raw_unavailable_result
-            "large transitivity result has no live binder" theorem
+          exact_result (EqualityProvenance (left, right)) theorem
       | NONE => raw_unavailable_result
           "transitivity with unavailable input provenance" theorem
     end

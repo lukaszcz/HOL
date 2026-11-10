@@ -16161,7 +16161,11 @@ let
 in
   check (source, "", "@source");
   check ("(= " ^ source ^ " true)",
-    "(step @pair :rule true_elim :premises (@source)) ", "@pair")
+    "(step @pair :rule true_elim :premises (@source)) ", "@pair");
+  check ("(= " ^ source ^ " true)",
+    "(step @refl :rule refl :args (true)) " ^
+    "(step @trans :rule trans :premises (@source @refl)) " ^
+    "(step @pair :rule true_elim :premises (@trans)) ", "@pair")
 end
 
 fun cpc_proof_replay_boolean_rewrites_success () =
