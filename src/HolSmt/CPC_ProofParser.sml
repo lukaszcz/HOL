@@ -5137,6 +5137,9 @@ in
               else emit "@" (fn () =>
                 term_from name (terms continuation))
             end
+        | "@" =>
+            if marked = "@" then emit "@" (terms continuation)
+            else ordinary_head_from marked continuation
         | "is" => emit "(" (literal "_" (literal "is"
             (tester continuation)))
         | token =>
