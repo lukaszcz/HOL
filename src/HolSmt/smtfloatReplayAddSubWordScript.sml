@@ -1395,4 +1395,95 @@ Proof
     pairTheory.pair_case_thm]
 QED
 
+(* Retained alignment for three-bit exponents never needs a count above
+   three. Keep the count proof independent of the significand width. *)
+fun retained_small_cases_tac e f =
+  let
+    fun cases variable = blastLib.BBLAST_PROVE
+      (boolSyntax.list_mk_disj (List.tabulate (8,fn i=>
+        boolSyntax.mk_eq (variable,wordsSyntax.mk_wordii (i,3)))))
+  in
+    STRIP_ASSUME_TAC (cases e) >> STRIP_ASSUME_TAC (cases f) >>
+    ASM_SIMP_TAC (srw_ss())
+      [smtfp_word_bounded_align_def,smtfp_word_retained_scale_def,
+       smtfp_word_addsub_exp_def,smtfp_word_jam_bv_def,
+       smtfp_word_lsl_bv_exact,smtfp_word_lsr_bv_exact,LET_THM]
+  end;
+
+Theorem smtfp_word_retained_scale_exp_comm:
+  smtfp_word_retained_scale
+    (smtfp_word_addsub_exp (e:word3):word4)
+    (smtfp_word_addsub_exp (f:word3):word4) =
+  smtfp_word_retained_scale
+    (smtfp_word_addsub_exp f:word4)
+    (smtfp_word_addsub_exp e:word4)
+Proof
+  retained_small_cases_tac ``e:word3`` ``f:word3``
+QED
+
+Theorem smtfp_word_retained_scale_narrow:
+  smtfp_word_retained_scale
+    (smtfp_word_addsub_exp (e:word3):word4)
+    (smtfp_word_addsub_exp (f:word3):word4) =
+  (w2w
+    (if (smtfp_word_addsub_exp f:word3) <=+
+          smtfp_word_addsub_exp e then
+       if (smtfp_word_addsub_exp e:word3) -
+            smtfp_word_addsub_exp f <=+ 3w then
+         (smtfp_word_addsub_exp f:word3)
+       else (smtfp_word_addsub_exp e:word3) - 3w
+     else
+       if (smtfp_word_addsub_exp f:word3) -
+            smtfp_word_addsub_exp e <=+ 3w then
+         (smtfp_word_addsub_exp e:word3)
+       else (smtfp_word_addsub_exp f:word3) - 3w):word4)
+Proof
+  retained_small_cases_tac ``e:word3`` ``f:word3``
+QED
+
+Theorem smtfp_word_bounded_align_narrow:
+  smtfp_word_bounded_align
+    (smtfp_word_retained_scale
+      (smtfp_word_addsub_exp (e:word3):word4)
+      (smtfp_word_addsub_exp (f:word3):word4))
+    (smtfp_word_addsub_exp e:word4) (v:'d word) =
+  if (smtfp_word_addsub_exp f:word4) <=+
+       smtfp_word_addsub_exp e then
+    smtfp_word_lsl_bv v
+      (w2w
+        (if (smtfp_word_addsub_exp e:word4) -
+              smtfp_word_addsub_exp f <=+ 3w then
+           (smtfp_word_addsub_exp e:word4) - smtfp_word_addsub_exp f
+         else 3w):word2)
+  else
+    if (smtfp_word_addsub_exp f:word4) -
+         smtfp_word_addsub_exp e <=+ 3w then v
+    else smtfp_word_jam_bv v
+      (w2w ((smtfp_word_addsub_exp f:word4) -
+              smtfp_word_addsub_exp e - 3w):word2)
+Proof
+  retained_small_cases_tac ``e:word3`` ``f:word3``
+QED
+
+(* Equal operands double exactly until exponent overflow. Prove this on
+   fields before inserting the operand's representation circuit. *)
+Theorem smtfp_word_add_self_rne_fields:
+  smtfp_word_addsub_fields F RNE
+    (s:word1) (e:word3) (f:word4) s e f (:4) (:9) =
+  if e=7w then
+    if f=0w then (s,7w,0w) else (0w,7w,1w)
+  else
+    (s, if e=6w then 7w else
+          if e=0w then (if f ' 3 then 1w else 0w) else e+1w,
+        if e=6w then 0w else if e=0w then f << 1 else f)
+Proof
+  STRIP_ASSUME_TAC (blastLib.BBLAST_PROVE
+    (boolSyntax.list_mk_disj (List.tabulate (8,fn i=>
+      boolSyntax.mk_eq (``e:word3``,wordsSyntax.mk_wordii (i,3)))))) >>
+  STRIP_ASSUME_TAC (blastLib.BBLAST_PROVE
+    (boolSyntax.list_mk_disj (List.tabulate (16,fn i=>
+      boolSyntax.mk_eq (``f:word4``,wordsSyntax.mk_wordii (i,4)))))) >>
+  ASM_REWRITE_TAC [] >> EVAL_TAC
+QED
+
 val _ = export_theory ();

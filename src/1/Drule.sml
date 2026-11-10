@@ -104,6 +104,14 @@ local
          GEN Bvar (SYM thm)
       end
 in
+   (* Decode only this fixed, small law on demand. No construction sidecar,
+      declaration-validity grant, proof work or fresh-name allocation. *)
+   fun eqt_intro_cache_data () =
+      let val statement = concl eq_thm
+          val (argument, body) = dest_forall statement
+      in {statement=statement,body=body,quantifier_variable=argument,
+          tag=tag eq_thm,bare=is_var argument,closed=null (hyp eq_thm)}
+      end
    fun EQT_INTRO th = EQ_MP (SPEC (concl th) eq_thm) th
                       handle HOL_ERR _ => raise ERR "EQT_INTRO" ""
 end
