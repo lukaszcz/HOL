@@ -8,6 +8,12 @@ sig
     val BBLAST_CONV      : Conv.conv
     val BBLAST_CONV_WITH_PROFILES :
       (Conv.conv -> Conv.conv) -> (Conv.conv -> Conv.conv) -> Conv.conv
+    val BBLAST_CONV_WITH_STAGES :
+      {word_simp : Conv.conv -> Conv.conv,
+       bit_blast : Conv.conv -> Term.term list -> Thm.thm list,
+       rewrite : Thm.thm list -> Conv.conv,
+       prover : Conv.conv -> Conv.conv} -> Conv.conv
+    val BBLAST_PROVE_WITH_CONVERSION : Conv.conv -> Conv.conv
     val BBLAST_PROVE     : Conv.conv
     val BBLAST_PROVE_TAC : Tactic.tactic
     val BBLAST_RULE      : Conv.rule
