@@ -29232,7 +29232,8 @@ end
 fun word_simp_assumptions_success () =
 let
   val goal =
-    ([``(w : 256 word) <> 0w``, ``~word_bit 0 (w : 256 word)``],
+    ([``(w : 256 word) <> 0w``, ``~word_bit 0 (w : 256 word)``,
+      ``(w : 256 word) >>> 2 <> 0w``],
      ``(w : 256 word) >>> 1 <> 0w``)
   val ((lowered, _), _) =
     SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
