@@ -1133,6 +1133,14 @@ local
 
   fun contains_abs_dag root = provenance_term_has_abs root
 
+  fun is_reflexive_equality theorem =
+    case Lib.total dest_reglan_equiv (Thm.concl theorem) of
+      SOME (left, right) => Term.aconv left right
+    | NONE =>
+        (case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
+           SOME (left, right) => Term.aconv left right
+         | NONE => false)
+
   fun expose_true_equality premise =
     let
       val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
@@ -1150,7 +1158,8 @@ local
       val source = expect_one_arg "cong" args
       fun expose_congruence premise =
         let val exposed = expose_true_equality premise in
-          if boolSyntax.is_eq (Thm.concl exposed) then exposed
+          if boolSyntax.is_eq (Thm.concl exposed) andalso
+             not (is_reflexive_equality exposed) then exposed
           else premise
         end
       fun nontrivial premise =
@@ -1927,7 +1936,8 @@ local
             | _ => false
           val exposed = if preserve_reflexive_occurrence then theorem
             else expose_true_equality theorem
-          val use_exposed = boolSyntax.is_eq (Thm.concl exposed)
+          val use_exposed = boolSyntax.is_eq (Thm.concl exposed) andalso
+            not (is_reflexive_equality exposed)
           val provenance =
             if not use_exposed then step_provenance premise_step
             else
@@ -2572,14 +2582,6 @@ local
   fun retain_all theorem supports =
     List.foldl (fn (support, kept) => retain_support kept support)
       theorem supports
-
-  fun is_reflexive_equality theorem =
-    case Lib.total dest_reglan_equiv (Thm.concl theorem) of
-      SOME (left, right) => Term.aconv left right
-    | NONE =>
-        (case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
-           SOME (left, right) => Term.aconv left right
-         | NONE => false)
 
   fun is_reflexive_boolean_equality theorem =
     case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
@@ -18866,7 +18868,9 @@ local
                  val provenance =
                    case located_args of
                      [located] => EqualityProvenance
-                       (#provenance located, #provenance located)
+                       (EqualityProvenance
+                          (#provenance located, #provenance located),
+                        AtomicProvenance)
                    | _ => UnavailableProvenance
                        "eq_refl lacks one exact operand occurrence"
                in exact_result provenance theorem end

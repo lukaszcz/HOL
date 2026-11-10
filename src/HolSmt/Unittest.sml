@@ -15355,6 +15355,15 @@ end
 
 fun cpc_proof_replay_eq_refl_cong_chain_success () =
 let
+  val congruence_proof = parse_cpc_proof_string
+    "((step @p1 :rule eq-refl :args (0)) \
+    \(step @p2 :rule cong :premises (@p1) :args ((not (= 0 0)))))"
+  val congruence = CPC_ProofReplay.replay_root_for_test congruence_proof
+  val _ = assert (Thm.concl congruence ~~ ``~((0:int) = 0) = ~T``,
+    "CPC congruence discarded eq-refl's equality to true")
+  val _ = assert (null (Thm.hyp congruence),
+    "CPC eq-refl congruence introduced hypotheses")
+  val _ = check_oracle_tags "CPC eq-refl congruence" congruence
   val proof = parse_cpc_proof_string
     "((define @t1 () (not (= true true))) (assume @p1 @t1) \
     \(step @p2 :rule evaluate :args ((not true))) \
@@ -15365,7 +15374,8 @@ let
   val thm = CPC_ProofReplay.replay_root_for_test proof
 in
   assert (Thm.concl thm ~~ ``F``,
-    "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false")
+    "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false");
+  check_oracle_tags "CPC eq-refl chain" thm
 end
 
 fun assert_cpc_eq_resolve_route_pin label expected_route prems expected =
