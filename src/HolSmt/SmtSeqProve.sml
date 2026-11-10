@@ -85,13 +85,15 @@ struct
     orelse named "list" ["TAKE", "DROP", "EL"] tm
 
   (* The statements below are built, not parsed: a constant a client
-     theory exports must not capture s, i or x. *)
+     theory exports must not capture s, i, x or y. *)
   local
     open boolSyntax
     val element_ty = Type.alpha
     val s = Term.mk_var ("s", listSyntax.mk_list_type element_ty)
     val i = Term.mk_var ("i", intSyntax.int_ty)
     val x = Term.mk_var ("x", element_ty)
+    val y = Term.mk_var ("y", element_ty)
+    val e = Term.mk_var ("e", element_ty)
     fun seq_app name args =
       HolKernel.list_mk_icomb
         (Term.prim_mk_const {Thy = "HolSmt", Name = name}) args
@@ -102,6 +104,9 @@ struct
     val out_of_range =
       mk_disj (intSyntax.mk_less (i, intSyntax.zero_tm),
                intSyntax.mk_leq (int_length, i))
+    (* MAP (\e. if x = e then y else e) s *)
+    val unit_map =
+      listSyntax.mk_map (Term.mk_abs (e, mk_cond (mk_eq (x, e), y, e)), s)
   in
   (* Z3's native Seq certificate uses its internal `seq.eq` and `seq.tail`
      witnesses for this list fact.  The parser reconstructs them as equality
@@ -147,25 +152,29 @@ struct
 
   (* smt_seq_nth s i, the shape nth_boundary_thm is instantiated at *)
   val nth_pattern = nth_s_i
-  end
 
   (* A singleton-for-singleton replacement is a map, independently of
      element values. This checked shape law avoids repeated suffix/fuel
-     discovery on wide concrete sequences. *)
-  val replacement_unit_aux_thm = Library.prove
-    (``smt_seq_replace_all_aux (LENGTH s) (s:'a list) [x] [y] =
-         MAP (\e. if x = e then y else e) s``,
-     Tactical.THEN (bossLib.Induct_on `s`,
+     discovery on wide concrete sequences.
+     !s. smt_seq_replace_all_aux (LENGTH s) s [x] [y] =
+         MAP (\e. if x = e then y else e) s *)
+  val replacement_unit_aux_thm = Drule.SPEC_ALL (Library.prove
+    (mk_forall (s,
+       mk_eq (seq_app "smt_seq_replace_all_aux"
+                [listSyntax.mk_length s, s, unit x, unit y],
+              unit_map)),
+     Tactical.THEN (bossLib.Induct,
        Tactical.THEN (bossLib.RW_TAC bossLib.std_ss
          [HolSmtTheory.smt_seq_replace_all_aux_def,listTheory.isPREFIX_THM,
           listTheory.LENGTH,listTheory.DROP_compute,listTheory.MAP,
-          listTheory.APPEND],Rewrite.ASM_REWRITE_TAC [])))
+          listTheory.APPEND],Rewrite.ASM_REWRITE_TAC []))))
+  (* smt_seq_replace_all s [x] [y] = MAP (\e. if x = e then y else e) s *)
   val replacement_unit_thm = Library.prove
-    (``smt_seq_replace_all (s:'a list) [x] [y] =
-         MAP (\e. if x = e then y else e) s``,
+    (mk_eq (seq_app "smt_seq_replace_all" [s, unit x, unit y], unit_map),
      bossLib.SIMP_TAC bossLib.std_ss
        [HolSmtTheory.smt_seq_replace_all_def,replacement_unit_aux_thm,
         listTheory.NOT_CONS_NIL])
+  end
 
   (* The continuation belongs to the current compact replay invocation.
      Hide its exceptions from tactic/search filtering, restoring the exact
@@ -1019,11 +1028,12 @@ struct
           (head, [_, _]) => named "HolSmt" ["smt_seq_nth"] head
         | _ => false
       val _ = admit t
-      val _ = List.app admit [nth_pattern,Thm.concl nth_boundary_thm]
+      val pattern = nth_pattern
+      val _ = List.app admit [pattern,Thm.concl nth_boundary_thm]
       val application = HolKernel.find_term is_nth_application t
       val _ = admit application
       val instantiated = theorem (Drule.INST_TY_TERM
-        (Term.match_term nth_pattern application) nth_boundary_thm)
+        (Term.match_term pattern application) nth_boundary_thm)
       val theorem = Thm.EQ_MP
         (simplify [] (Thm.concl instantiated)) instantiated
       val normalization = simplify [] t

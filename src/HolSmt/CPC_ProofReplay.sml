@@ -8160,14 +8160,33 @@ local
   (* Eliminate Boolean enum cases without opening the actual mode source.
      Unlike the pack-based law, this shares exactly the one-hot atoms used
      by rounding_partition_law. *)
-  val rounding_boolean_case_law = Library.prove
-    (``(case mode : smt_rounding of
-          RNE => rne | RNA => rna | RTP => rtp | RTN => rtn | RTZ => rtz) =
-       (if mode = RNE then (rne : bool)
-        else if mode = RNA then rna else if mode = RTP then rtp
-        else if mode = RTN then rtn else rtz)``,
-     Tactical.THEN (bossLib.Cases_on `mode`,
-       simpLib.SIMP_TAC (bossLib.srw_ss()) []))
+  (* (case mode of RNE => rne | RNA => rna | RTP => rtp | RTN => rtn
+                  | RTZ => rtz) =
+     (if mode = RNE then rne else if mode = RNA then rna
+      else if mode = RTP then rtp else if mode = RTN then rtn else rtz),
+     built rather than parsed: a constant a client theory exports must not
+     capture mode or the five Boolean outcomes. *)
+  val rounding_boolean_case_law =
+    let
+      val mode = Term.mk_var ("mode",
+        Type.mk_thy_type {Thy = "smtfloat", Tyop = "smt_rounding", Args = []})
+      val names = ["RNE", "RNA", "RTP", "RTN", "RTZ"]
+      val modes =
+        List.map (fn name => Term.prim_mk_const {Thy = "smtfloat", Name = name})
+          names
+      val outcomes =
+        List.map (fn name => Term.mk_var (String.map Char.toLower name, Type.bool))
+          names
+      val rows = ListPair.zip (modes, outcomes)
+      fun chain ((rounding, outcome), rest) =
+        boolSyntax.mk_cond (boolSyntax.mk_eq (mode, rounding), outcome, rest)
+      val if_chain = List.foldr chain (List.last outcomes) (List.take (rows, 4))
+    in
+      Library.prove
+        (boolSyntax.mk_eq (TypeBase.mk_case (mode, rows), if_chain),
+         Tactical.THEN (bossLib.tmCases_on mode [],
+           simpLib.SIMP_TAC (bossLib.srw_ss()) []))
+    end
 
   fun word_circuit_leaf_rewrites () =
     List.map Conv.REWR_CONV
