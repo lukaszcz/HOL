@@ -689,120 +689,13 @@ local
   (* Z3-internal fpa2bv term symbols                                        *)
   (***************************************************************************)
 
-  fun z3_is_smtfp_type ty =
-    let val {Thy, Tyop, ...} = Type.dest_thy_type ty
-    in Thy = "smtfloat" andalso Tyop = "smtfp" end
-    handle Feedback.HOL_ERR _ => false
-
-  fun z3_is_rounding_type ty =
-    Type.compare (ty, SmtLib_Theories.rounding_mode_ty) = EQUAL
-
-  fun z3_expect_word_width name width tm =
-    let
-      val actual = fcpLib.index_to_num (wordsSyntax.dim_of tm)
-    in
-      if actual = Arbnum.fromInt width then ()
-      else SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-        (Int.toString width ^ "-bit bit-vector expected")
-    end
-    handle Feedback.HOL_ERR _ =>
-      SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-        (Int.toString width ^ "-bit bit-vector expected")
-
-  fun z3_smtfp_packed_type x =
-    let
-      val {Thy, Tyop, Args, ...} =
-        Type.dest_thy_type (Term.type_of x)
-      val _ = Thy = "smtfloat" andalso Tyop = "smtfp" orelse
-        SmtLib_Theories.decline "<z3_builtin_dict.bv_wrap>"
-          "FloatingPoint or RoundingMode operand expected"
-      val (significand_index, exponent_index) = Lib.pair_of_list Args
-      val significand_width = fcpLib.index_to_num significand_index
-      val exponent_width = fcpLib.index_to_num exponent_index
-      val packed_width = Arbnum.plus1
-        (Arbnum.+ (significand_width, exponent_width))
-    in
-      wordsSyntax.mk_word_type (fcpLib.index_type packed_width)
-    end
-
-  fun z3_positive_word_index name width =
-    let
-      fun invalid () =
-        SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-          (name ^ ": positive numeric bit-vector width index expected")
-    in
-      ((let val value = SmtLib_Theories.natural_of_index width in
-          if Arbnum.compare (value, Arbnum.zero) = GREATER then
-            fcpLib.index_type value
-          else invalid ()
-        end)
-       handle Interrupt => raise Interrupt
-            | _ => invalid ())
-    end
-
-  fun z3_bv_wrap x =
-    if z3_is_smtfp_type (Term.type_of x) then
-      SmtLib_Theories.smtfloat_app_result "smtfp_pack_bv"
-        (z3_smtfp_packed_type x) [x]
-    else if z3_is_rounding_type (Term.type_of x) then
-      SmtLib_Theories.smtfloat_app "smtfp_pack_rounding" [x]
-    else
-      SmtLib_Theories.decline "<z3_builtin_dict.bv_wrap>"
-        "FloatingPoint or RoundingMode operand expected"
-
-  fun z3_bv2rm name bits =
-    let val _ = z3_expect_word_width name 3 bits in
-      SmtLib_Theories.smtfloat_app "smtfp_unpack_rounding" [bits]
-    end
-
-  fun z3_fp_binary name hol_name (x, y) =
-    if z3_is_smtfp_type (Term.type_of x) andalso
-       Type.compare (Term.type_of x, Term.type_of y) = EQUAL then
-      SmtLib_Theories.smtfloat_app hol_name [x, y]
-    else
-      SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-        "equal FloatingPoint operand sorts expected"
-
-  fun z3_fp_to_bv_i name hol_name indices args =
-    case (indices, args) of
-      ([width], [mode, x]) =>
-        if z3_is_rounding_type (Term.type_of mode) andalso
-           z3_is_smtfp_type (Term.type_of x) then
-          SmtLib_Theories.smtfloat_app_result hol_name
-            (wordsSyntax.mk_word_type
-              (z3_positive_word_index name width)) [mode, x]
-        else
-          SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-            "RoundingMode and FloatingPoint operands expected"
-    | ([_], _) => SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-        "two arguments expected"
-    | _ => SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
-        "one bit-vector width index expected"
-
-  fun z3_fp_to_real_i x =
-    if z3_is_smtfp_type (Term.type_of x) then
-      SmtLib_Theories.smtfloat_app "smtfp_to_real" [x]
-    else
-      SmtLib_Theories.decline "<z3_builtin_dict.fp.to_real_I>"
-        "FloatingPoint operand expected"
-
   val z3_hi_fp_unspecified_diagnostic =
-    "Z3_FPA2BV_HI_FP_UNSPECIFIED_UNSUPPORTED"
+    Z3_ProofFpConstructors.z3_hi_fp_unspecified_diagnostic
+  val z3_hi_fp_unspecified = Z3_ProofFpConstructors.z3_hi_fp_unspecified
 
-  fun z3_hi_fp_unspecified _ _ _ =
-    (* Z3 4.11.2 source evidence: [hi_fp_unspecified] occurs only as the
-       Boolean fpa2bv/fpa rewriter parameter in [*_rewriter_params.pyg] and
-       is never declared by [fpa_decl_plugin] as an AST term.  The proof
-       inventory for pinned Z3 4.11.2, 4.12.4, 4.13.0, 4.14.1 and 4.15.3 --
-       all in-tree proof fixtures plus the HOLSMT_VALIDATION_DIR corpus --
-       contains zero occurrences of the token as a proof term.  It therefore
-       has no term type or HOL denotation to reconstruct.  Keep the exact
-       token enumerated so it cannot fall through to the proof catch-all. *)
-    SmtLib_Theories.decline "<z3_builtin_dict.hi_fp_unspecified>"
-      (z3_hi_fp_unspecified_diagnostic ^
-       ": Z3 configuration parameter is not a proof term")
-
-  val z3_builtin_dict = Library.dict_from_list (proof_rule_builtin_entries @ [
+  val z3_builtin_dict = Library.dict_from_list
+    (proof_rule_builtin_entries @ Z3_ProofConstructors.entries @
+     Z3_ProofFpConstructors.entries @ [
     (* Z3 may retain the SMT-LIB Reals_Ints predicate in proof conclusions.
        Keep it available even when the translation-local inverse dictionary
        recorded the asserted application as a nullary term. *)
@@ -890,8 +783,7 @@ local
        when Z3 prints non-SMT-LIB spellings inside proofs.  The inventory did
        not show a corpus-dead extra shim to drop in those proofs, so all of
        them are kept. *)
-    ("iff", SmtLib_Theories.K_zero_two boolSyntax.mk_eq),
-    ("implies", SmtLib_Theories.K_zero_two boolSyntax.mk_imp),
+    (* iff/implies use the shared proof constructor packet. *)
     (* fpa2bv uses Z3's n-ary extension of otherwise binary BV operators. *)
     ("concat", SmtLib_Theories.K_zero_list
       (z3_leftassoc "concat" wordsSyntax.mk_word_concat)),
@@ -904,19 +796,7 @@ local
     (* Complete Z3 4.x fpa2bv proof-term family.  [rm] is Z3 4.11.2's
        declaration spelling for its BV-to-rounding-mode operator;
        [bv2rm] is retained as the family spelling used by proof inventories. *)
-    ("bv_wrap", SmtLib_Theories.K_zero_one z3_bv_wrap),
-    ("rm", SmtLib_Theories.K_zero_one (z3_bv2rm "rm")),
-    ("bv2rm", SmtLib_Theories.K_zero_one (z3_bv2rm "bv2rm")),
-    ("fp.min_i", SmtLib_Theories.K_zero_two
-      (z3_fp_binary "fp.min_i" "smtfp_min")),
-    ("fp.max_i", SmtLib_Theories.K_zero_two
-      (z3_fp_binary "fp.max_i" "smtfp_max")),
-    ("fp.to_ubv_I", fn _ => z3_fp_to_bv_i
-      "fp.to_ubv_I" "smtfp_to_ubv"),
-    ("fp.to_sbv_I", fn _ => z3_fp_to_bv_i
-      "fp.to_sbv_I" "smtfp_to_sbv"),
-    ("fp.to_real_I", SmtLib_Theories.K_zero_one z3_fp_to_real_i),
-    ("hi_fp_unspecified", z3_hi_fp_unspecified),
+    (* hi_fp_unspecified retains its shared explicit diagnostic entry. *)
     (* Z3's symbolic fp.to_real bridge contains its internal real-power
        operator.  HOL's ordinary [pow] has a natural exponent, so preserve
        this proof-local operator without assigning it the wrong semantics. *)
@@ -925,78 +805,11 @@ local
         (Term.mk_var ("z3_real_pow", boolSyntax.list_mk_fun
           ([realSyntax.real_ty, realSyntax.real_ty], realSyntax.real_ty)),
          [base, exponent]))),
-    (* equivalence modulo naming *)
-    ("~", SmtLib_Theories.K_zero_two boolSyntax.mk_eq),
-    (* the following two are the unary arithmetic negation operator *)
-    ("~", SmtLib_Theories.K_zero_one intSyntax.mk_negated),
-    ("~", SmtLib_Theories.K_zero_one realSyntax.mk_negated),
-    (* negative numerals and fractions such as `-3` or `1/2`, used in the
-       indices of `th-lemma arith` rules but otherwise invalid SMT-LIB term
-       syntax *)
-    ("_", SmtLib_Theories.zero_zero (fn token =>
-      let
-        fun digits text = String.size text > 0 andalso
-          List.all Char.isDigit (String.explode text)
-        fun signed_integer text =
-          if String.isPrefix "-" text then
-            digits (String.extract (text, 1, NONE))
-          else digits text
-        val fields = String.fields (Lib.equal #"/") token
-        val fraction =
-          case fields of
-            [numerator, denominator] =>
-              signed_integer numerator andalso digits denominator
-          | _ => false
-        val negated = String.isPrefix "-" token andalso
-          signed_integer token
-      in
-        if negated orelse fraction then
-          let
-            (* convert to a fraction, if it isn't already *)
-            val n_fraction =
-              if fraction then
-                token
-              else
-                token ^ "/1"
-            val (left, right) = Lib.pair_of_list (String.fields (Lib.equal #"/")
-              n_fraction)
-            val numerator = Arbint.fromString left
-            val denominator = Arbint.fromString right
-          in
-            if denominator = Arbint.one then
-              realSyntax.term_of_int numerator
-            else
-              realSyntax.mk_div (realSyntax.term_of_int numerator,
-                realSyntax.term_of_int denominator)
-          end
-        else
-          SmtLib_Theories.decline "<z3_builtin_dict._>" "not a negated numeral or fraction"
-      end)),
-    (* bit-vector constants: bvm[n] *)
-    ("_", SmtLib_Theories.zero_zero (fn token =>
-      if String.size token > 2 andalso String.isPrefix "bv" token andalso
-         Char.isDigit (String.sub (token, 2)) andalso
-         String.isSubstring "[" token then
-        let
-          val args = String.extract (token, 2, NONE)
-          val (value, args) = Lib.pair_of_list (String.fields (Lib.equal #"[")
-            args)
-          val (size, args) = Lib.pair_of_list (String.fields (Lib.equal #"]")
-            args)
-          val _ = args = "" orelse
-            SmtLib_Theories.decline "<z3_builtin_dict._>" "not a bit-vector constant"
-          val value = Library.parse_arbnum value
-          val size = Library.parse_arbnum size
-        in
-          wordsSyntax.mk_word (value, size)
-        end
-      else
-        SmtLib_Theories.decline "<z3_builtin_dict._>" "not a bit-vector constant")),
-    (* Z3's internal mkbv arguments run from LSB to MSB, whereas HOL's
-       v2w list runs from MSB to LSB. *)
-    ("mkbv", SmtLib_Theories.K_zero_list (fn l =>
-      bitstringSyntax.mk_v2w (listSyntax.mk_list (List.rev l, Type.bool),
-        fcpSyntax.mk_int_numeric_type (List.length l)))),
+    (* Equality/Int/Real ~ overloads use the shared constructor packet. *)
+    (* Exact literal policies are shared with the graph frontend. *)
+    ("_", SmtLib_Theories.zero_zero Z3_ProofLiterals.numeric),
+    ("_", SmtLib_Theories.zero_zero Z3_ProofLiterals.word),
+    (* The shared mkbv recipe reverses Z3's LSB-first argument list. *)
     (* extract[m:n] t *)
     ("_", SmtLib_Theories.zero_one (fn token =>
       if String.isPrefix "extract[" token then
@@ -1639,8 +1452,7 @@ local
        deliberately unchanged, as HOL regex constructor equality is not
        language equivalence. *)
     val tmdict = Library.extend_dict
-      (("=", SmtLib_Theories.chainable
-        (SmtLib_Theories.same_type_binary SmtRegLanProve.proof_equality)),
+      (("=", Z3_ProofConstructors.equality),
        tmdict)
     (* parse the stream *)
     val _ = if !Library.trace > 1 then
@@ -1692,12 +1504,114 @@ local
   fun parse_file dicts path =
     parse_file_with_version dicts unknown_z3_version path
 
+  type graph_term = SmtLib_GraphFrontend.term
+  type graph_step = proof_rule SmtLib_GraphFrontend.step
+  (* Terms and retained rule metadata have direct graph records. The legacy
+     :'pt proofterm encoding remains on the compatibility stream entry. *)
+  fun graph_term_reader_with_version options version instream =
+    let
+      val terms = SmtLib_GraphFrontend.create_session options
+        {solver = "Z3", version = resolve_version version,
+         policy = SmtLib_GraphFrontend.Z3,
+         reserved_names = List.map #1
+           (Z3_ProofConstructors.entries @ Z3_ProofFpConstructors.entries)}
+        (SmtLib_Parser.make_proof_stream_tokenizer instream)
+      val _ = List.app (#add_recipe_parser terms)
+        (("=", Z3_ProofConstructors.equality) :: Z3_ProofConstructors.entries)
+      val _ = List.app (#add_recipe_parser terms)
+        (Z3_ProofFpConstructors.bounded_entries
+          (#index_limit (#recipe_limits options)))
+      val _ = (#add_literal_parser terms) Z3_ProofLiterals.numeric
+      val _ = (#add_literal_parser terms)
+        (Z3_ProofLiterals.bounded_word
+          (#index_limit (#recipe_limits options)))
+    in #reader terms end
+  fun graph_term_reader options instream =
+    graph_term_reader_with_version options unknown_z3_version instream
+  type graph_proof = Z3_GraphProofParser.proof
+  fun parse_graph_packet_with_version options version input =
+    Z3_GraphProofParser.create_packet options version input
+  fun parse_graph_configured_packet_with_version configured version input =
+    Z3_GraphProofParser.create_configured_packet configured version input
+  fun parse_graph_translation_packet_with_version options translation
+      version input =
+    Z3_GraphProofParser.create_translation_packet
+      options translation version input
+  fun parse_graph_stream_with_version options version input =
+    Z3_GraphProofParser.create options version input
+  fun parse_graph_stream options input =
+    parse_graph_stream_with_version options unknown_z3_version input
+  fun graph_term_reader_with_version_with_policy options version instream =
+    let
+      val terms = SmtLib_GraphFrontend.create_session_with_policy options
+        {solver = "Z3", version = resolve_version version,
+         policy = SmtLib_GraphFrontend.Z3,
+         reserved_names = List.map #1
+           (Z3_ProofConstructors.entries @ Z3_ProofFpConstructors.entries)}
+        (SmtLib_Parser.make_proof_stream_tokenizer instream)
+      val _ = List.app (#add_recipe_parser terms)
+        (("=", Z3_ProofConstructors.equality) :: Z3_ProofConstructors.entries)
+      val _ = List.app (#add_recipe_parser terms)
+        (Z3_ProofFpConstructors.entries_with_policy
+          (#index_limit (#recipe_limits options)))
+      val _ = (#add_literal_parser terms) Z3_ProofLiterals.numeric
+      val _ = (#add_literal_parser terms)
+        (Z3_ProofLiterals.word_with_policy
+          (#index_limit (#recipe_limits options)))
+    in #reader terms end
+  fun graph_term_reader_with_policy options instream =
+    graph_term_reader_with_version_with_policy options unknown_z3_version instream
+  fun parse_graph_packet_with_version_with_policy options version input =
+    Z3_GraphProofParser.create_packet_with_policy options version input
+  fun parse_graph_configured_packet_with_version_with_policy configured version input =
+    Z3_GraphProofParser.create_configured_packet_with_policy configured version input
+  fun parse_graph_translation_packet_with_version_with_policy options translation
+      version input =
+    Z3_GraphProofParser.create_translation_packet_with_policy
+      options translation version input
+  fun parse_graph_translation_packet_with_version_with_policy_from_input
+      options translation version input =
+    Z3_GraphProofParser.create_translation_packet_with_policy_from_input
+      options translation version input
+  fun parse_graph_stream_with_version_with_policy options version input =
+    Z3_GraphProofParser.create_with_policy options version input
+  fun parse_graph_stream_with_policy options input =
+    parse_graph_stream_with_version_with_policy options unknown_z3_version input
+
 in
   val z3_hi_fp_unspecified_diagnostic = z3_hi_fp_unspecified_diagnostic
   val parse_stream_with_version = parse_stream_with_version
   val parse_stream = parse_stream
   val parse_file_with_version = parse_file_with_version
   val parse_file = parse_file
+  type graph_term = graph_term
+  type graph_step = graph_step
+  type graph_proof = graph_proof
+  val parse_graph_packet_with_version = parse_graph_packet_with_version
+  val parse_graph_configured_packet_with_version =
+    parse_graph_configured_packet_with_version
+  val parse_graph_translation_packet_with_version =
+    parse_graph_translation_packet_with_version
+  val parse_graph_stream_with_version = parse_graph_stream_with_version
+  val parse_graph_stream = parse_graph_stream
+  val graph_term_reader_with_version = graph_term_reader_with_version
+  val graph_term_reader = graph_term_reader
+  val graph_term_reader_with_version_with_policy =
+    graph_term_reader_with_version_with_policy
+  val graph_term_reader_with_policy =
+    graph_term_reader_with_policy
+  val parse_graph_packet_with_version_with_policy =
+    parse_graph_packet_with_version_with_policy
+  val parse_graph_configured_packet_with_version_with_policy =
+    parse_graph_configured_packet_with_version_with_policy
+  val parse_graph_translation_packet_with_version_with_policy =
+    parse_graph_translation_packet_with_version_with_policy
+  val parse_graph_translation_packet_with_version_with_policy_from_input =
+    parse_graph_translation_packet_with_version_with_policy_from_input
+  val parse_graph_stream_with_version_with_policy =
+    parse_graph_stream_with_version_with_policy
+  val parse_graph_stream_with_policy =
+    parse_graph_stream_with_policy
 end  (* local *)
 
 end

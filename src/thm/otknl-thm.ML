@@ -454,7 +454,7 @@ fun BETA_CONV tm =
  *---------------------------------------------------------------------------*)
 
 fun SUBST replacements template (th as THM(O,asl,c,_)) =
- let val fvs = Term.FVL_dag [template] Term.empty_varset
+ let val fvs = Term.FVL [template] Term.empty_varset
      val (ltheta, rtheta, hyps, oracles) =
          itlist (fn {redex, residue = THM(ocls,h,c,_)} =>
                  fn (tuple as (ltheta,rtheta,hyps,Ocls)) =>
@@ -1511,8 +1511,7 @@ fun prim_type_definition (Tyop, thm) = let
                                          "\" invalid"))
   val checked   = assert_exn (op=) (rng,bool)
                              (TYDEF_ERR "subset predicate has the wrong type")
-  val   _       = Type.prim_new_type name (List.length tyvars)
-  val newty     = Type.mk_thy_type{Tyop=Tyop,Thy=Thy,Args=tyvars}
+  val newty     = Type.prim_mk_new_type name tyvars
   val repty     = newty --> dom
   val rep       = mk_primed_var("rep", repty)
   val TYDEF     = inst[alpha |-> dom, Type.mk_vartype "'b" |-> newty]

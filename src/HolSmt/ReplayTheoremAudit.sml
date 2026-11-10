@@ -64,7 +64,6 @@ val non_replay_exports : exemption list =
       "seq_nth_i_def"
     ] @
   exempt "smtfloat" fp_definition_reason [
-      "float_canon_qnan_def",
       "float_from_ieee_bv_def",
       "float_max_zero_choice_spec",
       "float_min_zero_choice_spec",
@@ -421,7 +420,6 @@ val non_replay_exports : exemption list =
       "smtfp_rem_op_nan",
       "smtfp_rem_zero_infinity",
       "smtfp_rep_SmtFp",
-      "smtfp_rep_bits",
       "smtfp_rep_compute",
       "smtfp_rep_def",
       "smtfp_rep_finite_n2w_bits",

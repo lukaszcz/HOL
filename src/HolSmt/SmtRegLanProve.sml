@@ -72,7 +72,9 @@ struct
       {time = SOME 1.0, infs = SOME 5000} : mlibMeter.limit)
       (Feedback.trace ("metis", 0) (metisLib.METIS_PROVE facts)) target
 
-  fun congruence premises target =
+  (* The compact boundary supplies the same laws in its injective local
+     namespace, including variables absent from a law's consequence. *)
+  fun congruence_with_theorems schemas premises target =
     let
       fun exact proposition =
         case List.find (Term.aconv proposition o Thm.concl) premises of
@@ -98,10 +100,13 @@ struct
           val (antecedents, _) = boolSyntax.strip_imp (Thm.concl instance)
         in Drule.LIST_MP (List.map exact antecedents) instance end
     in
-      Lib.tryfind instantiate congruence_theorems
+      Lib.tryfind instantiate schemas
       handle Feedback.HOL_ERR _ =>
-        metis (premises @ congruence_theorems) target
+        metis (premises @ schemas) target
     end
+
+  fun congruence premises target =
+    congruence_with_theorems congruence_theorems premises target
 
   (* These are denotational identities, not constructor equalities.  Each
      rule applies at all operands and loop bounds supported by its theorem.
