@@ -496,15 +496,9 @@ proof format is CPC at `dsl-rewrite` granularity.
 For `CVC_TAC`, `UNSAT NONE` is not accepted: CPC replay must produce
 `UNSAT (SOME thm)` and pass the original-goal and no-oracle checks.
 
-Nonlinear integer replay substitutes numeral equalities proved from opposing
-bounds before SOS certificate search. CPC arithmetic rewrites include both
-maximum lower bounds, arith-max-geq1 and arith-max-geq2.
-Integer polynomial normalization removes negative zero introduced by
-subtraction aliases; transitivity normalizes integer relation spellings
-before searching for an equality bridge. Shared antecedents use the same
-DAG normalization for modus ponens. Numeric conditionals remain opaque
-through linear and nonlinear arithmetic before branch expansion; congruence
-preserves immediate child positions, including reflexive premises.
+CPC arithmetic rewrites include both maximum lower bounds, arith-max-geq1
+and arith-max-geq2. Checked nonlinear integer replay can use opposing bounds
+that fix an arithmetic expression to a numeral.
 
 Nonlinear real arithmetic replay may invoke CSDP through `SOSLib.REAL_SOS`.
 CSDP is an untrusted semidefinite-solver dependency: it searches for SOS
