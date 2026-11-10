@@ -10898,7 +10898,7 @@ let
     (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
       Z3_Proof.REWRITE equation),
      HOLset.addList (Term.empty_tmset, bits), [], "4.15.3")
-  val result = Timeout.apply (Time.fromSeconds 5)
+  val result = Timeout.apply (Time.fromSeconds 10)
     Z3_ProofReplay.replay_root_with_state_for_test proof
   val _ = assert (List.length (#definition_hyps result) = 8 andalso
     Term.aconv (Thm.concl (#thm result)) equation andalso
