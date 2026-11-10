@@ -2393,6 +2393,16 @@ struct
       val _ = positive "nested typed private higher-order application"
         "((declare-const x Int) \
         \(step @p :rule refl :args ((_ (@const 0 (-> Int Bool)) x))))"
+      val _ = List.app (fn (label,term) =>
+        positive ("higher-order indexed control " ^ label)
+          ("((declare-const h (-> (_ BitVec 8) (_ BitVec 8))) " ^
+           "(step @p :rule refl :args (" ^ term ^ ")))"))
+        [("word", "(_ bv5 8)"),
+         ("extract", "((_ extract 3 0) (_ bv5 8))"),
+         ("applied extract", "((_ extract 3 0) (_ h (_ bv5 8)))"),
+         ("positive zero", "(_ +zero 3 5)"),
+         ("word sort", "(_ BitVec 8)"),
+         ("float sort", "(_ FloatingPoint 3 5)")]
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)
       val indexed =
