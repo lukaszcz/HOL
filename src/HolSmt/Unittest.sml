@@ -11643,7 +11643,8 @@ let
         let val theorem = replay declared in
           assert (Term.aconv (Thm.concl theorem) expected andalso
               List.null (Thm.hyp theorem),
-            "CPC arrays_ext did not derive closed extensionality at " ^ sort)
+            "CPC arrays_ext did not derive closed extensionality at " ^ sort);
+          check_oracle_tags "CPC arrays_ext replay" theorem
         end
     in
       check "";
