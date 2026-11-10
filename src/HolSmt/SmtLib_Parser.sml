@@ -1696,6 +1696,40 @@ local
     t_with_args_raw dict token indices args
     handle SmtLib_Theories.ParseDecline exn => raise exn
 
+  (* Sort operands and legacy term-valued CPC markers have distinct
+     namespaces. Look ahead without choosing a term fallback after a sort
+     error; callers replay the tokens through their current lexical frame. *)
+  fun cpc_const_sort_operand symbol_key tydict get_token =
+    let
+      fun operand first =
+        if first <> "(" then [first] else
+          let
+            fun read depth acc =
+              let val token = get_token ()
+                  val depth = if token = "(" then depth + 1
+                    else if token = ")" then depth - 1 else depth
+              in if depth = 0 then List.rev (token :: acc)
+                else read depth (token :: acc) end
+          in read 1 [first] end
+      fun sort_head ("(" :: "_" :: name :: _) = SOME name
+        | sort_head ("(" :: name :: _) = SOME name
+        | sort_head [name] = SOME name
+        | sort_head _ = NONE
+      val first = get_token ()
+    in if first = ")" then (false,[first]) else
+      let val index = operand first
+          val second = get_token ()
+      in if second = ")" then (false,index @ [second]) else
+        let val sort = operand second
+            val last = get_token ()
+            val typed = last = ")" andalso
+              (case sort_head sort of NONE => false
+                | SOME name => Option.isSome
+                    (Redblackmap.peek (tydict,symbol_key name)))
+        in (typed,index @ sort @ [last]) end
+      end
+    end
+
   fun declared_sort_parsefn sort_name arity =
   let
     val nullary_ty = Type.mk_vartype ("'" ^ sort_name)
@@ -2232,7 +2266,19 @@ local
     : Term.term =
    let
     val headfn = parse_term_aux cfg get_token (tydict, tmdict) token
-    val operands = parse_term_operands cfg get_token (tydict, tmdict) []
+    val (typed,tokens) =
+      if token = "@const" andalso Option.isSome
+          (Redblackmap.peek (tmdict,(#symbol_key cfg) token)) then
+        cpc_const_sort_operand (#type_symbol_key cfg) tydict get_token
+      else (false,[])
+    val next = Library.undo_look_ahead tokens get_token
+    val operands = if typed then
+        let
+          val index = parse_term_with_cfg cfg next (tydict,tmdict)
+          val ty = parse_type_with_key (#type_symbol_key cfg) next tydict
+          val _ = Library.expect_token ")" (next ())
+        in [index,Term.mk_var ("@cpc.sort",ty)] end
+      else parse_term_operands cfg next (tydict,tmdict) []
   in
     headfn operands
   end
@@ -2978,6 +3024,29 @@ local
               in construction_apply_qualified backend frame occurrence function
               end
             end
+          else if head = "@const" then
+            let
+              val (typed,tokens) = cpc_const_sort_operand
+                (#type_symbol_key cfg) tydict get_token
+              val _ = unread tokens
+              val value = if typed then
+                let
+                  val number = term frame
+                  val ty = parse_type_with_key (#type_symbol_key cfg)
+                    get_token tydict
+                  val _ = expect ")"
+                  val marker = B.variable backend frame
+                    SmtReplayGraph.Generated ("@cpc.sort",ty)
+                  val metadata = occurrence frame
+                    (SOME (C.variable (Term.mk_var ("@cpc.sort",ty))))
+                    marker ConstructionAtom "@cpc.sort" []
+                in apply frame head [] [number,metadata]
+                  ConstructionApplication [number] end
+              else
+                let val children = operands frame []
+                in apply frame head [] children
+                  ConstructionApplication children end
+            in fn arguments => no_arguments arguments value end
           else if head = "@var" then
             let
               val token = get_token ()
@@ -3355,6 +3424,29 @@ local
               in construction_apply_qualified backend frame occurrence function
               end
             end
+          else if head = "@const" then
+            let
+              val (typed,tokens) = cpc_const_sort_operand
+                (#type_symbol_key cfg) tydict get_token
+              val _ = unread tokens
+              val value = if typed then
+                let
+                  val number = term frame
+                  val ty = parse_type_with_key (#type_symbol_key cfg)
+                    get_token tydict
+                  val _ = expect ")"
+                  val marker = B.variable backend frame
+                    SmtReplayGraph.Generated ("@cpc.sort",ty)
+                  val metadata = occurrence frame
+                    (SOME (C.variable (Term.mk_var ("@cpc.sort",ty))))
+                    marker ConstructionAtom "@cpc.sort" []
+                in apply frame head [] [number,metadata]
+                  ConstructionApplication [number] end
+              else
+                let val children = operands frame []
+                in apply frame head [] children
+                  ConstructionApplication children end
+            in fn arguments => no_arguments arguments value end
           else if head = "@var" then
             let
               val token = get_token ()

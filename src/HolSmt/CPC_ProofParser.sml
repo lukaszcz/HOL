@@ -2425,7 +2425,7 @@ local
         else if head = "match" orelse head = "par" then
           UnavailableProvenance
             ("unsupported binding form " ^ head)
-        else if head = "@var" then AtomicProvenance
+        else if head = "@var" orelse head = "@const" then AtomicProvenance
         else exact_application head
           (List.map (provenance_of_raw_in environment) operands)
     | RawList entries =>

@@ -984,6 +984,43 @@ struct
           (length free=1 andalso PV.key context (hd free)=
             PV.key context marker) end)) end
 
+  fun typed_private_constants () = owned (fn original =>
+    let
+      val ty = ``:bool option``
+      val sort = Redblackmap.find (types original,ty)
+      val text = "((declare-const " ^ sort ^ " Int) " ^
+        "(assume @a (= (@const 0 " ^ sort ^ ") (@const 0 " ^ sort ^ "))))"
+      fun inventory (e:env) =
+        require "typed constant leaked its sort metadata allocation"
+          (case !(#private_atoms e) of [(term,"@cpc.const.0")] =>
+             Type.compare (Term.type_of term,ty)=EQUAL | _ => false)
+      fun root (proof:'a C.constructed_graph_proof) =
+        case #commands proof of [C.GraphAssume (_,value)] => #node value
+          | _ => raise Fail "typed constant assumption changed"
+    in List.app (fn route =>
+      test ("emitted @const sort wins term collision / " ^ route_name route)
+        (fn () => case route of
+          Value => with_value text (fn e => fn current =>
+            let val context = #context current
+                val variables = PV.free_variables context
+                  (root (#proof current))
+            in inventory e;
+               require "sort marker leaked into Value root variables"
+                 (case variables of [variable] =>
+                   Type.compare (PV.type_of context variable,ty)=EQUAL
+                   | _ => false);
+               compare_commands (small_value e context)
+                 (legacy e text) (#proof current) end)
+        | _ => with_native route text (fn e => fn proof =>
+            (inventory e;
+             require "sort marker leaked into graph root variables"
+               (case G.free_variable_nodes (#graph e) (root proof) of
+                  SOME [variable] =>
+                    Type.compare (G.type_of (#graph e) variable,ty)=EQUAL
+                | _ => false);
+             compare_commands (small_graph e) (legacy e text) proof)))) routes
+    end)
+
   fun testers () = owned (fn e =>
     let
       val declarations = SmtLib.parser_datatype_declarations_from_types
@@ -1210,7 +1247,7 @@ struct
          ("function sort","(-> (_ BitVec 1) (_ BitVec 1))",
           ["@cpc.BitVec","@cpc.->"],["@cpc.->"]),
          ("const discards sort operand","(@const 0 (_ BitVec 1))",
-          ["@cpc.BitVec","@cpc.const.0"],["@cpc.const.0"])]
+          ["@cpc.const.0"],["@cpc.const.0"])]
       val _ = List.app (fn name => List.app (fn source => single
         (name ^ (if source="" then " fresh" else " source-indexed"),
          "(" ^ name ^ " (_ BitVec 1)" ^ source ^ ")",
@@ -2525,6 +2562,9 @@ struct
       val _ = private_quantifier_capture ()
       val _ = private_dependencies ()
       val _ = argument_resource_failure ()
+      val _ = typed_private_constants ()
+      val _ = negative "truncated registered private constant first error"
+        "((assume @a (= (@const task35_missing_arg (-> Bool"
       val _ = test "actual emitted datatype tester fixtures" testers
       (* All registry entries must reject missing/extra arguments through
          the native authoritative callback, not a graph-only catch-all. *)
