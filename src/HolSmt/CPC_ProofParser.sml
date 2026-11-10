@@ -5132,8 +5132,7 @@ in
         case cpc_semantic_token marked of
           "_" =>
             let val name = next () in
-              if marked = "_" andalso
-                 (name = "BitVec" orelse name = "FloatingPoint") then
+              if marked = "_" andalso cpc_indexed_identifier name then
                 emit "_" (literal name (data_tail continuation))
               else emit "@" (fn () =>
                 term_from name (terms continuation))
