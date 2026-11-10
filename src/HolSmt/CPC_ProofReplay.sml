@@ -2886,11 +2886,12 @@ local
         else if Term.aconv (Thm.concl right) boolSyntax.F then right
         else if is_reflexive_boolean_equality right then
           retain_support left right
-        else if is_reflexive_boolean_equality left then
-          retain_support right left
         else
           (Thm.EQ_MP right left
            handle Feedback.HOL_ERR _ =>
+           if is_reflexive_boolean_equality left then
+             retain_support right left
+           else
              (Thm.EQ_MP (Thm.SYM right) left
               handle Feedback.HOL_ERR _ =>
                 (Thm.EQ_MP left right
@@ -2944,13 +2945,14 @@ local
       else if is_reflexive_boolean_equality right andalso
               occurrence_reflexive right_step then
         (retain_support left right, step_provenance left_step)
-      else if is_reflexive_boolean_equality left andalso
-              occurrence_reflexive left_step then
-        (retain_support right left, step_provenance right_step)
       else
         ((Thm.EQ_MP right left,
           equality_side_provenance 1 (step_provenance right_step))
          handle Feedback.HOL_ERR _ =>
+         if is_reflexive_boolean_equality left andalso
+            occurrence_reflexive left_step then
+           (retain_support right left, step_provenance right_step)
+         else
            ((Thm.EQ_MP (Thm.SYM right) left,
              equality_side_provenance 0 (step_provenance right_step))
             handle Feedback.HOL_ERR _ =>
@@ -7158,7 +7160,9 @@ local
   fun replay_arrays_select_const args =
     case args of
       [target] => Tactical.TAC_PROOF (([], target),
-        bossLib.SIMP_TAC boolSimps.bool_ss [])
+        bossLib.SIMP_TAC boolSimps.bool_ss
+          [pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+           combinTheory.K_THM])
     | _ => raise ERR "arrays-select-const" "expected one equality"
 
   (* Compact CPC omits the conclusion of the read-over-write rules and gives
@@ -18467,6 +18471,71 @@ local
                   (description ^
                    " congruence lacks one exact source occurrence")
             end
+      (* A congruence under a binder block with one body equation is the
+         kernel's binder lift of that equation.  A canonicalizing fallback
+         may instead return the body's normal form, which later steps do
+         not mention; keep the lift, with the source's occurrence structure
+         around the premise's right-hand side, in that case. *)
+      fun binder_cong_result () =
+        case (conclusion, located_args, premise_steps) of
+          (NONE, [source], [premise_step]) =>
+            let
+              val premise = step_theorem premise_step
+              val body = boolSyntax.lhs (Thm.concl premise)
+              val right_provenance =
+                case step_provenance premise_step of
+                  EqualityProvenance (_, right) => right
+                | _ => UnavailableProvenance
+                    "binder congruence premise lacks equality provenance"
+              fun dest_binder term =
+                if boolSyntax.is_forall term then
+                  (Drule.FORALL_EQ, boolSyntax.dest_forall term)
+                else if boolSyntax.is_exists term then
+                  (Drule.EXISTS_EQ, boolSyntax.dest_exists term)
+                else raise ERR "cong" "no binder block over the premise"
+              (* Lift through [count] binders of [term]; [inner] lifts the
+                 body left after them. *)
+              fun under count term inner =
+                if count = 0 then inner term
+                else
+                  let
+                    val (bound, (variable, rest)) = dest_binder term
+                    val (theorem, provenance) = under (count - 1) rest inner
+                  in (bound variable theorem, provenance) end
+              fun lift term provenance =
+                if Term.aconv term body then (premise, right_provenance)
+                else
+                  case provenance of
+                    BinderProvenance (head, inner) =>
+                      Lib.apsnd (fn inner' => BinderProvenance (head, inner'))
+                        (under 1 term (fn rest => lift rest inner))
+                  | BinderBlockProvenance (head, size, inner) =>
+                      Lib.apsnd (fn inner' =>
+                          BinderBlockProvenance (head, size, inner'))
+                        (under size term (fn rest => lift rest inner))
+                  | _ =>
+                      Lib.apsnd (fn _ => UnavailableProvenance
+                          "binder congruence source lacks binder provenance")
+                        (under 1 term (fn rest => lift rest provenance))
+              val _ = boolSyntax.is_forall (#term source) orelse
+                boolSyntax.is_exists (#term source) orelse
+                raise ERR "cong" "source is not a binder block"
+              val (theorem, right) = lift (#term source) (#provenance source)
+            in
+              exact_result (EqualityProvenance (#provenance source, right))
+                theorem
+            end
+        | _ => raise ERR "cong" "not a unary binder congruence"
+      fun binder_checked_cong_result fallback =
+        let val result = fallback () in
+          case Lib.total binder_cong_result () of
+            NONE => result
+          | SOME lifted =>
+              if Term.aconv (Thm.concl (result_theorem result))
+                   (Thm.concl (result_theorem lifted))
+              then result
+              else lifted
+        end
       fun canonical_cong_result () =
         canonical_cong_result_with SmtReplayCanon.cpc_canon_conv
           "canonical"
@@ -18948,7 +19017,8 @@ local
                      (require_declared "cong"
                        (replay_cong conclusion args prems)))
                 handle Feedback.HOL_ERR direct_error =>
-                  (canonical_cong_result ()
+                  (binder_checked_cong_result (fn () =>
+                   canonical_cong_result ()
                    handle Feedback.HOL_ERR canonical_error =>
                      (integer_spelling_cong_result ()
                       handle Feedback.HOL_ERR spelling_error =>
@@ -18998,7 +19068,7 @@ local
                                  Feedback.message_of spelling_error ^
                                  "; strong: " ^
                                  Feedback.message_of strong_error)
-                                (reducing_cong ())))))))
+                                (reducing_cong ()))))))))
            | "ho_cong" => opaque ( replay_ho_cong prems)
            | "beta_reduce" => opaque ( replay_beta_reduce args)
            | "lambda_elim" => opaque ( replay_lambda_elim args)
@@ -19716,11 +19786,13 @@ local
           combinSyntax.mk_K_1 (boolSyntax.F, element)),
          (pred_setSyntax.mk_univ element,
           combinSyntax.mk_K_1 (boolSyntax.T, element))]
+      val diff_applied = Rewrite.PURE_REWRITE_RULE
+        [pred_setTheory.SPECIFICATION] pred_setTheory.IN_DIFF
     in
       Conv.QCONV (Conv.THENC
         (Rewrite.PURE_REWRITE_CONV
            (pred_setTheory.SPECIFICATION :: pred_setTheory.SUBSET_applied ::
-            equations),
+            diff_applied :: equations),
          Conv.DEPTH_CONV Thm.BETA_CONV))
     end)
 
@@ -19729,7 +19801,8 @@ local
       combinSyntax.is_update_comb tm orelse combinSyntax.is_K_1 tm orelse
       pred_setSyntax.is_in tm orelse pred_setSyntax.is_insert tm orelse
       pred_setSyntax.is_delete tm orelse pred_setSyntax.is_empty tm orelse
-      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm)) term
+      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm orelse
+      pred_setSyntax.is_diff tm)) term
 
   (* cvc5's preprocessing can expose canonical arithmetic spellings, record
      and datatype eliminators, and FP bit representations in a proof
@@ -19771,6 +19844,13 @@ local
           val conv = Susp.force array_set_echo_conv
           val hyp_eq = conv hyp
           val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
+          (* The translation's definition of a fresh set constant, mapped
+             back to the set it names, is an identity once both sides are
+             in array form. *)
+          fun identity () =
+            Drule.EQT_ELIM (Conv.QCONV (Conv.EVERY_CONV
+              [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
+               Rewrite.REWRITE_CONV []]) hyp)
           fun match assumption =
             let
               val normalized_assumption =
@@ -19784,7 +19864,8 @@ local
               Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
             end
         in
-          Lib.tryfind match context
+          identity () handle Feedback.HOL_ERR _ =>
+            Lib.tryfind match context
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
