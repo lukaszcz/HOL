@@ -114,18 +114,6 @@ rejected.  Equivalent nonreserved spellings such as `@p` and `|@p|` share one
 key for uniqueness, scope, premise lookup, normalized scoped reuse, and replay.
 Quoted reserved-symbol spellings retain their distinct symbol identity.
 
-CPC higher-order `(_ f x)` applications are accepted recursively in proof
-conclusions and arguments, including congruence sources. Indexed sort markers,
-literals and operator heads retain their SMT-LIB interpretation.
-
-CPC `@const` sort operands use the sort dictionary, including source datatypes
-and proof-local declared sorts. Purification equalities involving these fresh
-constants remain exact proof obligations across scope pops. Replay instantiates
-fresh constants with kernel `INST` and removes reflexive obligations with `REFL`;
-any remaining obligation still needs a checked proof before the final hypothesis
-audit accepts the result. Variables in the original goal or assumptions are
-never instantiated by this closure.
-
 CPC accepts exactly one outer proof wrapper and requires true EOF immediately
 after its close; a second wrapper and every other trailing token are errors.
 Unsupported entries bypass only HOL elaboration of unknown symbols.  A
@@ -181,11 +169,6 @@ Sets and Z3-only sequence higher-order operators; cvc5 1.3.4 has native
 finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
 `seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4 (it is
 a parser-side alias only: the printer always emits `seq.foldl`).
-
-In cvc5's Array fallback, collection carriers propagate through conditionals,
-let bindings, and shared function arguments and results. Array-valued datatype
-selectors use unary uninterpreted functions, and constructors with Array-valued
-arguments use the UF abstraction. Checked replay reconstructs the HOL selectors.
 
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
@@ -286,10 +269,6 @@ Definitions for translator-emitted operators are selected from the exact
 `EncodedSymbol` records of the current translation, never from constant
 names.  In particular, `bvcomp` replay unfolds its recorded definition and
 then uses the general word decision procedures.
-CPC word replay also checks whole extraction, extraction through a binary
-concatenation, constant logical shifts, and bitwise slicing. Slicing and
-identity-mask steps keep arithmetic operands schematic. Quantified word
-complement elimination is re-proved from complement involution.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
@@ -431,9 +410,6 @@ native datatypes are related to parser case form by kernel-proved
 normalization.  For partial destructors, constructor branches not fixed by the
 registered theorem retain the original constructor-headed value; they are not
 silently identified with the parser selector's chosen `ARB` interpretation.
-Residual destructors and unknown constants over native datatype sorts are
-abstracted as uninterpreted functions.  This abstraction preserves `unsat`
-proofs, but a `sat` verdict need not be a countermodel to the HOL goal.
 
 Trusted-code-base boundary and soundness audit:
 
@@ -677,16 +653,6 @@ Z3 th-lemma replay coverage:
               Z3 version; observed fpa2bv     checked SmtFpProve ladder;
               ground/atom/bit shapes          no occurrence is claimed
 
-Nonlinear integer replay substitutes numeral equalities proved from opposing
-bounds before SOS certificate search. CPC arithmetic rewrites include both
-maximum lower bounds, arith-max-geq1 and arith-max-geq2.
-Integer polynomial normalization removes negative zero introduced by
-subtraction aliases; transitivity normalizes integer relation spellings
-before searching for an equality bridge. Shared antecedents use the same
-DAG normalization for modus ponens. Numeric conditionals remain opaque
-through linear and nonlinear arithmetic before branch expansion; congruence
-preserves immediate child positions, including reflexive premises.
-
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.
 
@@ -717,7 +683,16 @@ heap and drivers with:
   bin/Holmake -C src/HolSmt
 
 The external validation runner should invoke the drivers directly through
-the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
+the own-build `smtreplayheap`, as do the Holmake selftest shards. On Poly/ML,
+`.uo` files are source-loading manifests: starting from `smtheap` recompiles
+the replay libraries in every process. Build `smtreplayheap` incrementally
+in each tree/kernel; never copy a heap from another build. It preloads only
+libraries, not solver entry points, workload goals or completed replay
+contexts. Solver executable/version detection still runs in the consumer.
+For performance comparisons, report heap preparation separately from the
+complete fresh consumer process (including restoration, solver execution
+and all checks); source-build-plus-first-use cost is not deployment cost.
+From `src/HolSmt`, the typechecker command is equivalent to:
 
   extra=$(printf '%s\n%s' "$input" "$logic")
   "$HOL4_ROOT/bin/hol" --gcthreads=1 run \

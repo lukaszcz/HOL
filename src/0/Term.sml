@@ -228,201 +228,34 @@ val empty_varset = HOLset.empty var_compare
 
 fun fast_term_eq (t1:term) (t2:term) = Portable.pointer_eq (t1,t2)
 
-(* Constant-work index hints for identity caches.  Sampling operand paths
-   reaches beyond homogeneous application prefixes without unfolding DAGs.
-   Closures stay opaque, and exact pointer/depth checks resolve every hit. *)
-fun pointer_bucket depth modulus root =
-  let
-    fun string_hash name = CharVector.foldl
-      (fn (character, hash) =>
-        Word.+ (Word.* (hash, 0w33),
-          Word.fromInt (Char.ord character))) 0w17 name
-    fun head term =
-      case term of
-        Fv (name, _) => string_hash name
-      | Bv index => Word.fromInt index
-      | Const (id, _) => Word.fromInt (KernelSig.epoch_of id)
-      | Comb _ => 0w17
-      | Abs _ => 0w19
-      | Clos _ => 0w23
-    fun sample 0 _ term = head term
-      | sample depth first term =
-          case term of
-            Comb (operator, operand) =>
-              let val child =
-                case (first, operator) of
-                  (true, Comb (_, argument)) => argument
-                | _ => operand
-              in Word.+ (Word.* (head operator, 0w37),
-                Word.+ (Word.* (0w17, sample (depth - 1) first child),
-                  0w29)) end
-          | Abs (_, body) =>
-              Word.+ (Word.* (0w41, sample (depth - 1) first body), 0w31)
-          | _ => head term
-    (* The two sampled paths have the same prefix in unary applications,
-       abstractions and physically shared operands.  Traverse that prefix
-       once, retaining exactly the same pair of hints as separate sampling. *)
-    fun samples 0 term = let val code = head term in (code, code) end
-      | samples depth (Comb (operator, operand)) =
-          let
-            val first = case operator of
-                Comb (_, argument) => argument | _ => operand
-            val (left, right) = if fast_term_eq first operand then
-                samples (depth - 1) operand
-              else (sample (depth - 1) true first,
-                    sample (depth - 1) false operand)
-            val prefix = Word.+ (Word.* (head operator, 0w37), 0w29)
-            fun mix code = Word.+ (prefix, Word.* (0w17, code))
-          in (mix left, mix right) end
-      | samples depth (Abs (_, body)) =
-          let
-            val (left, right) = samples (depth - 1) body
-            fun mix code = Word.+ (Word.* (0w41, code), 0w31)
-          in (mix left, mix right) end
-      | samples _ term = let val code = head term in (code, code) end
-    val (left, right) = samples (Int.max (0, depth)) root
-  in Word.toInt (Word.mod
-    (Word.+ (Word.* (0w37, left), right),
-     Word.fromInt modulus)) end
-
-val raw_pointer_bucket = pointer_bucket 4
-
-(* Only recursive comparisons can revisit a shared subgraph.  Comparing
-   leaves or different non-closure constructors is already constant work;
-   hashing and retaining those pairs cannot avoid a recursive traversal. *)
-fun recursive_pair (Comb _, Comb _) = true
-  | recursive_pair (Abs _, Abs _) = true
-  | recursive_pair (Clos _, _) = true
-  | recursive_pair (_, Clos _) = true
-  | recursive_pair _ = false
-
-(* Operation-local identity tables start small and grow with their retained
-   states.  Tiny conversions must not allocate thousands of empty buckets.
-   Growth changes indexing only; the supplied exact key check decides hits.
-   Retain each computed hint across insertion and growth.  In particular,
-   [memo] samples a missed key once, not again after recursive computation. *)
-fun new_identity_cache maximum hash equal =
-  let
-    val table = ref NONE
-    val count = ref 0
-    fun find (key, hint) =
-      case !table of
-        NONE => NONE
-      | SOME buckets =>
-          let
-            fun seek [] = NONE
-              | seek ((saved, _, value) :: rest) =
-                  if equal (key, saved) then SOME value else seek rest
-          in seek (Array.sub (buckets, hint mod Array.length buckets)) end
-    fun retain (key, hint) value =
-      let
-        val current = case !table of
-            SOME buckets => buckets
-          | NONE => Array.array (Int.min (32, maximum), [])
-        val capacity = Array.length current
-        val buckets =
-          if capacity < maximum andalso !count >= 2 * capacity then
-            let
-              val grown = Array.array (Int.min (maximum, 2 * capacity), [])
-              fun reindex (entry as (_, hint, _)) =
-                let val bucket = hint mod Array.length grown in
-                  Array.update (grown, bucket,
-                    entry :: Array.sub (grown, bucket))
-                end
-              val _ = Array.app (List.app reindex) current
-            in grown end
-          else current
-        val bucket = hint mod Array.length buckets
-        val _ = Array.update (buckets, bucket,
-          (key, hint, value) :: Array.sub (buckets, bucket))
-      in table := SOME buckets; count := !count + 1 end
-    fun lookup key = find (key, hash key)
-    fun save key value = retain (key, hash key) value
-    fun memo key compute =
-      let val prepared = (key, hash key) in
-        case find prepared of
-          SOME value => value
-        | NONE =>
-            let val value = compute ()
-            in retain prepared value; value end
-      end
-  in {lookup = lookup, save = save, memo = memo} end
-
 fun compare (t1,t2) =
-  if fast_term_eq t1 t2 then EQUAL
-  else
-    let
-      val bucket_count = 4093
-      val term_hash = raw_pointer_bucket bucket_count
-      fun cache_index (left, right) =
-        (term_hash left * 37 + term_hash right) mod bucket_count
-      val {memo, ...} = new_identity_cache bucket_count cache_index
-        (fn ((left, right), (saved_left, saved_right)) =>
-          fast_term_eq left saved_left andalso fast_term_eq right saved_right)
-      fun cmp depth left right =
-        if fast_term_eq left right then EQUAL
-        else if depth < 8 orelse not (recursive_pair (left, right)) then
-          compute (depth + 1) left right
-        else
-          memo (left, right) (fn () => compute (depth + 1) left right)
-      and compute depth left right =
-        case (left,right) of
-          (left as Clos _, right) => cmp depth (push_clos left) right
-        | (left, right as Clos _) => cmp depth left (push_clos right)
-        | (u as Fv _, v as Fv _) => var_compare (u,v)
-        | (Fv _, _) => LESS
-        | (Bv _, Fv _) => GREATER
-        | (Bv i, Bv j) => Int.compare (i,j)
-        | (Bv _, _) => LESS
-        | (Const _, Fv _) => GREATER
-        | (Const _, Bv _) => GREATER
-        | (Const(c1,ty1), Const(c2,ty2)) =>
-            (case KernelSig.id_compare (c1,c2) of
-               EQUAL => Type.compare (to_hol_type ty1, to_hol_type ty2)
-             | ordering => ordering)
-        | (Const _, _) => LESS
-        | (Comb(M,N), Comb(P,Q)) =>
-            (case cmp depth M P of
-               EQUAL => cmp depth N Q
-             | ordering => ordering)
-        | (Comb _, Abs _) => LESS
-        | (Comb _, _) => GREATER
-        | (Abs(Fv(_,ty1),M), Abs(Fv(_,ty2),N)) =>
-            (case Type.compare (ty1,ty2) of
-               EQUAL => cmp depth M N
-             | ordering => ordering)
-        | (Abs _, _) => GREATER
-    in cmp 0 t1 t2 end
-
-(*---------------------------------------------------------------------------
- * Does a term contain a free variable?  Bound occurrences remain raw Bv
- * nodes below abstractions.  A balanced structural set preserves sharing;
- * structurally equal nodes necessarily have the same answer.                *
- *---------------------------------------------------------------------------*)
-
-fun has_free_vars tm =
-    let
-      fun scan ([], _) = false
-        | scan (t::ts, seen) =
-            if HOLset.member(seen,t) then scan (ts,seen)
-            else if is_var t then true
-            else
-              case t of
-                (* [compare] normalizes closures, so recording the closure
-                   before its expansion would make the expansion appear to
-                   have been visited already. *)
-                Clos _ => scan (push_clos t::ts,seen)
-              | _ =>
-                  let val seen = HOLset.add(seen,t)
-                  in
-                    case t of
-                        Comb(f,x) => scan (f::x::ts,seen)
-                      | Abs(_,body) => scan (body::ts,seen)
-                      | _ => scan (ts,seen)
-                  end
-    in
-      scan ([tm], HOLset.empty compare)
-    end
+    if fast_term_eq t1 t2 then EQUAL else
+    case (t1,t2) of
+      (t1 as Clos _, t2)     => compare (push_clos t1, t2)
+    | (t1, t2 as Clos _)     => compare (t1, push_clos t2)
+    | (u as Fv _, v as Fv _) => var_compare (u,v)
+    | (Fv _, _)              => LESS
+    | (Bv _, Fv _)           => GREATER
+    | (Bv i, Bv j)           => Int.compare (i,j)
+    | (Bv _, _)              => LESS
+    | (Const _, Fv _)        => GREATER
+    | (Const _, Bv _)        => GREATER
+    | (Const(c1,ty1),
+       Const(c2,ty2))        => (case KernelSig.id_compare (c1, c2)
+                                  of EQUAL => Type.compare (to_hol_type ty1,
+                                                            to_hol_type ty2)
+                                   | x => x)
+    | (Const _, _)           => LESS
+    | (Comb(M,N),Comb(P,Q))  => (case compare (M,P)
+                                  of EQUAL => compare (N,Q)
+                                   | x => x)
+    | (Comb _, Abs _)        => LESS
+    | (Comb _, _)            => GREATER
+    | (Abs(Fv(_, ty1),M),
+       Abs(Fv(_, ty2),N))    => (case Type.compare(ty1,ty2)
+                                  of EQUAL => compare (M,N)
+                                   | x => x)
+    | (Abs _, _)             => GREATER;
 
 val empty_tmset = HOLset.empty compare
 fun term_eq t1 t2 = compare(t1,t2) = EQUAL
@@ -460,145 +293,6 @@ fun FVL [] A = A
   | FVL (Abs(_,Body)::rst) A      = FVL (Body::rst) A
   | FVL ((t as Clos _)::rst) A    = FVL (push_clos t::rst) A
   | FVL (_::rst) A                = FVL rst A
-
-local
-exception TreeComplete of term HOLset.set
-in
-(* [FVL_dag] has the same result as [FVL].  It cooperatively advances the
-   ordinary tree visitor while computing an intrinsic summary for each
-   physically shared node once per operation.  A summary contains
-   both free variables and the de Bruijn indices that remain free at that
-   node.  This lets [Clos] inspect only indices actually referenced by its
-   body, through [Subst.exp_rel], without expanding an explicit substitution.
-
-   A bounded structural hash partitions the identity cache without expanding
-   closures.  Hash collisions are resolved by pointer equality, so the hash
-   cannot affect the result.  One resumable tree step runs at lookup start
-   and before every pointer comparison, preventing even a collision-heavy
-   cache from starving an ordinary tree traversal.  The first visitor to
-   finish supplies the exact result.  Set operations, closure work, and
-   pointer steps do not have a claimed constant-time bound. *)
-fun FVL_dag roots initial =
-  let
-    type summary = {fvs : term HOLset.set, bvs : int HOLset.set}
-    datatype action = Visit of term
-      | FinishComb of term * term * term
-      | FinishAbs of term * term
-      | PrepareClos of term * term Subst.subs * term
-      | FinishClos of term * term * int list * (int * term) list
-    val empty_indices = HOLset.empty Int.compare
-    val bucket_count = 4093
-    val term_hash = raw_pointer_bucket bucket_count
-    val tree_pending = ref roots
-    val tree_free = ref initial
-    fun tree_step () =
-      case !tree_pending of
-        [] => raise TreeComplete (!tree_free)
-      | term :: pending =>
-          (case term of
-             Fv _ =>
-               (tree_pending := pending;
-                tree_free := HOLset.add (!tree_free, term))
-           | Comb (operator, operand) =>
-               tree_pending := operator :: operand :: pending
-           | Abs (_, body) => tree_pending := body :: pending
-           | Clos _ => tree_pending := push_clos term :: pending
-           | _ => tree_pending := pending)
-    val {lookup = find_summary, save, ...} =
-      new_identity_cache bucket_count term_hash
-        (fn (term, prior) =>
-          (tree_step (); Portable.pointer_eq (term, prior)))
-    fun lookup term = (tree_step (); find_summary term)
-    fun completed term =
-      case lookup term of
-        SOME summary => summary
-      | NONE => raise Fail "Term.FVL_dag: incomplete traversal"
-    fun union_summary ({fvs = left_fvs, bvs = left_bvs},
-        {fvs = right_fvs, bvs = right_bvs}) =
-      {fvs = HOLset.union (left_fvs, right_fvs),
-       bvs = HOLset.union (left_bvs, right_bvs)}
-    fun under_abs index = if index = 0 then NONE else SOME (index - 1)
-    fun close_index environment (index, (direct, residues)) =
-      case Subst.exp_rel (environment, index) of
-        (shift, NONE) => (shift :: direct, residues)
-      | (shift, SOME residue) => (direct, (shift, residue) :: residues)
-    fun add_shift shift (index, indices) =
-      HOLset.add (indices, index + shift)
-    fun add_residue ((shift, residue), summary) =
-      let val residue_summary = completed residue in
-        {fvs = HOLset.union (#fvs summary, #fvs residue_summary),
-         bvs = HOLset.foldl (add_shift shift) (#bvs summary)
-           (#bvs residue_summary)}
-      end
-    fun loop [] = ()
-      | loop (Visit term :: pending) =
-          if Option.isSome (lookup term) then loop pending
-          else
-            (case term of
-               Fv _ =>
-                 (save term
-                    {fvs = HOLset.add (empty_tmset, term),
-                     bvs = empty_indices};
-                  loop pending)
-             | Bv index =>
-                 (save term
-                    {fvs = empty_tmset,
-                     bvs = HOLset.add (empty_indices, index)};
-                  loop pending)
-             | Const _ =>
-                 (save term {fvs = empty_tmset, bvs = empty_indices};
-                  loop pending)
-             | Comb (operator, operand) =>
-                 loop (Visit operator :: Visit operand ::
-                   FinishComb (term, operator, operand) :: pending)
-             | Abs (_, body) =>
-                 loop (Visit body :: FinishAbs (term, body) :: pending)
-             | Clos (environment, body) =>
-                 loop (Visit body ::
-                   PrepareClos (term, environment, body) :: pending))
-      | loop (FinishComb (term, operator, operand) :: pending) =
-          (save term (union_summary
-             (completed operator, completed operand));
-           loop pending)
-      | loop (FinishAbs (term, body) :: pending) =
-          let
-            val body_summary = completed body
-            val indices = HOLset.foldl
-              (fn (index, result) =>
-                case under_abs index of
-                  SOME outer => HOLset.add (result, outer)
-                | NONE => result)
-              empty_indices (#bvs body_summary)
-          in
-            save term {fvs = #fvs body_summary, bvs = indices};
-            loop pending
-          end
-      | loop (PrepareClos (term, environment, body) :: pending) =
-          let
-            val (direct, residues) = HOLset.foldl
-              (close_index environment) ([], []) (#bvs (completed body))
-          in
-            loop (List.map (Visit o Lib.snd) residues @
-              FinishClos (term, body, direct, residues) :: pending)
-          end
-      | loop (FinishClos (term, body, direct, residues) :: pending) =
-          let
-            val body_summary = completed body
-            val base =
-              {fvs = #fvs body_summary,
-               bvs = HOLset.addList (empty_indices, direct)}
-          in
-            save term (List.foldl add_residue base residues);
-            loop pending
-          end
-    val () = loop (List.map Visit roots)
-    fun add_variable (variable, free) = HOLset.add (free, variable)
-    fun add_root (root, free) =
-      HOLset.foldl add_variable free (#fvs (completed root))
-  in
-    List.foldl add_root initial roots
-  end handle TreeComplete result => result
-end
 
 
 (* ----------------------------------------------------------------------
@@ -840,35 +534,17 @@ local
   fun EQ(t1,t2) = fast_term_eq t1 t2
   fun subsEQ(s1,s2) = s1 = s2
 in
-fun aconv t1 t2 =
-  if EQ (t1, t2) then true else
-  let
-    val bucket_count = 4093
-    val term_hash = raw_pointer_bucket bucket_count
-    fun pair_hash (left, right) =
-      (term_hash left * 37 + term_hash right) mod bucket_count
-    val {memo, ...} = new_identity_cache bucket_count pair_hash
-      (fn ((left, right), (saved_left, saved_right)) =>
-        EQ (left, saved_left) andalso EQ (right, saved_right))
-    fun compare depth left right =
-      if EQ(left,right) then true
-      else if depth < 8 orelse not (recursive_pair (left, right)) then
-        compute (depth + 1) left right
-      else
-        memo (left, right) (fn () => compute (depth + 1) left right)
-    and compute depth left right =
-      case (left,right) of
-        (Comb(M,N),Comb(P,Q)) =>
-          compare depth N Q andalso compare depth M P
-      | (Abs(Fv(_,ty1),M), Abs(Fv(_,ty2),N)) =>
-          ty1=ty2 andalso compare depth M N
-      | (Clos(e1,b1), Clos(e2,b2)) =>
-          (subsEQ(e1,e2) andalso EQ(b1,b2)) orelse
-          compare depth (push_clos left) (push_clos right)
-      | (Clos _, _) => compare depth (push_clos left) right
-      | (_, Clos _) => compare depth left (push_clos right)
-      | (M,N) => M=N
-  in compare 0 t1 t2 end
+fun aconv t1 t2 = EQ(t1,t2) orelse
+ case(t1,t2)
+  of (Comb(M,N),Comb(P,Q)) => aconv N Q andalso aconv M P
+   | (Abs(Fv(_,ty1),M),
+      Abs(Fv(_,ty2),N)) => ty1=ty2 andalso aconv M N
+   | (Clos(e1,b1),
+      Clos(e2,b2)) => (subsEQ(e1,e2) andalso EQ(b1,b2))
+                       orelse aconv (push_clos t1) (push_clos t2)
+   | (Clos _, _) => aconv (push_clos t1) t2
+   | (_, Clos _) => aconv t1 (push_clos t2)
+   | (M,N)       => (M=N)
 end;
 
 
@@ -878,40 +554,11 @@ end;
 
 fun beta_conv (Comb(Abs(_,Body), Bv 0)) = Body
   | beta_conv (Comb(Abs(_,Body), Rand)) =
-     let
-       datatype beta_result = Unchanged | Changed of term
-       val bucket_count = 4093
-       fun cache_index (tm, depth) =
-         (raw_pointer_bucket bucket_count tm * 37 + depth) mod bucket_count
-       val {memo, ...} = new_identity_cache bucket_count cache_index
-         (fn ((tm, depth), (saved, saved_depth)) =>
-           depth = saved_depth andalso fast_term_eq tm saved)
-       fun finish tm Unchanged = tm
-         | finish _ (Changed result) = result
-       fun subs (tm as Bv index, depth) =
-             if index = depth then Rand else tm
-         | subs (tm as Fv _, _) = tm
-         | subs (tm as Const _, _) = tm
-         | subs (key as (tm, depth)) =
-         finish tm (memo key (fn () =>
-             case tm of
-                Comb(Rator,Operand) =>
-                  let
-                    val Rator' = subs (Rator, depth)
-                    val Operand' = subs (Operand, depth)
-                  in
-                    if fast_term_eq Rator Rator' andalso
-                       fast_term_eq Operand Operand' then Unchanged
-                    else Changed (Comb(Rator', Operand'))
-                  end
-              | Abs(variable,body) =>
-                  let val body' = subs (body, depth + 1)
-                  in
-                    if fast_term_eq body body' then Unchanged
-                    else Changed (Abs(variable, body'))
-                  end
-              | tm as Clos _ => Changed (subs (push_clos tm, depth))
-              | _ => Unchanged))
+     let fun subs((tm as Bv j),i)     = if i=j then Rand else tm
+           | subs(Comb(Rator,Rand),i) = Comb(subs(Rator,i),subs(Rand,i))
+           | subs(Abs(v,Body),i)      = Abs(v,subs(Body,i+1))
+           | subs (tm as Clos _,i)    = subs(push_clos tm,i)
+           | subs (tm,_) = tm
      in
        subs (Body,0)
      end
@@ -969,75 +616,24 @@ local
 in
 fun subst [] = I
   | subst theta =
-    let
-      (* Large simultaneous substitutions can retain a broad graph.  Give
-         their identity cache more buckets; both sizes use bounded raw keys. *)
-      val large_substitution = List.length theta > 256
-      val (fmap,b) = addb theta (emptysubst, true)
-      fun apply root =
-        let
-          datatype subst_result = Unchanged | Changed of term
-          (* Portable ML provides pointer equality without a pointer hash.
-             A bounded syntax hash distinguishes homogeneous Boolean graphs
-             whose roots all have the same operator.  Collisions are harmless
-             because pointer identity remains the decisive cache key. *)
-          val bucket_count = if large_substitution then 16381 else 4093
-          val cache_index = raw_pointer_bucket bucket_count
-          val {memo, ...} = new_identity_cache bucket_count cache_index
-            (fn (tm, saved) => fast_term_eq tm saved)
-          fun finish tm Unchanged = tm
-            | finish _ (Changed result) = result
-          fun vsubs (v as Fv _) =
-                (case peek(fmap,v) of NONE => v | SOME y => y)
-            | vsubs (tm as Const _) = tm
-            | vsubs (tm as Bv _) = tm
-            | vsubs tm =
-            finish tm (memo tm (fn () =>
-                case tm of
-                   Comb(Rator,Rand) =>
-                     let val Rator' = vsubs Rator
-                         val Rand' = vsubs Rand
-                     in
-                       if fast_term_eq Rator Rator' andalso
-                          fast_term_eq Rand Rand'
-                       then Unchanged
-                       else Changed (Comb(Rator',Rand'))
-                     end
-                 | Abs(Bvar,Body) =>
-                     let val Body' = vsubs Body
-                     in if fast_term_eq Body Body' then Unchanged
-                        else Changed (Abs(Bvar,Body'))
-                     end
-                 | c as Clos _ => Changed (vsubs (push_clos c))
-                 | _ => Unchanged))
-          fun subs tm =
-            finish tm (memo tm (fn () =>
-                case peek(fmap,tm) of
-                   SOME residue =>
-                     if fast_term_eq tm residue then Unchanged
-                     else Changed residue
-                 | NONE =>
-                     (case tm of
-                        Comb(Rator,Rand) =>
-                          let val Rator' = subs Rator
-                              val Rand' = subs Rand
-                          in
-                            if fast_term_eq Rator Rator' andalso
-                               fast_term_eq Rand Rand'
-                            then Unchanged
-                            else Changed (Comb(Rator',Rand'))
-                          end
-                      | Abs(Bvar,Body) =>
-                          let val Body' = subs Body
-                          in if fast_term_eq Body Body' then Unchanged
-                             else Changed (Abs(Bvar,Body'))
-                          end
-                      | Clos _ => Changed (subs(push_clos tm))
-                      | _ => Unchanged)))
-        in
-          (if b then vsubs else subs) root
-        end
-    in apply end
+    let val (fmap,b) = addb theta (emptysubst, true)
+        fun vsubs (v as Fv _) = (case peek(fmap,v) of NONE => v | SOME y => y)
+          | vsubs (Comb(Rator,Rand)) = Comb(vsubs Rator, vsubs Rand)
+          | vsubs (Abs(Bvar,Body)) = Abs(Bvar,vsubs Body)
+          | vsubs (c as Clos _) = vsubs (push_clos c)
+          | vsubs tm = tm
+        fun subs tm =
+          case peek(fmap,tm)
+           of SOME residue => residue
+            | NONE =>
+              (case tm
+                of Comb(Rator,Rand) => Comb(subs Rator, subs Rand)
+                 | Abs(Bvar,Body) => Abs(Bvar,subs Body)
+                 | Clos _        => subs(push_clos tm)
+                 |   _         => tm)
+    in
+      (if b then vsubs else subs)
+    end
 end
 
 (*---------------------------------------------------------------------------*
@@ -1454,26 +1050,6 @@ fun size acc tlist =
         | _ => size (1 + acc) ts
       end
 fun term_size t = size 0 [t]
-
-(* Counts the same raw nodes as [term_size], but stops before the count would
-   exceed [limit].  A delayed closure is exposed one outer constructor at a
-   time; unlike [dest_abs], this never normalizes a complete abstraction
-   body. *)
-fun term_size_bounded limit root =
-  if limit < 0 then NONE
-  else
-    let
-      fun count ([], total) = SOME total
-        | count (tm :: pending, total) =
-            if total = limit then NONE
-            else
-              (case tm of
-                 Clos _ => count (push_clos tm :: pending, total)
-               | Comb (operator, operand) =>
-                   count (operator :: operand :: pending, total + 1)
-               | Abs (_, body) => count (body :: pending, total + 1)
-               | _ => count (pending, total + 1))
-    in count ([root], 0) end
 
 (*---------------------------------------------------------------------------*
  *  Raw syntax prettyprinter for terms.                                      *
