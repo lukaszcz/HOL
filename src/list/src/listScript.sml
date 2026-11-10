@@ -23,12 +23,6 @@ Libs
   boolSimps pred_setLib TotalDefn metisLib quotientLib
   Datatype[qualified] OpenTheoryMap[qualified]
 
-(* the bound is a cardinality, and cardinalityCoreTheory makes no
-   grammar of its own; this is kept to itself so that a theory
-   declaring a datatype does not inherit the notation *)
-Overload "<<="[local] = “cardleq”
-
-
 val ERR = mk_HOL_ERR "listScript"
 
 val arith_ss = bool_ss ++ numSimps.ARITH_ss ++ numSimps.REDUCE_ss
@@ -70,10 +64,11 @@ val PAIR_EQ      = pairTheory.PAIR_EQ;
 (* Declare the datatype of lists                                             *)
 (*---------------------------------------------------------------------------*)
 
-val _ = Datatype.Hol_datatype
-          ‘list[map=MAP[nocompute],set=LIST_TO_SET[nocompute],rel=LIST_REL,
-            size=list_size] =
-             NIL | CONS of 'a => list’;
+Datatype:
+  list[map=MAP[nocompute],set=LIST_TO_SET[nocompute],rel=LIST_REL,
+       size=list_size] =
+    NIL | CONS 'a list
+End
 
 local open OpenTheoryMap val cname = OpenTheory_const_name in
 val ns = ["Data","List"]
@@ -143,12 +138,6 @@ Definition TL_DEF[simp]:
   TL (h::t) = t
 End
 Theorem TL = CONJUNCT2 TL_DEF
-
-(* Keep the datatype metadata's destructor family complete.  Clients that
-   lower native datatype projections can then derive the family from
-   TypeBase instead of maintaining an operator-name table. *)
-val _ = TypeBase.general_update “:'a list”
-  (TypeBasePure.put_destructors [HD, TL_DEF])
 
 Definition SUM:
   SUM [] = 0 /\

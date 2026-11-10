@@ -923,8 +923,12 @@ local
            Arbint.negate (Arbint.fromNat (wordsSyntax.dest_word_literal n))
       | NONE => Arbint.fromNat (wordsSyntax.dest_word_literal t)
    fun gen_is_negative pick_word_l tm =
-      if is_known_word_size tm
-         then is_negative tm andalso (pick_word_l orelse not (is_eq_word_L tm))
+      if is_known_word_size tm then
+         (case WordCancelLiteral.classify tm of
+             SOME {negative,minimum} =>
+                negative andalso (pick_word_l orelse not minimum)
+           | NONE => is_negative tm andalso
+                (pick_word_l orelse not (is_eq_word_L tm)))
       else Arbint.<= (gen_dest_word_literal tm, Arbint.fromInt ~1)
    fun is_zero tm =
      case Lib.total gen_dest_word_literal tm of
@@ -982,7 +986,10 @@ local
      Term.compare (wordsSyntax.mk_word_mul x, wordsSyntax.mk_word_mul y)
    val is_lit_coeff = fn [r] => wordsSyntax.is_word_literal (snd r)
                        | _ => false
-   fun is_word_L_lit tm = is_word_literal tm andalso is_eq_word_L tm
+   fun is_word_L_lit tm = is_word_literal tm andalso
+      (case WordCancelLiteral.classify tm of
+          SOME {minimum,...} => minimum
+        | NONE => is_eq_word_L tm)
    fun swap_sides l =
       fn [] => false
        | r =>
