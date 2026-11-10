@@ -24864,7 +24864,9 @@ let
       ``^r > 0 /\ ^s < 0``, ``^r * ^s``,
       ``^r > 0 /\ ^s < 0 ==> ^r * ^s < 0``),
     ("nonzero real square", ``~(^s = 0)``, ``^s * ^s``,
-      ``~(^s = 0) ==> ^s * ^s > 0``)]
+      ``~(^s = 0) ==> ^s * ^s > 0``),
+    ("nonzero factor with a known sign", ``~(^c = 0) /\ ^c > 0``, ``^c``,
+      ``~(^c = 0) /\ ^c > 0 ==> ^c > 0``)]
   val () = Profile.reset_all ()
   fun check (name, factors, product, expected) =
     let val theorem = sign [factors, product]
@@ -24874,8 +24876,34 @@ let
         Library.thm_to_string theorem);
       check_oracle_tags name theorem
     end
+  (* Every nonzero factor is split into its two signs, so a product of
+     squares of many nonzero factors must be refused before the 2^n sign
+     assignments are expanded. *)
+  val derive = CPC_ProofReplay.derive_arith_mult_sign_for_test
+  fun squares n =
+    let
+      val vs = List.tabulate (n, fn i =>
+        mk_var ("z" ^ Int.toString i, intSyntax.int_ty))
+      val factors = list_mk_conj
+        (List.map (fn v => ``~(^v = 0)``) vs)
+      val product = List.foldl (fn (v, acc) => ``^acc * ^v * ^v``)
+        (let val v = hd vs in ``^v * ^v`` end) (tl vs)
+    in (factors, product) end
+  fun refused (factors, product) =
+    (derive (factors, product); false) handle HOL_ERR _ => true
+  val (factors8, product8) = squares 8
+  val (factors9, product9) = squares 9
+  val cube_factor = ``~((x:int) = 0)``
+  val cube_product = ``(x:int) * x * x``
 in
   List.app check cases;
+  assert (Thm.concl (derive (factors8, product8)) ~~
+            ``^factors8 ==> ^product8 > 0``,
+    "eight nonzero squares were not derived");
+  assert (refused (factors9, product9),
+    "nine nonzero squares were split");
+  assert (refused (cube_factor, cube_product),
+    "a nonzero cube was derived");
   assert (profile_call_count "CPC(rung:arith/cases)" = 0,
     "arith_mult_sign was routed to arithmetic search")
 end

@@ -11565,6 +11565,8 @@ local
      their two signs, which must agree. *)
   datatype mult_sign = MultPositive of Thm.thm | MultNegative of Thm.thm
 
+  val max_nonzero_splits = 8
+
   fun derive_arith_mult_sign (positive_factors, product) =
     let
       val is_int = Term.type_of product = intSyntax.int_ty
@@ -11695,9 +11697,33 @@ local
       val signs = List.mapPartial
         (fn (factor, sign, _) =>
           Option.map (fn sign => (factor, sign)) sign) literals
-      val nonzero = List.mapPartial
-        (fn (factor, _, theorem) =>
-          Option.map (fn theorem => (factor, theorem)) theorem) literals
+      (* How often [factor] is read as a factor of [term] by [sign_of]. *)
+      fun occurrences factor term =
+        if Term.aconv term factor then 1
+        else if List.exists (fn (known, _) => Term.aconv known term) signs
+        then 0
+        else if is_mult term then
+          let val (left, right) = dest_mult term
+          in occurrences factor left + occurrences factor right end
+        else 0
+      (* The splits below build a proof for every assignment of signs, so
+         split only the factors that occur in the product and have no sign
+         literal, and give up before expanding when one occurs an odd number
+         of times (its two signs would give opposite signs to the product) or
+         when there are more than [max_nonzero_splits] of them. *)
+      val nonzero = List.filter
+        (fn (factor, _) =>
+          occurrences factor product > 0 andalso
+          not (List.exists (fn (known, _) => Term.aconv known factor) signs))
+        (List.mapPartial
+          (fn (factor, _, theorem) =>
+            Option.map (fn theorem => (factor, theorem)) theorem) literals)
+      val _ = List.all
+        (fn (factor, _) => occurrences factor product mod 2 = 0) nonzero
+        orelse raise ERR "arith_mult_sign"
+          "a nonzero factor leaves the product's sign open"
+      val _ = length nonzero <= max_nonzero_splits orelse
+        raise ERR "arith_mult_sign" "too many nonzero factors to split"
       val result =
         case split signs nonzero of
           MultPositive theorem =>
@@ -21933,6 +21959,9 @@ in
 
   fun replay_arith_mult_sign_for_test args =
     replay_arith_mult_sign args
+
+  fun derive_arith_mult_sign_for_test args =
+    derive_arith_mult_sign args
 
   fun instantiate_cpc_fp_private_markers theorem =
     let
