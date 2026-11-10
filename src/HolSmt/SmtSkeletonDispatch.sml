@@ -117,7 +117,9 @@ struct
       val names = procedure_names context
       val _ = if distinct names then () else
         raise ERR "analyze" "duplicate atom-procedure registry name"
-      val feature_cache = ref (Redblackmap.mkDict Term.compare)
+      val term_order = SmtSkeletonProve.new_cache_order
+        SmtResource.max_bv_replay_term_nodes
+      val feature_cache = ref (Redblackmap.mkDict term_order)
       val observed = ref 0
       fun summary term =
         case Redblackmap.peek (!feature_cache, term) of
@@ -144,8 +146,8 @@ struct
               result
             end
       val (_, target_tree_nodes) = summary target
-      val owners = ref (Redblackmap.mkDict Term.compare)
-      val skeleton_nodes = ref (HOLset.empty Term.compare)
+      val owners = ref (Redblackmap.mkDict term_order)
+      val skeleton_nodes = ref (HOLset.empty term_order)
       val has_owner = ref false
       val ambiguous = ref false
       fun select atom =
