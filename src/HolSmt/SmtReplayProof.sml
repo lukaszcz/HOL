@@ -2228,8 +2228,16 @@ struct
               visit true (#2 (Term.dest_abs term))
             else ()
           val _ = visit false term
-          val _ = if HOLset.isSubset
-              (Term.FVL [term] (HOLset.empty Term.compare), names)
+          val variables = Term.FVL [term] (HOLset.empty Term.compare)
+          (* Constructor templates mention only a few names. A merge-based
+             subset check scans the frozen name set for every such template.
+             Keep that traversal for larger sets, but look up small sets
+             directly without changing their typed membership check. *)
+          val owned = if HOLset.numItems variables <= 8 then
+              HOLset.foldl (fn (variable, valid) =>
+                valid andalso HOLset.member (names, variable)) true variables
+            else HOLset.isSubset (variables, names)
+          val _ = if owned
             then () else raise ERR "guard" "unowned compact variable"
         in () end
     in active block; List.app inspect terms end

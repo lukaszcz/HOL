@@ -66,6 +66,5 @@ useB "RawTheoryReader";
 useB "../poly/SHA1_ML";
 useB "../SHA1";
 
-useB "theoryfiles";
 useB "theorystats";
 use  "theorytool.ML";
