@@ -11578,6 +11578,36 @@ in
   check_oracle_tags "CPC disjunction tautology" theorem
 end
 
+fun cpc_bool_and_de_morgan_tail_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(step @p :rule bool-and-de-morgan :args (p q (and r))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``~(p /\ q /\ r) = (~p \/ ~(q /\ r))``,
+    "CPC conjunction De Morgan rewrite dropped its tail");
+  assert (List.null (Thm.hyp theorem),
+    "CPC conjunction De Morgan rewrite retained hypotheses");
+  check_oracle_tags "CPC conjunction De Morgan tail" theorem
+end
+
+fun cpc_bool_or_de_morgan_tail_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(step @p :rule bool-or-de-morgan :args (p q (or r))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``~(p \/ q \/ r) = (~p /\ ~(q \/ r))``,
+    "CPC disjunction De Morgan rewrite dropped its tail");
+  assert (List.null (Thm.hyp theorem),
+    "CPC disjunction De Morgan rewrite retained hypotheses");
+  check_oracle_tags "CPC disjunction De Morgan tail" theorem
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -28892,6 +28922,10 @@ let
       cpc_quant_var_reordering_replay_success),
     ("cpc_quant_merge_prenex_replay_success",
       cpc_quant_merge_prenex_replay_success),
+    ("cpc_bool_and_de_morgan_tail_replay_success",
+      cpc_bool_and_de_morgan_tail_replay_success),
+    ("cpc_bool_or_de_morgan_tail_replay_success",
+      cpc_bool_or_de_morgan_tail_replay_success),
     ("cpc_bool_or_taut2_replay_success",
       cpc_bool_or_taut2_replay_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",

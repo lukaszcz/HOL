@@ -4006,14 +4006,24 @@ local
           tautology name (boolSyntax.mk_eq
             (boolSyntax.list_mk_disj operands, boolSyntax.T))
         end
-    | ("bool-or-de-morgan", [left, right, _]) =>
-        tautology name (boolSyntax.mk_eq
-          (boolSyntax.mk_neg (boolSyntax.mk_disj (left, right)),
-           boolSyntax.mk_conj (boolSyntax.mk_neg left, boolSyntax.mk_neg right)))
-    | ("bool-and-de-morgan", [left, right, _]) =>
-        tautology name (boolSyntax.mk_eq
-          (boolSyntax.mk_neg (boolSyntax.mk_conj (left, right)),
-           boolSyntax.mk_disj (boolSyntax.mk_neg left, boolSyntax.mk_neg right)))
+    | ("bool-or-de-morgan", [left, right, rest]) =>
+        let
+          val tail = if Term.aconv rest boolSyntax.F then right
+            else boolSyntax.mk_disj (right, rest)
+        in
+          tautology name (boolSyntax.mk_eq
+            (boolSyntax.mk_neg (boolSyntax.mk_disj (left, tail)),
+             boolSyntax.mk_conj (boolSyntax.mk_neg left, boolSyntax.mk_neg tail)))
+        end
+    | ("bool-and-de-morgan", [left, right, rest]) =>
+        let
+          val tail = if Term.aconv rest boolSyntax.T then right
+            else boolSyntax.mk_conj (right, rest)
+        in
+          tautology name (boolSyntax.mk_eq
+            (boolSyntax.mk_neg (boolSyntax.mk_conj (left, tail)),
+             boolSyntax.mk_disj (boolSyntax.mk_neg left, boolSyntax.mk_neg tail)))
+        end
     | ("bool-implies-de-morgan", [left, right]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_imp (left, right)),
