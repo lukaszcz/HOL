@@ -2427,6 +2427,28 @@ struct
       val _ = private_source_sharing ()
       val _ = detached_private_identity ()
       val _ = set_sort_metadata ()
+      val _ = List.app (fn argument => positive
+        ("declared indexed-literal name " ^ argument)
+        ("((declare-const bv5 (-> Int Int)) (declare-const x Int) " ^
+         "(step @p :rule refl :args ((forall " ^
+         "((bv5 (-> Int Int)) (x Int)) (= (_ bv5 " ^ argument ^
+         ") (_ bv5 " ^ argument ^ "))))))")) ["x", "1"]
+      val _ = positive "nested typed private higher-order application"
+        "((step @p :rule refl :args ((_ (@const 0 (-> Int Bool)) 1))))"
+      val _ = List.app (fn (label,term) =>
+        positive ("higher-order indexed control " ^ label)
+          ("((step @p :rule refl :args (" ^ term ^ ")))"))
+        [("word", "(_ bv5 8)"),
+         ("extract", "((_ extract 3 0) (_ bv5 8))"),
+         ("applied extract", "((_ extract 3 0) " ^
+           "(_ (@const 0 (-> (_ BitVec 8) (_ BitVec 8))) (_ bv5 8)))"),
+         ("positive zero", "(_ +zero 3 5)")]
+      val _ = positive "explicit application in a definition list"
+        "((define @xs () (@list \
+        \(@ (lambda (@list (@var x Int)) (@var x Int)) 1))) \
+        \(assume @a true))"
+      val _ = positive "indexed word in a definition list"
+        "((define @xs () (@list (_ bv5 8))) (assume @a true))"
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)
       val indexed =
