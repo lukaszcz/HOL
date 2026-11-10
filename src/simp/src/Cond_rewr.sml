@@ -502,6 +502,31 @@ fun mk_cond_rewrs l =
     (QUANTIFY_CONDITIONS oo IMP_EQ_CANON oo IMP_CANON) l
     handle e as HOL_ERR _ => WRAP_ERR("mk_cond_rewrs",e);
 
+(* The theorem objects are the existing stock captured programme, not
+   reconstructed with a new genvar or closed by an unquoted extra rule. *)
+datatype false_template_kind=FalseConclusion | TruthEqualsFalse
+  | FalseEqualsTruth
+datatype false_template=FalseTemplate of false_template_kind
+fun false_template kind=FalseTemplate kind
+fun false_template_data(FalseTemplate kind)=
+  case kind of FalseConclusion=>
+    let val(condition,result)=boolSyntax.dest_imp_only(concl x_eq_false)
+    in {proof=x_eq_false,condition=condition,result=result}end
+  | TruthEqualsFalse=>
+      {proof=TF_EQ_F,condition=hd(hyp TF_EQ_F),
+       result=concl TF_EQ_F}
+  | FalseEqualsTruth=>
+      {proof=FT_EQ_F,condition=hd(hyp FT_EQ_F),
+       result=concl FT_EQ_F}
+
+(* Same lexical namespace theorem used by the existing REWR_CONV branch.
+   SmtLib_OwnedPairedEqTFlip reads this only on explicit SMT activity. *)
+datatype eq_sym_template=EqSymTemplate
+fun eq_sym_template()=EqSymTemplate
+fun eq_sym_template_data EqSymTemplate=
+  {proof=EQ_SYM_EQ,statement=concl EQ_SYM_EQ}
+
+
 end;
 
 
