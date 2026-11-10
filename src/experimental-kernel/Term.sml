@@ -358,90 +358,6 @@ fun FVL0 tlist acc =
 
 fun FVL tlist = FVL0 (map FVTM tlist)
 
-local
-exception TreeComplete of term HOLset.set
-in
-(* Cooperatively run the ordinary delayed-delete visitor and one intrinsic
-   free-variable summary for every physical node.  An abstraction deletes its
-   named binder from its body's summary, so shadowing and capture remain exact.
-   Pointer lookup is portable but linear.  One resumable tree step runs at
-   lookup start and before every pointer comparison, so a long memo search
-   cannot starve the ordinary traversal.  The first exact visitor to finish
-   supplies the result.  No constant-time claim is made for set operations. *)
-fun FVL_dag roots initial =
-  let
-    datatype action = Visit of term | FinishApp of term * term * term
-      | FinishAbs of term * term * term
-    val summaries = ref ([] : (term * term HOLset.set) list)
-    val tree_pending = ref (map FVTM roots)
-    val tree_free = ref initial
-    fun tree_step () =
-      case !tree_pending of
-        [] => raise TreeComplete (!tree_free)
-      | FVTM term :: pending =>
-          (case term of
-             Var _ =>
-               (tree_pending := pending;
-                tree_free := HOLset.add (!tree_free, term))
-           | Const _ => tree_pending := pending
-           | App (operator, operand) =>
-               tree_pending := FVTM operator :: FVTM operand :: pending
-           | Abs (binder, body) =>
-               if HOLset.member (!tree_free, binder) then
-                 tree_pending := FVTM body :: pending
-               else
-                 tree_pending := FVTM body :: DELvar binder :: pending)
-      | DELvar binder :: pending =>
-          (tree_pending := pending;
-           tree_free := safe_delete (!tree_free, binder))
-    fun lookup term =
-      let
-        fun seek [] = NONE
-          | seek ((prior, summary) :: rest) =
-              (tree_step ();
-               if Portable.pointer_eq (term, prior) then SOME summary
-               else seek rest)
-      in
-        tree_step ();
-        seek (!summaries)
-      end
-    fun completed term =
-      case lookup term of
-        SOME summary => summary
-      | NONE => raise Fail "Term.FVL_dag: incomplete traversal"
-    fun save term summary = summaries := (term, summary) :: !summaries
-    fun without variable summary =
-      HOLset.delete (summary, variable)
-      handle HOLset.NotFound => summary
-    fun loop [] = ()
-      | loop (Visit term :: pending) =
-          if Option.isSome (lookup term) then loop pending
-          else
-            (case term of
-               Var _ =>
-                 (save term (HOLset.add (empty_varset, term)); loop pending)
-             | Const _ => (save term empty_varset; loop pending)
-             | App (operator, operand) =>
-                 loop (Visit operator :: Visit operand ::
-                   FinishApp (term, operator, operand) :: pending)
-             | Abs (binder as Var _, body) =>
-                 loop (Visit body :: FinishAbs (term, binder, body) :: pending)
-             | Abs _ => raise Fail "Term.FVL_dag: malformed abstraction")
-      | loop (FinishApp (term, operator, operand) :: pending) =
-          (save term
-             (HOLset.union (completed operator, completed operand));
-           loop pending)
-      | loop (FinishAbs (term, binder, body) :: pending) =
-          (save term (without binder (completed body)); loop pending)
-    val () = loop (List.map Visit roots)
-    fun add_variable (variable, free) = HOLset.add (free, variable)
-    fun add_root (root, free) =
-      HOLset.foldl add_variable free (completed root)
-  in
-    List.foldl add_root initial roots
-  end handle TreeComplete result => result
-end
-
 
 local
   fun vars (v as Var _) A = Lib.insert v A
@@ -457,51 +373,6 @@ fun all_varsl tm_list = itlist (union o all_vars) tm_list []
 
 (* term comparison *)
 fun fast_term_eq t1 t2 = Portable.pointer_eq (t1,t2)
-
-fun pointer_bucket depth modulus root =
-  let
-    fun name_hash name = CharVector.foldl
-      (fn (character, hash) => Word.+ (Word.* (hash, 0w33),
-        Word.fromInt (Char.ord character))) 0w17 name
-    fun head (Var (name, _)) = name_hash name
-      | head (Const (id, _)) = Word.fromInt (KernelSig.epoch_of id)
-      | head (App _) = 0w17
-      | head (Abs _) = 0w19
-    fun sample 0 _ term = head term
-      | sample depth first term =
-          case term of
-            App (operator, operand) =>
-              let val child = case (first, operator) of
-                    (true, App (_, argument)) => argument
-                  | _ => operand
-              in Word.+ (Word.* (head operator, 0w37),
-                Word.+ (Word.* (0w17, sample (depth - 1) first child),
-                  0w29)) end
-          | Abs (_, body) =>
-              Word.+ (Word.* (0w41, sample (depth - 1) first body), 0w31)
-          | _ => head term
-    fun samples 0 term = let val code = head term in (code, code) end
-      | samples depth (App (operator, operand)) =
-          let
-            val first = case operator of
-                App (_, argument) => argument | _ => operand
-            val (left, right) = if Portable.pointer_eq (first, operand) then
-                samples (depth - 1) operand
-              else (sample (depth - 1) true first,
-                    sample (depth - 1) false operand)
-            val prefix = Word.+ (Word.* (head operator, 0w37), 0w29)
-            fun mix code = Word.+ (prefix, Word.* (0w17, code))
-          in (mix left, mix right) end
-      | samples depth (Abs (_, body)) =
-          let
-            val (left, right) = samples (depth - 1) body
-            fun mix code = Word.+ (Word.* (0w41, code), 0w31)
-          in (mix left, mix right) end
-      | samples _ term = let val code = head term in (code, code) end
-    val (left, right) = samples (Int.max (0, depth)) root
-  in Word.toInt (Word.mod
-    (Word.+ (Word.* (0w37, left), right),
-     Word.fromInt modulus)) end
 structure Map = Binarymap
 val empty_env = Map.mkDict var_compare
 fun compare p = let
@@ -549,42 +420,6 @@ fun compare p = let
 in
   cmp 0 (empty_env, empty_env) p
 end
-
-(*---------------------------------------------------------------------------
- * Does a term contain a free variable?  The experimental kernel represents
- * bound occurrences with named variables, so memoization includes the set of
- * binders in scope.  Both the scope and the work cache are balanced sets.    *
- *---------------------------------------------------------------------------*)
-
-fun has_free_vars tm =
-    let
-      fun bound_compare (bound1, bound2) =
-          list_compare var_compare
-            (HOLset.listItems bound1, HOLset.listItems bound2)
-      fun state_compare ((term1, bound1), (term2, bound2)) =
-          case compare (term1, term2) of
-            EQUAL => bound_compare (bound1, bound2)
-          | order => order
-      fun scan ([], _) = false
-        | scan ((term, bound)::rest, seen) =
-            if HOLset.member(seen, (term, bound)) then scan (rest, seen)
-            else
-              let
-                val seen = HOLset.add(seen, (term, bound))
-              in
-                case term of
-                  Var _ =>
-                    if HOLset.member(bound, term) then scan (rest, seen)
-                    else true
-                | Const _ => scan (rest, seen)
-                | App(function, argument) =>
-                    scan ((function, bound)::(argument, bound)::rest, seen)
-                | Abs(variable, body) =>
-                    scan ((body, HOLset.add(bound, variable))::rest, seen)
-              end
-    in
-      scan ([(tm, empty_varset)], HOLset.empty state_compare)
-    end
 
 val empty_tmset = HOLset.empty compare
 
@@ -849,85 +684,18 @@ local
         end
 
   fun vsubst theta tm =
-    let
-      val large_substitution = numItems theta > 256
-      val bucket_count = if large_substitution then 16381 else 4093
-      val cache = Array.array
-        (bucket_count, [] : (term * term option) list)
-      fun string_hash string =
-        let
-          fun loop index hash =
-            if index = String.size string then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
-        in loop 0 5381 end
-      fun head_hash term =
-        case term of
-          Var(name,_) => string_hash name
-        | Const(id,_) => string_hash (KernelSig.id_toString id)
-        | App _ => 17
-        | Abs _ => 19
-      fun cache_index term =
-        let
-          fun spine (App(operator, operand), arity, _) =
-                spine (operator, arity + 1, SOME operand)
-            | spine (head, arity, first) = (head, arity, first)
-          fun shallow current =
-            let
-              val (head, arity, first) = spine (current, 0, NONE)
-              val first_hash = case first of NONE => 0 | SOME argument =>
-                head_hash (#1 (spine (argument, 0, NONE)))
-            in
-              (head_hash head * 37 + arity * 17 + first_hash) mod
-                bucket_count
-            end
-          fun hash 0 current = head_hash current
-            | hash depth current =
-                case current of
-                  App(operator, operand) =>
-                    (31 + 41 * hash (depth - 1) operator +
-                     67 * hash (depth - 1) operand) mod bucket_count
-                | Abs(_, body) =>
-                    (37 + 73 * hash (depth - 1) body) mod bucket_count
-                | _ => head_hash current
-        in if large_substitution then hash 8 term else shallow term end
-      fun lookup term =
-        let
-          fun seek [] = NONE
-            | seek ((saved, result) :: rest) =
-                if fast_term_eq term saved then SOME result else seek rest
-        in seek (Array.sub (cache, cache_index term)) end
-      fun save term result =
-        let val index = cache_index term
+      case tm of
+        Var _ => (case peek(theta, tm) of NONE => raise Unchanged
+                                        | SOME (_, t) => t)
+      | Const _ => raise Unchanged
+      | App p  => qcomb App (vsubst theta) p
+      | Abs _ => let
+          val fvi = calculate_fvinfo (SOME theta) tm
+          val theta' = filtertheta theta (current fvi)
         in
-          Array.update
-            (cache, index, (term, result) :: Array.sub (cache, index));
-          result
+          if numItems theta' = 0 then raise Unchanged
+          else augvsubst theta' fvi tm
         end
-      fun walk term =
-        case lookup term of
-          SOME (SOME result) => result
-        | SOME NONE => raise Unchanged
-        | NONE =>
-            ((let val result = compute term
-              in ignore (save term (SOME result)); result end)
-             handle Unchanged =>
-               (ignore (save term NONE); raise Unchanged))
-      and compute term =
-        case term of
-          Var _ => (case peek(theta, term) of NONE => raise Unchanged
-                                          | SOME (_, t) => t)
-        | Const _ => raise Unchanged
-        | App p => qcomb App walk p
-        | Abs _ => let
-            val fvi = calculate_fvinfo (SOME theta) term
-            val theta' = filtertheta theta (current fvi)
-          in
-            if numItems theta' = 0 then raise Unchanged
-            else augvsubst theta' fvi term
-          end
-    in walk tm end
 
   fun ssubst theta t =
       (* only used to substitute in fresh variables (genvars), so no
@@ -1318,21 +1086,6 @@ fun size acc tlist =
       end
 
 fun term_size t = size 0 [t]
-
-fun term_size_bounded limit root =
-  if limit < 0 then NONE
-  else
-    let
-      fun count ([], total) = SOME total
-        | count (tm :: pending, total) =
-            if total = limit then NONE
-            else
-              (case tm of
-                 App (operator, operand) =>
-                   count (operator :: operand :: pending, total + 1)
-               | Abs (_, body) => count (body :: pending, total + 1)
-               | _ => count (pending, total + 1))
-    in count ([root], 0) end
 
 
 
