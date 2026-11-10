@@ -366,7 +366,28 @@ local
     in #1 (summarize provenance) end
 
   fun term_contains_conjunction term =
-    not (List.null (HolKernel.find_terms boolSyntax.is_conj term))
+    let
+      val seen = Array.array (2039, [] : Term.term list)
+      fun visit [] = false
+        | visit (term :: pending) =
+            let
+              val bucket = SmtReplayImport.pointer_bucket 4 2039 term
+              val prior = Array.sub (seen,bucket)
+            in
+              if List.exists (fn old => Portable.pointer_eq (term,old)) prior
+              then visit pending
+              else if boolSyntax.is_conj term then true
+              else
+                (Array.update (seen,bucket,term :: prior);
+                 case Lib.total Term.dest_comb term of
+                   SOME (operator,operand) =>
+                     visit (operator :: operand :: pending)
+                 | NONE =>
+                     (case Lib.total Term.dest_abs term of
+                        SOME (_,body) => visit (body :: pending)
+                      | NONE => visit pending))
+            end
+    in visit [term] end
 
   (* CPC's n-ary [and] elaborates to [list_mk_conj], hence to this
      right-associated HOL shape.  Unlike source-occurrence provenance, these
@@ -2272,15 +2293,19 @@ local
      reject some compound terms even when those terms are semantically opaque
      to the certificate step.  Abstract every maximal selected atom uniformly
      across premises and target, prove the resulting implication, and then
-     instantiate the fresh variables back.  INST and LIST_MP keep this wholly
-     proof-producing; the selector describes a term class, not recorded proof
-     shapes. *)
+     restore the original atoms through checked graph instantiation. The
+     selector describes a term class, not recorded proof shapes. *)
   fun prove_from_prems_abstracting prove is_atom prems target =
     let
-      fun insert tm atoms =
-        if List.exists (Term.aconv tm) atoms then atoms else tm :: atoms
+      val visited = Array.array (2039, [] : Term.term list)
       fun collect tm atoms =
-        if is_atom tm then insert tm atoms
+        let
+          val bucket = SmtReplayImport.pointer_bucket 4 2039 tm
+          val prior = Array.sub (visited,bucket)
+        in
+        if List.exists (fn old => Portable.pointer_eq (tm,old)) prior then atoms
+        else (Array.update (visited,bucket,tm :: prior);
+        if is_atom tm then tm :: atoms
         else
           (case Lib.total Term.dest_comb tm of
              SOME (operator, operand) =>
@@ -2288,29 +2313,18 @@ local
            | NONE =>
                (case Lib.total Term.dest_abs tm of
                   SOME (_, body) => collect body atoms
-                | NONE => atoms))
+                | NONE => atoms)))
+        end
       val atoms = List.foldl
         (fn (theorem, accumulated) =>
           collect (Thm.concl theorem) accumulated)
         (collect target []) prems
-      val replacements = List.map
-        (fn atom => (Term.genvar (Term.type_of atom), atom)) atoms
-      val abstraction = List.map
-        (fn (variable, atom) => {redex = atom, residue = variable})
-        replacements
-      fun abstract tm = Term.subst abstraction tm
-      val abstract_implication = boolSyntax.list_mk_imp
-        (List.map (abstract o Thm.concl) prems, abstract target)
-      val abstract_theorem = prove abstract_implication
-        handle Feedback.HOL_ERR holerr =>
-          raise ERR "prove_from_prems_abstracting"
-            ("could not prove abstract implication " ^
-             Library.term_to_string abstract_implication ^ "; " ^
-             Feedback.message_of holerr)
-      val concrete_theorem = observed_inst
-        (List.map (fn (variable, atom) =>
-          {redex = variable, residue = atom}) replacements)
-        abstract_theorem
+      val _ = List.null atoms andalso
+        raise ERR "prove_from_prems_abstracting" "no selected atoms"
+      val implication = boolSyntax.list_mk_imp
+        (List.map Thm.concl prems,target)
+      val concrete_theorem =
+        Library.prove_abstracting_atoms prove atoms implication
     in
       Drule.LIST_MP prems concrete_theorem
     end
@@ -7890,7 +7904,7 @@ local
       raise ERR "arith-int-geq-tighten" (Feedback.message_of holerr)
     | exn => raise ERR "arith-int-geq-tighten" (General.exnMessage exn)
 
-  fun replay_arith_rule name args =
+  fun replay_arith_rule_schema name args =
     if name = "arith-int-geq-tighten" then
       (case args of
          [integer, real_bound, rounded] =>
@@ -7954,6 +7968,16 @@ local
         in Thm.TRANS le_lt (Thm.SYM not_ge) end
       else arith_prove target
     end
+
+  fun replay_arith_rule name args =
+    if name = "arith-int-geq-tighten" orelse name = "arith_poly_norm" then
+      replay_arith_rule_schema name args
+    else
+      let
+        val variables = List.map (Term.genvar o Term.type_of) args
+        val theorem = replay_arith_rule_schema name variables
+      in observed_inst (ListPair.mapEq (fn (variable,operand) =>
+        {redex=variable,residue=operand}) (variables,args)) theorem end
 
   (* Couple arithmetic relation rewrites to the exact syntax constructed by
      the successful semantic rule.  In particular, ARITH_EQ_ELIM_INT creates

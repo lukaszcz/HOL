@@ -1629,6 +1629,156 @@ struct
             end
     in search tm end
 
+  (* Import a closed arithmetic proof through flat constructor names. Native
+     INST then sees only the compact context and variable aliases, never the
+     expanded application DAG. Binder obligations retain their old worker. *)
+  fun prove_abstracting_atoms prove atoms target =
+    let
+      exception BinderObligation
+      val maximum = case Int.maxInt of SOME n => n | NONE => 1073741823
+      fun native () =
+        let
+          val replacements = List.map
+            (fn atom => (Term.genvar (Term.type_of atom), atom)) atoms
+          val abstract = Term.subst (List.map (fn (variable,atom) =>
+            {redex=atom,residue=variable}) replacements) target
+        in Thm.INST (List.map (fn (variable,atom) =>
+          {redex=variable,residue=atom}) replacements) (prove abstract) end
+      fun graph_proof () =
+        let
+          val graph = ReplayG.new ()
+          val root = ReplayG.root_scope graph
+          val original = ReplayG.import graph root maximum target
+          val reachable = ReplayG.reachable graph [#node original]
+          val _ = List.app (fn node => case ReplayG.view graph node of
+              ReplayG.OpaqueRetained => raise BinderObligation
+            | ReplayG.AdmittedBinder _ => raise BinderObligation
+            | _ => ()) reachable
+          val initial = List.map (fn atom =>
+            let
+              val source = ReplayG.import graph root maximum atom
+              val variable = ReplayG.fresh_flexible_variable graph root
+                (Term.genvar (Term.type_of atom))
+            in (atom,variable) end) atoms
+          val flexible = List.map #2 initial
+          val scope = ReplayG.new_scope graph root (List.map
+            (fn variable => (ReplayG.representative graph variable,variable))
+            flexible)
+          val concrete = ReplayG.import graph scope maximum target
+          val replacements = List.foldl (fn ((atom,variable),table) =>
+            let val node = #node (ReplayG.import graph scope maximum atom)
+            in Redblackmap.insert (table,ReplayG.node_id node,variable) end)
+            (Redblackmap.mkDict Int.compare) initial
+          val abstracted = ref (Redblackmap.mkDict Int.compare)
+          fun abstract node =
+            case Redblackmap.peek (!abstracted,ReplayG.node_id node) of
+              SOME result => result
+            | NONE =>
+                let
+                  val result = case Redblackmap.peek
+                      (replacements,ReplayG.node_id node) of
+                      SOME variable => variable
+                    | NONE => (case ReplayG.view graph node of
+                        ReplayG.Application (operator,operand) =>
+                          ReplayG.application graph scope
+                            (abstract operator,abstract operand)
+                      | _ => node)
+                  val _ = abstracted := Redblackmap.insert
+                    (!abstracted,ReplayG.node_id node,result)
+                in result end
+          val abstract_root = abstract (#node concrete)
+          val proof = prove (ReplayG.representative graph abstract_root)
+          val _ = if null (Thm.hyp proof) then () else
+            raise Feedback.mk_HOL_ERR "Library" "prove_abstracting_atoms"
+              "arithmetic procedure returned an open theorem"
+          val held = ReplayG.import graph scope maximum (Thm.concl proof)
+          val _ = if #node held = abstract_root then () else
+            raise Feedback.mk_HOL_ERR "Library" "prove_abstracting_atoms"
+              "arithmetic procedure changed its conclusion"
+          val canonical = Thm.EQ_MP (#bridge held) proof
+          val plan = graph_gen_instantiation graph
+            {scope=scope,flexible=flexible,lhs=abstract_root,
+             rhs= #node concrete}
+          val obligations = ReplayN.obligations plan
+          val sources = List.map #equation obligations
+          val roots = ReplayN.roots plan @ [abstract_root,#node concrete]
+          val resolution = case ReplayR.prepare graph scope
+              {flexible=flexible,assignments=List.map #assignment obligations,
+               roots=roots @ sources,preserved=[#node concrete]} of
+              ReplayR.Resolved result =>
+                ReplayR.record_assignment_sources result sources
+            | ReplayR.Refused _ =>
+                raise Feedback.mk_HOL_ERR "Library" "prove_abstracting_atoms"
+                  "arithmetic abstraction could not be resolved"
+          val block = ReplayP.freeze graph
+            {scope=scope,roots=roots @ ReplayR.roots resolution,
+             sources=sources,template_limit=maximum}
+          val converted = ref (Redblackmap.mkDict Int.compare)
+          val aliases = ref ([] : (Term.term * Term.term) list)
+          val definitions = ref ([] : ReplayP.edge list)
+          fun definition node =
+            let val edge = ReplayP.definition block node
+            in definitions := edge :: !definitions;
+               ReplayP.theorem block edge end
+          fun convert node =
+            case Redblackmap.peek (!converted,ReplayG.node_id node) of
+              SOME theorem => theorem
+            | NONE =>
+                let
+                  val original = ReplayG.representative graph node
+                  val theorem = case ReplayG.view graph node of
+                      ReplayG.Variable _ =>
+                        let val name = ReplayP.name block node
+                        in aliases := (original,name) :: !aliases;
+                           Thm.ASSUME (boolSyntax.mk_eq (original,name)) end
+                    | ReplayG.Constant _ => Thm.SYM (definition node)
+                    | ReplayG.Application (operator,operand) =>
+                        Thm.TRANS (Thm.REFL original)
+                          (Thm.TRANS
+                            (Thm.MK_COMB (convert operator,convert operand))
+                            (Thm.SYM (definition node)))
+                    | _ => raise BinderObligation
+                  val _ = converted := Redblackmap.insert
+                    (!converted,ReplayG.node_id node,theorem)
+                in theorem end
+          val named = Thm.EQ_MP (convert abstract_root) canonical
+          val renamed = Thm.INST (List.map (fn (variable,name) =>
+            {redex=variable,residue=name}) (!aliases)) named
+          val closed_aliases = List.foldl (fn ((_,name),theorem) =>
+            Drule.PROVE_HYP (Thm.REFL name) theorem) renamed (!aliases)
+          val abstract_edge = ReplayP.compose block
+            (fn _ => closed_aliases) (!definitions)
+          val indices = List.foldl (fn (node,(index,table)) =>
+            (index+1,Redblackmap.insert
+              (table,ReplayG.node_id node,index)))
+            (0,Redblackmap.mkDict Int.compare) sources
+          val equalities = ReplayN.assemble block plan
+            (fn {equation,...} => ReplayP.source block
+              (Redblackmap.find (#2 indices,ReplayG.node_id equation)))
+          val equation = #target (List.last (ReplayN.equations plan))
+          val equality = ReplayP.compose block
+            (fn [constructor,theorem] => Thm.EQ_MP constructor theorem
+              | _ => raise Fail "arithmetic abstraction equality arity")
+            [ReplayP.constructor block equation,List.last equalities]
+          val result = ReplayP.compose block
+            (fn [equality,theorem] => Thm.EQ_MP equality theorem
+              | _ => raise Fail "arithmetic abstraction proof arity")
+            [equality,abstract_edge]
+          val realized = ReplayP.realize_resolved block resolution
+            (#node concrete) result
+        in Thm.EQ_MP (Thm.SYM (#bridge concrete)) realized end
+    in
+      graph_proof ()
+      handle BinderObligation => native ()
+           | Feedback.HOL_ERR error =>
+               if SmtResource.is_resource_gate error andalso
+                  String.isSuffix
+                    "feature=resource-gate:BitVector:canon-type-work"
+                    (Feedback.message_of error)
+               then native ()
+               else raise Feedback.HOL_ERR error
+    end
+
   (* Polynomial arithmetic should treat conditional branches as opaque atoms;
      splitting them first is both unnecessary and potentially exponential. *)
   fun arith_prove_raw tm =
@@ -1671,8 +1821,7 @@ struct
                  if arithmetic term andalso boolSyntax.is_cond term andalso
                     not (captures_bound term)
                  then
-                   if List.exists (Term.aconv term) (!atoms) then ()
-                   else atoms := term :: !atoms
+                   atoms := term :: !atoms
                  else
                    case Lib.total Term.dest_abs term of
                      SOME (variable, body) => collect (variable :: bound) body
@@ -1684,23 +1833,15 @@ struct
             end
         in visit end
       val _ = collect [] tm
-      val replacements = List.map
-        (fn atom => (Term.genvar (Term.type_of atom), atom)) (!atoms)
-      val abstraction = List.map
-        (fn (variable, atom) => {redex = atom, residue = variable}) replacements
-      fun abstract_proof () = Thm.INST
-        (List.map (fn (variable, atom) => {redex = variable, residue = atom})
-          replacements)
-        (let val abstract = Term.subst abstraction tm in
-           raw abstract
-           handle Feedback.HOL_ERR error =>
-             if is_nonlinear abstract andalso
-                not (contains_nonpolynomial_arithmetic abstract)
-             then nla_prove abstract
-             else raise Feedback.HOL_ERR error
-         end)
+      fun abstract_proof () = prove_abstracting_atoms
+        (fn abstract => raw abstract
+          handle Feedback.HOL_ERR error =>
+            if is_nonlinear abstract andalso
+               not (contains_nonpolynomial_arithmetic abstract)
+            then nla_prove abstract
+            else raise Feedback.HOL_ERR error) (!atoms) tm
     in
-      if List.null replacements then raw tm
+      if List.null (!atoms) then raw tm
       else
         (abstract_proof ()
          handle Feedback.HOL_ERR error =>
